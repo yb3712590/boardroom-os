@@ -27,11 +27,14 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/project-init`
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
-- `GET /api/v1/projections/review-room/{review_pack_id}` reserved route, currently returning `404`
+- `GET /api/v1/projections/review-room/{review_pack_id}` real projection for persisted approval packs
 - `GET /api/v1/events/stream?after={cursor}` SSE stream
 - real `CommandAckEnvelope`
 - minimal `events`, `workflow_projection`, and `approval_projection` schema
-- API and reducer test scaffolding
+- `POST /api/v1/commands/board-approve`
+- `POST /api/v1/commands/board-reject`
+- `POST /api/v1/commands/modify-constraints`
+- minimal API, approval-flow, and reducer tests
 
 ## Not Implemented Yet
 
@@ -41,8 +44,8 @@ The following are still pending or stubbed:
 - ticket pool and lease protocol
 - worker execution chain
 - Maker-Checker review loop
-- board approval commands
-- full Review Room projection content
+- automatic approval request creation from ticket/worker results
+- richer Review Room evidence assembly beyond persisted approval packs
 - Context Compiler execution
 - FTS / vector retrieval
 - React Boardroom UI
@@ -56,6 +59,9 @@ The first backend slice already locks the route names and API boundaries:
 - `GET /api/v1/projections/inbox`
 - `GET /api/v1/projections/review-room/{review_pack_id}`
 - `GET /api/v1/events/stream?after={cursor}`
+- `POST /api/v1/commands/board-approve`
+- `POST /api/v1/commands/board-reject`
+- `POST /api/v1/commands/modify-constraints`
 
 The command acknowledgement is already real and returns:
 
@@ -138,4 +144,5 @@ The goal is not “an agent that talks a lot”.
 The goal is:
 
 **an agent operating system that can be governed, reviewed, and shipped**
+
 

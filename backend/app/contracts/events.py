@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
@@ -9,6 +9,7 @@ from app.contracts.common import StrictModel
 class EventCategory(StrEnum):
     WORKFLOW = "workflow"
     SYSTEM = "system"
+    APPROVAL = "approval"
 
 
 class EventSeverity(StrEnum):

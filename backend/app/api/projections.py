@@ -2,8 +2,16 @@
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.contracts.projections import DashboardProjectionEnvelope, InboxProjectionEnvelope
-from app.core.projections import build_dashboard_projection, build_inbox_projection
+from app.contracts.projections import (
+    DashboardProjectionEnvelope,
+    InboxProjectionEnvelope,
+    ReviewRoomProjectionEnvelope,
+)
+from app.core.projections import (
+    build_dashboard_projection,
+    build_inbox_projection,
+    build_review_room_projection,
+)
 from app.db.repository import ControlPlaneRepository
 
 router = APIRouter(prefix="/api/v1/projections", tags=["projections"])
@@ -21,14 +29,13 @@ def get_inbox(request: Request) -> InboxProjectionEnvelope:
     return build_inbox_projection(repository)
 
 
-@router.get("/review-room/{review_pack_id}")
-def get_review_room(request: Request, review_pack_id: str):
+@router.get("/review-room/{review_pack_id}", response_model=ReviewRoomProjectionEnvelope)
+def get_review_room(request: Request, review_pack_id: str) -> ReviewRoomProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
-    repository.initialize()
-    raise HTTPException(
-        status_code=404,
-        detail=(
-            "Review room projection route is reserved, but no review packs are "
-            f"materialized yet for '{review_pack_id}'."
-        ),
-    )
+    projection = build_review_room_projection(repository, review_pack_id)
+    if projection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Review pack '{review_pack_id}' was not found.",
+        )
+    return projection

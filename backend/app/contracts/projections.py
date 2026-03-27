@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 
-from app.contracts.events import EventSeverity
 from app.contracts.common import ProjectionEnvelopeBase, StrictModel
+from app.contracts.events import EventSeverity
 
 
 class WorkspaceSummary(StrictModel):

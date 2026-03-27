@@ -27,11 +27,14 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/project-init`
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
-- `GET /api/v1/projections/review-room/{review_pack_id}` 路由保留，当前固定返回 `404`
+- `GET /api/v1/projections/review-room/{review_pack_id}` 真实投影（针对已持久化审批包）
 - `GET /api/v1/events/stream?after={cursor}` SSE 增量事件流
 - `CommandAckEnvelope` 首轮真实契约
 - `events` / `workflow_projection` / `approval_projection` 最小 schema
-- API 与 reducer 测试骨架
+- `POST /api/v1/commands/board-approve`
+- `POST /api/v1/commands/board-reject`
+- `POST /api/v1/commands/modify-constraints`
+- API、审批链与 reducer 最小测试
 
 ## 本轮未实现
 
@@ -41,8 +44,8 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - Ticket Pool / Lease Protocol
 - Worker 执行链
 - Maker-Checker Review Loop
-- Board Review Pack 生成与审批命令
-- Review Room 完整投影内容
+- 审批请求从 Ticket/Worker 结果自动生成
+- Review Room 仍只支持已持久化审批包，不含更完整的证据拼装
 - Context Compiler 实际编译
 - FTS / 向量检索
 - React Boardroom UI
@@ -56,6 +59,9 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `GET /api/v1/projections/inbox`
 - `GET /api/v1/projections/review-room/{review_pack_id}`
 - `GET /api/v1/events/stream?after={cursor}`
+- `POST /api/v1/commands/board-approve`
+- `POST /api/v1/commands/board-reject`
+- `POST /api/v1/commands/modify-constraints`
 
 首轮命令回执已真实返回：
 
@@ -142,4 +148,5 @@ Boardroom OS 默认相信：
 最终目标不是做一个“会聊天的 Agent 项目”，而是做一个：
 
 **可推进、可治理、可交付的 Agent Operating System。**
+
 

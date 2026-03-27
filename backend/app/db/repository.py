@@ -3,12 +3,17 @@
 import json
 import sqlite3
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from app.core.constants import (
+    APPROVAL_STATUS_OPEN,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
+    EVENT_BOARD_REVIEW_APPROVED,
+    EVENT_BOARD_REVIEW_REJECTED,
+    EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_WORKFLOW_CREATED,
 )
@@ -26,6 +31,7 @@ class ControlPlaneRepository:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as connection:
             connection.executescript(SCHEMA_SQL)
+            self._ensure_approval_projection_shape(connection)
 
     @contextmanager
     def connection(self):
@@ -221,7 +227,7 @@ class ControlPlaneRepository:
                     "category": self._event_category(converted["event_type"]),
                     "severity": self._event_severity(converted["event_type"]),
                     "message": self._event_preview_message(converted),
-                    "related_ref": converted["workflow_id"],
+                    "related_ref": converted["workflow_id"] or converted["event_id"],
                 }
             )
         return previews
@@ -279,6 +285,200 @@ class ControlPlaneRepository:
             ).fetchone()
             return int(row["total"])
 
+    def count_open_approvals(self) -> int:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total FROM approval_projection WHERE status = ?",
+                (APPROVAL_STATUS_OPEN,),
+            ).fetchone()
+            return int(row["total"])
+
+    def list_open_approvals(self) -> list[dict[str, Any]]:
+        self.initialize()
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM approval_projection
+                WHERE status = ?
+                ORDER BY created_at DESC, approval_id DESC
+                """,
+                (APPROVAL_STATUS_OPEN,),
+            ).fetchall()
+            return [self._convert_approval_row(row) for row in rows]
+
+    def get_approval_by_review_pack_id(self, review_pack_id: str) -> dict[str, Any] | None:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM approval_projection WHERE review_pack_id = ?",
+                (review_pack_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_approval_row(row)
+
+    def get_approval_by_id(
+        self,
+        connection: sqlite3.Connection,
+        approval_id: str,
+    ) -> dict[str, Any] | None:
+        row = connection.execute(
+            "SELECT * FROM approval_projection WHERE approval_id = ?",
+            (approval_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._convert_approval_row(row)
+
+    def create_approval_request(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        workflow_id: str,
+        approval_type: str,
+        requested_by: str,
+        review_pack: dict[str, Any],
+        available_actions: list[str],
+        draft_defaults: dict[str, Any],
+        inbox_title: str,
+        inbox_summary: str,
+        badges: list[str],
+        priority: str,
+        occurred_at: datetime,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        review_pack_payload = deepcopy(review_pack)
+        approval_id = review_pack_payload.setdefault("meta", {}).setdefault(
+            "approval_id",
+            new_prefixed_id("apr"),
+        )
+        review_pack_id = review_pack_payload["meta"].setdefault(
+            "review_pack_id",
+            new_prefixed_id("brp"),
+        )
+        review_pack_version = int(review_pack_payload["meta"].setdefault("review_pack_version", 1))
+
+        event_row = self.insert_event(
+            connection,
+            event_type=EVENT_BOARD_REVIEW_REQUIRED,
+            actor_type="system",
+            actor_id=requested_by,
+            workflow_id=workflow_id,
+            idempotency_key=idempotency_key,
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "approval_id": approval_id,
+                "review_pack_id": review_pack_id,
+                "review_type": approval_type,
+                "title": inbox_title,
+            },
+            occurred_at=occurred_at,
+        )
+        if event_row is None:
+            existing = self.get_approval_by_id(connection, approval_id)
+            if existing is None:
+                raise RuntimeError("Approval request idempotency conflict without existing approval row.")
+            return existing
+
+        command_target_version = int(event_row["sequence_no"])
+        review_pack_payload["meta"]["source_projection_version"] = command_target_version
+        payload = {
+            "review_pack": review_pack_payload,
+            "available_actions": available_actions,
+            "draft_defaults": draft_defaults,
+            "inbox_title": inbox_title,
+            "inbox_summary": inbox_summary,
+            "badges": badges,
+            "priority": priority,
+        }
+
+        connection.execute(
+            """
+            INSERT INTO approval_projection (
+                approval_id,
+                review_pack_id,
+                workflow_id,
+                approval_type,
+                status,
+                requested_by,
+                resolved_by,
+                resolved_at,
+                created_at,
+                updated_at,
+                review_pack_version,
+                command_target_version,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                approval_id,
+                review_pack_id,
+                workflow_id,
+                approval_type,
+                APPROVAL_STATUS_OPEN,
+                requested_by,
+                None,
+                None,
+                occurred_at.isoformat(),
+                occurred_at.isoformat(),
+                review_pack_version,
+                command_target_version,
+                json.dumps(payload, sort_keys=True),
+            ),
+        )
+        created = self.get_approval_by_id(connection, approval_id)
+        if created is None:
+            raise RuntimeError("Approval row was not persisted.")
+        return created
+
+    def resolve_approval(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        approval_id: str,
+        status: str,
+        resolved_by: str,
+        resolved_at: datetime,
+        review_pack_version: int,
+        command_target_version: int,
+        resolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        approval = self.get_approval_by_id(connection, approval_id)
+        if approval is None:
+            raise RuntimeError("Approval not found.")
+
+        payload = deepcopy(approval["payload"])
+        payload["resolution"] = resolution
+        connection.execute(
+            """
+            UPDATE approval_projection
+            SET status = ?,
+                resolved_by = ?,
+                resolved_at = ?,
+                updated_at = ?,
+                review_pack_version = ?,
+                command_target_version = ?,
+                payload_json = ?
+            WHERE approval_id = ?
+            """,
+            (
+                status,
+                resolved_by,
+                resolved_at.isoformat(),
+                resolved_at.isoformat(),
+                review_pack_version,
+                command_target_version,
+                json.dumps(payload, sort_keys=True),
+                approval_id,
+            ),
+        )
+        updated = self.get_approval_by_id(connection, approval_id)
+        if updated is None:
+            raise RuntimeError("Approval disappeared after resolution.")
+        return updated
+
     def list_events_for_testing(self) -> list[dict[str, Any]]:
         self.initialize()
         with self.connection() as connection:
@@ -289,9 +489,25 @@ class ControlPlaneRepository:
         converted["occurred_at"] = datetime.fromisoformat(converted["occurred_at"])
         return converted
 
+    def _convert_approval_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("resolved_at", "created_at", "updated_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["review_pack_version"] = int(converted.get("review_pack_version") or 1)
+        converted["command_target_version"] = int(converted.get("command_target_version") or 0)
+        converted["payload"] = json.loads(converted["payload_json"])
+        return converted
+
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:
             return "system"
+        if event_type in {
+            EVENT_BOARD_REVIEW_REQUIRED,
+            EVENT_BOARD_REVIEW_APPROVED,
+            EVENT_BOARD_REVIEW_REJECTED,
+        }:
+            return "approval"
         return "workflow"
 
     def _event_severity(self, event_type: str) -> str:
@@ -299,8 +515,11 @@ class ControlPlaneRepository:
             EVENT_SYSTEM_INITIALIZED,
             EVENT_BOARD_DIRECTIVE_RECEIVED,
             EVENT_WORKFLOW_CREATED,
+            EVENT_BOARD_REVIEW_APPROVED,
         }:
             return "info"
+        if event_type in {EVENT_BOARD_REVIEW_REQUIRED, EVENT_BOARD_REVIEW_REJECTED}:
+            return "warning"
         return "debug"
 
     def _event_preview_message(self, event: dict[str, Any]) -> str:
@@ -310,6 +529,12 @@ class ControlPlaneRepository:
             return "BOARD_DIRECTIVE_RECEIVED from board"
         if event["event_type"] == EVENT_WORKFLOW_CREATED:
             return f"WORKFLOW_CREATED for {event['workflow_id']}"
+        if event["event_type"] == EVENT_BOARD_REVIEW_REQUIRED:
+            return "BOARD_REVIEW_REQUIRED pending board action"
+        if event["event_type"] == EVENT_BOARD_REVIEW_APPROVED:
+            return "BOARD_REVIEW_APPROVED by board"
+        if event["event_type"] == EVENT_BOARD_REVIEW_REJECTED:
+            return "BOARD_REVIEW_REJECTED by board"
         return event["event_type"]
 
     def _event_ui_hint(self, event_type: str) -> dict[str, Any]:
@@ -327,9 +552,51 @@ class ControlPlaneRepository:
                 "refresh_after_ms": 250,
                 "toast": "Board directive received.",
             }
+        if event_type == EVENT_BOARD_REVIEW_REQUIRED:
+            return {
+                "invalidate": ["dashboard", "inbox", "review-room"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Board review requested.",
+            }
+        if event_type == EVENT_BOARD_REVIEW_APPROVED:
+            return {
+                "invalidate": ["dashboard", "inbox", "review-room"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Board review approved.",
+            }
+        if event_type == EVENT_BOARD_REVIEW_REJECTED:
+            return {
+                "invalidate": ["dashboard", "inbox", "review-room"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Board review rejected.",
+            }
         return {
             "invalidate": ["dashboard", "inbox"],
             "refresh_policy": "debounced",
             "refresh_after_ms": 250,
             "toast": "Workflow created.",
         }
+
+    def _ensure_approval_projection_shape(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(approval_projection)").fetchall()
+        }
+        required_columns = {
+            "review_pack_id": "TEXT",
+            "created_at": "TEXT",
+            "updated_at": "TEXT",
+            "review_pack_version": "INTEGER",
+            "command_target_version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE approval_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_projection_review_pack_id ON approval_projection(review_pack_id)"
+        )

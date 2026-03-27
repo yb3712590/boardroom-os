@@ -32,12 +32,17 @@ CREATE TABLE IF NOT EXISTS workflow_projection (
 
 CREATE TABLE IF NOT EXISTS approval_projection (
     approval_id TEXT PRIMARY KEY,
+    review_pack_id TEXT,
     workflow_id TEXT NOT NULL,
     approval_type TEXT NOT NULL,
     status TEXT NOT NULL,
     requested_by TEXT NOT NULL,
     resolved_by TEXT,
     resolved_at TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    review_pack_version INTEGER,
+    command_target_version INTEGER,
     payload_json TEXT NOT NULL
 );
 """

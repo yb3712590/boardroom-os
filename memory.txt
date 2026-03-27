@@ -586,3 +586,64 @@
 - Extend the event model beyond `project-init` into approval and ticket flows.
 - Add real `review-room` projection and board decision commands without renaming current routes.
 - Introduce `ticket_projection` and the next reducer layer.
+
+## 2026-03-28T05:05:00+08:00
+
+### Session Context
+- User asked to continue from the current repository state without rebuilding the existing backend slice.
+- The task was to read current code, compare it against root design docs, choose the smallest next vertical slice, and then implement it incrementally.
+
+### Relevant Design Constraints Used
+- Keep current stack and directory structure unchanged.
+- Preserve route names already locked in design docs, especially `review-room` and board command routes.
+- If design and code differ, note the gap first and take the most conservative path.
+- Do not claim unimplemented runtime producers or richer review assembly as complete.
+
+### Design/Code Gap Identified
+- `approval_projection` existed in schema but was not actually used.
+- `GET /api/v1/projections/review-room/{review_pack_id}` was only a reserved `404`, while the design contracts already treat it as a real projection boundary.
+- Board decision commands defined in docs were not implemented yet.
+
+### Slice Landed
+- Implemented the smallest adjacent approval slice without touching unrelated modules:
+  - real `review-room` projection for persisted approval records
+  - real `board-approve`
+  - real `board-reject`
+  - real `modify-constraints`
+  - inbox/dashboard approval counts backed by `approval_projection`
+- Added approval-related event types:
+  - `BOARD_REVIEW_REQUIRED`
+  - `BOARD_REVIEW_APPROVED`
+  - `BOARD_REVIEW_REJECTED`
+- Added stale-write validation on board commands using:
+  - `review_pack_version`
+  - `command_target_version`
+- `modify-constraints` currently reuses `BOARD_REVIEW_REJECTED` with explicit `decision_action=MODIFY_CONSTRAINTS` in payload because no dedicated modify event had been formalized in the written event set.
+
+### Current Scope Boundary
+- Approval read/decision path is now real for already persisted approval packs.
+- Automatic creation of approval requests from ticket outputs is still not implemented.
+- Review Room still uses persisted pack payloads and does not yet assemble richer evidence, deltas, or maker-checker summaries dynamically.
+
+### Verification
+- Ran backend tests with Python 3.12.10.
+- Current result: `17 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\contracts\commands.py`
+- `D:\Projects\boardroom-os\backend\app\contracts\events.py`
+- `D:\Projects\boardroom-os\backend\app\contracts\projections.py`
+- `D:\Projects\boardroom-os\backend\app\api\commands.py`
+- `D:\Projects\boardroom-os\backend\app\api\projections.py`
+- `D:\Projects\boardroom-os\backend\app\core\constants.py`
+- `D:\Projects\boardroom-os\backend\app\core\approval_handlers.py`
+- `D:\Projects\boardroom-os\backend\app\core\projections.py`
+- `D:\Projects\boardroom-os\backend\app\db\schema.py`
+- `D:\Projects\boardroom-os\backend\app\db\repository.py`
+- `D:\Projects\boardroom-os\backend\tests\test_api.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Add the producer path that creates approval requests from real workflow or ticket outcomes so Review Room no longer depends on seeded/persisted records only.

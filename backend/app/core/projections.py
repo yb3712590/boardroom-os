@@ -7,14 +7,19 @@ from app.contracts.projections import (
     DashboardProjectionEnvelope,
     EventStreamPreviewItem,
     InboxCountsProjection,
+    InboxItemProjection,
     InboxProjectionData,
     InboxProjectionEnvelope,
     OpsStripProjection,
     PipelineSummaryProjection,
+    ReviewRoomDraftDefaults,
+    ReviewRoomProjectionData,
+    ReviewRoomProjectionEnvelope,
+    RouteTarget,
     WorkforceSummaryProjection,
     WorkspaceSummary,
 )
-from app.core.constants import SCHEMA_VERSION
+from app.core.constants import APPROVAL_STATUS_OPEN, SCHEMA_VERSION
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -23,6 +28,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
     repository.initialize()
     active_workflow = repository.get_active_workflow()
     cursor, projection_version = repository.get_cursor_and_version()
+    pending_approvals = repository.count_open_approvals()
 
     if active_workflow is None:
         active_workflow_projection = None
@@ -81,7 +87,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 blocked_node_ids=[],
             ),
             inbox_counts=InboxCountsProjection(
-                approvals_pending=0,
+                approvals_pending=pending_approvals,
                 incidents_pending=0,
                 budget_alerts=0,
                 provider_alerts=0,
@@ -101,10 +107,60 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
 def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectionEnvelope:
     repository.initialize()
     cursor, projection_version = repository.get_cursor_and_version()
+    items = []
+    for approval in repository.list_open_approvals():
+        payload = approval["payload"]
+        items.append(
+            InboxItemProjection(
+                inbox_item_id=f"inbox_{approval['approval_id']}",
+                workflow_id=approval["workflow_id"],
+                item_type="BOARD_APPROVAL",
+                priority=payload.get("priority", "medium"),
+                status=approval["status"],
+                created_at=approval["created_at"],
+                sla_due_at=None,
+                title=payload.get("inbox_title", approval["review_pack_id"]),
+                summary=payload.get("inbox_summary", "Board review pending."),
+                source_ref=approval["approval_id"],
+                route_target=RouteTarget(
+                    view="review_room",
+                    review_pack_id=approval["review_pack_id"],
+                ),
+                badges=payload.get("badges", []),
+            )
+        )
     return InboxProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
         generated_at=now_local(),
         projection_version=projection_version,
         cursor=cursor,
-        data=InboxProjectionData(items=[]),
+        data=InboxProjectionData(items=items),
+    )
+
+
+def build_review_room_projection(
+    repository: ControlPlaneRepository,
+    review_pack_id: str,
+) -> ReviewRoomProjectionEnvelope | None:
+    repository.initialize()
+    approval = repository.get_approval_by_review_pack_id(review_pack_id)
+    if approval is None:
+        return None
+
+    cursor, projection_version = repository.get_cursor_and_version()
+    payload = approval["payload"]
+    available_actions = payload.get("available_actions", [])
+    if approval["status"] != APPROVAL_STATUS_OPEN:
+        available_actions = []
+
+    return ReviewRoomProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=now_local(),
+        projection_version=projection_version,
+        cursor=cursor,
+        data=ReviewRoomProjectionData(
+            review_pack=payload.get("review_pack"),
+            available_actions=available_actions,
+            draft_defaults=ReviewRoomDraftDefaults(**payload.get("draft_defaults", {})),
+        ),
     )
