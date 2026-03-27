@@ -18,6 +18,8 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
+    EVENT_TICKET_CREATED,
+    EVENT_TICKET_STARTED,
     EVENT_WORKFLOW_CREATED,
 )
 from app.core.ids import new_prefixed_id
@@ -689,7 +691,7 @@ class ControlPlaneRepository:
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:
             return "system"
-        if event_type == EVENT_TICKET_COMPLETED:
+        if event_type in {EVENT_TICKET_CREATED, EVENT_TICKET_STARTED, EVENT_TICKET_COMPLETED}:
             return "ticket"
         if event_type in {
             EVENT_BOARD_REVIEW_REQUIRED,
@@ -704,6 +706,8 @@ class ControlPlaneRepository:
             EVENT_SYSTEM_INITIALIZED,
             EVENT_BOARD_DIRECTIVE_RECEIVED,
             EVENT_WORKFLOW_CREATED,
+            EVENT_TICKET_CREATED,
+            EVENT_TICKET_STARTED,
             EVENT_TICKET_COMPLETED,
             EVENT_BOARD_REVIEW_APPROVED,
         }:
@@ -719,6 +723,10 @@ class ControlPlaneRepository:
             return "BOARD_DIRECTIVE_RECEIVED from board"
         if event["event_type"] == EVENT_WORKFLOW_CREATED:
             return f"WORKFLOW_CREATED for {event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_CREATED:
+            return f"TICKET_CREATED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_STARTED:
+            return f"TICKET_STARTED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_COMPLETED:
             return f"TICKET_COMPLETED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_BOARD_REVIEW_REQUIRED:
@@ -750,6 +758,20 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Ticket completed.",
+            }
+        if event_type == EVENT_TICKET_CREATED:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket created.",
+            }
+        if event_type == EVENT_TICKET_STARTED:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket started.",
             }
         if event_type == EVENT_BOARD_REVIEW_REQUIRED:
             return {

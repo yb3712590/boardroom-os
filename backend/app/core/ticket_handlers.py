@@ -1,16 +1,63 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 
-from app.contracts.commands import CommandAckEnvelope, CommandAckStatus, TicketCompletedCommand
+from app.contracts.commands import (
+    CommandAckEnvelope,
+    CommandAckStatus,
+    TicketCompletedCommand,
+    TicketCreateCommand,
+    TicketStartCommand,
+)
 from app.core.constants import (
     EVENT_TICKET_COMPLETED,
-    NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
-    NODE_STATUS_COMPLETED,
+    EVENT_TICKET_CREATED,
+    EVENT_TICKET_STARTED,
+    NODE_STATUS_EXECUTING,
+    NODE_STATUS_PENDING,
+    NODE_STATUS_REWORK_REQUIRED,
+    TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_PENDING,
 )
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
+
+
+def _duplicate_ack(
+    *,
+    command_id: str,
+    idempotency_key: str,
+    received_at: datetime,
+    ticket_id: str,
+    action: str,
+) -> CommandAckEnvelope:
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=idempotency_key,
+        status=CommandAckStatus.DUPLICATE,
+        received_at=received_at,
+        reason=f"An identical {action} command was already accepted.",
+        causation_hint=f"ticket:{ticket_id}",
+    )
+
+
+def _rejected_ack(
+    *,
+    command_id: str,
+    idempotency_key: str,
+    received_at: datetime,
+    ticket_id: str,
+    reason: str,
+) -> CommandAckEnvelope:
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=idempotency_key,
+        status=CommandAckStatus.REJECTED,
+        received_at=received_at,
+        reason=reason,
+        causation_hint=f"ticket:{ticket_id}",
+    )
 
 
 def _build_review_pack(
@@ -67,6 +114,173 @@ def _build_review_pack(
     }
 
 
+def handle_ticket_create(
+    repository: ControlPlaneRepository,
+    payload: TicketCreateCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-create",
+            )
+
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
+        if current_ticket is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=f"Ticket {payload.ticket_id} already exists in projection state.",
+            )
+
+        current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+        if current_node is not None and current_node["status"] != NODE_STATUS_REWORK_REQUIRED:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Node {payload.node_id} cannot accept a new ticket while status is "
+                    f"{current_node['status']}."
+                ),
+            )
+
+        event_row = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="system",
+            workflow_id=payload.workflow_id,
+            idempotency_key=payload.idempotency_key,
+            causation_id=command_id,
+            correlation_id=payload.workflow_id,
+            payload=payload.model_dump(mode="json"),
+            occurred_at=received_at,
+        )
+        if event_row is None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-create",
+            )
+
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"ticket:{payload.ticket_id}",
+    )
+
+
+def handle_ticket_start(
+    repository: ControlPlaneRepository,
+    payload: TicketStartCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-start",
+            )
+
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
+        current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+        if current_ticket is None or current_node is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket must be created before it can be started.",
+            )
+        if current_ticket["workflow_id"] != payload.workflow_id or current_ticket["node_id"] != payload.node_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket projection does not match the requested workflow or node.",
+            )
+        if current_node["latest_ticket_id"] != payload.ticket_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Node projection no longer points at this ticket.",
+            )
+        if current_ticket["status"] != TICKET_STATUS_PENDING or current_node["status"] != NODE_STATUS_PENDING:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} can only start from PENDING; current ticket/node "
+                    f"status is {current_ticket['status']}/{current_node['status']}."
+                ),
+            )
+
+        event_row = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_STARTED,
+            actor_type="worker",
+            actor_id=payload.started_by,
+            workflow_id=payload.workflow_id,
+            idempotency_key=payload.idempotency_key,
+            causation_id=command_id,
+            correlation_id=payload.workflow_id,
+            payload={
+                "ticket_id": payload.ticket_id,
+                "node_id": payload.node_id,
+                "started_by": payload.started_by,
+            },
+            occurred_at=received_at,
+        )
+        if event_row is None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-start",
+            )
+
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"ticket:{payload.ticket_id}",
+    )
+
+
 def handle_ticket_completed(
     repository: ControlPlaneRepository,
     payload: TicketCompletedCommand,
@@ -77,30 +291,70 @@ def handle_ticket_completed(
     with repository.transaction() as connection:
         existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
         if existing_event is not None:
-            return CommandAckEnvelope(
+            return _duplicate_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
-                status=CommandAckStatus.DUPLICATE,
                 received_at=received_at,
-                reason="An identical ticket-complete command was already accepted.",
-                causation_hint=f"ticket:{payload.ticket_id}",
+                ticket_id=payload.ticket_id,
+                action="ticket-complete",
             )
 
         current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
-        if current_node is not None and current_node["status"] in {
-            NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
-            NODE_STATUS_COMPLETED,
-        }:
-            return CommandAckEnvelope(
+        if current_node is None:
+            return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
-                status=CommandAckStatus.REJECTED,
                 received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket must be created and started before it can be completed.",
+            )
+        if current_node["status"] != NODE_STATUS_EXECUTING:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
                 reason=(
-                    f"Node {payload.node_id} cannot accept a new ticket result while status is "
+                    f"Node {payload.node_id} cannot accept a ticket result while status is "
                     f"{current_node['status']}."
                 ),
-                causation_hint=f"node:{payload.node_id}",
+            )
+        if current_node["latest_ticket_id"] != payload.ticket_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Node projection no longer points at this ticket.",
+            )
+
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
+        if current_ticket is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket projection is missing for the currently executing node.",
+            )
+        if current_ticket["workflow_id"] != payload.workflow_id or current_ticket["node_id"] != payload.node_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket projection does not match the requested workflow or node.",
+            )
+        if current_ticket["status"] != TICKET_STATUS_EXECUTING:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} cannot be completed while status is "
+                    f"{current_ticket['status']}."
+                ),
             )
 
         event_row = repository.insert_event(
@@ -122,13 +376,12 @@ def handle_ticket_completed(
             occurred_at=received_at,
         )
         if event_row is None:
-            return CommandAckEnvelope(
+            return _duplicate_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
-                status=CommandAckStatus.DUPLICATE,
                 received_at=received_at,
-                reason="An identical ticket-complete command was already accepted.",
-                causation_hint=f"ticket:{payload.ticket_id}",
+                ticket_id=payload.ticket_id,
+                action="ticket-complete",
             )
 
         causation_hint = f"ticket:{payload.ticket_id}"

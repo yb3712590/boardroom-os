@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from typing import Any
 
 from app.core.constants import (
     BLOCKING_REASON_BOARD_REJECTED,
@@ -14,12 +15,18 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_TICKET_COMPLETED,
+    EVENT_TICKET_CREATED,
+    EVENT_TICKET_STARTED,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_COMPLETED,
+    NODE_STATUS_EXECUTING,
+    NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
+    TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_PENDING,
     TICKET_STATUS_REWORK_REQUIRED,
 )
 
@@ -29,6 +36,30 @@ def _event_payload(event: dict) -> dict:
     if payload is not None:
         return payload
     return json.loads(event["payload_json"])
+
+
+def _base_ticket_projection(event: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ticket_id": payload["ticket_id"],
+        "workflow_id": event["workflow_id"],
+        "node_id": payload["node_id"],
+        "lease_owner": None,
+        "lease_expires_at": None,
+        "retry_count": 0,
+        "retry_budget": payload.get("retry_budget"),
+        "timeout_sla_sec": payload.get("timeout_sla_sec"),
+        "priority": payload.get("priority"),
+        "blocking_reason_code": None,
+    }
+
+
+def _base_node_projection(event: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "workflow_id": event["workflow_id"],
+        "node_id": payload["node_id"],
+        "latest_ticket_id": payload["ticket_id"],
+        "blocking_reason_code": None,
+    }
 
 
 def rebuild_workflow_projections(events: Iterable[dict]) -> list[dict]:
@@ -67,19 +98,37 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
         occurred_at = event["occurred_at"].isoformat()
         version = event["sequence_no"]
 
+        if event_type == EVENT_TICKET_CREATED:
+            ticket_id = payload["ticket_id"]
+            projections[ticket_id] = {
+                **_base_ticket_projection(event, payload),
+                "status": TICKET_STATUS_PENDING,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_STARTED:
+            ticket_id = payload["ticket_id"]
+            node_id = payload["node_id"]
+            projections[ticket_id] = {
+                **projections.get(ticket_id, _base_ticket_projection(event, payload)),
+                "workflow_id": event["workflow_id"],
+                "node_id": node_id,
+                "status": TICKET_STATUS_EXECUTING,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
         if event_type == EVENT_TICKET_COMPLETED:
             ticket_id = payload["ticket_id"]
             projections[ticket_id] = {
-                "ticket_id": ticket_id,
+                **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
                 "status": TICKET_STATUS_COMPLETED,
-                "lease_owner": None,
-                "lease_expires_at": None,
-                "retry_count": 0,
-                "retry_budget": None,
-                "timeout_sla_sec": None,
-                "priority": None,
                 "blocking_reason_code": None,
                 "updated_at": occurred_at,
                 "version": version,
@@ -92,20 +141,7 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
             if ticket_id is None or node_id is None:
                 continue
             projections[ticket_id] = {
-                **projections.get(
-                    ticket_id,
-                    {
-                        "ticket_id": ticket_id,
-                        "workflow_id": event["workflow_id"],
-                        "node_id": node_id,
-                        "lease_owner": None,
-                        "lease_expires_at": None,
-                        "retry_count": 0,
-                        "retry_budget": None,
-                        "timeout_sla_sec": None,
-                        "priority": None,
-                    },
-                ),
+                **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
                 "status": TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
@@ -121,20 +157,7 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
             if ticket_id is None or node_id is None:
                 continue
             projections[ticket_id] = {
-                **projections.get(
-                    ticket_id,
-                    {
-                        "ticket_id": ticket_id,
-                        "workflow_id": event["workflow_id"],
-                        "node_id": node_id,
-                        "lease_owner": None,
-                        "lease_expires_at": None,
-                        "retry_count": 0,
-                        "retry_budget": None,
-                        "timeout_sla_sec": None,
-                        "priority": None,
-                    },
-                ),
+                **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
                 "status": TICKET_STATUS_COMPLETED,
@@ -155,20 +178,7 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 else BLOCKING_REASON_BOARD_REJECTED
             )
             projections[ticket_id] = {
-                **projections.get(
-                    ticket_id,
-                    {
-                        "ticket_id": ticket_id,
-                        "workflow_id": event["workflow_id"],
-                        "node_id": node_id,
-                        "lease_owner": None,
-                        "lease_expires_at": None,
-                        "retry_count": 0,
-                        "retry_budget": None,
-                        "timeout_sla_sec": None,
-                        "priority": None,
-                    },
-                ),
+                **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
                 "status": TICKET_STATUS_REWORK_REQUIRED,
@@ -193,14 +203,37 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
         if workflow_id is None:
             continue
 
+        if event_type == EVENT_TICKET_CREATED:
+            node_id = payload["node_id"]
+            key = (workflow_id, node_id)
+            projections[key] = {
+                **_base_node_projection(event, payload),
+                "status": NODE_STATUS_PENDING,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_STARTED:
+            node_id = payload["node_id"]
+            key = (workflow_id, node_id)
+            projections[key] = {
+                **projections.get(key, _base_node_projection(event, payload)),
+                "latest_ticket_id": payload["ticket_id"],
+                "status": NODE_STATUS_EXECUTING,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
         if event_type == EVENT_TICKET_COMPLETED:
             if payload.get("board_review_requested"):
                 continue
             node_id = payload["node_id"]
             key = (workflow_id, node_id)
             projections[key] = {
-                "workflow_id": workflow_id,
-                "node_id": node_id,
+                **projections.get(key, _base_node_projection(event, payload)),
                 "latest_ticket_id": payload["ticket_id"],
                 "status": NODE_STATUS_COMPLETED,
                 "blocking_reason_code": None,
@@ -216,8 +249,7 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
                 continue
             key = (workflow_id, node_id)
             projections[key] = {
-                "workflow_id": workflow_id,
-                "node_id": node_id,
+                **projections.get(key, _base_node_projection(event, payload)),
                 "latest_ticket_id": ticket_id,
                 "status": NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
                 "blocking_reason_code": BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
@@ -233,8 +265,7 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
                 continue
             key = (workflow_id, node_id)
             projections[key] = {
-                "workflow_id": workflow_id,
-                "node_id": node_id,
+                **projections.get(key, _base_node_projection(event, payload)),
                 "latest_ticket_id": ticket_id,
                 "status": NODE_STATUS_COMPLETED,
                 "blocking_reason_code": None,
@@ -255,8 +286,7 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
             )
             key = (workflow_id, node_id)
             projections[key] = {
-                "workflow_id": workflow_id,
-                "node_id": node_id,
+                **projections.get(key, _base_node_projection(event, payload)),
                 "latest_ticket_id": ticket_id,
                 "status": NODE_STATUS_REWORK_REQUIRED,
                 "blocking_reason_code": blocking_reason,

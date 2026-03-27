@@ -9,6 +9,8 @@ from app.contracts.commands import (
     ModifyConstraintsCommand,
     ProjectInitCommand,
     TicketCompletedCommand,
+    TicketCreateCommand,
+    TicketStartCommand,
 )
 from app.core.approval_handlers import (
     handle_board_approve,
@@ -16,7 +18,7 @@ from app.core.approval_handlers import (
     handle_modify_constraints,
 )
 from app.core.command_handlers import handle_project_init
-from app.core.ticket_handlers import handle_ticket_completed
+from app.core.ticket_handlers import handle_ticket_completed, handle_ticket_create, handle_ticket_start
 from app.db.repository import ControlPlaneRepository
 
 router = APIRouter(prefix="/api/v1/commands", tags=["commands"])
@@ -26,6 +28,18 @@ router = APIRouter(prefix="/api/v1/commands", tags=["commands"])
 def project_init(request: Request, payload: ProjectInitCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_project_init(repository, payload)
+
+
+@router.post("/ticket-create", response_model=CommandAckEnvelope)
+def ticket_create(request: Request, payload: TicketCreateCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_ticket_create(repository, payload)
+
+
+@router.post("/ticket-start", response_model=CommandAckEnvelope)
+def ticket_start(request: Request, payload: TicketStartCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_ticket_start(repository, payload)
 
 
 @router.post("/ticket-complete", response_model=CommandAckEnvelope)

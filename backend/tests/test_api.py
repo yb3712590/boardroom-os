@@ -13,12 +13,18 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
+    EVENT_TICKET_CREATED,
+    EVENT_TICKET_STARTED,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_COMPLETED,
+    NODE_STATUS_EXECUTING,
+    NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
+    TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_PENDING,
     TICKET_STATUS_REWORK_REQUIRED,
 )
 
@@ -127,7 +133,91 @@ def _ticket_complete_payload(
     return payload
 
 
+def _ticket_create_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+    attempt_no: int = 1,
+) -> dict:
+    return {
+        "ticket_id": ticket_id,
+        "workflow_id": workflow_id,
+        "node_id": node_id,
+        "parent_ticket_id": None,
+        "attempt_no": attempt_no,
+        "role_profile_ref": "ui_designer_primary",
+        "constraints_ref": "global_constraints_v3",
+        "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
+        "context_query_plan": {
+            "keywords": ["homepage", "brand", "visual"],
+            "semantic_queries": ["approved visual direction"],
+            "max_context_tokens": 3000,
+        },
+        "acceptance_criteria": [
+            "Must satisfy approved visual direction",
+            "Must produce 2 options",
+            "Must include rationale and risks",
+        ],
+        "output_schema_ref": "ui_milestone_review",
+        "output_schema_version": 1,
+        "allowed_tools": ["read_artifact", "write_artifact", "image_gen"],
+        "allowed_write_set": ["artifacts/ui/homepage/*", "reports/review/*"],
+        "retry_budget": 2,
+        "priority": "high",
+        "timeout_sla_sec": 1800,
+        "deadline_at": "2026-03-28T18:00:00+08:00",
+        "escalation_policy": {
+            "on_timeout": "retry",
+            "on_schema_error": "retry",
+            "on_repeat_failure": "escalate_ceo",
+        },
+        "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
+    }
+
+
+def _ticket_start_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "started_by": "emp_frontend_2",
+        "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
+    }
+
+
+def _create_and_start_ticket(
+    client,
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+    attempt_no: int = 1,
+) -> None:
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            attempt_no=attempt_no,
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+
+
 def _seed_review_request(client, workflow_id: str = "wf_seed") -> dict:
+    _create_and_start_ticket(client, workflow_id=workflow_id)
     response = client.post(
         "/api/v1/commands/ticket-complete",
         json=_ticket_complete_payload(workflow_id=workflow_id),
@@ -181,6 +271,45 @@ def test_dashboard_returns_latest_active_workflow(client):
     assert isinstance(data["pipeline_summary"]["phases"], list)
 
 
+def test_ticket_create_moves_ticket_and_node_to_pending(client):
+    response = client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_seed",
+        "node_homepage_visual",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert response.json()["causation_hint"] == "ticket:tkt_visual_001"
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_CREATED) == 1
+    assert ticket_projection["status"] == TICKET_STATUS_PENDING
+    assert ticket_projection["priority"] == "high"
+    assert ticket_projection["retry_budget"] == 2
+    assert ticket_projection["timeout_sla_sec"] == 1800
+    assert node_projection["status"] == NODE_STATUS_PENDING
+    assert node_projection["latest_ticket_id"] == "tkt_visual_001"
+
+
+def test_ticket_start_moves_ticket_and_node_to_executing(client):
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+
+    response = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
+
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_seed",
+        "node_homepage_visual",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_STARTED) == 1
+    assert ticket_projection["status"] == TICKET_STATUS_EXECUTING
+    assert node_projection["status"] == NODE_STATUS_EXECUTING
+
+
 def test_inbox_projection_returns_empty_items(client):
     response = client.get("/api/v1/projections/inbox")
 
@@ -188,7 +317,41 @@ def test_inbox_projection_returns_empty_items(client):
     assert response.json()["data"]["items"] == []
 
 
+def test_ticket_start_is_rejected_before_ticket_create(client):
+    response = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "created" in response.json()["reason"].lower()
+
+
+def test_ticket_complete_is_rejected_before_ticket_start(client):
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+
+    response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(include_review_request=False),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "PENDING" in response.json()["reason"]
+
+
+def test_ticket_create_and_start_are_idempotent(client):
+    first_create = client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    duplicate_create = client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    first_start = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
+    duplicate_start = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
+
+    assert first_create.json()["status"] == "ACCEPTED"
+    assert duplicate_create.json()["status"] == "DUPLICATE"
+    assert first_start.json()["status"] == "ACCEPTED"
+    assert duplicate_start.json()["status"] == "DUPLICATE"
+
+
 def test_ticket_complete_without_review_request_does_not_open_approval(client):
+    _create_and_start_ticket(client)
     response = client.post(
         "/api/v1/commands/ticket-complete",
         json=_ticket_complete_payload(include_review_request=False),
@@ -381,12 +544,12 @@ def test_stale_board_command_is_rejected_without_resolving_approval(client):
     assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_APPROVED) == 0
 
 
-def test_ticket_complete_is_rejected_when_node_is_blocked_for_board_review(client):
+def test_ticket_create_is_rejected_when_node_is_blocked_for_board_review(client):
     _seed_review_request(client)
 
     response = client.post(
-        "/api/v1/commands/ticket-complete",
-        json=_ticket_complete_payload(ticket_id="tkt_visual_002"),
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(ticket_id="tkt_visual_002"),
     )
 
     assert response.status_code == 200
@@ -394,15 +557,13 @@ def test_ticket_complete_is_rejected_when_node_is_blocked_for_board_review(clien
     assert "BLOCKED_FOR_BOARD_REVIEW" in response.json()["reason"]
 
 
-def test_ticket_complete_is_rejected_when_node_is_completed(client):
-    client.post(
-        "/api/v1/commands/ticket-complete",
-        json=_ticket_complete_payload(include_review_request=False),
-    )
+def test_ticket_create_is_rejected_when_node_is_completed(client):
+    _create_and_start_ticket(client)
+    client.post("/api/v1/commands/ticket-complete", json=_ticket_complete_payload(include_review_request=False))
 
     response = client.post(
-        "/api/v1/commands/ticket-complete",
-        json=_ticket_complete_payload(ticket_id="tkt_visual_002", include_review_request=False),
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(ticket_id="tkt_visual_002"),
     )
 
     assert response.status_code == 200
@@ -426,6 +587,12 @@ def test_ticket_complete_is_allowed_after_rework_required(client):
     )
     assert reject_response.json()["status"] == "ACCEPTED"
 
+    _create_and_start_ticket(
+        client,
+        workflow_id="wf_rework",
+        ticket_id="tkt_visual_002",
+        attempt_no=2,
+    )
     response = client.post(
         "/api/v1/commands/ticket-complete",
         json=_ticket_complete_payload(
@@ -497,12 +664,15 @@ def test_event_stream_returns_incremental_events_after_cursor(client):
 
 def test_ticket_complete_stream_carries_ticket_and_review_events(client):
     initial_cursor = client.get("/api/v1/projections/dashboard").json()["cursor"]
+    _create_and_start_ticket(client)
     client.post("/api/v1/commands/ticket-complete", json=_ticket_complete_payload())
 
     with client.stream("GET", f"/api/v1/events/stream?after={initial_cursor}") as response:
         body = "".join(response.iter_text())
 
     assert response.status_code == 200
+    assert "TICKET_CREATED" in body
+    assert "TICKET_STARTED" in body
     assert "TICKET_COMPLETED" in body
     assert "BOARD_REVIEW_REQUIRED" in body
     assert "tkt_visual_001" in body

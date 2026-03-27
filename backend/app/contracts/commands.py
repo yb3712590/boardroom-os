@@ -48,6 +48,49 @@ class ProjectInitCommand(StrictModel):
     deadline_at: datetime | None = None
 
 
+class ContextQueryPlan(StrictModel):
+    keywords: list[str]
+    semantic_queries: list[str]
+    max_context_tokens: int = Field(ge=1)
+
+
+class TicketEscalationPolicy(StrictModel):
+    on_timeout: str = Field(min_length=1)
+    on_schema_error: str = Field(min_length=1)
+    on_repeat_failure: str = Field(min_length=1)
+
+
+class TicketCreateCommand(StrictModel):
+    ticket_id: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    parent_ticket_id: str | None = None
+    attempt_no: int = Field(ge=1)
+    role_profile_ref: str = Field(min_length=1)
+    constraints_ref: str = Field(min_length=1)
+    input_artifact_refs: list[str]
+    context_query_plan: ContextQueryPlan
+    acceptance_criteria: list[str]
+    output_schema_ref: str = Field(min_length=1)
+    output_schema_version: int = Field(ge=1)
+    allowed_tools: list[str]
+    allowed_write_set: list[str]
+    retry_budget: int = Field(ge=0)
+    priority: str = Field(min_length=1)
+    timeout_sla_sec: int = Field(ge=1)
+    deadline_at: datetime | None = None
+    escalation_policy: TicketEscalationPolicy
+    idempotency_key: str = Field(min_length=1)
+
+
+class TicketStartCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    started_by: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
 class TicketReviewOption(StrictModel):
     option_id: str = Field(min_length=1)
     label: str = Field(min_length=1)

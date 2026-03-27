@@ -763,6 +763,67 @@ Recommended `status` enum:
 }
 ```
 
+### 10.1.1 Ticket Create
+
+`POST /api/v1/commands/ticket-create`
+
+```json
+{
+  "ticket_id": "tkt_ui_home_03",
+  "workflow_id": "wf_001",
+  "node_id": "node_homepage_visual",
+  "parent_ticket_id": null,
+  "attempt_no": 1,
+  "role_profile_ref": "ui_designer_primary",
+  "constraints_ref": "global_constraints_v3",
+  "input_artifact_refs": [
+    "art://inputs/brief.md",
+    "art://inputs/brand-guide.md"
+  ],
+  "context_query_plan": {
+    "keywords": ["homepage", "brand", "visual"],
+    "semantic_queries": ["approved visual direction"],
+    "max_context_tokens": 3000
+  },
+  "acceptance_criteria": [
+    "Must satisfy approved visual direction",
+    "Must produce 2 options",
+    "Must include rationale and risks"
+  ],
+  "output_schema_ref": "ui_milestone_review",
+  "output_schema_version": 1,
+  "allowed_tools": ["read_artifact", "write_artifact", "image_gen"],
+  "allowed_write_set": [
+    "artifacts/ui/homepage/*",
+    "reports/review/*"
+  ],
+  "retry_budget": 2,
+  "priority": "high",
+  "timeout_sla_sec": 1800,
+  "deadline_at": "2026-03-28T18:00:00+08:00",
+  "escalation_policy": {
+    "on_timeout": "retry",
+    "on_schema_error": "retry",
+    "on_repeat_failure": "escalate_ceo"
+  },
+  "idempotency_key": "ticket-create:wf_001:tkt_ui_home_03"
+}
+```
+
+### 10.1.2 Ticket Start
+
+`POST /api/v1/commands/ticket-start`
+
+```json
+{
+  "workflow_id": "wf_001",
+  "ticket_id": "tkt_ui_home_03",
+  "node_id": "node_homepage_visual",
+  "started_by": "emp_frontend_2",
+  "idempotency_key": "ticket-start:wf_001:tkt_ui_home_03"
+}
+```
+
 ### 10.2 Board Approve
 
 `POST /api/v1/commands/board-approve`
