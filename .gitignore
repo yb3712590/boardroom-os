@@ -26,3 +26,13 @@ Thumbs.db
 
 # Logs
 *.log
+
+.tmp/
+**/.pytest_cache/
+**/pytest-cache-files-*/
+**/*.egg-info/
+__pycache__/
+*.pyc
+dist/
+build/
+.venv/
