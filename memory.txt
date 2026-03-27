@@ -1,0 +1,518 @@
+# Memory Log
+
+## 2026-03-27T23:39:10+08:00
+
+### Session Context
+- User wants to build a new company-style Agent Team automation framework.
+- The visualized-agent-office direction in `cube-pets-office` is not the user's focus; the repository was read mainly for architecture reference.
+- A persistent memory file is required at repo root so future sessions or model switches can reconnect quickly.
+
+### Key Conclusions From Discussion
+- The desired operating model is: Board of Directors -> Main Agent / CEO -> autonomous team execution -> deliverable output.
+- The framework should not depend on the model voluntarily continuing work; "keep progressing until deliverable" must be enforced by runtime contracts and workflow governance.
+- Visual quality is treated as a first-class governance concern because first impression drives user satisfaction more than code quality alone.
+- Visual milestones must be reviewed by the Board; non-visual stages should remain autonomous.
+- The system should minimize unnecessary escalation to the Board and only escalate on defined high-risk or high-cost decisions.
+
+### Governance Rules Agreed So Far
+- The Board sets goals, constraints, and approval decisions, but does not participate in routine execution.
+- The CEO must continue driving work, assign responsibilities, enforce completion criteria, and prevent the team from stalling in discussion loops.
+- Agents should not default to "waiting for user confirmation" unless there is a formal blocking condition.
+- Each stage should produce explicit outputs such as conclusion, assumptions, artifacts, next inputs, and blocking status.
+
+### Visual Review Policy
+- Board approval is required for user-visible visual milestones.
+- Typical review gates include: information architecture draft, visual direction, key screen drafts, design system freeze, high-fidelity UI, brand visual, homepage first screen, major motion design, and final visual acceptance.
+- Board review packages should contain comparable options, rationale, expected user perception, risks, and a recommended direction.
+
+### Organization Design Policy
+- Company initialization should start with only one CEO Agent.
+- The CEO should recruit employees dynamically based on project size, complexity, risk, and timeline rather than using a fixed preset team.
+- Employee impact should be determined jointly by: skills, personality, and aesthetics.
+- Same-role employees should not be highly similar in personality; controlled heterogeneity is required to avoid blind spots, echo chambers, and defect amplification.
+- Core early hires should have their personality and aesthetic positioning approved by the Board.
+- Regular later hires can be approved autonomously by the CEO, but still must satisfy diversity constraints.
+
+### Suggested Runtime Objects For Later Design
+- `EmployeeProfile`
+- `HiringPolicy`
+- `BoardApprovalGate`
+- `TeamDiversityConstraint`
+
+### Files Updated
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\memory.txt`
+
+### Current State Of feature.txt
+- `feature.txt` now contains 20 governance-oriented feature statements.
+- Existing feature set covers:
+  - autonomous execution with limited Board review gates
+  - mandatory Board review at visual milestones
+  - CEO responsibility for continuous forward progress
+  - escalation rules
+  - anti-stall / anti-unnecessary-feedback rules
+  - dynamic hiring by the CEO
+  - employee modeling by skills + personality + aesthetics
+  - same-role heterogeneity requirements
+  - Board approval of core early hires
+
+### Repo Review Notes Worth Keeping
+- `cube-pets-office` already demonstrates a strong external workflow driver: fixed stages, review/revision loops, report generation, message routing rules, and runtime separation between shared kernel and adapters.
+- It does not fully solve the "GPT-style agents wait for user feedback" problem, because its agents are still single-call wrappers and lack a hard anti-stall governance layer.
+- The reusable part is its workflow skeleton and protocol discipline, not its visual office presentation.
+
+### Likely Next Discussion
+- Convert governance ideas into concrete runtime entities, policies, and state transitions.
+- Define how CEO hiring works in practice:
+  - hiring triggers
+  - diversity scoring
+  - core-role approval workflow
+  - replacement / expansion rules
+- Define the approval protocol for visual milestone gates.
+
+## 2026-03-28T00:47:08+08:00
+
+### Session Context
+- User provided a draft for the message mechanism covering event types, reducer rules, ticket schema, and Board Gate for visual milestones.
+- The task was to review that draft, identify gaps, then apply the corrected design into project files as the initial finalized version.
+
+### Key Design Decisions Finalized
+- The message mechanism remains based on an event-sourced workflow bus plus stateless ticket executors.
+- CEO is defined as compute-stateless, but durable company state remains in the event log and state projections.
+- Reducer purity is now explicit: agents only propose actions, reducer only validates and derives effects, runtime performs actual event commits.
+- Ticket completion validation is explicitly split into:
+  - schema validation
+  - write-set validation
+- Worker-facing input is no longer just a reference-based ticket; runtime must compile it into a closed execution package with:
+  - `compiled_role`
+  - `compiled_constraints`
+  - `atomic_context_bundle`
+- Event model was tightened to distinguish:
+  - ticket creation
+  - ticket lease
+  - ticket start
+  - ticket timeout
+  - circuit breaker open/close
+- Visual Board Gate state machine is now explicit:
+  - `PENDING`
+  - `EXECUTING`
+  - `BLOCKED_FOR_BOARD_REVIEW`
+  - `REWORK_REQUIRED`
+  - `COMPLETED`
+- Board rejection no longer rewinds a visual node to generic `PENDING`; rejected review state is preserved as `REWORK_REQUIRED`.
+- Board-gated freezes should apply only to the dependent subgraph, not to the whole workflow.
+- Failure handling is tied to repeated error fingerprints within the same node or ticket family, not just naive repeat counts.
+
+### Files Updated
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\message-bus-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State Of feature.txt
+- `feature.txt` now contains the earlier governance and hiring rules plus initial finalized message-mechanism rules.
+- New summary rules added to `feature.txt` cover:
+  - event taxonomy tightening
+  - reducer purity
+  - schema vs write-set validation split
+  - compiled execution package requirement
+  - explicit visual approval state machine
+
+### Current State Of message-bus-design.md
+- The detailed design document now includes:
+  - stricter reducer semantics
+  - expanded event catalog
+  - reducer-oriented validation rules
+  - control-plane ticket spec
+  - compiled execution package model
+  - explicit board-gated visual state machine
+  - dependent-subgraph freeze rule
+  - fingerprint-scoped circuit breaker guidance
+
+### Likely Next Discussion
+- Formalize reducer action types and payload schemas.
+- Define projection models and table schemas in executable detail.
+- Define the employee roster model:
+  - hire proposal schema
+  - diversity scoring
+  - board approval payload for core hires
+- Define artifact URI strategy and write-set enforcement model.
+
+## 2026-03-28T01:03:36+08:00
+
+### Session Context
+- User proposed a `Meeting Room Protocol` as a bounded exception to normal serial Ticket flow for cross-role alignment.
+- The required action in this step was to record the feature summary and create a dedicated design document for the protocol.
+
+### Key Decision
+- The Meeting Room is accepted as a controlled subworkflow, not as a persistent free-chat mode.
+- It is intended for high-coupling, cross-functional conflicts where repeated serial retries would waste more budget than a short structured alignment session.
+- It must remain event-driven, budget-bounded, participant-bounded, and schema-constrained.
+- It cannot bypass the main state bus, Reducer, or Board Gate.
+
+### Design Rules Captured
+- `feature.txt` now includes Meeting Room summary items `41`-`45`.
+- Meeting Room entry should require explicit conditions such as repeated cross-role rework, interface conflict, or CEO/governance-triggered bounded alignment need.
+- The room should use explicit events including:
+  - `MEETING_ROOM_REQUESTED`
+  - `MEETING_ROOM_OPENED`
+  - `MEETING_ROUND_COMPLETED`
+  - `MEETING_CONSENSUS_SUBMITTED`
+  - `MEETING_NO_CONSENSUS`
+  - `MEETING_ROOM_CLOSED`
+- The room should use structured rounds instead of open-ended discussion.
+- A designated recorder must output a schema-valid `Consensus_Document`.
+- If no consensus is reached within limits, the system must close the room and escalate rather than extending discussion indefinitely.
+
+### Files Updated
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\meeting-room-protocol.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Dedicated Meeting Room design doc created at `D:\\Codex\\meeting-room-protocol.md`.
+- The protocol now has documented:
+  - positioning and non-goals
+  - entry conditions
+  - event types
+  - state machine
+  - participant rules
+  - round protocol
+  - budget policy
+  - `Consensus_Document` schema
+  - no-consensus escalation
+  - audit retention
+  - relation to the main ticket bus
+
+### Likely Next Discussion
+- Define how Meeting Room outcomes map to concrete follow-up ticket templates.
+- Decide whether the recorder is always a worker role or can be a system summarizer role.
+- Define reopen policy and topic-family fingerprinting in executable detail.
+
+## 2026-03-28T01:22:45+08:00
+
+### Session Context
+- User proposed a `Maker-Checker` peer review and internal audit mechanism.
+- The proposal was evaluated against the existing company-style workflow framework and then accepted in a refined form for recording.
+
+### Key Decision
+- The feature is worth keeping because it reduces CEO review burden and introduces a controlled internal quality gate before merge or downstream progression.
+- The accepted form is not a "rude auditor who yells", but a structured adversarial review mechanism.
+- Checker should be modeled as skeptical, evidence-driven, and defect-seeking rather than emotional or high-noise.
+
+### Design Rules Captured
+- Important artifacts should not go directly from Maker to CEO or mainline; they should first enter an internal review stage.
+- Runtime should automatically create a `REVIEW_TICKET` after qualifying Maker outputs.
+- Checker should preferably be heterogeneous relative to Maker in risk preference, reasoning style, or aesthetic orientation.
+- Review output should be structured and should support at least:
+  - `APPROVED`
+  - `APPROVED_WITH_NOTES`
+  - `CHANGES_REQUIRED`
+  - `ESCALATED`
+- If review requires changes, findings should be compiled into a new `FIX_TICKET` for Maker instead of relying on CEO to manually relay feedback.
+- Repeated recurrence of the same finding fingerprint inside the Maker-Checker loop should trigger escalation, reassignment, or circuit-breaking rather than unlimited back-and-forth.
+
+### Files Updated
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- `feature.txt` now includes formalized Maker-Checker feature rules as items `46`-`50`.
+- No dedicated design document has been created yet; the concept is currently captured at the feature-governance layer.
+
+### Likely Next Discussion
+- Define which artifact classes must always pass Maker-Checker review and which can bypass it.
+- Decide whether visual work should first pass internal review before Board Gate, or only for selected milestones.
+- Define how review findings map to failure fingerprints and retry / fuse policy in the message bus.
+
+## 2026-03-28T01:33:24+08:00
+
+### Session Context
+- User proposed initial data contracts for `CompiledContextBundle` and `CompileManifest` for the `Context Compiler`.
+- The task was to evaluate the proposal, keep the core direction, refine it where needed, and land a dedicated design document.
+
+### Key Decision
+- The overall direction was accepted.
+- Two engineering upgrades were applied before finalizing:
+  - `CompiledContextBundle` was normalized into a provider-agnostic IR with explicit separation between control-plane instructions and typed data context blocks.
+  - `CompileManifest` was expanded beyond a simple budget log to include input fingerprinting, source-level traceability, degradation state, cache report, and transform history.
+
+### Design Rules Captured
+- `Context Compiler` is treated as deterministic middleware, not as an LLM role.
+- IR-first design is mandatory: bundle contract is primary, prompt/XML rendering is downstream.
+- Context sources now use explicit trust levels and instruction authority separation to reduce prompt injection risk.
+- Fragment selectors are first-class and should support values such as:
+  - `JSON_PATH`
+  - `AST_SYMBOL`
+  - `LINE_RANGE`
+  - `DIFF_HUNK`
+  - `MARKDOWN_SECTION`
+- Token control is budget-first rather than retrieve-everything-then-truncate.
+- Compiler should support both `FAIL_CLOSED` and `BEST_EFFORT` modes and record degradation in the manifest.
+- Compile caching and invalidation should be driven by ticket hash, artifact hashes, constraint versions, query plan hash, compiler version, and model profile.
+
+### Files Updated
+- `D:\\Codex\\context-compiler-design.md`
+- `D:\\Codex\\message-bus-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Dedicated Context Compiler design doc created at `D:\\Codex\\context-compiler-design.md`.
+- `message-bus-design.md` now points to the dedicated Context Compiler contract document.
+- The finalized design now covers:
+  - responsibility boundary
+  - fragment selector model
+  - trust and instruction authority model
+  - four-stage pipeline with preflight
+  - `CompiledContextBundle_v1`
+  - `CompileManifest_v1`
+  - fail mode policy
+  - cache and invalidation
+  - rendering contract
+
+### Likely Next Discussion
+- Define the `CompileRequest` schema explicitly.
+- Decide which task types map to which compression strategy set.
+- Define how repository code indexing and AST extraction are implemented on Windows-first local workspaces.
+
+## 2026-03-28T01:59:04+08:00
+
+### Session Context
+- User reviewed external feedback on the proposed `Boardroom UI`.
+- The task in this step was to decide which critiques to keep, which to reject, and then lock the UI direction.
+
+### Key Decision
+- The overall external critique was accepted with targeted corrections.
+- `Boardroom UI` is now finalized as a lightweight web control plane and human approval console.
+- BYOK policy was explicitly resolved in favor of cross-platform simplicity and ordinary-user usability, even if that means not depending on heavier system-level secret infrastructure.
+
+### Finalized Product Decisions
+- The UI is not a project management system and not an office animation product; it is an `Agent Workflow Control Plane + Human Approval Console`.
+- DAG visualization should not be the default homepage view, but should remain as a secondary dependency inspector instead of being deleted.
+- Startup should support two modes:
+  - guided setup for first-time or non-technical users
+  - quick-start command palette for repeat or technical users
+- Board review should follow `Inbox -> Review Room`, not a small modal popup.
+- Board-facing review content should default to a `Board Review Pack`, not raw `CompiledContextBundle`.
+- The main control surface should include:
+  - approval inbox
+  - pipeline view
+  - workforce and event stream panel
+  - persistent health strip
+- Frontend/backend contract should follow `snapshot + stream + command`.
+- MVP sync transport should use SSE first.
+
+### BYOK Policy Locked
+- BYOK should remain easy and cross-platform.
+- The product may allow users to enter API keys directly in the UI and store them locally.
+- System-specific secure storage is no longer treated as a hard dependency.
+- Advanced options such as env import or manual rotation can remain optional, but the default path should minimize setup friction.
+
+### Files Updated
+- `D:\\Codex\\boardroom-ui-design.md`
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Dedicated Boardroom UI design doc created at `D:\\Codex\\boardroom-ui-design.md`.
+- `feature.txt` now includes UI/control-plane rules as items `51`-`57`.
+
+### Likely Next Discussion
+- Define projection schemas for dashboard, inbox, workforce panel, and review room.
+- Define the `Board Review Pack` data contract explicitly.
+- Decide whether the MVP frontend should start with Vue or React and how strongly to optimize for clone-and-run simplicity.
+
+## 2026-03-28T02:03:59+08:00
+
+### Session Context
+- User asked for a first-pass concrete version of the Boardroom UI data layer so it could be compared against other design references.
+- The requested scope was the projection schemas plus the `Board Review Pack` contract.
+
+### Key Decision
+- A dedicated data-contract draft was created rather than continuing with only narrative design text.
+- This draft keeps feature rules unchanged and focuses only on UI-facing read models and approval payload shape.
+
+### Contracts Added
+- `dashboard` projection
+- `inbox` projection
+- `workforce` projection
+- `review-room` projection
+- `BoardReviewPack_v1`
+- event stream envelope
+- core board command payloads
+
+### Design Rules Captured
+- Projection APIs use a common envelope with:
+  - `schema_version`
+  - `generated_at`
+  - `projection_version`
+  - `cursor`
+  - `data`
+- Review Room is modeled as a projection wrapping a `BoardReviewPack`.
+- `BoardReviewPack` is explicitly human-facing and does not default to showing raw compiler IR.
+- Event stream is for incremental UI sync and cache invalidation hints, not for rebuilding all business logic in the browser.
+- MVP read model split should stay compact and avoid over-fragmented endpoints.
+
+### Files Updated
+- `D:\\Codex\\boardroom-data-contracts.md`
+- `D:\\Codex\\boardroom-ui-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Dedicated Boardroom data-contract draft created at `D:\\Codex\\boardroom-data-contracts.md`.
+- `boardroom-ui-design.md` now points to the dedicated contract doc for detailed schemas.
+
+### Likely Next Discussion
+- Decide whether `dashboard` should remain one fat bootstrap projection or split once the UI grows.
+- Define preview asset serving and artifact URI conventions for `BoardReviewPack`.
+- Decide whether review packs should carry embedded lightweight previews or only references.
+
+## 2026-03-28T02:10:13+08:00
+
+### Session Context
+- User provided external feedback on the first-pass Boardroom contracts and asked to record the recommended implementation patches.
+
+### Key Decision
+- The feedback was accepted in substance, but refined before recording.
+- The resulting patches stay at the UI/data-contract layer rather than being promoted into high-level feature rules.
+
+### Patches Recorded
+- Added command acknowledgement guidance with `command_id`, `idempotency_key`, acceptance status, and causation hints.
+- Added stale-write protection for board decisions via:
+  - `review_pack_version`
+  - `command_target_version`
+- Strengthened `WorkforceProjection.bound_model` to expose routing degradation through:
+  - `preferred_model_id`
+  - `actual_model_id`
+  - `route_mode`
+  - `is_fallback_active`
+  - `fallback_reason`
+  - `degraded_since`
+- Strengthened `BoardReviewPack` preview contracts with explicit preview asset delivery metadata.
+- Reworked budget-impact fields toward estimate ranges plus coarse human-facing risk:
+  - `tokens_if_approved_estimate_range`
+  - `tokens_if_rework_estimate_range`
+  - `estimate_confidence`
+  - `budget_risk`
+- Added SSE reconciliation notes for:
+  - invalidate-as-hint semantics
+  - debounce / batching
+  - full resync on drift
+  - causation hints for in-flight command reconciliation
+- Added `command in-flight state` to allowed frontend local state.
+
+### Files Updated
+- `D:\\Codex\\boardroom-data-contracts.md`
+- `D:\\Codex\\boardroom-ui-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Boardroom contracts now include the main runtime hardening points identified by external review.
+- These patches improve safety around approval races, fallback visibility, preview delivery, and stream-driven UI consistency.
+
+### Likely Next Discussion
+- Decide whether command acknowledgements should remain synchronous HTTP responses only or also be projected into a command-status view.
+- Define exact artifact serving route shape for review previews.
+- Decide whether fallback metadata also needs to appear in dashboard-level aggregate projections.
+
+## 2026-03-28T02:14:41+08:00
+
+### Session Context
+- User asked to finalize the `CompileRequest` contract and decide the mapping between task types and compression strategies for the `Context Compiler`.
+- An external proposal was provided as the starting point.
+
+### Key Decision
+- The proposal was accepted in direction but refined before recording.
+- `CompileRequest` is now treated as a runtime-to-compiler control contract, not as a raw ticket copy.
+- Task-aware compression is now formalized as a stable strategy matrix rather than loose narrative guidance.
+
+### Main Refinements Applied
+- Replaced a vague total-token budget with:
+  - `max_input_tokens`
+  - `reserved_output_tokens`
+- Replaced an overly implementation-specific truncation enum with policy-level `overflow_policy`:
+  - `FAIL_CLOSED`
+  - `BEST_EFFORT`
+  - `STRICT_BUCKETS`
+- Expanded explicit source references beyond artifact IDs to support:
+  - `ARTIFACT`
+  - `REPO_FILE`
+  - `PROJECTION`
+  - `INCIDENT`
+  - `APPROVAL`
+  - `EVENT_SUMMARY`
+- Aligned selectors with the compiler design’s canonical selector model:
+  - `WHOLE_ARTIFACT`
+  - `JSON_PATH`
+  - `AST_SYMBOL`
+  - `LINE_RANGE`
+  - `DIFF_HUNK`
+  - `MARKDOWN_SECTION`
+  - `LOG_WINDOW`
+  - `TEST_CASE_ID`
+- Added `representation_hint` to let runtime request shapes such as `RAW`, `SKELETON`, `DIFF`, `SUMMARY`, or `PREVIEW`.
+- Expanded retrieval from a single opaque RAG string into a structured `retrieval_plan` with separate channels.
+- Added `preferred_modalities` so `DESIGN` and similar tasks can preserve visual or HTML preview fidelity instead of over-flattening into text.
+
+### Task Categories Finalized
+- `IMPLEMENTATION`
+- `DEBUGGING`
+- `REVIEW`
+- `DESIGN`
+- `PLANNING`
+- `TESTING`
+
+### Compression Matrix Finalized
+- `IMPLEMENTATION`
+  - target file full, dependencies reduced to signatures or skeletons
+- `DEBUGGING`
+  - diff-first, stack denoising, symbol neighborhood slicing
+- `REVIEW`
+  - diff-centric, constraint amplification, broad RAG heavily down-ranked
+- `DESIGN`
+  - long-text summarization plus multimodal reference preservation
+- `PLANNING`
+  - structured state and risk summaries over deep code bodies
+- `TESTING`
+  - acceptance-criteria and diff-centric with failing tests and environment context prioritized
+
+### Files Updated
+- `D:\\Codex\\context-compiler-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- `context-compiler-design.md` now contains:
+  - `CompileRequest_v1`
+  - canonical task categories
+  - task-type compression matrix
+  - strategy-override rules
+
+### Likely Next Discussion
+- Decide whether `TESTING` should remain a first-class task category or be folded into `IMPLEMENTATION` and `DEBUGGING`.
+- Define which fields are derived by runtime versus explicitly stored in ticket payloads.
+- Decide whether multimodal preview preservation should be gated only by task category or also by role profile capability.
+
+## 2026-03-28T03:05:54+08:00
+
+### Session Context
+- User requested homepage-friendly README files for `Boardroom OS`, with Chinese as the primary community-facing version and a separate English version.
+
+### Key Decision
+- Created a Chinese-first `README.md` as the default project homepage.
+- Created a separate `README.en.md` for English readers.
+- README content was written to match the current repo truth: design-finalization and bootstrap stage, not an already implemented production framework.
+
+### Files Updated
+- `D:\\Codex\\README.md`
+- `D:\\Codex\\README.en.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- `README.md` is now suitable as a GitHub homepage for the current stage of the project.
+- `README.en.md` provides a concise parallel English overview.
+- Both README files reflect the intended name and slogan:
+  - `Boardroom OS`
+  - `Event-sourced Agent Governance.`
+
+### Likely Next Discussion
+- Refresh README once the new implementation repo exists and real project structure, setup commands, and CI details land.
+- Decide final license before public release.
