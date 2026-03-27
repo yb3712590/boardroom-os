@@ -3,7 +3,11 @@
 from datetime import datetime
 
 from app.contracts.commands import CommandAckEnvelope, CommandAckStatus, TicketCompletedCommand
-from app.core.constants import EVENT_TICKET_COMPLETED
+from app.core.constants import (
+    EVENT_TICKET_COMPLETED,
+    NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    NODE_STATUS_COMPLETED,
+)
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -82,6 +86,23 @@ def handle_ticket_completed(
                 causation_hint=f"ticket:{payload.ticket_id}",
             )
 
+        current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+        if current_node is not None and current_node["status"] in {
+            NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+            NODE_STATUS_COMPLETED,
+        }:
+            return CommandAckEnvelope(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                status=CommandAckStatus.REJECTED,
+                received_at=received_at,
+                reason=(
+                    f"Node {payload.node_id} cannot accept a new ticket result while status is "
+                    f"{current_node['status']}."
+                ),
+                causation_hint=f"node:{payload.node_id}",
+            )
+
         event_row = repository.insert_event(
             connection,
             event_type=EVENT_TICKET_COMPLETED,
@@ -136,6 +157,8 @@ def handle_ticket_completed(
                 idempotency_key=f"{payload.idempotency_key}:approval-request",
             )
             causation_hint = f"approval:{approval['approval_id']}"
+
+        repository.refresh_projections(connection)
 
     return CommandAckEnvelope(
         command_id=command_id,

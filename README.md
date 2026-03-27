@@ -30,7 +30,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `GET /api/v1/projections/review-room/{review_pack_id}` 真实投影（针对已持久化审批包）
 - `GET /api/v1/events/stream?after={cursor}` SSE 增量事件流
 - `CommandAckEnvelope` 首轮真实契约
-- `events` / `workflow_projection` / `approval_projection` 最小 schema
+- `events` / `workflow_projection` / `ticket_projection` / `node_projection` / `approval_projection` 最小 schema
 - `POST /api/v1/commands/ticket-complete` 用结构化 ticket 结果触发上游审批生产
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
@@ -44,6 +44,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - CEO Tick Scheduler
 - Ticket Pool / Lease Protocol
 - 完整 Worker 执行链（当前仅支持结构化 `ticket-complete` 结果接入）
+- 完整 Ticket 生命周期投影（当前仅覆盖完成后进入审批门的治理状态）
 - Maker-Checker Review Loop
 - Review Room 仍只支持已持久化审批包，不含更完整的证据拼装
 - Context Compiler 实际编译

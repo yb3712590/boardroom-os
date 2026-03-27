@@ -29,6 +29,9 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
     active_workflow = repository.get_active_workflow()
     cursor, projection_version = repository.get_cursor_and_version()
     pending_approvals = repository.count_open_approvals()
+    active_tickets = repository.count_active_tickets()
+    blocked_nodes = repository.count_blocked_nodes()
+    blocked_node_ids = repository.list_blocked_node_ids()
 
     if active_workflow is None:
         active_workflow_projection = None
@@ -75,8 +78,8 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 budget_used=budget_used,
                 budget_remaining=max(budget_total - budget_used, 0),
                 token_burn_rate_5m=0,
-                active_tickets=0,
-                blocked_nodes=0,
+                active_tickets=active_tickets,
+                blocked_nodes=blocked_nodes,
                 open_incidents=0,
                 open_circuit_breakers=0,
                 provider_health_summary="UNKNOWN",
@@ -84,7 +87,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
             pipeline_summary=PipelineSummaryProjection(
                 phases=[],
                 critical_path_node_ids=[],
-                blocked_node_ids=[],
+                blocked_node_ids=blocked_node_ids,
             ),
             inbox_counts=InboxCountsProjection(
                 approvals_pending=pending_approvals,

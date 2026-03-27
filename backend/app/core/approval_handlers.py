@@ -16,6 +16,8 @@ from app.core.constants import (
     APPROVAL_STATUS_REJECTED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
+    NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
 )
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
@@ -78,6 +80,32 @@ def _validate_open_approval(
     return None
 
 
+def _validate_blocked_projection(
+    repository: ControlPlaneRepository,
+    approval: dict[str, Any],
+) -> str | None:
+    subject = approval["payload"].get("review_pack", {}).get("subject", {})
+    workflow_id = approval["workflow_id"]
+    ticket_id = subject.get("source_ticket_id")
+    node_id = subject.get("source_node_id")
+    if ticket_id is None or node_id is None:
+        return None
+
+    ticket_projection = repository.get_current_ticket_projection(ticket_id)
+    node_projection = repository.get_current_node_projection(workflow_id, node_id)
+    if ticket_projection is None or node_projection is None:
+        return "Ticket or node projection for this approval is missing. Reload dashboard state."
+    if ticket_projection["status"] != TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+        return "Ticket is not currently blocked for board review."
+    if node_projection["status"] != NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+        return "Node is not currently blocked for board review."
+    if ticket_projection["workflow_id"] != workflow_id or ticket_projection["node_id"] != node_id:
+        return "Ticket projection does not match the approval target."
+    if node_projection["latest_ticket_id"] != ticket_id:
+        return "Node projection no longer points at this approval ticket."
+    return None
+
+
 def handle_board_approve(
     repository: ControlPlaneRepository,
     payload: BoardApproveCommand,
@@ -110,6 +138,17 @@ def handle_board_approve(
                 reason=reason,
                 causation_hint=f"approval:{payload.approval_id}",
             )
+        projection_reason = _validate_blocked_projection(repository, approval)
+        if projection_reason is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=projection_reason,
+                causation_hint=f"approval:{payload.approval_id}",
+            )
+
+        subject = approval["payload"].get("review_pack", {}).get("subject", {})
 
         event_row = repository.insert_event(
             connection,
@@ -123,6 +162,8 @@ def handle_board_approve(
             payload={
                 "approval_id": payload.approval_id,
                 "review_pack_id": payload.review_pack_id,
+                "node_id": subject.get("source_node_id"),
+                "ticket_id": subject.get("source_ticket_id"),
                 "selected_option_id": payload.selected_option_id,
                 "board_comment": payload.board_comment,
             },
@@ -150,6 +191,7 @@ def handle_board_approve(
                 "board_comment": payload.board_comment,
             },
         )
+        repository.refresh_projections(connection)
 
     return CommandAckEnvelope(
         command_id=command_id,
@@ -193,6 +235,17 @@ def handle_board_reject(
                 reason=reason,
                 causation_hint=f"approval:{payload.approval_id}",
             )
+        projection_reason = _validate_blocked_projection(repository, approval)
+        if projection_reason is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=projection_reason,
+                causation_hint=f"approval:{payload.approval_id}",
+            )
+
+        subject = approval["payload"].get("review_pack", {}).get("subject", {})
 
         event_row = repository.insert_event(
             connection,
@@ -206,6 +259,8 @@ def handle_board_reject(
             payload={
                 "approval_id": payload.approval_id,
                 "review_pack_id": payload.review_pack_id,
+                "node_id": subject.get("source_node_id"),
+                "ticket_id": subject.get("source_ticket_id"),
                 "board_comment": payload.board_comment,
                 "rejection_reasons": payload.rejection_reasons,
                 "decision_action": "REJECT",
@@ -234,6 +289,7 @@ def handle_board_reject(
                 "rejection_reasons": payload.rejection_reasons,
             },
         )
+        repository.refresh_projections(connection)
 
     return CommandAckEnvelope(
         command_id=command_id,
@@ -277,6 +333,17 @@ def handle_modify_constraints(
                 reason=reason,
                 causation_hint=f"approval:{payload.approval_id}",
             )
+        projection_reason = _validate_blocked_projection(repository, approval)
+        if projection_reason is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=projection_reason,
+                causation_hint=f"approval:{payload.approval_id}",
+            )
+
+        subject = approval["payload"].get("review_pack", {}).get("subject", {})
 
         event_row = repository.insert_event(
             connection,
@@ -290,6 +357,8 @@ def handle_modify_constraints(
             payload={
                 "approval_id": payload.approval_id,
                 "review_pack_id": payload.review_pack_id,
+                "node_id": subject.get("source_node_id"),
+                "ticket_id": subject.get("source_ticket_id"),
                 "board_comment": payload.board_comment,
                 "constraint_patch": payload.constraint_patch.model_dump(mode="json"),
                 "decision_action": "MODIFY_CONSTRAINTS",
@@ -318,6 +387,7 @@ def handle_modify_constraints(
                 "constraint_patch": payload.constraint_patch.model_dump(mode="json"),
             },
         )
+        repository.refresh_projections(connection)
 
     return CommandAckEnvelope(
         command_id=command_id,

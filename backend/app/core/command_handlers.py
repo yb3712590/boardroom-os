@@ -11,7 +11,6 @@ from app.core.constants import (
     SYSTEM_INITIALIZED_KEY,
 )
 from app.core.ids import new_prefixed_id
-from app.core.reducer import rebuild_workflow_projections
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -57,10 +56,7 @@ def handle_project_init(
             workflow_event_key,
         )
         if existing_workflow_event is not None:
-            repository.replace_workflow_projections(
-                connection,
-                rebuild_workflow_projections(repository.list_all_events(connection)),
-            )
+            repository.refresh_projections(connection)
             return CommandAckEnvelope(
                 command_id=command_id,
                 idempotency_key=command_key,
@@ -99,10 +95,7 @@ def handle_project_init(
             occurred_at=received_at,
         )
 
-        repository.replace_workflow_projections(
-            connection,
-            rebuild_workflow_projections(repository.list_all_events(connection)),
-        )
+        repository.refresh_projections(connection)
 
     return CommandAckEnvelope(
         command_id=command_id,

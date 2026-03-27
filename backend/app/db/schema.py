@@ -45,4 +45,31 @@ CREATE TABLE IF NOT EXISTS approval_projection (
     command_target_version INTEGER,
     payload_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ticket_projection (
+    ticket_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    retry_budget INTEGER,
+    timeout_sla_sec INTEGER,
+    priority TEXT,
+    blocking_reason_code TEXT,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS node_projection (
+    workflow_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    latest_ticket_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    blocking_reason_code TEXT,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    PRIMARY KEY (workflow_id, node_id)
+);
 """

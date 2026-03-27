@@ -10,6 +10,8 @@ from typing import Any
 
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
+    NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    NODE_STATUS_COMPLETED,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
@@ -19,6 +21,11 @@ from app.core.constants import (
     EVENT_WORKFLOW_CREATED,
 )
 from app.core.ids import new_prefixed_id
+from app.core.reducer import (
+    rebuild_node_projections,
+    rebuild_ticket_projections,
+    rebuild_workflow_projections,
+)
 from app.db.schema import SCHEMA_SQL
 
 
@@ -33,6 +40,8 @@ class ControlPlaneRepository:
         with self.connection() as connection:
             connection.executescript(SCHEMA_SQL)
             self._ensure_approval_projection_shape(connection)
+            self._ensure_ticket_projection_shape(connection)
+            self._ensure_node_projection_shape(connection)
 
     @contextmanager
     def connection(self):
@@ -177,6 +186,84 @@ class ControlPlaneRepository:
                 ),
             )
 
+    def replace_ticket_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM ticket_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO ticket_projection (
+                    ticket_id,
+                    workflow_id,
+                    node_id,
+                    status,
+                    lease_owner,
+                    lease_expires_at,
+                    retry_count,
+                    retry_budget,
+                    timeout_sla_sec,
+                    priority,
+                    blocking_reason_code,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["ticket_id"],
+                    projection["workflow_id"],
+                    projection["node_id"],
+                    projection["status"],
+                    projection.get("lease_owner"),
+                    projection.get("lease_expires_at"),
+                    projection.get("retry_count", 0),
+                    projection.get("retry_budget"),
+                    projection.get("timeout_sla_sec"),
+                    projection.get("priority"),
+                    projection.get("blocking_reason_code"),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
+    def replace_node_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM node_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO node_projection (
+                    workflow_id,
+                    node_id,
+                    latest_ticket_id,
+                    status,
+                    blocking_reason_code,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["workflow_id"],
+                    projection["node_id"],
+                    projection["latest_ticket_id"],
+                    projection["status"],
+                    projection.get("blocking_reason_code"),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
+    def refresh_projections(self, connection: sqlite3.Connection) -> None:
+        events = self.list_all_events(connection)
+        self.replace_workflow_projections(connection, rebuild_workflow_projections(events))
+        self.replace_ticket_projections(connection, rebuild_ticket_projections(events))
+        self.replace_node_projections(connection, rebuild_node_projections(events))
+
     def get_active_workflow(self) -> dict[str, Any] | None:
         self.initialize()
         with self.connection() as connection:
@@ -190,6 +277,35 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return dict(row)
+
+    def get_current_ticket_projection(self, ticket_id: str) -> dict[str, Any] | None:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM ticket_projection WHERE ticket_id = ?",
+                (ticket_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_ticket_projection_row(row)
+
+    def get_current_node_projection(
+        self,
+        workflow_id: str,
+        node_id: str,
+    ) -> dict[str, Any] | None:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM node_projection
+                WHERE workflow_id = ? AND node_id = ?
+                """,
+                (workflow_id, node_id),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_node_projection_row(row)
 
     def get_cursor_and_version(self) -> tuple[str | None, int]:
         self.initialize()
@@ -296,6 +412,46 @@ class ControlPlaneRepository:
                 (APPROVAL_STATUS_OPEN,),
             ).fetchone()
             return int(row["total"])
+
+    def count_active_tickets(self) -> int:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM node_projection
+                WHERE status <> ?
+                """,
+                (NODE_STATUS_COMPLETED,),
+            ).fetchone()
+            return int(row["total"])
+
+    def count_blocked_nodes(self) -> int:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM node_projection
+                WHERE status = ?
+                """,
+                (NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,),
+            ).fetchone()
+            return int(row["total"])
+
+    def list_blocked_node_ids(self) -> list[str]:
+        self.initialize()
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT node_id
+                FROM node_projection
+                WHERE status = ?
+                ORDER BY node_id ASC
+                """,
+                (NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,),
+            ).fetchall()
+            return [str(row["node_id"]) for row in rows]
 
     def list_open_approvals(self) -> list[dict[str, Any]]:
         self.initialize()
@@ -511,6 +667,25 @@ class ControlPlaneRepository:
         converted["payload"] = json.loads(converted["payload_json"])
         return converted
 
+    def _convert_ticket_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["retry_count"] = int(converted.get("retry_count") or 0)
+        converted["retry_budget"] = (
+            int(converted["retry_budget"]) if converted.get("retry_budget") is not None else None
+        )
+        converted["timeout_sla_sec"] = (
+            int(converted["timeout_sla_sec"])
+            if converted.get("timeout_sla_sec") is not None
+            else None
+        )
+        converted["version"] = int(converted["version"])
+        return converted
+
+    def _convert_node_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["version"] = int(converted["version"])
+        return converted
+
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:
             return "system"
@@ -623,4 +798,62 @@ class ControlPlaneRepository:
                 )
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_projection_review_pack_id ON approval_projection(review_pack_id)"
+        )
+
+    def _ensure_ticket_projection_shape(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(ticket_projection)").fetchall()
+        }
+        required_columns = {
+            "ticket_id": "TEXT",
+            "workflow_id": "TEXT",
+            "node_id": "TEXT",
+            "status": "TEXT",
+            "lease_owner": "TEXT",
+            "lease_expires_at": "TEXT",
+            "retry_count": "INTEGER DEFAULT 0",
+            "retry_budget": "INTEGER",
+            "timeout_sla_sec": "INTEGER",
+            "priority": "TEXT",
+            "blocking_reason_code": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE ticket_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ticket_projection_node_id ON ticket_projection(node_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ticket_projection_status ON ticket_projection(status)"
+        )
+
+    def _ensure_node_projection_shape(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(node_projection)").fetchall()
+        }
+        required_columns = {
+            "workflow_id": "TEXT",
+            "node_id": "TEXT",
+            "latest_ticket_id": "TEXT",
+            "status": "TEXT",
+            "blocking_reason_code": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE node_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_node_projection_status ON node_projection(status)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_node_projection_latest_ticket_id ON node_projection(latest_ticket_id)"
         )

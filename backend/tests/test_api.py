@@ -5,12 +5,21 @@ from app.core.constants import (
     APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
     APPROVAL_STATUS_OPEN,
     APPROVAL_STATUS_REJECTED,
+    BLOCKING_REASON_BOARD_REJECTED,
+    BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
+    BLOCKING_REASON_MODIFY_CONSTRAINTS,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_WORKFLOW_CREATED,
+    NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    NODE_STATUS_COMPLETED,
+    NODE_STATUS_REWORK_REQUIRED,
+    TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    TICKET_STATUS_COMPLETED,
+    TICKET_STATUS_REWORK_REQUIRED,
 )
 
 
@@ -26,12 +35,13 @@ def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
 def _ticket_complete_payload(
     workflow_id: str = "wf_seed",
     ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
     include_review_request: bool = True,
 ) -> dict:
     payload = {
         "workflow_id": workflow_id,
         "ticket_id": ticket_id,
-        "node_id": "node_homepage_visual",
+        "node_id": node_id,
         "completed_by": "emp_frontend_2",
         "completion_summary": "Visual milestone is blocked for board review.",
         "artifact_refs": ["art://homepage/option-a.png", "art://homepage/option-b.png"],
@@ -183,6 +193,11 @@ def test_ticket_complete_without_review_request_does_not_open_approval(client):
         "/api/v1/commands/ticket-complete",
         json=_ticket_complete_payload(include_review_request=False),
     )
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_seed",
+        "node_homepage_visual",
+    )
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
@@ -190,6 +205,8 @@ def test_ticket_complete_without_review_request_does_not_open_approval(client):
     assert client.app.state.repository.count_events_by_type(EVENT_TICKET_COMPLETED) == 1
     assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_REQUIRED) == 0
     assert client.app.state.repository.list_open_approvals() == []
+    assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
+    assert node_projection["status"] == NODE_STATUS_COMPLETED
 
 
 def test_inbox_and_dashboard_reflect_open_approval(client):
@@ -203,6 +220,11 @@ def test_inbox_and_dashboard_reflect_open_approval(client):
     assert len(items) == 1
     assert items[0]["route_target"]["view"] == "review_room"
     assert dashboard_response.json()["data"]["inbox_counts"]["approvals_pending"] == 1
+    assert dashboard_response.json()["data"]["ops_strip"]["active_tickets"] == 1
+    assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 1
+    assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == [
+        "node_homepage_visual"
+    ]
 
 
 def test_review_room_route_returns_existing_projection(client):
@@ -243,11 +265,24 @@ def test_board_approve_command_resolves_open_approval(client):
     )
 
     updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_seed",
+        "node_homepage_visual",
+    )
+    dashboard_response = client.get("/api/v1/projections/dashboard")
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert updated["status"] == APPROVAL_STATUS_APPROVED
     assert updated["payload"]["resolution"]["decision_action"] == "APPROVE"
     assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_APPROVED) == 1
+    assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
+    assert ticket_projection["blocking_reason_code"] is None
+    assert node_projection["status"] == NODE_STATUS_COMPLETED
+    assert node_projection["blocking_reason_code"] is None
+    assert dashboard_response.json()["data"]["ops_strip"]["active_tickets"] == 0
+    assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 0
+    assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == []
 
 
 def test_board_reject_command_resolves_open_approval(client):
@@ -267,11 +302,24 @@ def test_board_reject_command_resolves_open_approval(client):
     )
 
     updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_reject",
+        "node_homepage_visual",
+    )
+    dashboard_response = client.get("/api/v1/projections/dashboard")
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert updated["status"] == APPROVAL_STATUS_REJECTED
     assert updated["payload"]["resolution"]["decision_action"] == "REJECT"
     assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_REJECTED) == 1
+    assert ticket_projection["status"] == TICKET_STATUS_REWORK_REQUIRED
+    assert ticket_projection["blocking_reason_code"] == BLOCKING_REASON_BOARD_REJECTED
+    assert node_projection["status"] == NODE_STATUS_REWORK_REQUIRED
+    assert node_projection["blocking_reason_code"] == BLOCKING_REASON_BOARD_REJECTED
+    assert dashboard_response.json()["data"]["ops_strip"]["active_tickets"] == 1
+    assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 0
+    assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == []
 
 
 def test_modify_constraints_command_resolves_open_approval(client):
@@ -295,10 +343,19 @@ def test_modify_constraints_command_resolves_open_approval(client):
     )
 
     updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_modify",
+        "node_homepage_visual",
+    )
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert updated["status"] == APPROVAL_STATUS_MODIFIED_CONSTRAINTS
     assert updated["payload"]["resolution"]["decision_action"] == "MODIFY_CONSTRAINTS"
+    assert ticket_projection["status"] == TICKET_STATUS_REWORK_REQUIRED
+    assert ticket_projection["blocking_reason_code"] == BLOCKING_REASON_MODIFY_CONSTRAINTS
+    assert node_projection["status"] == NODE_STATUS_REWORK_REQUIRED
+    assert node_projection["blocking_reason_code"] == BLOCKING_REASON_MODIFY_CONSTRAINTS
 
 
 def test_stale_board_command_is_rejected_without_resolving_approval(client):
@@ -322,6 +379,105 @@ def test_stale_board_command_is_rejected_without_resolving_approval(client):
     assert response.json()["status"] == "REJECTED"
     assert updated["status"] == APPROVAL_STATUS_OPEN
     assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_APPROVED) == 0
+
+
+def test_ticket_complete_is_rejected_when_node_is_blocked_for_board_review(client):
+    _seed_review_request(client)
+
+    response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(ticket_id="tkt_visual_002"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "BLOCKED_FOR_BOARD_REVIEW" in response.json()["reason"]
+
+
+def test_ticket_complete_is_rejected_when_node_is_completed(client):
+    client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(include_review_request=False),
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(ticket_id="tkt_visual_002", include_review_request=False),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "COMPLETED" in response.json()["reason"]
+
+
+def test_ticket_complete_is_allowed_after_rework_required(client):
+    approval = _seed_review_request(client, workflow_id="wf_rework")
+    reject_response = client.post(
+        "/api/v1/commands/board-reject",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "board_comment": "Current direction is too weak.",
+            "rejection_reasons": ["visual_impact_insufficient"],
+            "idempotency_key": f"board-reject:{approval['approval_id']}:rework",
+        },
+    )
+    assert reject_response.json()["status"] == "ACCEPTED"
+
+    response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(
+            workflow_id="wf_rework",
+            ticket_id="tkt_visual_002",
+            include_review_request=False,
+        ),
+    )
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_rework",
+        "node_homepage_visual",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert node_projection["latest_ticket_id"] == "tkt_visual_002"
+    assert node_projection["status"] == NODE_STATUS_COMPLETED
+
+
+def test_board_command_is_rejected_when_projection_is_not_currently_blocked(client):
+    approval = _seed_review_request(client, workflow_id="wf_guard")
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            "UPDATE ticket_projection SET status = ?, blocking_reason_code = NULL WHERE ticket_id = ?",
+            (TICKET_STATUS_COMPLETED, "tkt_visual_001"),
+        )
+        connection.execute(
+            """
+            UPDATE node_projection
+            SET status = ?, blocking_reason_code = NULL
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            (NODE_STATUS_COMPLETED, "wf_guard", "node_homepage_visual"),
+        )
+
+    response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": "option_a",
+            "board_comment": "Proceed with option A.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:projection-guard",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "blocked for board review" in response.json()["reason"].lower()
 
 
 def test_event_stream_returns_incremental_events_after_cursor(client):

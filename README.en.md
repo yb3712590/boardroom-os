@@ -30,7 +30,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `GET /api/v1/projections/review-room/{review_pack_id}` real projection for persisted approval packs
 - `GET /api/v1/events/stream?after={cursor}` SSE stream
 - real `CommandAckEnvelope`
-- minimal `events`, `workflow_projection`, and `approval_projection` schema
+- minimal `events`, `workflow_projection`, `ticket_projection`, `node_projection`, and `approval_projection` schema
 - `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
@@ -44,6 +44,7 @@ The following are still pending or stubbed:
 - CEO tick scheduler
 - ticket pool and lease protocol
 - full worker execution chain (current slice only accepts structured `ticket-complete` results)
+- full ticket lifecycle projection beyond post-completion governance states
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
 - Context Compiler execution
