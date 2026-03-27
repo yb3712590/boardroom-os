@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from collections.abc import Iterator
@@ -29,8 +29,8 @@ def stream_events(repository: ControlPlaneRepository, after: str | None = None) 
                     severity=event["severity"],
                     event_type=event["event_type"],
                     workflow_id=event["workflow_id"],
-                    node_id=None,
-                    ticket_id=None,
+                    node_id=event.get("node_id"),
+                    ticket_id=event.get("ticket_id"),
                     causation_id=event["causation_id"],
                     related_command_id=None,
                     ui_hint=UIHint(**event["ui_hint"]),

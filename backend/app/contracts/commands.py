@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.contracts.common import StrictModel
 
@@ -14,11 +14,112 @@ class CommandAckStatus(StrEnum):
     DUPLICATE = "DUPLICATE"
 
 
+class ReviewAction(StrEnum):
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+    MODIFY_CONSTRAINTS = "MODIFY_CONSTRAINTS"
+
+
+class ReviewType(StrEnum):
+    VISUAL_MILESTONE = "VISUAL_MILESTONE"
+    BUDGET_EXCEPTION = "BUDGET_EXCEPTION"
+    MEETING_ESCALATION = "MEETING_ESCALATION"
+    CORE_HIRE_APPROVAL = "CORE_HIRE_APPROVAL"
+    SCOPE_PIVOT = "SCOPE_PIVOT"
+
+
+class ReviewPriority(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class BlockingScope(StrEnum):
+    NODE_ONLY = "NODE_ONLY"
+    DEPENDENT_SUBGRAPH = "DEPENDENT_SUBGRAPH"
+    WORKFLOW = "WORKFLOW"
+
+
 class ProjectInitCommand(StrictModel):
     north_star_goal: str = Field(min_length=1)
     hard_constraints: list[str]
     budget_cap: int = Field(ge=0)
     deadline_at: datetime | None = None
+
+
+class TicketReviewOption(StrictModel):
+    option_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    artifact_refs: list[str] = Field(default_factory=list)
+    preview_assets: list[dict] = Field(default_factory=list)
+    pros: list[str] = Field(default_factory=list)
+    cons: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    estimated_budget_impact_range: dict | None = None
+
+
+class TicketReviewEvidence(StrictModel):
+    evidence_id: str = Field(min_length=1)
+    source_type: str = Field(min_length=1)
+    headline: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    source_ref: str | None = None
+
+
+class TicketBoardReviewRequest(StrictModel):
+    review_type: ReviewType
+    priority: ReviewPriority = ReviewPriority.MEDIUM
+    title: str = Field(min_length=1)
+    subtitle: str | None = None
+    blocking_scope: BlockingScope = BlockingScope.NODE_ONLY
+    trigger_reason: str = Field(min_length=1)
+    why_now: str = Field(min_length=1)
+    recommended_action: ReviewAction
+    recommended_option_id: str | None = None
+    recommendation_summary: str = Field(min_length=1)
+    options: list[TicketReviewOption] = Field(min_length=1)
+    evidence_summary: list[TicketReviewEvidence] = Field(default_factory=list)
+    delta_summary: dict | None = None
+    maker_checker_summary: dict | None = None
+    risk_summary: dict | None = None
+    budget_impact: dict | None = None
+    developer_inspector_refs: dict | None = None
+    available_actions: list[ReviewAction] = Field(
+        default_factory=lambda: [
+            ReviewAction.APPROVE,
+            ReviewAction.REJECT,
+            ReviewAction.MODIFY_CONSTRAINTS,
+        ]
+    )
+    draft_selected_option_id: str | None = None
+    comment_template: str = ""
+    inbox_title: str | None = None
+    inbox_summary: str | None = None
+    badges: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_option_refs(self) -> "TicketBoardReviewRequest":
+        option_ids = {option.option_id for option in self.options}
+        if self.recommended_option_id is not None and self.recommended_option_id not in option_ids:
+            raise ValueError("recommended_option_id must match one of the review options.")
+        if self.draft_selected_option_id is not None and self.draft_selected_option_id not in option_ids:
+            raise ValueError("draft_selected_option_id must match one of the review options.")
+        if len({action.value for action in self.available_actions}) != len(self.available_actions):
+            raise ValueError("available_actions must not contain duplicates.")
+        return self
+
+
+class TicketCompletedCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    completed_by: str = Field(min_length=1)
+    completion_summary: str = Field(min_length=1)
+    artifact_refs: list[str] = Field(default_factory=list)
+    review_request: TicketBoardReviewRequest | None = None
+    idempotency_key: str = Field(min_length=1)
 
 
 class BoardApproveCommand(StrictModel):

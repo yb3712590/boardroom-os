@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import sqlite3
@@ -15,6 +15,7 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_SYSTEM_INITIALIZED,
+    EVENT_TICKET_COMPLETED,
     EVENT_WORKFLOW_CREATED,
 )
 from app.core.ids import new_prefixed_id
@@ -227,7 +228,7 @@ class ControlPlaneRepository:
                     "category": self._event_category(converted["event_type"]),
                     "severity": self._event_severity(converted["event_type"]),
                     "message": self._event_preview_message(converted),
-                    "related_ref": converted["workflow_id"] or converted["event_id"],
+                    "related_ref": converted.get("ticket_id") or converted.get("workflow_id") or converted["event_id"],
                 }
             )
         return previews
@@ -269,6 +270,8 @@ class ControlPlaneRepository:
                     "severity": self._event_severity(converted["event_type"]),
                     "event_type": converted["event_type"],
                     "workflow_id": converted["workflow_id"],
+                    "node_id": converted.get("node_id"),
+                    "ticket_id": converted.get("ticket_id"),
                     "causation_id": converted["causation_id"],
                     "projection_version_hint": converted["sequence_no"],
                     "ui_hint": self._event_ui_hint(converted["event_type"]),
@@ -373,6 +376,8 @@ class ControlPlaneRepository:
                 "review_pack_id": review_pack_id,
                 "review_type": approval_type,
                 "title": inbox_title,
+                "node_id": review_pack_payload.get("subject", {}).get("source_node_id"),
+                "ticket_id": review_pack_payload.get("subject", {}).get("source_ticket_id"),
             },
             occurred_at=occurred_at,
         )
@@ -384,6 +389,9 @@ class ControlPlaneRepository:
 
         command_target_version = int(event_row["sequence_no"])
         review_pack_payload["meta"]["source_projection_version"] = command_target_version
+        decision_form = review_pack_payload.get("decision_form")
+        if isinstance(decision_form, dict):
+            decision_form["command_target_version"] = command_target_version
         payload = {
             "review_pack": review_pack_payload,
             "available_actions": available_actions,
@@ -487,6 +495,10 @@ class ControlPlaneRepository:
     def _convert_event_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["occurred_at"] = datetime.fromisoformat(converted["occurred_at"])
+        payload = json.loads(converted["payload_json"])
+        converted["payload"] = payload
+        converted["node_id"] = payload.get("node_id")
+        converted["ticket_id"] = payload.get("ticket_id")
         return converted
 
     def _convert_approval_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -502,6 +514,8 @@ class ControlPlaneRepository:
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:
             return "system"
+        if event_type == EVENT_TICKET_COMPLETED:
+            return "ticket"
         if event_type in {
             EVENT_BOARD_REVIEW_REQUIRED,
             EVENT_BOARD_REVIEW_APPROVED,
@@ -515,6 +529,7 @@ class ControlPlaneRepository:
             EVENT_SYSTEM_INITIALIZED,
             EVENT_BOARD_DIRECTIVE_RECEIVED,
             EVENT_WORKFLOW_CREATED,
+            EVENT_TICKET_COMPLETED,
             EVENT_BOARD_REVIEW_APPROVED,
         }:
             return "info"
@@ -529,6 +544,8 @@ class ControlPlaneRepository:
             return "BOARD_DIRECTIVE_RECEIVED from board"
         if event["event_type"] == EVENT_WORKFLOW_CREATED:
             return f"WORKFLOW_CREATED for {event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_COMPLETED:
+            return f"TICKET_COMPLETED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_BOARD_REVIEW_REQUIRED:
             return "BOARD_REVIEW_REQUIRED pending board action"
         if event["event_type"] == EVENT_BOARD_REVIEW_APPROVED:
@@ -551,6 +568,13 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Board directive received.",
+            }
+        if event_type == EVENT_TICKET_COMPLETED:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket completed.",
             }
         if event_type == EVENT_BOARD_REVIEW_REQUIRED:
             return {

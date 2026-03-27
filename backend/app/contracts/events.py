@@ -8,6 +8,7 @@ from app.contracts.common import StrictModel
 
 class EventCategory(StrEnum):
     WORKFLOW = "workflow"
+    TICKET = "ticket"
     SYSTEM = "system"
     APPROVAL = "approval"
 

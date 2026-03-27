@@ -9,9 +9,9 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_SYSTEM_INITIALIZED,
+    EVENT_TICKET_COMPLETED,
     EVENT_WORKFLOW_CREATED,
 )
-from app.core.time import now_local
 
 
 def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
@@ -23,54 +23,111 @@ def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
     }
 
 
-def _seed_review_request(client, workflow_id: str = "wf_seed") -> dict:
-    repository = client.app.state.repository
-    with repository.transaction() as connection:
-        return repository.create_approval_request(
-            connection,
-            workflow_id=workflow_id,
-            approval_type="VISUAL_MILESTONE",
-            requested_by="system",
-            review_pack={
-                "meta": {
-                    "review_pack_version": 1,
-                    "workflow_id": workflow_id,
-                    "review_type": "VISUAL_MILESTONE",
-                    "created_at": now_local().isoformat(),
-                    "priority": "high",
+def _ticket_complete_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    include_review_request: bool = True,
+) -> dict:
+    payload = {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": "node_homepage_visual",
+        "completed_by": "emp_frontend_2",
+        "completion_summary": "Visual milestone is blocked for board review.",
+        "artifact_refs": ["art://homepage/option-a.png", "art://homepage/option-b.png"],
+        "idempotency_key": f"ticket-complete:{workflow_id}:{ticket_id}",
+    }
+    if include_review_request:
+        payload["review_request"] = {
+            "review_type": "VISUAL_MILESTONE",
+            "priority": "high",
+            "title": "Review homepage visual milestone",
+            "subtitle": "Two candidate hero directions are ready for board selection.",
+            "blocking_scope": "NODE_ONLY",
+            "trigger_reason": "Visual milestone hit a board-gated release checkpoint.",
+            "why_now": "Downstream homepage implementation should not proceed before direction lock.",
+            "recommended_action": "APPROVE",
+            "recommended_option_id": "option_a",
+            "recommendation_summary": "Option A has the clearest hierarchy and strongest first impression.",
+            "options": [
+                {
+                    "option_id": "option_a",
+                    "label": "Option A",
+                    "summary": "High-contrast review candidate.",
+                    "artifact_refs": ["art://homepage/option-a.png"],
+                    "pros": ["Strong first-screen hierarchy"],
+                    "cons": ["Slightly more aggressive contrast"],
+                    "risks": ["Needs careful brand calibration"],
                 },
-                "subject": {
-                    "title": "Review homepage visual milestone",
-                    "source_node_id": "node_homepage_visual",
-                    "blocking_scope": "NODE_ONLY",
+                {
+                    "option_id": "option_b",
+                    "label": "Option B",
+                    "summary": "Lower contrast fallback.",
+                    "artifact_refs": ["art://homepage/option-b.png"],
+                    "pros": ["Safer visual tone"],
+                    "cons": ["Weaker first impression"],
+                    "risks": ["May undersignal product confidence"],
                 },
-                "recommendation": {
-                    "recommended_action": "APPROVE",
-                    "recommended_option_id": "option_a",
-                    "summary": "Option A is the strongest current draft.",
-                },
-                "options": [
+            ],
+            "evidence_summary": [
+                {
+                    "evidence_id": "ev_homepage_checker",
+                    "source_type": "CHECKER_FINDING",
+                    "headline": "Checker prefers Option A",
+                    "summary": "Option A is more legible and directional under current constraints.",
+                    "source_ref": "chk://homepage/visual-review",
+                }
+            ],
+            "maker_checker_summary": {
+                "maker_employee_id": "emp_frontend_2",
+                "checker_employee_id": "emp_checker_1",
+                "review_status": "APPROVED_WITH_NOTES",
+                "top_findings": [
                     {
-                        "option_id": "option_a",
-                        "label": "Option A",
-                        "summary": "High-contrast review candidate.",
-                    },
-                    {
-                        "option_id": "option_b",
-                        "label": "Option B",
-                        "summary": "Lower contrast fallback.",
-                    },
+                        "finding_id": "finding_hero_contrast",
+                        "severity": "medium",
+                        "headline": "Option B lacks contrast in the hero section",
+                    }
                 ],
             },
-            available_actions=["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
-            draft_defaults={"selected_option_id": "option_a", "comment_template": ""},
-            inbox_title="Review homepage visual milestone",
-            inbox_summary="Visual milestone is blocked for board review.",
-            badges=["visual", "board_gate"],
-            priority="high",
-            occurred_at=now_local(),
-            idempotency_key=f"seed-review:{workflow_id}",
-        )
+            "risk_summary": {
+                "user_risk": "LOW",
+                "engineering_risk": "LOW",
+                "schedule_risk": "MEDIUM",
+                "budget_risk": "LOW",
+            },
+            "budget_impact": {
+                "tokens_spent_so_far": 1200,
+                "tokens_if_approved_estimate_range": {"min_tokens": 200, "max_tokens": 500},
+                "tokens_if_rework_estimate_range": {"min_tokens": 600, "max_tokens": 1200},
+                "estimate_confidence": "medium",
+                "budget_risk": "LOW",
+            },
+            "developer_inspector_refs": {
+                "compiled_context_bundle_ref": "ctx://homepage/visual-v1",
+                "compile_manifest_ref": "manifest://homepage/visual-v1",
+            },
+            "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+            "draft_selected_option_id": "option_a",
+            "comment_template": "",
+            "inbox_title": "Review homepage visual milestone",
+            "inbox_summary": "Visual milestone is blocked for board review.",
+            "badges": ["visual", "board_gate"],
+        }
+    return payload
+
+
+def _seed_review_request(client, workflow_id: str = "wf_seed") -> dict:
+    response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(workflow_id=workflow_id),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    approvals = client.app.state.repository.list_open_approvals()
+    assert len(approvals) == 1
+    return approvals[0]
 
 
 def test_startup_initializes_schema_and_wal_mode(client, db_path):
@@ -121,6 +178,20 @@ def test_inbox_projection_returns_empty_items(client):
     assert response.json()["data"]["items"] == []
 
 
+def test_ticket_complete_without_review_request_does_not_open_approval(client):
+    response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(include_review_request=False),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert response.json()["causation_hint"] == "ticket:tkt_visual_001"
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_COMPLETED) == 1
+    assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_REQUIRED) == 0
+    assert client.app.state.repository.list_open_approvals() == []
+
+
 def test_inbox_and_dashboard_reflect_open_approval(client):
     _seed_review_request(client)
 
@@ -142,6 +213,9 @@ def test_review_room_route_returns_existing_projection(client):
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["review_pack"]["meta"]["approval_id"] == approval["approval_id"]
+    assert body["review_pack"]["subject"]["source_ticket_id"] == "tkt_visual_001"
+    assert body["review_pack"]["trigger"]["trigger_event_id"].startswith("evt_")
+    assert body["review_pack"]["decision_form"]["command_target_version"] >= 1
     assert body["available_actions"] == ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"]
 
 
@@ -265,6 +339,20 @@ def test_event_stream_returns_incremental_events_after_cursor(client):
     assert "event: heartbeat" in body
 
 
+def test_ticket_complete_stream_carries_ticket_and_review_events(client):
+    initial_cursor = client.get("/api/v1/projections/dashboard").json()["cursor"]
+    client.post("/api/v1/commands/ticket-complete", json=_ticket_complete_payload())
+
+    with client.stream("GET", f"/api/v1/events/stream?after={initial_cursor}") as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "TICKET_COMPLETED" in body
+    assert "BOARD_REVIEW_REQUIRED" in body
+    assert "tkt_visual_001" in body
+    assert "node_homepage_visual" in body
+
+
 def test_invalid_project_init_returns_422_without_writing_events(client):
     response = client.post(
         "/api/v1/commands/project-init",
@@ -281,7 +369,8 @@ def test_invalid_project_init_returns_422_without_writing_events(client):
     assert repository.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 0
 
 
-def test_seed_review_request_emits_required_event(client):
+def test_ticket_complete_review_request_emits_required_event(client):
     _seed_review_request(client, workflow_id="wf_event")
 
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_COMPLETED) == 1
     assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_REQUIRED) == 1

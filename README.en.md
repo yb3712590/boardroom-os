@@ -1,8 +1,8 @@
-﻿# Boardroom OS
+# Boardroom OS
 
 > Event-sourced Agent Governance.
 
-English overview. 中文版请见 [README.md](README.md)
+English overview. 涓枃鐗堣瑙?[README.md](README.md)
 
 Boardroom OS is an event-sourced agent governance framework for autonomous software delivery.
 
@@ -31,6 +31,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `GET /api/v1/events/stream?after={cursor}` SSE stream
 - real `CommandAckEnvelope`
 - minimal `events`, `workflow_projection`, and `approval_projection` schema
+- `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -42,9 +43,8 @@ The following are still pending or stubbed:
 
 - CEO tick scheduler
 - ticket pool and lease protocol
-- worker execution chain
+- full worker execution chain (current slice only accepts structured `ticket-complete` results)
 - Maker-Checker review loop
-- automatic approval request creation from ticket/worker results
 - richer Review Room evidence assembly beyond persisted approval packs
 - Context Compiler execution
 - FTS / vector retrieval
@@ -59,6 +59,7 @@ The first backend slice already locks the route names and API boundaries:
 - `GET /api/v1/projections/inbox`
 - `GET /api/v1/projections/review-room/{review_pack_id}`
 - `GET /api/v1/events/stream?after={cursor}`
+- `POST /api/v1/commands/ticket-complete`
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -139,7 +140,7 @@ Boardroom OS is opinionated:
 - less prompt juggling
 - more structured delivery
 
-The goal is not “an agent that talks a lot”.
+The goal is not 鈥渁n agent that talks a lot鈥?
 
 The goal is:
 
