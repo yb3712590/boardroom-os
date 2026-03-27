@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from app.contracts.events import EventSeverity
+from app.contracts.common import ProjectionEnvelopeBase, StrictModel
+
+
+class WorkspaceSummary(StrictModel):
+    workspace_id: str
+    workspace_name: str
+
+
+class ActiveWorkflowProjection(StrictModel):
+    workflow_id: str
+    title: str
+    north_star_goal: str
+    status: str
+    current_stage: str
+    started_at: datetime
+    deadline_at: datetime | None = None
+
+
+class OpsStripProjection(StrictModel):
+    budget_total: int
+    budget_used: int
+    budget_remaining: int
+    token_burn_rate_5m: int
+    active_tickets: int
+    blocked_nodes: int
+    open_incidents: int
+    open_circuit_breakers: int
+    provider_health_summary: str
+
+
+class NodeCountsProjection(StrictModel):
+    pending: int
+    executing: int
+    under_review: int
+    blocked_for_board: int
+    fused: int
+    completed: int
+
+
+class PhaseSummaryProjection(StrictModel):
+    phase_id: str
+    label: str
+    status: str
+    node_counts: NodeCountsProjection
+
+
+class PipelineSummaryProjection(StrictModel):
+    phases: list[PhaseSummaryProjection]
+    critical_path_node_ids: list[str]
+    blocked_node_ids: list[str]
+
+
+class InboxCountsProjection(StrictModel):
+    approvals_pending: int
+    incidents_pending: int
+    budget_alerts: int
+    provider_alerts: int
+
+
+class WorkforceSummaryProjection(StrictModel):
+    active_workers: int
+    idle_workers: int
+    overloaded_workers: int
+    active_checkers: int
+    workers_in_rework_loop: int
+
+
+class EventStreamPreviewItem(StrictModel):
+    event_id: str
+    occurred_at: datetime
+    category: str
+    severity: EventSeverity
+    message: str
+    related_ref: str | None = None
+
+
+class DashboardProjectionData(StrictModel):
+    workspace: WorkspaceSummary
+    active_workflow: ActiveWorkflowProjection | None = None
+    ops_strip: OpsStripProjection
+    pipeline_summary: PipelineSummaryProjection
+    inbox_counts: InboxCountsProjection
+    workforce_summary: WorkforceSummaryProjection
+    event_stream_preview: list[EventStreamPreviewItem]
+
+
+class DashboardProjectionEnvelope(ProjectionEnvelopeBase):
+    data: DashboardProjectionData
+
+
+class RouteTarget(StrictModel):
+    view: str
+    review_pack_id: str | None = None
+    incident_id: str | None = None
+
+
+class InboxItemProjection(StrictModel):
+    inbox_item_id: str
+    workflow_id: str
+    item_type: str
+    priority: str
+    status: str
+    created_at: datetime
+    sla_due_at: datetime | None = None
+    title: str
+    summary: str
+    source_ref: str
+    route_target: RouteTarget
+    badges: list[str]
+
+
+class InboxProjectionData(StrictModel):
+    items: list[InboxItemProjection]
+
+
+class InboxProjectionEnvelope(ProjectionEnvelopeBase):
+    data: InboxProjectionData
+
+
+class ReviewRoomDraftDefaults(StrictModel):
+    selected_option_id: str | None = None
+    comment_template: str = ""
+
+
+class ReviewRoomProjectionData(StrictModel):
+    review_pack: dict | None = None
+    available_actions: list[str]
+    draft_defaults: ReviewRoomDraftDefaults
+
+
+class ReviewRoomProjectionEnvelope(ProjectionEnvelopeBase):
+    data: ReviewRoomProjectionData

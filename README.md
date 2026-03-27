@@ -1,4 +1,4 @@
-# Boardroom OS
+﻿# Boardroom OS
 
 > Event-sourced Agent Governance.
 
@@ -15,78 +15,83 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - 关键里程碑通过 Board Gate 审批
 - 全流程通过事件日志和状态投影保留可追溯性
 
-## 这个项目想解决什么
+## 当前代码状态
 
-多数 Agent 开发框架最后都会掉进两个坑：
+当前仓库已经从“纯设计文档仓库”进入 **设计文档 + 后端首个可运行切片** 阶段。
 
-1. 过度依赖长对话上下文，成本高、易漂移、难审计。
-2. 动不动停下来等人确认，无法像真正的团队一样持续推进。
+已落地代码位于 [backend/](backend/)，当前实现范围：
 
-Boardroom OS 试图用一套更工程化的方式处理这个问题：
+- FastAPI 后端入口
+- SQLite 控制面数据库与 `WAL`
+- `SYSTEM_INITIALIZED` 首次初始化幂等规则
+- `POST /api/v1/commands/project-init`
+- `GET /api/v1/projections/dashboard`
+- `GET /api/v1/projections/inbox`
+- `GET /api/v1/projections/review-room/{review_pack_id}` 路由保留，当前固定返回 `404`
+- `GET /api/v1/events/stream?after={cursor}` SSE 增量事件流
+- `CommandAckEnvelope` 首轮真实契约
+- `events` / `workflow_projection` / `approval_projection` 最小 schema
+- API 与 reducer 测试骨架
 
-- 用 `Event Log + Projection` 管理状态，而不是用聊天记录管理状态
-- 用 `Ticket` 驱动执行，而不是让 Agent 自由漫游
-- 用 `Context Compiler` 组装上下文，而不是让 CEO 手工喂 prompt
-- 用 `Maker-Checker` 和 `Board Gate` 保证质量与治理
-- 用 `Boardroom UI` 提供高密度、极简的人机控制面
+## 本轮未实现
 
-一句话概括：
+以下能力仍未落地，当前仍是 stub 或未开始：
 
-**少一点群聊，多一点治理。**
+- CEO Tick Scheduler
+- Ticket Pool / Lease Protocol
+- Worker 执行链
+- Maker-Checker Review Loop
+- Board Review Pack 生成与审批命令
+- Review Room 完整投影内容
+- Context Compiler 实际编译
+- FTS / 向量检索
+- React Boardroom UI
 
-## 核心机制
+## 已落地后端契约
 
-### 1. Event-sourced Workflow Bus
-- 事件日志是唯一真实来源
-- CEO 读取状态投影，不读取长对话
-- 状态流转由 Reducer 和 Transition Guard 约束
+首轮对外路由和契约名已经锁定，不再用临时命名替代：
 
-### 2. Ticket-driven Stateless Workers
-- Worker 只处理当前原子任务
-- 正式信息交接通过工单、事件和产物引用完成
-- 禁止平级 Agent 黑箱式自由对话
+- `POST /api/v1/commands/project-init`
+- `GET /api/v1/projections/dashboard`
+- `GET /api/v1/projections/inbox`
+- `GET /api/v1/projections/review-room/{review_pack_id}`
+- `GET /api/v1/events/stream?after={cursor}`
 
-### 3. Context Compiler
-- 将 Ticket、约束、Artifact、检索结果编译为执行包
-- 通过 `CompileRequest -> CompiledContextBundle` 管理上下文
-- 支持基于任务类型的差异化压缩策略
+首轮命令回执已真实返回：
 
-### 4. Maker-Checker Review
-- 重要产物不能由 Maker 直接进入主干
-- Checker 负责对抗性、证据导向的结构化审查
-- 反复打回达到阈值时触发熔断或升级
+- `command_id`
+- `idempotency_key`
+- `status`
+- `received_at`
+- `reason`
+- `causation_hint`
 
-### 5. Board Gate
-- 视觉里程碑、预算异常、关键升级事项进入董事会审批
-- 董事会面向的是 `Board Review Pack`
-- 原始编译上下文只作为高级调试信息存在
+## 运行方式
 
-### 6. Boardroom UI
-- 不是聊天窗口
-- 不是桌宠/办公室动画
-- 是 projection-first 的治理控制台
+在本地安装 Python 3.12 后：
 
-## 当前状态
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .[dev]
+uvicorn app.main:app --reload
+```
 
-当前仓库处于 **设计定稿 + 项目启动前** 阶段。
+测试命令：
 
-已完成：
+```bash
+cd backend
+pytest
+```
 
-- 总体 feature 约束整理
-- 消息总线设计
-- Context Compiler 设计
-- Meeting Room 协议设计
-- Boardroom UI 设计
-- Boardroom 数据契约设计
+默认数据库路径：
 
-当前尚未承诺：
+- `backend/data/boardroom_os.db`
 
-- 生产可用
-- 完整模型路由编排
-- 完整向量检索
-- 完整可视化前端实现
+也可以通过环境变量覆盖：
 
-更准确地说，这个仓库目前是 **Boardroom OS 的 RFC / PRD / API 契约集合**，用于启动后续实现。
+- `BOARDROOM_OS_DB_PATH`
 
 ## 文档导航
 
@@ -113,62 +118,16 @@ Boardroom OS 试图用一套更工程化的方式处理这个问题：
 - 同步：REST + SSE
 - 存储：控制面元数据进 SQLite，产物与预览走文件系统引用
 
-## MVP 范围
+## MVP 仍然方向
 
-首个可运行版本优先打通一条最小闭环：
+当前后端切片只打通最小控制面闭环。后续仍按既定顺序推进：
 
-- `project-init`
-- event store
-- projection API
-- SSE 事件流
-- Context Compiler 骨架
-- Worker 执行链骨架
-- Maker-Checker 一次闭环
-- Board Review Pack 一次审批链路
-- Boardroom UI 最小控制面
-
-## 明确不做
-
-至少在 MVP 阶段，不做以下内容：
-
-- 聊天主界面
-- 动画桌宠 / 办公室可视化表演
-- 复杂首页 DAG 画布
-- Meeting Room 专用 UI
-- 重型 ORM 驱动的数据层
-- 为了“看起来聪明”而超出文档约束的功能发散
-
-## 开源协作
-
-Boardroom OS 计划作为 GitHub 开源项目推进。
-
-希望它具备以下特征：
-
-- clone 后容易理解
-- 文档和代码边界清晰
-- 架构约束明确
-- 适合人类与 AI 协作开发
-
-后续实现阶段将补充：
-
-- `CONTRIBUTING.md`
-- `CHANGELOG.md`
-- CI 骨架
-- 统一版本入口
-
-## 版本状态
-
-计划起始版本：
-
-- `0.1.0`
-
-当前建议阶段标记：
-
-- `pre-alpha`
-
-## License
-
-许可证尚未最终确认。
+- 投影 reducer 继续扩展
+- ticket / review / approval 状态机
+- Context Compiler 骨架接入
+- Worker / Checker 执行链
+- Board Review Pack 与审批命令
+- 最小 Boardroom UI
 
 ## 项目哲学
 
@@ -183,3 +142,4 @@ Boardroom OS 默认相信：
 最终目标不是做一个“会聊天的 Agent 项目”，而是做一个：
 
 **可推进、可治理、可交付的 Agent Operating System。**
+

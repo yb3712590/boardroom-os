@@ -1,4 +1,4 @@
-# Boardroom OS
+﻿# Boardroom OS
 
 > Event-sourced Agent Governance.
 
@@ -15,44 +15,83 @@ It is designed around a simple model:
 - key milestones go through explicit approval gates
 - all state changes remain auditable through events and projections
 
-## What It Is
+## Current Code State
 
-Boardroom OS is not:
+This repository is no longer design-only. It now contains **design documents plus the first runnable backend slice**.
 
-- a chat-first agent shell
-- an animated AI office demo
-- a loose multi-agent group chat
+Implemented code lives in [backend/](backend/). The current backend slice includes:
 
-It is a control-plane-oriented system for governed agent execution.
+- FastAPI app bootstrap
+- SQLite control-plane storage with `WAL`
+- backend-enforced `SYSTEM_INITIALIZED` idempotency
+- `POST /api/v1/commands/project-init`
+- `GET /api/v1/projections/dashboard`
+- `GET /api/v1/projections/inbox`
+- `GET /api/v1/projections/review-room/{review_pack_id}` reserved route, currently returning `404`
+- `GET /api/v1/events/stream?after={cursor}` SSE stream
+- real `CommandAckEnvelope`
+- minimal `events`, `workflow_projection`, and `approval_projection` schema
+- API and reducer test scaffolding
 
-## Core Ideas
+## Not Implemented Yet
 
-- Event log as source of truth
-- Projection-first runtime state
-- Ticket-driven stateless workers
-- Context Compiler for deterministic context assembly
-- Maker-Checker internal review
-- Board Gate for explicit human approval
-- Boardroom UI as a governance console
+The following are still pending or stubbed:
 
-## Current Status
+- CEO tick scheduler
+- ticket pool and lease protocol
+- worker execution chain
+- Maker-Checker review loop
+- board approval commands
+- full Review Room projection content
+- Context Compiler execution
+- FTS / vector retrieval
+- React Boardroom UI
 
-This repository is currently in the design-finalization and bootstrap stage.
+## Implemented Contracts
 
-What exists now:
+The first backend slice already locks the route names and API boundaries:
 
-- feature constraints
-- workflow bus design
-- Context Compiler design
-- Meeting Room protocol design
-- Boardroom UI design
-- Boardroom data contracts
+- `POST /api/v1/commands/project-init`
+- `GET /api/v1/projections/dashboard`
+- `GET /api/v1/projections/inbox`
+- `GET /api/v1/projections/review-room/{review_pack_id}`
+- `GET /api/v1/events/stream?after={cursor}`
 
-This repository should currently be understood as:
+The command acknowledgement is already real and returns:
 
-**RFC + PRD + API contract set for Boardroom OS**
+- `command_id`
+- `idempotency_key`
+- `status`
+- `received_at`
+- `reason`
+- `causation_hint`
 
-It is not production-ready yet.
+## Local Run
+
+After installing Python 3.12 locally:
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .[dev]
+uvicorn app.main:app --reload
+```
+
+Run tests with:
+
+```bash
+cd backend
+pytest
+```
+
+Default database path:
+
+- `backend/data/boardroom_os.db`
+
+Override with:
+
+- `BOARDROOM_OS_DB_PATH`
 
 ## Document Index
 
@@ -72,51 +111,16 @@ It is not production-ready yet.
 - Sync: REST + SSE
 - Storage: SQLite for control-plane metadata, filesystem references for larger artifacts
 
-## MVP Direction
+## Near-Term MVP Direction
 
-The first runnable slice aims to include:
+This slice only establishes the first control-plane loop. The next implementation layers still follow the written design:
 
-- project initialization
-- event store
-- projection APIs
-- SSE event stream
+- richer projection reducer
+- ticket / review / approval state machines
 - Context Compiler skeleton
-- worker execution skeleton
-- one Maker-Checker loop
-- one Board review loop
-- a minimal Boardroom UI shell
-
-## Non-Goals for MVP
-
-- chat-first UI
-- animated office metaphors
-- complex homepage DAG rendering
-- dedicated Meeting Room UI
-- heavy ORM-based persistence
-- speculative features outside the written design contracts
-
-## Open Source Direction
-
-Boardroom OS is intended to become a GitHub-friendly open-source base project:
-
-- easy to clone
-- easy to understand
-- explicit in architectural boundaries
-- suitable for human + AI collaboration
-
-## Versioning
-
-Planned starting version:
-
-- `0.1.0`
-
-Suggested current stage:
-
-- `pre-alpha`
-
-## License
-
-License is not finalized yet.
+- worker / checker execution chain
+- Board Review Pack and decision commands
+- minimal Boardroom UI
 
 ## Philosophy
 
@@ -134,3 +138,4 @@ The goal is not “an agent that talks a lot”.
 The goal is:
 
 **an agent operating system that can be governed, reviewed, and shipped**
+

@@ -516,3 +516,73 @@
 ### Likely Next Discussion
 - Refresh README once the new implementation repo exists and real project structure, setup commands, and CI details land.
 - Decide final license before public release.
+
+## 2026-03-28T04:10:00+08:00
+
+### Session Context
+- User clarified that implementation should start directly in the current `boardroom-os` repo even though the actual repository state only contained design documents.
+- The implementation target for this round was the first runnable backend vertical slice, not frontend work.
+
+### Key Delivery Landed
+- Added a new `backend/` implementation root for the first executable control-plane slice.
+- Implemented a FastAPI backend with these routes:
+  - `POST /api/v1/commands/project-init`
+  - `GET /api/v1/projections/dashboard`
+  - `GET /api/v1/projections/inbox`
+  - `GET /api/v1/projections/review-room/{review_pack_id}`
+  - `GET /api/v1/events/stream?after={cursor}`
+- Implemented SQLite bootstrap with:
+  - `journal_mode=WAL`
+  - `busy_timeout`
+  - explicit transaction boundaries
+- Implemented event-store-backed idempotency rule so `SYSTEM_INITIALIZED` can only be committed once.
+- Implemented real `CommandAckEnvelope` with:
+  - `command_id`
+  - `idempotency_key`
+  - `status`
+  - `received_at`
+  - `reason`
+  - `causation_hint`
+- Implemented duplicate detection for identical `project-init` payloads and returns `DUPLICATE` consistently.
+- Implemented minimal reducer flow from event log into `workflow_projection`.
+- Reserved the `review-room` route name and contract boundary; current behavior is explicit `404` because no review packs are materialized yet.
+
+### Files Added Or Updated
+- `D:\Projects\boardroom-os\backend\pyproject.toml`
+- `D:\Projects\boardroom-os\backend\app\...`
+- `D:\Projects\boardroom-os\backend\tests\...`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Current Code State
+- The repo is no longer design-only.
+- The first runnable backend slice now exists, but it is still intentionally narrow.
+- Landed persistence tables are:
+  - `events`
+  - `workflow_projection`
+  - `approval_projection`
+- Landed event types actually used in code are:
+  - `SYSTEM_INITIALIZED`
+  - `BOARD_DIRECTIVE_RECEIVED`
+  - `WORKFLOW_CREATED`
+
+### Still Stub / Not Implemented
+- CEO tick scheduler
+- ticket lifecycle and lease protocol
+- worker execution chain
+- Maker-Checker loop
+- board approval commands
+- Board Review Pack generation
+- full review-room projection
+- Context Compiler execution
+- frontend UI
+
+### Verification Notes
+- Test files were added for API behavior and reducer replay.
+- Local test execution could not be completed in this environment because no runnable Python interpreter / pytest executable was available from the workspace shell.
+
+### Likely Next Discussion
+- Extend the event model beyond `project-init` into approval and ticket flows.
+- Add real `review-room` projection and board decision commands without renaming current routes.
+- Introduce `ticket_projection` and the next reducer layer.
