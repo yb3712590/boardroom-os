@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from app.contracts.commands import DeveloperInspectorRefs
+
 from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     build_compile_request,
     compile_and_persist_execution_artifacts,
     compile_audit_artifacts,
     compile_execution_package,
+    export_latest_compile_artifacts_to_developer_inspector,
 )
 
 
@@ -179,3 +182,37 @@ def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(clie
     assert latest_manifest["payload"]["source_log"][0]["status"] == "USED"
     assert latest_manifest["payload"]["degradation"]["warnings"]
     assert repository.get_compile_manifest(latest_manifest["compile_id"]) is not None
+
+
+def test_export_latest_compile_artifacts_to_developer_inspector_writes_real_persisted_payloads(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    developer_inspector_store = client.app.state.developer_inspector_store
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+
+    compiled_artifacts = compile_and_persist_execution_artifacts(repository, ticket)
+    persisted = export_latest_compile_artifacts_to_developer_inspector(
+        repository,
+        developer_inspector_store,
+        "tkt_compile_001",
+        DeveloperInspectorRefs(
+            compiled_context_bundle_ref="ctx://compile/tkt_compile_001",
+            compile_manifest_ref="manifest://compile/tkt_compile_001",
+        ),
+    )
+
+    bundle_payload = developer_inspector_store.read_json("ctx://compile/tkt_compile_001")
+    manifest_payload = developer_inspector_store.read_json("manifest://compile/tkt_compile_001")
+
+    assert len(persisted) == 2
+    assert bundle_payload is not None
+    assert manifest_payload is not None
+    assert bundle_payload["meta"]["bundle_id"] == compiled_artifacts.compiled_context_bundle.meta.bundle_id
+    assert manifest_payload["compile_meta"]["compile_id"] == compiled_artifacts.compile_manifest.compile_meta.compile_id
+    assert manifest_payload["compile_meta"]["bundle_id"] == bundle_payload["meta"]["bundle_id"]

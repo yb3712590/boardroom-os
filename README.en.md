@@ -38,7 +38,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/ticket-start` for moving the latest node ticket into execution
 - `POST /api/v1/commands/ticket-fail` for explicit worker failure reporting plus minimal retry creation
 - `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
-- optional developer inspector JSON materialization from `ticket-complete -> review_request` for `compiled_context_bundle` and `compile_manifest`
+- `ticket-complete -> review_request` now only declares `developer_inspector_refs`; the review-room inspector files are exported from that ticket's real persisted minimal compile artifacts, and the companion projection stays honestly `partial` when those artifacts do not exist yet
 - seeded persisted worker roster for the minimal executor pool
 - `POST /api/v1/commands/scheduler-tick` for timeout handling, retry creation, and expired-lease dispatch using persisted roster by default
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros

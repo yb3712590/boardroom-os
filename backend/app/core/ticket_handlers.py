@@ -32,6 +32,7 @@ from app.core.constants import (
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
 )
+from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
@@ -148,40 +149,6 @@ def _build_review_pack(
     }
 
 
-def _persist_developer_inspector_payloads(
-    developer_inspector_store: DeveloperInspectorStore,
-    payload: TicketCompletedCommand,
-) -> list[PersistedDeveloperInspectorArtifact]:
-    review_request = payload.review_request
-    if review_request is None or review_request.developer_inspector_payloads is None:
-        return []
-
-    refs = review_request.developer_inspector_refs
-    if refs is None:
-        return []
-
-    persisted: list[PersistedDeveloperInspectorArtifact] = []
-    if (
-        refs.compiled_context_bundle_ref is not None
-        and review_request.developer_inspector_payloads.compiled_context_bundle is not None
-    ):
-        persisted.append(
-            developer_inspector_store.write_json(
-                refs.compiled_context_bundle_ref,
-                review_request.developer_inspector_payloads.compiled_context_bundle,
-            )
-        )
-    if (
-        refs.compile_manifest_ref is not None
-        and review_request.developer_inspector_payloads.compile_manifest is not None
-    ):
-        persisted.append(
-            developer_inspector_store.write_json(
-                refs.compile_manifest_ref,
-                review_request.developer_inspector_payloads.compile_manifest,
-            )
-        )
-    return persisted
 
 
 def _normalized_failure_detail(failure_detail: dict | None) -> dict:
@@ -1131,14 +1098,20 @@ def handle_ticket_completed(
             causation_hint = f"ticket:{payload.ticket_id}"
             if payload.review_request is not None:
                 if (
-                    payload.review_request.developer_inspector_payloads is not None
+                    payload.review_request.developer_inspector_refs is not None
                     and developer_inspector_store is None
                 ):
-                    raise RuntimeError("Developer inspector store is required to persist inspector payloads.")
-                if developer_inspector_store is not None:
-                    persisted_artifacts = _persist_developer_inspector_payloads(
+                    raise RuntimeError("Developer inspector store is required to export inspector artifacts.")
+                if (
+                    developer_inspector_store is not None
+                    and payload.review_request.developer_inspector_refs is not None
+                ):
+                    persisted_artifacts = export_latest_compile_artifacts_to_developer_inspector(
+                        repository,
                         developer_inspector_store,
-                        payload,
+                        payload.ticket_id,
+                        payload.review_request.developer_inspector_refs,
+                        connection=connection,
                     )
                 approval = repository.create_approval_request(
                     connection,

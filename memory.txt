@@ -911,3 +911,51 @@
 
 ### Likely Next Step
 - Replace the ad hoc `developer_inspector_payloads` write path with a real minimal Context Compiler producer so review-pack inspector artifacts come from an actual compile run instead of manual ticket-complete payload injection.
+
+## 2026-03-29T01:57:56.0271110+08:00
+
+### Session Context
+- User asked to replace the ad hoc `developer_inspector_payloads` write path with a real minimal Context Compiler producer so review-pack inspector artifacts come from an actual compile run.
+
+### Design/Code Gap Identified
+- Runtime already persisted real minimal `compiled_context_bundle` and `compile_manifest` rows in SQLite.
+- Review-pack developer inspector files were still materialized from manual `ticket-complete -> review_request.developer_inspector_payloads` JSON injection instead of those real persisted compile artifacts.
+
+### Slice Landed
+- Removed `developer_inspector_payloads` from the review-request command contract so callers can no longer inject fake compiler JSON through `ticket-complete`.
+- Added `export_latest_compile_artifacts_to_developer_inspector(...)` in the minimal Context Compiler boundary.
+- `ticket-complete` now exports review-pack inspector files from the latest persisted compile bundle / manifest for the same ticket when matching refs are provided.
+- If the ticket has no persisted compile artifacts yet, review-pack creation still succeeds and the review-room developer-inspector projection remains honestly `partial`.
+- When both bundle and manifest are present for export, the exporter now validates that they belong to the same persisted compile lineage instead of mixing mismatched rows.
+
+### New or Adjusted Boundaries
+- `review_request.developer_inspector_refs` stays as the review-pack contract boundary.
+- Developer inspector filesystem payloads now have one allowed source of truth: persisted compile audit artifacts already written by the minimal Context Compiler path.
+- `ticket-complete` no longer accepts raw compiler payload bodies from external callers.
+
+### Still Mock / Stub
+- Artifact hydration beyond reference descriptors
+- Retrieval, cache reuse, and richer provenance in the Context Compiler
+- Frontend developer inspector UI
+- Automatic generation of `developer_inspector_refs`
+
+### Verification
+- Added targeted compile/export and API regression coverage for:
+  - exporting real persisted compile artifacts into the developer inspector store
+  - review-room developer-inspector `ready` state backed by a real compile before `ticket-complete`
+  - legacy `developer_inspector_payloads` rejection via `422`
+  - invalid developer inspector ref rejection via `422`
+- Tried to run local pytest, but the current session still has no usable Python interpreter on PATH beyond the inaccessible WindowsApps stub, so runtime execution verification could not be completed here.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\contracts\commands.py`
+- `D:\Projects\boardroom-os\backend\app\core\context_compiler.py`
+- `D:\Projects\boardroom-os\backend\app\core\ticket_handlers.py`
+- `D:\Projects\boardroom-os\backend\tests\test_context_compiler.py`
+- `D:\Projects\boardroom-os\backend\tests\test_api.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Add a small runtime or approval-level signal that tells the review pack whether the referenced compile artifacts are stale relative to the latest ticket attempt, without widening the public read surface.

@@ -5,7 +5,7 @@ import json
 import sqlite3
 from typing import Any
 
-from app.contracts.commands import TicketEscalationPolicy
+from app.contracts.commands import DeveloperInspectorRefs, TicketEscalationPolicy
 from app.contracts.runtime import (
     AtomicContextBlock,
     AtomicContextBundle,
@@ -46,6 +46,10 @@ from app.contracts.runtime import (
 )
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
+from app.core.developer_inspector import (
+    DeveloperInspectorStore,
+    PersistedDeveloperInspectorArtifact,
+)
 from app.db.repository import ControlPlaneRepository
 
 MINIMAL_CONTEXT_COMPILER_VERSION = "context-compiler.min.v1"
@@ -449,6 +453,77 @@ def compile_audit_artifacts(
         compile_manifest=compile_manifest,
         compiled_execution_package=compiled_execution_package,
     )
+
+
+
+def _validate_matching_compiled_audit_artifacts(
+    bundle_row: dict[str, Any],
+    manifest_row: dict[str, Any],
+) -> None:
+    bundle_payload = bundle_row["payload"]
+    manifest_payload = manifest_row["payload"]
+    bundle_id = str(bundle_row["bundle_id"])
+    compile_request_id = str(bundle_row["compile_request_id"])
+    ticket_id = str(bundle_row["ticket_id"])
+
+    if str(manifest_row["bundle_id"]) != bundle_id:
+        raise RuntimeError("Latest compile manifest does not match the latest compiled context bundle.")
+    if str(manifest_row["compile_request_id"]) != compile_request_id:
+        raise RuntimeError("Latest compile manifest uses a different compile request than the latest bundle.")
+    if str(manifest_row["ticket_id"]) != ticket_id:
+        raise RuntimeError("Latest compile manifest belongs to a different ticket than the latest bundle.")
+    if bundle_payload["meta"]["bundle_id"] != bundle_id:
+        raise RuntimeError("Compiled context bundle payload does not match its persisted bundle id.")
+    if bundle_payload["meta"]["compile_request_id"] != compile_request_id:
+        raise RuntimeError("Compiled context bundle payload does not match its persisted compile request id.")
+    if manifest_payload["compile_meta"]["bundle_id"] != bundle_id:
+        raise RuntimeError("Compile manifest payload does not match the persisted bundle id.")
+    if manifest_payload["compile_meta"]["compile_request_id"] != compile_request_id:
+        raise RuntimeError("Compile manifest payload does not match the persisted compile request id.")
+    if manifest_payload["compile_meta"]["ticket_id"] != ticket_id:
+        raise RuntimeError("Compile manifest payload does not match the persisted ticket id.")
+
+
+def export_latest_compile_artifacts_to_developer_inspector(
+    repository: ControlPlaneRepository,
+    developer_inspector_store: DeveloperInspectorStore,
+    ticket_id: str,
+    refs: DeveloperInspectorRefs,
+    connection: sqlite3.Connection | None = None,
+) -> list[PersistedDeveloperInspectorArtifact]:
+    latest_bundle = repository.get_latest_compiled_context_bundle_by_ticket(
+        ticket_id,
+        connection=connection,
+    )
+    latest_manifest = repository.get_latest_compile_manifest_by_ticket(
+        ticket_id,
+        connection=connection,
+    )
+
+    if (
+        refs.compiled_context_bundle_ref is not None
+        and refs.compile_manifest_ref is not None
+        and latest_bundle is not None
+        and latest_manifest is not None
+    ):
+        _validate_matching_compiled_audit_artifacts(latest_bundle, latest_manifest)
+
+    persisted: list[PersistedDeveloperInspectorArtifact] = []
+    if refs.compiled_context_bundle_ref is not None and latest_bundle is not None:
+        persisted.append(
+            developer_inspector_store.write_json(
+                refs.compiled_context_bundle_ref,
+                latest_bundle["payload"],
+            )
+        )
+    if refs.compile_manifest_ref is not None and latest_manifest is not None:
+        persisted.append(
+            developer_inspector_store.write_json(
+                refs.compile_manifest_ref,
+                latest_manifest["payload"],
+            )
+        )
+    return persisted
 
 
 def compile_execution_package(

@@ -38,7 +38,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-start` 把最新 ticket / node 推进到执行态
 - `POST /api/v1/commands/ticket-fail` 真实落地主动失败上报与最小 retry create
 - `POST /api/v1/commands/ticket-complete` 用结构化 ticket 结果触发上游审批生产
-- `ticket-complete -> review_request` 现已支持把 `compiled_context_bundle` / `compile_manifest` 以 JSON 形式落到文件系统，并通过 review-room 下的 inspector 路径读取
+- `ticket-complete -> review_request` 现在只负责声明 `developer_inspector_refs`；review-room 下的 inspector 文件来自该 ticket 已持久化的真实最小 compile 产物，若真实产物尚未存在则 companion projection 会诚实返回 `partial`
 - 最小持久化 worker roster / executor pool
 - `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于 timeout、retry create 与 expired lease dispatch
 - dashboard `workforce_summary` 已接入最小真实投影
