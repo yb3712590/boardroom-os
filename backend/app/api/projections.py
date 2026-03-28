@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.contracts.projections import (
     DashboardProjectionEnvelope,
+    IncidentDetailProjectionEnvelope,
     InboxProjectionEnvelope,
     ReviewRoomDeveloperInspectorProjectionEnvelope,
     ReviewRoomProjectionEnvelope,
@@ -11,6 +12,7 @@ from app.contracts.projections import (
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.projections import (
     build_dashboard_projection,
+    build_incident_detail_projection,
     build_inbox_projection,
     build_review_room_developer_inspector_projection,
     build_review_room_projection,
@@ -30,6 +32,18 @@ def get_dashboard(request: Request) -> DashboardProjectionEnvelope:
 def get_inbox(request: Request) -> InboxProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return build_inbox_projection(repository)
+
+
+@router.get("/incidents/{incident_id}", response_model=IncidentDetailProjectionEnvelope)
+def get_incident_detail(request: Request, incident_id: str) -> IncidentDetailProjectionEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    projection = build_incident_detail_projection(repository, incident_id)
+    if projection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Incident '{incident_id}' was not found.",
+        )
+    return projection
 
 
 @router.get("/review-room/{review_pack_id}", response_model=ReviewRoomProjectionEnvelope)

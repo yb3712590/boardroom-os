@@ -93,6 +93,23 @@ CREATE TABLE IF NOT EXISTS employee_projection (
     version INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS incident_projection (
+    incident_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    node_id TEXT,
+    ticket_id TEXT,
+    incident_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    severity TEXT,
+    fingerprint TEXT NOT NULL,
+    circuit_breaker_state TEXT,
+    opened_at TEXT NOT NULL,
+    closed_at TEXT,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS compiled_context_bundle (
     bundle_id TEXT PRIMARY KEY,
     compile_request_id TEXT NOT NULL,
@@ -129,4 +146,13 @@ ON compile_manifest(ticket_id);
 
 CREATE INDEX IF NOT EXISTS idx_compile_manifest_compile_request_id
 ON compile_manifest(compile_request_id);
+
+CREATE INDEX IF NOT EXISTS idx_incident_projection_workflow_id
+ON incident_projection(workflow_id);
+
+CREATE INDEX IF NOT EXISTS idx_incident_projection_status
+ON incident_projection(status);
+
+CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint
+ON incident_projection(fingerprint);
 """

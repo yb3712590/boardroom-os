@@ -6,6 +6,9 @@ from app.contracts.projections import (
     DashboardProjectionData,
     DashboardProjectionEnvelope,
     EventStreamPreviewItem,
+    IncidentDetailProjectionData,
+    IncidentDetailProjectionEnvelope,
+    IncidentProjectionItem,
     InboxCountsProjection,
     InboxItemProjection,
     InboxProjectionData,
@@ -73,6 +76,8 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
     active_workflow = repository.get_active_workflow()
     cursor, projection_version = repository.get_cursor_and_version()
     pending_approvals = repository.count_open_approvals()
+    open_incidents = repository.count_open_incidents()
+    open_circuit_breakers = repository.count_open_circuit_breakers()
     active_tickets = repository.count_active_tickets()
     blocked_nodes = repository.count_blocked_nodes()
     blocked_node_ids = repository.list_blocked_node_ids()
@@ -124,8 +129,8 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 token_burn_rate_5m=0,
                 active_tickets=active_tickets,
                 blocked_nodes=blocked_nodes,
-                open_incidents=0,
-                open_circuit_breakers=0,
+                open_incidents=open_incidents,
+                open_circuit_breakers=open_circuit_breakers,
                 provider_health_summary="UNKNOWN",
             ),
             pipeline_summary=PipelineSummaryProjection(
@@ -135,7 +140,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
             ),
             inbox_counts=InboxCountsProjection(
                 approvals_pending=pending_approvals,
-                incidents_pending=0,
+                incidents_pending=open_incidents,
                 budget_alerts=0,
                 provider_alerts=0,
             ),
@@ -170,6 +175,30 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
                 badges=payload.get("badges", []),
             )
         )
+    for incident in repository.list_open_incidents():
+        items.append(
+            InboxItemProjection(
+                inbox_item_id=f"inbox_{incident['incident_id']}",
+                workflow_id=incident["workflow_id"],
+                item_type="INCIDENT_ESCALATION",
+                priority=str(incident.get("severity") or "high"),
+                status=incident["status"],
+                created_at=incident["opened_at"],
+                sla_due_at=None,
+                title=f"Repeated timeout escalation in {incident.get('node_id') or 'unknown-node'}",
+                summary=(
+                    f"Node {incident.get('node_id') or 'unknown-node'} hit repeated runtime timeout "
+                    "threshold and opened a circuit breaker."
+                ),
+                source_ref=incident["incident_id"],
+                route_target=RouteTarget(
+                    view="incident_detail",
+                    incident_id=incident["incident_id"],
+                ),
+                badges=["runtime_timeout", "circuit_breaker"],
+            )
+        )
+    items.sort(key=lambda item: item.created_at, reverse=True)
     return InboxProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
         generated_at=now_local(),
@@ -257,5 +286,39 @@ def build_review_room_developer_inspector_projection(
             compiled_context_bundle=compiled_context_bundle,
             compile_manifest=compile_manifest,
             availability=availability,
+        ),
+    )
+
+
+def build_incident_detail_projection(
+    repository: ControlPlaneRepository,
+    incident_id: str,
+) -> IncidentDetailProjectionEnvelope | None:
+    repository.initialize()
+    incident = repository.get_incident_projection(incident_id)
+    if incident is None:
+        return None
+
+    cursor, projection_version = repository.get_cursor_and_version()
+    return IncidentDetailProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=now_local(),
+        projection_version=projection_version,
+        cursor=cursor,
+        data=IncidentDetailProjectionData(
+            incident=IncidentProjectionItem(
+                incident_id=incident["incident_id"],
+                workflow_id=incident["workflow_id"],
+                node_id=incident.get("node_id"),
+                ticket_id=incident.get("ticket_id"),
+                incident_type=incident["incident_type"],
+                status=incident["status"],
+                severity=incident.get("severity"),
+                fingerprint=incident["fingerprint"],
+                circuit_breaker_state=incident.get("circuit_breaker_state"),
+                opened_at=incident["opened_at"],
+                closed_at=incident.get("closed_at"),
+                payload=incident.get("payload") or {},
+            )
         ),
     )

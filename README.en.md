@@ -27,13 +27,14 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/project-init`
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
+- `GET /api/v1/projections/incidents/{incident_id}` for minimal incident detail projection
 - `GET /api/v1/projections/review-room/{review_pack_id}` real projection for persisted approval packs
 - `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` for persisted developer inspector JSON artifacts
 - `GET /api/v1/events/stream?after={cursor}` SSE stream
 - real `CommandAckEnvelope`
-- minimal `events`, `workflow_projection`, `ticket_projection`, `node_projection`, `approval_projection`, and `employee_projection` schema
+- minimal `events`, `workflow_projection`, `ticket_projection`, `node_projection`, `approval_projection`, `employee_projection`, and `incident_projection` schema
 - minimal persisted `compiled_context_bundle` and `compile_manifest` audit tables
-- `POST /api/v1/commands/ticket-create` for full control-plane ticket creation
+- `POST /api/v1/commands/ticket-create` for full control-plane ticket creation, including explicit lease timeout plus repeated-timeout escalation and backoff policy
 - `POST /api/v1/commands/ticket-lease` for explicit ticket lease acquisition and renewal
 - `POST /api/v1/commands/ticket-start` for moving the latest node ticket into execution
 - `POST /api/v1/commands/ticket-heartbeat` for explicit liveness heartbeats while a ticket is already executing
@@ -41,8 +42,10 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
 - `ticket-complete -> review_request` now only declares `developer_inspector_refs`; the review-room inspector files are exported from that ticket's real persisted minimal compile artifacts, and the companion projection stays honestly `partial` when those artifacts do not exist yet
 - seeded persisted worker roster for the minimal executor pool
-- `POST /api/v1/commands/scheduler-tick` for total execution timeout, heartbeat timeout, retry creation, and expired-lease dispatch using persisted roster by default
+- `POST /api/v1/commands/scheduler-tick` for total execution timeout, heartbeat timeout, timeout-retry backoff, repeated-timeout incident / circuit-breaker escalation, and expired-lease dispatch using persisted roster by default
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
+- dashboard / inbox incident and circuit-breaker counts are now backed by real projections instead of fixed zeros
+- repeated runtime timeouts now open a minimal incident and circuit breaker on the affected node and block further automatic dispatch on that node
 - independent scheduler runner via `python -m app.scheduler_runner`
 - runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
 - FastAPI can now also host an optional in-process background scheduler loop behind an explicit env flag; it stays off by default so app startup behavior does not change unless requested
@@ -58,8 +61,8 @@ The following are still pending or stubbed:
 
 - full compiled execution package delivery and external worker runtime handoff beyond the in-process minimal compiler boundary
 - employee hire / replace / freeze lifecycle beyond the seeded roster
-- incident / circuit-breaker escalation
-- cancel / richer retry policy / broader incident states beyond the current minimal loop
+- cancel / richer retry policy / incident recovery and close state beyond the current minimal loop
+- external AI provider quota / outage pause-and-resume governance
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
 - non-reference-only Context Compiler execution with artifact hydration, cache reuse, and richer provenance
@@ -74,6 +77,7 @@ The first backend slice already locks the route names and API boundaries:
 - `POST /api/v1/commands/project-init`
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
+- `GET /api/v1/projections/incidents/{incident_id}`
 - `GET /api/v1/projections/review-room/{review_pack_id}`
 - `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector`
 - `GET /api/v1/events/stream?after={cursor}`
@@ -167,7 +171,7 @@ Override with:
 This slice only establishes the first control-plane loop. The next implementation layers still follow the written design:
 
 - richer projection reducer
-- ticket cancel / richer retry / incident state machines
+- ticket cancel / richer retry / incident recovery state machines
 - expansion from the current reference-only compiler boundary to full compilation with artifact hydration, retrieval, and cache reuse
 - worker / checker execution chain
 - Board Review Pack and decision commands
@@ -189,4 +193,3 @@ The goal is not 鈥渁n agent that talks a lot鈥?
 The goal is:
 
 **an agent operating system that can be governed, reviewed, and shipped**
-

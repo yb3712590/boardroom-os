@@ -12,6 +12,8 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
@@ -152,9 +154,13 @@ def _ticket_create_payload(
     node_id: str = "node_homepage_visual",
     attempt_no: int = 1,
     role_profile_ref: str = "ui_designer_primary",
+    lease_timeout_sec: int = 600,
     retry_budget: int = 2,
     on_timeout: str = "retry",
     on_schema_error: str = "retry",
+    timeout_repeat_threshold: int = 2,
+    timeout_backoff_multiplier: float = 1.5,
+    timeout_backoff_cap_multiplier: float = 2.0,
 ) -> dict:
     return {
         "ticket_id": ticket_id,
@@ -179,6 +185,7 @@ def _ticket_create_payload(
         "output_schema_version": 1,
         "allowed_tools": ["read_artifact", "write_artifact", "image_gen"],
         "allowed_write_set": ["artifacts/ui/homepage/*", "reports/review/*"],
+        "lease_timeout_sec": lease_timeout_sec,
         "retry_budget": retry_budget,
         "priority": "high",
         "timeout_sla_sec": 1800,
@@ -187,6 +194,9 @@ def _ticket_create_payload(
             "on_timeout": on_timeout,
             "on_schema_error": on_schema_error,
             "on_repeat_failure": "escalate_ceo",
+            "timeout_repeat_threshold": timeout_repeat_threshold,
+            "timeout_backoff_multiplier": timeout_backoff_multiplier,
+            "timeout_backoff_cap_multiplier": timeout_backoff_cap_multiplier,
         },
         "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
     }
@@ -281,6 +291,9 @@ def _create_and_lease_ticket(
     retry_budget: int = 2,
     on_timeout: str = "retry",
     on_schema_error: str = "retry",
+    timeout_repeat_threshold: int = 2,
+    timeout_backoff_multiplier: float = 1.5,
+    timeout_backoff_cap_multiplier: float = 2.0,
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -290,9 +303,13 @@ def _create_and_lease_ticket(
             node_id=node_id,
             attempt_no=attempt_no,
             role_profile_ref=role_profile_ref,
+            lease_timeout_sec=lease_timeout_sec,
             retry_budget=retry_budget,
             on_timeout=on_timeout,
             on_schema_error=on_schema_error,
+            timeout_repeat_threshold=timeout_repeat_threshold,
+            timeout_backoff_multiplier=timeout_backoff_multiplier,
+            timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
         ),
     )
     assert create_response.status_code == 200
@@ -324,6 +341,9 @@ def _create_lease_and_start_ticket(
     retry_budget: int = 2,
     on_timeout: str = "retry",
     on_schema_error: str = "retry",
+    timeout_repeat_threshold: int = 2,
+    timeout_backoff_multiplier: float = 1.5,
+    timeout_backoff_cap_multiplier: float = 2.0,
 ) -> None:
     _create_and_lease_ticket(
         client,
@@ -337,6 +357,9 @@ def _create_lease_and_start_ticket(
         retry_budget=retry_budget,
         on_timeout=on_timeout,
         on_schema_error=on_schema_error,
+        timeout_repeat_threshold=timeout_repeat_threshold,
+        timeout_backoff_multiplier=timeout_backoff_multiplier,
+        timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
     )
     start_response = client.post(
         "/api/v1/commands/ticket-start",
@@ -883,6 +906,10 @@ def test_scheduler_tick_times_out_executing_ticket_and_creates_retry(client, set
     assert latest_projection["status"] == TICKET_STATUS_LEASED
     assert latest_projection["lease_owner"] == "emp_frontend_2"
     assert latest_projection["retry_count"] == 1
+    assert latest_projection["timeout_sla_sec"] == 2700
+    assert latest_projection["heartbeat_timeout_sec"] == 900
+    assert repository.count_events_by_type(EVENT_INCIDENT_OPENED) == 0
+    assert repository.count_events_by_type(EVENT_CIRCUIT_BREAKER_OPENED) == 0
 
 
 def test_scheduler_tick_times_out_executing_ticket_on_missed_heartbeat(client, set_ticket_time):
@@ -939,6 +966,132 @@ def test_scheduler_tick_keeps_total_timeout_as_hard_cap_after_heartbeat_refresh(
     assert response.json()["status"] == "ACCEPTED"
     assert timeout_events[-1]["payload"]["failure_kind"] == "TIMEOUT_SLA_EXCEEDED"
     assert original_projection["status"] == TICKET_STATUS_TIMED_OUT
+
+
+def test_repeated_timeout_opens_incident_and_blocks_same_node_dispatch(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    first_timeout = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:first-timeout"),
+    )
+    assert first_timeout.status_code == 200
+    assert first_timeout.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    retried_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")["latest_ticket_id"]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    retry_start = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=retried_ticket_id),
+    )
+    assert retry_start.status_code == 200
+    assert retry_start.json()["status"] == "ACCEPTED"
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    second_timeout = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:second-timeout"),
+    )
+    assert second_timeout.status_code == 200
+    assert second_timeout.json()["status"] == "ACCEPTED"
+
+    same_node_create = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(ticket_id="tkt_visual_003", attempt_no=3),
+    )
+    assert same_node_create.status_code == 200
+    assert same_node_create.json()["status"] == "ACCEPTED"
+
+    other_node_create = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(ticket_id="tkt_other_node_001", node_id="node_docs_visual"),
+    )
+    assert other_node_create.status_code == 200
+    assert other_node_create.json()["status"] == "ACCEPTED"
+
+    set_ticket_time("2026-03-28T11:19:00+08:00")
+    third_tick = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:breaker-block"),
+    )
+
+    incident_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_INCIDENT_OPENED
+    ]
+    breaker_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_CIRCUIT_BREAKER_OPENED
+    ]
+    blocked_projection = repository.get_current_ticket_projection("tkt_visual_003")
+    other_projection = repository.get_current_ticket_projection("tkt_other_node_001")
+
+    assert third_tick.status_code == 200
+    assert third_tick.json()["status"] == "ACCEPTED"
+    assert len(incident_events) == 1
+    assert len(breaker_events) == 1
+    assert blocked_projection["status"] == TICKET_STATUS_PENDING
+    assert blocked_projection["lease_owner"] is None
+    assert other_projection["status"] == TICKET_STATUS_LEASED
+    assert other_projection["lease_owner"] == "emp_frontend_2"
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 1
+
+
+def test_incident_projection_dashboard_inbox_and_endpoint_reflect_open_timeout_incident(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:incident-first"),
+    )
+
+    repository = client.app.state.repository
+    retried_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")["latest_ticket_id"]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=retried_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:incident-second"),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    inbox_response = client.get("/api/v1/projections/inbox")
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json()["data"]["ops_strip"]["open_incidents"] == 1
+    assert dashboard_response.json()["data"]["ops_strip"]["open_circuit_breakers"] == 1
+    assert dashboard_response.json()["data"]["inbox_counts"]["incidents_pending"] == 1
+
+    assert inbox_response.status_code == 200
+    incident_items = [
+        item for item in inbox_response.json()["data"]["items"] if item["item_type"] == "INCIDENT_ESCALATION"
+    ]
+    assert len(incident_items) == 1
+    assert incident_items[0]["route_target"]["view"] == "incident_detail"
+    assert incident_items[0]["route_target"]["incident_id"] == incident_id
+
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["incident"]["incident_id"] == incident_id
+    assert incident_response.json()["data"]["incident"]["status"] == "OPEN"
+    assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "OPEN"
 
 
 def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(client, set_ticket_time):
@@ -1433,6 +1586,40 @@ def test_scheduler_timeout_stream_carries_timeout_events(client, set_ticket_time
     assert response.status_code == 200
     assert "TICKET_TIMED_OUT" in body
     assert "TICKET_RETRY_SCHEDULED" in body
+
+
+def test_timeout_incident_stream_carries_incident_and_breaker_events(client, set_ticket_time):
+    initial_cursor = client.get("/api/v1/projections/dashboard").json()["cursor"]
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:stream-incident-first"),
+    )
+
+    repository = client.app.state.repository
+    retried_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")["latest_ticket_id"]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=retried_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:stream-incident-second"),
+    )
+
+    with client.stream("GET", f"/api/v1/events/stream?after={initial_cursor}") as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "INCIDENT_OPENED" in body
+    assert "CIRCUIT_BREAKER_OPENED" in body
 
 
 def test_invalid_project_init_returns_422_without_writing_events(client):

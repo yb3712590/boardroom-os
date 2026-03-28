@@ -11,12 +11,15 @@ from typing import Any
 from app.contracts.runtime import CompileManifest, CompiledContextBundle
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
+    CIRCUIT_BREAKER_STATE_OPEN,
+    EVENT_CIRCUIT_BREAKER_OPENED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_COMPLETED,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
@@ -32,6 +35,7 @@ from app.core.constants import (
 )
 from app.core.ids import new_prefixed_id
 from app.core.reducer import (
+    rebuild_incident_projections,
     rebuild_node_projections,
     rebuild_ticket_projections,
     rebuild_workflow_projections,
@@ -77,6 +81,7 @@ class ControlPlaneRepository:
             self._ensure_ticket_projection_shape(connection)
             self._ensure_node_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
+            self._ensure_incident_projection_shape(connection)
             self._seed_employee_roster(connection)
 
     @contextmanager
@@ -308,11 +313,56 @@ class ControlPlaneRepository:
                 ),
             )
 
+    def replace_incident_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM incident_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO incident_projection (
+                    incident_id,
+                    workflow_id,
+                    node_id,
+                    ticket_id,
+                    incident_type,
+                    status,
+                    severity,
+                    fingerprint,
+                    circuit_breaker_state,
+                    opened_at,
+                    closed_at,
+                    payload_json,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["incident_id"],
+                    projection["workflow_id"],
+                    projection.get("node_id"),
+                    projection.get("ticket_id"),
+                    projection["incident_type"],
+                    projection["status"],
+                    projection.get("severity"),
+                    projection["fingerprint"],
+                    projection.get("circuit_breaker_state"),
+                    projection["opened_at"],
+                    projection.get("closed_at"),
+                    json.dumps(projection.get("payload") or {}, sort_keys=True),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
     def refresh_projections(self, connection: sqlite3.Connection) -> None:
         events = self.list_all_events(connection)
         self.replace_workflow_projections(connection, rebuild_workflow_projections(events))
         self.replace_ticket_projections(connection, rebuild_ticket_projections(events))
         self.replace_node_projections(connection, rebuild_node_projections(events))
+        self.replace_incident_projections(connection, rebuild_incident_projections(events))
 
     def get_active_workflow(self) -> dict[str, Any] | None:
         self.initialize()
@@ -382,6 +432,56 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_node_projection_row(row)
+
+    def get_incident_projection(
+        self,
+        incident_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM incident_projection WHERE incident_id = ?",
+                (incident_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_incident_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM incident_projection WHERE incident_id = ?",
+                (incident_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_incident_projection_row(row)
+
+    def get_open_incident_for_node(
+        self,
+        workflow_id: str,
+        node_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM incident_projection
+            WHERE workflow_id = ? AND node_id = ? AND status = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            LIMIT 1
+        """
+        params = (workflow_id, node_id, "OPEN")
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return self._convert_incident_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return self._convert_incident_projection_row(row)
 
     def list_employee_projections(
         self,
@@ -536,6 +636,25 @@ class ControlPlaneRepository:
             payload = json.loads(row["payload_json"])
             if payload.get("ticket_id") == ticket_id:
                 return payload
+        return None
+
+    def get_latest_ticket_terminal_event(
+        self,
+        connection: sqlite3.Connection,
+        ticket_id: str,
+    ) -> dict[str, Any] | None:
+        rows = connection.execute(
+            """
+            SELECT * FROM events
+            WHERE event_type IN (?, ?, ?)
+            ORDER BY sequence_no DESC
+            """,
+            (EVENT_TICKET_TIMED_OUT, EVENT_TICKET_FAILED, EVENT_TICKET_COMPLETED),
+        ).fetchall()
+        for row in rows:
+            converted = self._convert_event_row(row)
+            if converted.get("ticket_id") == ticket_id:
+                return converted
         return None
 
     def save_compiled_context_bundle(
@@ -739,7 +858,12 @@ class ControlPlaneRepository:
                     "category": self._event_category(converted["event_type"]),
                     "severity": self._event_severity(converted["event_type"]),
                     "message": self._event_preview_message(converted),
-                    "related_ref": converted.get("ticket_id") or converted.get("workflow_id") or converted["event_id"],
+                    "related_ref": (
+                        converted.get("incident_id")
+                        or converted.get("ticket_id")
+                        or converted.get("workflow_id")
+                        or converted["event_id"]
+                    ),
                 }
             )
         return previews
@@ -807,6 +931,63 @@ class ControlPlaneRepository:
                 (APPROVAL_STATUS_OPEN,),
             ).fetchone()
             return int(row["total"])
+
+    def count_open_incidents(self) -> int:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total FROM incident_projection WHERE status = ?",
+                ("OPEN",),
+            ).fetchone()
+            return int(row["total"])
+
+    def count_open_circuit_breakers(self) -> int:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM incident_projection
+                WHERE status = ? AND circuit_breaker_state = ?
+                """,
+                ("OPEN", CIRCUIT_BREAKER_STATE_OPEN),
+            ).fetchone()
+            return int(row["total"])
+
+    def list_open_incidents(self) -> list[dict[str, Any]]:
+        self.initialize()
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM incident_projection
+                WHERE status = ?
+                ORDER BY opened_at DESC, incident_id DESC
+                """,
+                ("OPEN",),
+            ).fetchall()
+            return [self._convert_incident_projection_row(row) for row in rows]
+
+    def has_open_circuit_breaker_for_node(
+        self,
+        workflow_id: str,
+        node_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> bool:
+        query = """
+            SELECT 1
+            FROM incident_projection
+            WHERE workflow_id = ? AND node_id = ? AND status = ? AND circuit_breaker_state = ?
+            LIMIT 1
+        """
+        params = (workflow_id, node_id, "OPEN", CIRCUIT_BREAKER_STATE_OPEN)
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return row is not None
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return row is not None
 
     def count_active_tickets(self) -> int:
         self.initialize()
@@ -1050,6 +1231,7 @@ class ControlPlaneRepository:
         converted["payload"] = payload
         converted["node_id"] = payload.get("node_id")
         converted["ticket_id"] = payload.get("ticket_id")
+        converted["incident_id"] = payload.get("incident_id")
         return converted
 
     def _convert_approval_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -1120,6 +1302,15 @@ class ControlPlaneRepository:
         converted["version"] = int(converted.get("version") or 0)
         return converted
 
+    def _convert_incident_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("opened_at", "closed_at", "updated_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["payload"] = json.loads(converted["payload_json"])
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:
             return "system"
@@ -1133,6 +1324,8 @@ class ControlPlaneRepository:
             EVENT_TICKET_TIMED_OUT,
         }:
             return "ticket"
+        if event_type in {EVENT_INCIDENT_OPENED, EVENT_CIRCUIT_BREAKER_OPENED}:
+            return "system"
         if event_type in {
             EVENT_BOARD_REVIEW_REQUIRED,
             EVENT_BOARD_REVIEW_APPROVED,
@@ -1159,8 +1352,11 @@ class ControlPlaneRepository:
             EVENT_TICKET_TIMED_OUT,
             EVENT_BOARD_REVIEW_REQUIRED,
             EVENT_BOARD_REVIEW_REJECTED,
+            EVENT_INCIDENT_OPENED,
         }:
             return "warning"
+        if event_type == EVENT_CIRCUIT_BREAKER_OPENED:
+            return "critical"
         return "debug"
 
     def _event_preview_message(self, event: dict[str, Any]) -> str:
@@ -1184,6 +1380,10 @@ class ControlPlaneRepository:
             return f"TICKET_TIMED_OUT for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_RETRY_SCHEDULED:
             return f"TICKET_RETRY_SCHEDULED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_INCIDENT_OPENED:
+            return f"INCIDENT_OPENED for {event.get('incident_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_CIRCUIT_BREAKER_OPENED:
+            return f"CIRCUIT_BREAKER_OPENED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_BOARD_REVIEW_REQUIRED:
             return "BOARD_REVIEW_REQUIRED pending board action"
         if event["event_type"] == EVENT_BOARD_REVIEW_APPROVED:
@@ -1255,6 +1455,20 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Ticket retry scheduled.",
+            }
+        if event_type == EVENT_INCIDENT_OPENED:
+            return {
+                "invalidate": ["dashboard", "inbox", "incidents"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Timeout incident opened.",
+            }
+        if event_type == EVENT_CIRCUIT_BREAKER_OPENED:
+            return {
+                "invalidate": ["dashboard", "inbox", "incidents"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Circuit breaker opened.",
             }
         if event_type == EVENT_BOARD_REVIEW_REQUIRED:
             return {
@@ -1397,6 +1611,42 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_employee_projection_role_type ON employee_projection(role_type)"
+        )
+
+    def _ensure_incident_projection_shape(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(incident_projection)").fetchall()
+        }
+        required_columns = {
+            "incident_id": "TEXT",
+            "workflow_id": "TEXT",
+            "node_id": "TEXT",
+            "ticket_id": "TEXT",
+            "incident_type": "TEXT",
+            "status": "TEXT",
+            "severity": "TEXT",
+            "fingerprint": "TEXT",
+            "circuit_breaker_state": "TEXT",
+            "opened_at": "TEXT",
+            "closed_at": "TEXT",
+            "payload_json": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE incident_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_incident_projection_status ON incident_projection(status)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_incident_projection_node_id ON incident_projection(node_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint ON incident_projection(fingerprint)"
         )
 
     def _seed_employee_roster(self, connection: sqlite3.Connection) -> None:

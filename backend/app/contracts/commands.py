@@ -7,6 +7,12 @@ from pydantic import Field, model_validator
 
 from app.contracts.common import StrictModel
 from app.core.developer_inspector import parse_developer_inspector_ref
+from app.core.constants import (
+    DEFAULT_LEASE_TIMEOUT_SEC,
+    DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER,
+    DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER,
+    DEFAULT_TIMEOUT_REPEAT_THRESHOLD,
+)
 
 
 class CommandAckStatus(StrEnum):
@@ -59,6 +65,12 @@ class TicketEscalationPolicy(StrictModel):
     on_timeout: str = Field(min_length=1)
     on_schema_error: str = Field(min_length=1)
     on_repeat_failure: str = Field(min_length=1)
+    timeout_repeat_threshold: int = Field(default=DEFAULT_TIMEOUT_REPEAT_THRESHOLD, ge=1)
+    timeout_backoff_multiplier: float = Field(default=DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER, ge=1.0)
+    timeout_backoff_cap_multiplier: float = Field(
+        default=DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER,
+        ge=1.0,
+    )
 
 
 class TicketCreateCommand(StrictModel):
@@ -76,6 +88,7 @@ class TicketCreateCommand(StrictModel):
     output_schema_version: int = Field(ge=1)
     allowed_tools: list[str]
     allowed_write_set: list[str]
+    lease_timeout_sec: int = Field(default=DEFAULT_LEASE_TIMEOUT_SEC, ge=1)
     retry_budget: int = Field(ge=0)
     priority: str = Field(min_length=1)
     timeout_sla_sec: int = Field(ge=1)

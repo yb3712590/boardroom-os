@@ -9,12 +9,15 @@ from app.core.constants import (
     BLOCKING_REASON_BOARD_REJECTED,
     BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
     BLOCKING_REASON_MODIFY_CONSTRAINTS,
+    CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_BOARD_GATE_STATE,
     DEFAULT_WORKFLOW_STAGE,
     DEFAULT_WORKFLOW_STATUS,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_OPENED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
@@ -75,6 +78,23 @@ def _base_node_projection(event: dict[str, Any], payload: dict[str, Any]) -> dic
         "node_id": payload["node_id"],
         "latest_ticket_id": payload["ticket_id"],
         "blocking_reason_code": None,
+    }
+
+
+def _base_incident_projection(event: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "incident_id": payload["incident_id"],
+        "workflow_id": event["workflow_id"],
+        "node_id": payload.get("node_id"),
+        "ticket_id": payload.get("ticket_id"),
+        "incident_type": payload.get("incident_type"),
+        "status": payload.get("status"),
+        "severity": payload.get("severity"),
+        "fingerprint": payload.get("fingerprint"),
+        "circuit_breaker_state": None,
+        "opened_at": None,
+        "closed_at": None,
+        "payload": payload,
     }
 
 
@@ -472,6 +492,49 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
                 "latest_ticket_id": ticket_id,
                 "status": NODE_STATUS_REWORK_REQUIRED,
                 "blocking_reason_code": blocking_reason,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+
+    return list(projections.values())
+
+
+def rebuild_incident_projections(events: Iterable[dict]) -> list[dict]:
+    projections: dict[str, dict[str, Any]] = {}
+
+    for event in events:
+        payload = _event_payload(event)
+        event_type = event["event_type"]
+        incident_id = payload.get("incident_id")
+        if incident_id is None:
+            continue
+
+        occurred_at = event["occurred_at"].isoformat()
+        version = event["sequence_no"]
+
+        if event_type == EVENT_INCIDENT_OPENED:
+            projections[incident_id] = {
+                **_base_incident_projection(event, payload),
+                "incident_type": payload.get("incident_type"),
+                "status": payload.get("status", "OPEN"),
+                "severity": payload.get("severity"),
+                "fingerprint": payload.get("fingerprint"),
+                "opened_at": occurred_at,
+                "closed_at": None,
+                "payload": payload,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_CIRCUIT_BREAKER_OPENED:
+            projections[incident_id] = {
+                **projections.get(incident_id, _base_incident_projection(event, payload)),
+                "workflow_id": event["workflow_id"],
+                "node_id": payload.get("node_id", projections.get(incident_id, {}).get("node_id")),
+                "ticket_id": payload.get("ticket_id", projections.get(incident_id, {}).get("ticket_id")),
+                "fingerprint": payload.get("fingerprint", projections.get(incident_id, {}).get("fingerprint")),
+                "circuit_breaker_state": payload.get("circuit_breaker_state", CIRCUIT_BREAKER_STATE_OPEN),
                 "updated_at": occurred_at,
                 "version": version,
             }

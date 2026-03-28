@@ -479,6 +479,7 @@ Recommended URI patterns:
     "artifacts/ui/homepage/*",
     "reports/review/*"
   ],
+  "lease_timeout_sec": 600,
   "retry_budget": 2,
   "priority": "high",
   "timeout_sla_sec": 1800,
@@ -486,7 +487,10 @@ Recommended URI patterns:
   "escalation_policy": {
     "on_timeout": "retry",
     "on_schema_error": "retry",
-    "on_repeat_failure": "escalate_ceo"
+    "on_repeat_failure": "escalate_ceo",
+    "timeout_repeat_threshold": 2,
+    "timeout_backoff_multiplier": 1.5,
+    "timeout_backoff_cap_multiplier": 2.0
   },
   "idempotency_key": "wf_...:node_...:attempt_1"
 }
@@ -542,7 +546,10 @@ The execution package is the final worker-facing payload after Context Compiler 
     "escalation_policy": {
       "on_timeout": "retry",
       "on_schema_error": "retry",
-      "on_repeat_failure": "escalate_ceo"
+      "on_repeat_failure": "escalate_ceo",
+      "timeout_repeat_threshold": 2,
+      "timeout_backoff_multiplier": 1.5,
+      "timeout_backoff_cap_multiplier": 2.0
     }
   }
 }
@@ -777,6 +784,13 @@ When triggered:
 3. emit escalation event
 4. attach failure snapshot
 5. route to CEO or Board depending on policy
+
+Current minimal implementation status:
+
+- repeated `TIMEOUT_SLA_EXCEEDED` and `HEARTBEAT_TIMEOUT` on the same `workflow_id + node_id` retry chain can open the breaker
+- timeout-triggered retry create may widen both total timeout and lease / heartbeat window using bounded backoff
+- the breaker currently blocks automatic dispatch on that node only
+- close / restore flow is intentionally deferred to a later slice
 
 ## 14.3 Failure Snapshot Should Include
 

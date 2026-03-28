@@ -203,20 +203,20 @@ Purpose:
         "inbox_item_id": "inbox_002",
         "workflow_id": "wf_001",
         "item_type": "INCIDENT_ESCALATION",
-        "priority": "medium",
+        "priority": "high",
         "status": "OPEN",
         "created_at": "2026-03-28T01:50:00+08:00",
         "sla_due_at": null,
-        "title": "Repeated schema failure in review loop",
-        "summary": "Maker-Checker loop hit repeated finding fingerprint threshold.",
+        "title": "Repeated runtime timeout on homepage visual node",
+        "summary": "The same node exceeded the runtime timeout threshold and opened a circuit breaker.",
         "source_ref": "inc_093",
         "route_target": {
           "view": "incident_detail",
           "incident_id": "inc_093"
         },
         "badges": [
-          "review_loop",
-          "circuit_risk"
+          "runtime_timeout",
+          "circuit_breaker"
         ]
       }
     ]
@@ -232,6 +232,47 @@ Recommended `item_type` enum:
 - `PROVIDER_ALERT`
 - `MEETING_ESCALATION`
 - `CORE_HIRE_APPROVAL`
+
+## 5.1 Incident Detail Projection
+
+Suggested endpoint:
+
+- `GET /api/v1/projections/incidents/{incident_id}`
+
+Purpose:
+
+- open a concrete escalation target from Inbox
+- show the minimal incident / circuit-breaker state without replaying raw events in the UI
+
+```json
+{
+  "schema_version": "2026-03-28.boardroom.v1",
+  "generated_at": "2026-03-28T02:00:00+08:00",
+  "projection_version": 1842,
+  "cursor": "evt_0001842",
+  "data": {
+    "incident": {
+      "incident_id": "inc_093",
+      "workflow_id": "wf_001",
+      "node_id": "node_homepage_visual",
+      "ticket_id": "tkt_ui_home_03_retry_1",
+      "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
+      "status": "OPEN",
+      "severity": "high",
+      "fingerprint": "wf_001:node_homepage_visual:runtime-timeout",
+      "circuit_breaker_state": "OPEN",
+      "opened_at": "2026-03-28T01:50:00+08:00",
+      "closed_at": null,
+      "payload": {
+        "timeout_streak_count": 2,
+        "latest_failure_kind": "TIMEOUT_SLA_EXCEEDED"
+      }
+    }
+  }
+}
+```
+
+This endpoint is intentionally minimal in the current slice. It exposes the active incident record and circuit-breaker state, but not a broader restore / close workflow yet.
 
 ## 6. Workforce Projection
 
@@ -839,6 +880,7 @@ Recommended `status` enum:
     "artifacts/ui/homepage/*",
     "reports/review/*"
   ],
+  "lease_timeout_sec": 600,
   "retry_budget": 2,
   "priority": "high",
   "timeout_sla_sec": 1800,
@@ -846,11 +888,20 @@ Recommended `status` enum:
   "escalation_policy": {
     "on_timeout": "retry",
     "on_schema_error": "retry",
-    "on_repeat_failure": "escalate_ceo"
+    "on_repeat_failure": "escalate_ceo",
+    "timeout_repeat_threshold": 2,
+    "timeout_backoff_multiplier": 1.5,
+    "timeout_backoff_cap_multiplier": 2.0
   },
   "idempotency_key": "ticket-create:wf_001:tkt_ui_home_03"
 }
 ```
+
+Current minimal runtime-governance rule:
+
+- `TIMEOUT_SLA_EXCEEDED` and `HEARTBEAT_TIMEOUT` participate in the repeated-timeout streak for the same `workflow_id + node_id` retry chain
+- timeout-triggered retry create may widen both `timeout_sla_sec` and `lease_timeout_sec`
+- once the streak reaches `timeout_repeat_threshold`, backend opens an incident, opens a circuit breaker, and stops automatic dispatch on that node
 
 ### 10.1.2 Ticket Lease
 

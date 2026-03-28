@@ -18,7 +18,13 @@ from app.contracts.commands import (
     TicketStartCommand,
 )
 from app.core.constants import (
+    CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_LEASE_TIMEOUT_SEC,
+    DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER,
+    DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER,
+    DEFAULT_TIMEOUT_REPEAT_THRESHOLD,
+    EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_OPENED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
@@ -27,12 +33,15 @@ from app.core.constants import (
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
     EVENT_TICKET_TIMED_OUT,
+    INCIDENT_STATUS_OPEN,
+    INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
+    TIMEOUT_FAMILY_RUNTIME,
 )
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
@@ -187,6 +196,91 @@ def _build_failure_payload(
     }
 
 
+TIMEOUT_FAILURE_KINDS = {"TIMEOUT_SLA_EXCEEDED", "HEARTBEAT_TIMEOUT"}
+
+
+def _resolve_ticket_lease_timeout_sec(created_spec: dict[str, Any]) -> int:
+    return int(created_spec.get("lease_timeout_sec") or DEFAULT_LEASE_TIMEOUT_SEC)
+
+
+def _resolve_timeout_repeat_threshold(created_spec: dict[str, Any]) -> int:
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    return int(escalation_policy.get("timeout_repeat_threshold") or DEFAULT_TIMEOUT_REPEAT_THRESHOLD)
+
+
+def _resolve_timeout_backoff_multiplier(created_spec: dict[str, Any]) -> float:
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    return float(
+        escalation_policy.get("timeout_backoff_multiplier") or DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER
+    )
+
+
+def _resolve_timeout_backoff_cap_multiplier(created_spec: dict[str, Any]) -> float:
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    return float(
+        escalation_policy.get("timeout_backoff_cap_multiplier")
+        or DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER
+    )
+
+
+def _resolve_timeout_fingerprint(workflow_id: str, node_id: str) -> str:
+    return f"{workflow_id}:{node_id}:{TIMEOUT_FAMILY_RUNTIME}"
+
+
+def _resolve_timeout_root_created_spec(
+    repository: ControlPlaneRepository,
+    connection,
+    created_spec: dict[str, Any],
+) -> dict[str, Any]:
+    root_spec = created_spec
+    parent_ticket_id = created_spec.get("parent_ticket_id")
+    seen_ticket_ids: set[str] = set()
+    while parent_ticket_id and parent_ticket_id not in seen_ticket_ids:
+        seen_ticket_ids.add(parent_ticket_id)
+        parent_spec = repository.get_latest_ticket_created_payload(connection, parent_ticket_id)
+        if parent_spec is None:
+            break
+        root_spec = parent_spec
+        parent_ticket_id = parent_spec.get("parent_ticket_id")
+    return root_spec
+
+
+def _apply_timeout_backoff(current_value: int, root_value: int, multiplier: float, cap_multiplier: float) -> int:
+    increased_value = int(current_value * multiplier)
+    capped_value = int(root_value * cap_multiplier)
+    return max(current_value, min(increased_value, capped_value))
+
+
+def _calculate_timeout_streak(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    workflow_id: str,
+    node_id: str,
+    created_spec: dict[str, Any],
+) -> int:
+    streak = 1
+    parent_ticket_id = created_spec.get("parent_ticket_id")
+    seen_ticket_ids: set[str] = set()
+
+    while parent_ticket_id and parent_ticket_id not in seen_ticket_ids:
+        seen_ticket_ids.add(parent_ticket_id)
+        parent_spec = repository.get_latest_ticket_created_payload(connection, parent_ticket_id)
+        if parent_spec is None:
+            break
+        if parent_spec.get("workflow_id") != workflow_id or parent_spec.get("node_id") != node_id:
+            break
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, parent_ticket_id)
+        if terminal_event is None or terminal_event["event_type"] != EVENT_TICKET_TIMED_OUT:
+            break
+        if terminal_event["payload"].get("failure_kind") not in TIMEOUT_FAILURE_KINDS:
+            break
+        streak += 1
+        parent_ticket_id = parent_spec.get("parent_ticket_id")
+
+    return streak
+
+
 def _retry_budget(current_ticket: dict[str, Any], created_spec: dict[str, Any]) -> int:
     return int(created_spec.get("retry_budget") or current_ticket.get("retry_budget") or 0)
 
@@ -300,6 +394,20 @@ def _schedule_retry(
         "retry_count": next_retry_count,
         "idempotency_key": f"system-retry-create:{workflow_id}:{next_ticket_id}",
     }
+    if retry_source_event_type == EVENT_TICKET_TIMED_OUT:
+        root_spec = _resolve_timeout_root_created_spec(repository, connection, created_spec)
+        next_ticket_payload["timeout_sla_sec"] = _apply_timeout_backoff(
+            int(created_spec.get("timeout_sla_sec") or 0),
+            int(root_spec.get("timeout_sla_sec") or 0),
+            _resolve_timeout_backoff_multiplier(created_spec),
+            _resolve_timeout_backoff_cap_multiplier(created_spec),
+        )
+        next_ticket_payload["lease_timeout_sec"] = _apply_timeout_backoff(
+            _resolve_ticket_lease_timeout_sec(created_spec),
+            _resolve_ticket_lease_timeout_sec(root_spec),
+            _resolve_timeout_backoff_multiplier(created_spec),
+            _resolve_timeout_backoff_cap_multiplier(created_spec),
+        )
     created_event = repository.insert_event(
         connection,
         event_type=EVENT_TICKET_CREATED,
@@ -315,6 +423,77 @@ def _schedule_retry(
     if created_event is None:
         raise RuntimeError("Retry ticket creation idempotency conflict.")
     return next_ticket_id
+
+
+def _open_timeout_incident(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    timeout_streak_count: int,
+    failure_payload: dict[str, Any],
+    idempotency_key_base: str,
+) -> str:
+    existing_incident = repository.get_open_incident_for_node(workflow_id, node_id, connection=connection)
+    if existing_incident is not None:
+        return str(existing_incident["incident_id"])
+
+    incident_id = new_prefixed_id("inc")
+    fingerprint = _resolve_timeout_fingerprint(workflow_id, node_id)
+    incident_payload = {
+        "incident_id": incident_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "incident_type": INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
+        "status": INCIDENT_STATUS_OPEN,
+        "severity": "high",
+        "fingerprint": fingerprint,
+        "timeout_streak_count": timeout_streak_count,
+        "latest_failure_kind": failure_payload.get("failure_kind"),
+        "latest_failure_message": failure_payload.get("failure_message"),
+        "latest_failure_fingerprint": failure_payload.get("failure_fingerprint"),
+    }
+    incident_event = repository.insert_event(
+        connection,
+        event_type=EVENT_INCIDENT_OPENED,
+        actor_type="system",
+        actor_id="scheduler",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:incident-opened:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=incident_payload,
+        occurred_at=occurred_at,
+    )
+    if incident_event is None:
+        raise RuntimeError("Incident opening idempotency conflict.")
+
+    breaker_event = repository.insert_event(
+        connection,
+        event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+        actor_type="system",
+        actor_id="scheduler",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "incident_id": incident_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+            "fingerprint": fingerprint,
+        },
+        occurred_at=occurred_at,
+    )
+    if breaker_event is None:
+        raise RuntimeError("Circuit breaker opening idempotency conflict.")
+
+    return incident_id
 
 
 def _dispatch_sort_key(ticket: dict[str, Any]) -> tuple[int, datetime, str]:
@@ -435,6 +614,29 @@ def run_scheduler_tick(
             created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             if created_spec is None:
                 continue
+            timeout_streak_count = _calculate_timeout_streak(
+                repository,
+                connection,
+                workflow_id=ticket["workflow_id"],
+                node_id=ticket["node_id"],
+                created_spec=created_spec,
+            )
+            timeout_threshold = _resolve_timeout_repeat_threshold(created_spec)
+            if timeout_streak_count >= timeout_threshold:
+                _open_timeout_incident(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=ticket["workflow_id"],
+                    ticket_id=ticket["ticket_id"],
+                    node_id=ticket["node_id"],
+                    timeout_streak_count=timeout_streak_count,
+                    failure_payload=timeout_payload,
+                    idempotency_key_base=f"{idempotency_key}:timeout:{ticket['ticket_id']}",
+                )
+                changed_state = True
+                continue
             if _should_retry_timeout(current_ticket=ticket, created_spec=created_spec):
                 _schedule_retry(
                     repository=repository,
@@ -498,6 +700,29 @@ def run_scheduler_tick(
             created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             if created_spec is None:
                 continue
+            timeout_streak_count = _calculate_timeout_streak(
+                repository,
+                connection,
+                workflow_id=ticket["workflow_id"],
+                node_id=ticket["node_id"],
+                created_spec=created_spec,
+            )
+            timeout_threshold = _resolve_timeout_repeat_threshold(created_spec)
+            if timeout_streak_count >= timeout_threshold:
+                _open_timeout_incident(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=ticket["workflow_id"],
+                    ticket_id=ticket["ticket_id"],
+                    node_id=ticket["node_id"],
+                    timeout_streak_count=timeout_streak_count,
+                    failure_payload=timeout_payload,
+                    idempotency_key_base=f"{idempotency_key}:heartbeat-timeout:{ticket['ticket_id']}",
+                )
+                changed_state = True
+                continue
             if _should_retry_timeout(current_ticket=ticket, created_spec=created_spec):
                 _schedule_retry(
                     repository=repository,
@@ -556,6 +781,12 @@ def run_scheduler_tick(
                 or node_projection["status"] != NODE_STATUS_PENDING
             ):
                 continue
+            if repository.has_open_circuit_breaker_for_node(
+                ticket["workflow_id"],
+                ticket["node_id"],
+                connection=connection,
+            ):
+                continue
 
             created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             if created_spec is None:
@@ -563,6 +794,7 @@ def run_scheduler_tick(
             target_role_profile = created_spec.get("role_profile_ref")
             if not target_role_profile:
                 continue
+            lease_timeout_sec = _resolve_ticket_lease_timeout_sec(created_spec)
 
             selected_worker_id = next(
                 (
@@ -591,10 +823,8 @@ def run_scheduler_tick(
                     "ticket_id": ticket["ticket_id"],
                     "node_id": ticket["node_id"],
                     "leased_by": selected_worker_id,
-                    "lease_timeout_sec": DEFAULT_LEASE_TIMEOUT_SEC,
-                    "lease_expires_at": (
-                        received_at + timedelta(seconds=DEFAULT_LEASE_TIMEOUT_SEC)
-                    ).isoformat(),
+                    "lease_timeout_sec": lease_timeout_sec,
+                    "lease_expires_at": (received_at + timedelta(seconds=lease_timeout_sec)).isoformat(),
                 },
                 occurred_at=received_at,
             )

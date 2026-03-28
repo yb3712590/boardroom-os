@@ -1089,3 +1089,79 @@
 
 ### Likely Next Step
 - Continue runtime governance on one boundary only, most likely repeated-timeout escalation into incident / circuit-breaker logic, now that explicit heartbeat and timeout classification are in place.
+
+## 2026-03-29T06:15:43+08:00
+
+### Session Context
+- User asked to implement the planned runtime-governance slice directly on `main`.
+- This round stayed inside one boundary only: repeated-timeout escalation plus bounded timeout backoff.
+
+### Design / Code Gap Identified
+- The backend already distinguished total timeout and heartbeat timeout, but repeated timeout behavior still ended at blind retry or plain timeout state.
+- `dashboard` / `inbox` contracts had already reserved incident and circuit-breaker visibility, yet backend projections still returned fixed zeros and had no incident detail route.
+- Existing retry accounting was too generic to represent consecutive timeout escalation safely, so the new logic had to track timeout streaks by retry chain instead of reusing general `retry_count`.
+
+### Slice Landed
+- Extended `ticket-create` governance input with minimal runtime-governance controls:
+  - `lease_timeout_sec`
+  - `escalation_policy.timeout_repeat_threshold`
+  - `escalation_policy.timeout_backoff_multiplier`
+  - `escalation_policy.timeout_backoff_cap_multiplier`
+- Added bounded timeout backoff for timeout-triggered retry only:
+  - next retry ticket widens `timeout_sla_sec`
+  - scheduler auto-lease now reuses widened `lease_timeout_sec`, so heartbeat window grows with the same retry
+  - schema-error / generic failure retry behavior stayed unchanged
+- Added minimal incident / circuit-breaker runtime chain:
+  - `INCIDENT_OPENED`
+  - `CIRCUIT_BREAKER_OPENED`
+  - repeated `TIMEOUT_SLA_EXCEEDED` and `HEARTBEAT_TIMEOUT` on the same `workflow_id + node_id` retry chain now open an incident and breaker
+  - open breaker blocks future automatic dispatch on that node only
+- Added real `incident_projection` persistence plus read-side support.
+- Added `GET /api/v1/projections/incidents/{incident_id}`.
+- Dashboard and Inbox now read real incident / breaker counts and emit real `INCIDENT_ESCALATION` items.
+- Event preview / SSE metadata now surface incident and breaker events.
+
+### Conservative Handling
+- Breaker open is one-way in this slice; there is still no restore / close command.
+- Repeated-timeout detection only covers runtime timeout classes and does not mix in generic `ticket-fail`.
+- External AI provider quota exhaustion, provider outage pause, and later resume flow are still intentionally out of scope.
+
+### Still Mock / Stub
+- External worker runtime handoff beyond the in-process minimal runtime
+- Provider-specific pause / resume governance for quota exhaustion or upstream outages
+- Breaker close / incident restore workflow
+- Cancel flow and richer retry policy beyond the current bounded timeout backoff
+- Full artifact hydration and richer compiler provenance
+
+### Documentation Sync
+- Updated `README.md` and `README.en.md` because this round changed public route surface and the project's externally visible runtime-governance status.
+- Updated `boardroom-data-contracts.md` to document incident detail projection plus the expanded `ticket-create` contract.
+- Updated `message-bus-design.md` to record the current minimal repeated-timeout breaker policy.
+
+### Verification
+- Created a local Python 3.12 virtual environment at `backend/.venv` and installed backend dev dependencies.
+- Verified TDD red step after adding tests and before implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py backend/tests/test_reducer.py -q` -> failed during collection because `EVENT_CIRCUIT_BREAKER_OPENED` / `EVENT_INCIDENT_OPENED` did not exist yet.
+- Verified green step after implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py backend/tests/test_reducer.py -q` -> `69 passed`
+
+### Files Updated
+- `/Users/bill/projects/boardroom-os/backend/app/api/projections.py`
+- `/Users/bill/projects/boardroom-os/backend/app/contracts/commands.py`
+- `/Users/bill/projects/boardroom-os/backend/app/contracts/projections.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/constants.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/projections.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/reducer.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/ticket_handlers.py`
+- `/Users/bill/projects/boardroom-os/backend/app/db/repository.py`
+- `/Users/bill/projects/boardroom-os/backend/app/db/schema.py`
+- `/Users/bill/projects/boardroom-os/backend/tests/test_api.py`
+- `/Users/bill/projects/boardroom-os/backend/tests/test_reducer.py`
+- `/Users/bill/projects/boardroom-os/README.md`
+- `/Users/bill/projects/boardroom-os/README.en.md`
+- `/Users/bill/projects/boardroom-os/boardroom-data-contracts.md`
+- `/Users/bill/projects/boardroom-os/message-bus-design.md`
+- `/Users/bill/projects/boardroom-os/memory.txt`
+
+### Likely Next Step
+- Keep runtime governance on one boundary and add the smallest real breaker recovery / incident close path, or switch boundaries and tackle provider quota / outage pause-resume governance as a separate slice.

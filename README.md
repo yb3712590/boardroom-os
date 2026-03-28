@@ -27,13 +27,14 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/project-init`
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
+- `GET /api/v1/projections/incidents/{incident_id}` 最小 incident 详情投影
 - `GET /api/v1/projections/review-room/{review_pack_id}` 真实投影（针对已持久化审批包）
 - `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` 可读取已持久化的 developer inspector JSON 产物
 - `GET /api/v1/events/stream?after={cursor}` SSE 增量事件流
 - `CommandAckEnvelope` 首轮真实契约
-- `events` / `workflow_projection` / `ticket_projection` / `node_projection` / `approval_projection` / `employee_projection` 最小 schema
+- `events` / `workflow_projection` / `ticket_projection` / `node_projection` / `approval_projection` / `employee_projection` / `incident_projection` 最小 schema
 - `compiled_context_bundle` / `compile_manifest` 最小持久化审计表
-- `POST /api/v1/commands/ticket-create` 真实落地 ticket 创建
+- `POST /api/v1/commands/ticket-create` 真实落地 ticket 创建，并显式携带 lease 超时、重复超时升级阈值与轻量退让策略
 - `POST /api/v1/commands/ticket-lease` 真实落地 ticket lease 获取与续租
 - `POST /api/v1/commands/ticket-start` 把最新 ticket / node 推进到执行态
 - `POST /api/v1/commands/ticket-heartbeat` 为 `EXECUTING` ticket 提供显式活跃心跳，不再复用 lease 续命语义
@@ -41,7 +42,9 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-complete` 用结构化 ticket 结果触发上游审批生产
 - `ticket-complete -> review_request` 现在只负责声明 `developer_inspector_refs`；review-room 下的 inspector 文件来自该 ticket 已持久化的真实最小 compile 产物，若真实产物尚未存在则 companion projection 会诚实返回 `partial`
 - 最小持久化 worker roster / executor pool
-- `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于总执行超时、heartbeat 超时、retry create 与 expired lease dispatch
+- `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于总执行超时、heartbeat 超时、timeout retry 轻量退让、重复超时 incident / circuit-breaker 升级与 expired lease dispatch
+- dashboard / inbox 的 incident 与 circuit-breaker 计数已接入真实投影，不再写死为 0
+- repeated runtime timeout 现在会在同一 node 的重试链路上打开最小 incident 与 circuit-breaker，并阻断该 node 的后续自动 dispatch
 - dashboard `workforce_summary` 已接入最小真实投影
 - 独立 scheduler runner：`python -m app.scheduler_runner`
 - runner 已打通最小自动执行链：`TICKET_LEASED` 会在独立 runner 中继续推进到 `TICKET_STARTED`，并先经过最小 `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` 编译与持久化边界，再进入 `TICKET_COMPLETED` 或 `TICKET_FAILED`
@@ -58,8 +61,8 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 
 - 完整 compiled execution package 交付 / 外部 worker runtime 实际交付（当前仅落地进程内最小编译边界）
 - employee hire / replace / freeze 生命周期
-- incident / circuit-breaker 升级与治理
-- 超出当前最小闭环的 cancel / richer retry policy / incident 状态
+- 超出当前最小闭环的 cancel / richer retry policy / incident 恢复与关闭状态
+- 外部 AI 提供方配额不足 / 服务波动后的暂停恢复治理
 - Maker-Checker Review Loop
 - Review Room 仍只支持已持久化审批包，不含更完整的证据拼装
 - 非 reference-only 的完整 Context Compiler 编译、artifact hydration、缓存复用与更丰富 provenance
@@ -74,6 +77,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/project-init`
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
+- `GET /api/v1/projections/incidents/{incident_id}`
 - `GET /api/v1/projections/review-room/{review_pack_id}`
 - `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector`
 - `GET /api/v1/events/stream?after={cursor}`
@@ -174,7 +178,7 @@ python -m pytest
 当前后端切片只打通最小控制面闭环。后续仍按既定顺序推进：
 
 - 投影 reducer 继续扩展
-- ticket 的 cancel / richer retry / incident 状态机
+- ticket 的 cancel / richer retry / incident 恢复状态机
 - 扩展当前 reference-only Context Compiler 到带 artifact hydration、检索与缓存复用的完整编译链
 - Worker / Checker 执行链
 - Board Review Pack 与审批命令
@@ -193,4 +197,3 @@ Boardroom OS 默认相信：
 最终目标不是做一个“会聊天的 Agent 项目”，而是做一个：
 
 **可推进、可治理、可交付的 Agent Operating System。**
-

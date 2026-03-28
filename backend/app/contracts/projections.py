@@ -148,3 +148,26 @@ class ReviewRoomDeveloperInspectorProjectionData(StrictModel):
 
 class ReviewRoomDeveloperInspectorProjectionEnvelope(ProjectionEnvelopeBase):
     data: ReviewRoomDeveloperInspectorProjectionData
+
+
+class IncidentProjectionItem(StrictModel):
+    incident_id: str
+    workflow_id: str
+    node_id: str | None = None
+    ticket_id: str | None = None
+    incident_type: str
+    status: str
+    severity: str | None = None
+    fingerprint: str
+    circuit_breaker_state: str | None = None
+    opened_at: datetime
+    closed_at: datetime | None = None
+    payload: dict
+
+
+class IncidentDetailProjectionData(StrictModel):
+    incident: IncidentProjectionItem
+
+
+class IncidentDetailProjectionEnvelope(ProjectionEnvelopeBase):
+    data: IncidentDetailProjectionData

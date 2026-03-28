@@ -10,6 +10,8 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
@@ -35,6 +37,7 @@ from app.core.constants import (
     TICKET_STATUS_TIMED_OUT,
 )
 from app.core.reducer import (
+    rebuild_incident_projections,
     rebuild_node_projections,
     rebuild_ticket_projections,
     rebuild_workflow_projections,
@@ -555,6 +558,116 @@ def test_reducer_rebuilds_timed_out_then_retry_created_flow():
     assert new_ticket["retry_count"] == 1
     assert nodes[0]["latest_ticket_id"] == "tkt_002"
     assert nodes[0]["status"] == NODE_STATUS_PENDING
+
+
+def test_reducer_rebuilds_timeout_retry_backoff_and_incident_projection():
+    retry_created_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_TICKET_CREATED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:35:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "attempt_no": 2,
+                "retry_count": 1,
+                "retry_budget": 2,
+                "lease_timeout_sec": 900,
+                "timeout_sla_sec": 2700,
+                "priority": "high",
+                "parent_ticket_id": "tkt_001",
+                "escalation_policy": {
+                    "on_timeout": "retry",
+                    "on_schema_error": "retry",
+                    "on_repeat_failure": "escalate_ceo",
+                    "timeout_repeat_threshold": 2,
+                    "timeout_backoff_multiplier": 1.5,
+                    "timeout_backoff_cap_multiplier": 2.0,
+                },
+            }
+        ),
+    }
+    leased_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_TICKET_LEASED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:36:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "leased_by": "emp_frontend_2",
+                "lease_timeout_sec": 900,
+                "lease_expires_at": "2026-03-28T10:51:00+08:00",
+            }
+        ),
+    }
+    incident_opened_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_INCIDENT_OPENED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T11:18:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_001",
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "wf_123:node_homepage_visual:runtime-timeout",
+                "timeout_streak_count": 2,
+            }
+        ),
+    }
+    breaker_opened_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_CIRCUIT_BREAKER_OPENED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T11:18:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_001",
+                "node_id": "node_homepage_visual",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": "wf_123:node_homepage_visual:runtime-timeout",
+            }
+        ),
+    }
+
+    ticket = rebuild_ticket_projections([retry_created_event, leased_event])[0]
+    incidents = rebuild_incident_projections([incident_opened_event, breaker_opened_event])
+
+    assert ticket["timeout_sla_sec"] == 2700
+    assert ticket["heartbeat_timeout_sec"] == 900
+    assert incidents == [
+        {
+            "incident_id": "inc_001",
+            "workflow_id": "wf_123",
+            "node_id": "node_homepage_visual",
+            "ticket_id": "tkt_002",
+            "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
+            "status": "OPEN",
+            "severity": "high",
+            "fingerprint": "wf_123:node_homepage_visual:runtime-timeout",
+            "circuit_breaker_state": "OPEN",
+            "opened_at": "2026-03-28T11:18:00+08:00",
+            "closed_at": None,
+            "payload": {
+                "incident_id": "inc_001",
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "wf_123:node_homepage_visual:runtime-timeout",
+                "timeout_streak_count": 2,
+            },
+            "updated_at": "2026-03-28T11:18:00+08:00",
+            "version": 4,
+        }
+    ]
 
 
 def test_reducer_rebuilds_blocked_then_approved_then_rework_states():
