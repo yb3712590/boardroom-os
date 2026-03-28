@@ -113,7 +113,7 @@ def test_scheduler_runner_loop_respects_tick_limit_and_dispatch_budget(client, s
     assert completed_count == 2
 
 
-def test_scheduler_runner_marks_started_then_failed_for_unsupported_bridge_execution(client, set_ticket_time):
+def test_scheduler_runner_marks_started_then_failed_for_unsupported_compiled_execution(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post(
         "/api/v1/commands/ticket-create",
@@ -143,6 +143,104 @@ def test_scheduler_runner_marks_started_then_failed_for_unsupported_bridge_execu
     assert failed_events
     assert failed_events[-1]["payload"]["failure_kind"] == "UNSUPPORTED_RUNTIME_EXECUTION"
     assert "unsupported_schema_v1" in failed_events[-1]["payload"]["failure_message"]
+    assert failed_events[-1]["payload"]["failure_detail"]["compiler_version"] == "context-compiler.min.v1"
+
+
+def test_scheduler_runner_fails_closed_when_ticket_create_spec_disappears(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_missing_spec",
+            ticket_id="tkt_runner_missing_spec",
+            node_id="node_runner_missing_spec",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_missing_spec",
+            "ticket_id": "tkt_runner_missing_spec",
+            "node_id": "node_runner_missing_spec",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_missing_spec:tkt_runner_missing_spec",
+        },
+    )
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM events
+            WHERE event_type = 'TICKET_CREATED' AND json_extract(payload_json, '$.ticket_id') = ?
+            """,
+            ("tkt_runner_missing_spec",),
+        )
+
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-missing-spec",
+        max_dispatches=10,
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_missing_spec")
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == "TICKET_FAILED"
+    ]
+
+    assert ticket_projection["status"] == "FAILED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "RUNTIME_INPUT_ERROR"
+    assert "runtime compilation" in failed_events[-1]["payload"]["failure_message"]
+    assert failed_events[-1]["payload"]["failure_detail"]["compiler_version"] == "context-compiler.min.v1"
+
+
+def test_scheduler_runner_fails_closed_when_worker_projection_disappears(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_missing_worker",
+            ticket_id="tkt_runner_missing_worker",
+            node_id="node_runner_missing_worker",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_missing_worker",
+            "ticket_id": "tkt_runner_missing_worker",
+            "node_id": "node_runner_missing_worker",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_missing_worker:tkt_runner_missing_worker",
+        },
+    )
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            "DELETE FROM employee_projection WHERE employee_id = ?",
+            ("emp_frontend_2",),
+        )
+
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-missing-worker",
+        max_dispatches=10,
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_missing_worker")
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == "TICKET_FAILED"
+    ]
+
+    assert ticket_projection["status"] == "FAILED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "RUNTIME_INPUT_ERROR"
+    assert "missing from employee_projection" in failed_events[-1]["payload"]["failure_message"]
+    assert failed_events[-1]["payload"]["failure_detail"]["compiler_version"] == "context-compiler.min.v1"
 
 
 def test_scheduler_runner_execution_events_are_visible_in_stream(client, set_ticket_time):

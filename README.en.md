@@ -40,7 +40,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/scheduler-tick` for timeout handling, retry creation, and expired-lease dispatch using persisted roster by default
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
 - independent scheduler runner via `python -m app.scheduler_runner`
-- runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED` and then `TICKET_COMPLETED` or `TICKET_FAILED` through an internal bridge executor
+- runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledExecutionPackage` runtime boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -50,13 +50,13 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 
 The following are still pending or stubbed:
 
-- full compiled execution package delivery and external worker runtime handoff
+- full compiled execution package delivery and external worker runtime handoff beyond the in-process minimal compiler boundary
 - employee hire / replace / freeze lifecycle beyond the seeded roster
 - incident / circuit-breaker escalation
 - cancel / richer retry policy / heartbeat timeout states beyond the current minimal loop
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
-- Context Compiler execution
+- full Context Compiler execution plus persisted `CompiledContextBundle` / `CompileManifest` audit artifacts
 - artifact store / artifact index and strict worker-result validator
 - FTS / vector retrieval
 - React Boardroom UI
@@ -151,7 +151,7 @@ This slice only establishes the first control-plane loop. The next implementatio
 
 - richer projection reducer
 - ticket cancel / richer retry / incident state machines
-- Context Compiler skeleton
+- expansion from the minimal runtime compiler boundary to full compiler and audit flow
 - worker / checker execution chain
 - Board Review Pack and decision commands
 - minimal Boardroom UI
