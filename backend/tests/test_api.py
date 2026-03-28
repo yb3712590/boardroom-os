@@ -16,6 +16,7 @@ from app.core.constants import (
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
+    EVENT_TICKET_HEARTBEAT_RECORDED,
     EVENT_TICKET_LEASED,
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
@@ -240,6 +241,21 @@ def _ticket_fail_payload(
         "failure_message": failure_message,
         "failure_detail": failure_detail or {"step": "render", "exit_code": 1},
         "idempotency_key": f"ticket-fail:{workflow_id}:{ticket_id}:{failure_kind}",
+    }
+
+
+def _ticket_heartbeat_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+    reported_by: str = "emp_frontend_2",
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "reported_by": reported_by,
+        "idempotency_key": f"ticket-heartbeat:{workflow_id}:{ticket_id}:{reported_by}",
     }
 
 
@@ -498,6 +514,10 @@ def test_ticket_start_moves_ticket_and_node_to_executing(client, set_ticket_time
     assert client.app.state.repository.count_events_by_type(EVENT_TICKET_STARTED) == 1
     assert ticket_projection["status"] == TICKET_STATUS_EXECUTING
     assert ticket_projection["lease_owner"] == "emp_frontend_2"
+    assert ticket_projection["started_at"].isoformat() == "2026-03-28T10:05:00+08:00"
+    assert ticket_projection["last_heartbeat_at"].isoformat() == "2026-03-28T10:05:00+08:00"
+    assert ticket_projection["heartbeat_timeout_sec"] == 600
+    assert ticket_projection["heartbeat_expires_at"].isoformat() == "2026-03-28T10:15:00+08:00"
     assert ticket_projection["lease_expires_at"].isoformat() == "2026-03-28T10:10:00+08:00"
     assert node_projection["status"] == NODE_STATUS_EXECUTING
 
@@ -583,6 +603,76 @@ def test_ticket_start_is_rejected_when_lease_has_expired(client, set_ticket_time
     assert response.status_code == 200
     assert response.json()["status"] == "REJECTED"
     assert "expired" in response.json()["reason"].lower()
+
+
+def test_ticket_heartbeat_refreshes_executing_ticket(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+
+    set_ticket_time("2026-03-28T10:09:00+08:00")
+    response = client.post("/api/v1/commands/ticket-heartbeat", json=_ticket_heartbeat_payload())
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_HEARTBEAT_RECORDED) == 1
+    assert ticket_projection["status"] == TICKET_STATUS_EXECUTING
+    assert ticket_projection["started_at"].isoformat() == "2026-03-28T10:00:00+08:00"
+    assert ticket_projection["last_heartbeat_at"].isoformat() == "2026-03-28T10:09:00+08:00"
+    assert ticket_projection["heartbeat_expires_at"].isoformat() == "2026-03-28T10:19:00+08:00"
+
+
+def test_ticket_heartbeat_is_rejected_before_ticket_start(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client)
+
+    response = client.post("/api/v1/commands/ticket-heartbeat", json=_ticket_heartbeat_payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "EXECUTING" in response.json()["reason"]
+
+
+def test_ticket_heartbeat_is_rejected_when_owner_differs(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, leased_by="emp_checker_1", role_profile_ref="checker_primary")
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    response = client.post(
+        "/api/v1/commands/ticket-heartbeat",
+        json=_ticket_heartbeat_payload(reported_by="emp_frontend_2"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "leased by emp_checker_1" in response.json()["reason"]
+
+
+def test_ticket_heartbeat_is_rejected_when_window_has_expired(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, lease_timeout_sec=60)
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    response = client.post("/api/v1/commands/ticket-heartbeat", json=_ticket_heartbeat_payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "heartbeat" in response.json()["reason"].lower()
+    assert "expired" in response.json()["reason"].lower()
+
+
+def test_ticket_heartbeat_is_idempotent(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    first = client.post("/api/v1/commands/ticket-heartbeat", json=_ticket_heartbeat_payload())
+    duplicate = client.post("/api/v1/commands/ticket-heartbeat", json=_ticket_heartbeat_payload())
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "ACCEPTED"
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "DUPLICATE"
 
 
 def test_ticket_lease_is_rejected_for_non_latest_ticket(client, set_ticket_time):
@@ -779,16 +869,76 @@ def test_scheduler_tick_times_out_executing_ticket_and_creates_retry(client, set
     latest_projection = repository.get_current_ticket_projection(latest_ticket)
     original_projection = repository.get_current_ticket_projection("tkt_visual_001")
     retry_events = repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED)
+    timeout_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_TIMED_OUT
+    ]
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert repository.count_events_by_type(EVENT_TICKET_TIMED_OUT) == 1
     assert retry_events == 1
+    assert timeout_events[-1]["payload"]["failure_kind"] == "TIMEOUT_SLA_EXCEEDED"
     assert original_projection["status"] == TICKET_STATUS_TIMED_OUT
     assert latest_ticket != "tkt_visual_001"
     assert latest_projection["status"] == TICKET_STATUS_LEASED
     assert latest_projection["lease_owner"] == "emp_frontend_2"
     assert latest_projection["retry_count"] == 1
+
+
+def test_scheduler_tick_times_out_executing_ticket_on_missed_heartbeat(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=1, lease_timeout_sec=60)
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:heartbeat-timeout"),
+    )
+
+    repository = client.app.state.repository
+    node_projection = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    latest_ticket = node_projection["latest_ticket_id"]
+    latest_projection = repository.get_current_ticket_projection(latest_ticket)
+    original_projection = repository.get_current_ticket_projection("tkt_visual_001")
+    timeout_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_TIMED_OUT
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_TICKET_TIMED_OUT) == 1
+    assert timeout_events[-1]["payload"]["failure_kind"] == "HEARTBEAT_TIMEOUT"
+    assert original_projection["status"] == TICKET_STATUS_TIMED_OUT
+    assert latest_ticket != "tkt_visual_001"
+    assert latest_projection["status"] == TICKET_STATUS_LEASED
+    assert latest_projection["retry_count"] == 1
+
+
+def test_scheduler_tick_keeps_total_timeout_as_hard_cap_after_heartbeat_refresh(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=1, lease_timeout_sec=1800)
+
+    set_ticket_time("2026-03-28T10:25:00+08:00")
+    heartbeat_response = client.post("/api/v1/commands/ticket-heartbeat", json=_ticket_heartbeat_payload())
+    assert heartbeat_response.status_code == 200
+    assert heartbeat_response.json()["status"] == "ACCEPTED"
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:total-timeout-after-heartbeat"),
+    )
+
+    repository = client.app.state.repository
+    timeout_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_TIMED_OUT
+    ]
+    original_projection = repository.get_current_ticket_projection("tkt_visual_001")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert timeout_events[-1]["payload"]["failure_kind"] == "TIMEOUT_SLA_EXCEEDED"
+    assert original_projection["status"] == TICKET_STATUS_TIMED_OUT
 
 
 def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(client, set_ticket_time):

@@ -13,6 +13,7 @@ from app.contracts.commands import (
     TicketCompletedCommand,
     TicketCreateCommand,
     TicketFailCommand,
+    TicketHeartbeatCommand,
     TicketLeaseCommand,
     TicketStartCommand,
 )
@@ -21,6 +22,7 @@ from app.core.constants import (
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
+    EVENT_TICKET_HEARTBEAT_RECORDED,
     EVENT_TICKET_LEASED,
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
@@ -191,6 +193,32 @@ def _retry_budget(current_ticket: dict[str, Any], created_spec: dict[str, Any]) 
 
 def _retry_count(current_ticket: dict[str, Any], created_spec: dict[str, Any]) -> int:
     return int(current_ticket.get("retry_count") or created_spec.get("retry_count") or 0)
+
+
+def _resolve_heartbeat_timeout_sec(current_ticket: dict[str, Any]) -> int:
+    return int(current_ticket.get("heartbeat_timeout_sec") or DEFAULT_LEASE_TIMEOUT_SEC)
+
+
+def _resolve_current_heartbeat_expiry(
+    current_ticket: dict[str, Any],
+) -> datetime | None:
+    heartbeat_expires_at = current_ticket.get("heartbeat_expires_at")
+    if heartbeat_expires_at is not None:
+        return heartbeat_expires_at
+
+    heartbeat_timeout_sec = current_ticket.get("heartbeat_timeout_sec")
+    if heartbeat_timeout_sec is None:
+        return None
+
+    last_signal_at = (
+        current_ticket.get("last_heartbeat_at")
+        or current_ticket.get("started_at")
+        or current_ticket.get("updated_at")
+    )
+    if last_signal_at is None:
+        return None
+
+    return last_signal_at + timedelta(seconds=int(heartbeat_timeout_sec))
 
 
 def _should_retry_failure(
@@ -371,10 +399,11 @@ def run_scheduler_tick(
             return key
 
         changed_state = False
-        timeout_candidates = repository.list_timed_out_ticket_candidates(connection, received_at)
-        for ticket in timeout_candidates:
+        timed_out_ticket_ids: set[str] = set()
+        total_timeout_candidates = repository.list_total_timeout_ticket_candidates(connection, received_at)
+        for ticket in total_timeout_candidates:
             timeout_payload = _build_failure_payload(
-                failure_kind="TIMEOUT",
+                failure_kind="TIMEOUT_SLA_EXCEEDED",
                 failure_message="Ticket exceeded timeout SLA.",
                 failure_detail={"timeout_sla_sec": ticket.get("timeout_sla_sec")},
             )
@@ -401,6 +430,7 @@ def run_scheduler_tick(
                     received_at=received_at,
                 )
             changed_state = True
+            timed_out_ticket_ids.add(ticket["ticket_id"])
 
             created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             if created_spec is None:
@@ -418,6 +448,69 @@ def run_scheduler_tick(
                     failure_payload=timeout_payload,
                     retry_source_event_type=EVENT_TICKET_TIMED_OUT,
                     idempotency_key_base=f"{idempotency_key}:timeout:{ticket['ticket_id']}",
+                )
+                changed_state = True
+
+        heartbeat_timeout_candidates = repository.list_heartbeat_timeout_ticket_candidates(
+            connection,
+            received_at,
+        )
+        for ticket in heartbeat_timeout_candidates:
+            if ticket["ticket_id"] in timed_out_ticket_ids:
+                continue
+            timeout_payload = _build_failure_payload(
+                failure_kind="HEARTBEAT_TIMEOUT",
+                failure_message="Ticket missed the required heartbeat window.",
+                failure_detail={
+                    "heartbeat_expires_at": (
+                        ticket["heartbeat_expires_at"].isoformat()
+                        if ticket.get("heartbeat_expires_at") is not None
+                        else None
+                    ),
+                    "heartbeat_timeout_sec": ticket.get("heartbeat_timeout_sec"),
+                },
+            )
+            timeout_event = repository.insert_event(
+                connection,
+                event_type=EVENT_TICKET_TIMED_OUT,
+                actor_type="system",
+                actor_id="scheduler",
+                workflow_id=ticket["workflow_id"],
+                idempotency_key=next_idempotency_key(f"heartbeat-timed-out:{ticket['ticket_id']}"),
+                causation_id=command_id,
+                correlation_id=ticket["workflow_id"],
+                payload={
+                    "ticket_id": ticket["ticket_id"],
+                    "node_id": ticket["node_id"],
+                    **timeout_payload,
+                },
+                occurred_at=received_at,
+            )
+            if timeout_event is None:
+                return _scheduler_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=idempotency_key,
+                    received_at=received_at,
+                )
+            changed_state = True
+            timed_out_ticket_ids.add(ticket["ticket_id"])
+
+            created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
+            if created_spec is None:
+                continue
+            if _should_retry_timeout(current_ticket=ticket, created_spec=created_spec):
+                _schedule_retry(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=ticket["workflow_id"],
+                    failed_ticket_id=ticket["ticket_id"],
+                    node_id=ticket["node_id"],
+                    created_spec=created_spec,
+                    failure_payload=timeout_payload,
+                    retry_source_event_type=EVENT_TICKET_TIMED_OUT,
+                    idempotency_key_base=f"{idempotency_key}:heartbeat-timeout:{ticket['ticket_id']}",
                 )
                 changed_state = True
 
@@ -839,6 +932,130 @@ def handle_ticket_start(
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
                 action="ticket-start",
+            )
+
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"ticket:{payload.ticket_id}",
+    )
+
+
+def handle_ticket_heartbeat(
+    repository: ControlPlaneRepository,
+    payload: TicketHeartbeatCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-heartbeat",
+            )
+
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
+        current_node = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
+        if current_ticket is None or current_node is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket must be created and started before it can report heartbeat.",
+            )
+        if current_ticket["workflow_id"] != payload.workflow_id or current_ticket["node_id"] != payload.node_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket projection does not match the requested workflow or node.",
+            )
+        if current_node["latest_ticket_id"] != payload.ticket_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Node projection no longer points at this ticket.",
+            )
+        if current_ticket["status"] != TICKET_STATUS_EXECUTING or current_node["status"] != NODE_STATUS_EXECUTING:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} can only report heartbeat while ticket/node status is "
+                    f"EXECUTING/EXECUTING; current status is "
+                    f"{current_ticket['status']}/{current_node['status']}."
+                ),
+            )
+
+        lease_owner = current_ticket.get("lease_owner")
+        if lease_owner != payload.reported_by:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} is leased by {lease_owner}; "
+                    f"{payload.reported_by} cannot report heartbeat."
+                ),
+            )
+
+        current_heartbeat_expiry = _resolve_current_heartbeat_expiry(current_ticket)
+        if current_heartbeat_expiry is None or current_heartbeat_expiry <= received_at:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=f"Ticket {payload.ticket_id} heartbeat window is missing or expired.",
+            )
+
+        heartbeat_timeout_sec = _resolve_heartbeat_timeout_sec(current_ticket)
+        heartbeat_expires_at = received_at + timedelta(seconds=heartbeat_timeout_sec)
+        event_row = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_HEARTBEAT_RECORDED,
+            actor_type="worker",
+            actor_id=payload.reported_by,
+            workflow_id=payload.workflow_id,
+            idempotency_key=payload.idempotency_key,
+            causation_id=command_id,
+            correlation_id=payload.workflow_id,
+            payload={
+                "ticket_id": payload.ticket_id,
+                "node_id": payload.node_id,
+                "reported_by": payload.reported_by,
+                "heartbeat_expires_at": heartbeat_expires_at.isoformat(),
+            },
+            occurred_at=received_at,
+        )
+        if event_row is None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-heartbeat",
             )
 
         repository.refresh_projections(connection)

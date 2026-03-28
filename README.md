@@ -36,11 +36,12 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-create` 真实落地 ticket 创建
 - `POST /api/v1/commands/ticket-lease` 真实落地 ticket lease 获取与续租
 - `POST /api/v1/commands/ticket-start` 把最新 ticket / node 推进到执行态
+- `POST /api/v1/commands/ticket-heartbeat` 为 `EXECUTING` ticket 提供显式活跃心跳，不再复用 lease 续命语义
 - `POST /api/v1/commands/ticket-fail` 真实落地主动失败上报与最小 retry create
 - `POST /api/v1/commands/ticket-complete` 用结构化 ticket 结果触发上游审批生产
 - `ticket-complete -> review_request` 现在只负责声明 `developer_inspector_refs`；review-room 下的 inspector 文件来自该 ticket 已持久化的真实最小 compile 产物，若真实产物尚未存在则 companion projection 会诚实返回 `partial`
 - 最小持久化 worker roster / executor pool
-- `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于 timeout、retry create 与 expired lease dispatch
+- `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于总执行超时、heartbeat 超时、retry create 与 expired lease dispatch
 - dashboard `workforce_summary` 已接入最小真实投影
 - 独立 scheduler runner：`python -m app.scheduler_runner`
 - runner 已打通最小自动执行链：`TICKET_LEASED` 会在独立 runner 中继续推进到 `TICKET_STARTED`，并先经过最小 `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` 编译与持久化边界，再进入 `TICKET_COMPLETED` 或 `TICKET_FAILED`
@@ -58,7 +59,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - 完整 compiled execution package 交付 / 外部 worker runtime 实际交付（当前仅落地进程内最小编译边界）
 - employee hire / replace / freeze 生命周期
 - incident / circuit-breaker 升级与治理
-- 超出当前最小闭环的 cancel / richer retry policy / heartbeat timeout 状态
+- 超出当前最小闭环的 cancel / richer retry policy / incident 状态
 - Maker-Checker Review Loop
 - Review Room 仍只支持已持久化审批包，不含更完整的证据拼装
 - 非 reference-only 的完整 Context Compiler 编译、artifact hydration、缓存复用与更丰富 provenance
@@ -79,6 +80,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-create`
 - `POST /api/v1/commands/ticket-lease`
 - `POST /api/v1/commands/ticket-start`
+- `POST /api/v1/commands/ticket-heartbeat`
 - `POST /api/v1/commands/ticket-fail`
 - `POST /api/v1/commands/ticket-complete`
 - `POST /api/v1/commands/scheduler-tick`
@@ -176,5 +178,4 @@ Boardroom OS 默认相信：
 最终目标不是做一个“会聊天的 Agent 项目”，而是做一个：
 
 **可推进、可治理、可交付的 Agent Operating System。**
-
 

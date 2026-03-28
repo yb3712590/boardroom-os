@@ -959,3 +959,79 @@
 
 ### Likely Next Step
 - Add a small runtime or approval-level signal that tells the review pack whether the referenced compile artifacts are stale relative to the latest ticket attempt, without widening the public read surface.
+
+## 2026-03-29T03:54:09+08:00
+
+### Session Context
+- User asked to continue from the current Boardroom OS repository with another medium-sized slice under the runtime-governance boundary.
+- This round focused on heartbeat / timeout refinement, not on employee lifecycle, incident governance, or broader runtime delivery.
+
+### Design / Code Gap Identified
+- The backend already had ticket lease expiry and total execution timeout, but there was no explicit worker heartbeat command once a ticket entered `EXECUTING`.
+- `ticket-lease` still mixed acquisition and liveness semantics, while total timeout relied on `updated_at`, which would become unsafe once heartbeats started refreshing execution activity.
+- SSE already exposed a frontend stream heartbeat, but that was unrelated to worker execution liveness and could not serve as a runtime-governance signal.
+
+### Slice Landed
+- Added explicit worker heartbeat command support:
+  - `POST /api/v1/commands/ticket-heartbeat`
+  - new event type `TICKET_HEARTBEAT_RECORDED`
+- Refined ticket runtime state with minimal internal fields:
+  - `started_at`
+  - `last_heartbeat_at`
+  - `heartbeat_expires_at`
+  - `heartbeat_timeout_sec`
+- Reducer now:
+  - seeds `heartbeat_timeout_sec` from `TICKET_LEASED`
+  - initializes heartbeat fields on `TICKET_STARTED`
+  - refreshes heartbeat fields on `TICKET_HEARTBEAT_RECORDED`
+  - clears active heartbeat timestamps on completion / failure / timeout / board-gated terminal transitions
+- Scheduler now evaluates two timeout classes for `EXECUTING` tickets:
+  - `TIMEOUT_SLA_EXCEEDED` from `started_at + timeout_sla_sec`
+  - `HEARTBEAT_TIMEOUT` from `heartbeat_expires_at`
+- Total execution timeout takes precedence when both conditions are true in the same scheduler tick.
+- Existing `LEASED` reclaim behavior and retry scheduling stayed intact.
+
+### Conservative Handling
+- No new ticket-create field was introduced; `heartbeat_timeout_sec` reuses the latest lease timeout value.
+- No new projection API or UI surface was added; the new fields stay inside internal projection state for runtime governance only.
+- Both timeout classes still reuse the existing `on_timeout` retry policy rather than introducing a new policy tree.
+
+### Still Mock / Stub
+- External worker runtime handoff beyond the current in-process minimal runtime
+- Broader incident / circuit-breaker escalation after repeated heartbeat or timeout failures
+- Cancel flow and richer retry policy beyond the existing minimal loop
+- Full artifact hydration and richer compiler provenance
+
+### Documentation Sync
+- Updated `README.md` and `README.en.md` because this round changed the public command surface and the project's real runtime-governance status.
+- Updated `boardroom-data-contracts.md` to add the new heartbeat command contract and clarify scheduler responsibility.
+- Updated `message-bus-design.md` to add the heartbeat event and separate runtime liveness from lease rules.
+
+### Verification
+- Rebuilt a Python 3.12 virtual environment in the worktree and installed backend dev dependencies.
+- Verified clean baseline first: `backend/.venv/bin/python -m pytest backend/tests` -> `68 passed`.
+- Verified TDD red step after adding new tests but before implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py backend/tests/test_reducer.py` -> collection failed because `EVENT_TICKET_HEARTBEAT_RECORDED` did not exist yet.
+- Verified green step after implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py backend/tests/test_reducer.py` -> `65 passed`
+- Verified full regression at the end:
+  - `backend/.venv/bin/python -m pytest backend/tests` -> `76 passed`
+
+### Files Updated
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/api/commands.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/contracts/commands.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/core/constants.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/core/reducer.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/core/ticket_handlers.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/db/repository.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/db/schema.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/tests/test_api.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/tests/test_reducer.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/README.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/README.en.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/boardroom-data-contracts.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/message-bus-design.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/memory.txt`
+
+### Likely Next Step
+- Continue runtime governance on one boundary only, most likely repeated-timeout escalation into incident / circuit-breaker logic, now that explicit heartbeat and timeout classification are in place.

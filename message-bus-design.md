@@ -295,6 +295,7 @@ The system should enforce the following invariants:
 - `TICKET_CREATED`
 - `TICKET_LEASED`
 - `TICKET_STARTED`
+- `TICKET_HEARTBEAT_RECORDED`
 - `TICKET_COMPLETED`
 - `TICKET_FAILED`
 - `TICKET_TIMED_OUT`
@@ -795,6 +796,8 @@ SQLite needs explicit concurrency discipline.
 - only one executor may hold an active ticket lease
 - lease has `lease_expires_at`
 - expired lease can be reclaimed by scheduler
+- executing tickets should emit explicit heartbeat updates separate from lease acquisition
+- total execution SLA and heartbeat timeout should be evaluated independently
 - duplicate completion is ignored via idempotency key
 
 ## 15.2 Optimistic Update Rule

@@ -92,6 +92,14 @@ class TicketStartCommand(StrictModel):
     idempotency_key: str = Field(min_length=1)
 
 
+class TicketHeartbeatCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    reported_by: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
 class TicketLeaseCommand(StrictModel):
     workflow_id: str = Field(min_length=1)
     ticket_id: str = Field(min_length=1)

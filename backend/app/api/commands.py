@@ -12,6 +12,7 @@ from app.contracts.commands import (
     TicketCompletedCommand,
     TicketCreateCommand,
     TicketFailCommand,
+    TicketHeartbeatCommand,
     TicketLeaseCommand,
     TicketStartCommand,
 )
@@ -27,6 +28,7 @@ from app.core.ticket_handlers import (
     handle_ticket_completed,
     handle_ticket_create,
     handle_ticket_fail,
+    handle_ticket_heartbeat,
     handle_ticket_lease,
     handle_ticket_start,
 )
@@ -57,6 +59,12 @@ def ticket_lease(request: Request, payload: TicketLeaseCommand) -> CommandAckEnv
 def ticket_start(request: Request, payload: TicketStartCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_ticket_start(repository, payload)
+
+
+@router.post("/ticket-heartbeat", response_model=CommandAckEnvelope)
+def ticket_heartbeat(request: Request, payload: TicketHeartbeatCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_ticket_heartbeat(repository, payload)
 
 
 @router.post("/ticket-fail", response_model=CommandAckEnvelope)

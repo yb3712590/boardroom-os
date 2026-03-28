@@ -238,6 +238,10 @@ class ControlPlaneRepository:
                     status,
                     lease_owner,
                     lease_expires_at,
+                    started_at,
+                    last_heartbeat_at,
+                    heartbeat_expires_at,
+                    heartbeat_timeout_sec,
                     retry_count,
                     retry_budget,
                     timeout_sla_sec,
@@ -248,7 +252,7 @@ class ControlPlaneRepository:
                     blocking_reason_code,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["ticket_id"],
@@ -257,6 +261,10 @@ class ControlPlaneRepository:
                     projection["status"],
                     projection.get("lease_owner"),
                     projection.get("lease_expires_at"),
+                    projection.get("started_at"),
+                    projection.get("last_heartbeat_at"),
+                    projection.get("heartbeat_expires_at"),
+                    projection.get("heartbeat_timeout_sec"),
                     projection.get("retry_count", 0),
                     projection.get("retry_budget"),
                     projection.get("timeout_sla_sec"),
@@ -462,12 +470,33 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         now: datetime,
     ) -> list[dict[str, Any]]:
+        return self.list_total_timeout_ticket_candidates(connection, now)
+
+    def list_total_timeout_ticket_candidates(
+        self,
+        connection: sqlite3.Connection,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
         executing = self.list_ticket_projections_by_statuses(connection, [TICKET_STATUS_EXECUTING])
         return [
             ticket
             for ticket in executing
-            if ticket.get("timeout_sla_sec") is not None
-            and ticket["updated_at"] + timedelta(seconds=ticket["timeout_sla_sec"]) <= now
+            if ticket.get("started_at") is not None
+            and ticket.get("timeout_sla_sec") is not None
+            and ticket["started_at"] + timedelta(seconds=ticket["timeout_sla_sec"]) <= now
+        ]
+
+    def list_heartbeat_timeout_ticket_candidates(
+        self,
+        connection: sqlite3.Connection,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
+        executing = self.list_ticket_projections_by_statuses(connection, [TICKET_STATUS_EXECUTING])
+        return [
+            ticket
+            for ticket in executing
+            if ticket.get("heartbeat_expires_at") is not None
+            and ticket["heartbeat_expires_at"] <= now
         ]
 
     def list_dispatchable_ticket_projections(
@@ -1051,7 +1080,15 @@ class ControlPlaneRepository:
             converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
         if converted.get("lease_expires_at"):
             converted["lease_expires_at"] = datetime.fromisoformat(converted["lease_expires_at"])
+        for field in ("started_at", "last_heartbeat_at", "heartbeat_expires_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
         converted["retry_count"] = int(converted.get("retry_count") or 0)
+        converted["heartbeat_timeout_sec"] = (
+            int(converted["heartbeat_timeout_sec"])
+            if converted.get("heartbeat_timeout_sec") is not None
+            else None
+        )
         converted["retry_budget"] = (
             int(converted["retry_budget"]) if converted.get("retry_budget") is not None else None
         )
@@ -1280,6 +1317,10 @@ class ControlPlaneRepository:
             "status": "TEXT",
             "lease_owner": "TEXT",
             "lease_expires_at": "TEXT",
+            "started_at": "TEXT",
+            "last_heartbeat_at": "TEXT",
+            "heartbeat_expires_at": "TEXT",
+            "heartbeat_timeout_sec": "INTEGER",
             "retry_count": "INTEGER DEFAULT 0",
             "retry_budget": "INTEGER",
             "timeout_sla_sec": "INTEGER",

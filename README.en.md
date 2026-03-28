@@ -36,11 +36,12 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/ticket-create` for full control-plane ticket creation
 - `POST /api/v1/commands/ticket-lease` for explicit ticket lease acquisition and renewal
 - `POST /api/v1/commands/ticket-start` for moving the latest node ticket into execution
+- `POST /api/v1/commands/ticket-heartbeat` for explicit liveness heartbeats while a ticket is already executing
 - `POST /api/v1/commands/ticket-fail` for explicit worker failure reporting plus minimal retry creation
 - `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
 - `ticket-complete -> review_request` now only declares `developer_inspector_refs`; the review-room inspector files are exported from that ticket's real persisted minimal compile artifacts, and the companion projection stays honestly `partial` when those artifacts do not exist yet
 - seeded persisted worker roster for the minimal executor pool
-- `POST /api/v1/commands/scheduler-tick` for timeout handling, retry creation, and expired-lease dispatch using persisted roster by default
+- `POST /api/v1/commands/scheduler-tick` for total execution timeout, heartbeat timeout, retry creation, and expired-lease dispatch using persisted roster by default
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
 - independent scheduler runner via `python -m app.scheduler_runner`
 - runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
@@ -57,7 +58,7 @@ The following are still pending or stubbed:
 - full compiled execution package delivery and external worker runtime handoff beyond the in-process minimal compiler boundary
 - employee hire / replace / freeze lifecycle beyond the seeded roster
 - incident / circuit-breaker escalation
-- cancel / richer retry policy / heartbeat timeout states beyond the current minimal loop
+- cancel / richer retry policy / broader incident states beyond the current minimal loop
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
 - non-reference-only Context Compiler execution with artifact hydration, cache reuse, and richer provenance
@@ -78,6 +79,7 @@ The first backend slice already locks the route names and API boundaries:
 - `POST /api/v1/commands/ticket-create`
 - `POST /api/v1/commands/ticket-lease`
 - `POST /api/v1/commands/ticket-start`
+- `POST /api/v1/commands/ticket-heartbeat`
 - `POST /api/v1/commands/ticket-fail`
 - `POST /api/v1/commands/ticket-complete`
 - `POST /api/v1/commands/scheduler-tick`
@@ -178,5 +180,4 @@ The goal is not 鈥渁n agent that talks a lot鈥?
 The goal is:
 
 **an agent operating system that can be governed, reviewed, and shipped**
-
 

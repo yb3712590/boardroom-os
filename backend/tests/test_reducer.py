@@ -14,6 +14,7 @@ from app.core.constants import (
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
+    EVENT_TICKET_HEARTBEAT_RECORDED,
     EVENT_TICKET_LEASED,
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
@@ -127,6 +128,7 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
                 "ticket_id": "tkt_001",
                 "node_id": "node_homepage_visual",
                 "leased_by": "emp_frontend_2",
+                "lease_timeout_sec": 600,
                 "lease_expires_at": "2026-03-28T10:13:00+08:00",
             }
         ),
@@ -173,6 +175,7 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
     assert leased_ticket["status"] == TICKET_STATUS_LEASED
     assert leased_ticket["lease_owner"] == "emp_frontend_2"
     assert leased_ticket["lease_expires_at"] == "2026-03-28T10:13:00+08:00"
+    assert leased_ticket["heartbeat_timeout_sec"] == 600
     assert leased_node["status"] == NODE_STATUS_PENDING
 
     executing_ticket = rebuild_ticket_projections([created_event, leased_event, started_event])[0]
@@ -180,6 +183,9 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
     assert executing_ticket["status"] == TICKET_STATUS_EXECUTING
     assert executing_ticket["lease_owner"] == "emp_frontend_2"
     assert executing_ticket["lease_expires_at"] == "2026-03-28T10:13:00+08:00"
+    assert executing_ticket["started_at"] == "2026-03-28T10:04:00+08:00"
+    assert executing_ticket["last_heartbeat_at"] == "2026-03-28T10:04:00+08:00"
+    assert executing_ticket["heartbeat_expires_at"] == "2026-03-28T10:14:00+08:00"
     assert executing_node["status"] == NODE_STATUS_EXECUTING
 
     ticket_projections = rebuild_ticket_projections(
@@ -197,6 +203,10 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             "status": TICKET_STATUS_COMPLETED,
             "lease_owner": None,
             "lease_expires_at": None,
+            "started_at": None,
+            "last_heartbeat_at": None,
+            "heartbeat_expires_at": None,
+            "heartbeat_timeout_sec": 600,
             "retry_count": 0,
             "retry_budget": 2,
             "timeout_sla_sec": 1800,
@@ -220,6 +230,100 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             "version": 4,
         }
     ]
+
+
+def test_reducer_rebuilds_heartbeat_refresh_and_clears_runtime_activity_fields():
+    created_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_TICKET_CREATED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "retry_budget": 2,
+                "timeout_sla_sec": 1800,
+                "priority": "high",
+            }
+        ),
+    }
+    leased_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_TICKET_LEASED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:03:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "leased_by": "emp_frontend_2",
+                "lease_timeout_sec": 600,
+                "lease_expires_at": "2026-03-28T10:13:00+08:00",
+            }
+        ),
+    }
+    started_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_TICKET_STARTED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:04:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "started_by": "emp_frontend_2",
+            }
+        ),
+    }
+    heartbeat_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_TICKET_HEARTBEAT_RECORDED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:08:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "reported_by": "emp_frontend_2",
+                "heartbeat_expires_at": "2026-03-28T10:18:00+08:00",
+            }
+        ),
+    }
+    timed_out_event = {
+        "sequence_no": 5,
+        "event_type": EVENT_TICKET_TIMED_OUT,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:20:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "failure_kind": "HEARTBEAT_TIMEOUT",
+                "failure_message": "Ticket missed the required heartbeat window.",
+                "failure_fingerprint": "fp_heartbeat_001",
+            }
+        ),
+    }
+
+    heartbeat_ticket = rebuild_ticket_projections(
+        [created_event, leased_event, started_event, heartbeat_event]
+    )[0]
+    timed_out_ticket = rebuild_ticket_projections(
+        [created_event, leased_event, started_event, heartbeat_event, timed_out_event]
+    )[0]
+
+    assert heartbeat_ticket["status"] == TICKET_STATUS_EXECUTING
+    assert heartbeat_ticket["started_at"] == "2026-03-28T10:04:00+08:00"
+    assert heartbeat_ticket["last_heartbeat_at"] == "2026-03-28T10:08:00+08:00"
+    assert heartbeat_ticket["heartbeat_expires_at"] == "2026-03-28T10:18:00+08:00"
+    assert heartbeat_ticket["heartbeat_timeout_sec"] == 600
+
+    assert timed_out_ticket["status"] == TICKET_STATUS_TIMED_OUT
+    assert timed_out_ticket["started_at"] is None
+    assert timed_out_ticket["last_heartbeat_at"] is None
+    assert timed_out_ticket["heartbeat_expires_at"] is None
+    assert timed_out_ticket["heartbeat_timeout_sec"] == 600
 
 
 def test_reducer_rebuilds_failed_then_retry_created_flow():

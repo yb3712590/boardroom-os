@@ -901,7 +901,25 @@ Recommended `status` enum:
 }
 ```
 
-### 10.1.5 Scheduler Tick
+### 10.1.5 Ticket Heartbeat
+
+`POST /api/v1/commands/ticket-heartbeat`
+
+```json
+{
+  "workflow_id": "wf_001",
+  "ticket_id": "tkt_ui_home_03",
+  "node_id": "node_homepage_visual",
+  "reported_by": "emp_frontend_2",
+  "idempotency_key": "ticket-heartbeat:wf_001:tkt_ui_home_03:emp_frontend_2"
+}
+```
+
+This command is only valid after `ticket-start`.
+
+It exists to prove that an `EXECUTING` ticket is still alive without overloading `ticket-lease` with mixed semantics.
+
+### 10.1.6 Scheduler Tick
 
 `POST /api/v1/commands/scheduler-tick`
 
@@ -924,10 +942,12 @@ Recommended `status` enum:
 
 This endpoint currently provides only the minimum explicit scheduler surface:
 
-- detect timed-out executing tickets
+- detect total-SLA timeout for executing tickets
+- detect heartbeat timeout for executing tickets
 - schedule retry by appending `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`
 - dispatch `PENDING` or expired-lease tickets by appending `TICKET_LEASED`
 - it does not replace explicit `ticket-start`
+- it does not replace explicit `ticket-heartbeat`
 - it does not imply compiled execution package delivery, worker runtime dispatch, or background scheduler loops
 
 ### 10.2 Board Approve

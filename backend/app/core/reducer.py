@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from datetime import timedelta
 from typing import Any
 
 from app.core.constants import (
@@ -17,6 +18,7 @@ from app.core.constants import (
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
+    EVENT_TICKET_HEARTBEAT_RECORDED,
     EVENT_TICKET_LEASED,
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
@@ -52,6 +54,10 @@ def _base_ticket_projection(event: dict[str, Any], payload: dict[str, Any]) -> d
         "node_id": payload["node_id"],
         "lease_owner": None,
         "lease_expires_at": None,
+        "started_at": None,
+        "last_heartbeat_at": None,
+        "heartbeat_expires_at": None,
+        "heartbeat_timeout_sec": None,
         "retry_count": payload.get("retry_count", 0),
         "retry_budget": payload.get("retry_budget"),
         "timeout_sla_sec": payload.get("timeout_sla_sec"),
@@ -130,6 +136,10 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "status": TICKET_STATUS_LEASED,
                 "lease_owner": payload.get("leased_by"),
                 "lease_expires_at": payload.get("lease_expires_at"),
+                "heartbeat_timeout_sec": payload.get(
+                    "lease_timeout_sec",
+                    projections.get(ticket_id, {}).get("heartbeat_timeout_sec"),
+                ),
                 "last_failure_kind": projections.get(ticket_id, {}).get("last_failure_kind"),
                 "last_failure_message": projections.get(ticket_id, {}).get("last_failure_message"),
                 "last_failure_fingerprint": projections.get(ticket_id, {}).get("last_failure_fingerprint"),
@@ -142,14 +152,46 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
         if event_type == EVENT_TICKET_STARTED:
             ticket_id = payload["ticket_id"]
             node_id = payload["node_id"]
+            previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            heartbeat_timeout_sec = previous_projection.get("heartbeat_timeout_sec")
+            heartbeat_expires_at = None
+            if heartbeat_timeout_sec is not None:
+                heartbeat_expires_at = (
+                    event["occurred_at"] + timedelta(seconds=heartbeat_timeout_sec)
+                ).isoformat()
             projections[ticket_id] = {
-                **projections.get(ticket_id, _base_ticket_projection(event, payload)),
+                **previous_projection,
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
                 "status": TICKET_STATUS_EXECUTING,
-                "last_failure_kind": projections.get(ticket_id, {}).get("last_failure_kind"),
-                "last_failure_message": projections.get(ticket_id, {}).get("last_failure_message"),
-                "last_failure_fingerprint": projections.get(ticket_id, {}).get("last_failure_fingerprint"),
+                "started_at": occurred_at,
+                "last_heartbeat_at": occurred_at,
+                "heartbeat_expires_at": heartbeat_expires_at,
+                "last_failure_kind": previous_projection.get("last_failure_kind"),
+                "last_failure_message": previous_projection.get("last_failure_message"),
+                "last_failure_fingerprint": previous_projection.get("last_failure_fingerprint"),
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_HEARTBEAT_RECORDED:
+            ticket_id = payload["ticket_id"]
+            previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            heartbeat_timeout_sec = previous_projection.get("heartbeat_timeout_sec")
+            heartbeat_expires_at = payload.get("heartbeat_expires_at")
+            if heartbeat_expires_at is None and heartbeat_timeout_sec is not None:
+                heartbeat_expires_at = (
+                    event["occurred_at"] + timedelta(seconds=heartbeat_timeout_sec)
+                ).isoformat()
+            projections[ticket_id] = {
+                **previous_projection,
+                "workflow_id": event["workflow_id"],
+                "node_id": payload["node_id"],
+                "status": TICKET_STATUS_EXECUTING,
+                "last_heartbeat_at": occurred_at,
+                "heartbeat_expires_at": heartbeat_expires_at,
                 "blocking_reason_code": None,
                 "updated_at": occurred_at,
                 "version": version,
@@ -165,6 +207,9 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "status": TICKET_STATUS_COMPLETED,
                 "lease_owner": None,
                 "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
                 "last_failure_kind": None,
                 "last_failure_message": None,
                 "last_failure_fingerprint": None,
@@ -183,6 +228,9 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "status": TICKET_STATUS_FAILED,
                 "lease_owner": None,
                 "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
                 "last_failure_kind": payload.get("failure_kind"),
                 "last_failure_message": payload.get("failure_message"),
                 "last_failure_fingerprint": payload.get("failure_fingerprint"),
@@ -201,6 +249,9 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "status": TICKET_STATUS_TIMED_OUT,
                 "lease_owner": None,
                 "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
                 "last_failure_kind": payload.get("failure_kind"),
                 "last_failure_message": payload.get("failure_message"),
                 "last_failure_fingerprint": payload.get("failure_fingerprint"),
@@ -225,6 +276,9 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "status": TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
                 "lease_owner": None,
                 "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
                 "last_failure_kind": None,
                 "last_failure_message": None,
                 "last_failure_fingerprint": None,
@@ -246,6 +300,9 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "status": TICKET_STATUS_COMPLETED,
                 "lease_owner": None,
                 "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
                 "last_failure_kind": None,
                 "last_failure_message": None,
                 "last_failure_fingerprint": None,
@@ -272,6 +329,9 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "status": TICKET_STATUS_REWORK_REQUIRED,
                 "lease_owner": None,
                 "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
                 "last_failure_kind": None,
                 "last_failure_message": None,
                 "last_failure_fingerprint": None,
