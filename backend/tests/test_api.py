@@ -45,11 +45,73 @@ def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
     }
 
 
+def _compiled_context_bundle_payload() -> dict:
+    return {
+        "meta": {
+            "bundle_id": "ccb_homepage_visual_v1",
+            "ticket_id": "tkt_visual_001",
+            "workflow_id": "wf_seed",
+            "node_id": "node_homepage_visual",
+            "compiler_version": "context-compiler.stub.v1",
+            "compiled_at": "2026-03-28T10:00:00+08:00",
+            "model_profile": "gpt-5.4",
+            "render_target": "codex",
+            "is_degraded": False,
+        },
+        "system_controls": {
+            "role_profile": {"ref": "ui_designer_primary"},
+            "hard_rules": ["Keep governance explicit."],
+            "output_contract": {"schema_ref": "ui_milestone_review", "schema_version": 1},
+        },
+        "task_definition": {
+            "task_type": "DESIGN",
+            "atomic_task": "Prepare homepage visual review options.",
+            "acceptance_criteria": ["Must produce 2 options."],
+        },
+        "context_blocks": [
+            {
+                "block_id": "ctx_block_1",
+                "source_ref": "art://inputs/brief.md",
+                "source_kind": "HYDRATED_ARTIFACT",
+                "trust_level": 1,
+                "instruction_authority": "DATA_ONLY",
+                "priority_class": "P1",
+                "content_type": "MARKDOWN",
+                "content_payload": "# Brief\nHomepage visual direction",
+            }
+        ],
+    }
+
+
+def _compile_manifest_payload() -> dict:
+    return {
+        "compile_meta": {
+            "compile_id": "cmp_homepage_visual_v1",
+            "ticket_id": "tkt_visual_001",
+            "workflow_id": "wf_seed",
+            "compiler_version": "context-compiler.stub.v1",
+            "compiled_at": "2026-03-28T10:00:01+08:00",
+            "duration_ms": 42,
+            "model_profile": "gpt-5.4",
+            "cache_key": "cache_homepage_visual_v1",
+        },
+        "input_fingerprint": {
+            "ticket_hash": "sha256:tkt_visual_001",
+            "artifact_hashes": [{"artifact_id": "art://inputs/brief.md", "hash": "sha256:brief"}],
+        },
+        "budget_plan": {"total_budget_tokens": 3000, "hard_limit_tokens": 3000},
+        "budget_actual": {"used_p0": 600, "used_p1": 400, "used_p2": 0, "used_p3": 0},
+    }
+
+
 def _ticket_complete_payload(
     workflow_id: str = "wf_seed",
     ticket_id: str = "tkt_visual_001",
     node_id: str = "node_homepage_visual",
     include_review_request: bool = True,
+    include_developer_inspector_payloads: bool = False,
+    compiled_context_bundle_ref: str = "ctx://homepage/visual-v1",
+    compile_manifest_ref: str = "manifest://homepage/visual-v1",
 ) -> dict:
     payload = {
         "workflow_id": workflow_id,
@@ -127,8 +189,8 @@ def _ticket_complete_payload(
                 "budget_risk": "LOW",
             },
             "developer_inspector_refs": {
-                "compiled_context_bundle_ref": "ctx://homepage/visual-v1",
-                "compile_manifest_ref": "manifest://homepage/visual-v1",
+                "compiled_context_bundle_ref": compiled_context_bundle_ref,
+                "compile_manifest_ref": compile_manifest_ref,
             },
             "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
             "draft_selected_option_id": "option_a",
@@ -137,6 +199,11 @@ def _ticket_complete_payload(
             "inbox_summary": "Visual milestone is blocked for board review.",
             "badges": ["visual", "board_gate"],
         }
+        if include_developer_inspector_payloads:
+            payload["review_request"]["developer_inspector_payloads"] = {
+                "compiled_context_bundle": _compiled_context_bundle_payload(),
+                "compile_manifest": _compile_manifest_payload(),
+            }
     return payload
 
 
@@ -330,11 +397,22 @@ def _create_lease_and_start_ticket(
     assert start_response.json()["status"] == "ACCEPTED"
 
 
-def _seed_review_request(client, workflow_id: str = "wf_seed") -> dict:
+def _seed_review_request(
+    client,
+    workflow_id: str = "wf_seed",
+    include_developer_inspector_payloads: bool = False,
+    compiled_context_bundle_ref: str = "ctx://homepage/visual-v1",
+    compile_manifest_ref: str = "manifest://homepage/visual-v1",
+) -> dict:
     _create_lease_and_start_ticket(client, workflow_id=workflow_id)
     response = client.post(
         "/api/v1/commands/ticket-complete",
-        json=_ticket_complete_payload(workflow_id=workflow_id),
+        json=_ticket_complete_payload(
+            workflow_id=workflow_id,
+            include_developer_inspector_payloads=include_developer_inspector_payloads,
+            compiled_context_bundle_ref=compiled_context_bundle_ref,
+            compile_manifest_ref=compile_manifest_ref,
+        ),
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
@@ -881,6 +959,63 @@ def test_review_room_route_returns_existing_projection(client):
     assert body["review_pack"]["trigger"]["trigger_event_id"].startswith("evt_")
     assert body["review_pack"]["decision_form"]["command_target_version"] >= 1
     assert body["available_actions"] == ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"]
+
+
+def test_review_room_developer_inspector_returns_materialized_payloads(client):
+    approval = _seed_review_request(client, include_developer_inspector_payloads=True)
+
+    response = client.get(
+        f"/api/v1/projections/review-room/{approval['review_pack_id']}/developer-inspector"
+    )
+    body = response.json()["data"]
+    store = client.app.state.developer_inspector_store
+
+    assert response.status_code == 200
+    assert body["review_pack_id"] == approval["review_pack_id"]
+    assert body["compiled_context_bundle_ref"] == "ctx://homepage/visual-v1"
+    assert body["compile_manifest_ref"] == "manifest://homepage/visual-v1"
+    assert body["availability"] == "ready"
+    assert body["compiled_context_bundle"]["meta"]["bundle_id"] == "ccb_homepage_visual_v1"
+    assert body["compile_manifest"]["compile_meta"]["compile_id"] == "cmp_homepage_visual_v1"
+    assert store.resolve_path("ctx://homepage/visual-v1").exists()
+    assert store.resolve_path("manifest://homepage/visual-v1").exists()
+
+
+def test_review_room_developer_inspector_returns_partial_when_refs_are_unmaterialized(client):
+    approval = _seed_review_request(client)
+
+    response = client.get(
+        f"/api/v1/projections/review-room/{approval['review_pack_id']}/developer-inspector"
+    )
+    body = response.json()["data"]
+
+    assert response.status_code == 200
+    assert body["availability"] == "partial"
+    assert body["compiled_context_bundle_ref"] == "ctx://homepage/visual-v1"
+    assert body["compile_manifest_ref"] == "manifest://homepage/visual-v1"
+    assert body["compiled_context_bundle"] is None
+    assert body["compile_manifest"] is None
+
+
+def test_review_room_developer_inspector_returns_404_for_missing_review_pack(client):
+    response = client.get("/api/v1/projections/review-room/brp_missing/developer-inspector")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_ticket_complete_rejects_invalid_developer_inspector_ref(client):
+    _create_lease_and_start_ticket(client)
+    response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(
+            include_developer_inspector_payloads=True,
+            compiled_context_bundle_ref="ctx://homepage/../escape",
+        ),
+    )
+
+    assert response.status_code == 422
+    assert "unsafe segment" in response.text
 
 
 def test_missing_review_room_returns_404(client):

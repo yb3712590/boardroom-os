@@ -6,6 +6,7 @@ from enum import StrEnum
 from pydantic import Field, model_validator
 
 from app.contracts.common import StrictModel
+from app.core.developer_inspector import parse_developer_inspector_ref
 
 
 class CommandAckStatus(StrEnum):
@@ -142,6 +143,30 @@ class TicketReviewEvidence(StrictModel):
     source_ref: str | None = None
 
 
+class DeveloperInspectorRefs(StrictModel):
+    compiled_context_bundle_ref: str | None = None
+    compile_manifest_ref: str | None = None
+    incident_ref: str | None = None
+    meeting_consensus_ref: str | None = None
+
+    @model_validator(mode="after")
+    def validate_supported_refs(self) -> "DeveloperInspectorRefs":
+        if self.compiled_context_bundle_ref is not None:
+            parsed = parse_developer_inspector_ref(self.compiled_context_bundle_ref)
+            if parsed.scheme != "ctx":
+                raise ValueError("compiled_context_bundle_ref must use ctx://.")
+        if self.compile_manifest_ref is not None:
+            parsed = parse_developer_inspector_ref(self.compile_manifest_ref)
+            if parsed.scheme != "manifest":
+                raise ValueError("compile_manifest_ref must use manifest://.")
+        return self
+
+
+class DeveloperInspectorPayloads(StrictModel):
+    compiled_context_bundle: dict | None = None
+    compile_manifest: dict | None = None
+
+
 class TicketBoardReviewRequest(StrictModel):
     review_type: ReviewType
     priority: ReviewPriority = ReviewPriority.MEDIUM
@@ -159,7 +184,8 @@ class TicketBoardReviewRequest(StrictModel):
     maker_checker_summary: dict | None = None
     risk_summary: dict | None = None
     budget_impact: dict | None = None
-    developer_inspector_refs: dict | None = None
+    developer_inspector_refs: DeveloperInspectorRefs | None = None
+    developer_inspector_payloads: DeveloperInspectorPayloads | None = None
     available_actions: list[ReviewAction] = Field(
         default_factory=lambda: [
             ReviewAction.APPROVE,
@@ -182,6 +208,21 @@ class TicketBoardReviewRequest(StrictModel):
             raise ValueError("draft_selected_option_id must match one of the review options.")
         if len({action.value for action in self.available_actions}) != len(self.available_actions):
             raise ValueError("available_actions must not contain duplicates.")
+        refs = self.developer_inspector_refs
+        payloads = self.developer_inspector_payloads
+        if payloads is not None:
+            if payloads.compiled_context_bundle is not None and (
+                refs is None or refs.compiled_context_bundle_ref is None
+            ):
+                raise ValueError(
+                    "developer_inspector_payloads.compiled_context_bundle requires compiled_context_bundle_ref."
+                )
+            if payloads.compile_manifest is not None and (
+                refs is None or refs.compile_manifest_ref is None
+            ):
+                raise ValueError(
+                    "developer_inspector_payloads.compile_manifest requires compile_manifest_ref."
+                )
         return self
 
 

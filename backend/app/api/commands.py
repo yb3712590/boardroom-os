@@ -15,6 +15,7 @@ from app.contracts.commands import (
     TicketLeaseCommand,
     TicketStartCommand,
 )
+from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.approval_handlers import (
     handle_board_approve,
     handle_board_reject,
@@ -67,7 +68,8 @@ def ticket_fail(request: Request, payload: TicketFailCommand) -> CommandAckEnvel
 @router.post("/ticket-complete", response_model=CommandAckEnvelope)
 def ticket_complete(request: Request, payload: TicketCompletedCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
-    return handle_ticket_completed(repository, payload)
+    developer_inspector_store: DeveloperInspectorStore = request.app.state.developer_inspector_store
+    return handle_ticket_completed(repository, payload, developer_inspector_store)
 
 
 @router.post("/scheduler-tick", response_model=CommandAckEnvelope)

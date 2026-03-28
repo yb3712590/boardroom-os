@@ -373,6 +373,46 @@ This projection should mostly be a thin envelope around a `BoardReviewPack`.
 }
 ```
 
+### 7.1 Review Room Developer Inspector Companion Projection
+
+Suggested endpoint:
+
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector`
+
+Purpose:
+
+- expose the raw persisted developer-facing compilation artifacts referenced by the review pack
+- keep raw compiler IR behind an explicit advanced inspector path instead of mixing it into the default board-facing review surface
+
+Suggested response:
+
+```json
+{
+  "schema_version": "2026-03-28.boardroom.v1",
+  "generated_at": "2026-03-29T00:40:00+08:00",
+  "projection_version": 1849,
+  "cursor": "evt_0001849",
+  "data": {
+    "review_pack_id": "brp_001",
+    "compiled_context_bundle_ref": "ctx://homepage/visual-v1",
+    "compile_manifest_ref": "manifest://homepage/visual-v1",
+    "compiled_context_bundle": {
+      "$ref": "persisted json payload"
+    },
+    "compile_manifest": {
+      "$ref": "persisted json payload"
+    },
+    "availability": "ready"
+  }
+}
+```
+
+Implementation rules:
+
+- this endpoint is scoped to one existing review pack, not a global arbitrary artifact reader
+- `availability` should be `ready`, `partial`, or `missing`
+- `developer_inspector_refs` may exist before payloads are materialized; in that case the endpoint must report that honestly instead of fabricating content
+
 ## 8. BoardReviewPack
 
 This is the primary human-facing approval artifact. It should be assembled from approval state, artifacts, findings, delta summaries, and relevant workflow metadata.
@@ -644,6 +684,8 @@ It should not expose raw compiler IR as the first thing the Board sees.
   "required": ["meta", "subject", "recommendation", "decision_form"]
 }
 ```
+
+`developer_inspector_refs` should point to persisted JSON artifacts when those artifacts have been materialized. The refs may still exist before materialization, but that state should be surfaced through the companion developer inspector projection instead of being treated as fully ready.
 
 Implementation rules:
 

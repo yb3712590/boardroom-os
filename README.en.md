@@ -28,6 +28,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
 - `GET /api/v1/projections/review-room/{review_pack_id}` real projection for persisted approval packs
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` for persisted developer inspector JSON artifacts
 - `GET /api/v1/events/stream?after={cursor}` SSE stream
 - real `CommandAckEnvelope`
 - minimal `events`, `workflow_projection`, `ticket_projection`, `node_projection`, `approval_projection`, and `employee_projection` schema
@@ -37,6 +38,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/ticket-start` for moving the latest node ticket into execution
 - `POST /api/v1/commands/ticket-fail` for explicit worker failure reporting plus minimal retry creation
 - `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
+- optional developer inspector JSON materialization from `ticket-complete -> review_request` for `compiled_context_bundle` and `compile_manifest`
 - seeded persisted worker roster for the minimal executor pool
 - `POST /api/v1/commands/scheduler-tick` for timeout handling, retry creation, and expired-lease dispatch using persisted roster by default
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
@@ -71,6 +73,7 @@ The first backend slice already locks the route names and API boundaries:
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
 - `GET /api/v1/projections/review-room/{review_pack_id}`
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector`
 - `GET /api/v1/events/stream?after={cursor}`
 - `POST /api/v1/commands/ticket-create`
 - `POST /api/v1/commands/ticket-lease`
@@ -128,6 +131,7 @@ Override with:
 - `BOARDROOM_OS_RECENT_EVENT_LIMIT`
 - `BOARDROOM_OS_SCHEDULER_POLL_INTERVAL_SEC`
 - `BOARDROOM_OS_SCHEDULER_MAX_DISPATCHES`
+- `BOARDROOM_OS_DEVELOPER_INSPECTOR_ROOT`
 
 ## Document Index
 

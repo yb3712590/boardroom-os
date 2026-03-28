@@ -8,6 +8,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Settings:
     db_path: Path
+    developer_inspector_root: Path
     busy_timeout_ms: int = 5000
     recent_event_limit: int = 10
     scheduler_poll_interval_sec: float = 5.0
@@ -22,6 +23,12 @@ def get_settings() -> Settings:
             repo_root / "backend" / "data" / "boardroom_os.db",
         )
     )
+    developer_inspector_root = Path(
+        os.environ.get(
+            "BOARDROOM_OS_DEVELOPER_INSPECTOR_ROOT",
+            repo_root / "backend" / "data" / "developer_inspector",
+        )
+    )
     busy_timeout_ms = int(os.environ.get("BOARDROOM_OS_BUSY_TIMEOUT_MS", "5000"))
     recent_event_limit = int(os.environ.get("BOARDROOM_OS_RECENT_EVENT_LIMIT", "10"))
     scheduler_poll_interval_sec = float(
@@ -32,6 +39,7 @@ def get_settings() -> Settings:
     )
     return Settings(
         db_path=db_path,
+        developer_inspector_root=developer_inspector_root,
         busy_timeout_ms=busy_timeout_ms,
         recent_event_limit=recent_event_limit,
         scheduler_poll_interval_sec=scheduler_poll_interval_sec,

@@ -13,6 +13,8 @@ from app.contracts.projections import (
     OpsStripProjection,
     PipelineSummaryProjection,
     ReviewRoomDraftDefaults,
+    ReviewRoomDeveloperInspectorProjectionData,
+    ReviewRoomDeveloperInspectorProjectionEnvelope,
     ReviewRoomProjectionData,
     ReviewRoomProjectionEnvelope,
     RouteTarget,
@@ -20,6 +22,7 @@ from app.contracts.projections import (
     WorkspaceSummary,
 )
 from app.core.constants import APPROVAL_STATUS_OPEN, SCHEMA_VERSION
+from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -200,5 +203,59 @@ def build_review_room_projection(
             review_pack=payload.get("review_pack"),
             available_actions=available_actions,
             draft_defaults=ReviewRoomDraftDefaults(**payload.get("draft_defaults", {})),
+        ),
+    )
+
+
+def build_review_room_developer_inspector_projection(
+    repository: ControlPlaneRepository,
+    review_pack_id: str,
+    developer_inspector_store: DeveloperInspectorStore,
+) -> ReviewRoomDeveloperInspectorProjectionEnvelope | None:
+    repository.initialize()
+    approval = repository.get_approval_by_review_pack_id(review_pack_id)
+    if approval is None:
+        return None
+
+    cursor, projection_version = repository.get_cursor_and_version()
+    review_pack = approval["payload"].get("review_pack") or {}
+    refs = review_pack.get("developer_inspector_refs") or {}
+    compiled_context_bundle_ref = refs.get("compiled_context_bundle_ref")
+    compile_manifest_ref = refs.get("compile_manifest_ref")
+    compiled_context_bundle = (
+        developer_inspector_store.read_json(compiled_context_bundle_ref)
+        if compiled_context_bundle_ref is not None
+        else None
+    )
+    compile_manifest = (
+        developer_inspector_store.read_json(compile_manifest_ref)
+        if compile_manifest_ref is not None
+        else None
+    )
+
+    ref_count = sum(
+        ref is not None for ref in (compiled_context_bundle_ref, compile_manifest_ref)
+    )
+    materialized_count = sum(
+        payload is not None for payload in (compiled_context_bundle, compile_manifest)
+    )
+    availability = "missing"
+    if ref_count == 2 and materialized_count == 2:
+        availability = "ready"
+    elif ref_count > 0 or materialized_count > 0:
+        availability = "partial"
+
+    return ReviewRoomDeveloperInspectorProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=now_local(),
+        projection_version=projection_version,
+        cursor=cursor,
+        data=ReviewRoomDeveloperInspectorProjectionData(
+            review_pack_id=review_pack_id,
+            compiled_context_bundle_ref=compiled_context_bundle_ref,
+            compile_manifest_ref=compile_manifest_ref,
+            compiled_context_bundle=compiled_context_bundle,
+            compile_manifest=compile_manifest,
+            availability=availability,
         ),
     )

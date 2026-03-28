@@ -32,6 +32,7 @@ from app.core.constants import (
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
 )
+from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -139,8 +140,48 @@ def _build_review_pack(
             "requires_comment_on_reject": True,
             "requires_constraint_patch_on_modify": True,
         },
-        "developer_inspector_refs": review_request.developer_inspector_refs,
+        "developer_inspector_refs": (
+            review_request.developer_inspector_refs.model_dump(mode="json", exclude_none=True)
+            if review_request.developer_inspector_refs is not None
+            else None
+        ),
     }
+
+
+def _persist_developer_inspector_payloads(
+    developer_inspector_store: DeveloperInspectorStore,
+    payload: TicketCompletedCommand,
+) -> list[PersistedDeveloperInspectorArtifact]:
+    review_request = payload.review_request
+    if review_request is None or review_request.developer_inspector_payloads is None:
+        return []
+
+    refs = review_request.developer_inspector_refs
+    if refs is None:
+        return []
+
+    persisted: list[PersistedDeveloperInspectorArtifact] = []
+    if (
+        refs.compiled_context_bundle_ref is not None
+        and review_request.developer_inspector_payloads.compiled_context_bundle is not None
+    ):
+        persisted.append(
+            developer_inspector_store.write_json(
+                refs.compiled_context_bundle_ref,
+                review_request.developer_inspector_payloads.compiled_context_bundle,
+            )
+        )
+    if (
+        refs.compile_manifest_ref is not None
+        and review_request.developer_inspector_payloads.compile_manifest is not None
+    ):
+        persisted.append(
+            developer_inspector_store.write_json(
+                refs.compile_manifest_ref,
+                review_request.developer_inspector_payloads.compile_manifest,
+            )
+        )
+    return persisted
 
 
 def _normalized_failure_detail(failure_detail: dict | None) -> dict:
@@ -974,138 +1015,162 @@ def handle_ticket_fail(
 def handle_ticket_completed(
     repository: ControlPlaneRepository,
     payload: TicketCompletedCommand,
+    developer_inspector_store: DeveloperInspectorStore | None = None,
 ) -> CommandAckEnvelope:
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
+    persisted_artifacts: list[PersistedDeveloperInspectorArtifact] = []
 
-    with repository.transaction() as connection:
-        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
-        if existing_event is not None:
-            return _duplicate_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                action="ticket-complete",
-            )
+    try:
+        with repository.transaction() as connection:
+            existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+            if existing_event is not None:
+                return _duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    action="ticket-complete",
+                )
 
-        current_node = repository.get_current_node_projection(
-            payload.workflow_id,
-            payload.node_id,
-            connection=connection,
-        )
-        if current_node is None:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                reason="Ticket must be created and started before it can be completed.",
+            current_node = repository.get_current_node_projection(
+                payload.workflow_id,
+                payload.node_id,
+                connection=connection,
             )
-        if current_node["status"] != NODE_STATUS_EXECUTING:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                reason=(
-                    f"Node {payload.node_id} cannot accept a ticket result while status is "
-                    f"{current_node['status']}."
-                ),
-            )
-        if current_node["latest_ticket_id"] != payload.ticket_id:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                reason="Node projection no longer points at this ticket.",
-            )
+            if current_node is None:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason="Ticket must be created and started before it can be completed.",
+                )
+            if current_node["status"] != NODE_STATUS_EXECUTING:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        f"Node {payload.node_id} cannot accept a ticket result while status is "
+                        f"{current_node['status']}."
+                    ),
+                )
+            if current_node["latest_ticket_id"] != payload.ticket_id:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason="Node projection no longer points at this ticket.",
+                )
 
-        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
-        if current_ticket is None:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                reason="Ticket projection is missing for the currently executing node.",
+            current_ticket = repository.get_current_ticket_projection(
+                payload.ticket_id,
+                connection=connection,
             )
-        if current_ticket["workflow_id"] != payload.workflow_id or current_ticket["node_id"] != payload.node_id:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                reason="Ticket projection does not match the requested workflow or node.",
-            )
-        if current_ticket["status"] != TICKET_STATUS_EXECUTING:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                reason=(
-                    f"Ticket {payload.ticket_id} cannot be completed while status is "
-                    f"{current_ticket['status']}."
-                ),
-            )
+            if current_ticket is None:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason="Ticket projection is missing for the currently executing node.",
+                )
+            if (
+                current_ticket["workflow_id"] != payload.workflow_id
+                or current_ticket["node_id"] != payload.node_id
+            ):
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason="Ticket projection does not match the requested workflow or node.",
+                )
+            if current_ticket["status"] != TICKET_STATUS_EXECUTING:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        f"Ticket {payload.ticket_id} cannot be completed while status is "
+                        f"{current_ticket['status']}."
+                    ),
+                )
 
-        event_row = repository.insert_event(
-            connection,
-            event_type=EVENT_TICKET_COMPLETED,
-            actor_type="worker",
-            actor_id=payload.completed_by,
-            workflow_id=payload.workflow_id,
-            idempotency_key=payload.idempotency_key,
-            causation_id=command_id,
-            correlation_id=payload.workflow_id,
-            payload={
-                "ticket_id": payload.ticket_id,
-                "node_id": payload.node_id,
-                "completion_summary": payload.completion_summary,
-                "artifact_refs": payload.artifact_refs,
-                "board_review_requested": payload.review_request is not None,
-            },
-            occurred_at=received_at,
-        )
-        if event_row is None:
-            return _duplicate_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                action="ticket-complete",
-            )
-
-        causation_hint = f"ticket:{payload.ticket_id}"
-        if payload.review_request is not None:
-            approval = repository.create_approval_request(
+            event_row = repository.insert_event(
                 connection,
+                event_type=EVENT_TICKET_COMPLETED,
+                actor_type="worker",
+                actor_id=payload.completed_by,
                 workflow_id=payload.workflow_id,
-                approval_type=payload.review_request.review_type.value,
-                requested_by=payload.completed_by,
-                review_pack=_build_review_pack(
-                    payload=payload,
-                    trigger_event_id=event_row["event_id"],
-                    command_target_version=int(event_row["sequence_no"]),
-                    occurred_at=received_at,
-                ),
-                available_actions=[action.value for action in payload.review_request.available_actions],
-                draft_defaults={
-                    "selected_option_id": payload.review_request.draft_selected_option_id,
-                    "comment_template": payload.review_request.comment_template,
+                idempotency_key=payload.idempotency_key,
+                causation_id=command_id,
+                correlation_id=payload.workflow_id,
+                payload={
+                    "ticket_id": payload.ticket_id,
+                    "node_id": payload.node_id,
+                    "completion_summary": payload.completion_summary,
+                    "artifact_refs": payload.artifact_refs,
+                    "board_review_requested": payload.review_request is not None,
                 },
-                inbox_title=payload.review_request.inbox_title or payload.review_request.title,
-                inbox_summary=payload.review_request.inbox_summary or payload.completion_summary,
-                badges=payload.review_request.badges,
-                priority=payload.review_request.priority.value,
                 occurred_at=received_at,
-                idempotency_key=f"{payload.idempotency_key}:approval-request",
             )
-            causation_hint = f"approval:{approval['approval_id']}"
+            if event_row is None:
+                return _duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    action="ticket-complete",
+                )
 
-        repository.refresh_projections(connection)
+            causation_hint = f"ticket:{payload.ticket_id}"
+            if payload.review_request is not None:
+                if (
+                    payload.review_request.developer_inspector_payloads is not None
+                    and developer_inspector_store is None
+                ):
+                    raise RuntimeError("Developer inspector store is required to persist inspector payloads.")
+                if developer_inspector_store is not None:
+                    persisted_artifacts = _persist_developer_inspector_payloads(
+                        developer_inspector_store,
+                        payload,
+                    )
+                approval = repository.create_approval_request(
+                    connection,
+                    workflow_id=payload.workflow_id,
+                    approval_type=payload.review_request.review_type.value,
+                    requested_by=payload.completed_by,
+                    review_pack=_build_review_pack(
+                        payload=payload,
+                        trigger_event_id=event_row["event_id"],
+                        command_target_version=int(event_row["sequence_no"]),
+                        occurred_at=received_at,
+                    ),
+                    available_actions=[action.value for action in payload.review_request.available_actions],
+                    draft_defaults={
+                        "selected_option_id": payload.review_request.draft_selected_option_id,
+                        "comment_template": payload.review_request.comment_template,
+                    },
+                    inbox_title=payload.review_request.inbox_title or payload.review_request.title,
+                    inbox_summary=payload.review_request.inbox_summary or payload.completion_summary,
+                    badges=payload.review_request.badges,
+                    priority=payload.review_request.priority.value,
+                    occurred_at=received_at,
+                    idempotency_key=f"{payload.idempotency_key}:approval-request",
+                )
+                causation_hint = f"approval:{approval['approval_id']}"
+
+            repository.refresh_projections(connection)
+    except Exception:
+        if developer_inspector_store is not None:
+            for artifact in persisted_artifacts:
+                developer_inspector_store.delete_ref(artifact.ref)
+        raise
 
     return CommandAckEnvelope(
         command_id=command_id,

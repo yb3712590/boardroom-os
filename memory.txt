@@ -711,6 +711,7 @@
 ### Likely Next Step
 - Replace the internal runtime bridge package with a real minimal Context Compiler request/response boundary so automatic execution no longer depends on direct ticket-create payload hydration.
 
+<<<<<<< HEAD
 ## 2026-03-28T22:52:00.4204996+08:00
 
 ### Session Context
@@ -849,3 +850,64 @@
 
 ### Likely Next Step
 - Add a minimal developer-inspector read path so persisted compiler artifacts referenced by review packs can be opened directly without widening the public API surface too much.
+
+## 2026-03-29T00:43:25.5474752+08:00
+
+### Session Context
+- User asked to implement the minimal developer inspector read path so `compiled_context_bundle_ref` and `compile_manifest_ref` in review packs point to truly viewable persisted artifacts.
+
+### Design/Code Gap Identified
+- `BoardReviewPack` already carried `developer_inspector_refs`, but code only stored the ref strings inside the persisted approval payload.
+- There was no persisted JSON artifact behind those refs and no review-room-scoped read endpoint for advanced inspection.
+
+### Slice Landed
+- Added a minimal filesystem-backed developer inspector store rooted by config.
+- Added safe ref parsing for:
+  - `ctx://...`
+  - `manifest://...`
+- Added optional `developer_inspector_payloads` under `ticket-complete -> review_request` so the current approval-production path can materialize:
+  - `compiled_context_bundle`
+  - `compile_manifest`
+- Added `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` to return:
+  - `review_pack_id`
+  - `compiled_context_bundle_ref`
+  - `compile_manifest_ref`
+  - `compiled_context_bundle`
+  - `compile_manifest`
+  - `availability`
+
+### New or Adjusted Boundaries
+- Review Room main projection remains board-facing and does not inline raw compiler JSON.
+- Developer inspector reading is scoped to an existing review pack and is not a global arbitrary artifact reader.
+- Large developer inspector payloads are stored on the filesystem, while SQLite still stores control-plane metadata and review-pack refs only.
+- Invalid developer inspector refs are now rejected during command validation.
+
+### Still Mock / Stub
+- Context Compiler execution
+- Generic artifact store / artifact index
+- Global artifact serving or arbitrary ref resolution
+- Frontend developer inspector UI
+
+### Verification
+- Ran targeted API regression for review-room, approval, and developer inspector paths.
+- Current targeted result after this slice: `11 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\config.py`
+- `D:\Projects\boardroom-os\backend\app\main.py`
+- `D:\Projects\boardroom-os\backend\app\api\commands.py`
+- `D:\Projects\boardroom-os\backend\app\api\projections.py`
+- `D:\Projects\boardroom-os\backend\app\contracts\commands.py`
+- `D:\Projects\boardroom-os\backend\app\contracts\projections.py`
+- `D:\Projects\boardroom-os\backend\app\core\developer_inspector.py`
+- `D:\Projects\boardroom-os\backend\app\core\projections.py`
+- `D:\Projects\boardroom-os\backend\app\core\ticket_handlers.py`
+- `D:\Projects\boardroom-os\backend\tests\conftest.py`
+- `D:\Projects\boardroom-os\backend\tests\test_api.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\boardroom-data-contracts.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Replace the ad hoc `developer_inspector_payloads` write path with a real minimal Context Compiler producer so review-pack inspector artifacts come from an actual compile run instead of manual ticket-complete payload injection.

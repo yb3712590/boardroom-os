@@ -28,6 +28,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
 - `GET /api/v1/projections/review-room/{review_pack_id}` 真实投影（针对已持久化审批包）
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` 可读取已持久化的 developer inspector JSON 产物
 - `GET /api/v1/events/stream?after={cursor}` SSE 增量事件流
 - `CommandAckEnvelope` 首轮真实契约
 - `events` / `workflow_projection` / `ticket_projection` / `node_projection` / `approval_projection` / `employee_projection` 最小 schema
@@ -37,6 +38,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-start` 把最新 ticket / node 推进到执行态
 - `POST /api/v1/commands/ticket-fail` 真实落地主动失败上报与最小 retry create
 - `POST /api/v1/commands/ticket-complete` 用结构化 ticket 结果触发上游审批生产
+- `ticket-complete -> review_request` 现已支持把 `compiled_context_bundle` / `compile_manifest` 以 JSON 形式落到文件系统，并通过 review-room 下的 inspector 路径读取
 - 最小持久化 worker roster / executor pool
 - `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于 timeout、retry create 与 expired lease dispatch
 - dashboard `workforce_summary` 已接入最小真实投影
@@ -72,6 +74,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `GET /api/v1/projections/dashboard`
 - `GET /api/v1/projections/inbox`
 - `GET /api/v1/projections/review-room/{review_pack_id}`
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector`
 - `GET /api/v1/events/stream?after={cursor}`
 - `POST /api/v1/commands/ticket-create`
 - `POST /api/v1/commands/ticket-lease`
@@ -122,6 +125,7 @@ python -m pytest
 - `BOARDROOM_OS_RECENT_EVENT_LIMIT`
 - `BOARDROOM_OS_SCHEDULER_POLL_INTERVAL_SEC`
 - `BOARDROOM_OS_SCHEDULER_MAX_DISPATCHES`
+- `BOARDROOM_OS_DEVELOPER_INSPECTOR_ROOT`
 
 ## 文档导航
 

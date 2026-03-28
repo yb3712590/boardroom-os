@@ -12,8 +12,11 @@ from fastapi.testclient import TestClient
 def db_path(monkeypatch):
     base_dir = Path(__file__).resolve().parents[2] / ".tmp" / "test-db"
     base_dir.mkdir(parents=True, exist_ok=True)
-    path = base_dir / f"boardroom_os_test_{uuid4().hex}.db"
+    run_id = uuid4().hex
+    path = base_dir / f"boardroom_os_test_{run_id}.db"
+    developer_inspector_root = base_dir / f"developer_inspector_{run_id}"
     monkeypatch.setenv("BOARDROOM_OS_DB_PATH", str(path))
+    monkeypatch.setenv("BOARDROOM_OS_DEVELOPER_INSPECTOR_ROOT", str(developer_inspector_root))
     return path
 
 

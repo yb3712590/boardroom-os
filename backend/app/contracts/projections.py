@@ -135,3 +135,16 @@ class ReviewRoomProjectionData(StrictModel):
 
 class ReviewRoomProjectionEnvelope(ProjectionEnvelopeBase):
     data: ReviewRoomProjectionData
+
+
+class ReviewRoomDeveloperInspectorProjectionData(StrictModel):
+    review_pack_id: str
+    compiled_context_bundle_ref: str | None = None
+    compile_manifest_ref: str | None = None
+    compiled_context_bundle: dict | None = None
+    compile_manifest: dict | None = None
+    availability: str
+
+
+class ReviewRoomDeveloperInspectorProjectionEnvelope(ProjectionEnvelopeBase):
+    data: ReviewRoomDeveloperInspectorProjectionData
