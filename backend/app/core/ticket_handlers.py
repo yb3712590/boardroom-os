@@ -907,14 +907,6 @@ def handle_ticket_fail(
             )
 
         created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
-        if created_spec is None:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                ticket_id=payload.ticket_id,
-                reason="Ticket create spec is missing; cannot evaluate retry policy.",
-            )
 
         failure_payload = _build_failure_payload(
             failure_kind=payload.failure_kind,
@@ -948,7 +940,7 @@ def handle_ticket_fail(
             )
 
         next_ticket_id: str | None = None
-        if _should_retry_failure(
+        if created_spec is not None and _should_retry_failure(
             current_ticket=current_ticket,
             created_spec=created_spec,
             failure_kind=payload.failure_kind,

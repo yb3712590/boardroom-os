@@ -710,3 +710,67 @@
 
 ### Likely Next Step
 - Replace the internal runtime bridge package with a real minimal Context Compiler request/response boundary so automatic execution no longer depends on direct ticket-create payload hydration.
+
+## 2026-03-28T22:52:00.4204996+08:00
+
+### Session Context
+- User asked to implement the planned replacement of the internal runtime bridge package with the smallest real Context Compiler boundary.
+- The target was to keep the existing backend architecture and public APIs stable while making automatic execution consume an explicit runtime input layer.
+
+### Relevant Design Constraints Used
+- Keep the current FastAPI + SQLite + event-sourced control-plane structure.
+- Do not change `POST /api/v1/commands/ticket-create`, `POST /api/v1/commands/scheduler-tick`, or the scheduler state machine.
+- Use the current codebase as the source of truth and make the most conservative implementation where design and code were still apart.
+- Update README files only for landed facts, and append memory instead of rewriting prior notes.
+
+### Design/Code Gap Identified
+- Runtime execution still hydrated `TICKET_CREATED` payloads directly into an internal `RuntimeBridgeExecutionPackage`, so worker-facing runtime input was not separated from control-plane ticket storage.
+- The prior fail-closed path was incomplete: if runtime input was broken badly enough that the original create spec disappeared, `ticket-fail` could reject the failure event and leave the ticket stuck in `EXECUTING`.
+
+### Slice Landed
+- Added explicit internal runtime contracts for:
+  - `CompileRequest`
+  - `CompiledExecutionPackage`
+- Added a minimal deterministic compiler path that now does:
+  - ticket projection + persisted `TICKET_CREATED` payload + worker projection
+  - runtime translation into `CompileRequest`
+  - deterministic compilation into `CompiledExecutionPackage`
+  - runtime execution against the compiled package only
+- Replaced the old `RuntimeBridgeExecutionPackage` usage in `backend/app/core/runtime.py`.
+- Kept the actual compiled package conservative:
+  - `compiled_role` expands the assigned worker profile from `employee_projection`
+  - `compiled_constraints` keeps `constraints_ref` and empty expanded rule lists
+  - `atomic_context_bundle` turns `input_artifact_refs` into structured source-descriptor blocks instead of pretending artifacts were already hydrated
+  - execution and governance fields are copied into a stable runtime-facing shape
+
+### New or Adjusted Boundaries
+- Automatic execution no longer directly consumes raw `ticket-create` payload shape after lease; it now consumes `CompiledExecutionPackage`.
+- `CompileRequest` is now the internal runtime-to-compiler boundary for the current MVP slice.
+- `handle_ticket_fail` now allows a failure event to be recorded even when the original create spec is missing; retry is simply skipped in that degraded path.
+
+### Still Mock / Stub
+- Full `CompiledContextBundle` IR generation
+- `CompileManifest` persistence and audit trace storage
+- Artifact hydration / artifact index
+- External worker runtime handoff
+- Strict worker-result validation
+- Richer constraint expansion from `constraints_ref`
+
+### Verification
+- Ran targeted tests for compiler and runner paths.
+- Ran full backend test suite with Python 3.12.10.
+- Current result after this slice: `60 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\contracts\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\core\context_compiler.py`
+- `D:\Projects\boardroom-os\backend\app\core\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\core\ticket_handlers.py`
+- `D:\Projects\boardroom-os\backend\tests\test_context_compiler.py`
+- `D:\Projects\boardroom-os\backend\tests\test_scheduler_runner.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Expand the minimal compiler boundary into a persisted audit path for `CompiledContextBundle` / `CompileManifest`, while keeping the current runtime input contract stable.

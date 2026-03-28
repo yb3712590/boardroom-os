@@ -3,12 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
     TicketCompletedCommand,
     TicketFailCommand,
     TicketStartCommand,
+)
+from app.contracts.runtime import CompiledExecutionPackage
+from app.core.context_compiler import (
+    MINIMAL_CONTEXT_COMPILER_VERSION,
+    build_compile_request,
+    compile_execution_package,
 )
 from app.core.ticket_handlers import (
     handle_ticket_completed,
@@ -17,27 +25,6 @@ from app.core.ticket_handlers import (
 )
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
-
-
-@dataclass(frozen=True)
-class RuntimeBridgeExecutionPackage:
-    workflow_id: str
-    ticket_id: str
-    node_id: str
-    lease_owner: str
-    employee_role_type: str
-    role_profile_ref: str
-    constraints_ref: str
-    input_artifact_refs: list[str]
-    acceptance_criteria: list[str]
-    allowed_tools: list[str]
-    allowed_write_set: list[str]
-    output_schema_ref: str
-    output_schema_version: int
-    retry_budget: int
-    timeout_sla_sec: int
-    escalation_policy: dict[str, Any]
-    bridge_contract_version: str = "runtime-bridge.v1"
 
 
 @dataclass(frozen=True)
@@ -99,99 +86,75 @@ def _list_runtime_startable_leased_tickets(
     return sorted(runnable_tickets, key=_runtime_sort_key)
 
 
-def _build_runtime_bridge_execution_package(
+def _build_compiled_execution_package(
     repository: ControlPlaneRepository,
     ticket: dict[str, Any],
-) -> RuntimeBridgeExecutionPackage:
-    with repository.connection() as connection:
-        created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
-        if created_spec is None:
-            raise ValueError("Ticket create spec is missing for runtime execution.")
-
-    lease_owner = ticket.get("lease_owner")
-    if lease_owner is None:
-        raise ValueError("Ticket lease owner is missing for runtime execution.")
-    employee = repository.get_employee_projection(lease_owner)
-    if employee is None:
-        raise ValueError(f"Employee {lease_owner} is missing from employee_projection.")
-
-    return RuntimeBridgeExecutionPackage(
-        workflow_id=ticket["workflow_id"],
-        ticket_id=ticket["ticket_id"],
-        node_id=ticket["node_id"],
-        lease_owner=lease_owner,
-        employee_role_type=str(employee.get("role_type") or "unknown"),
-        role_profile_ref=str(created_spec.get("role_profile_ref") or ""),
-        constraints_ref=str(created_spec.get("constraints_ref") or ""),
-        input_artifact_refs=list(created_spec.get("input_artifact_refs") or []),
-        acceptance_criteria=list(created_spec.get("acceptance_criteria") or []),
-        allowed_tools=list(created_spec.get("allowed_tools") or []),
-        allowed_write_set=list(created_spec.get("allowed_write_set") or []),
-        output_schema_ref=str(created_spec.get("output_schema_ref") or ""),
-        output_schema_version=int(created_spec.get("output_schema_version") or 0),
-        retry_budget=int(created_spec.get("retry_budget") or 0),
-        timeout_sla_sec=int(created_spec.get("timeout_sla_sec") or 0),
-        escalation_policy=dict(created_spec.get("escalation_policy") or {}),
-    )
+) -> CompiledExecutionPackage:
+    compile_request = build_compile_request(repository, ticket)
+    return compile_execution_package(compile_request)
 
 
-def _execute_runtime_bridge_package(
-    execution_package: RuntimeBridgeExecutionPackage,
+def _execute_compiled_execution_package(
+    execution_package: CompiledExecutionPackage,
 ) -> RuntimeExecutionResult:
-    if execution_package.role_profile_ref not in SUPPORTED_RUNTIME_ROLE_PROFILES:
+    if execution_package.compiled_role.role_profile_ref not in SUPPORTED_RUNTIME_ROLE_PROFILES:
         return RuntimeExecutionResult(
             result_status="failed",
             failure_kind="UNSUPPORTED_RUNTIME_EXECUTION",
             failure_message=(
-                f"Runtime bridge executor does not support role profile "
-                f"{execution_package.role_profile_ref}."
+                "Runtime executor does not support role profile "
+                f"{execution_package.compiled_role.role_profile_ref}."
             ),
             failure_detail={
-                "bridge_contract_version": execution_package.bridge_contract_version,
-                "role_profile_ref": execution_package.role_profile_ref,
-                "output_schema_ref": execution_package.output_schema_ref,
+                "compiler_version": execution_package.meta.compiler_version,
+                "compile_request_id": execution_package.meta.compile_request_id,
+                "role_profile_ref": execution_package.compiled_role.role_profile_ref,
+                "output_schema_ref": execution_package.execution.output_schema_ref,
             },
         )
 
-    if execution_package.output_schema_ref != SUPPORTED_RUNTIME_OUTPUT_SCHEMA:
+    if execution_package.execution.output_schema_ref != SUPPORTED_RUNTIME_OUTPUT_SCHEMA:
         return RuntimeExecutionResult(
             result_status="failed",
             failure_kind="UNSUPPORTED_RUNTIME_EXECUTION",
             failure_message=(
-                f"Runtime bridge executor does not support output schema "
-                f"{execution_package.output_schema_ref}."
+                "Runtime executor does not support output schema "
+                f"{execution_package.execution.output_schema_ref}."
             ),
             failure_detail={
-                "bridge_contract_version": execution_package.bridge_contract_version,
-                "role_profile_ref": execution_package.role_profile_ref,
-                "output_schema_ref": execution_package.output_schema_ref,
-                "output_schema_version": execution_package.output_schema_version,
+                "compiler_version": execution_package.meta.compiler_version,
+                "compile_request_id": execution_package.meta.compile_request_id,
+                "role_profile_ref": execution_package.compiled_role.role_profile_ref,
+                "output_schema_ref": execution_package.execution.output_schema_ref,
+                "output_schema_version": execution_package.execution.output_schema_version,
             },
         )
 
-    if not execution_package.input_artifact_refs:
+    if not execution_package.atomic_context_bundle.context_blocks:
         return RuntimeExecutionResult(
             result_status="failed",
             failure_kind="RUNTIME_INPUT_ERROR",
-            failure_message="Runtime bridge executor requires at least one input artifact reference.",
+            failure_message="Runtime executor requires at least one compiled context block.",
             failure_detail={
-                "bridge_contract_version": execution_package.bridge_contract_version,
-                "ticket_id": execution_package.ticket_id,
+                "compiler_version": execution_package.meta.compiler_version,
+                "compile_request_id": execution_package.meta.compile_request_id,
+                "ticket_id": execution_package.meta.ticket_id,
             },
         )
 
     return RuntimeExecutionResult(
         result_status="completed",
         completion_summary=(
-            f"Runtime bridge executed ticket {execution_package.ticket_id} for "
-            f"{execution_package.role_profile_ref}."
+            f"Runtime executed ticket {execution_package.meta.ticket_id} via "
+            f"{execution_package.meta.compiler_version}."
         ),
         artifact_refs=[],
         result_payload={
-            "bridge_contract_version": execution_package.bridge_contract_version,
-            "role_profile_ref": execution_package.role_profile_ref,
-            "output_schema_ref": execution_package.output_schema_ref,
-            "input_artifact_count": len(execution_package.input_artifact_refs),
+            "compiler_version": execution_package.meta.compiler_version,
+            "compile_request_id": execution_package.meta.compile_request_id,
+            "role_profile_ref": execution_package.compiled_role.role_profile_ref,
+            "output_schema_ref": execution_package.execution.output_schema_ref,
+            "context_block_count": len(execution_package.atomic_context_bundle.context_blocks),
         },
     )
 
@@ -246,9 +209,9 @@ def run_leased_ticket_runtime(
             continue
 
         try:
-            execution_package = _build_runtime_bridge_execution_package(repository, ticket)
-            execution_result = _execute_runtime_bridge_package(execution_package)
-        except ValueError as exc:
+            execution_package = _build_compiled_execution_package(repository, ticket)
+            execution_result = _execute_compiled_execution_package(execution_package)
+        except (ValidationError, ValueError) as exc:
             final_ack = handle_ticket_fail(
                 repository,
                 _build_runtime_failure(
@@ -257,7 +220,7 @@ def run_leased_ticket_runtime(
                     failure_kind="RUNTIME_INPUT_ERROR",
                     failure_message=str(exc),
                     failure_detail={
-                        "bridge_contract_version": "runtime-bridge.v1",
+                        "compiler_version": MINIMAL_CONTEXT_COMPILER_VERSION,
                     },
                 ),
             )
@@ -292,7 +255,7 @@ def run_leased_ticket_runtime(
                     ticket=ticket,
                     failed_by=lease_owner,
                     failure_kind=execution_result.failure_kind or "RUNTIME_ERROR",
-                    failure_message=execution_result.failure_message or "Runtime bridge executor failed.",
+                    failure_message=execution_result.failure_message or "Runtime executor failed.",
                     failure_detail=execution_result.failure_detail,
                 ),
             )
