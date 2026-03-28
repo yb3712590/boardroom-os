@@ -117,7 +117,7 @@ class SchedulerWorkerCandidate(StrictModel):
 
 
 class SchedulerTickCommand(StrictModel):
-    workers: list[SchedulerWorkerCandidate] = Field(min_length=1)
+    workers: list[SchedulerWorkerCandidate] | None = None
     max_dispatches: int = Field(default=10, ge=1)
     idempotency_key: str = Field(min_length=1)
 

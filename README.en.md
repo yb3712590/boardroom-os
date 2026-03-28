@@ -30,13 +30,16 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `GET /api/v1/projections/review-room/{review_pack_id}` real projection for persisted approval packs
 - `GET /api/v1/events/stream?after={cursor}` SSE stream
 - real `CommandAckEnvelope`
-- minimal `events`, `workflow_projection`, `ticket_projection`, `node_projection`, and `approval_projection` schema
+- minimal `events`, `workflow_projection`, `ticket_projection`, `node_projection`, `approval_projection`, and `employee_projection` schema
 - `POST /api/v1/commands/ticket-create` for full control-plane ticket creation
 - `POST /api/v1/commands/ticket-lease` for explicit ticket lease acquisition and renewal
 - `POST /api/v1/commands/ticket-start` for moving the latest node ticket into execution
 - `POST /api/v1/commands/ticket-fail` for explicit worker failure reporting plus minimal retry creation
 - `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
-- `POST /api/v1/commands/scheduler-tick` for explicit timeout handling, retry creation, and expired-lease dispatch
+- seeded persisted worker roster for the minimal executor pool
+- `POST /api/v1/commands/scheduler-tick` for timeout handling, retry creation, and expired-lease dispatch using persisted roster by default
+- dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
+- independent scheduler runner via `python -m app.scheduler_runner`
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -46,9 +49,8 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 
 The following are still pending or stubbed:
 
-- background CEO tick scheduler
 - worker dispatch / compiled execution package handoff
-- persisted employee roster / executor pool
+- employee hire / replace / freeze lifecycle beyond the seeded roster
 - incident / circuit-breaker escalation
 - cancel / richer retry policy / heartbeat timeout states beyond the current minimal loop
 - Maker-Checker review loop
@@ -97,6 +99,13 @@ pip install -e .[dev]
 uvicorn app.main:app --reload
 ```
 
+Run the independent scheduler runner with:
+
+```bash
+cd backend
+python -m app.scheduler_runner
+```
+
 Run tests with:
 
 ```bash
@@ -111,6 +120,10 @@ Default database path:
 Override with:
 
 - `BOARDROOM_OS_DB_PATH`
+- `BOARDROOM_OS_BUSY_TIMEOUT_MS`
+- `BOARDROOM_OS_RECENT_EVENT_LIMIT`
+- `BOARDROOM_OS_SCHEDULER_POLL_INTERVAL_SEC`
+- `BOARDROOM_OS_SCHEDULER_MAX_DISPATCHES`
 
 ## Document Index
 

@@ -239,17 +239,13 @@ def _ticket_fail_payload(
 
 
 def _scheduler_tick_payload(workers: list[dict] | None = None, idempotency_key: str = "scheduler-tick:1") -> dict:
-    return {
-        "workers": workers
-        or [
-            {
-                "employee_id": "emp_frontend_2",
-                "role_profile_refs": ["ui_designer_primary"],
-            }
-        ],
+    payload = {
         "max_dispatches": 10,
         "idempotency_key": idempotency_key,
     }
+    if workers is not None:
+        payload["workers"] = workers
+    return payload
 
 
 def _create_and_lease_ticket(
@@ -354,6 +350,20 @@ def test_startup_initializes_schema_and_wal_mode(client, db_path):
     assert repository.get_journal_mode() == "wal"
 
 
+def test_startup_seeds_minimal_employee_roster(client):
+    employees = client.app.state.repository.list_employee_projections(
+        states=["ACTIVE"],
+        board_approved_only=True,
+    )
+
+    assert [employee["employee_id"] for employee in employees] == [
+        "emp_checker_1",
+        "emp_frontend_2",
+    ]
+    assert employees[0]["role_profile_refs"] == ["checker_primary"]
+    assert employees[1]["role_profile_refs"] == ["ui_designer_primary"]
+
+
 def test_project_init_returns_real_command_ack(client):
     response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
 
@@ -387,6 +397,25 @@ def test_dashboard_returns_latest_active_workflow(client):
     assert data["active_workflow"]["north_star_goal"] == "Ship MVP B"
     assert data["ops_strip"]["budget_total"] == 750000
     assert isinstance(data["pipeline_summary"]["phases"], list)
+
+
+def test_dashboard_workforce_summary_reflects_seeded_roster_and_busy_worker(client, set_ticket_time):
+    initial_response = client.get("/api/v1/projections/dashboard")
+
+    assert initial_response.status_code == 200
+    initial_summary = initial_response.json()["data"]["workforce_summary"]
+    assert initial_summary["active_workers"] == 0
+    assert initial_summary["idle_workers"] == 1
+    assert initial_summary["active_checkers"] == 0
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client)
+    active_response = client.get("/api/v1/projections/dashboard")
+    active_summary = active_response.json()["data"]["workforce_summary"]
+
+    assert active_summary["active_workers"] == 1
+    assert active_summary["idle_workers"] == 0
+    assert active_summary["active_checkers"] == 0
 
 
 def test_ticket_create_moves_ticket_and_node_to_pending(client):

@@ -24,6 +24,47 @@ from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
 
+def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSummaryProjection:
+    employees = repository.list_employee_projections(states=["ACTIVE"], board_approved_only=True)
+    busy_tickets = repository.list_ticket_projections_by_statuses_readonly(["LEASED", "EXECUTING"])
+    now = now_local()
+
+    busy_workers: set[str] = set()
+    for ticket in busy_tickets:
+        owner = ticket.get("lease_owner")
+        if owner is None:
+            continue
+        if ticket["status"] == "EXECUTING":
+            busy_workers.add(owner)
+            continue
+        lease_expiry = ticket.get("lease_expires_at")
+        if lease_expiry is not None and lease_expiry > now:
+            busy_workers.add(owner)
+
+    active_workers = 0
+    idle_workers = 0
+    active_checkers = 0
+    for employee in employees:
+        role_type = employee.get("role_type")
+        is_busy = employee["employee_id"] in busy_workers
+        if role_type == "checker":
+            if is_busy:
+                active_checkers += 1
+            continue
+        if is_busy:
+            active_workers += 1
+        else:
+            idle_workers += 1
+
+    return WorkforceSummaryProjection(
+        active_workers=active_workers,
+        idle_workers=idle_workers,
+        overloaded_workers=0,
+        active_checkers=active_checkers,
+        workers_in_rework_loop=0,
+    )
+
+
 def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardProjectionEnvelope:
     repository.initialize()
     active_workflow = repository.get_active_workflow()
@@ -95,13 +136,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 budget_alerts=0,
                 provider_alerts=0,
             ),
-            workforce_summary=WorkforceSummaryProjection(
-                active_workers=0,
-                idle_workers=0,
-                overloaded_workers=0,
-                active_checkers=0,
-                workers_in_rework_loop=0,
-            ),
+            workforce_summary=_build_workforce_summary(repository),
             event_stream_preview=preview_events,
         ),
     )

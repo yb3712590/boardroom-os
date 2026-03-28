@@ -75,4 +75,17 @@ CREATE TABLE IF NOT EXISTS node_projection (
     version INTEGER NOT NULL,
     PRIMARY KEY (workflow_id, node_id)
 );
+
+CREATE TABLE IF NOT EXISTS employee_projection (
+    employee_id TEXT PRIMARY KEY,
+    role_type TEXT NOT NULL,
+    skill_profile_json TEXT,
+    personality_profile_json TEXT,
+    aesthetic_profile_json TEXT,
+    state TEXT NOT NULL,
+    board_approved INTEGER NOT NULL,
+    role_profile_refs_json TEXT,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
 """

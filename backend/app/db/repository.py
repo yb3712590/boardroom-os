@@ -35,7 +35,31 @@ from app.core.reducer import (
     rebuild_ticket_projections,
     rebuild_workflow_projections,
 )
+from app.core.time import now_local
 from app.db.schema import SCHEMA_SQL
+
+DEFAULT_EMPLOYEE_ROSTER = (
+    {
+        "employee_id": "emp_frontend_2",
+        "role_type": "frontend_engineer",
+        "skill_profile_json": {"primary_domain": "frontend"},
+        "personality_profile_json": {"style": "maker"},
+        "aesthetic_profile_json": {"preference": "minimal"},
+        "state": "ACTIVE",
+        "board_approved": True,
+        "role_profile_refs_json": ["ui_designer_primary"],
+    },
+    {
+        "employee_id": "emp_checker_1",
+        "role_type": "checker",
+        "skill_profile_json": {"primary_domain": "quality"},
+        "personality_profile_json": {"style": "checker"},
+        "aesthetic_profile_json": {"preference": "structured"},
+        "state": "ACTIVE",
+        "board_approved": True,
+        "role_profile_refs_json": ["checker_primary"],
+    },
+)
 
 
 class ControlPlaneRepository:
@@ -51,6 +75,8 @@ class ControlPlaneRepository:
             self._ensure_approval_projection_shape(connection)
             self._ensure_ticket_projection_shape(connection)
             self._ensure_node_projection_shape(connection)
+            self._ensure_employee_projection_shape(connection)
+            self._seed_employee_roster(connection)
 
     @contextmanager
     def connection(self):
@@ -348,6 +374,38 @@ class ControlPlaneRepository:
                 return None
             return self._convert_node_projection_row(row)
 
+    def list_employee_projections(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        states: list[str] | None = None,
+        board_approved_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        if connection is not None:
+            return self._list_employee_projections(
+                connection,
+                states=states,
+                board_approved_only=board_approved_only,
+            )
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            return self._list_employee_projections(
+                owned_connection,
+                states=states,
+                board_approved_only=board_approved_only,
+            )
+
+    def list_scheduler_worker_candidates(
+        self,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.list_employee_projections(
+            connection,
+            states=["ACTIVE"],
+            board_approved_only=True,
+        )
+
     def list_ticket_projections_by_statuses(
         self,
         connection: sqlite3.Connection,
@@ -365,6 +423,14 @@ class ControlPlaneRepository:
             tuple(statuses),
         ).fetchall()
         return [self._convert_ticket_projection_row(row) for row in rows]
+
+    def list_ticket_projections_by_statuses_readonly(
+        self,
+        statuses: list[str],
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        with self.connection() as connection:
+            return self.list_ticket_projections_by_statuses(connection, statuses)
 
     def list_timed_out_ticket_candidates(
         self,
@@ -803,6 +869,19 @@ class ControlPlaneRepository:
         converted["version"] = int(converted["version"])
         return converted
 
+    def _convert_employee_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        if converted.get("updated_at"):
+            converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
+        for field in ("skill_profile_json", "personality_profile_json", "aesthetic_profile_json"):
+            raw_value = converted.get(field)
+            converted[field] = json.loads(raw_value) if raw_value else {}
+        raw_role_profiles = converted.get("role_profile_refs_json")
+        converted["role_profile_refs"] = json.loads(raw_role_profiles) if raw_role_profiles else []
+        converted["board_approved"] = bool(converted.get("board_approved"))
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:
             return "system"
@@ -1048,3 +1127,100 @@ class ControlPlaneRepository:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_node_projection_latest_ticket_id ON node_projection(latest_ticket_id)"
         )
+
+    def _ensure_employee_projection_shape(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(employee_projection)").fetchall()
+        }
+        required_columns = {
+            "employee_id": "TEXT",
+            "role_type": "TEXT",
+            "skill_profile_json": "TEXT",
+            "personality_profile_json": "TEXT",
+            "aesthetic_profile_json": "TEXT",
+            "state": "TEXT",
+            "board_approved": "INTEGER",
+            "role_profile_refs_json": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE employee_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_employee_projection_state ON employee_projection(state)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_employee_projection_role_type ON employee_projection(role_type)"
+        )
+
+    def _seed_employee_roster(self, connection: sqlite3.Connection) -> None:
+        existing_count = connection.execute(
+            "SELECT COUNT(*) AS total FROM employee_projection"
+        ).fetchone()
+        if existing_count is not None and int(existing_count["total"]) > 0:
+            return
+
+        seeded_at = now_local().isoformat()
+        for employee in DEFAULT_EMPLOYEE_ROSTER:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO employee_projection (
+                    employee_id,
+                    role_type,
+                    skill_profile_json,
+                    personality_profile_json,
+                    aesthetic_profile_json,
+                    state,
+                    board_approved,
+                    role_profile_refs_json,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    employee["employee_id"],
+                    employee["role_type"],
+                    json.dumps(employee["skill_profile_json"], sort_keys=True),
+                    json.dumps(employee["personality_profile_json"], sort_keys=True),
+                    json.dumps(employee["aesthetic_profile_json"], sort_keys=True),
+                    employee["state"],
+                    1 if employee["board_approved"] else 0,
+                    json.dumps(employee["role_profile_refs_json"], sort_keys=True),
+                    seeded_at,
+                    1,
+                ),
+            )
+
+    def _list_employee_projections(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        states: list[str] | None = None,
+        board_approved_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if states:
+            placeholders = ", ".join("?" for _ in states)
+            clauses.append(f"state IN ({placeholders})")
+            params.extend(states)
+        if board_approved_only:
+            clauses.append("board_approved = 1")
+
+        where_clause = ""
+        if clauses:
+            where_clause = "WHERE " + " AND ".join(clauses)
+
+        rows = connection.execute(
+            f"""
+            SELECT * FROM employee_projection
+            {where_clause}
+            ORDER BY employee_id ASC
+            """,
+            tuple(params),
+        ).fetchall()
+        return [self._convert_employee_projection_row(row) for row in rows]
