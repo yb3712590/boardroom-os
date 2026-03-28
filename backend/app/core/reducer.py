@@ -16,6 +16,7 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_LEASED,
     EVENT_TICKET_STARTED,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
@@ -26,6 +27,7 @@ from app.core.constants import (
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
     TICKET_STATUS_REWORK_REQUIRED,
 )
@@ -108,6 +110,21 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
             }
             continue
 
+        if event_type == EVENT_TICKET_LEASED:
+            ticket_id = payload["ticket_id"]
+            projections[ticket_id] = {
+                **projections.get(ticket_id, _base_ticket_projection(event, payload)),
+                "workflow_id": event["workflow_id"],
+                "node_id": payload["node_id"],
+                "status": TICKET_STATUS_LEASED,
+                "lease_owner": payload.get("leased_by"),
+                "lease_expires_at": payload.get("lease_expires_at"),
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
         if event_type == EVENT_TICKET_STARTED:
             ticket_id = payload["ticket_id"]
             node_id = payload["node_id"]
@@ -129,6 +146,8 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
                 "status": TICKET_STATUS_COMPLETED,
+                "lease_owner": None,
+                "lease_expires_at": None,
                 "blocking_reason_code": None,
                 "updated_at": occurred_at,
                 "version": version,
@@ -145,6 +164,8 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
                 "status": TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+                "lease_owner": None,
+                "lease_expires_at": None,
                 "blocking_reason_code": BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
                 "updated_at": occurred_at,
                 "version": version,
@@ -161,6 +182,8 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
                 "status": TICKET_STATUS_COMPLETED,
+                "lease_owner": None,
+                "lease_expires_at": None,
                 "blocking_reason_code": None,
                 "updated_at": occurred_at,
                 "version": version,
@@ -182,6 +205,8 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
                 "status": TICKET_STATUS_REWORK_REQUIRED,
+                "lease_owner": None,
+                "lease_expires_at": None,
                 "blocking_reason_code": blocking_reason,
                 "updated_at": occurred_at,
                 "version": version,
@@ -209,6 +234,19 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
             projections[key] = {
                 **_base_node_projection(event, payload),
                 "status": NODE_STATUS_PENDING,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_LEASED:
+            node_id = payload["node_id"]
+            key = (workflow_id, node_id)
+            projections[key] = {
+                **projections.get(key, _base_node_projection(event, payload)),
+                "latest_ticket_id": payload["ticket_id"],
+                "status": NODE_STATUS_PENDING,
+                "blocking_reason_code": None,
                 "updated_at": occurred_at,
                 "version": version,
             }

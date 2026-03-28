@@ -810,7 +810,22 @@ Recommended `status` enum:
 }
 ```
 
-### 10.1.2 Ticket Start
+### 10.1.2 Ticket Lease
+
+`POST /api/v1/commands/ticket-lease`
+
+```json
+{
+  "workflow_id": "wf_001",
+  "ticket_id": "tkt_ui_home_03",
+  "node_id": "node_homepage_visual",
+  "leased_by": "emp_frontend_2",
+  "lease_timeout_sec": 600,
+  "idempotency_key": "ticket-lease:wf_001:tkt_ui_home_03:emp_frontend_2"
+}
+```
+
+### 10.1.3 Ticket Start
 
 `POST /api/v1/commands/ticket-start`
 

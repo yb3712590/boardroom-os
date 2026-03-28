@@ -1,22 +1,25 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
     TicketCompletedCommand,
     TicketCreateCommand,
+    TicketLeaseCommand,
     TicketStartCommand,
 )
 from app.core.constants import (
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_LEASED,
     EVENT_TICKET_STARTED,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
 )
 from app.core.ids import new_prefixed_id
@@ -188,6 +191,118 @@ def handle_ticket_create(
     )
 
 
+def handle_ticket_lease(
+    repository: ControlPlaneRepository,
+    payload: TicketLeaseCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+    lease_expires_at = received_at + timedelta(seconds=payload.lease_timeout_sec)
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-lease",
+            )
+
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
+        current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+        if current_ticket is None or current_node is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket must be created before it can be leased.",
+            )
+        if current_ticket["workflow_id"] != payload.workflow_id or current_ticket["node_id"] != payload.node_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket projection does not match the requested workflow or node.",
+            )
+        if current_node["latest_ticket_id"] != payload.ticket_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Node projection no longer points at this ticket.",
+            )
+        if current_ticket["status"] not in {TICKET_STATUS_PENDING, TICKET_STATUS_LEASED}:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} can only be leased from PENDING or LEASED; "
+                    f"current status is {current_ticket['status']}."
+                ),
+            )
+
+        current_owner = current_ticket.get("lease_owner")
+        current_expiry = current_ticket.get("lease_expires_at")
+        lease_is_active = current_expiry is not None and current_expiry > received_at
+        if current_ticket["status"] == TICKET_STATUS_LEASED and lease_is_active:
+            if current_owner != payload.leased_by:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        f"Ticket {payload.ticket_id} is currently leased by {current_owner} until "
+                        f"{current_expiry.isoformat()}."
+                    ),
+                )
+
+        event_row = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_LEASED,
+            actor_type="worker",
+            actor_id=payload.leased_by,
+            workflow_id=payload.workflow_id,
+            idempotency_key=payload.idempotency_key,
+            causation_id=command_id,
+            correlation_id=payload.workflow_id,
+            payload={
+                "ticket_id": payload.ticket_id,
+                "node_id": payload.node_id,
+                "leased_by": payload.leased_by,
+                "lease_timeout_sec": payload.lease_timeout_sec,
+                "lease_expires_at": lease_expires_at.isoformat(),
+            },
+            occurred_at=received_at,
+        )
+        if event_row is None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-lease",
+            )
+
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"ticket:{payload.ticket_id}",
+    )
+
+
 def handle_ticket_start(
     repository: ControlPlaneRepository,
     payload: TicketStartCommand,
@@ -232,16 +347,49 @@ def handle_ticket_start(
                 ticket_id=payload.ticket_id,
                 reason="Node projection no longer points at this ticket.",
             )
-        if current_ticket["status"] != TICKET_STATUS_PENDING or current_node["status"] != NODE_STATUS_PENDING:
+        if current_node["status"] != NODE_STATUS_PENDING:
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
                 reason=(
-                    f"Ticket {payload.ticket_id} can only start from PENDING; current ticket/node "
-                    f"status is {current_ticket['status']}/{current_node['status']}."
+                    f"Ticket {payload.ticket_id} can only start while node {payload.node_id} is "
+                    f"PENDING; current node status is {current_node['status']}."
                 ),
+            )
+        if current_ticket["status"] != TICKET_STATUS_LEASED:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} can only start from LEASED; current ticket status "
+                    f"is {current_ticket['status']}."
+                ),
+            )
+
+        lease_owner = current_ticket.get("lease_owner")
+        lease_expires_at = current_ticket.get("lease_expires_at")
+        if lease_owner != payload.started_by:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} is leased by {lease_owner}; "
+                    f"{payload.started_by} cannot start it."
+                ),
+            )
+        if lease_expires_at is None or lease_expires_at <= received_at:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=f"Ticket {payload.ticket_id} lease is missing or expired.",
             )
 
         event_row = repository.insert_event(

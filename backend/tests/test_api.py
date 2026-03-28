@@ -14,6 +14,7 @@ from app.core.constants import (
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_LEASED,
     EVENT_TICKET_STARTED,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
@@ -24,6 +25,7 @@ from app.core.constants import (
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
     TICKET_STATUS_REWORK_REQUIRED,
 )
@@ -179,22 +181,42 @@ def _ticket_start_payload(
     workflow_id: str = "wf_seed",
     ticket_id: str = "tkt_visual_001",
     node_id: str = "node_homepage_visual",
+    started_by: str = "emp_frontend_2",
 ) -> dict:
     return {
         "workflow_id": workflow_id,
         "ticket_id": ticket_id,
         "node_id": node_id,
-        "started_by": "emp_frontend_2",
+        "started_by": started_by,
         "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
     }
 
 
-def _create_and_start_ticket(
+def _ticket_lease_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+    leased_by: str = "emp_frontend_2",
+    lease_timeout_sec: int = 600,
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "leased_by": leased_by,
+        "lease_timeout_sec": lease_timeout_sec,
+        "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:{leased_by}",
+    }
+
+
+def _create_and_lease_ticket(
     client,
     workflow_id: str = "wf_seed",
     ticket_id: str = "tkt_visual_001",
     node_id: str = "node_homepage_visual",
     attempt_no: int = 1,
+    leased_by: str = "emp_frontend_2",
+    lease_timeout_sec: int = 600,
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -208,16 +230,53 @@ def _create_and_start_ticket(
     assert create_response.status_code == 200
     assert create_response.json()["status"] == "ACCEPTED"
 
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            leased_by=leased_by,
+            lease_timeout_sec=lease_timeout_sec,
+        ),
+    )
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+
+
+def _create_lease_and_start_ticket(
+    client,
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+    attempt_no: int = 1,
+    leased_by: str = "emp_frontend_2",
+    lease_timeout_sec: int = 600,
+) -> None:
+    _create_and_lease_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        attempt_no=attempt_no,
+        leased_by=leased_by,
+        lease_timeout_sec=lease_timeout_sec,
+    )
     start_response = client.post(
         "/api/v1/commands/ticket-start",
-        json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            started_by=leased_by,
+        ),
     )
     assert start_response.status_code == 200
     assert start_response.json()["status"] == "ACCEPTED"
 
 
 def _seed_review_request(client, workflow_id: str = "wf_seed") -> dict:
-    _create_and_start_ticket(client, workflow_id=workflow_id)
+    _create_lease_and_start_ticket(client, workflow_id=workflow_id)
     response = client.post(
         "/api/v1/commands/ticket-complete",
         json=_ticket_complete_payload(workflow_id=workflow_id),
@@ -292,9 +351,32 @@ def test_ticket_create_moves_ticket_and_node_to_pending(client):
     assert node_projection["latest_ticket_id"] == "tkt_visual_001"
 
 
-def test_ticket_start_moves_ticket_and_node_to_executing(client):
+def test_ticket_lease_moves_ticket_to_leased_and_keeps_node_pending(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
 
+    response = client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_seed",
+        "node_homepage_visual",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_LEASED) == 1
+    assert ticket_projection["status"] == TICKET_STATUS_LEASED
+    assert ticket_projection["lease_owner"] == "emp_frontend_2"
+    assert ticket_projection["lease_expires_at"].isoformat() == "2026-03-28T10:10:00+08:00"
+    assert node_projection["status"] == NODE_STATUS_PENDING
+
+
+def test_ticket_start_moves_ticket_and_node_to_executing(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client)
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
     response = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
 
     ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
@@ -307,6 +389,8 @@ def test_ticket_start_moves_ticket_and_node_to_executing(client):
     assert response.json()["status"] == "ACCEPTED"
     assert client.app.state.repository.count_events_by_type(EVENT_TICKET_STARTED) == 1
     assert ticket_projection["status"] == TICKET_STATUS_EXECUTING
+    assert ticket_projection["lease_owner"] == "emp_frontend_2"
+    assert ticket_projection["lease_expires_at"].isoformat() == "2026-03-28T10:10:00+08:00"
     assert node_projection["status"] == NODE_STATUS_EXECUTING
 
 
@@ -325,6 +409,16 @@ def test_ticket_start_is_rejected_before_ticket_create(client):
     assert "created" in response.json()["reason"].lower()
 
 
+def test_ticket_start_is_rejected_before_ticket_lease(client):
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+
+    response = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "LEASED" in response.json()["reason"]
+
+
 def test_ticket_complete_is_rejected_before_ticket_start(client):
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
 
@@ -338,20 +432,112 @@ def test_ticket_complete_is_rejected_before_ticket_start(client):
     assert "PENDING" in response.json()["reason"]
 
 
-def test_ticket_create_and_start_are_idempotent(client):
+def test_ticket_create_lease_and_start_are_idempotent(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
     first_create = client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
     duplicate_create = client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    first_lease = client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+    duplicate_lease = client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+    set_ticket_time("2026-03-28T10:05:00+08:00")
     first_start = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
     duplicate_start = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
 
     assert first_create.json()["status"] == "ACCEPTED"
     assert duplicate_create.json()["status"] == "DUPLICATE"
+    assert first_lease.json()["status"] == "ACCEPTED"
+    assert duplicate_lease.json()["status"] == "DUPLICATE"
     assert first_start.json()["status"] == "ACCEPTED"
     assert duplicate_start.json()["status"] == "DUPLICATE"
 
 
-def test_ticket_complete_without_review_request_does_not_open_approval(client):
-    _create_and_start_ticket(client)
+def test_ticket_start_is_rejected_when_lease_owner_differs(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client, leased_by="emp_checker_1")
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(started_by="emp_frontend_2"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "leased by emp_checker_1" in response.json()["reason"]
+
+
+def test_ticket_start_is_rejected_when_lease_has_expired(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client, lease_timeout_sec=60)
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    response = client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "expired" in response.json()["reason"].lower()
+
+
+def test_ticket_lease_is_rejected_for_non_latest_ticket(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload(ticket_id="tkt_visual_001"))
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE node_projection
+            SET latest_ticket_id = ?
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            ("tkt_visual_002", "wf_seed", "node_homepage_visual"),
+        )
+
+    response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id="tkt_visual_001"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "no longer points" in response.json()["reason"].lower()
+
+
+def test_ticket_lease_is_rejected_when_active_lease_belongs_to_other_owner(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client, leased_by="emp_checker_1", lease_timeout_sec=600)
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(leased_by="emp_frontend_2"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "currently leased by emp_checker_1" in response.json()["reason"]
+
+
+def test_ticket_lease_can_be_reclaimed_after_expiry(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client, leased_by="emp_checker_1", lease_timeout_sec=60)
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(leased_by="emp_frontend_2"),
+    )
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_LEASED) == 2
+    assert ticket_projection["status"] == TICKET_STATUS_LEASED
+    assert ticket_projection["lease_owner"] == "emp_frontend_2"
+    assert ticket_projection["lease_expires_at"].isoformat() == "2026-03-28T10:12:00+08:00"
+
+
+def test_ticket_complete_without_review_request_does_not_open_approval(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
     response = client.post(
         "/api/v1/commands/ticket-complete",
         json=_ticket_complete_payload(include_review_request=False),
@@ -558,7 +744,7 @@ def test_ticket_create_is_rejected_when_node_is_blocked_for_board_review(client)
 
 
 def test_ticket_create_is_rejected_when_node_is_completed(client):
-    _create_and_start_ticket(client)
+    _create_lease_and_start_ticket(client)
     client.post("/api/v1/commands/ticket-complete", json=_ticket_complete_payload(include_review_request=False))
 
     response = client.post(
@@ -587,7 +773,7 @@ def test_ticket_complete_is_allowed_after_rework_required(client):
     )
     assert reject_response.json()["status"] == "ACCEPTED"
 
-    _create_and_start_ticket(
+    _create_lease_and_start_ticket(
         client,
         workflow_id="wf_rework",
         ticket_id="tkt_visual_002",
@@ -664,7 +850,7 @@ def test_event_stream_returns_incremental_events_after_cursor(client):
 
 def test_ticket_complete_stream_carries_ticket_and_review_events(client):
     initial_cursor = client.get("/api/v1/projections/dashboard").json()["cursor"]
-    _create_and_start_ticket(client)
+    _create_lease_and_start_ticket(client)
     client.post("/api/v1/commands/ticket-complete", json=_ticket_complete_payload())
 
     with client.stream("GET", f"/api/v1/events/stream?after={initial_cursor}") as response:
@@ -672,6 +858,7 @@ def test_ticket_complete_stream_carries_ticket_and_review_events(client):
 
     assert response.status_code == 200
     assert "TICKET_CREATED" in body
+    assert "TICKET_LEASED" in body
     assert "TICKET_STARTED" in body
     assert "TICKET_COMPLETED" in body
     assert "BOARD_REVIEW_REQUIRED" in body

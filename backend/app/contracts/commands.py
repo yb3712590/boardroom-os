@@ -91,6 +91,15 @@ class TicketStartCommand(StrictModel):
     idempotency_key: str = Field(min_length=1)
 
 
+class TicketLeaseCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    leased_by: str = Field(min_length=1)
+    lease_timeout_sec: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1)
+
+
 class TicketReviewOption(StrictModel):
     option_id: str = Field(min_length=1)
     label: str = Field(min_length=1)

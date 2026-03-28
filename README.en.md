@@ -32,6 +32,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - real `CommandAckEnvelope`
 - minimal `events`, `workflow_projection`, `ticket_projection`, `node_projection`, and `approval_projection` schema
 - `POST /api/v1/commands/ticket-create` for full control-plane ticket creation
+- `POST /api/v1/commands/ticket-lease` for explicit ticket lease acquisition and renewal
 - `POST /api/v1/commands/ticket-start` for moving the latest node ticket into execution
 - `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
 - `POST /api/v1/commands/board-approve`
@@ -44,9 +45,9 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 The following are still pending or stubbed:
 
 - CEO tick scheduler
-- ticket pool and lease protocol
+- scheduler-driven lease reclaim / ticket pool dispatch
 - worker dispatch / compiled execution package handoff
-- lease / timeout / retry / failure states beyond `CREATED -> STARTED -> COMPLETED`
+- timeout / retry / failure states beyond `CREATED -> LEASED -> STARTED -> COMPLETED`
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
 - Context Compiler execution
@@ -63,6 +64,7 @@ The first backend slice already locks the route names and API boundaries:
 - `GET /api/v1/projections/review-room/{review_pack_id}`
 - `GET /api/v1/events/stream?after={cursor}`
 - `POST /api/v1/commands/ticket-create`
+- `POST /api/v1/commands/ticket-lease`
 - `POST /api/v1/commands/ticket-start`
 - `POST /api/v1/commands/ticket-complete`
 - `POST /api/v1/commands/board-approve`
@@ -128,7 +130,7 @@ Override with:
 This slice only establishes the first control-plane loop. The next implementation layers still follow the written design:
 
 - richer projection reducer
-- ticket lease / retry / failure state machines
+- ticket timeout / retry / failure state machines
 - Context Compiler skeleton
 - worker / checker execution chain
 - Board Review Pack and decision commands

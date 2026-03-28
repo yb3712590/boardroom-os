@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,3 +24,20 @@ def client(db_path):
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def set_ticket_time(monkeypatch):
+    import app.core.ticket_handlers as ticket_handlers
+
+    state = {"value": datetime.fromisoformat("2026-03-28T10:00:00+08:00")}
+
+    def _set(value: str | datetime) -> datetime:
+        if isinstance(value, str):
+            state["value"] = datetime.fromisoformat(value)
+        else:
+            state["value"] = value
+        return state["value"]
+
+    monkeypatch.setattr(ticket_handlers, "now_local", lambda: state["value"])
+    return _set

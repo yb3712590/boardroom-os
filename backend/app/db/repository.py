@@ -19,6 +19,7 @@ from app.core.constants import (
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_LEASED,
     EVENT_TICKET_STARTED,
     EVENT_WORKFLOW_CREATED,
 )
@@ -671,6 +672,8 @@ class ControlPlaneRepository:
 
     def _convert_ticket_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
+        if converted.get("lease_expires_at"):
+            converted["lease_expires_at"] = datetime.fromisoformat(converted["lease_expires_at"])
         converted["retry_count"] = int(converted.get("retry_count") or 0)
         converted["retry_budget"] = (
             int(converted["retry_budget"]) if converted.get("retry_budget") is not None else None
@@ -691,7 +694,12 @@ class ControlPlaneRepository:
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:
             return "system"
-        if event_type in {EVENT_TICKET_CREATED, EVENT_TICKET_STARTED, EVENT_TICKET_COMPLETED}:
+        if event_type in {
+            EVENT_TICKET_CREATED,
+            EVENT_TICKET_LEASED,
+            EVENT_TICKET_STARTED,
+            EVENT_TICKET_COMPLETED,
+        }:
             return "ticket"
         if event_type in {
             EVENT_BOARD_REVIEW_REQUIRED,
@@ -707,6 +715,7 @@ class ControlPlaneRepository:
             EVENT_BOARD_DIRECTIVE_RECEIVED,
             EVENT_WORKFLOW_CREATED,
             EVENT_TICKET_CREATED,
+            EVENT_TICKET_LEASED,
             EVENT_TICKET_STARTED,
             EVENT_TICKET_COMPLETED,
             EVENT_BOARD_REVIEW_APPROVED,
@@ -725,6 +734,8 @@ class ControlPlaneRepository:
             return f"WORKFLOW_CREATED for {event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_CREATED:
             return f"TICKET_CREATED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_LEASED:
+            return f"TICKET_LEASED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_STARTED:
             return f"TICKET_STARTED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_COMPLETED:
@@ -765,6 +776,13 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Ticket created.",
+            }
+        if event_type == EVENT_TICKET_LEASED:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket leased.",
             }
         if event_type == EVENT_TICKET_STARTED:
             return {
