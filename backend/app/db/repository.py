@@ -4,7 +4,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +19,15 @@ from app.core.constants import (
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_FAILED,
     EVENT_TICKET_LEASED,
+    EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
+    EVENT_TICKET_TIMED_OUT,
     EVENT_WORKFLOW_CREATED,
+    TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_LEASED,
+    TICKET_STATUS_PENDING,
 )
 from app.core.ids import new_prefixed_id
 from app.core.reducer import (
@@ -209,10 +215,13 @@ class ControlPlaneRepository:
                     retry_budget,
                     timeout_sla_sec,
                     priority,
+                    last_failure_kind,
+                    last_failure_message,
+                    last_failure_fingerprint,
                     blocking_reason_code,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["ticket_id"],
@@ -225,6 +234,9 @@ class ControlPlaneRepository:
                     projection.get("retry_budget"),
                     projection.get("timeout_sla_sec"),
                     projection.get("priority"),
+                    projection.get("last_failure_kind"),
+                    projection.get("last_failure_message"),
+                    projection.get("last_failure_fingerprint"),
                     projection.get("blocking_reason_code"),
                     projection["updated_at"],
                     projection["version"],
@@ -281,10 +293,23 @@ class ControlPlaneRepository:
                 return None
             return dict(row)
 
-    def get_current_ticket_projection(self, ticket_id: str) -> dict[str, Any] | None:
-        self.initialize()
-        with self.connection() as connection:
+    def get_current_ticket_projection(
+        self,
+        ticket_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
             row = connection.execute(
+                "SELECT * FROM ticket_projection WHERE ticket_id = ?",
+                (ticket_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_ticket_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
                 "SELECT * FROM ticket_projection WHERE ticket_id = ?",
                 (ticket_id,),
             ).fetchone()
@@ -296,9 +321,9 @@ class ControlPlaneRepository:
         self,
         workflow_id: str,
         node_id: str,
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any] | None:
-        self.initialize()
-        with self.connection() as connection:
+        if connection is not None:
             row = connection.execute(
                 """
                 SELECT * FROM node_projection
@@ -309,6 +334,89 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_node_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                """
+                SELECT * FROM node_projection
+                WHERE workflow_id = ? AND node_id = ?
+                """,
+                (workflow_id, node_id),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_node_projection_row(row)
+
+    def list_ticket_projections_by_statuses(
+        self,
+        connection: sqlite3.Connection,
+        statuses: list[str],
+    ) -> list[dict[str, Any]]:
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        rows = connection.execute(
+            f"""
+            SELECT * FROM ticket_projection
+            WHERE status IN ({placeholders})
+            ORDER BY updated_at ASC, ticket_id ASC
+            """,
+            tuple(statuses),
+        ).fetchall()
+        return [self._convert_ticket_projection_row(row) for row in rows]
+
+    def list_timed_out_ticket_candidates(
+        self,
+        connection: sqlite3.Connection,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
+        executing = self.list_ticket_projections_by_statuses(connection, [TICKET_STATUS_EXECUTING])
+        return [
+            ticket
+            for ticket in executing
+            if ticket.get("timeout_sla_sec") is not None
+            and ticket["updated_at"] + timedelta(seconds=ticket["timeout_sla_sec"]) <= now
+        ]
+
+    def list_dispatchable_ticket_projections(
+        self,
+        connection: sqlite3.Connection,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
+        candidates = self.list_ticket_projections_by_statuses(
+            connection,
+            [TICKET_STATUS_PENDING, TICKET_STATUS_LEASED],
+        )
+        dispatchable = []
+        for ticket in candidates:
+            if ticket["status"] == TICKET_STATUS_PENDING:
+                dispatchable.append(ticket)
+                continue
+            lease_expiry = ticket.get("lease_expires_at")
+            if lease_expiry is not None and lease_expiry <= now:
+                dispatchable.append(ticket)
+        return dispatchable
+
+    def get_latest_ticket_created_payload(
+        self,
+        connection: sqlite3.Connection,
+        ticket_id: str,
+    ) -> dict[str, Any] | None:
+        rows = connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type = ?
+            ORDER BY sequence_no DESC
+            """,
+            (EVENT_TICKET_CREATED,),
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if payload.get("ticket_id") == ticket_id:
+                return payload
+        return None
 
     def get_cursor_and_version(self) -> tuple[str | None, int]:
         self.initialize()
@@ -672,6 +780,8 @@ class ControlPlaneRepository:
 
     def _convert_ticket_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
+        if converted.get("updated_at"):
+            converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
         if converted.get("lease_expires_at"):
             converted["lease_expires_at"] = datetime.fromisoformat(converted["lease_expires_at"])
         converted["retry_count"] = int(converted.get("retry_count") or 0)
@@ -688,6 +798,8 @@ class ControlPlaneRepository:
 
     def _convert_node_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
+        if converted.get("updated_at"):
+            converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
         converted["version"] = int(converted["version"])
         return converted
 
@@ -696,9 +808,12 @@ class ControlPlaneRepository:
             return "system"
         if event_type in {
             EVENT_TICKET_CREATED,
+            EVENT_TICKET_FAILED,
             EVENT_TICKET_LEASED,
+            EVENT_TICKET_RETRY_SCHEDULED,
             EVENT_TICKET_STARTED,
             EVENT_TICKET_COMPLETED,
+            EVENT_TICKET_TIMED_OUT,
         }:
             return "ticket"
         if event_type in {
@@ -715,13 +830,19 @@ class ControlPlaneRepository:
             EVENT_BOARD_DIRECTIVE_RECEIVED,
             EVENT_WORKFLOW_CREATED,
             EVENT_TICKET_CREATED,
+            EVENT_TICKET_RETRY_SCHEDULED,
             EVENT_TICKET_LEASED,
             EVENT_TICKET_STARTED,
             EVENT_TICKET_COMPLETED,
             EVENT_BOARD_REVIEW_APPROVED,
         }:
             return "info"
-        if event_type in {EVENT_BOARD_REVIEW_REQUIRED, EVENT_BOARD_REVIEW_REJECTED}:
+        if event_type in {
+            EVENT_TICKET_FAILED,
+            EVENT_TICKET_TIMED_OUT,
+            EVENT_BOARD_REVIEW_REQUIRED,
+            EVENT_BOARD_REVIEW_REJECTED,
+        }:
             return "warning"
         return "debug"
 
@@ -740,6 +861,12 @@ class ControlPlaneRepository:
             return f"TICKET_STARTED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_COMPLETED:
             return f"TICKET_COMPLETED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_FAILED:
+            return f"TICKET_FAILED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_TIMED_OUT:
+            return f"TICKET_TIMED_OUT for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_RETRY_SCHEDULED:
+            return f"TICKET_RETRY_SCHEDULED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_BOARD_REVIEW_REQUIRED:
             return "BOARD_REVIEW_REQUIRED pending board action"
         if event["event_type"] == EVENT_BOARD_REVIEW_APPROVED:
@@ -790,6 +917,27 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Ticket started.",
+            }
+        if event_type == EVENT_TICKET_FAILED:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket failed.",
+            }
+        if event_type == EVENT_TICKET_TIMED_OUT:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket timed out.",
+            }
+        if event_type == EVENT_TICKET_RETRY_SCHEDULED:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket retry scheduled.",
             }
         if event_type == EVENT_BOARD_REVIEW_REQUIRED:
             return {
@@ -856,6 +1004,9 @@ class ControlPlaneRepository:
             "retry_budget": "INTEGER",
             "timeout_sla_sec": "INTEGER",
             "priority": "TEXT",
+            "last_failure_kind": "TEXT",
+            "last_failure_message": "TEXT",
+            "last_failure_fingerprint": "TEXT",
             "blocking_reason_code": "TEXT",
             "updated_at": "TEXT",
             "version": "INTEGER",

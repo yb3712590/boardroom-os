@@ -34,7 +34,9 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/ticket-create` for full control-plane ticket creation
 - `POST /api/v1/commands/ticket-lease` for explicit ticket lease acquisition and renewal
 - `POST /api/v1/commands/ticket-start` for moving the latest node ticket into execution
+- `POST /api/v1/commands/ticket-fail` for explicit worker failure reporting plus minimal retry creation
 - `POST /api/v1/commands/ticket-complete` to turn structured ticket results into upstream approval requests
+- `POST /api/v1/commands/scheduler-tick` for explicit timeout handling, retry creation, and expired-lease dispatch
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -44,10 +46,11 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 
 The following are still pending or stubbed:
 
-- CEO tick scheduler
-- scheduler-driven lease reclaim / ticket pool dispatch
+- background CEO tick scheduler
 - worker dispatch / compiled execution package handoff
-- timeout / retry / failure states beyond `CREATED -> LEASED -> STARTED -> COMPLETED`
+- persisted employee roster / executor pool
+- incident / circuit-breaker escalation
+- cancel / richer retry policy / heartbeat timeout states beyond the current minimal loop
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
 - Context Compiler execution
@@ -66,7 +69,9 @@ The first backend slice already locks the route names and API boundaries:
 - `POST /api/v1/commands/ticket-create`
 - `POST /api/v1/commands/ticket-lease`
 - `POST /api/v1/commands/ticket-start`
+- `POST /api/v1/commands/ticket-fail`
 - `POST /api/v1/commands/ticket-complete`
+- `POST /api/v1/commands/scheduler-tick`
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -130,7 +135,7 @@ Override with:
 This slice only establishes the first control-plane loop. The next implementation layers still follow the written design:
 
 - richer projection reducer
-- ticket timeout / retry / failure state machines
+- ticket cancel / richer retry / incident state machines
 - Context Compiler skeleton
 - worker / checker execution chain
 - Board Review Pack and decision commands

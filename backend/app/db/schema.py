@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS ticket_projection (
     retry_budget INTEGER,
     timeout_sla_sec INTEGER,
     priority TEXT,
+    last_failure_kind TEXT,
+    last_failure_message TEXT,
+    last_failure_fingerprint TEXT,
     blocking_reason_code TEXT,
     updated_at TEXT NOT NULL,
     version INTEGER NOT NULL

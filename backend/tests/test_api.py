@@ -14,8 +14,11 @@ from app.core.constants import (
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_FAILED,
     EVENT_TICKET_LEASED,
+    EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
+    EVENT_TICKET_TIMED_OUT,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_COMPLETED,
@@ -25,9 +28,11 @@ from app.core.constants import (
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_FAILED,
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
     TICKET_STATUS_REWORK_REQUIRED,
+    TICKET_STATUS_TIMED_OUT,
 )
 
 
@@ -140,6 +145,10 @@ def _ticket_create_payload(
     ticket_id: str = "tkt_visual_001",
     node_id: str = "node_homepage_visual",
     attempt_no: int = 1,
+    role_profile_ref: str = "ui_designer_primary",
+    retry_budget: int = 2,
+    on_timeout: str = "retry",
+    on_schema_error: str = "retry",
 ) -> dict:
     return {
         "ticket_id": ticket_id,
@@ -147,7 +156,7 @@ def _ticket_create_payload(
         "node_id": node_id,
         "parent_ticket_id": None,
         "attempt_no": attempt_no,
-        "role_profile_ref": "ui_designer_primary",
+        "role_profile_ref": role_profile_ref,
         "constraints_ref": "global_constraints_v3",
         "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
         "context_query_plan": {
@@ -164,13 +173,13 @@ def _ticket_create_payload(
         "output_schema_version": 1,
         "allowed_tools": ["read_artifact", "write_artifact", "image_gen"],
         "allowed_write_set": ["artifacts/ui/homepage/*", "reports/review/*"],
-        "retry_budget": 2,
+        "retry_budget": retry_budget,
         "priority": "high",
         "timeout_sla_sec": 1800,
         "deadline_at": "2026-03-28T18:00:00+08:00",
         "escalation_policy": {
-            "on_timeout": "retry",
-            "on_schema_error": "retry",
+            "on_timeout": on_timeout,
+            "on_schema_error": on_schema_error,
             "on_repeat_failure": "escalate_ceo",
         },
         "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
@@ -209,6 +218,40 @@ def _ticket_lease_payload(
     }
 
 
+def _ticket_fail_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+    failure_kind: str = "RUNTIME_ERROR",
+    failure_message: str = "Worker execution failed.",
+    failure_detail: dict | None = None,
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "failed_by": "emp_frontend_2",
+        "failure_kind": failure_kind,
+        "failure_message": failure_message,
+        "failure_detail": failure_detail or {"step": "render", "exit_code": 1},
+        "idempotency_key": f"ticket-fail:{workflow_id}:{ticket_id}:{failure_kind}",
+    }
+
+
+def _scheduler_tick_payload(workers: list[dict] | None = None, idempotency_key: str = "scheduler-tick:1") -> dict:
+    return {
+        "workers": workers
+        or [
+            {
+                "employee_id": "emp_frontend_2",
+                "role_profile_refs": ["ui_designer_primary"],
+            }
+        ],
+        "max_dispatches": 10,
+        "idempotency_key": idempotency_key,
+    }
+
+
 def _create_and_lease_ticket(
     client,
     workflow_id: str = "wf_seed",
@@ -217,6 +260,10 @@ def _create_and_lease_ticket(
     attempt_no: int = 1,
     leased_by: str = "emp_frontend_2",
     lease_timeout_sec: int = 600,
+    role_profile_ref: str = "ui_designer_primary",
+    retry_budget: int = 2,
+    on_timeout: str = "retry",
+    on_schema_error: str = "retry",
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -225,6 +272,10 @@ def _create_and_lease_ticket(
             ticket_id=ticket_id,
             node_id=node_id,
             attempt_no=attempt_no,
+            role_profile_ref=role_profile_ref,
+            retry_budget=retry_budget,
+            on_timeout=on_timeout,
+            on_schema_error=on_schema_error,
         ),
     )
     assert create_response.status_code == 200
@@ -252,6 +303,10 @@ def _create_lease_and_start_ticket(
     attempt_no: int = 1,
     leased_by: str = "emp_frontend_2",
     lease_timeout_sec: int = 600,
+    role_profile_ref: str = "ui_designer_primary",
+    retry_budget: int = 2,
+    on_timeout: str = "retry",
+    on_schema_error: str = "retry",
 ) -> None:
     _create_and_lease_ticket(
         client,
@@ -261,6 +316,10 @@ def _create_lease_and_start_ticket(
         attempt_no=attempt_no,
         leased_by=leased_by,
         lease_timeout_sec=lease_timeout_sec,
+        role_profile_ref=role_profile_ref,
+        retry_budget=retry_budget,
+        on_timeout=on_timeout,
+        on_schema_error=on_schema_error,
     )
     start_response = client.post(
         "/api/v1/commands/ticket-start",
@@ -556,6 +615,211 @@ def test_ticket_complete_without_review_request_does_not_open_approval(client, s
     assert client.app.state.repository.list_open_approvals() == []
     assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
     assert node_projection["status"] == NODE_STATUS_COMPLETED
+
+
+def test_ticket_fail_moves_ticket_to_failed_and_node_to_rework_when_retry_exhausted(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=0)
+
+    response = client.post("/api/v1/commands/ticket-fail", json=_ticket_fail_payload())
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_seed",
+        "node_homepage_visual",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_FAILED) == 1
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 0
+    assert ticket_projection["status"] == TICKET_STATUS_FAILED
+    assert ticket_projection["lease_owner"] is None
+    assert ticket_projection["lease_expires_at"] is None
+    assert ticket_projection["last_failure_kind"] == "RUNTIME_ERROR"
+    assert ticket_projection["last_failure_message"] == "Worker execution failed."
+    assert ticket_projection["last_failure_fingerprint"]
+    assert node_projection["status"] == NODE_STATUS_REWORK_REQUIRED
+
+
+def test_ticket_fail_is_rejected_before_ticket_start(client):
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    response = client.post("/api/v1/commands/ticket-fail", json=_ticket_fail_payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "EXECUTING" in response.json()["reason"]
+
+
+def test_ticket_fail_is_rejected_for_non_latest_ticket(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE node_projection
+            SET latest_ticket_id = ?
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            ("tkt_other", "wf_seed", "node_homepage_visual"),
+        )
+
+    response = client.post("/api/v1/commands/ticket-fail", json=_ticket_fail_payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "no longer points" in response.json()["reason"].lower()
+
+
+def test_ticket_fail_auto_retry_creates_new_attempt(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+
+    response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(failure_kind="SCHEMA_ERROR"),
+    )
+
+    repository = client.app.state.repository
+    events = repository.list_events_for_testing()
+    latest_ticket = repository.get_current_node_projection("wf_seed", "node_homepage_visual")["latest_ticket_id"]
+    new_ticket_projection = repository.get_current_ticket_projection(latest_ticket)
+    failed_ticket_projection = repository.get_current_ticket_projection("tkt_visual_001")
+    created_retry_events = [
+        event
+        for event in events
+        if event["event_type"] == EVENT_TICKET_CREATED and event["payload"]["ticket_id"] != "tkt_visual_001"
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_TICKET_FAILED) == 1
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 1
+    assert len(created_retry_events) == 1
+    assert created_retry_events[0]["payload"]["parent_ticket_id"] == "tkt_visual_001"
+    assert created_retry_events[0]["payload"]["attempt_no"] == 2
+    assert created_retry_events[0]["payload"]["retry_count"] == 1
+    assert failed_ticket_projection["status"] == TICKET_STATUS_FAILED
+    assert new_ticket_projection["status"] == TICKET_STATUS_PENDING
+    assert new_ticket_projection["retry_count"] == 1
+
+
+def test_ticket_fail_is_idempotent(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=0)
+
+    first = client.post("/api/v1/commands/ticket-fail", json=_ticket_fail_payload())
+    duplicate = client.post("/api/v1/commands/ticket-fail", json=_ticket_fail_payload())
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "ACCEPTED"
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "DUPLICATE"
+
+
+def test_scheduler_tick_times_out_executing_ticket_and_creates_retry(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=1)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    response = client.post("/api/v1/commands/scheduler-tick", json=_scheduler_tick_payload())
+
+    repository = client.app.state.repository
+    node_projection = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    latest_ticket = node_projection["latest_ticket_id"]
+    latest_projection = repository.get_current_ticket_projection(latest_ticket)
+    original_projection = repository.get_current_ticket_projection("tkt_visual_001")
+    retry_events = repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_TICKET_TIMED_OUT) == 1
+    assert retry_events == 1
+    assert original_projection["status"] == TICKET_STATUS_TIMED_OUT
+    assert latest_ticket != "tkt_visual_001"
+    assert latest_projection["status"] == TICKET_STATUS_LEASED
+    assert latest_projection["lease_owner"] == "emp_frontend_2"
+    assert latest_projection["retry_count"] == 1
+
+
+def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client, lease_timeout_sec=60, leased_by="emp_checker_1")
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(
+            workers=[
+                {"employee_id": "emp_frontend_2", "role_profile_refs": ["ui_designer_primary"]},
+                {"employee_id": "emp_checker_1", "role_profile_refs": ["checker_primary"]},
+            ],
+            idempotency_key="scheduler-tick:expired-lease",
+        ),
+    )
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_LEASED) == 2
+    assert ticket_projection["status"] == TICKET_STATUS_LEASED
+    assert ticket_projection["lease_owner"] == "emp_frontend_2"
+
+
+def test_scheduler_tick_does_not_auto_start_ticket(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    response = client.post("/api/v1/commands/scheduler-tick", json=_scheduler_tick_payload())
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection(
+        "wf_seed",
+        "node_homepage_visual",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_LEASED
+    assert node_projection["status"] == NODE_STATUS_PENDING
+
+
+def test_scheduler_tick_skips_busy_worker_and_role_mismatch(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_busy",
+        ticket_id="tkt_busy",
+        node_id="node_busy",
+        role_profile_ref="ui_designer_primary",
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_busy",
+            ticket_id="tkt_pending",
+            node_id="node_pending",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(
+            workers=[
+                {"employee_id": "emp_frontend_2", "role_profile_refs": ["ui_designer_primary"]},
+                {"employee_id": "emp_checker_1", "role_profile_refs": ["checker_primary"]},
+            ],
+            idempotency_key="scheduler-tick:busy",
+        ),
+    )
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_pending")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_PENDING
+    assert ticket_projection["lease_owner"] is None
 
 
 def test_inbox_and_dashboard_reflect_open_approval(client):
@@ -864,6 +1128,39 @@ def test_ticket_complete_stream_carries_ticket_and_review_events(client):
     assert "BOARD_REVIEW_REQUIRED" in body
     assert "tkt_visual_001" in body
     assert "node_homepage_visual" in body
+
+
+def test_ticket_fail_and_retry_stream_carries_failure_events(client, set_ticket_time):
+    initial_cursor = client.get("/api/v1/projections/dashboard").json()["cursor"]
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(failure_kind="SCHEMA_ERROR"),
+    )
+
+    with client.stream("GET", f"/api/v1/events/stream?after={initial_cursor}") as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "TICKET_FAILED" in body
+    assert "TICKET_RETRY_SCHEDULED" in body
+
+
+def test_scheduler_timeout_stream_carries_timeout_events(client, set_ticket_time):
+    initial_cursor = client.get("/api/v1/projections/dashboard").json()["cursor"]
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=1)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post("/api/v1/commands/scheduler-tick", json=_scheduler_tick_payload(idempotency_key="scheduler-tick:stream"))
+
+    with client.stream("GET", f"/api/v1/events/stream?after={initial_cursor}") as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "TICKET_TIMED_OUT" in body
+    assert "TICKET_RETRY_SCHEDULED" in body
 
 
 def test_invalid_project_init_returns_422_without_writing_events(client):

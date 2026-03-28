@@ -1,20 +1,29 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta
+from typing import Any
 
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
+    SchedulerTickCommand,
     TicketCompletedCommand,
     TicketCreateCommand,
+    TicketFailCommand,
     TicketLeaseCommand,
     TicketStartCommand,
 )
 from app.core.constants import (
+    DEFAULT_LEASE_TIMEOUT_SEC,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_FAILED,
     EVENT_TICKET_LEASED,
+    EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
+    EVENT_TICKET_TIMED_OUT,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
@@ -60,6 +69,22 @@ def _rejected_ack(
         received_at=received_at,
         reason=reason,
         causation_hint=f"ticket:{ticket_id}",
+    )
+
+
+def _scheduler_duplicate_ack(
+    *,
+    command_id: str,
+    idempotency_key: str,
+    received_at: datetime,
+) -> CommandAckEnvelope:
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=idempotency_key,
+        status=CommandAckStatus.DUPLICATE,
+        received_at=received_at,
+        reason="An identical scheduler-tick command was already accepted.",
+        causation_hint="scheduler:tick",
     )
 
 
@@ -117,6 +142,158 @@ def _build_review_pack(
     }
 
 
+def _normalized_failure_detail(failure_detail: dict | None) -> dict:
+    if failure_detail is None:
+        return {}
+    return json.loads(json.dumps(failure_detail, sort_keys=True))
+
+
+def _build_failure_payload(
+    *,
+    failure_kind: str,
+    failure_message: str,
+    failure_detail: dict | None,
+) -> dict[str, Any]:
+    normalized_detail = _normalized_failure_detail(failure_detail)
+    fingerprint_source = {
+        "failure_kind": failure_kind,
+        "failure_message": failure_message,
+        "failure_detail": normalized_detail,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            fingerprint_source,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "failure_kind": failure_kind,
+        "failure_message": failure_message,
+        "failure_detail": normalized_detail,
+        "failure_fingerprint": fingerprint,
+    }
+
+
+def _retry_budget(current_ticket: dict[str, Any], created_spec: dict[str, Any]) -> int:
+    return int(created_spec.get("retry_budget") or current_ticket.get("retry_budget") or 0)
+
+
+def _retry_count(current_ticket: dict[str, Any], created_spec: dict[str, Any]) -> int:
+    return int(current_ticket.get("retry_count") or created_spec.get("retry_count") or 0)
+
+
+def _should_retry_failure(
+    *,
+    current_ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+    failure_kind: str,
+) -> bool:
+    retry_budget = _retry_budget(current_ticket, created_spec)
+    retry_count = _retry_count(current_ticket, created_spec)
+    if retry_count >= retry_budget:
+        return False
+
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    if failure_kind == "SCHEMA_ERROR":
+        return escalation_policy.get("on_schema_error") == "retry"
+    return retry_budget > retry_count
+
+
+def _should_retry_timeout(
+    *,
+    current_ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+) -> bool:
+    retry_budget = _retry_budget(current_ticket, created_spec)
+    retry_count = _retry_count(current_ticket, created_spec)
+    if retry_count >= retry_budget:
+        return False
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    return escalation_policy.get("on_timeout") == "retry"
+
+
+def _schedule_retry(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    failed_ticket_id: str,
+    node_id: str,
+    created_spec: dict[str, Any],
+    failure_payload: dict[str, Any],
+    retry_source_event_type: str,
+    idempotency_key_base: str,
+) -> str:
+    next_ticket_id = new_prefixed_id("tkt")
+    next_attempt_no = int(created_spec.get("attempt_no") or 1) + 1
+    next_retry_count = int(created_spec.get("retry_count") or 0) + 1
+
+    retry_event = repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_RETRY_SCHEDULED,
+        actor_type="system",
+        actor_id="scheduler",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:retry-scheduled:{failed_ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "ticket_id": failed_ticket_id,
+            "node_id": node_id,
+            "next_ticket_id": next_ticket_id,
+            "next_attempt_no": next_attempt_no,
+            "retry_count": next_retry_count,
+            "retry_source_event_type": retry_source_event_type,
+            "failure_fingerprint": failure_payload["failure_fingerprint"],
+        },
+        occurred_at=occurred_at,
+    )
+    if retry_event is None:
+        raise RuntimeError("Retry scheduling idempotency conflict.")
+
+    next_ticket_payload = {
+        **created_spec,
+        "ticket_id": next_ticket_id,
+        "parent_ticket_id": failed_ticket_id,
+        "attempt_no": next_attempt_no,
+        "retry_count": next_retry_count,
+        "idempotency_key": f"system-retry-create:{workflow_id}:{next_ticket_id}",
+    }
+    created_event = repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_CREATED,
+        actor_type="system",
+        actor_id="scheduler",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:retry-create:{next_ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=next_ticket_payload,
+        occurred_at=occurred_at,
+    )
+    if created_event is None:
+        raise RuntimeError("Retry ticket creation idempotency conflict.")
+    return next_ticket_id
+
+
+def _dispatch_sort_key(ticket: dict[str, Any]) -> tuple[int, datetime, str]:
+    priority_rank = {
+        "critical": 0,
+        "high": 1,
+        "medium": 2,
+        "low": 3,
+    }
+    return (
+        priority_rank.get(str(ticket.get("priority")).lower(), 4),
+        ticket["updated_at"],
+        ticket["ticket_id"],
+    )
+
+
 def handle_ticket_create(
     repository: ControlPlaneRepository,
     payload: TicketCreateCommand,
@@ -135,7 +312,7 @@ def handle_ticket_create(
                 action="ticket-create",
             )
 
-        current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
         if current_ticket is not None:
             return _rejected_ack(
                 command_id=command_id,
@@ -145,7 +322,11 @@ def handle_ticket_create(
                 reason=f"Ticket {payload.ticket_id} already exists in projection state.",
             )
 
-        current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+        current_node = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
         if current_node is not None and current_node["status"] != NODE_STATUS_REWORK_REQUIRED:
             return _rejected_ack(
                 command_id=command_id,
@@ -210,8 +391,12 @@ def handle_ticket_lease(
                 action="ticket-lease",
             )
 
-        current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
-        current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
+        current_node = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
         if current_ticket is None or current_node is None:
             return _rejected_ack(
                 command_id=command_id,
@@ -321,8 +506,12 @@ def handle_ticket_start(
                 action="ticket-start",
             )
 
-        current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
-        current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
+        current_node = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
         if current_ticket is None or current_node is None:
             return _rejected_ack(
                 command_id=command_id,
@@ -429,6 +618,140 @@ def handle_ticket_start(
     )
 
 
+def handle_ticket_fail(
+    repository: ControlPlaneRepository,
+    payload: TicketFailCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-fail",
+            )
+
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
+        current_node = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
+        if current_ticket is None or current_node is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket must be created and started before it can fail.",
+            )
+        if current_ticket["workflow_id"] != payload.workflow_id or current_ticket["node_id"] != payload.node_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket projection does not match the requested workflow or node.",
+            )
+        if current_node["latest_ticket_id"] != payload.ticket_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Node projection no longer points at this ticket.",
+            )
+        if current_ticket["status"] != TICKET_STATUS_EXECUTING or current_node["status"] != NODE_STATUS_EXECUTING:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} can only fail while ticket/node status is "
+                    f"EXECUTING/EXECUTING; current status is "
+                    f"{current_ticket['status']}/{current_node['status']}."
+                ),
+            )
+
+        created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
+        if created_spec is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket create spec is missing; cannot evaluate retry policy.",
+            )
+
+        failure_payload = _build_failure_payload(
+            failure_kind=payload.failure_kind,
+            failure_message=payload.failure_message,
+            failure_detail=payload.failure_detail,
+        )
+        event_row = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_FAILED,
+            actor_type="worker",
+            actor_id=payload.failed_by,
+            workflow_id=payload.workflow_id,
+            idempotency_key=payload.idempotency_key,
+            causation_id=command_id,
+            correlation_id=payload.workflow_id,
+            payload={
+                "ticket_id": payload.ticket_id,
+                "node_id": payload.node_id,
+                "failed_by": payload.failed_by,
+                **failure_payload,
+            },
+            occurred_at=received_at,
+        )
+        if event_row is None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-fail",
+            )
+
+        next_ticket_id: str | None = None
+        if _should_retry_failure(
+            current_ticket=current_ticket,
+            created_spec=created_spec,
+            failure_kind=payload.failure_kind,
+        ):
+            next_ticket_id = _schedule_retry(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=payload.workflow_id,
+                failed_ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                created_spec=created_spec,
+                failure_payload=failure_payload,
+                retry_source_event_type=EVENT_TICKET_FAILED,
+                idempotency_key_base=payload.idempotency_key,
+            )
+
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"ticket:{next_ticket_id or payload.ticket_id}",
+    )
+
+
 def handle_ticket_completed(
     repository: ControlPlaneRepository,
     payload: TicketCompletedCommand,
@@ -447,7 +770,11 @@ def handle_ticket_completed(
                 action="ticket-complete",
             )
 
-        current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+        current_node = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
         if current_node is None:
             return _rejected_ack(
                 command_id=command_id,
@@ -476,7 +803,7 @@ def handle_ticket_completed(
                 reason="Node projection no longer points at this ticket.",
             )
 
-        current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
         if current_ticket is None:
             return _rejected_ack(
                 command_id=command_id,
@@ -568,4 +895,190 @@ def handle_ticket_completed(
         received_at=received_at,
         reason=None,
         causation_hint=causation_hint,
+    )
+
+
+def handle_scheduler_tick(
+    repository: ControlPlaneRepository,
+    payload: SchedulerTickCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _scheduler_duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+            )
+
+        event_index = 0
+
+        def next_idempotency_key(suffix: str) -> str:
+            nonlocal event_index
+            key = payload.idempotency_key if event_index == 0 else f"{payload.idempotency_key}:{event_index}:{suffix}"
+            event_index += 1
+            return key
+
+        changed_state = False
+        timeout_candidates = repository.list_timed_out_ticket_candidates(connection, received_at)
+        for ticket in timeout_candidates:
+            timeout_payload = _build_failure_payload(
+                failure_kind="TIMEOUT",
+                failure_message="Ticket exceeded timeout SLA.",
+                failure_detail={"timeout_sla_sec": ticket.get("timeout_sla_sec")},
+            )
+            timeout_event = repository.insert_event(
+                connection,
+                event_type=EVENT_TICKET_TIMED_OUT,
+                actor_type="system",
+                actor_id="scheduler",
+                workflow_id=ticket["workflow_id"],
+                idempotency_key=next_idempotency_key(f"timed-out:{ticket['ticket_id']}"),
+                causation_id=command_id,
+                correlation_id=ticket["workflow_id"],
+                payload={
+                    "ticket_id": ticket["ticket_id"],
+                    "node_id": ticket["node_id"],
+                    **timeout_payload,
+                },
+                occurred_at=received_at,
+            )
+            if timeout_event is None:
+                return _scheduler_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                )
+            changed_state = True
+
+            created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
+            if created_spec is None:
+                continue
+            if _should_retry_timeout(current_ticket=ticket, created_spec=created_spec):
+                _schedule_retry(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=ticket["workflow_id"],
+                    failed_ticket_id=ticket["ticket_id"],
+                    node_id=ticket["node_id"],
+                    created_spec=created_spec,
+                    failure_payload=timeout_payload,
+                    retry_source_event_type=EVENT_TICKET_TIMED_OUT,
+                    idempotency_key_base=f"{payload.idempotency_key}:timeout:{ticket['ticket_id']}",
+                )
+                changed_state = True
+
+        repository.refresh_projections(connection)
+
+        worker_candidates = []
+        worker_by_id: dict[str, set[str]] = {}
+        for worker in payload.workers:
+            if worker.employee_id in worker_by_id:
+                continue
+            worker_by_id[worker.employee_id] = set(worker.role_profile_refs)
+            worker_candidates.append(worker.employee_id)
+
+        all_busy_tickets = repository.list_ticket_projections_by_statuses(
+            connection,
+            [TICKET_STATUS_LEASED, TICKET_STATUS_EXECUTING],
+        )
+        busy_workers: set[str] = set()
+        for ticket in all_busy_tickets:
+            owner = ticket.get("lease_owner")
+            if owner is None:
+                continue
+            if ticket["status"] == TICKET_STATUS_EXECUTING:
+                busy_workers.add(owner)
+                continue
+            lease_expiry = ticket.get("lease_expires_at")
+            if lease_expiry is not None and lease_expiry > received_at:
+                busy_workers.add(owner)
+
+        dispatchable_tickets = sorted(
+            repository.list_dispatchable_ticket_projections(connection, received_at),
+            key=_dispatch_sort_key,
+        )
+        dispatched = 0
+
+        for ticket in dispatchable_tickets:
+            if dispatched >= payload.max_dispatches:
+                break
+
+            node_projection = repository.get_current_node_projection(
+                ticket["workflow_id"],
+                ticket["node_id"],
+                connection=connection,
+            )
+            if node_projection is None:
+                continue
+            if node_projection["latest_ticket_id"] != ticket["ticket_id"] or node_projection["status"] != NODE_STATUS_PENDING:
+                continue
+
+            created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
+            if created_spec is None:
+                continue
+            target_role_profile = created_spec.get("role_profile_ref")
+            if not target_role_profile:
+                continue
+
+            selected_worker_id = next(
+                (
+                    worker_id
+                    for worker_id in worker_candidates
+                    if worker_id not in busy_workers
+                    and target_role_profile in worker_by_id[worker_id]
+                ),
+                None,
+            )
+            if selected_worker_id is None:
+                continue
+
+            lease_event = repository.insert_event(
+                connection,
+                event_type=EVENT_TICKET_LEASED,
+                actor_type="system",
+                actor_id="scheduler",
+                workflow_id=ticket["workflow_id"],
+                idempotency_key=next_idempotency_key(
+                    f"lease:{ticket['ticket_id']}:{selected_worker_id}"
+                ),
+                causation_id=command_id,
+                correlation_id=ticket["workflow_id"],
+                payload={
+                    "ticket_id": ticket["ticket_id"],
+                    "node_id": ticket["node_id"],
+                    "leased_by": selected_worker_id,
+                    "lease_timeout_sec": DEFAULT_LEASE_TIMEOUT_SEC,
+                    "lease_expires_at": (
+                        received_at + timedelta(seconds=DEFAULT_LEASE_TIMEOUT_SEC)
+                    ).isoformat(),
+                },
+                occurred_at=received_at,
+            )
+            if lease_event is None:
+                return _scheduler_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                )
+
+            busy_workers.add(selected_worker_id)
+            dispatched += 1
+            changed_state = True
+
+        if changed_state or dispatched > 0:
+            repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint="scheduler:tick",
     )

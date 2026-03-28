@@ -839,6 +839,55 @@ Recommended `status` enum:
 }
 ```
 
+### 10.1.4 Ticket Fail
+
+`POST /api/v1/commands/ticket-fail`
+
+```json
+{
+  "workflow_id": "wf_001",
+  "ticket_id": "tkt_ui_home_03",
+  "node_id": "node_homepage_visual",
+  "failed_by": "emp_frontend_2",
+  "failure_kind": "SCHEMA_ERROR",
+  "failure_message": "Output schema validation failed.",
+  "failure_detail": {
+    "schema_ref": "ui_milestone_review",
+    "field": "options"
+  },
+  "idempotency_key": "ticket-fail:wf_001:tkt_ui_home_03:SCHEMA_ERROR"
+}
+```
+
+### 10.1.5 Scheduler Tick
+
+`POST /api/v1/commands/scheduler-tick`
+
+```json
+{
+  "workers": [
+    {
+      "employee_id": "emp_frontend_2",
+      "role_profile_refs": ["ui_designer_primary"]
+    },
+    {
+      "employee_id": "emp_checker_1",
+      "role_profile_refs": ["checker_primary"]
+    }
+  ],
+  "max_dispatches": 10,
+  "idempotency_key": "scheduler-tick:2026-03-28T10:31:00+08:00"
+}
+```
+
+This endpoint currently provides only the minimum explicit scheduler surface:
+
+- detect timed-out executing tickets
+- schedule retry by appending `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`
+- dispatch `PENDING` or expired-lease tickets by appending `TICKET_LEASED`
+- it does not replace explicit `ticket-start`
+- it does not imply compiled execution package delivery, worker runtime dispatch, or background scheduler loops
+
 ### 10.2 Board Approve
 
 `POST /api/v1/commands/board-approve`

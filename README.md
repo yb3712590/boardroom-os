@@ -34,7 +34,9 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-create` 真实落地 ticket 创建
 - `POST /api/v1/commands/ticket-lease` 真实落地 ticket lease 获取与续租
 - `POST /api/v1/commands/ticket-start` 把最新 ticket / node 推进到执行态
+- `POST /api/v1/commands/ticket-fail` 真实落地主动失败上报与最小 retry create
 - `POST /api/v1/commands/ticket-complete` 用结构化 ticket 结果触发上游审批生产
+- `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，用于 timeout、retry create 与 expired lease dispatch
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -44,10 +46,11 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 
 以下能力仍未落地，当前仍是 stub 或未开始：
 
-- CEO Tick Scheduler
-- Scheduler 驱动的 lease 回收 / Ticket Pool 派发
+- 后台常驻 CEO Tick Scheduler
 - Worker 派发 / compiled execution package 实际交付
-- 超出 `CREATED -> LEASED -> STARTED -> COMPLETED` 的 timeout / retry / failure 状态
+- employee roster / executor pool 持久化
+- incident / circuit-breaker 升级与治理
+- 超出当前最小闭环的 cancel / richer retry policy / heartbeat timeout 状态
 - Maker-Checker Review Loop
 - Review Room 仍只支持已持久化审批包，不含更完整的证据拼装
 - Context Compiler 实际编译
@@ -66,7 +69,9 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-create`
 - `POST /api/v1/commands/ticket-lease`
 - `POST /api/v1/commands/ticket-start`
+- `POST /api/v1/commands/ticket-fail`
 - `POST /api/v1/commands/ticket-complete`
+- `POST /api/v1/commands/scheduler-tick`
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -137,7 +142,7 @@ python -m pytest
 当前后端切片只打通最小控制面闭环。后续仍按既定顺序推进：
 
 - 投影 reducer 继续扩展
-- ticket 的 timeout / retry / failure 状态机
+- ticket 的 cancel / richer retry / incident 状态机
 - Context Compiler 骨架接入
 - Worker / Checker 执行链
 - Board Review Pack 与审批命令

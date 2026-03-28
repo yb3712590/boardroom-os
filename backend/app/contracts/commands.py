@@ -100,6 +100,28 @@ class TicketLeaseCommand(StrictModel):
     idempotency_key: str = Field(min_length=1)
 
 
+class TicketFailCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    failed_by: str = Field(min_length=1)
+    failure_kind: str = Field(min_length=1)
+    failure_message: str = Field(min_length=1)
+    failure_detail: dict | None = None
+    idempotency_key: str = Field(min_length=1)
+
+
+class SchedulerWorkerCandidate(StrictModel):
+    employee_id: str = Field(min_length=1)
+    role_profile_refs: list[str] = Field(min_length=1)
+
+
+class SchedulerTickCommand(StrictModel):
+    workers: list[SchedulerWorkerCandidate] = Field(min_length=1)
+    max_dispatches: int = Field(default=10, ge=1)
+    idempotency_key: str = Field(min_length=1)
+
+
 class TicketReviewOption(StrictModel):
     option_id: str = Field(min_length=1)
     label: str = Field(min_length=1)

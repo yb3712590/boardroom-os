@@ -8,8 +8,10 @@ from app.contracts.commands import (
     CommandAckEnvelope,
     ModifyConstraintsCommand,
     ProjectInitCommand,
+    SchedulerTickCommand,
     TicketCompletedCommand,
     TicketCreateCommand,
+    TicketFailCommand,
     TicketLeaseCommand,
     TicketStartCommand,
 )
@@ -20,8 +22,10 @@ from app.core.approval_handlers import (
 )
 from app.core.command_handlers import handle_project_init
 from app.core.ticket_handlers import (
+    handle_scheduler_tick,
     handle_ticket_completed,
     handle_ticket_create,
+    handle_ticket_fail,
     handle_ticket_lease,
     handle_ticket_start,
 )
@@ -54,10 +58,22 @@ def ticket_start(request: Request, payload: TicketStartCommand) -> CommandAckEnv
     return handle_ticket_start(repository, payload)
 
 
+@router.post("/ticket-fail", response_model=CommandAckEnvelope)
+def ticket_fail(request: Request, payload: TicketFailCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_ticket_fail(repository, payload)
+
+
 @router.post("/ticket-complete", response_model=CommandAckEnvelope)
 def ticket_complete(request: Request, payload: TicketCompletedCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_ticket_completed(repository, payload)
+
+
+@router.post("/scheduler-tick", response_model=CommandAckEnvelope)
+def scheduler_tick(request: Request, payload: SchedulerTickCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_scheduler_tick(repository, payload)
 
 
 @router.post("/board-approve", response_model=CommandAckEnvelope)

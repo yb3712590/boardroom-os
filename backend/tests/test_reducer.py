@@ -13,8 +13,11 @@ from app.core.constants import (
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_FAILED,
     EVENT_TICKET_LEASED,
+    EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
+    EVENT_TICKET_TIMED_OUT,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_COMPLETED,
@@ -24,9 +27,11 @@ from app.core.constants import (
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_FAILED,
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
     TICKET_STATUS_REWORK_REQUIRED,
+    TICKET_STATUS_TIMED_OUT,
 )
 from app.core.reducer import (
     rebuild_node_projections,
@@ -196,6 +201,9 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             "retry_budget": 2,
             "timeout_sla_sec": 1800,
             "priority": "high",
+            "last_failure_kind": None,
+            "last_failure_message": None,
+            "last_failure_fingerprint": None,
             "blocking_reason_code": None,
             "updated_at": "2026-03-28T10:05:00+08:00",
             "version": 4,
@@ -212,6 +220,237 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             "version": 4,
         }
     ]
+
+
+def test_reducer_rebuilds_failed_then_retry_created_flow():
+    created_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_TICKET_CREATED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "attempt_no": 1,
+                "retry_count": 0,
+                "retry_budget": 2,
+                "timeout_sla_sec": 1800,
+                "priority": "high",
+                "parent_ticket_id": None,
+            }
+        ),
+    }
+    leased_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_TICKET_LEASED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:03:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "leased_by": "emp_frontend_2",
+                "lease_expires_at": "2026-03-28T10:13:00+08:00",
+            }
+        ),
+    }
+    started_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_TICKET_STARTED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:04:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "started_by": "emp_frontend_2",
+            }
+        ),
+    }
+    failed_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_TICKET_FAILED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:05:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "failure_kind": "SCHEMA_ERROR",
+                "failure_message": "Schema validation failed.",
+                "failure_fingerprint": "fp_schema_001",
+            }
+        ),
+    }
+    retry_scheduled_event = {
+        "sequence_no": 5,
+        "event_type": EVENT_TICKET_RETRY_SCHEDULED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:05:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "next_ticket_id": "tkt_002",
+                "next_attempt_no": 2,
+                "retry_count": 1,
+            }
+        ),
+    }
+    retry_created_event = {
+        "sequence_no": 6,
+        "event_type": EVENT_TICKET_CREATED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:05:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "attempt_no": 2,
+                "retry_count": 1,
+                "retry_budget": 2,
+                "timeout_sla_sec": 1800,
+                "priority": "high",
+                "parent_ticket_id": "tkt_001",
+            }
+        ),
+    }
+
+    failed_ticket = rebuild_ticket_projections([created_event, leased_event, started_event, failed_event])[0]
+    failed_node = rebuild_node_projections([created_event, leased_event, started_event, failed_event])[0]
+    assert failed_ticket["status"] == TICKET_STATUS_FAILED
+    assert failed_ticket["lease_owner"] is None
+    assert failed_ticket["last_failure_kind"] == "SCHEMA_ERROR"
+    assert failed_ticket["last_failure_message"] == "Schema validation failed."
+    assert failed_ticket["last_failure_fingerprint"] == "fp_schema_001"
+    assert failed_node["status"] == NODE_STATUS_REWORK_REQUIRED
+
+    tickets = rebuild_ticket_projections(
+        [created_event, leased_event, started_event, failed_event, retry_scheduled_event, retry_created_event]
+    )
+    nodes = rebuild_node_projections(
+        [created_event, leased_event, started_event, failed_event, retry_scheduled_event, retry_created_event]
+    )
+    old_ticket = next(item for item in tickets if item["ticket_id"] == "tkt_001")
+    new_ticket = next(item for item in tickets if item["ticket_id"] == "tkt_002")
+
+    assert old_ticket["status"] == TICKET_STATUS_FAILED
+    assert new_ticket["status"] == TICKET_STATUS_PENDING
+    assert new_ticket["retry_count"] == 1
+    assert nodes[0]["latest_ticket_id"] == "tkt_002"
+    assert nodes[0]["status"] == NODE_STATUS_PENDING
+
+
+def test_reducer_rebuilds_timed_out_then_retry_created_flow():
+    created_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_TICKET_CREATED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "attempt_no": 1,
+                "retry_count": 0,
+                "retry_budget": 2,
+                "timeout_sla_sec": 1800,
+                "priority": "high",
+            }
+        ),
+    }
+    leased_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_TICKET_LEASED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:03:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "leased_by": "emp_frontend_2",
+                "lease_expires_at": "2026-03-28T10:13:00+08:00",
+            }
+        ),
+    }
+    started_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_TICKET_STARTED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:04:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "started_by": "emp_frontend_2",
+            }
+        ),
+    }
+    timed_out_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_TICKET_TIMED_OUT,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:35:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "failure_kind": "TIMEOUT",
+                "failure_message": "Ticket exceeded timeout SLA.",
+                "failure_fingerprint": "fp_timeout_001",
+            }
+        ),
+    }
+    retry_scheduled_event = {
+        "sequence_no": 5,
+        "event_type": EVENT_TICKET_RETRY_SCHEDULED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:35:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "next_ticket_id": "tkt_002",
+                "next_attempt_no": 2,
+                "retry_count": 1,
+            }
+        ),
+    }
+    retry_created_event = {
+        "sequence_no": 6,
+        "event_type": EVENT_TICKET_CREATED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:35:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "attempt_no": 2,
+                "retry_count": 1,
+                "retry_budget": 2,
+                "timeout_sla_sec": 1800,
+                "priority": "high",
+                "parent_ticket_id": "tkt_001",
+            }
+        ),
+    }
+
+    tickets = rebuild_ticket_projections(
+        [created_event, leased_event, started_event, timed_out_event, retry_scheduled_event, retry_created_event]
+    )
+    nodes = rebuild_node_projections(
+        [created_event, leased_event, started_event, timed_out_event, retry_scheduled_event, retry_created_event]
+    )
+    old_ticket = next(item for item in tickets if item["ticket_id"] == "tkt_001")
+    new_ticket = next(item for item in tickets if item["ticket_id"] == "tkt_002")
+
+    assert old_ticket["status"] == TICKET_STATUS_TIMED_OUT
+    assert old_ticket["last_failure_kind"] == "TIMEOUT"
+    assert new_ticket["status"] == TICKET_STATUS_PENDING
+    assert new_ticket["retry_count"] == 1
+    assert nodes[0]["latest_ticket_id"] == "tkt_002"
+    assert nodes[0]["status"] == NODE_STATUS_PENDING
 
 
 def test_reducer_rebuilds_blocked_then_approved_then_rework_states():
