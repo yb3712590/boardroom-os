@@ -45,6 +45,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
 - independent scheduler runner via `python -m app.scheduler_runner`
 - runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
+- FastAPI can now also host an optional in-process background scheduler loop behind an explicit env flag; it stays off by default so app startup behavior does not change unless requested
 - persisted minimal `CompiledContextBundle` / `CompileManifest` audit artifacts with ticket-level lookup; provenance is still reference-only and does not hydrate artifact bodies yet
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
@@ -108,6 +109,13 @@ pip install -e .[dev]
 uvicorn app.main:app --reload
 ```
 
+To enable the FastAPI in-process scheduler loop explicitly:
+
+```bash
+cd backend
+BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER=true uvicorn app.main:app --reload
+```
+
 Run the independent scheduler runner with:
 
 ```bash
@@ -131,6 +139,7 @@ Override with:
 - `BOARDROOM_OS_DB_PATH`
 - `BOARDROOM_OS_BUSY_TIMEOUT_MS`
 - `BOARDROOM_OS_RECENT_EVENT_LIMIT`
+- `BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER`
 - `BOARDROOM_OS_SCHEDULER_POLL_INTERVAL_SEC`
 - `BOARDROOM_OS_SCHEDULER_MAX_DISPATCHES`
 - `BOARDROOM_OS_DEVELOPER_INSPECTOR_ROOT`

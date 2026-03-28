@@ -711,7 +711,6 @@
 ### Likely Next Step
 - Replace the internal runtime bridge package with a real minimal Context Compiler request/response boundary so automatic execution no longer depends on direct ticket-create payload hydration.
 
-<<<<<<< HEAD
 ## 2026-03-28T22:52:00.4204996+08:00
 
 ### Session Context
@@ -959,6 +958,61 @@
 
 ### Likely Next Step
 - Add a small runtime or approval-level signal that tells the review pack whether the referenced compile artifacts are stale relative to the latest ticket attempt, without widening the public read surface.
+
+## 2026-03-29T03:09:51+08:00
+
+### Session Context
+- User asked to keep developing the current Boardroom OS repository incrementally and land a medium-sized slice around the most suitable single boundary.
+- After reading the current code and docs, the chosen boundary for this round was the FastAPI in-process background scheduler loop.
+
+### Design Decision
+- The new in-process scheduler loop is optional and stays disabled by default.
+- The existing explicit `POST /api/v1/commands/scheduler-tick` contract remains unchanged.
+- The independent `python -m app.scheduler_runner` path remains valid and is not replaced by the new loop.
+- FastAPI startup now only hosts the same minimal scheduler/runtime chain when `BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER=true` is set.
+
+### Slice Landed
+- Added `enable_inprocess_scheduler` to backend settings with env parsing via `BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER`.
+- Added `InProcessSchedulerLoop` as a dedicated background service that:
+  - runs one scheduler iteration immediately on start
+  - keeps polling on a background thread
+  - logs iteration failures instead of crashing the app
+  - stops cleanly and tolerates repeated `start()` / `stop()` calls
+- Wired FastAPI lifespan to attach the scheduler service on `app.state`, start it only when enabled, and stop it during shutdown.
+- Added focused tests for:
+  - loop immediate execution and clean stop
+  - idempotent start/stop behavior
+  - default-disabled FastAPI behavior
+  - enabled FastAPI behavior that auto-consumes a pending ticket through the existing minimal runtime chain
+
+### Still Mock / Stub
+- External worker runtime handoff beyond the current in-process minimal runtime
+- Employee lifecycle beyond the seeded roster
+- Richer retry / heartbeat / cancel state machine behavior
+- Non-reference-only context hydration and richer compiler provenance
+
+### Documentation Sync
+- Updated `README.md` to move the FastAPI in-process scheduler loop into the implemented state, document that it is opt-in, and add the new env var.
+- Updated `README.en.md` with the same external-status change and enablement instructions.
+- README was updated in this round because the change affects how the backend can be run in real deployments, even though the default behavior stays unchanged.
+
+### Verification
+- Installed backend dev dependencies in a Python 3.12 virtual environment inside the worktree.
+- Verified clean baseline first: `backend/.venv/bin/python -m pytest backend/tests` -> `68 passed`.
+- Verified TDD red step for the new boundary: `backend/.venv/bin/python -m pytest backend/tests/test_inprocess_scheduler.py` -> `3 failed, 1 passed`.
+- Verified green step after implementation: `backend/.venv/bin/python -m pytest backend/tests/test_inprocess_scheduler.py` -> `4 passed`.
+
+### Files Updated
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/backend/app/config.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/backend/app/core/inprocess_scheduler.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/backend/app/main.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/backend/tests/test_inprocess_scheduler.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/README.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/README.en.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/memory.txt`
+
+### Likely Next Step
+- Build the next medium slice around richer runtime governance, most likely heartbeat / timeout refinement or employee lifecycle, without widening beyond one boundary.
 
 ## 2026-03-29T03:54:09+08:00
 

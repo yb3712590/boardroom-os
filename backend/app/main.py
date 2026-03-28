@@ -9,6 +9,7 @@ from app.api.events import router as events_router
 from app.api.projections import router as projections_router
 from app.config import get_settings
 from app.core.developer_inspector import DeveloperInspectorStore
+from app.core.inprocess_scheduler import build_inprocess_scheduler
 from app.db.repository import ControlPlaneRepository
 
 
@@ -20,13 +21,25 @@ def create_app() -> FastAPI:
         recent_event_limit=settings.recent_event_limit,
     )
     developer_inspector_store = DeveloperInspectorStore(settings.developer_inspector_root)
+    inprocess_scheduler = (
+        build_inprocess_scheduler(repository, settings)
+        if settings.enable_inprocess_scheduler
+        else None
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         repository.initialize()
         app.state.repository = repository
         app.state.developer_inspector_store = developer_inspector_store
-        yield
+        app.state.inprocess_scheduler = inprocess_scheduler
+        if inprocess_scheduler is not None:
+            inprocess_scheduler.start()
+        try:
+            yield
+        finally:
+            if inprocess_scheduler is not None:
+                inprocess_scheduler.stop()
 
     app = FastAPI(
         title="Boardroom OS Backend",

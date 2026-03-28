@@ -13,6 +13,14 @@ class Settings:
     recent_event_limit: int = 10
     scheduler_poll_interval_sec: float = 5.0
     scheduler_max_dispatches: int = 10
+    enable_inprocess_scheduler: bool = False
+
+
+def _read_bool_env(name: str, default: bool = False) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def get_settings() -> Settings:
@@ -37,6 +45,10 @@ def get_settings() -> Settings:
     scheduler_max_dispatches = int(
         os.environ.get("BOARDROOM_OS_SCHEDULER_MAX_DISPATCHES", "10")
     )
+    enable_inprocess_scheduler = _read_bool_env(
+        "BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER",
+        default=False,
+    )
     return Settings(
         db_path=db_path,
         developer_inspector_root=developer_inspector_root,
@@ -44,4 +56,5 @@ def get_settings() -> Settings:
         recent_event_limit=recent_event_limit,
         scheduler_poll_interval_sec=scheduler_poll_interval_sec,
         scheduler_max_dispatches=scheduler_max_dispatches,
+        enable_inprocess_scheduler=enable_inprocess_scheduler,
     )

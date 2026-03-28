@@ -45,6 +45,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - dashboard `workforce_summary` 已接入最小真实投影
 - 独立 scheduler runner：`python -m app.scheduler_runner`
 - runner 已打通最小自动执行链：`TICKET_LEASED` 会在独立 runner 中继续推进到 `TICKET_STARTED`，并先经过最小 `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` 编译与持久化边界，再进入 `TICKET_COMPLETED` 或 `TICKET_FAILED`
+- FastAPI 进程现在也可按环境变量显式开启进程内后台 scheduler loop；默认关闭，不改变现有启动语义；开启后会复用同一条最小调度与运行时链路
 - 最小 `CompiledContextBundle` / `CompileManifest` 已落地持久化与审计，可按 ticket 回看；当前 provenance 仍是 reference-only，不包含 artifact 正文 hydration
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
@@ -55,7 +56,6 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 
 以下能力仍未落地，当前仍是 stub 或未开始：
 
-- FastAPI 进程内后台 scheduler loop
 - 完整 compiled execution package 交付 / 外部 worker runtime 实际交付（当前仅落地进程内最小编译边界）
 - employee hire / replace / freeze 生命周期
 - incident / circuit-breaker 升级与治理
@@ -109,6 +109,20 @@ pip install -e .[dev]
 uvicorn app.main:app --reload
 ```
 
+如需启用 FastAPI 进程内后台调度，可显式打开：
+
+```bash
+cd backend
+BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER=true uvicorn app.main:app --reload
+```
+
+独立 runner 仍保留，适合与 API 进程分离部署：
+
+```bash
+cd backend
+python -m app.scheduler_runner
+```
+
 测试命令：
 
 ```bash
@@ -125,6 +139,7 @@ python -m pytest
 - `BOARDROOM_OS_DB_PATH`
 - `BOARDROOM_OS_BUSY_TIMEOUT_MS`
 - `BOARDROOM_OS_RECENT_EVENT_LIMIT`
+- `BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER`
 - `BOARDROOM_OS_SCHEDULER_POLL_INTERVAL_SEC`
 - `BOARDROOM_OS_SCHEDULER_MAX_DISPATCHES`
 - `BOARDROOM_OS_DEVELOPER_INSPECTOR_ROOT`
