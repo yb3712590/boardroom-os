@@ -62,11 +62,21 @@ def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_tic
         idempotency_key="scheduler-runner:test-once",
         max_dispatches=10,
     )
+    latest_bundle = client.app.state.repository.get_latest_compiled_context_bundle_by_ticket(
+        "tkt_runner_ui"
+    )
+    latest_manifest = client.app.state.repository.get_latest_compile_manifest_by_ticket(
+        "tkt_runner_ui"
+    )
     ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_runner_ui")
     node_projection = client.app.state.repository.get_current_node_projection("wf_runner", "node_runner_ui")
 
     assert ack.status.value == "ACCEPTED"
     assert ack.causation_hint == "scheduler:tick"
+    assert latest_bundle is not None
+    assert latest_manifest is not None
+    assert latest_bundle["payload"]["meta"]["ticket_id"] == "tkt_runner_ui"
+    assert latest_manifest["payload"]["compile_meta"]["ticket_id"] == "tkt_runner_ui"
     assert ticket_projection["status"] == "COMPLETED"
     assert ticket_projection["lease_owner"] is None
     assert node_projection["status"] == "COMPLETED"
@@ -133,11 +143,17 @@ def test_scheduler_runner_marks_started_then_failed_for_unsupported_compiled_exe
     )
 
     repository = client.app.state.repository
+    latest_bundle = repository.get_latest_compiled_context_bundle_by_ticket("tkt_runner_fail")
+    latest_manifest = repository.get_latest_compile_manifest_by_ticket("tkt_runner_fail")
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_fail")
     events = repository.list_events_for_testing()
     started_events = [event for event in events if event["event_type"] == "TICKET_STARTED"]
     failed_events = [event for event in events if event["event_type"] == "TICKET_FAILED"]
 
+    assert latest_bundle is not None
+    assert latest_manifest is not None
+    assert latest_bundle["payload"]["context_blocks"][0]["source_kind"] == "ARTIFACT_REFERENCE"
+    assert latest_manifest["payload"]["degradation"]["is_degraded"] is True
     assert ticket_projection["status"] == "FAILED"
     assert started_events
     assert failed_events

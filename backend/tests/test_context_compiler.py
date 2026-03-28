@@ -3,6 +3,8 @@ from __future__ import annotations
 from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     build_compile_request,
+    compile_and_persist_execution_artifacts,
+    compile_audit_artifacts,
     compile_execution_package,
 )
 
@@ -119,3 +121,61 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
         block.content_type == "SOURCE_DESCRIPTOR"
         for block in compiled_package.atomic_context_bundle.context_blocks
     )
+
+
+def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    bundle = compiled_artifacts.compiled_context_bundle
+    manifest = compiled_artifacts.compile_manifest
+    compiled_package = compiled_artifacts.compiled_execution_package
+
+    assert bundle.meta.compile_request_id == compile_request.meta.compile_request_id
+    assert bundle.meta.compiler_version == MINIMAL_CONTEXT_COMPILER_VERSION
+    assert bundle.meta.is_degraded is True
+    assert bundle.system_controls.output_contract.schema_ref == "ui_milestone_review"
+    assert bundle.context_blocks[0].source_kind == "ARTIFACT_REFERENCE"
+    assert bundle.context_blocks[0].selector.selector_type == "SOURCE_REF"
+    assert bundle.context_blocks[0].transform_chain == ["NORMALIZE_REFERENCE_DESCRIPTOR"]
+    assert bundle.context_blocks[0].trust_note
+    assert manifest.compile_meta.bundle_id == bundle.meta.bundle_id
+    assert manifest.compile_meta.compile_request_id == compile_request.meta.compile_request_id
+    assert manifest.source_log[0].status == "USED"
+    assert manifest.source_log[0].selector_used == "SOURCE_REF:art://inputs/brief.md"
+    assert manifest.transform_log[0].operation_type == "NORMALIZE"
+    assert manifest.degradation.is_degraded is True
+    assert manifest.budget_actual.final_bundle_tokens > 0
+    assert compiled_package.meta.compile_request_id == compile_request.meta.compile_request_id
+    assert compiled_package.atomic_context_bundle.context_blocks[0].block_id == bundle.context_blocks[0].block_id
+
+
+def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+
+    compiled_artifacts = compile_and_persist_execution_artifacts(repository, ticket)
+    latest_bundle = repository.get_latest_compiled_context_bundle_by_ticket("tkt_compile_001")
+    latest_manifest = repository.get_latest_compile_manifest_by_ticket("tkt_compile_001")
+
+    assert latest_bundle is not None
+    assert latest_manifest is not None
+    assert latest_bundle["bundle_id"] == compiled_artifacts.compiled_context_bundle.meta.bundle_id
+    assert latest_bundle["payload"]["meta"]["bundle_id"] == latest_bundle["bundle_id"]
+    assert latest_bundle["payload"]["context_blocks"][0]["source_hash"]
+    assert repository.get_compiled_context_bundle(latest_bundle["bundle_id"]) is not None
+    assert latest_manifest["compile_id"] == compiled_artifacts.compile_manifest.compile_meta.compile_id
+    assert latest_manifest["payload"]["compile_meta"]["compile_id"] == latest_manifest["compile_id"]
+    assert latest_manifest["payload"]["source_log"][0]["status"] == "USED"
+    assert latest_manifest["payload"]["degradation"]["warnings"]
+    assert repository.get_compile_manifest(latest_manifest["compile_id"]) is not None

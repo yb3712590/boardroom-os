@@ -31,6 +31,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `GET /api/v1/events/stream?after={cursor}` SSE stream
 - real `CommandAckEnvelope`
 - minimal `events`, `workflow_projection`, `ticket_projection`, `node_projection`, `approval_projection`, and `employee_projection` schema
+- minimal persisted `compiled_context_bundle` and `compile_manifest` audit tables
 - `POST /api/v1/commands/ticket-create` for full control-plane ticket creation
 - `POST /api/v1/commands/ticket-lease` for explicit ticket lease acquisition and renewal
 - `POST /api/v1/commands/ticket-start` for moving the latest node ticket into execution
@@ -40,7 +41,8 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/scheduler-tick` for timeout handling, retry creation, and expired-lease dispatch using persisted roster by default
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
 - independent scheduler runner via `python -m app.scheduler_runner`
-- runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledExecutionPackage` runtime boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
+- runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
+- persisted minimal `CompiledContextBundle` / `CompileManifest` audit artifacts with ticket-level lookup; provenance is still reference-only and does not hydrate artifact bodies yet
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -56,7 +58,7 @@ The following are still pending or stubbed:
 - cancel / richer retry policy / heartbeat timeout states beyond the current minimal loop
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
-- full Context Compiler execution plus persisted `CompiledContextBundle` / `CompileManifest` audit artifacts
+- non-reference-only Context Compiler execution with artifact hydration, cache reuse, and richer provenance
 - artifact store / artifact index and strict worker-result validator
 - FTS / vector retrieval
 - React Boardroom UI
@@ -151,7 +153,7 @@ This slice only establishes the first control-plane loop. The next implementatio
 
 - richer projection reducer
 - ticket cancel / richer retry / incident state machines
-- expansion from the minimal runtime compiler boundary to full compiler and audit flow
+- expansion from the current reference-only compiler boundary to full compilation with artifact hydration, retrieval, and cache reuse
 - worker / checker execution chain
 - Board Review Pack and decision commands
 - minimal Boardroom UI

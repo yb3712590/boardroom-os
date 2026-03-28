@@ -88,4 +88,41 @@ CREATE TABLE IF NOT EXISTS employee_projection (
     updated_at TEXT NOT NULL,
     version INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS compiled_context_bundle (
+    bundle_id TEXT PRIMARY KEY,
+    compile_request_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    workflow_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    compiler_version TEXT NOT NULL,
+    compiled_at TEXT NOT NULL,
+    bundle_version TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS compile_manifest (
+    compile_id TEXT PRIMARY KEY,
+    bundle_id TEXT NOT NULL,
+    compile_request_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    workflow_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    compiler_version TEXT NOT NULL,
+    compiled_at TEXT NOT NULL,
+    manifest_version TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_compiled_context_bundle_ticket_id
+ON compiled_context_bundle(ticket_id);
+
+CREATE INDEX IF NOT EXISTS idx_compiled_context_bundle_compile_request_id
+ON compiled_context_bundle(compile_request_id);
+
+CREATE INDEX IF NOT EXISTS idx_compile_manifest_ticket_id
+ON compile_manifest(ticket_id);
+
+CREATE INDEX IF NOT EXISTS idx_compile_manifest_compile_request_id
+ON compile_manifest(compile_request_id);
 """

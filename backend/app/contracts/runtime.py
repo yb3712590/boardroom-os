@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import Field
@@ -65,6 +66,186 @@ class CompileRequest(StrictModel):
     governance: CompileRequestGovernance
 
 
+class CompiledContextBundleMeta(StrictModel):
+    bundle_id: str = Field(min_length=1)
+    compile_request_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    attempt_no: int = Field(ge=1)
+    compiler_version: str = Field(min_length=1)
+    compiled_at: datetime
+    model_profile: str = Field(min_length=1)
+    render_target: str = Field(min_length=1)
+    is_degraded: bool
+
+
+class CompiledOutputContract(StrictModel):
+    schema_ref: str = Field(min_length=1)
+    schema_version: int = Field(ge=1)
+    schema_body: dict[str, Any] = Field(default_factory=dict)
+
+
+class CompiledSystemControls(StrictModel):
+    role_profile: dict[str, Any] = Field(default_factory=dict)
+    hard_rules: list[str] = Field(default_factory=list)
+    board_constraints: list[str] = Field(default_factory=list)
+    output_contract: CompiledOutputContract
+    allowed_write_set: list[str] = Field(default_factory=list)
+
+
+class CompiledTaskDefinition(StrictModel):
+    task_type: str | None = None
+    atomic_task: str = Field(min_length=1)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    risk_class: Literal["low", "medium", "high", "critical"] | None = None
+    budget_profile: str | None = None
+
+
+class CompiledContextSelector(StrictModel):
+    selector_type: str = Field(min_length=1)
+    selector_value: str = Field(min_length=1)
+
+
+class CompiledContextBlock(StrictModel):
+    block_id: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
+    source_kind: Literal["ARTIFACT_REFERENCE"]
+    trust_level: Literal[1, 2, 3]
+    instruction_authority: Literal["DATA_ONLY"]
+    priority_class: Literal["P1", "P2", "P3"]
+    selector: CompiledContextSelector
+    transform_chain: list[str] = Field(default_factory=list)
+    content_type: Literal["JSON"]
+    content_payload: dict[str, Any] = Field(default_factory=dict)
+    token_estimate: int = Field(ge=1)
+    relevance_score: float = Field(ge=0.0)
+    source_hash: str = Field(min_length=1)
+    trust_note: str = Field(min_length=1)
+
+
+class CompiledRenderHints(StrictModel):
+    preferred_section_order: list[str] = Field(default_factory=list)
+    sandbox_untrusted_data: bool = True
+    preferred_markup: Literal["json_messages", "markdown", "xml", "provider_native"]
+
+
+class CompiledContextBundle(StrictModel):
+    meta: CompiledContextBundleMeta
+    system_controls: CompiledSystemControls
+    task_definition: CompiledTaskDefinition
+    context_blocks: list[CompiledContextBlock] = Field(default_factory=list)
+    render_hints: CompiledRenderHints
+
+
+class CompileManifestMeta(StrictModel):
+    compile_id: str = Field(min_length=1)
+    bundle_id: str = Field(min_length=1)
+    compile_request_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    compiler_version: str = Field(min_length=1)
+    compiled_at: datetime
+    duration_ms: int = Field(ge=0)
+    model_profile: str = Field(min_length=1)
+    cache_key: str = Field(min_length=1)
+
+
+class CompileManifestArtifactHash(StrictModel):
+    artifact_id: str = Field(min_length=1)
+    hash: str = Field(min_length=1)
+
+
+class CompileManifestInputFingerprint(StrictModel):
+    ticket_hash: str = Field(min_length=1)
+    role_profile_version: str = Field(min_length=1)
+    constraints_version: str = Field(min_length=1)
+    output_schema_version: str = Field(min_length=1)
+    artifact_hashes: list[CompileManifestArtifactHash] = Field(default_factory=list)
+
+
+class CompileManifestBudgetPlan(StrictModel):
+    total_budget_tokens: int = Field(ge=0)
+    reserved_p0: int = Field(ge=0)
+    reserved_p1: int = Field(ge=0)
+    reserved_p2: int = Field(ge=0)
+    reserved_p3: int = Field(ge=0)
+    soft_limit_tokens: int = Field(ge=0)
+    hard_limit_tokens: int = Field(ge=0)
+
+
+class CompileManifestBudgetActual(StrictModel):
+    used_p0: int = Field(ge=0)
+    used_p1: int = Field(ge=0)
+    used_p2: int = Field(ge=0)
+    used_p3: int = Field(ge=0)
+    final_bundle_tokens: int = Field(ge=0)
+    truncated_tokens: int = Field(ge=0)
+
+
+class CompileManifestSourceLogEntry(StrictModel):
+    source_ref: str = Field(min_length=1)
+    source_kind: str = Field(min_length=1)
+    priority_class: str | None = None
+    trust_level: int | None = Field(default=None, ge=0)
+    selector_used: str | None = None
+    critical: bool = False
+    status: Literal["USED", "CACHE_HIT", "SUMMARIZED", "TRUNCATED", "DROPPED", "MISSING"]
+    tokens_before: int | None = Field(default=None, ge=0)
+    tokens_after: int | None = Field(default=None, ge=0)
+    reason: str | None = None
+
+
+class CompileManifestTransformLogEntry(StrictModel):
+    stage: str = Field(min_length=1)
+    operation_type: Literal[
+        "HYDRATE",
+        "RETRIEVE",
+        "AST_SKELETON",
+        "SUMMARIZE",
+        "TRUNCATE",
+        "DROP",
+        "NORMALIZE",
+        "RENDER_PREP",
+    ]
+    target_ref: str | None = None
+    output_block_id: str | None = None
+    reason: str | None = None
+
+
+class CompileManifestDegradation(StrictModel):
+    is_degraded: bool
+    fail_mode: Literal["FAIL_CLOSED", "BEST_EFFORT"]
+    missing_critical_sources: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CompileManifestCacheReport(StrictModel):
+    cache_hit: bool
+    reused_from_compile_id: str | None = None
+    invalidated_by: list[str] = Field(default_factory=list)
+
+
+class CompileManifestFinalBundleStats(StrictModel):
+    context_block_count: int = Field(ge=0)
+    trusted_block_count: int = Field(ge=0)
+    reference_block_count: int = Field(ge=0)
+    negative_pattern_count: int = Field(ge=0)
+
+
+class CompileManifest(StrictModel):
+    compile_meta: CompileManifestMeta
+    input_fingerprint: CompileManifestInputFingerprint
+    budget_plan: CompileManifestBudgetPlan
+    budget_actual: CompileManifestBudgetActual
+    source_log: list[CompileManifestSourceLogEntry] = Field(default_factory=list)
+    transform_log: list[CompileManifestTransformLogEntry] = Field(default_factory=list)
+    degradation: CompileManifestDegradation
+    cache_report: CompileManifestCacheReport
+    final_bundle_stats: CompileManifestFinalBundleStats
+
+
 class CompiledExecutionPackageMeta(StrictModel):
     compile_request_id: str = Field(min_length=1)
     ticket_id: str = Field(min_length=1)
@@ -125,3 +306,9 @@ class CompiledExecutionPackage(StrictModel):
     atomic_context_bundle: AtomicContextBundle
     execution: CompiledExecution
     governance: CompiledGovernance
+
+
+class CompiledAuditArtifacts(StrictModel):
+    compiled_context_bundle: CompiledContextBundle
+    compile_manifest: CompileManifest
+    compiled_execution_package: CompiledExecutionPackage

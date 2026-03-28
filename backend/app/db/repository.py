@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.contracts.runtime import CompileManifest, CompiledContextBundle
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
@@ -508,6 +509,170 @@ class ControlPlaneRepository:
                 return payload
         return None
 
+    def save_compiled_context_bundle(
+        self,
+        connection: sqlite3.Connection,
+        bundle: CompiledContextBundle,
+    ) -> None:
+        payload = bundle.model_dump(mode="json")
+        connection.execute(
+            """
+            INSERT INTO compiled_context_bundle (
+                bundle_id,
+                compile_request_id,
+                ticket_id,
+                workflow_id,
+                node_id,
+                compiler_version,
+                compiled_at,
+                bundle_version,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                bundle.meta.bundle_id,
+                bundle.meta.compile_request_id,
+                bundle.meta.ticket_id,
+                bundle.meta.workflow_id,
+                bundle.meta.node_id,
+                bundle.meta.compiler_version,
+                bundle.meta.compiled_at.isoformat(),
+                "CompiledContextBundle_v1",
+                json.dumps(payload, sort_keys=True),
+            ),
+        )
+
+    def save_compile_manifest(
+        self,
+        connection: sqlite3.Connection,
+        manifest: CompileManifest,
+    ) -> None:
+        payload = manifest.model_dump(mode="json")
+        connection.execute(
+            """
+            INSERT INTO compile_manifest (
+                compile_id,
+                bundle_id,
+                compile_request_id,
+                ticket_id,
+                workflow_id,
+                node_id,
+                compiler_version,
+                compiled_at,
+                manifest_version,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                manifest.compile_meta.compile_id,
+                manifest.compile_meta.bundle_id,
+                manifest.compile_meta.compile_request_id,
+                manifest.compile_meta.ticket_id,
+                manifest.compile_meta.workflow_id,
+                manifest.compile_meta.node_id,
+                manifest.compile_meta.compiler_version,
+                manifest.compile_meta.compiled_at.isoformat(),
+                "CompileManifest_v1",
+                json.dumps(payload, sort_keys=True),
+            ),
+        )
+
+    def get_compiled_context_bundle(
+        self,
+        bundle_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM compiled_context_bundle WHERE bundle_id = ?",
+                (bundle_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_compiled_context_bundle_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM compiled_context_bundle WHERE bundle_id = ?",
+                (bundle_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_compiled_context_bundle_row(row)
+
+    def get_latest_compiled_context_bundle_by_ticket(
+        self,
+        ticket_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM compiled_context_bundle
+            WHERE ticket_id = ?
+            ORDER BY compiled_at DESC, bundle_id DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (ticket_id,)).fetchone()
+            if row is None:
+                return None
+            return self._convert_compiled_context_bundle_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (ticket_id,)).fetchone()
+            if row is None:
+                return None
+            return self._convert_compiled_context_bundle_row(row)
+
+    def get_compile_manifest(
+        self,
+        compile_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM compile_manifest WHERE compile_id = ?",
+                (compile_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_compile_manifest_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM compile_manifest WHERE compile_id = ?",
+                (compile_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_compile_manifest_row(row)
+
+    def get_latest_compile_manifest_by_ticket(
+        self,
+        ticket_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM compile_manifest
+            WHERE ticket_id = ?
+            ORDER BY compiled_at DESC, compile_id DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (ticket_id,)).fetchone()
+            if row is None:
+                return None
+            return self._convert_compile_manifest_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (ticket_id,)).fetchone()
+            if row is None:
+                return None
+            return self._convert_compile_manifest_row(row)
+
     def get_cursor_and_version(self) -> tuple[str | None, int]:
         self.initialize()
         with self.connection() as connection:
@@ -865,6 +1030,18 @@ class ControlPlaneRepository:
                 converted[field] = datetime.fromisoformat(converted[field])
         converted["review_pack_version"] = int(converted.get("review_pack_version") or 1)
         converted["command_target_version"] = int(converted.get("command_target_version") or 0)
+        converted["payload"] = json.loads(converted["payload_json"])
+        return converted
+
+    def _convert_compiled_context_bundle_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["compiled_at"] = datetime.fromisoformat(converted["compiled_at"])
+        converted["payload"] = json.loads(converted["payload_json"])
+        return converted
+
+    def _convert_compile_manifest_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["compiled_at"] = datetime.fromisoformat(converted["compiled_at"])
         converted["payload"] = json.loads(converted["payload_json"])
         return converted
 

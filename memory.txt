@@ -774,3 +774,78 @@
 
 ### Likely Next Step
 - Expand the minimal compiler boundary into a persisted audit path for `CompiledContextBundle` / `CompileManifest`, while keeping the current runtime input contract stable.
+
+## 2026-03-28T23:38:12.4993270+08:00
+
+### Session Context
+- User asked to continue the compiler boundary into an auditable version by landing persisted `CompiledContextBundle` / `CompileManifest` plus minimal provenance.
+- The implementation had to stay incremental on top of the current backend slice without changing public API routes or broadening scope into artifact hydration.
+
+### Design/Code Gap Identified
+- The previous slice only produced an in-memory `CompiledExecutionPackage`, so the system could execute tickets but could not later prove what context bundle and compile trace were actually used.
+- Design docs already treated `CompiledContextBundle` and `CompileManifest` as the stable compiler contracts, but the code still had no persisted bundle, no persisted manifest, and no source-level provenance trail.
+
+### Slice Landed
+- Added internal persisted compiler contracts for:
+  - `CompiledContextBundle`
+  - `CompileManifest`
+  - `CompiledAuditArtifacts`
+- Added deterministic reference-only compilation that now produces three coupled outputs from the same compile request:
+  - persisted `CompiledContextBundle`
+  - persisted `CompileManifest`
+  - runtime-facing `CompiledExecutionPackage`
+- Added SQLite persistence for compiler audit artifacts through:
+  - `compiled_context_bundle`
+  - `compile_manifest`
+- Added repository read/write methods for:
+  - saving bundle / manifest
+  - looking up the latest bundle / manifest by `ticket_id`
+  - fetching bundle / manifest by primary id
+- Changed runtime execution flow so that automatic execution now:
+  - builds `CompileRequest`
+  - compiles audit artifacts
+  - persists bundle + manifest
+  - executes against the derived `CompiledExecutionPackage`
+
+### New or Adjusted Boundaries
+- `CompiledExecutionPackage` remains the runtime input contract; public routes and command payloads did not change.
+- `CompiledContextBundle` is now the persisted canonical compiler IR for the current MVP slice, but only in a conservative reference-only form.
+- `CompileManifest` is now the persisted audit contract for compilation and records:
+  - input fingerprint
+  - source log
+  - transform log
+  - degradation state
+  - token estimates
+  - cache report
+
+### Still Mock / Stub
+- Artifact body hydration
+- Artifact store / artifact index
+- Cache reuse across compile runs
+- FTS / vector retrieval
+- Rich constraint expansion from `constraints_ref`
+- External worker runtime handoff
+- Strict worker-result validation
+
+### Verification
+- Ran targeted compiler tests with Python 3.12.10.
+- Ran targeted scheduler runner tests with Python 3.12.10.
+- Ran full `tests/test_api.py`.
+- Ran the full backend test suite with Python 3.12.10.
+- Current result after this slice: `62 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\contracts\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\core\context_compiler.py`
+- `D:\Projects\boardroom-os\backend\app\core\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\db\repository.py`
+- `D:\Projects\boardroom-os\backend\app\db\schema.py`
+- `D:\Projects\boardroom-os\backend\tests\test_context_compiler.py`
+- `D:\Projects\boardroom-os\backend\tests\test_scheduler_runner.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\context-compiler-design.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Add a minimal developer-inspector read path so persisted compiler artifacts referenced by review packs can be opened directly without widening the public API surface too much.

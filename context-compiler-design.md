@@ -764,6 +764,7 @@ Key refinement versus a simpler schema:
           "source_kind": {
             "type": "string",
             "enum": [
+              "ARTIFACT_REFERENCE",
               "HYDRATED_ARTIFACT",
               "REPOSITORY_FRAGMENT",
               "RETRIEVED_RULE",
@@ -857,6 +858,12 @@ Key refinement versus a simpler schema:
   ]
 }
 ```
+
+Current MVP note:
+
+- when artifact hydration is not yet available, the compiler may emit `ARTIFACT_REFERENCE` blocks as a conservative reference-only form
+- in that mode, `source_hash` and provenance are computed from the normalized reference descriptor rather than artifact body content
+- token counts may be deterministic estimates rather than provider tokenizer output
 
 ## 11. CompileManifest
 

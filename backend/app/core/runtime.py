@@ -12,11 +12,10 @@ from app.contracts.commands import (
     TicketFailCommand,
     TicketStartCommand,
 )
-from app.contracts.runtime import CompiledExecutionPackage
+from app.contracts.runtime import CompiledAuditArtifacts, CompiledExecutionPackage
 from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
-    build_compile_request,
-    compile_execution_package,
+    compile_and_persist_execution_artifacts,
 )
 from app.core.ticket_handlers import (
     handle_ticket_completed,
@@ -86,12 +85,11 @@ def _list_runtime_startable_leased_tickets(
     return sorted(runnable_tickets, key=_runtime_sort_key)
 
 
-def _build_compiled_execution_package(
+def _build_compiled_execution_artifacts(
     repository: ControlPlaneRepository,
     ticket: dict[str, Any],
-) -> CompiledExecutionPackage:
-    compile_request = build_compile_request(repository, ticket)
-    return compile_execution_package(compile_request)
+) -> CompiledAuditArtifacts:
+    return compile_and_persist_execution_artifacts(repository, ticket)
 
 
 def _execute_compiled_execution_package(
@@ -209,7 +207,8 @@ def run_leased_ticket_runtime(
             continue
 
         try:
-            execution_package = _build_compiled_execution_package(repository, ticket)
+            compiled_artifacts = _build_compiled_execution_artifacts(repository, ticket)
+            execution_package = compiled_artifacts.compiled_execution_package
             execution_result = _execute_compiled_execution_package(execution_package)
         except (ValidationError, ValueError) as exc:
             final_ack = handle_ticket_fail(
