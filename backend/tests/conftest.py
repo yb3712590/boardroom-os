@@ -29,6 +29,7 @@ def client(db_path):
 @pytest.fixture
 def set_ticket_time(monkeypatch):
     import app.core.ticket_handlers as ticket_handlers
+    import app.core.runtime as runtime
     import app.core.projections as projections
     import app.scheduler_runner as scheduler_runner
 
@@ -42,6 +43,7 @@ def set_ticket_time(monkeypatch):
         return state["value"]
 
     monkeypatch.setattr(ticket_handlers, "now_local", lambda: state["value"])
+    monkeypatch.setattr(runtime, "now_local", lambda: state["value"])
     monkeypatch.setattr(projections, "now_local", lambda: state["value"])
     monkeypatch.setattr(scheduler_runner, "now_local", lambda: state["value"])
     return _set

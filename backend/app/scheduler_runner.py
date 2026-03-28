@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 
 from app.config import Settings, get_settings
+from app.core.runtime import run_leased_ticket_runtime
 from app.core.ticket_handlers import run_scheduler_tick
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -31,11 +32,13 @@ def run_scheduler_once(
     tick_index: int = 0,
 ):
     settings = get_settings()
-    return run_scheduler_tick(
+    scheduler_ack = run_scheduler_tick(
         repository,
         idempotency_key=idempotency_key or _build_runner_idempotency_key(tick_index),
         max_dispatches=max_dispatches or settings.scheduler_max_dispatches,
     )
+    run_leased_ticket_runtime(repository)
+    return scheduler_ack
 
 
 def run_scheduler_loop(

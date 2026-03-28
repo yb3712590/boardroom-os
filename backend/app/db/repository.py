@@ -406,6 +406,30 @@ class ControlPlaneRepository:
             board_approved_only=True,
         )
 
+    def get_employee_projection(
+        self,
+        employee_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM employee_projection WHERE employee_id = ?",
+                (employee_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_employee_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM employee_projection WHERE employee_id = ?",
+                (employee_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_employee_projection_row(row)
+
     def list_ticket_projections_by_statuses(
         self,
         connection: sqlite3.Connection,

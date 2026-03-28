@@ -647,3 +647,66 @@
 
 ### Likely Next Step
 - Add the producer path that creates approval requests from real workflow or ticket outcomes so Review Room no longer depends on seeded/persisted records only.
+
+## 2026-03-28T22:13:48.3248840+08:00
+
+### Session Context
+- User asked to continue from the current backend state and specifically land the smallest real runtime handoff after `TICKET_LEASED`.
+- The goal of this round was to stop relying on explicit `ticket-start` for runner-driven execution and connect leased tickets to a minimal automatic execution chain.
+
+### Relevant Design Constraints Used
+- Keep the existing FastAPI + SQLite + event-sourced control-plane structure.
+- Do not change the public `scheduler-tick` API contract to imply automatic execution.
+- If design and code differ, document the gap first and take the most conservative bridge.
+- Do not claim full Context Compiler, artifact storage, or external worker runtime as complete.
+
+### Design/Code Gap Identified
+- Design docs say workers should consume a compiled execution package, but code still had no Context Compiler, no artifact index, and no worker-result validator.
+- The repository already had a real scheduler runner that could produce `TICKET_LEASED`, but execution still stopped there unless an external caller manually posted `ticket-start`, `ticket-complete`, or `ticket-fail`.
+
+### Slice Landed
+- Added an internal runtime bridge module that:
+  - finds startable `LEASED` tickets
+  - appends `TICKET_STARTED` through the existing handler path
+  - builds a minimal internal bridge execution package from ticket create payload plus employee projection
+  - executes an in-process minimal bridge executor
+  - appends `TICKET_COMPLETED` or `TICKET_FAILED` through the existing handler paths
+- Extended the independent scheduler runner so each cycle now does:
+  - scheduler dispatch
+  - leased-ticket runtime execution
+- Kept `POST /api/v1/commands/scheduler-tick` unchanged: it still means scheduling only, not automatic execution by itself.
+
+### Current Scope Boundary
+- Automatic execution currently exists only inside the independent runner path.
+- The bridge execution package is internal-only and not treated as a stable external contract.
+- The bridge executor currently supports only the minimal seeded role/output combinations needed by the current backend slice.
+
+### New or Adjusted Boundaries
+- `ticket-start` remains a public API and debugging surface, but runner no longer depends on an external caller to invoke it.
+- `employee_projection` is now used not only for dispatch matching but also for the minimal runtime bridge package assembly.
+- Unsupported runtime inputs now fail closed through the normal `TICKET_FAILED` path instead of creating a parallel runtime-specific state machine.
+
+### Still Mock / Stub
+- Full compiled execution package generation
+- External worker runtime handoff
+- Artifact store / artifact index
+- Strict worker-result validator
+- Employee hire / replace / freeze lifecycle
+- Richer multi-role execution chain
+
+### Verification
+- Ran backend tests with Python 3.12.10.
+- Current result after this slice: `54 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\core\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\scheduler_runner.py`
+- `D:\Projects\boardroom-os\backend\app\db\repository.py`
+- `D:\Projects\boardroom-os\backend\tests\conftest.py`
+- `D:\Projects\boardroom-os\backend\tests\test_scheduler_runner.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Replace the internal runtime bridge package with a real minimal Context Compiler request/response boundary so automatic execution no longer depends on direct ticket-create payload hydration.

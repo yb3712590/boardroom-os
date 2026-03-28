@@ -40,6 +40,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/scheduler-tick` for timeout handling, retry creation, and expired-lease dispatch using persisted roster by default
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
 - independent scheduler runner via `python -m app.scheduler_runner`
+- runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED` and then `TICKET_COMPLETED` or `TICKET_FAILED` through an internal bridge executor
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -49,13 +50,14 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 
 The following are still pending or stubbed:
 
-- worker dispatch / compiled execution package handoff
+- full compiled execution package delivery and external worker runtime handoff
 - employee hire / replace / freeze lifecycle beyond the seeded roster
 - incident / circuit-breaker escalation
 - cancel / richer retry policy / heartbeat timeout states beyond the current minimal loop
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
 - Context Compiler execution
+- artifact store / artifact index and strict worker-result validator
 - FTS / vector retrieval
 - React Boardroom UI
 

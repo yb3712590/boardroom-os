@@ -40,6 +40,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于 timeout、retry create 与 expired lease dispatch
 - dashboard `workforce_summary` 已接入最小真实投影
 - 独立 scheduler runner：`python -m app.scheduler_runner`
+- runner 已打通最小自动执行链：`TICKET_LEASED` 会在独立 runner 中继续推进到 `TICKET_STARTED`，再进入 `TICKET_COMPLETED` 或 `TICKET_FAILED`
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`
@@ -49,14 +50,15 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 
 以下能力仍未落地，当前仍是 stub 或未开始：
 
-- 后台常驻 CEO Tick Scheduler
-- Worker 派发 / compiled execution package 实际交付
-- employee roster / executor pool 持久化
+- FastAPI 进程内后台 scheduler loop
+- 完整 compiled execution package / 外部 worker runtime 实际交付
+- employee hire / replace / freeze 生命周期
 - incident / circuit-breaker 升级与治理
 - 超出当前最小闭环的 cancel / richer retry policy / heartbeat timeout 状态
 - Maker-Checker Review Loop
 - Review Room 仍只支持已持久化审批包，不含更完整的证据拼装
 - Context Compiler 实际编译
+- artifact store / artifact index 与严格结果校验器
 - FTS / 向量检索
 - React Boardroom UI
 
