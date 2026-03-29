@@ -46,7 +46,9 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - dashboard / inbox 的 incident 与 circuit-breaker 计数已接入真实投影，不再写死为 0
 - dashboard `provider_health_summary` / `provider_alerts` 已接入最小真实 provider incident 投影，不再固定返回占位值
 - repeated runtime timeout 现在会在同一 node 的重试链路上打开最小 incident 与 circuit-breaker，并阻断该 node 的后续自动 dispatch
+- 普通 `TICKET_FAILED` 现在也会按同一 `workflow_id + node_id` retry 链上的相同 failure fingerprint 统计重复失败；当 `escalation_policy.on_repeat_failure=escalate_ceo` 且达到 `repeat_failure_threshold` 时，会打开最小 incident 与 circuit-breaker，并阻断该 node 的后续自动 dispatch
 - `POST /api/v1/commands/incident-resolve` 已打通受控人工恢复链：默认仍只关闭 circuit breaker 并关闭 incident；如显式请求 `RESTORE_AND_RETRY_LATEST_TIMEOUT`，则会在同一事务里基于触发 incident 的最新 timeout ticket 补发一张受控 retry，且仍受原 retry budget 约束
+- `incident-resolve` 现在也支持普通失败恢复；如显式请求 `RESTORE_AND_RETRY_LATEST_FAILURE`，会校验最新终态仍是普通 `TICKET_FAILED`、且 retry budget 仍允许，再在同一事务里补发一张受控 retry
 - 最小 worker roster 现在带有内部 `provider_id` 绑定，用于 provider 级运行时治理
 - `PROVIDER_RATE_LIMITED` / `UPSTREAM_UNAVAILABLE` 失败现在会打开 provider 级 incident 与 circuit-breaker，并暂停同 provider worker 的后续自动 dispatch、手工 lease 与 start
 - `incident-resolve` 现在也支持 provider 级恢复；如显式请求 `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE`，会在关闭 provider breaker 前校验最新 provider 故障 ticket 的 retry budget，并在同一事务里补发一张受控 retry

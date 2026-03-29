@@ -32,6 +32,7 @@ from app.core.constants import (
     EVENT_TICKET_STARTED,
     EVENT_TICKET_TIMED_OUT,
     EVENT_WORKFLOW_CREATED,
+    INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
@@ -1473,11 +1474,15 @@ class ControlPlaneRepository:
             if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
                 provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
                 return f"PROVIDER_INCIDENT_OPENED for {provider_id or event['workflow_id']}"
+            if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
+                return f"REPEATED_FAILURE_INCIDENT_OPENED for {event.get('incident_id') or event['workflow_id']}"
             return f"INCIDENT_OPENED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_INCIDENT_CLOSED:
             if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
                 provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
                 return f"PROVIDER_INCIDENT_CLOSED for {provider_id or event['workflow_id']}"
+            if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
+                return f"REPEATED_FAILURE_INCIDENT_CLOSED for {event.get('incident_id') or event['workflow_id']}"
             return f"INCIDENT_CLOSED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_CIRCUIT_BREAKER_OPENED:
             if event.get("provider_id") or event.get("payload", {}).get("provider_id"):

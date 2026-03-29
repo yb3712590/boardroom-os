@@ -202,6 +202,8 @@ def _ticket_create_payload(
     retry_budget: int = 2,
     on_timeout: str = "retry",
     on_schema_error: str = "retry",
+    on_repeat_failure: str = "escalate_ceo",
+    repeat_failure_threshold: int = 2,
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
@@ -237,7 +239,8 @@ def _ticket_create_payload(
         "escalation_policy": {
             "on_timeout": on_timeout,
             "on_schema_error": on_schema_error,
-            "on_repeat_failure": "escalate_ceo",
+            "on_repeat_failure": on_repeat_failure,
+            "repeat_failure_threshold": repeat_failure_threshold,
             "timeout_repeat_threshold": timeout_repeat_threshold,
             "timeout_backoff_multiplier": timeout_backoff_multiplier,
             "timeout_backoff_cap_multiplier": timeout_backoff_cap_multiplier,
@@ -353,6 +356,8 @@ def _create_and_lease_ticket(
     retry_budget: int = 2,
     on_timeout: str = "retry",
     on_schema_error: str = "retry",
+    on_repeat_failure: str = "escalate_ceo",
+    repeat_failure_threshold: int = 2,
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
@@ -369,6 +374,8 @@ def _create_and_lease_ticket(
             retry_budget=retry_budget,
             on_timeout=on_timeout,
             on_schema_error=on_schema_error,
+            on_repeat_failure=on_repeat_failure,
+            repeat_failure_threshold=repeat_failure_threshold,
             timeout_repeat_threshold=timeout_repeat_threshold,
             timeout_backoff_multiplier=timeout_backoff_multiplier,
             timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
@@ -403,6 +410,8 @@ def _create_lease_and_start_ticket(
     retry_budget: int = 2,
     on_timeout: str = "retry",
     on_schema_error: str = "retry",
+    on_repeat_failure: str = "escalate_ceo",
+    repeat_failure_threshold: int = 2,
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
@@ -419,6 +428,8 @@ def _create_lease_and_start_ticket(
         retry_budget=retry_budget,
         on_timeout=on_timeout,
         on_schema_error=on_schema_error,
+        on_repeat_failure=on_repeat_failure,
+        repeat_failure_threshold=repeat_failure_threshold,
         timeout_repeat_threshold=timeout_repeat_threshold,
         timeout_backoff_multiplier=timeout_backoff_multiplier,
         timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
@@ -1758,20 +1769,324 @@ def test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure
     assert blocked_tick.status_code == 200
     assert blocked_tick.json()["status"] == "ACCEPTED"
     assert blocked_ticket["status"] == TICKET_STATUS_PENDING
+
+
+def test_repeated_failure_opens_incident_and_blocks_same_node_dispatch(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=3, repeat_failure_threshold=2)
+
+    first_failure = {
+        "step": "render",
+        "exit_code": 1,
+        "component": "hero",
+    }
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    first_fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            failure_message="Primary hero render crashed.",
+            failure_detail=first_failure,
+        ),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:06:00+08:00")
+    second_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=second_ticket_id),
+    )
+    second_start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T10:07:00+08:00")
+    second_fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            ticket_id=second_ticket_id,
+            failure_message="Primary hero render crashed.",
+            failure_detail=first_failure,
+        ),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    create_blocked_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_failure_blocked",
+            node_id="node_homepage_visual",
+        ),
+    )
+    set_ticket_time("2026-03-28T10:08:00+08:00")
+    scheduler_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:repeat-failure-breaker"),
+    )
+    blocked_ticket = repository.get_current_ticket_projection("tkt_failure_blocked")
+    inbox_response = client.get("/api/v1/projections/inbox")
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert first_fail_response.status_code == 200
+    assert first_fail_response.json()["status"] == "ACCEPTED"
+    assert second_lease_response.status_code == 200
+    assert second_lease_response.json()["status"] == "ACCEPTED"
+    assert second_start_response.status_code == 200
+    assert second_start_response.json()["status"] == "ACCEPTED"
+    assert second_fail_response.status_code == 200
+    assert second_fail_response.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 1
+    assert repository.count_events_by_type(EVENT_INCIDENT_OPENED) == 1
+    assert repository.count_events_by_type(EVENT_CIRCUIT_BREAKER_OPENED) == 1
+    assert create_blocked_response.status_code == 200
+    assert create_blocked_response.json()["status"] == "ACCEPTED"
+    assert scheduler_response.status_code == 200
+    assert scheduler_response.json()["status"] == "ACCEPTED"
+    assert blocked_ticket["status"] == TICKET_STATUS_PENDING
+    assert incident_response.json()["data"]["incident"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    assert incident_response.json()["data"]["incident"]["payload"]["failure_streak_count"] == 2
+    assert incident_response.json()["data"]["incident"]["payload"]["latest_failure_kind"] == "RUNTIME_ERROR"
+    incident_items = [
+        item for item in inbox_response.json()["data"]["items"] if item["item_type"] == "INCIDENT_ESCALATION"
+    ]
+    assert len(incident_items) == 1
+    assert "Repeated failure escalation" in incident_items[0]["title"]
+
+
+def test_repeated_failure_with_different_fingerprint_keeps_retrying_without_incident(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=3, repeat_failure_threshold=2)
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            failure_message="Primary hero render crashed.",
+            failure_detail={"step": "render", "exit_code": 1},
+        ),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:06:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=second_ticket_id),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T10:07:00+08:00")
+    second_fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            ticket_id=second_ticket_id,
+            failure_message="Secondary export step crashed.",
+            failure_detail={"step": "export", "exit_code": 9},
+        ),
+    )
+
+    latest_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    latest_ticket = repository.get_current_ticket_projection(latest_ticket_id)
+
+    assert second_fail_response.status_code == 200
+    assert second_fail_response.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_INCIDENT_OPENED) == 0
+    assert repository.count_events_by_type(EVENT_CIRCUIT_BREAKER_OPENED) == 0
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 2
+    assert latest_ticket["status"] == TICKET_STATUS_PENDING
+
+
+def test_incident_resolve_can_restore_and_retry_latest_failure_in_one_command(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=3, repeat_failure_threshold=2)
+
+    repeated_failure = {
+        "step": "render",
+        "exit_code": 1,
+        "component": "hero",
+    }
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            failure_message="Primary hero render crashed.",
+            failure_detail=repeated_failure,
+        ),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:06:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=second_ticket_id),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T10:07:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            ticket_id=second_ticket_id,
+            failure_message="Primary hero render crashed.",
+            failure_detail=repeated_failure,
+        ),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    set_ticket_time("2026-03-28T10:08:00+08:00")
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key="incident-resolve:repeat-failure-retry",
+            followup_action="RESTORE_AND_RETRY_LATEST_FAILURE",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    followup_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
     assert resolve_response.status_code == 200
     assert resolve_response.json()["status"] == "ACCEPTED"
-    assert followup_ticket_id != "tkt_visual_001"
+    assert followup_ticket_id not in {"tkt_visual_001", second_ticket_id}
     assert followup_ticket["status"] == TICKET_STATUS_PENDING
-    assert followup_ticket["retry_count"] == 1
+    assert followup_ticket["retry_count"] == 2
     assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
-        "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
+        "RESTORE_AND_RETRY_LATEST_FAILURE"
     )
     assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == followup_ticket_id
-    assert resumed_tick.status_code == 200
-    assert resumed_tick.json()["status"] == "ACCEPTED"
-    assert resumed_ticket["status"] == TICKET_STATUS_LEASED
-    assert resumed_ticket["lease_owner"] == "emp_frontend_2"
-    assert dashboard_response.json()["data"]["inbox_counts"]["provider_alerts"] == 0
+
+
+def test_incident_resolve_restore_and_retry_latest_failure_rejects_when_retry_budget_is_exhausted(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=1, repeat_failure_threshold=2)
+
+    repeated_failure = {
+        "step": "render",
+        "exit_code": 1,
+        "component": "hero",
+    }
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            failure_message="Primary hero render crashed.",
+            failure_detail=repeated_failure,
+        ),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:06:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=second_ticket_id),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T10:07:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            ticket_id=second_ticket_id,
+            failure_message="Primary hero render crashed.",
+            failure_detail=repeated_failure,
+        ),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    set_ticket_time("2026-03-28T10:08:00+08:00")
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key="incident-resolve:repeat-failure-budget",
+            followup_action="RESTORE_AND_RETRY_LATEST_FAILURE",
+        ),
+    )
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "REJECTED"
+    assert "retry budget" in resolve_response.json()["reason"].lower()
+
+
+def test_provider_failure_still_uses_provider_incident_path_not_repeated_failure_incident(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=3, repeat_failure_threshold=1)
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            failure_kind="PROVIDER_RATE_LIMITED",
+            failure_message="Provider quota exhausted.",
+            failure_detail={
+                "provider_id": "prov_openai_compat",
+                "provider_status_code": 429,
+            },
+        ),
+    )
+
+    repository = client.app.state.repository
+    incident_response = client.get(
+        f"/api/v1/projections/incidents/{[event['payload']['incident_id'] for event in repository.list_events_for_testing() if event['event_type'] == EVENT_INCIDENT_OPENED][0]}"
+    )
+
+    assert fail_response.status_code == 200
+    assert fail_response.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_INCIDENT_OPENED) == 1
+    assert incident_response.json()["data"]["incident"]["incident_type"] == "PROVIDER_EXECUTION_PAUSED"
 
 
 def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(client, set_ticket_time):

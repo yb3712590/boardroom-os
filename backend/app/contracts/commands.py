@@ -9,6 +9,7 @@ from app.contracts.common import StrictModel
 from app.core.developer_inspector import parse_developer_inspector_ref
 from app.core.constants import (
     DEFAULT_LEASE_TIMEOUT_SEC,
+    DEFAULT_REPEAT_FAILURE_THRESHOLD,
     DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER,
     DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER,
     DEFAULT_TIMEOUT_REPEAT_THRESHOLD,
@@ -50,6 +51,7 @@ class BlockingScope(StrEnum):
 
 class IncidentFollowupAction(StrEnum):
     RESTORE_ONLY = "RESTORE_ONLY"
+    RESTORE_AND_RETRY_LATEST_FAILURE = "RESTORE_AND_RETRY_LATEST_FAILURE"
     RESTORE_AND_RETRY_LATEST_TIMEOUT = "RESTORE_AND_RETRY_LATEST_TIMEOUT"
     RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE = "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
 
@@ -71,6 +73,7 @@ class TicketEscalationPolicy(StrictModel):
     on_timeout: str = Field(min_length=1)
     on_schema_error: str = Field(min_length=1)
     on_repeat_failure: str = Field(min_length=1)
+    repeat_failure_threshold: int = Field(default=DEFAULT_REPEAT_FAILURE_THRESHOLD, ge=1)
     timeout_repeat_threshold: int = Field(default=DEFAULT_TIMEOUT_REPEAT_THRESHOLD, ge=1)
     timeout_backoff_multiplier: float = Field(default=DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER, ge=1.0)
     timeout_backoff_cap_multiplier: float = Field(

@@ -284,6 +284,13 @@ For provider pauses, the same endpoint now also exposes:
 - `incident_type = PROVIDER_EXECUTION_PAUSED`
 - `payload.pause_reason` with values such as `PROVIDER_RATE_LIMITED` or `UPSTREAM_UNAVAILABLE`
 
+For repeated ordinary failures, the same endpoint may expose:
+
+- `incident_type = REPEATED_FAILURE_ESCALATION`
+- `payload.failure_streak_count`
+- `payload.latest_failure_kind`
+- `payload.latest_failure_fingerprint`
+
 It still does not expose a broader automated recovery workflow.
 
 ## 5.2 Incident Resolve Command
@@ -312,12 +319,14 @@ Implementation rules:
 - command is accepted only when the incident exists, `status=OPEN`, and `circuit_breaker_state=OPEN`
 - `followup_action` defaults to `RESTORE_ONLY` for backward compatibility
 - accepted `RESTORE_ONLY` emits `CIRCUIT_BREAKER_CLOSED` first and `INCIDENT_CLOSED` second
+- accepted `RESTORE_AND_RETRY_LATEST_FAILURE` emits `CIRCUIT_BREAKER_CLOSED`, then `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`, then `INCIDENT_CLOSED`
 - accepted `RESTORE_AND_RETRY_LATEST_TIMEOUT` emits `CIRCUIT_BREAKER_CLOSED`, then `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`, then `INCIDENT_CLOSED`
 - accepted `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` emits `CIRCUIT_BREAKER_CLOSED`, then `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`, then `INCIDENT_CLOSED`
+- `RESTORE_AND_RETRY_LATEST_FAILURE` is accepted only for `REPEATED_FAILURE_ESCALATION`, when the incident source ticket still exists, its latest terminal event is an ordinary failure, and its retry budget still allows one more retry
 - `RESTORE_AND_RETRY_LATEST_TIMEOUT` is accepted only when the incident source ticket still exists, its latest terminal event is timeout-based, and its retry budget still allows one more timeout retry
 - `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` is accepted only for `PROVIDER_EXECUTION_PAUSED`, when the incident source ticket still exists, its latest terminal event is a provider failure, and its retry budget still allows one more retry
 - `INCIDENT_CLOSED.payload` now carries `followup_action` and `followup_ticket_id`
-- default close behavior still does not auto-create a retry ticket; retry creation only happens when the operator explicitly requests `RESTORE_AND_RETRY_LATEST_TIMEOUT` or `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE`
+- default close behavior still does not auto-create a retry ticket; retry creation only happens when the operator explicitly requests `RESTORE_AND_RETRY_LATEST_FAILURE`, `RESTORE_AND_RETRY_LATEST_TIMEOUT`, or `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE`
 
 ## 6. Workforce Projection
 
@@ -934,6 +943,7 @@ Recommended `status` enum:
     "on_timeout": "retry",
     "on_schema_error": "retry",
     "on_repeat_failure": "escalate_ceo",
+    "repeat_failure_threshold": 2,
     "timeout_repeat_threshold": 2,
     "timeout_backoff_multiplier": 1.5,
     "timeout_backoff_cap_multiplier": 2.0
@@ -944,6 +954,8 @@ Recommended `status` enum:
 
 Current minimal runtime-governance rule:
 
+- ordinary `TICKET_FAILED` events now also participate in repeated-failure governance on the same `workflow_id + node_id` retry chain when the `failure_fingerprint` matches and the failure is not provider-scoped
+- once the repeated-failure streak reaches `repeat_failure_threshold` and `on_repeat_failure=escalate_ceo`, backend opens an incident, opens a circuit breaker, and stops automatic dispatch on that node
 - `TIMEOUT_SLA_EXCEEDED` and `HEARTBEAT_TIMEOUT` participate in the repeated-timeout streak for the same `workflow_id + node_id` retry chain
 - timeout-triggered retry create may widen both `timeout_sla_sec` and `lease_timeout_sec`
 - once the streak reaches `timeout_repeat_threshold`, backend opens an incident, opens a circuit breaker, and stops automatic dispatch on that node

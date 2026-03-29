@@ -23,6 +23,7 @@ from app.core.constants import (
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_LEASE_TIMEOUT_SEC,
+    DEFAULT_REPEAT_FAILURE_THRESHOLD,
     DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER,
     DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER,
     DEFAULT_TIMEOUT_REPEAT_THRESHOLD,
@@ -40,6 +41,7 @@ from app.core.constants import (
     EVENT_TICKET_TIMED_OUT,
     FAILURE_KIND_PROVIDER_RATE_LIMITED,
     FAILURE_KIND_UPSTREAM_UNAVAILABLE,
+    INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_STATUS_CLOSED,
     INCIDENT_STATUS_OPEN,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
@@ -254,6 +256,13 @@ def _resolve_timeout_repeat_threshold(created_spec: dict[str, Any]) -> int:
     return int(escalation_policy.get("timeout_repeat_threshold") or DEFAULT_TIMEOUT_REPEAT_THRESHOLD)
 
 
+def _resolve_repeat_failure_threshold(created_spec: dict[str, Any]) -> int:
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    return int(
+        escalation_policy.get("repeat_failure_threshold") or DEFAULT_REPEAT_FAILURE_THRESHOLD
+    )
+
+
 def _resolve_timeout_backoff_multiplier(created_spec: dict[str, Any]) -> float:
     escalation_policy = created_spec.get("escalation_policy") or {}
     return float(
@@ -275,6 +284,14 @@ def _resolve_timeout_fingerprint(workflow_id: str, node_id: str) -> str:
 
 def _resolve_provider_fingerprint(provider_id: str) -> str:
     return f"{PROVIDER_FINGERPRINT_PREFIX}:{provider_id}"
+
+
+def _resolve_repeated_failure_incident_fingerprint(
+    workflow_id: str,
+    node_id: str,
+    failure_fingerprint: str,
+) -> str:
+    return f"{workflow_id}:{node_id}:repeat-failure:{failure_fingerprint}"
 
 
 def _resolve_provider_id_for_ticket(
@@ -368,6 +385,40 @@ def _calculate_timeout_streak(
     return streak
 
 
+def _calculate_failure_streak(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    workflow_id: str,
+    node_id: str,
+    created_spec: dict[str, Any],
+    failure_fingerprint: str,
+) -> int:
+    streak = 1
+    parent_ticket_id = created_spec.get("parent_ticket_id")
+    seen_ticket_ids: set[str] = set()
+
+    while parent_ticket_id and parent_ticket_id not in seen_ticket_ids:
+        seen_ticket_ids.add(parent_ticket_id)
+        parent_spec = repository.get_latest_ticket_created_payload(connection, parent_ticket_id)
+        if parent_spec is None:
+            break
+        if parent_spec.get("workflow_id") != workflow_id or parent_spec.get("node_id") != node_id:
+            break
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, parent_ticket_id)
+        if terminal_event is None or terminal_event["event_type"] != EVENT_TICKET_FAILED:
+            break
+        parent_failure_kind = str(terminal_event["payload"].get("failure_kind") or "")
+        if _is_provider_pause_failure(parent_failure_kind):
+            break
+        if terminal_event["payload"].get("failure_fingerprint") != failure_fingerprint:
+            break
+        streak += 1
+        parent_ticket_id = parent_spec.get("parent_ticket_id")
+
+    return streak
+
+
 def _retry_budget(current_ticket: dict[str, Any], created_spec: dict[str, Any]) -> int:
     return int(created_spec.get("retry_budget") or current_ticket.get("retry_budget") or 0)
 
@@ -432,6 +483,21 @@ def _should_retry_timeout(
     return escalation_policy.get("on_timeout") == "retry"
 
 
+def _should_escalate_repeat_failure(
+    *,
+    created_spec: dict[str, Any],
+    failure_kind: str,
+    failure_streak_count: int,
+) -> bool:
+    if _is_provider_pause_failure(failure_kind):
+        return False
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    return (
+        escalation_policy.get("on_repeat_failure") == "escalate_ceo"
+        and failure_streak_count >= _resolve_repeat_failure_threshold(created_spec)
+    )
+
+
 def _validate_restore_and_retry_followup(
     *,
     repository: ControlPlaneRepository,
@@ -471,6 +537,61 @@ def _validate_restore_and_retry_followup(
         raise ValueError(
             f"Incident {incident['incident_id']} cannot restore and retry because the retry budget "
             "is exhausted or timeout retry is disabled."
+        )
+
+    return current_ticket, created_spec
+
+
+def _validate_restore_and_retry_failure_followup(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    incident: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    incident_ticket_id = incident.get("ticket_id")
+    if incident_ticket_id is None:
+        raise ValueError(f"Incident {incident['incident_id']} is missing its source ticket.")
+
+    latest_terminal_event = repository.get_latest_ticket_terminal_event(connection, incident_ticket_id)
+    if latest_terminal_event is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "has no terminal event."
+        )
+    if latest_terminal_event["event_type"] != EVENT_TICKET_FAILED:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the latest terminal "
+            "event is not an ordinary failure."
+        )
+
+    latest_failure_kind = str(latest_terminal_event["payload"].get("failure_kind") or "")
+    if _is_provider_pause_failure(latest_failure_kind):
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the latest terminal "
+            "event is not an ordinary failure."
+        )
+
+    created_spec = repository.get_latest_ticket_created_payload(connection, incident_ticket_id)
+    if created_spec is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "created spec is missing."
+        )
+
+    current_ticket = repository.get_current_ticket_projection(incident_ticket_id, connection=connection)
+    if current_ticket is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "projection is missing."
+        )
+    if not _should_retry_failure(
+        current_ticket=current_ticket,
+        created_spec=created_spec,
+        failure_kind=latest_failure_kind,
+    ):
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the retry budget "
+            "is exhausted or failure retry is disabled."
         )
 
     return current_ticket, created_spec
@@ -677,6 +798,81 @@ def _open_timeout_incident(
     )
     if breaker_event is None:
         raise RuntimeError("Circuit breaker opening idempotency conflict.")
+
+    return incident_id
+
+
+def _open_repeated_failure_incident(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    failure_streak_count: int,
+    failure_payload: dict[str, Any],
+    idempotency_key_base: str,
+) -> str:
+    existing_incident = repository.get_open_incident_for_node(workflow_id, node_id, connection=connection)
+    if existing_incident is not None:
+        return str(existing_incident["incident_id"])
+
+    incident_id = new_prefixed_id("inc")
+    failure_fingerprint = str(failure_payload.get("failure_fingerprint") or "unknown-failure")
+    incident_payload = {
+        "incident_id": incident_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "incident_type": INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
+        "status": INCIDENT_STATUS_OPEN,
+        "severity": "high",
+        "fingerprint": _resolve_repeated_failure_incident_fingerprint(
+            workflow_id,
+            node_id,
+            failure_fingerprint,
+        ),
+        "failure_streak_count": failure_streak_count,
+        "latest_failure_kind": failure_payload.get("failure_kind"),
+        "latest_failure_message": failure_payload.get("failure_message"),
+        "latest_failure_fingerprint": failure_fingerprint,
+    }
+    incident_event = repository.insert_event(
+        connection,
+        event_type=EVENT_INCIDENT_OPENED,
+        actor_type="system",
+        actor_id="runtime",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:incident-opened:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=incident_payload,
+        occurred_at=occurred_at,
+    )
+    if incident_event is None:
+        raise RuntimeError("Repeated failure incident opening idempotency conflict.")
+
+    breaker_event = repository.insert_event(
+        connection,
+        event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+        actor_type="system",
+        actor_id="runtime",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "incident_id": incident_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+            "fingerprint": incident_payload["fingerprint"],
+        },
+        occurred_at=occurred_at,
+    )
+    if breaker_event is None:
+        raise RuntimeError("Repeated failure circuit breaker opening idempotency conflict.")
 
     return incident_id
 
@@ -1195,6 +1391,31 @@ def handle_incident_resolve(
                     incident_id=payload.incident_id,
                     reason=str(exc),
                 )
+        elif payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE:
+            if incident["incident_type"] != INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=(
+                        f"Incident {payload.incident_id} does not support ordinary failure retry recovery."
+                    ),
+                )
+            try:
+                retry_ticket, retry_created_spec = _validate_restore_and_retry_failure_followup(
+                    repository=repository,
+                    connection=connection,
+                    incident=incident,
+                )
+            except ValueError as exc:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=str(exc),
+                )
         elif payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE:
             if incident["incident_type"] != INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
                 return _incident_rejected_ack(
@@ -1257,11 +1478,17 @@ def handle_incident_resolve(
             )
 
         if payload.followup_action in {
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE,
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT,
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE,
         }:
             assert retry_ticket is not None
             assert retry_created_spec is not None
+            retry_source_event_type = (
+                EVENT_TICKET_FAILED
+                if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE
+                else EVENT_TICKET_TIMED_OUT
+            )
             followup_ticket_id = _schedule_retry(
                 repository=repository,
                 connection=connection,
@@ -1272,9 +1499,12 @@ def handle_incident_resolve(
                 node_id=str(incident["node_id"]),
                 created_spec=retry_created_spec,
                 failure_payload={
-                    "failure_fingerprint": incident.get("fingerprint"),
+                    "failure_fingerprint": (
+                        (incident.get("payload") or {}).get("latest_failure_fingerprint")
+                        or incident.get("fingerprint")
+                    ),
                 },
-                retry_source_event_type=EVENT_TICKET_TIMED_OUT,
+                retry_source_event_type=retry_source_event_type,
                 idempotency_key_base=f"{payload.idempotency_key}:followup-timeout",
             )
             resolution_payload["followup_ticket_id"] = followup_ticket_id
@@ -1911,24 +2141,50 @@ def handle_ticket_fail(
                 failure_payload=failure_payload,
                 idempotency_key_base=payload.idempotency_key,
             )
-        elif created_spec is not None and _should_retry_failure(
-            current_ticket=current_ticket,
-            created_spec=created_spec,
-            failure_kind=payload.failure_kind,
-        ):
-            next_ticket_id = _schedule_retry(
-                repository=repository,
-                connection=connection,
-                command_id=command_id,
-                occurred_at=received_at,
+        elif created_spec is not None:
+            failure_streak_count = _calculate_failure_streak(
+                repository,
+                connection,
                 workflow_id=payload.workflow_id,
-                failed_ticket_id=payload.ticket_id,
                 node_id=payload.node_id,
                 created_spec=created_spec,
-                failure_payload=failure_payload,
-                retry_source_event_type=EVENT_TICKET_FAILED,
-                idempotency_key_base=payload.idempotency_key,
+                failure_fingerprint=str(failure_payload["failure_fingerprint"]),
             )
+            if _should_escalate_repeat_failure(
+                created_spec=created_spec,
+                failure_kind=payload.failure_kind,
+                failure_streak_count=failure_streak_count,
+            ):
+                _open_repeated_failure_incident(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=payload.workflow_id,
+                    ticket_id=payload.ticket_id,
+                    node_id=payload.node_id,
+                    failure_streak_count=failure_streak_count,
+                    failure_payload=failure_payload,
+                    idempotency_key_base=payload.idempotency_key,
+                )
+            elif _should_retry_failure(
+                current_ticket=current_ticket,
+                created_spec=created_spec,
+                failure_kind=payload.failure_kind,
+            ):
+                next_ticket_id = _schedule_retry(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=payload.workflow_id,
+                    failed_ticket_id=payload.ticket_id,
+                    node_id=payload.node_id,
+                    created_spec=created_spec,
+                    failure_payload=failure_payload,
+                    retry_source_event_type=EVENT_TICKET_FAILED,
+                    idempotency_key_base=payload.idempotency_key,
+                )
 
         repository.refresh_projections(connection)
 

@@ -892,6 +892,116 @@ def test_reducer_rebuilds_provider_pause_incident_projection_and_close_payload()
     ]
 
 
+def test_reducer_rebuilds_repeated_failure_incident_projection_and_close_payload():
+    incident_opened_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_INCIDENT_OPENED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_failure_001",
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "incident_type": "REPEATED_FAILURE_ESCALATION",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "wf_123:node_homepage_visual:repeat-failure:fp_1",
+                "failure_streak_count": 2,
+                "latest_failure_kind": "RUNTIME_ERROR",
+                "latest_failure_fingerprint": "fp_1",
+            }
+        ),
+    }
+    breaker_opened_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_CIRCUIT_BREAKER_OPENED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:00:01+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_failure_001",
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+                "fingerprint": "wf_123:node_homepage_visual:repeat-failure:fp_1",
+            }
+        ),
+    }
+    breaker_closed_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_CIRCUIT_BREAKER_CLOSED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:05:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_failure_001",
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_CLOSED,
+            }
+        ),
+    }
+    incident_closed_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_INCIDENT_CLOSED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:05:01+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_failure_001",
+                "ticket_id": "tkt_003",
+                "node_id": "node_homepage_visual",
+                "status": "CLOSED",
+                "followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+                "followup_ticket_id": "tkt_003",
+            }
+        ),
+    }
+
+    incidents = rebuild_incident_projections(
+        [
+            incident_opened_event,
+            breaker_opened_event,
+            breaker_closed_event,
+            incident_closed_event,
+        ]
+    )
+
+    assert incidents == [
+        {
+            "incident_id": "inc_failure_001",
+            "workflow_id": "wf_123",
+            "node_id": "node_homepage_visual",
+            "ticket_id": "tkt_003",
+            "provider_id": None,
+            "incident_type": "REPEATED_FAILURE_ESCALATION",
+            "status": "CLOSED",
+            "severity": "high",
+            "fingerprint": "wf_123:node_homepage_visual:repeat-failure:fp_1",
+            "circuit_breaker_state": "CLOSED",
+            "opened_at": "2026-03-28T10:00:00+08:00",
+            "closed_at": "2026-03-28T10:05:01+08:00",
+            "payload": {
+                "incident_id": "inc_failure_001",
+                "ticket_id": "tkt_003",
+                "node_id": "node_homepage_visual",
+                "incident_type": "REPEATED_FAILURE_ESCALATION",
+                "status": "CLOSED",
+                "severity": "high",
+                "fingerprint": "wf_123:node_homepage_visual:repeat-failure:fp_1",
+                "failure_streak_count": 2,
+                "latest_failure_kind": "RUNTIME_ERROR",
+                "latest_failure_fingerprint": "fp_1",
+                "followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+                "followup_ticket_id": "tkt_003",
+            },
+            "updated_at": "2026-03-28T10:05:01+08:00",
+            "version": 4,
+        }
+    ]
+
+
 def test_reducer_rebuilds_blocked_then_approved_then_rework_states():
     created_event = {
         "sequence_no": 1,

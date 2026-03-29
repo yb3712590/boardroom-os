@@ -24,7 +24,12 @@ from app.contracts.projections import (
     WorkforceSummaryProjection,
     WorkspaceSummary,
 )
-from app.core.constants import APPROVAL_STATUS_OPEN, SCHEMA_VERSION
+from app.core.constants import (
+    APPROVAL_STATUS_OPEN,
+    INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
+    INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
+    SCHEMA_VERSION,
+)
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -199,6 +204,34 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
                         incident_id=incident["incident_id"],
                     ),
                     badges=["provider", "execution_pause"],
+                )
+            )
+            continue
+        if incident.get("incident_type") == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
+            node_id = incident.get("node_id") or "unknown-node"
+            latest_failure_kind = str(
+                (incident.get("payload") or {}).get("latest_failure_kind") or "RUNTIME_ERROR"
+            )
+            items.append(
+                InboxItemProjection(
+                    inbox_item_id=f"inbox_{incident['incident_id']}",
+                    workflow_id=incident["workflow_id"],
+                    item_type="INCIDENT_ESCALATION",
+                    priority=str(incident.get("severity") or "high"),
+                    status=incident["status"],
+                    created_at=incident["opened_at"],
+                    sla_due_at=None,
+                    title=f"Repeated failure escalation in {node_id}",
+                    summary=(
+                        f"Node {node_id} repeated the same {latest_failure_kind.lower()} "
+                        "fingerprint and opened a circuit breaker."
+                    ),
+                    source_ref=incident["incident_id"],
+                    route_target=RouteTarget(
+                        view="incident_detail",
+                        incident_id=incident["incident_id"],
+                    ),
+                    badges=["repeat_failure", "circuit_breaker"],
                 )
             )
             continue

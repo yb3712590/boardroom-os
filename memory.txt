@@ -1365,3 +1365,66 @@
 - automatic provider recovery or circuit-breaker close
 - richer provider routing policy and provider preference on tickets
 - a dedicated provider management view or provider projection API
+
+## 2026-03-30T02:12:06+08:00
+
+### Session Context
+- User asked to continue directly from the existing repo and implement the planned runtime-governance slice without widening the boundary.
+- This round stayed inside one boundary only: repeated ordinary failure escalation and controlled recovery on the existing runtime incident chain.
+
+### Boundary Chosen
+- Single boundary for this round: non-timeout repeated failure governance for ordinary `TICKET_FAILED` paths.
+- This slice intentionally did not change timeout escalation rules, provider pause rules, cancel flow, employee lifecycle, or compiler scope.
+
+### Design / Code Gap Identified
+- `TicketEscalationPolicy.on_repeat_failure` was already part of the public ticket contract, but runtime still treated most ordinary failures as blind retry within budget.
+- `incident-resolve` could restore timeout incidents and provider incidents, but had no symmetric recovery path for repeated ordinary failure incidents.
+
+### Slice Landed
+- Extended `TicketEscalationPolicy` with `repeat_failure_threshold`.
+- Added `REPEATED_FAILURE_ESCALATION` as a new node-scoped incident type for ordinary repeated failures.
+- Ordinary `TICKET_FAILED` events now participate in repeated-failure governance when all of the following match:
+  - same `workflow_id + node_id`
+  - same retry chain
+  - same `failure_fingerprint`
+  - not a provider-scoped failure kind
+- When `on_repeat_failure=escalate_ceo` and the repeated-failure streak reaches `repeat_failure_threshold`, runtime now:
+  - opens a repeated-failure incident
+  - opens a circuit breaker on that node
+  - stops later automatic dispatch on that node
+- Added `RESTORE_AND_RETRY_LATEST_FAILURE` to `incident-resolve`.
+- `RESTORE_AND_RETRY_LATEST_FAILURE` now:
+  - validates the incident type is `REPEATED_FAILURE_ESCALATION`
+  - validates the latest terminal event is still an ordinary `TICKET_FAILED`
+  - validates retry budget still allows one more retry
+  - closes the breaker
+  - appends `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`
+  - closes the incident in the same transaction
+- Dashboard / inbox / incident detail / event preview wording now distinguishes repeated ordinary failure escalation from timeout escalation and provider pause.
+
+### Conservative Handling
+- Provider-scoped failures still use the existing provider pause / recovery path and are intentionally excluded from the new repeated ordinary failure streak.
+- This slice does not add automatic incident closure after later success.
+- This slice does not change generic retry semantics beyond enforcing the new repeated-failure escalation threshold when policy explicitly asks for escalation.
+
+### Tests Added
+- API coverage for:
+  - repeated ordinary failure opening a node-scoped incident and breaker
+  - different failure fingerprints continuing bounded retry without opening the new incident
+  - `RESTORE_AND_RETRY_LATEST_FAILURE` creating a bounded follow-up retry
+  - rejecting `RESTORE_AND_RETRY_LATEST_FAILURE` when retry budget is exhausted
+  - provider failures still going through the existing provider incident path
+- Reducer coverage for:
+  - repeated-failure incident replay including close payload merge
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `boardroom-data-contracts.md`
+- `message-bus-design.md`
+- `memory.txt`
+
+### Still Not Done
+- `TICKET_CANCELLED` and controlled cancel / interrupt governance
+- automatic incident closure after later successful recovery
+- richer provider routing and provider management surfaces
