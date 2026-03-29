@@ -44,8 +44,12 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - 最小持久化 worker roster / executor pool
 - `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于总执行超时、heartbeat 超时、timeout retry 轻量退让、重复超时 incident / circuit-breaker 升级与 expired lease dispatch
 - dashboard / inbox 的 incident 与 circuit-breaker 计数已接入真实投影，不再写死为 0
+- dashboard `provider_health_summary` / `provider_alerts` 已接入最小真实 provider incident 投影，不再固定返回占位值
 - repeated runtime timeout 现在会在同一 node 的重试链路上打开最小 incident 与 circuit-breaker，并阻断该 node 的后续自动 dispatch
 - `POST /api/v1/commands/incident-resolve` 已打通受控人工恢复链：默认仍只关闭 circuit breaker 并关闭 incident；如显式请求 `RESTORE_AND_RETRY_LATEST_TIMEOUT`，则会在同一事务里基于触发 incident 的最新 timeout ticket 补发一张受控 retry，且仍受原 retry budget 约束
+- 最小 worker roster 现在带有内部 `provider_id` 绑定，用于 provider 级运行时治理
+- `PROVIDER_RATE_LIMITED` / `UPSTREAM_UNAVAILABLE` 失败现在会打开 provider 级 incident 与 circuit-breaker，并暂停同 provider worker 的后续自动 dispatch、手工 lease 与 start
+- `incident-resolve` 现在也支持 provider 级恢复；如显式请求 `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE`，会在关闭 provider breaker 前校验最新 provider 故障 ticket 的 retry budget，并在同一事务里补发一张受控 retry
 - dashboard `workforce_summary` 已接入最小真实投影
 - 独立 scheduler runner：`python -m app.scheduler_runner`
 - runner 已打通最小自动执行链：`TICKET_LEASED` 会在独立 runner 中继续推进到 `TICKET_STARTED`，并先经过最小 `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` 编译与持久化边界，再进入 `TICKET_COMPLETED` 或 `TICKET_FAILED`
@@ -63,7 +67,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - 完整 compiled execution package 交付 / 外部 worker runtime 实际交付（当前仅落地进程内最小编译边界）
 - employee hire / replace / freeze 生命周期
 - 超出当前最小闭环的 cancel / richer retry policy / incident 自动恢复与自动关闭状态
-- 外部 AI 提供方配额不足 / 服务波动后的暂停恢复治理
+- 更完整的 provider 路由、自动恢复与多 provider 管理面
 - Maker-Checker Review Loop
 - Review Room 仍只支持已持久化审批包，不含更完整的证据拼装
 - 非 reference-only 的完整 Context Compiler 编译、artifact hydration、缓存复用与更丰富 provenance

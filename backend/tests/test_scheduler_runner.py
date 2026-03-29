@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+import app.core.runtime as runtime_module
+from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.scheduler_runner import run_scheduler_loop, run_scheduler_once
 
 
@@ -42,6 +46,40 @@ def _ticket_create_payload(
         },
         "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
     }
+
+
+def _seed_worker(repository, *, employee_id: str, provider_id: str) -> None:
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO employee_projection (
+                employee_id,
+                role_type,
+                skill_profile_json,
+                personality_profile_json,
+                aesthetic_profile_json,
+                state,
+                board_approved,
+                provider_id,
+                role_profile_refs_json,
+                updated_at,
+                version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                employee_id,
+                "frontend_engineer",
+                "{}",
+                "{}",
+                "{}",
+                "ACTIVE",
+                1,
+                provider_id,
+                json.dumps(["ui_designer_primary"], sort_keys=True),
+                "2026-03-28T10:00:00+08:00",
+                1,
+            ),
+        )
 
 
 def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_ticket_time):
@@ -286,3 +324,77 @@ def test_scheduler_runner_execution_events_are_visible_in_stream(client, set_tic
     assert "TICKET_LEASED" in body
     assert "TICKET_STARTED" in body
     assert "TICKET_COMPLETED" in body
+
+
+def test_runtime_skips_later_leased_tickets_after_provider_pause_opens(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_backup", provider_id="prov_openai_compat")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_pause",
+            ticket_id="tkt_runner_provider_pause_1",
+            node_id="node_runner_provider_pause_1",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_pause",
+            ticket_id="tkt_runner_provider_pause_2",
+            node_id="node_runner_provider_pause_2",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_pause",
+            "ticket_id": "tkt_runner_provider_pause_1",
+            "node_id": "node_runner_provider_pause_1",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_pause:tkt_runner_provider_pause_1",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_pause",
+            "ticket_id": "tkt_runner_provider_pause_2",
+            "node_id": "node_runner_provider_pause_2",
+            "leased_by": "emp_frontend_backup",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_pause:tkt_runner_provider_pause_2",
+        },
+    )
+
+    executed_ticket_ids: list[str] = []
+
+    def _fake_execute(execution_package):
+        executed_ticket_ids.append(execution_package.meta.ticket_id)
+        if execution_package.meta.ticket_id == "tkt_runner_provider_pause_1":
+            return RuntimeExecutionResult(
+                result_status="failed",
+                failure_kind="PROVIDER_RATE_LIMITED",
+                failure_message="Provider quota exhausted.",
+                failure_detail={"provider_id": "prov_openai_compat"},
+            )
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary="Completed after pause should not happen.",
+        )
+
+    monkeypatch.setattr(runtime_module, "_execute_compiled_execution_package", _fake_execute)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    first_ticket = repository.get_current_ticket_projection("tkt_runner_provider_pause_1")
+    second_ticket = repository.get_current_ticket_projection("tkt_runner_provider_pause_2")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_pause_1"]
+    assert executed_ticket_ids == ["tkt_runner_provider_pause_1"]
+    assert first_ticket["status"] == "FAILED"
+    assert second_ticket["status"] == "LEASED"

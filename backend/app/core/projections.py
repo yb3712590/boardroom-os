@@ -78,6 +78,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
     pending_approvals = repository.count_open_approvals()
     open_incidents = repository.count_open_incidents()
     open_circuit_breakers = repository.count_open_circuit_breakers()
+    open_provider_incidents = repository.count_open_provider_incidents()
     active_tickets = repository.count_active_tickets()
     blocked_nodes = repository.count_blocked_nodes()
     blocked_node_ids = repository.list_blocked_node_ids()
@@ -131,7 +132,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 blocked_nodes=blocked_nodes,
                 open_incidents=open_incidents,
                 open_circuit_breakers=open_circuit_breakers,
-                provider_health_summary="UNKNOWN",
+                provider_health_summary="DEGRADED" if open_provider_incidents > 0 else "UNKNOWN",
             ),
             pipeline_summary=PipelineSummaryProjection(
                 phases=[],
@@ -142,7 +143,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 approvals_pending=pending_approvals,
                 incidents_pending=open_incidents,
                 budget_alerts=0,
-                provider_alerts=0,
+                provider_alerts=open_provider_incidents,
             ),
             workforce_summary=_build_workforce_summary(repository),
             event_stream_preview=preview_events,
@@ -176,6 +177,31 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
             )
         )
     for incident in repository.list_open_incidents():
+        if incident.get("provider_id") is not None:
+            provider_id = str(incident["provider_id"])
+            pause_reason = str((incident.get("payload") or {}).get("pause_reason") or "PROVIDER_FAILURE")
+            items.append(
+                InboxItemProjection(
+                    inbox_item_id=f"inbox_{incident['incident_id']}",
+                    workflow_id=incident["workflow_id"],
+                    item_type="PROVIDER_INCIDENT",
+                    priority=str(incident.get("severity") or "high"),
+                    status=incident["status"],
+                    created_at=incident["opened_at"],
+                    sla_due_at=None,
+                    title=f"Provider pause on {provider_id}",
+                    summary=(
+                        f"Provider {provider_id} entered paused state because of {pause_reason.lower()}."
+                    ),
+                    source_ref=incident["incident_id"],
+                    route_target=RouteTarget(
+                        view="incident_detail",
+                        incident_id=incident["incident_id"],
+                    ),
+                    badges=["provider", "execution_pause"],
+                )
+            )
+            continue
         items.append(
             InboxItemProjection(
                 inbox_item_id=f"inbox_{incident['incident_id']}",
@@ -311,6 +337,7 @@ def build_incident_detail_projection(
                 workflow_id=incident["workflow_id"],
                 node_id=incident.get("node_id"),
                 ticket_id=incident.get("ticket_id"),
+                provider_id=incident.get("provider_id"),
                 incident_type=incident["incident_type"],
                 status=incident["status"],
                 severity=incident.get("severity"),

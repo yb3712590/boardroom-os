@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS employee_projection (
     aesthetic_profile_json TEXT,
     state TEXT NOT NULL,
     board_approved INTEGER NOT NULL,
+    provider_id TEXT,
     role_profile_refs_json TEXT,
     updated_at TEXT NOT NULL,
     version INTEGER NOT NULL
@@ -98,6 +99,7 @@ CREATE TABLE IF NOT EXISTS incident_projection (
     workflow_id TEXT NOT NULL,
     node_id TEXT,
     ticket_id TEXT,
+    provider_id TEXT,
     incident_type TEXT NOT NULL,
     status TEXT NOT NULL,
     severity TEXT,
@@ -152,6 +154,9 @@ ON incident_projection(workflow_id);
 
 CREATE INDEX IF NOT EXISTS idx_incident_projection_status
 ON incident_projection(status);
+
+CREATE INDEX IF NOT EXISTS idx_incident_projection_provider_id
+ON incident_projection(provider_id);
 
 CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint
 ON incident_projection(fingerprint);

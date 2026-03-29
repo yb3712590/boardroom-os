@@ -32,6 +32,7 @@ from app.core.constants import (
     EVENT_TICKET_STARTED,
     EVENT_TICKET_TIMED_OUT,
     EVENT_WORKFLOW_CREATED,
+    INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
@@ -55,6 +56,7 @@ DEFAULT_EMPLOYEE_ROSTER = (
         "aesthetic_profile_json": {"preference": "minimal"},
         "state": "ACTIVE",
         "board_approved": True,
+        "provider_id": "prov_openai_compat",
         "role_profile_refs_json": ["ui_designer_primary"],
     },
     {
@@ -65,6 +67,7 @@ DEFAULT_EMPLOYEE_ROSTER = (
         "aesthetic_profile_json": {"preference": "structured"},
         "state": "ACTIVE",
         "board_approved": True,
+        "provider_id": "prov_openai_compat",
         "role_profile_refs_json": ["checker_primary"],
     },
 )
@@ -330,6 +333,7 @@ class ControlPlaneRepository:
                     workflow_id,
                     node_id,
                     ticket_id,
+                    provider_id,
                     incident_type,
                     status,
                     severity,
@@ -340,13 +344,14 @@ class ControlPlaneRepository:
                     payload_json,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["incident_id"],
                     projection["workflow_id"],
                     projection.get("node_id"),
                     projection.get("ticket_id"),
+                    projection.get("provider_id"),
                     projection["incident_type"],
                     projection["status"],
                     projection.get("severity"),
@@ -473,6 +478,31 @@ class ControlPlaneRepository:
             LIMIT 1
         """
         params = (workflow_id, node_id, "OPEN")
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return self._convert_incident_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return self._convert_incident_projection_row(row)
+
+    def get_open_incident_for_provider(
+        self,
+        provider_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM incident_projection
+            WHERE provider_id = ? AND status = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            LIMIT 1
+        """
+        params = (provider_id, "OPEN")
         if connection is not None:
             row = connection.execute(query, params).fetchone()
             if row is None:
@@ -957,6 +987,19 @@ class ControlPlaneRepository:
             ).fetchone()
             return int(row["total"])
 
+    def count_open_provider_incidents(self) -> int:
+        self.initialize()
+        with self.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM incident_projection
+                WHERE status = ? AND provider_id IS NOT NULL
+                """,
+                ("OPEN",),
+            ).fetchone()
+            return int(row["total"])
+
     def list_open_incidents(self) -> list[dict[str, Any]]:
         self.initialize()
         with self.connection() as connection:
@@ -964,6 +1007,19 @@ class ControlPlaneRepository:
                 """
                 SELECT * FROM incident_projection
                 WHERE status = ?
+                ORDER BY opened_at DESC, incident_id DESC
+                """,
+                ("OPEN",),
+            ).fetchall()
+            return [self._convert_incident_projection_row(row) for row in rows]
+
+    def list_open_provider_incidents(self) -> list[dict[str, Any]]:
+        self.initialize()
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM incident_projection
+                WHERE status = ? AND provider_id IS NOT NULL
                 ORDER BY opened_at DESC, incident_id DESC
                 """,
                 ("OPEN",),
@@ -983,6 +1039,27 @@ class ControlPlaneRepository:
             LIMIT 1
         """
         params = (workflow_id, node_id, "OPEN", CIRCUIT_BREAKER_STATE_OPEN)
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return row is not None
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return row is not None
+
+    def has_open_circuit_breaker_for_provider(
+        self,
+        provider_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> bool:
+        query = """
+            SELECT 1
+            FROM incident_projection
+            WHERE provider_id = ? AND status = ? AND circuit_breaker_state = ?
+            LIMIT 1
+        """
+        params = (provider_id, "OPEN", CIRCUIT_BREAKER_STATE_OPEN)
         if connection is not None:
             row = connection.execute(query, params).fetchone()
             return row is not None
@@ -1235,6 +1312,7 @@ class ControlPlaneRepository:
         converted["node_id"] = payload.get("node_id")
         converted["ticket_id"] = payload.get("ticket_id")
         converted["incident_id"] = payload.get("incident_id")
+        converted["provider_id"] = payload.get("provider_id")
         return converted
 
     def _convert_approval_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -1301,6 +1379,7 @@ class ControlPlaneRepository:
             converted[field] = json.loads(raw_value) if raw_value else {}
         raw_role_profiles = converted.get("role_profile_refs_json")
         converted["role_profile_refs"] = json.loads(raw_role_profiles) if raw_role_profiles else []
+        converted["provider_id"] = converted.get("provider_id")
         converted["board_approved"] = bool(converted.get("board_approved"))
         converted["version"] = int(converted.get("version") or 0)
         return converted
@@ -1391,12 +1470,24 @@ class ControlPlaneRepository:
         if event["event_type"] == EVENT_TICKET_RETRY_SCHEDULED:
             return f"TICKET_RETRY_SCHEDULED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_INCIDENT_OPENED:
+            if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
+                provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
+                return f"PROVIDER_INCIDENT_OPENED for {provider_id or event['workflow_id']}"
             return f"INCIDENT_OPENED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_INCIDENT_CLOSED:
+            if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
+                provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
+                return f"PROVIDER_INCIDENT_CLOSED for {provider_id or event['workflow_id']}"
             return f"INCIDENT_CLOSED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_CIRCUIT_BREAKER_OPENED:
+            if event.get("provider_id") or event.get("payload", {}).get("provider_id"):
+                provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
+                return f"PROVIDER_BREAKER_OPENED for {provider_id or event['workflow_id']}"
             return f"CIRCUIT_BREAKER_OPENED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_CIRCUIT_BREAKER_CLOSED:
+            if event.get("provider_id") or event.get("payload", {}).get("provider_id"):
+                provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
+                return f"PROVIDER_BREAKER_CLOSED for {provider_id or event['workflow_id']}"
             return f"CIRCUIT_BREAKER_CLOSED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_BOARD_REVIEW_REQUIRED:
             return "BOARD_REVIEW_REQUIRED pending board action"
@@ -1475,7 +1566,7 @@ class ControlPlaneRepository:
                 "invalidate": ["dashboard", "inbox", "incidents"],
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
-                "toast": "Timeout incident opened.",
+                "toast": "Incident opened.",
             }
         if event_type == EVENT_INCIDENT_CLOSED:
             return {
@@ -1489,14 +1580,14 @@ class ControlPlaneRepository:
                 "invalidate": ["dashboard", "inbox", "incidents"],
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
-                "toast": "Circuit breaker opened.",
+                "toast": "Execution pause opened.",
             }
         if event_type == EVENT_CIRCUIT_BREAKER_CLOSED:
             return {
                 "invalidate": ["dashboard", "inbox", "incidents"],
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
-                "toast": "Circuit breaker closed.",
+                "toast": "Execution pause cleared.",
             }
         if event_type == EVENT_BOARD_REVIEW_REQUIRED:
             return {
@@ -1625,6 +1716,7 @@ class ControlPlaneRepository:
             "aesthetic_profile_json": "TEXT",
             "state": "TEXT",
             "board_approved": "INTEGER",
+            "provider_id": "TEXT",
             "role_profile_refs_json": "TEXT",
             "updated_at": "TEXT",
             "version": "INTEGER",
@@ -1651,6 +1743,7 @@ class ControlPlaneRepository:
             "workflow_id": "TEXT",
             "node_id": "TEXT",
             "ticket_id": "TEXT",
+            "provider_id": "TEXT",
             "incident_type": "TEXT",
             "status": "TEXT",
             "severity": "TEXT",
@@ -1672,6 +1765,9 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_incident_projection_node_id ON incident_projection(node_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_incident_projection_provider_id ON incident_projection(provider_id)"
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint ON incident_projection(fingerprint)"
@@ -1696,10 +1792,11 @@ class ControlPlaneRepository:
                     aesthetic_profile_json,
                     state,
                     board_approved,
+                    provider_id,
                     role_profile_refs_json,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     employee["employee_id"],
@@ -1709,6 +1806,7 @@ class ControlPlaneRepository:
                     json.dumps(employee["aesthetic_profile_json"], sort_keys=True),
                     employee["state"],
                     1 if employee["board_approved"] else 0,
+                    employee.get("provider_id"),
                     json.dumps(employee["role_profile_refs_json"], sort_keys=True),
                     seeded_at,
                     1,

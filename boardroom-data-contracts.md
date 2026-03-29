@@ -229,7 +229,7 @@ Recommended `item_type` enum:
 - `BOARD_APPROVAL`
 - `INCIDENT_ESCALATION`
 - `BUDGET_ALERT`
-- `PROVIDER_ALERT`
+- `PROVIDER_INCIDENT`
 - `MEETING_ESCALATION`
 - `CORE_HIRE_APPROVAL`
 
@@ -256,6 +256,7 @@ Purpose:
       "workflow_id": "wf_001",
       "node_id": "node_homepage_visual",
       "ticket_id": "tkt_ui_home_03_retry_1",
+      "provider_id": null,
       "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
       "status": "OPEN",
       "severity": "high",
@@ -277,6 +278,12 @@ This endpoint remains intentionally minimal in the current slice. After the oper
 - `followup_action`
 - `followup_ticket_id`
 
+For provider pauses, the same endpoint now also exposes:
+
+- top-level `provider_id`
+- `incident_type = PROVIDER_EXECUTION_PAUSED`
+- `payload.pause_reason` with values such as `PROVIDER_RATE_LIMITED` or `UPSTREAM_UNAVAILABLE`
+
 It still does not expose a broader automated recovery workflow.
 
 ## 5.2 Incident Resolve Command
@@ -287,8 +294,8 @@ Suggested endpoint:
 
 Purpose:
 
-- let an operator manually reopen dispatch on a fused node
-- close the minimal timeout incident in the same transaction
+- let an operator manually reopen dispatch on a fused node or paused provider
+- close the minimal timeout or provider incident in the same transaction
 
 ```json
 {
@@ -306,9 +313,11 @@ Implementation rules:
 - `followup_action` defaults to `RESTORE_ONLY` for backward compatibility
 - accepted `RESTORE_ONLY` emits `CIRCUIT_BREAKER_CLOSED` first and `INCIDENT_CLOSED` second
 - accepted `RESTORE_AND_RETRY_LATEST_TIMEOUT` emits `CIRCUIT_BREAKER_CLOSED`, then `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`, then `INCIDENT_CLOSED`
+- accepted `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` emits `CIRCUIT_BREAKER_CLOSED`, then `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`, then `INCIDENT_CLOSED`
 - `RESTORE_AND_RETRY_LATEST_TIMEOUT` is accepted only when the incident source ticket still exists, its latest terminal event is timeout-based, and its retry budget still allows one more timeout retry
+- `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` is accepted only for `PROVIDER_EXECUTION_PAUSED`, when the incident source ticket still exists, its latest terminal event is a provider failure, and its retry budget still allows one more retry
 - `INCIDENT_CLOSED.payload` now carries `followup_action` and `followup_ticket_id`
-- default close behavior still does not auto-create a retry ticket; retry creation only happens when the operator explicitly requests `RESTORE_AND_RETRY_LATEST_TIMEOUT`
+- default close behavior still does not auto-create a retry ticket; retry creation only happens when the operator explicitly requests `RESTORE_AND_RETRY_LATEST_TIMEOUT` or `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE`
 
 ## 6. Workforce Projection
 

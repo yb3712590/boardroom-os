@@ -1307,3 +1307,61 @@
 
 ### Likely Next Step
 - Stay on runtime governance and add the next conservative slice: provider outage / quota pause-resume governance, or switch to a different single boundary such as richer cancel / recovery state handling.
+
+## 2026-03-30 Provider Pause-Resume Governance Slice
+
+### Scope Decision
+- This round stayed inside one boundary only: provider quota exhaustion and upstream outage pause-resume governance inside the existing runtime incident chain.
+- The implementation reused the current `incident-resolve` command instead of adding a separate provider-resume command.
+
+### Why This Slice
+- The repo already had node-scoped timeout incident governance, but `provider_health_summary` and `provider_alerts` were still mostly placeholders.
+- README and prior memory explicitly marked provider quota / outage pause-resume as the next conservative runtime-governance slice.
+
+### What Landed
+- Seeded worker roster now carries internal `provider_id` bindings.
+- `PROVIDER_RATE_LIMITED` and `UPSTREAM_UNAVAILABLE` now open a provider-scoped incident plus circuit breaker keyed by `provider_id`.
+- Provider-scoped breaker now blocks:
+  - later automatic dispatch for workers bound to that provider
+  - manual `ticket-lease`
+  - manual `ticket-start`
+  - later runtime start of already leased tickets on the same provider
+- `incident-resolve` now supports `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` in addition to the existing timeout recovery path.
+- Provider recovery validates:
+  - the source ticket still exists
+  - the latest terminal event is still a provider failure
+  - retry budget still allows another retry
+- Dashboard and Inbox now surface real provider pause state:
+  - `ops_strip.provider_health_summary`
+  - `inbox_counts.provider_alerts`
+  - provider-specific inbox items and incident detail payload
+
+### Conservative Handling
+- This slice still does not introduce a full provider management subsystem or explicit provider CRUD.
+- Tickets remain provider-agnostic; if another worker on a different provider can satisfy the same role, scheduler may still dispatch the ticket there.
+- Provider incidents still recover only through explicit operator action; there is no automatic provider health probe or auto-resume loop yet.
+
+### Tests Added
+- API coverage for:
+  - provider failure opening provider incident and breaker
+  - manual lease rejection while provider is paused
+  - scheduler rerouting work to an alternate provider when available
+  - provider alert visibility in dashboard / inbox / incident detail
+  - `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` creating a bounded retry and reopening dispatch
+- Reducer coverage for:
+  - provider incident projection replay including `provider_id`
+  - provider incident close payload merge
+- Scheduler runtime coverage for:
+  - skipping later leased tickets on the same provider after the first provider failure opens the pause
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `boardroom-data-contracts.md`
+- `message-bus-design.md`
+- `memory.txt`
+
+### Still Not Done
+- automatic provider recovery or circuit-breaker close
+- richer provider routing policy and provider preference on tickets
+- a dedicated provider management view or provider projection API

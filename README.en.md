@@ -45,8 +45,12 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/scheduler-tick` for total execution timeout, heartbeat timeout, timeout-retry backoff, repeated-timeout incident / circuit-breaker escalation, and expired-lease dispatch using persisted roster by default
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
 - dashboard / inbox incident and circuit-breaker counts are now backed by real projections instead of fixed zeros
+- dashboard `provider_health_summary` and `provider_alerts` are now backed by minimal real provider-incident projections instead of placeholder values
 - repeated runtime timeouts now open a minimal incident and circuit breaker on the affected node and block further automatic dispatch on that node
 - `POST /api/v1/commands/incident-resolve` now provides a controlled manual recovery path: by default it still only closes the circuit breaker and the incident, but an explicit `RESTORE_AND_RETRY_LATEST_TIMEOUT` follow-up can reopen the node and create one bounded retry for the latest timeout ticket in the same transaction
+- the minimal worker roster now carries internal `provider_id` bindings for provider-level runtime governance
+- `PROVIDER_RATE_LIMITED` and `UPSTREAM_UNAVAILABLE` failures now open provider-scoped incidents and circuit breakers, pausing later automatic dispatch plus manual lease/start on that provider
+- `incident-resolve` also supports provider recovery now; an explicit `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` follow-up validates retry budget on the latest provider-failure ticket and creates one bounded retry in the same transaction
 - independent scheduler runner via `python -m app.scheduler_runner`
 - runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
 - FastAPI can now also host an optional in-process background scheduler loop behind an explicit env flag; it stays off by default so app startup behavior does not change unless requested
@@ -63,7 +67,7 @@ The following are still pending or stubbed:
 - full compiled execution package delivery and external worker runtime handoff beyond the in-process minimal compiler boundary
 - employee hire / replace / freeze lifecycle beyond the seeded roster
 - cancel / richer retry policy / automatic incident recovery and close state beyond the current minimal loop
-- external AI provider quota / outage pause-and-resume governance
+- richer provider routing, automatic recovery, and a fuller multi-provider management surface
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
 - non-reference-only Context Compiler execution with artifact hydration, cache reuse, and richer provenance

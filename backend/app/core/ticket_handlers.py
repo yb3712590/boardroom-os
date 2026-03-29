@@ -38,12 +38,17 @@ from app.core.constants import (
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
     EVENT_TICKET_TIMED_OUT,
+    FAILURE_KIND_PROVIDER_RATE_LIMITED,
+    FAILURE_KIND_UPSTREAM_UNAVAILABLE,
     INCIDENT_STATUS_CLOSED,
     INCIDENT_STATUS_OPEN,
+    INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
+    PROVIDER_FINGERPRINT_PREFIX,
+    PROVIDER_PAUSE_FAILURE_KINDS,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
@@ -268,6 +273,47 @@ def _resolve_timeout_fingerprint(workflow_id: str, node_id: str) -> str:
     return f"{workflow_id}:{node_id}:{TIMEOUT_FAMILY_RUNTIME}"
 
 
+def _resolve_provider_fingerprint(provider_id: str) -> str:
+    return f"{PROVIDER_FINGERPRINT_PREFIX}:{provider_id}"
+
+
+def _resolve_provider_id_for_ticket(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    ticket: dict[str, Any] | None = None,
+    lease_owner: str | None = None,
+    failure_detail: dict[str, Any] | None = None,
+) -> str | None:
+    if failure_detail is not None:
+        provider_id = failure_detail.get("provider_id")
+        if provider_id:
+            return str(provider_id)
+
+    resolved_owner = lease_owner or (str(ticket["lease_owner"]) if ticket and ticket.get("lease_owner") else None)
+    if resolved_owner is None:
+        return None
+
+    employee = repository.get_employee_projection(resolved_owner, connection=connection)
+    if employee is None or not employee.get("provider_id"):
+        return None
+    return str(employee["provider_id"])
+
+
+def _is_provider_pause_failure(failure_kind: str) -> bool:
+    return failure_kind in PROVIDER_PAUSE_FAILURE_KINDS
+
+
+def _is_provider_paused(
+    repository: ControlPlaneRepository,
+    connection,
+    provider_id: str | None,
+) -> bool:
+    if provider_id is None:
+        return False
+    return repository.has_open_circuit_breaker_for_provider(provider_id, connection=connection)
+
+
 def _resolve_timeout_root_created_spec(
     repository: ControlPlaneRepository,
     connection,
@@ -430,6 +476,60 @@ def _validate_restore_and_retry_followup(
     return current_ticket, created_spec
 
 
+def _validate_restore_and_retry_provider_followup(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    incident: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    incident_ticket_id = incident.get("ticket_id")
+    if incident_ticket_id is None:
+        raise ValueError(f"Incident {incident['incident_id']} is missing its source ticket.")
+
+    latest_terminal_event = repository.get_latest_ticket_terminal_event(connection, incident_ticket_id)
+    if latest_terminal_event is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "has no terminal event."
+        )
+    if latest_terminal_event["event_type"] != EVENT_TICKET_FAILED:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the latest terminal "
+            "event is not a provider failure."
+        )
+    latest_failure_kind = latest_terminal_event["payload"].get("failure_kind")
+    if not _is_provider_pause_failure(str(latest_failure_kind)):
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the latest terminal "
+            "event is not a provider failure."
+        )
+
+    created_spec = repository.get_latest_ticket_created_payload(connection, incident_ticket_id)
+    if created_spec is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "created spec is missing."
+        )
+
+    current_ticket = repository.get_current_ticket_projection(incident_ticket_id, connection=connection)
+    if current_ticket is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "projection is missing."
+        )
+    if not _should_retry_failure(
+        current_ticket=current_ticket,
+        created_spec=created_spec,
+        failure_kind=str(latest_failure_kind),
+    ):
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the retry budget "
+            "is exhausted or provider retry is disabled."
+        )
+
+    return current_ticket, created_spec
+
+
 def _schedule_retry(
     *,
     repository: ControlPlaneRepository,
@@ -577,6 +677,79 @@ def _open_timeout_incident(
     )
     if breaker_event is None:
         raise RuntimeError("Circuit breaker opening idempotency conflict.")
+
+    return incident_id
+
+
+def _open_provider_incident(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    provider_id: str,
+    failure_payload: dict[str, Any],
+    idempotency_key_base: str,
+) -> str:
+    existing_incident = repository.get_open_incident_for_provider(provider_id, connection=connection)
+    if existing_incident is not None:
+        return str(existing_incident["incident_id"])
+
+    incident_id = new_prefixed_id("inc")
+    fingerprint = _resolve_provider_fingerprint(provider_id)
+    incident_payload = {
+        "incident_id": incident_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "provider_id": provider_id,
+        "incident_type": INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
+        "status": INCIDENT_STATUS_OPEN,
+        "severity": "high",
+        "fingerprint": fingerprint,
+        "pause_reason": failure_payload.get("failure_kind"),
+        "latest_failure_kind": failure_payload.get("failure_kind"),
+        "latest_failure_message": failure_payload.get("failure_message"),
+        "latest_failure_fingerprint": failure_payload.get("failure_fingerprint"),
+    }
+    incident_event = repository.insert_event(
+        connection,
+        event_type=EVENT_INCIDENT_OPENED,
+        actor_type="system",
+        actor_id="runtime",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:incident-opened:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=incident_payload,
+        occurred_at=occurred_at,
+    )
+    if incident_event is None:
+        raise RuntimeError("Provider incident opening idempotency conflict.")
+
+    breaker_event = repository.insert_event(
+        connection,
+        event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+        actor_type="system",
+        actor_id="runtime",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "incident_id": incident_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "provider_id": provider_id,
+            "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+            "fingerprint": fingerprint,
+        },
+        occurred_at=occurred_at,
+    )
+    if breaker_event is None:
+        raise RuntimeError("Provider circuit breaker opening idempotency conflict.")
 
     return incident_id
 
@@ -887,6 +1060,15 @@ def run_scheduler_tick(
                     for worker_id in worker_candidates
                     if worker_id not in busy_workers
                     and target_role_profile in worker_by_id[worker_id]
+                    and not _is_provider_paused(
+                        repository,
+                        connection,
+                        _resolve_provider_id_for_ticket(
+                            repository,
+                            connection,
+                            lease_owner=worker_id,
+                        ),
+                    )
                 ),
                 None,
             )
@@ -989,8 +1171,43 @@ def handle_incident_resolve(
         retry_ticket: dict[str, Any] | None = None
         retry_created_spec: dict[str, Any] | None = None
         if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
+            if incident["incident_type"] != INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=(
+                        f"Incident {payload.incident_id} does not support timeout retry recovery."
+                    ),
+                )
             try:
                 retry_ticket, retry_created_spec = _validate_restore_and_retry_followup(
+                    repository=repository,
+                    connection=connection,
+                    incident=incident,
+                )
+            except ValueError as exc:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=str(exc),
+                )
+        elif payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE:
+            if incident["incident_type"] != INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=(
+                        f"Incident {payload.incident_id} does not support provider retry recovery."
+                    ),
+                )
+            try:
+                retry_ticket, retry_created_spec = _validate_restore_and_retry_provider_followup(
                     repository=repository,
                     connection=connection,
                     incident=incident,
@@ -1008,10 +1225,12 @@ def handle_incident_resolve(
             "incident_id": payload.incident_id,
             "node_id": incident.get("node_id"),
             "ticket_id": incident.get("ticket_id"),
+            "provider_id": incident.get("provider_id"),
             "resolved_by": payload.resolved_by,
             "resolution_summary": payload.resolution_summary,
             "followup_action": followup_action,
             "followup_ticket_id": None,
+            "incident_type": incident["incident_type"],
         }
 
         breaker_closed_event = repository.insert_event(
@@ -1037,7 +1256,10 @@ def handle_incident_resolve(
                 incident_id=payload.incident_id,
             )
 
-        if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
+        if payload.followup_action in {
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT,
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE,
+        }:
             assert retry_ticket is not None
             assert retry_created_spec is not None
             followup_ticket_id = _schedule_retry(
@@ -1247,6 +1469,23 @@ def handle_ticket_lease(
                     ),
                 )
 
+        provider_id = _resolve_provider_id_for_ticket(
+            repository,
+            connection,
+            lease_owner=payload.leased_by,
+        )
+        if _is_provider_paused(repository, connection, provider_id):
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} cannot be leased because worker provider "
+                    f"{provider_id} is currently paused."
+                ),
+            )
+
         event_row = repository.insert_event(
             connection,
             event_type=EVENT_TICKET_LEASED,
@@ -1377,6 +1616,24 @@ def handle_ticket_start(
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
                 reason=f"Ticket {payload.ticket_id} lease is missing or expired.",
+            )
+
+        provider_id = _resolve_provider_id_for_ticket(
+            repository,
+            connection,
+            ticket=current_ticket,
+            lease_owner=lease_owner,
+        )
+        if _is_provider_paused(repository, connection, provider_id):
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=(
+                    f"Ticket {payload.ticket_id} cannot start because worker provider {provider_id} "
+                    "is currently paused."
+                ),
             )
 
         event_row = repository.insert_event(
@@ -1635,7 +1892,26 @@ def handle_ticket_fail(
             )
 
         next_ticket_id: str | None = None
-        if created_spec is not None and _should_retry_failure(
+        provider_id = _resolve_provider_id_for_ticket(
+            repository,
+            connection,
+            ticket=current_ticket,
+            failure_detail=failure_payload.get("failure_detail"),
+        )
+        if _is_provider_pause_failure(payload.failure_kind) and provider_id is not None:
+            _open_provider_incident(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                provider_id=provider_id,
+                failure_payload=failure_payload,
+                idempotency_key_base=payload.idempotency_key,
+            )
+        elif created_spec is not None and _should_retry_failure(
             current_ticket=current_ticket,
             created_spec=created_spec,
             failure_kind=payload.failure_kind,

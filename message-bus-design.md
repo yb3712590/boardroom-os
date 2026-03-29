@@ -790,8 +790,11 @@ Current minimal implementation status:
 - repeated `TIMEOUT_SLA_EXCEEDED` and `HEARTBEAT_TIMEOUT` on the same `workflow_id + node_id` retry chain can open the breaker
 - timeout-triggered retry create may widen both total timeout and lease / heartbeat window using bounded backoff
 - the breaker currently blocks automatic dispatch on that node only
+- `PROVIDER_RATE_LIMITED` and `UPSTREAM_UNAVAILABLE` can also open a provider-scoped incident / breaker keyed by `provider_id`
+- provider-scoped breaker blocks later automatic dispatch and manual lease / start on workers bound to that provider, while other providers may still take the ticket
 - minimal manual restore is now implemented via `CIRCUIT_BREAKER_CLOSED` followed by `INCIDENT_CLOSED`
 - `incident-resolve` defaults to restore-only, but an explicit `RESTORE_AND_RETRY_LATEST_TIMEOUT` can add one bounded timeout retry before closing the incident
+- `incident-resolve` can also use `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` to clear a paused provider and create one bounded retry from the latest provider-failure ticket
 - close / restore still does not imply automatic retry creation by default or automatic incident closure after later success
 
 ## 14.3 Failure Snapshot Should Include

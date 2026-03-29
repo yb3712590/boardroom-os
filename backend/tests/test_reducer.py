@@ -7,10 +7,14 @@ from app.core.constants import (
     BLOCKING_REASON_BOARD_REJECTED,
     BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
     BLOCKING_REASON_MODIFY_CONSTRAINTS,
+    CIRCUIT_BREAKER_STATE_CLOSED,
+    CIRCUIT_BREAKER_STATE_OPEN,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
@@ -647,6 +651,7 @@ def test_reducer_rebuilds_timeout_retry_backoff_and_incident_projection():
             "workflow_id": "wf_123",
             "node_id": "node_homepage_visual",
             "ticket_id": "tkt_002",
+            "provider_id": None,
             "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
             "status": "OPEN",
             "severity": "high",
@@ -750,6 +755,7 @@ def test_reducer_rebuilds_closed_breaker_and_closed_incident_projection():
             "workflow_id": "wf_123",
             "node_id": "node_homepage_visual",
             "ticket_id": "tkt_002",
+            "provider_id": None,
             "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
             "status": "CLOSED",
             "severity": "high",
@@ -770,6 +776,117 @@ def test_reducer_rebuilds_closed_breaker_and_closed_incident_projection():
                 "resolution_summary": "Breaker manually reopened after mitigation.",
             },
             "updated_at": "2026-03-28T11:20:01+08:00",
+            "version": 4,
+        }
+    ]
+
+
+def test_reducer_rebuilds_provider_pause_incident_projection_and_close_payload():
+    incident_opened_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_INCIDENT_OPENED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_provider_001",
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "provider_id": "prov_openai_compat",
+                "incident_type": "PROVIDER_EXECUTION_PAUSED",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "provider:prov_openai_compat",
+                "pause_reason": "PROVIDER_RATE_LIMITED",
+            }
+        ),
+    }
+    breaker_opened_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_CIRCUIT_BREAKER_OPENED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:00:10+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_provider_001",
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "provider_id": "prov_openai_compat",
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+                "fingerprint": "provider:prov_openai_compat",
+            }
+        ),
+    }
+    breaker_closed_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_CIRCUIT_BREAKER_CLOSED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:05:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_provider_001",
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "provider_id": "prov_openai_compat",
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_CLOSED,
+            }
+        ),
+    }
+    incident_closed_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_INCIDENT_CLOSED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:05:01+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_provider_001",
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "provider_id": "prov_openai_compat",
+                "status": "CLOSED",
+                "followup_action": "RESTORE_ONLY",
+                "followup_ticket_id": None,
+            }
+        ),
+    }
+
+    incidents = rebuild_incident_projections(
+        [
+            incident_opened_event,
+            breaker_opened_event,
+            breaker_closed_event,
+            incident_closed_event,
+        ]
+    )
+
+    assert incidents == [
+        {
+            "incident_id": "inc_provider_001",
+            "workflow_id": "wf_123",
+            "node_id": "node_homepage_visual",
+            "ticket_id": "tkt_001",
+            "provider_id": "prov_openai_compat",
+            "incident_type": "PROVIDER_EXECUTION_PAUSED",
+            "status": "CLOSED",
+            "severity": "high",
+            "fingerprint": "provider:prov_openai_compat",
+            "circuit_breaker_state": "CLOSED",
+            "opened_at": "2026-03-28T10:00:00+08:00",
+            "closed_at": "2026-03-28T10:05:01+08:00",
+            "payload": {
+                "incident_id": "inc_provider_001",
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "provider_id": "prov_openai_compat",
+                "incident_type": "PROVIDER_EXECUTION_PAUSED",
+                "status": "CLOSED",
+                "severity": "high",
+                "fingerprint": "provider:prov_openai_compat",
+                "pause_reason": "PROVIDER_RATE_LIMITED",
+                "followup_action": "RESTORE_ONLY",
+                "followup_ticket_id": None,
+            },
+            "updated_at": "2026-03-28T10:05:01+08:00",
             "version": 4,
         }
     ]

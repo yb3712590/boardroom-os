@@ -90,6 +90,7 @@ def _base_incident_projection(event: dict[str, Any], payload: dict[str, Any]) ->
         "workflow_id": event["workflow_id"],
         "node_id": payload.get("node_id"),
         "ticket_id": payload.get("ticket_id"),
+        "provider_id": payload.get("provider_id"),
         "incident_type": payload.get("incident_type"),
         "status": payload.get("status"),
         "severity": payload.get("severity"),
@@ -536,6 +537,10 @@ def rebuild_incident_projections(events: Iterable[dict]) -> list[dict]:
                 "workflow_id": event["workflow_id"],
                 "node_id": payload.get("node_id", projections.get(incident_id, {}).get("node_id")),
                 "ticket_id": payload.get("ticket_id", projections.get(incident_id, {}).get("ticket_id")),
+                "provider_id": payload.get(
+                    "provider_id",
+                    projections.get(incident_id, {}).get("provider_id"),
+                ),
                 "fingerprint": payload.get("fingerprint", projections.get(incident_id, {}).get("fingerprint")),
                 "circuit_breaker_state": payload.get("circuit_breaker_state", CIRCUIT_BREAKER_STATE_OPEN),
                 "updated_at": occurred_at,
@@ -549,6 +554,10 @@ def rebuild_incident_projections(events: Iterable[dict]) -> list[dict]:
                 "workflow_id": event["workflow_id"],
                 "node_id": payload.get("node_id", projections.get(incident_id, {}).get("node_id")),
                 "ticket_id": payload.get("ticket_id", projections.get(incident_id, {}).get("ticket_id")),
+                "provider_id": payload.get(
+                    "provider_id",
+                    projections.get(incident_id, {}).get("provider_id"),
+                ),
                 "circuit_breaker_state": payload.get(
                     "circuit_breaker_state",
                     CIRCUIT_BREAKER_STATE_CLOSED,
@@ -565,6 +574,7 @@ def rebuild_incident_projections(events: Iterable[dict]) -> list[dict]:
                 "workflow_id": event["workflow_id"],
                 "node_id": payload.get("node_id", previous_projection.get("node_id")),
                 "ticket_id": payload.get("ticket_id", previous_projection.get("ticket_id")),
+                "provider_id": payload.get("provider_id", previous_projection.get("provider_id")),
                 "status": payload.get("status", "CLOSED"),
                 "closed_at": occurred_at,
                 "payload": {

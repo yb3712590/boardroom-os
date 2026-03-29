@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.constants import (
     APPROVAL_STATUS_APPROVED,
@@ -47,6 +49,48 @@ def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
         "budget_cap": budget_cap,
         "deadline_at": None,
     }
+
+
+def _seed_worker(
+    client,
+    *,
+    employee_id: str,
+    role_type: str = "frontend_engineer",
+    provider_id: str = "prov_openai_compat",
+    role_profile_refs: list[str] | None = None,
+) -> None:
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO employee_projection (
+                employee_id,
+                role_type,
+                skill_profile_json,
+                personality_profile_json,
+                aesthetic_profile_json,
+                state,
+                board_approved,
+                provider_id,
+                role_profile_refs_json,
+                updated_at,
+                version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                employee_id,
+                role_type,
+                "{}",
+                "{}",
+                "{}",
+                "ACTIVE",
+                1,
+                provider_id,
+                json.dumps(role_profile_refs or ["ui_designer_primary"], sort_keys=True),
+                "2026-03-28T10:00:00+08:00",
+                1,
+            ),
+        )
 
 
 
@@ -1542,6 +1586,192 @@ def test_incident_resolve_restore_and_retry_rejects_when_latest_terminal_event_i
     assert response.status_code == 200
     assert response.json()["status"] == "REJECTED"
     assert "latest terminal" in response.json()["reason"].lower()
+
+
+def test_provider_failure_opens_provider_incident_blocks_same_provider_and_updates_dashboard(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+    _seed_worker(
+        client,
+        employee_id="emp_frontend_backup",
+        provider_id="prov_backup",
+    )
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            failure_kind="PROVIDER_RATE_LIMITED",
+            failure_message="Provider quota exhausted.",
+            failure_detail={
+                "provider_id": "prov_openai_compat",
+                "provider_status_code": 429,
+            },
+        ),
+    )
+
+    repository = client.app.state.repository
+    provider_incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    create_same_provider = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_provider_blocked",
+            node_id="node_provider_blocked",
+        ),
+    )
+    create_fallback = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_provider_fallback",
+            node_id="node_provider_fallback",
+        ),
+    )
+    blocked_lease = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            ticket_id="tkt_provider_blocked",
+            node_id="node_provider_blocked",
+        ),
+    )
+
+    set_ticket_time("2026-03-28T10:06:00+08:00")
+    tick_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:provider-block"),
+    )
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    inbox_response = client.get("/api/v1/projections/inbox")
+    incident_response = client.get(f"/api/v1/projections/incidents/{provider_incident_id}")
+
+    blocked_ticket = repository.get_current_ticket_projection("tkt_provider_blocked")
+    fallback_ticket = repository.get_current_ticket_projection("tkt_provider_fallback")
+
+    assert fail_response.status_code == 200
+    assert fail_response.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 0
+    assert create_same_provider.status_code == 200
+    assert create_same_provider.json()["status"] == "ACCEPTED"
+    assert create_fallback.status_code == 200
+    assert create_fallback.json()["status"] == "ACCEPTED"
+    assert blocked_lease.status_code == 200
+    assert blocked_lease.json()["status"] == "REJECTED"
+    assert "currently paused" in blocked_lease.json()["reason"].lower()
+    assert tick_response.status_code == 200
+    assert tick_response.json()["status"] == "ACCEPTED"
+    leased_tickets = [
+        ticket
+        for ticket in (blocked_ticket, fallback_ticket)
+        if ticket is not None and ticket["status"] == TICKET_STATUS_LEASED
+    ]
+    pending_tickets = [
+        ticket
+        for ticket in (blocked_ticket, fallback_ticket)
+        if ticket is not None and ticket["status"] == TICKET_STATUS_PENDING
+    ]
+    assert len(leased_tickets) == 1
+    assert leased_tickets[0]["lease_owner"] == "emp_frontend_backup"
+    assert len(pending_tickets) == 1
+    assert pending_tickets[0]["lease_owner"] is None
+    assert dashboard_response.json()["data"]["ops_strip"]["provider_health_summary"] == "DEGRADED"
+    assert dashboard_response.json()["data"]["inbox_counts"]["provider_alerts"] == 1
+    incident_items = [
+        item for item in inbox_response.json()["data"]["items"] if item["item_type"] == "PROVIDER_INCIDENT"
+    ]
+    assert len(incident_items) == 1
+    assert incident_response.json()["data"]["incident"]["provider_id"] == "prov_openai_compat"
+    assert incident_response.json()["data"]["incident"]["incident_type"] == "PROVIDER_EXECUTION_PAUSED"
+    assert incident_response.json()["data"]["incident"]["payload"]["pause_reason"] == "PROVIDER_RATE_LIMITED"
+
+
+def test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            failure_message="Provider upstream returned 503.",
+            failure_detail={
+                "provider_id": "prov_openai_compat",
+                "provider_status_code": 503,
+            },
+        ),
+    )
+
+    repository = client.app.state.repository
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_provider_resume",
+            node_id="node_provider_resume",
+        ),
+    )
+    set_ticket_time("2026-03-28T10:06:00+08:00")
+    blocked_tick = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:provider-before-resolve"),
+    )
+    blocked_ticket = repository.get_current_ticket_projection("tkt_provider_resume")
+
+    set_ticket_time("2026-03-28T10:07:00+08:00")
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key="incident-resolve:provider-retry",
+            followup_action="RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    followup_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
+    set_ticket_time("2026-03-28T10:08:00+08:00")
+    resumed_tick = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:provider-after-resolve"),
+    )
+    resumed_ticket = repository.get_current_ticket_projection("tkt_provider_resume")
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    assert blocked_tick.status_code == 200
+    assert blocked_tick.json()["status"] == "ACCEPTED"
+    assert blocked_ticket["status"] == TICKET_STATUS_PENDING
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert followup_ticket_id != "tkt_visual_001"
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_ticket["retry_count"] == 1
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
+    )
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == followup_ticket_id
+    assert resumed_tick.status_code == 200
+    assert resumed_tick.json()["status"] == "ACCEPTED"
+    assert resumed_ticket["status"] == TICKET_STATUS_LEASED
+    assert resumed_ticket["lease_owner"] == "emp_frontend_2"
+    assert dashboard_response.json()["data"]["inbox_counts"]["provider_alerts"] == 0
 
 
 def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(client, set_ticket_time):

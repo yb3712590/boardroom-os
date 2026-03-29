@@ -65,6 +65,22 @@ def _build_fail_idempotency_key(ticket: dict[str, Any], failure_kind: str) -> st
     return f"runtime-fail:{ticket['workflow_id']}:{ticket['ticket_id']}:{failure_kind}"
 
 
+def _is_provider_paused_for_ticket(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+) -> bool:
+    lease_owner = ticket.get("lease_owner")
+    if lease_owner is None:
+        return False
+    employee = repository.get_employee_projection(str(lease_owner))
+    if employee is None:
+        return False
+    provider_id = employee.get("provider_id")
+    if not provider_id:
+        return False
+    return repository.has_open_circuit_breaker_for_provider(str(provider_id))
+
+
 def _list_runtime_startable_leased_tickets(
     repository: ControlPlaneRepository,
 ) -> list[dict[str, Any]]:
@@ -183,6 +199,8 @@ def run_leased_ticket_runtime(
     outcomes: list[RuntimeExecutionOutcome] = []
 
     for ticket in _list_runtime_startable_leased_tickets(repository):
+        if _is_provider_paused_for_ticket(repository, ticket):
+            continue
         lease_owner = str(ticket["lease_owner"])
         start_ack = handle_ticket_start(
             repository,

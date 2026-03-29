@@ -155,6 +155,7 @@ class IncidentProjectionItem(StrictModel):
     workflow_id: str
     node_id: str | None = None
     ticket_id: str | None = None
+    provider_id: str | None = None
     incident_type: str
     status: str
     severity: str | None = None
