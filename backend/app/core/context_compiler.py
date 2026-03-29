@@ -45,6 +45,7 @@ from app.contracts.runtime import (
     CompileRequestWorkerBinding,
 )
 from app.core.ids import new_prefixed_id
+from app.core.output_schemas import get_output_schema_body
 from app.core.time import now_local
 from app.core.developer_inspector import (
     DeveloperInspectorStore,
@@ -316,7 +317,10 @@ def compile_audit_artifacts(
             output_contract=CompiledOutputContract(
                 schema_ref=compile_request.control_refs.output_schema_ref,
                 schema_version=compile_request.control_refs.output_schema_version,
-                schema_body={},
+                schema_body=get_output_schema_body(
+                    compile_request.control_refs.output_schema_ref,
+                    compile_request.control_refs.output_schema_version,
+                ),
             ),
             allowed_write_set=compile_request.execution.allowed_write_set,
         ),

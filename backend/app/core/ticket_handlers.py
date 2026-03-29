@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 from datetime import datetime, timedelta
@@ -12,11 +13,14 @@ from app.contracts.commands import (
     IncidentResolveCommand,
     SchedulerWorkerCandidate,
     SchedulerTickCommand,
+    TicketCancelCommand,
     TicketCompletedCommand,
     TicketCreateCommand,
     TicketFailCommand,
     TicketHeartbeatCommand,
     TicketLeaseCommand,
+    TicketResultStatus,
+    TicketResultSubmitCommand,
     TicketStartCommand,
 )
 from app.core.constants import (
@@ -30,7 +34,10 @@ from app.core.constants import (
     EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_CLOSED,
+    EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
+    EVENT_TICKET_CANCELLED,
+    EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
@@ -44,8 +51,11 @@ from app.core.constants import (
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_STATUS_CLOSED,
     INCIDENT_STATUS_OPEN,
+    INCIDENT_STATUS_RECOVERING,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
+    NODE_STATUS_CANCEL_REQUESTED,
+    NODE_STATUS_CANCELLED,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
@@ -54,11 +64,17 @@ from app.core.constants import (
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
+    TICKET_STATUS_CANCEL_REQUESTED,
+    TICKET_STATUS_CANCELLED,
+    TICKET_STATUS_COMPLETED,
+    TICKET_STATUS_FAILED,
+    TICKET_STATUS_TIMED_OUT,
     TIMEOUT_FAMILY_RUNTIME,
 )
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.ids import new_prefixed_id
+from app.core.output_schemas import validate_output_payload
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -148,6 +164,61 @@ def _incident_rejected_ack(
         reason=reason,
         causation_hint=f"incident:{incident_id}",
     )
+
+
+def _cancel_duplicate_ack(
+    *,
+    command_id: str,
+    idempotency_key: str,
+    received_at: datetime,
+    ticket_id: str,
+) -> CommandAckEnvelope:
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=idempotency_key,
+        status=CommandAckStatus.DUPLICATE,
+        received_at=received_at,
+        reason="An identical ticket-cancel command was already accepted.",
+        causation_hint=f"ticket:{ticket_id}",
+    )
+
+
+def _match_allowed_write_set(path: str, allowed_write_set: list[str]) -> bool:
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in allowed_write_set)
+
+
+def _insert_ticket_cancelled_event(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    cancelled_by: str,
+    reason: str,
+    idempotency_key: str,
+) -> None:
+    event_row = repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_CANCELLED,
+        actor_type="operator",
+        actor_id=cancelled_by,
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "cancelled_by": cancelled_by,
+            "reason": reason,
+        },
+        occurred_at=occurred_at,
+    )
+    if event_row is None:
+        raise RuntimeError("Ticket cancellation idempotency conflict.")
 
 
 def _build_review_pack(
@@ -729,6 +800,47 @@ def _schedule_retry(
     if created_event is None:
         raise RuntimeError("Retry ticket creation idempotency conflict.")
     return next_ticket_id
+
+
+def _auto_close_recovering_incidents_for_completed_ticket(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    completed_ticket_id: str,
+) -> None:
+    incidents = repository.list_recovering_incidents_for_followup_ticket(
+        connection,
+        completed_ticket_id,
+    )
+    for incident in incidents:
+        event_row = repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_CLOSED,
+            actor_type="system",
+            actor_id="runtime",
+            workflow_id=workflow_id,
+            idempotency_key=f"auto-close-incident:{incident['incident_id']}:{completed_ticket_id}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident["incident_id"],
+                "ticket_id": completed_ticket_id,
+                "node_id": incident.get("node_id"),
+                "provider_id": incident.get("provider_id"),
+                "status": INCIDENT_STATUS_CLOSED,
+                "followup_action": (incident.get("payload") or {}).get("followup_action"),
+                "followup_ticket_id": completed_ticket_id,
+                "auto_closed_by": "runtime",
+                "close_reason": "Follow-up ticket completed successfully.",
+                "incident_type": incident["incident_type"],
+            },
+            occurred_at=occurred_at,
+        )
+        if event_row is None:
+            raise RuntimeError("Recovering incident auto-close idempotency conflict.")
 
 
 def _open_timeout_incident(
@@ -1347,7 +1459,7 @@ def handle_incident_resolve(
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 incident_id=payload.incident_id,
-                reason=f"Incident {payload.incident_id} is already closed.",
+                reason=f"Incident {payload.incident_id} is not open for recovery.",
             )
         if incident.get("circuit_breaker_state") != CIRCUIT_BREAKER_STATE_OPEN:
             return _incident_rejected_ack(
@@ -1485,9 +1597,9 @@ def handle_incident_resolve(
             assert retry_ticket is not None
             assert retry_created_spec is not None
             retry_source_event_type = (
-                EVENT_TICKET_FAILED
-                if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE
-                else EVENT_TICKET_TIMED_OUT
+                EVENT_TICKET_TIMED_OUT
+                if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
+                else EVENT_TICKET_FAILED
             )
             followup_ticket_id = _schedule_retry(
                 repository=repository,
@@ -1509,9 +1621,9 @@ def handle_incident_resolve(
             )
             resolution_payload["followup_ticket_id"] = followup_ticket_id
 
-        incident_closed_event = repository.insert_event(
+        incident_recovery_event = repository.insert_event(
             connection,
-            event_type=EVENT_INCIDENT_CLOSED,
+            event_type=EVENT_INCIDENT_RECOVERY_STARTED,
             actor_type="operator",
             actor_id=payload.resolved_by,
             workflow_id=workflow_id,
@@ -1520,11 +1632,11 @@ def handle_incident_resolve(
             correlation_id=workflow_id,
             payload={
                 **resolution_payload,
-                "status": INCIDENT_STATUS_CLOSED,
+                "status": INCIDENT_STATUS_RECOVERING,
             },
             occurred_at=received_at,
         )
-        if incident_closed_event is None:
+        if incident_recovery_event is None:
             return _incident_duplicate_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
@@ -1541,6 +1653,129 @@ def handle_incident_resolve(
         received_at=received_at,
         reason=None,
         causation_hint=f"incident:{payload.incident_id}",
+    )
+
+
+def handle_ticket_cancel(
+    repository: ControlPlaneRepository,
+    payload: TicketCancelCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _cancel_duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+            )
+
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
+        current_node = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
+        if current_ticket is None or current_node is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket must exist before it can be cancelled.",
+            )
+        if current_ticket["workflow_id"] != payload.workflow_id or current_ticket["node_id"] != payload.node_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket projection does not match the requested workflow or node.",
+            )
+        if current_node["latest_ticket_id"] != payload.ticket_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Node projection no longer points at this ticket.",
+            )
+        if current_ticket["status"] == TICKET_STATUS_CANCELLED:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=f"Ticket {payload.ticket_id} is already cancelled.",
+            )
+        if current_ticket["status"] == TICKET_STATUS_COMPLETED:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=f"Ticket {payload.ticket_id} is already completed.",
+            )
+        if current_ticket["status"] in {TICKET_STATUS_FAILED, TICKET_STATUS_TIMED_OUT}:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=f"Ticket {payload.ticket_id} is already terminal.",
+            )
+
+        if current_ticket["status"] == TICKET_STATUS_EXECUTING:
+            event_row = repository.insert_event(
+                connection,
+                event_type=EVENT_TICKET_CANCEL_REQUESTED,
+                actor_type="operator",
+                actor_id=payload.cancelled_by,
+                workflow_id=payload.workflow_id,
+                idempotency_key=payload.idempotency_key,
+                causation_id=command_id,
+                correlation_id=payload.workflow_id,
+                payload={
+                    "ticket_id": payload.ticket_id,
+                    "node_id": payload.node_id,
+                    "cancelled_by": payload.cancelled_by,
+                    "reason": payload.reason,
+                },
+                occurred_at=received_at,
+            )
+            if event_row is None:
+                return _cancel_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                )
+        else:
+            _insert_ticket_cancelled_event(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                cancelled_by=payload.cancelled_by,
+                reason=payload.reason,
+                idempotency_key=payload.idempotency_key,
+            )
+
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"ticket:{payload.ticket_id}",
     )
 
 
@@ -2198,6 +2433,175 @@ def handle_ticket_fail(
     )
 
 
+def handle_ticket_result_submit(
+    repository: ControlPlaneRepository,
+    payload: TicketResultSubmitCommand,
+    developer_inspector_store: DeveloperInspectorStore | None = None,
+) -> CommandAckEnvelope:
+    current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
+    current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
+    if current_ticket is None or current_node is None:
+        return _rejected_ack(
+            command_id=new_prefixed_id("cmd"),
+            idempotency_key=payload.idempotency_key,
+            received_at=now_local(),
+            ticket_id=payload.ticket_id,
+            reason="Ticket must be created and started before it can submit a structured result.",
+        )
+
+    if current_ticket["status"] == TICKET_STATUS_CANCELLED:
+        return _rejected_ack(
+            command_id=new_prefixed_id("cmd"),
+            idempotency_key=payload.idempotency_key,
+            received_at=now_local(),
+            ticket_id=payload.ticket_id,
+            reason=f"Ticket {payload.ticket_id} is already cancelled.",
+        )
+
+    if current_ticket["status"] == TICKET_STATUS_CANCEL_REQUESTED or current_node["status"] == NODE_STATUS_CANCEL_REQUESTED:
+        command_id = new_prefixed_id("cmd")
+        received_at = now_local()
+        with repository.transaction() as connection:
+            existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+            if existing_event is not None:
+                return _duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    action="ticket-result-submit",
+                )
+            _insert_ticket_cancelled_event(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                cancelled_by=payload.submitted_by,
+                reason="Late result arrived after cancellation was requested.",
+                idempotency_key=payload.idempotency_key,
+            )
+            repository.refresh_projections(connection)
+        return CommandAckEnvelope(
+            command_id=command_id,
+            idempotency_key=payload.idempotency_key,
+            status=CommandAckStatus.ACCEPTED,
+            received_at=received_at,
+            reason=None,
+            causation_hint=f"ticket:{payload.ticket_id}",
+        )
+
+    if current_ticket["status"] != TICKET_STATUS_EXECUTING or current_node["status"] != NODE_STATUS_EXECUTING:
+        return _rejected_ack(
+            command_id=new_prefixed_id("cmd"),
+            idempotency_key=payload.idempotency_key,
+            received_at=now_local(),
+            ticket_id=payload.ticket_id,
+            reason=(
+                f"Ticket {payload.ticket_id} can only submit a structured result while ticket/node "
+                f"status is EXECUTING/EXECUTING; current status is "
+                f"{current_ticket['status']}/{current_node['status']}."
+            ),
+        )
+
+    if payload.result_status == TicketResultStatus.FAILED:
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind=payload.failure_kind or "RUNTIME_ERROR",
+                failure_message=payload.failure_message or payload.summary,
+                failure_detail=payload.failure_detail,
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
+
+    if created_spec is None:
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind="SCHEMA_ERROR",
+                failure_message="Ticket result validation could not load the created ticket spec.",
+                failure_detail={},
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+
+    try:
+        validate_output_payload(
+            schema_ref=str(created_spec.get("output_schema_ref") or ""),
+            schema_version=int(created_spec.get("output_schema_version") or 0),
+            submitted_schema_version=payload.schema_version,
+            payload=payload.payload,
+        )
+    except ValueError as exc:
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind="SCHEMA_ERROR",
+                failure_message=str(exc),
+                failure_detail={
+                    "schema_ref": created_spec.get("output_schema_ref"),
+                    "schema_version": created_spec.get("output_schema_version"),
+                },
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+
+    allowed_write_set = list(created_spec.get("allowed_write_set") or [])
+    violating_paths = [
+        item.path for item in payload.written_artifacts if not _match_allowed_write_set(item.path, allowed_write_set)
+    ]
+    if violating_paths:
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind="WRITE_SET_VIOLATION",
+                failure_message="Structured result attempted to write outside the allowed write set.",
+                failure_detail={
+                    "violating_paths": violating_paths,
+                    "allowed_write_set": allowed_write_set,
+                },
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+
+    return handle_ticket_completed(
+        repository,
+        TicketCompletedCommand(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            node_id=payload.node_id,
+            completed_by=payload.submitted_by,
+            completion_summary=payload.summary,
+            artifact_refs=payload.artifact_refs,
+            review_request=payload.review_request,
+            idempotency_key=payload.idempotency_key,
+        ),
+        developer_inspector_store,
+    )
+
+
 def handle_ticket_completed(
     repository: ControlPlaneRepository,
     payload: TicketCompletedCommand,
@@ -2357,6 +2761,14 @@ def handle_ticket_completed(
                 )
                 causation_hint = f"approval:{approval['approval_id']}"
 
+            _auto_close_recovering_incidents_for_completed_ticket(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=payload.workflow_id,
+                completed_ticket_id=payload.ticket_id,
+            )
             repository.refresh_projections(connection)
     except Exception:
         if developer_inspector_store is not None:

@@ -398,3 +398,108 @@ def test_runtime_skips_later_leased_tickets_after_provider_pause_opens(client, s
     assert executed_ticket_ids == ["tkt_runner_provider_pause_1"]
     assert first_ticket["status"] == "FAILED"
     assert second_ticket["status"] == "LEASED"
+
+
+def test_scheduler_runner_auto_closes_recovering_incident_after_followup_success(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id="wf_runner_recovery",
+                ticket_id="tkt_runner_recovery",
+                node_id="node_runner_recovery",
+                role_profile_ref="ui_designer_primary",
+            ),
+            "retry_budget": 2,
+        },
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_recovery",
+            "ticket_id": "tkt_runner_recovery",
+            "node_id": "node_runner_recovery",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_recovery:tkt_runner_recovery",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": "wf_runner_recovery",
+            "ticket_id": "tkt_runner_recovery",
+            "node_id": "node_runner_recovery",
+            "started_by": "emp_frontend_2",
+            "idempotency_key": "ticket-start:wf_runner_recovery:tkt_runner_recovery",
+        },
+    )
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:runner-recovery-first"},
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection(
+        "wf_runner_recovery",
+        "node_runner_recovery",
+    )["latest_ticket_id"]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": "wf_runner_recovery",
+            "ticket_id": second_ticket_id,
+            "node_id": "node_runner_recovery",
+            "started_by": "emp_frontend_2",
+                "idempotency_key": f"ticket-start:wf_runner_recovery:{second_ticket_id}",
+            },
+        )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:runner-recovery-second"},
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "INCIDENT_OPENED"
+    ][0]
+
+    set_ticket_time("2026-03-28T11:20:00+08:00")
+    client.post(
+        "/api/v1/commands/incident-resolve",
+        json={
+            "incident_id": incident_id,
+            "resolved_by": "emp_ops_1",
+            "resolution_summary": "Retry after mitigation.",
+            "followup_action": "RESTORE_AND_RETRY_LATEST_TIMEOUT",
+            "idempotency_key": "incident-resolve:runner-recovery",
+        },
+    )
+
+    followup_ticket_id = repository.get_current_node_projection(
+        "wf_runner_recovery",
+        "node_runner_recovery",
+    )["latest_ticket_id"]
+
+    set_ticket_time("2026-03-28T11:21:00+08:00")
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:recovery-close",
+        max_dispatches=10,
+    )
+
+    incident_projection = repository.get_incident_projection(incident_id)
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
+    assert followup_ticket["status"] == "COMPLETED"
+    assert incident_projection["status"] == "CLOSED"
+    assert incident_projection["closed_at"] is not None

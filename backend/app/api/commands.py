@@ -10,11 +10,13 @@ from app.contracts.commands import (
     ModifyConstraintsCommand,
     ProjectInitCommand,
     SchedulerTickCommand,
+    TicketCancelCommand,
     TicketCompletedCommand,
     TicketCreateCommand,
     TicketFailCommand,
     TicketHeartbeatCommand,
     TicketLeaseCommand,
+    TicketResultSubmitCommand,
     TicketStartCommand,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
@@ -26,12 +28,14 @@ from app.core.approval_handlers import (
 from app.core.command_handlers import handle_project_init
 from app.core.ticket_handlers import (
     handle_incident_resolve,
+    handle_ticket_cancel,
     handle_scheduler_tick,
     handle_ticket_completed,
     handle_ticket_create,
     handle_ticket_fail,
     handle_ticket_heartbeat,
     handle_ticket_lease,
+    handle_ticket_result_submit,
     handle_ticket_start,
 )
 from app.db.repository import ControlPlaneRepository
@@ -82,6 +86,13 @@ def ticket_complete(request: Request, payload: TicketCompletedCommand) -> Comman
     return handle_ticket_completed(repository, payload, developer_inspector_store)
 
 
+@router.post("/ticket-result-submit", response_model=CommandAckEnvelope)
+def ticket_result_submit(request: Request, payload: TicketResultSubmitCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    developer_inspector_store: DeveloperInspectorStore = request.app.state.developer_inspector_store
+    return handle_ticket_result_submit(repository, payload, developer_inspector_store)
+
+
 @router.post("/scheduler-tick", response_model=CommandAckEnvelope)
 def scheduler_tick(request: Request, payload: SchedulerTickCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
@@ -92,6 +103,12 @@ def scheduler_tick(request: Request, payload: SchedulerTickCommand) -> CommandAc
 def incident_resolve(request: Request, payload: IncidentResolveCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_incident_resolve(repository, payload)
+
+
+@router.post("/ticket-cancel", response_model=CommandAckEnvelope)
+def ticket_cancel(request: Request, payload: TicketCancelCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_ticket_cancel(repository, payload)
 
 
 @router.post("/board-approve", response_model=CommandAckEnvelope)

@@ -56,6 +56,11 @@ class IncidentFollowupAction(StrEnum):
     RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE = "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
 
 
+class TicketResultStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ProjectInitCommand(StrictModel):
     north_star_goal: str = Field(min_length=1)
     hard_constraints: list[str]
@@ -140,6 +145,53 @@ class TicketFailCommand(StrictModel):
     failure_message: str = Field(min_length=1)
     failure_detail: dict | None = None
     idempotency_key: str = Field(min_length=1)
+
+
+class TicketCancelCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    cancelled_by: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class TicketWrittenArtifact(StrictModel):
+    path: str = Field(min_length=1)
+    artifact_ref: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+
+
+class TicketResultSubmitCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    submitted_by: str = Field(min_length=1)
+    result_status: TicketResultStatus
+    schema_version: str = Field(min_length=1)
+    payload: dict
+    artifact_refs: list[str] = Field(default_factory=list)
+    written_artifacts: list[TicketWrittenArtifact] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+    needs_escalation: bool = False
+    summary: str = Field(min_length=1)
+    review_request: TicketBoardReviewRequest | None = None
+    failure_kind: str | None = None
+    failure_message: str | None = None
+    failure_detail: dict | None = None
+    idempotency_key: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_status_specific_fields(self) -> "TicketResultSubmitCommand":
+        if self.result_status == TicketResultStatus.COMPLETED:
+            if self.review_request is not None and self.needs_escalation:
+                raise ValueError("review_request and needs_escalation cannot conflict.")
+            return self
+        if not self.failure_kind or not self.failure_message:
+            raise ValueError("failed result submissions require failure_kind and failure_message.")
+        return self
 
 
 class SchedulerWorkerCandidate(StrictModel):

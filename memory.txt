@@ -1428,3 +1428,100 @@
 - `TICKET_CANCELLED` and controlled cancel / interrupt governance
 - automatic incident closure after later successful recovery
 - richer provider routing and provider management surfaces
+
+## 2026-03-30T03:56:02+08:00
+
+### Session Context
+- User asked to continue from the existing repo and treat this round as the runtime-governance control-plane closeout, not another medium slice.
+- This round stayed inside the existing backend control plane and finished the remaining minimal governance loop without widening into external worker delivery, full artifact storage, or Maker-Checker.
+
+### Boundary Chosen
+- Single boundary for this round: runtime-governance control-plane closeout.
+- The work was delivered as one linked feature chain:
+  - unified structured result entry
+  - strict minimal result validation
+  - cooperative cancellation
+  - explicit recovering state plus automatic close on successful follow-up retry
+
+### Design / Code Gap Identified
+- Design expected result schema validation and write-set validation before `TICKET_COMPLETED`, but the code previously completed tickets without that strict gate.
+- Design mentioned `created -> cancelled`, but runtime had no cancel command or cancel-aware guards.
+- `incident-resolve` previously closed incidents immediately and had no explicit `RECOVERING` state.
+- Worker result ingress was split between `ticket-complete` and `ticket-fail`, which left the governance surface inconsistent.
+
+### Slice Landed
+- Added `POST /api/v1/commands/ticket-result-submit` as the new primary structured result command.
+- Added `TicketResultSubmitCommand`, `TicketResultStatus`, `TicketWrittenArtifact`, and `TicketCancelCommand`.
+- Added minimal output schema registry support in `backend/app/core/output_schemas.py`.
+- The registry now provides real strict payload validation for `ui_milestone_review@1`.
+- `ticket-result-submit` now:
+  - routes failed results into the existing controlled `ticket-fail` governance path
+  - validates `payload` against the created ticket's `output_schema_ref/output_schema_version`
+  - validates `written_artifacts[*].path` against `allowed_write_set`
+  - converts schema mismatch into controlled `SCHEMA_ERROR`
+  - converts write-set overreach into controlled `WRITE_SET_VIOLATION`
+  - reuses the existing retry / repeated-failure / incident / breaker logic instead of creating a side path
+- Added cooperative cancellation with:
+  - `POST /api/v1/commands/ticket-cancel`
+  - `TICKET_CANCEL_REQUESTED`
+  - `TICKET_CANCELLED`
+  - `CANCEL_REQUESTED` and `CANCELLED` ticket/node states
+- Cancellation semantics now behave conservatively:
+  - `PENDING / LEASED` cancel immediately to `CANCELLED`
+  - `EXECUTING` moves to `CANCEL_REQUESTED`
+  - late results after `CANCEL_REQUESTED` are accepted only to finalize `CANCELLED`
+  - cancelled tickets can no longer lease, start, heartbeat, or complete/fail normally
+- Added explicit incident recovery state with:
+  - `INCIDENT_RECOVERY_STARTED`
+  - `RECOVERING` incident status
+- `incident-resolve` no longer closes an incident immediately on recovery start.
+- When recovery requests bounded follow-up retry, the handler now:
+  - closes the relevant breaker
+  - records `INCIDENT_RECOVERY_STARTED`
+  - stores `followup_ticket_id` in the incident recovery payload
+- Successful completion of that follow-up retry now auto-closes matching `RECOVERING` incidents.
+- Existing reducer / projection / event preview / UI hint logic was extended to replay and expose the new cancel and recovery facts.
+- Legacy `ticket-complete` and `ticket-fail` were kept as compatibility entrypoints instead of being removed.
+
+### Conservative Handling
+- `get_output_schema_body()` still returns a placeholder body for unknown schema refs so existing unsupported-schema compiler behavior stays stable.
+- Strict validation at submit time still rejects unknown schema refs through `validate_output_payload()`.
+- Internal runner execution still calls the existing complete/fail handlers directly; this round did not rewire the whole runtime to call the new HTTP command.
+- Automatic incident close only applies to incidents already in `RECOVERING` with a matching follow-up retry that later completes successfully.
+
+### Tests Added
+- API coverage for:
+  - successful `ticket-result-submit`
+  - schema validation failure becoming `SCHEMA_ERROR`
+  - write-set violation becoming `WRITE_SET_VIOLATION`
+  - cooperative cancellation on executing tickets
+  - cancel guards blocking later progress
+  - `incident-resolve` moving incidents into `RECOVERING`
+- Reducer coverage for:
+  - replaying `CANCEL_REQUESTED` and `CANCELLED`
+  - replaying `RECOVERING` before later close
+- Scheduler runner coverage for:
+  - automatic close of a `RECOVERING` incident after successful follow-up retry
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `memory.txt`
+
+### Verification
+- Fresh full backend test suite:
+  - `cd /Users/bill/projects/boardroom-os/backend`
+  - `source .venv/bin/activate`
+  - `python -m pytest tests -q`
+  - Result: `111 passed in 2.38s`
+
+### Known Reality Left Unchanged
+- `backend/pyproject.toml` editable install still has a flat-layout packaging problem in fresh environments, so `pip install -e .[dev]` may fail until packaging configuration is fixed.
+- This round documented that reality in README instead of pretending the editable install path is already healthy.
+
+### Still Not Done
+- full external worker runtime handoff
+- full artifact store / artifact index
+- broader output schema coverage beyond `ui_milestone_review@1`
+- full convergence of internal runtime execution onto `ticket-result-submit`
+- richer provider routing and multi-provider control-plane surface

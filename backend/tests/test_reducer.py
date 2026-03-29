@@ -15,8 +15,11 @@ from app.core.constants import (
     EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_CLOSED,
+    EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
+    EVENT_TICKET_CANCELLED,
+    EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
@@ -27,11 +30,15 @@ from app.core.constants import (
     EVENT_TICKET_TIMED_OUT,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    NODE_STATUS_CANCELLED,
+    NODE_STATUS_CANCEL_REQUESTED,
     NODE_STATUS_COMPLETED,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    TICKET_STATUS_CANCELLED,
+    TICKET_STATUS_CANCEL_REQUESTED,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_FAILED,
@@ -997,6 +1004,203 @@ def test_reducer_rebuilds_repeated_failure_incident_projection_and_close_payload
                 "followup_ticket_id": "tkt_003",
             },
             "updated_at": "2026-03-28T10:05:01+08:00",
+            "version": 4,
+        }
+    ]
+
+
+def test_reducer_rebuilds_cancel_requested_and_cancelled_states():
+    created_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_TICKET_CREATED,
+        "workflow_id": "wf_cancel",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_cancel_001",
+                "node_id": "node_cancel",
+                "retry_budget": 1,
+                "timeout_sla_sec": 1800,
+                "priority": "high",
+            }
+        ),
+    }
+    leased_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_TICKET_LEASED,
+        "workflow_id": "wf_cancel",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_cancel_001",
+                "node_id": "node_cancel",
+                "leased_by": "emp_frontend_2",
+                "lease_expires_at": "2026-03-28T10:11:00+08:00",
+            }
+        ),
+    }
+    started_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_TICKET_STARTED,
+        "workflow_id": "wf_cancel",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_cancel_001",
+                "node_id": "node_cancel",
+                "started_by": "emp_frontend_2",
+            }
+        ),
+    }
+    cancel_requested_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_TICKET_CANCEL_REQUESTED,
+        "workflow_id": "wf_cancel",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:03:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_cancel_001",
+                "node_id": "node_cancel",
+                "cancelled_by": "emp_ops_1",
+                "reason": "Stop current attempt.",
+            }
+        ),
+    }
+    cancelled_event = {
+        "sequence_no": 5,
+        "event_type": EVENT_TICKET_CANCELLED,
+        "workflow_id": "wf_cancel",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:03:10+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_cancel_001",
+                "node_id": "node_cancel",
+                "cancelled_by": "emp_ops_1",
+                "reason": "Cancellation confirmed.",
+            }
+        ),
+    }
+
+    tickets = rebuild_ticket_projections(
+        [created_event, leased_event, started_event, cancel_requested_event, cancelled_event]
+    )
+    nodes = rebuild_node_projections(
+        [created_event, leased_event, started_event, cancel_requested_event, cancelled_event]
+    )
+
+    assert tickets[0]["status"] == TICKET_STATUS_CANCELLED
+    assert nodes[0]["status"] == NODE_STATUS_CANCELLED
+
+    intermediate_tickets = rebuild_ticket_projections(
+        [created_event, leased_event, started_event, cancel_requested_event]
+    )
+    intermediate_nodes = rebuild_node_projections(
+        [created_event, leased_event, started_event, cancel_requested_event]
+    )
+
+    assert intermediate_tickets[0]["status"] == TICKET_STATUS_CANCEL_REQUESTED
+    assert intermediate_nodes[0]["status"] == NODE_STATUS_CANCEL_REQUESTED
+
+
+def test_reducer_rebuilds_recovering_incident_before_close():
+    incident_opened_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_INCIDENT_OPENED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T11:18:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_001",
+                "ticket_id": "tkt_002",
+                "node_id": "node_homepage_visual",
+                "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "wf_123:node_homepage_visual:runtime-timeout",
+            }
+        ),
+    }
+    breaker_opened_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_CIRCUIT_BREAKER_OPENED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T11:18:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_001",
+                "node_id": "node_homepage_visual",
+                "ticket_id": "tkt_002",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": "wf_123:node_homepage_visual:runtime-timeout",
+            }
+        ),
+    }
+    breaker_closed_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_CIRCUIT_BREAKER_CLOSED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T11:20:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_001",
+                "node_id": "node_homepage_visual",
+                "ticket_id": "tkt_002",
+                "circuit_breaker_state": "CLOSED",
+            }
+        ),
+    }
+    recovery_started_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_INCIDENT_RECOVERY_STARTED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T11:20:01+08:00"),
+        "payload_json": json.dumps(
+            {
+                "incident_id": "inc_001",
+                "ticket_id": "tkt_003",
+                "node_id": "node_homepage_visual",
+                "status": "RECOVERING",
+                "followup_action": "RESTORE_AND_RETRY_LATEST_TIMEOUT",
+                "followup_ticket_id": "tkt_003",
+            }
+        ),
+    }
+
+    incidents = rebuild_incident_projections(
+        [
+            incident_opened_event,
+            breaker_opened_event,
+            breaker_closed_event,
+            recovery_started_event,
+        ]
+    )
+
+    assert incidents == [
+        {
+            "incident_id": "inc_001",
+            "workflow_id": "wf_123",
+            "node_id": "node_homepage_visual",
+            "ticket_id": "tkt_003",
+            "provider_id": None,
+            "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
+            "status": "RECOVERING",
+            "severity": "high",
+            "fingerprint": "wf_123:node_homepage_visual:runtime-timeout",
+            "circuit_breaker_state": "CLOSED",
+            "opened_at": "2026-03-28T11:18:00+08:00",
+            "closed_at": None,
+            "payload": {
+                "incident_id": "inc_001",
+                "ticket_id": "tkt_003",
+                "node_id": "node_homepage_visual",
+                "incident_type": "RUNTIME_TIMEOUT_ESCALATION",
+                "status": "RECOVERING",
+                "severity": "high",
+                "fingerprint": "wf_123:node_homepage_visual:runtime-timeout",
+                "followup_action": "RESTORE_AND_RETRY_LATEST_TIMEOUT",
+                "followup_ticket_id": "tkt_003",
+            },
+            "updated_at": "2026-03-28T11:20:01+08:00",
             "version": 4,
         }
     ]

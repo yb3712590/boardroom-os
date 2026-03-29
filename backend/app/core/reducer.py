@@ -20,7 +20,10 @@ from app.core.constants import (
     EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_CLOSED,
+    EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
+    EVENT_TICKET_CANCELLED,
+    EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
@@ -31,11 +34,15 @@ from app.core.constants import (
     EVENT_TICKET_TIMED_OUT,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    NODE_STATUS_CANCELLED,
+    NODE_STATUS_CANCEL_REQUESTED,
     NODE_STATUS_COMPLETED,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    TICKET_STATUS_CANCELLED,
+    TICKET_STATUS_CANCEL_REQUESTED,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_FAILED,
@@ -216,6 +223,44 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 "status": TICKET_STATUS_EXECUTING,
                 "last_heartbeat_at": occurred_at,
                 "heartbeat_expires_at": heartbeat_expires_at,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_CANCEL_REQUESTED:
+            ticket_id = payload["ticket_id"]
+            previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            projections[ticket_id] = {
+                **previous_projection,
+                "workflow_id": event["workflow_id"],
+                "node_id": payload["node_id"],
+                "status": TICKET_STATUS_CANCEL_REQUESTED,
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_CANCELLED:
+            ticket_id = payload["ticket_id"]
+            previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            projections[ticket_id] = {
+                **previous_projection,
+                "workflow_id": event["workflow_id"],
+                "node_id": payload["node_id"],
+                "status": TICKET_STATUS_CANCELLED,
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
                 "blocking_reason_code": None,
                 "updated_at": occurred_at,
                 "version": version,
@@ -417,6 +462,32 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
             }
             continue
 
+        if event_type == EVENT_TICKET_CANCEL_REQUESTED:
+            node_id = payload["node_id"]
+            key = (workflow_id, node_id)
+            projections[key] = {
+                **projections.get(key, _base_node_projection(event, payload)),
+                "latest_ticket_id": payload["ticket_id"],
+                "status": NODE_STATUS_CANCEL_REQUESTED,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_CANCELLED:
+            node_id = payload["node_id"]
+            key = (workflow_id, node_id)
+            projections[key] = {
+                **projections.get(key, _base_node_projection(event, payload)),
+                "latest_ticket_id": payload["ticket_id"],
+                "status": NODE_STATUS_CANCELLED,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
         if event_type == EVENT_TICKET_COMPLETED:
             if payload.get("board_review_requested"):
                 continue
@@ -562,6 +633,24 @@ def rebuild_incident_projections(events: Iterable[dict]) -> list[dict]:
                     "circuit_breaker_state",
                     CIRCUIT_BREAKER_STATE_CLOSED,
                 ),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_INCIDENT_RECOVERY_STARTED:
+            previous_projection = projections.get(incident_id, _base_incident_projection(event, payload))
+            projections[incident_id] = {
+                **previous_projection,
+                "workflow_id": event["workflow_id"],
+                "node_id": payload.get("node_id", previous_projection.get("node_id")),
+                "ticket_id": payload.get("ticket_id", previous_projection.get("ticket_id")),
+                "provider_id": payload.get("provider_id", previous_projection.get("provider_id")),
+                "status": payload.get("status", "RECOVERING"),
+                "payload": {
+                    **(previous_projection.get("payload") or {}),
+                    **payload,
+                },
                 "updated_at": occurred_at,
                 "version": version,
             }

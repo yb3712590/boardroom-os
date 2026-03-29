@@ -16,7 +16,10 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_OPENED,
+    EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_SYSTEM_INITIALIZED,
+    EVENT_TICKET_CANCELLED,
+    EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
@@ -27,11 +30,15 @@ from app.core.constants import (
     EVENT_TICKET_TIMED_OUT,
     EVENT_WORKFLOW_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    NODE_STATUS_CANCELLED,
+    NODE_STATUS_CANCEL_REQUESTED,
     NODE_STATUS_COMPLETED,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    TICKET_STATUS_CANCELLED,
+    TICKET_STATUS_CANCEL_REQUESTED,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_FAILED,
@@ -190,6 +197,101 @@ def _ticket_complete_payload(
             "badges": ["visual", "board_gate"],
         }
     return payload
+
+
+def _ticket_result_submit_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+    submitted_by: str = "emp_frontend_2",
+    result_status: str = "completed",
+    include_review_request: bool = False,
+    schema_version: str = "ui_milestone_review_v1",
+    payload: dict | None = None,
+    written_artifacts: list[dict] | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
+    result_payload = {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "submitted_by": submitted_by,
+        "result_status": result_status,
+        "schema_version": schema_version,
+        "payload": payload
+        or {
+            "summary": "Homepage visual milestone is ready for downstream review.",
+            "recommended_option_id": "option_a",
+            "options": [
+                {
+                    "option_id": "option_a",
+                    "label": "Option A",
+                    "summary": "High-contrast review candidate.",
+                    "artifact_refs": ["art://homepage/option-a.png"],
+                },
+                {
+                    "option_id": "option_b",
+                    "label": "Option B",
+                    "summary": "Lower contrast fallback.",
+                    "artifact_refs": ["art://homepage/option-b.png"],
+                },
+            ],
+        },
+        "artifact_refs": ["art://homepage/option-a.png", "art://homepage/option-b.png"],
+        "written_artifacts": written_artifacts
+        or [
+            {
+                "path": "artifacts/ui/homepage/option-a.png",
+                "artifact_ref": "art://homepage/option-a.png",
+                "kind": "IMAGE",
+            },
+            {
+                "path": "artifacts/ui/homepage/option-b.png",
+                "artifact_ref": "art://homepage/option-b.png",
+                "kind": "IMAGE",
+            },
+        ],
+        "assumptions": ["Keep current homepage information hierarchy."],
+        "issues": [],
+        "confidence": 0.82,
+        "needs_escalation": False,
+        "summary": "Structured runtime result submitted.",
+        "failure_kind": None,
+        "failure_message": None,
+        "failure_detail": None,
+        "idempotency_key": idempotency_key
+        or f"ticket-result-submit:{workflow_id}:{ticket_id}:{result_status}",
+    }
+    if result_status == "failed":
+        result_payload["failure_kind"] = "RUNTIME_ERROR"
+        result_payload["failure_message"] = "Structured runtime result reported failure."
+        result_payload["failure_detail"] = {"step": "render", "exit_code": 1}
+    if include_review_request:
+        result_payload["review_request"] = _ticket_complete_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_review_request=True,
+        )["review_request"]
+    return result_payload
+
+
+def _ticket_cancel_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_visual_001",
+    node_id: str = "node_homepage_visual",
+    cancelled_by: str = "emp_ops_1",
+    reason: str = "Operator requested controlled cancellation.",
+    idempotency_key: str | None = None,
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "cancelled_by": cancelled_by,
+        "reason": reason,
+        "idempotency_key": idempotency_key or f"ticket-cancel:{workflow_id}:{ticket_id}",
+    }
 
 
 def _ticket_create_payload(
@@ -852,6 +954,135 @@ def test_ticket_complete_without_review_request_does_not_open_approval(client, s
     assert node_projection["status"] == NODE_STATUS_COMPLETED
 
 
+def test_ticket_result_submit_completes_ticket_with_validated_structured_payload(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(),
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
+    assert node_projection["status"] == NODE_STATUS_COMPLETED
+
+
+def test_ticket_result_submit_schema_error_converts_to_controlled_failure(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2, on_schema_error="retry")
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            payload={
+                "summary": "Homepage visual milestone is missing options.",
+                "recommended_option_id": "option_a",
+            },
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:schema-error",
+        ),
+    )
+
+    repository = client.app.state.repository
+    latest_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    original_ticket = repository.get_current_ticket_projection("tkt_visual_001")
+    latest_ticket = repository.get_current_ticket_projection(latest_ticket_id)
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert original_ticket["status"] == TICKET_STATUS_FAILED
+    assert latest_ticket_id != "tkt_visual_001"
+    assert latest_ticket["status"] == TICKET_STATUS_PENDING
+    assert failed_events[-1]["payload"]["failure_kind"] == "SCHEMA_ERROR"
+
+
+def test_ticket_result_submit_write_set_violation_converts_to_controlled_failure(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            written_artifacts=[
+                {
+                    "path": "artifacts/forbidden/option-a.png",
+                    "artifact_ref": "art://homepage/option-a.png",
+                    "kind": "IMAGE",
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:write-set",
+        ),
+    )
+
+    repository = client.app.state.repository
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "WRITE_SET_VIOLATION"
+
+
+def test_ticket_cancel_transitions_executing_ticket_to_cancel_requested_and_blocks_progress(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+
+    cancel_response = client.post(
+        "/api/v1/commands/ticket-cancel",
+        json=_ticket_cancel_payload(),
+    )
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = client.app.state.repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+
+    heartbeat_response = client.post(
+        "/api/v1/commands/ticket-heartbeat",
+        json=_ticket_heartbeat_payload(),
+    )
+    result_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:after-cancel",
+        ),
+    )
+
+    events = client.app.state.repository.list_events_for_testing()
+    cancel_requested_events = [
+        event for event in events if event["event_type"] == EVENT_TICKET_CANCEL_REQUESTED
+    ]
+    cancelled_events = [event for event in events if event["event_type"] == EVENT_TICKET_CANCELLED]
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_CANCEL_REQUESTED
+    assert node_projection["status"] == NODE_STATUS_CANCEL_REQUESTED
+    assert heartbeat_response.status_code == 200
+    assert heartbeat_response.json()["status"] == "REJECTED"
+    assert result_response.status_code == 200
+    assert result_response.json()["status"] == "ACCEPTED"
+    assert cancel_requested_events
+    assert cancelled_events
+    assert client.app.state.repository.get_current_ticket_projection("tkt_visual_001")["status"] == (
+        TICKET_STATUS_CANCELLED
+    )
+    assert client.app.state.repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "status"
+    ] == NODE_STATUS_CANCELLED
+
+
 def test_ticket_fail_moves_ticket_to_failed_and_node_to_rework_when_retry_exhausted(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client, retry_budget=0)
@@ -1220,9 +1451,9 @@ def test_incident_resolve_closes_breaker_and_removes_open_incident_from_dashboar
     assert dashboard_response.json()["data"]["ops_strip"]["open_circuit_breakers"] == 0
     assert dashboard_response.json()["data"]["inbox_counts"]["incidents_pending"] == 0
     assert inbox_response.json()["data"]["items"] == []
-    assert incident_response.json()["data"]["incident"]["status"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
     assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
-    assert incident_response.json()["data"]["incident"]["closed_at"] is not None
+    assert incident_response.json()["data"]["incident"]["closed_at"] is None
     assert incident_response.json()["data"]["incident"]["payload"]["resolved_by"] == "emp_ops_1"
     assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "RESTORE_ONLY"
     assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] is None
@@ -1300,6 +1531,63 @@ def test_incident_resolve_can_restore_and_retry_latest_timeout_in_one_command(cl
     assert tick_response.status_code == 200
     assert tick_response.json()["status"] == "ACCEPTED"
     assert leased_ticket["status"] == TICKET_STATUS_LEASED
+
+
+def test_incident_resolve_moves_incident_into_recovering_before_auto_close(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=3)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:recovering-first"),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:recovering-second"),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    set_ticket_time("2026-03-28T11:20:00+08:00")
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key="incident-resolve:recovering-timeout",
+            followup_action="RESTORE_AND_RETRY_LATEST_TIMEOUT",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    recovery_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_RECOVERY_STARTED
+    ]
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
+    assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["closed_at"] is None
+    assert recovery_events
 
 
 def test_incident_resolve_reopens_scheduler_dispatch_for_same_node(client, set_ticket_time):
@@ -2660,7 +2948,7 @@ def test_incident_resolve_stream_carries_breaker_closed_and_incident_closed_even
 
     assert response.status_code == 200
     assert "CIRCUIT_BREAKER_CLOSED" in body
-    assert "INCIDENT_CLOSED" in body
+    assert "INCIDENT_RECOVERY_STARTED" in body
 
 
 def test_invalid_project_init_returns_422_without_writing_events(client):

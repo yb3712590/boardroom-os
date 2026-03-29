@@ -22,8 +22,11 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_INCIDENT_CLOSED,
+    EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
+    EVENT_TICKET_CANCELLED,
+    EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
@@ -34,6 +37,7 @@ from app.core.constants import (
     EVENT_WORKFLOW_CREATED,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
+    NODE_STATUS_CANCELLED,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
@@ -516,6 +520,21 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_incident_projection_row(row)
+
+    def list_recovering_incidents_for_followup_ticket(
+        self,
+        connection: sqlite3.Connection,
+        followup_ticket_id: str,
+    ) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            """
+            SELECT * FROM incident_projection
+            WHERE status = ? AND json_extract(payload_json, '$.followup_ticket_id') = ?
+            ORDER BY opened_at ASC, incident_id ASC
+            """,
+            ("RECOVERING", followup_ticket_id),
+        ).fetchall()
+        return [self._convert_incident_projection_row(row) for row in rows]
 
     def list_employee_projections(
         self,
@@ -1077,9 +1096,9 @@ class ControlPlaneRepository:
                 """
                 SELECT COUNT(*) AS total
                 FROM node_projection
-                WHERE status <> ?
+                WHERE status NOT IN (?, ?)
                 """,
-                (NODE_STATUS_COMPLETED,),
+                (NODE_STATUS_COMPLETED, NODE_STATUS_CANCELLED),
             ).fetchone()
             return int(row["total"])
 
@@ -1399,6 +1418,8 @@ class ControlPlaneRepository:
             return "system"
         if event_type in {
             EVENT_TICKET_CREATED,
+            EVENT_TICKET_CANCEL_REQUESTED,
+            EVENT_TICKET_CANCELLED,
             EVENT_TICKET_FAILED,
             EVENT_TICKET_LEASED,
             EVENT_TICKET_RETRY_SCHEDULED,
@@ -1409,6 +1430,7 @@ class ControlPlaneRepository:
             return "ticket"
         if event_type in {
             EVENT_INCIDENT_OPENED,
+            EVENT_INCIDENT_RECOVERY_STARTED,
             EVENT_INCIDENT_CLOSED,
             EVENT_CIRCUIT_BREAKER_OPENED,
             EVENT_CIRCUIT_BREAKER_CLOSED,
@@ -1431,8 +1453,10 @@ class ControlPlaneRepository:
             EVENT_TICKET_RETRY_SCHEDULED,
             EVENT_TICKET_LEASED,
             EVENT_TICKET_STARTED,
+            EVENT_TICKET_CANCELLED,
             EVENT_TICKET_COMPLETED,
             EVENT_BOARD_REVIEW_APPROVED,
+            EVENT_INCIDENT_RECOVERY_STARTED,
             EVENT_INCIDENT_CLOSED,
             EVENT_CIRCUIT_BREAKER_CLOSED,
         }:
@@ -1440,6 +1464,7 @@ class ControlPlaneRepository:
         if event_type in {
             EVENT_TICKET_FAILED,
             EVENT_TICKET_TIMED_OUT,
+            EVENT_TICKET_CANCEL_REQUESTED,
             EVENT_BOARD_REVIEW_REQUIRED,
             EVENT_BOARD_REVIEW_REJECTED,
             EVENT_INCIDENT_OPENED,
@@ -1462,6 +1487,10 @@ class ControlPlaneRepository:
             return f"TICKET_LEASED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_STARTED:
             return f"TICKET_STARTED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_CANCEL_REQUESTED:
+            return f"TICKET_CANCEL_REQUESTED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_TICKET_CANCELLED:
+            return f"TICKET_CANCELLED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_COMPLETED:
             return f"TICKET_COMPLETED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_FAILED:
@@ -1484,6 +1513,8 @@ class ControlPlaneRepository:
             if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
                 return f"REPEATED_FAILURE_INCIDENT_CLOSED for {event.get('incident_id') or event['workflow_id']}"
             return f"INCIDENT_CLOSED for {event.get('incident_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_INCIDENT_RECOVERY_STARTED:
+            return f"INCIDENT_RECOVERY_STARTED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_CIRCUIT_BREAKER_OPENED:
             if event.get("provider_id") or event.get("payload", {}).get("provider_id"):
                 provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
@@ -1545,6 +1576,20 @@ class ControlPlaneRepository:
                 "refresh_after_ms": 250,
                 "toast": "Ticket started.",
             }
+        if event_type == EVENT_TICKET_CANCEL_REQUESTED:
+            return {
+                "invalidate": ["dashboard", "incidents"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket cancellation requested.",
+            }
+        if event_type == EVENT_TICKET_CANCELLED:
+            return {
+                "invalidate": ["dashboard", "incidents"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Ticket cancelled.",
+            }
         if event_type == EVENT_TICKET_FAILED:
             return {
                 "invalidate": ["dashboard"],
@@ -1579,6 +1624,13 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Incident closed.",
+            }
+        if event_type == EVENT_INCIDENT_RECOVERY_STARTED:
+            return {
+                "invalidate": ["dashboard", "inbox", "incidents"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Incident recovery started.",
             }
         if event_type == EVENT_CIRCUIT_BREAKER_OPENED:
             return {
