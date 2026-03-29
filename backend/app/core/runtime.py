@@ -8,8 +8,9 @@ from pydantic import ValidationError
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
-    TicketCompletedCommand,
-    TicketFailCommand,
+    TicketResultStatus,
+    TicketResultSubmitCommand,
+    TicketWrittenArtifact,
     TicketStartCommand,
 )
 from app.contracts.runtime import CompiledAuditArtifacts, CompiledExecutionPackage
@@ -17,9 +18,9 @@ from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     compile_and_persist_execution_artifacts,
 )
+from app.core.output_schemas import schema_id
 from app.core.ticket_handlers import (
-    handle_ticket_completed,
-    handle_ticket_fail,
+    handle_ticket_result_submit,
     handle_ticket_start,
 )
 from app.core.time import now_local
@@ -32,6 +33,10 @@ class RuntimeExecutionResult:
     completion_summary: str | None = None
     artifact_refs: list[str] = field(default_factory=list)
     result_payload: dict[str, Any] = field(default_factory=dict)
+    written_artifacts: list[dict[str, Any]] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
+    confidence: float = 0.0
     failure_kind: str | None = None
     failure_message: str | None = None
     failure_detail: dict[str, Any] | None = None
@@ -57,12 +62,8 @@ def _build_start_idempotency_key(ticket: dict[str, Any]) -> str:
     return f"runtime-start:{ticket['workflow_id']}:{ticket['ticket_id']}:{ticket['lease_owner']}"
 
 
-def _build_complete_idempotency_key(ticket: dict[str, Any]) -> str:
-    return f"runtime-complete:{ticket['workflow_id']}:{ticket['ticket_id']}"
-
-
-def _build_fail_idempotency_key(ticket: dict[str, Any], failure_kind: str) -> str:
-    return f"runtime-fail:{ticket['workflow_id']}:{ticket['ticket_id']}:{failure_kind}"
+def _build_result_submit_idempotency_key(ticket: dict[str, Any], result_status: str) -> str:
+    return f"runtime-result-submit:{ticket['workflow_id']}:{ticket['ticket_id']}:{result_status}"
 
 
 def _is_provider_paused_for_ticket(
@@ -106,6 +107,76 @@ def _build_compiled_execution_artifacts(
     ticket: dict[str, Any],
 ) -> CompiledAuditArtifacts:
     return compile_and_persist_execution_artifacts(repository, ticket)
+
+
+def _resolve_runtime_write_path(allowed_write_pattern: str, filename: str) -> str:
+    if "*" in allowed_write_pattern:
+        return allowed_write_pattern.replace("*", filename, 1)
+    normalized = allowed_write_pattern.rstrip("/")
+    if not normalized:
+        return filename
+    return f"{normalized}/{filename}"
+
+
+def _build_runtime_default_artifacts(
+    execution_package: CompiledExecutionPackage,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    ticket_id = execution_package.meta.ticket_id
+    artifact_refs = [
+        f"art://runtime/{ticket_id}/option-a.png",
+        f"art://runtime/{ticket_id}/option-b.png",
+    ]
+    allowed_write_set = list(execution_package.execution.allowed_write_set)
+    if not allowed_write_set:
+        return artifact_refs, []
+    write_pattern = allowed_write_set[0]
+    written_artifacts = [
+        {
+            "path": _resolve_runtime_write_path(write_pattern, "option-a.png"),
+            "artifact_ref": artifact_refs[0],
+            "kind": "IMAGE",
+        },
+        {
+            "path": _resolve_runtime_write_path(write_pattern, "option-b.png"),
+            "artifact_ref": artifact_refs[1],
+            "kind": "IMAGE",
+        },
+    ]
+    return artifact_refs, written_artifacts
+
+
+def _build_runtime_success_payload(
+    execution_package: CompiledExecutionPackage,
+    artifact_refs: list[str],
+) -> dict[str, Any]:
+    return {
+        "summary": (
+            f"Runtime prepared a minimal {execution_package.execution.output_schema_ref} review package "
+            f"for ticket {execution_package.meta.ticket_id}."
+        ),
+        "recommended_option_id": "option_a",
+        "options": [
+            {
+                "option_id": "option_a",
+                "label": "Option A",
+                "summary": "Primary minimal runtime-generated review option.",
+                "artifact_refs": [artifact_refs[0]],
+            },
+            {
+                "option_id": "option_b",
+                "label": "Option B",
+                "summary": "Fallback minimal runtime-generated review option.",
+                "artifact_refs": [artifact_refs[1]],
+            },
+        ],
+    }
+
+
+def _schema_version_for_execution_package(execution_package: CompiledExecutionPackage) -> str:
+    return schema_id(
+        execution_package.execution.output_schema_ref,
+        execution_package.execution.output_schema_version,
+    )
 
 
 def _execute_compiled_execution_package(
@@ -156,40 +227,71 @@ def _execute_compiled_execution_package(
             },
         )
 
+    artifact_refs, written_artifacts = _build_runtime_default_artifacts(execution_package)
     return RuntimeExecutionResult(
         result_status="completed",
         completion_summary=(
             f"Runtime executed ticket {execution_package.meta.ticket_id} via "
             f"{execution_package.meta.compiler_version}."
         ),
-        artifact_refs=[],
-        result_payload={
-            "compiler_version": execution_package.meta.compiler_version,
-            "compile_request_id": execution_package.meta.compile_request_id,
-            "role_profile_ref": execution_package.compiled_role.role_profile_ref,
-            "output_schema_ref": execution_package.execution.output_schema_ref,
-            "context_block_count": len(execution_package.atomic_context_bundle.context_blocks),
-        },
+        artifact_refs=artifact_refs,
+        result_payload=_build_runtime_success_payload(execution_package, artifact_refs),
+        written_artifacts=written_artifacts,
+        assumptions=[
+            f"compiler_version={execution_package.meta.compiler_version}",
+            f"compile_request_id={execution_package.meta.compile_request_id}",
+        ],
+        issues=[],
+        confidence=0.7,
     )
 
 
-def _build_runtime_failure(
+def _build_runtime_result_submit_command(
     *,
     ticket: dict[str, Any],
-    failed_by: str,
-    failure_kind: str,
-    failure_message: str,
-    failure_detail: dict[str, Any] | None,
-) -> TicketFailCommand:
-    return TicketFailCommand(
+    submitted_by: str,
+    execution_package: CompiledExecutionPackage | None,
+    execution_result: RuntimeExecutionResult,
+) -> TicketResultSubmitCommand:
+    schema_version = (
+        _schema_version_for_execution_package(execution_package)
+        if execution_package is not None
+        else f"{SUPPORTED_RUNTIME_OUTPUT_SCHEMA}_v1"
+    )
+    written_artifacts = [
+        TicketWrittenArtifact(
+            path=str(item["path"]),
+            artifact_ref=str(item["artifact_ref"]),
+            kind=str(item["kind"]),
+        )
+        for item in execution_result.written_artifacts
+    ]
+    return TicketResultSubmitCommand(
         workflow_id=ticket["workflow_id"],
         ticket_id=ticket["ticket_id"],
         node_id=ticket["node_id"],
-        failed_by=failed_by,
-        failure_kind=failure_kind,
-        failure_message=failure_message,
-        failure_detail=failure_detail,
-        idempotency_key=_build_fail_idempotency_key(ticket, failure_kind),
+        submitted_by=submitted_by,
+        result_status=(
+            TicketResultStatus.COMPLETED
+            if execution_result.result_status == "completed"
+            else TicketResultStatus.FAILED
+        ),
+        schema_version=schema_version,
+        payload=execution_result.result_payload,
+        artifact_refs=execution_result.artifact_refs,
+        written_artifacts=written_artifacts,
+        assumptions=execution_result.assumptions,
+        issues=execution_result.issues,
+        confidence=execution_result.confidence,
+        needs_escalation=False,
+        summary=execution_result.completion_summary
+        or execution_result.failure_message
+        or "Runtime submitted a structured result.",
+        review_request=None,
+        failure_kind=execution_result.failure_kind,
+        failure_message=execution_result.failure_message,
+        failure_detail=execution_result.failure_detail,
+        idempotency_key=_build_result_submit_idempotency_key(ticket, execution_result.result_status),
     )
 
 
@@ -229,16 +331,21 @@ def run_leased_ticket_runtime(
             execution_package = compiled_artifacts.compiled_execution_package
             execution_result = _execute_compiled_execution_package(execution_package)
         except (ValidationError, ValueError) as exc:
-            final_ack = handle_ticket_fail(
+            final_ack = handle_ticket_result_submit(
                 repository,
-                _build_runtime_failure(
+                _build_runtime_result_submit_command(
                     ticket=ticket,
-                    failed_by=lease_owner,
-                    failure_kind="RUNTIME_INPUT_ERROR",
-                    failure_message=str(exc),
-                    failure_detail={
-                        "compiler_version": MINIMAL_CONTEXT_COMPILER_VERSION,
-                    },
+                    submitted_by=lease_owner,
+                    execution_package=None,
+                    execution_result=RuntimeExecutionResult(
+                        result_status="failed",
+                        completion_summary="Runtime compilation failed before structured submission.",
+                        failure_kind="RUNTIME_INPUT_ERROR",
+                        failure_message=str(exc),
+                        failure_detail={
+                            "compiler_version": MINIMAL_CONTEXT_COMPILER_VERSION,
+                        },
+                    ),
                 ),
             )
             outcomes.append(
@@ -251,31 +358,15 @@ def run_leased_ticket_runtime(
             )
             continue
 
-        if execution_result.result_status == "completed":
-            final_ack = handle_ticket_completed(
-                repository,
-                TicketCompletedCommand(
-                    workflow_id=ticket["workflow_id"],
-                    ticket_id=ticket["ticket_id"],
-                    node_id=ticket["node_id"],
-                    completed_by=lease_owner,
-                    completion_summary=execution_result.completion_summary or "Runtime completed ticket.",
-                    artifact_refs=execution_result.artifact_refs,
-                    review_request=None,
-                    idempotency_key=_build_complete_idempotency_key(ticket),
-                ),
-            )
-        else:
-            final_ack = handle_ticket_fail(
-                repository,
-                _build_runtime_failure(
-                    ticket=ticket,
-                    failed_by=lease_owner,
-                    failure_kind=execution_result.failure_kind or "RUNTIME_ERROR",
-                    failure_message=execution_result.failure_message or "Runtime executor failed.",
-                    failure_detail=execution_result.failure_detail,
-                ),
-            )
+        final_ack = handle_ticket_result_submit(
+            repository,
+            _build_runtime_result_submit_command(
+                ticket=ticket,
+                submitted_by=lease_owner,
+                execution_package=execution_package,
+                execution_result=execution_result,
+            ),
+        )
 
         outcomes.append(
             RuntimeExecutionOutcome(

@@ -40,8 +40,8 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/ticket-heartbeat` for explicit liveness heartbeats while a ticket is already executing
 - `POST /api/v1/commands/ticket-result-submit` is now the primary structured worker-result entrypoint; both success and failure can flow through it, and completion now runs minimal output-schema validation plus `allowed_write_set` validation first
 - the minimal output schema registry is now wired into the control plane; strict real support currently covers `ui_milestone_review@1`
-- `POST /api/v1/commands/ticket-fail` remains available as a compatibility failure path and for the current minimal in-process runtime chain
-- `POST /api/v1/commands/ticket-complete` remains available as a compatibility completion path and for the current minimal in-process runtime chain
+- `POST /api/v1/commands/ticket-fail` remains available as a compatibility failure path
+- `POST /api/v1/commands/ticket-complete` remains available as a compatibility completion path
 - `ticket-complete -> review_request` now only declares `developer_inspector_refs`; the review-room inspector files are exported from that ticket's real persisted minimal compile artifacts, and the companion projection stays honestly `partial` when those artifacts do not exist yet
 - `ticket-result-submit` turns schema mismatches into controlled `SCHEMA_ERROR` failures, and turns writes outside `allowed_write_set` into controlled `WRITE_SET_VIOLATION` failures that still flow through the existing retry / incident / breaker governance path
 - seeded persisted worker roster for the minimal executor pool
@@ -61,7 +61,8 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - `POST /api/v1/commands/ticket-cancel` now provides cooperative cancellation: `PENDING / LEASED` tickets move straight to `CANCELLED`, while `EXECUTING` tickets move to `CANCEL_REQUESTED` first and are finalized later by runtime or a late-arriving result
 - cancellation guards now cover lease / start / heartbeat / result submission, so cancelled tickets cannot keep progressing or be pushed back into completed / failed by late results
 - independent scheduler runner via `python -m app.scheduler_runner`
-- runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
+- runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before converging on `ticket-result-submit` for `TICKET_COMPLETED` or `TICKET_FAILED`
+- internal minimal runtime success results now pass through the same schema / write-set governance path; they still emit only minimal structured review payloads plus placeholder artifact declarations rather than real persisted runtime output files
 - FastAPI can now also host an optional in-process background scheduler loop behind an explicit env flag; it stays off by default so app startup behavior does not change unless requested
 - persisted minimal `CompiledContextBundle` / `CompileManifest` audit artifacts with ticket-level lookup; provenance is still reference-only and does not hydrate artifact bodies yet
 - `POST /api/v1/commands/board-approve`
@@ -81,7 +82,7 @@ The following are still pending or stubbed:
 - non-reference-only Context Compiler execution with artifact hydration, cache reuse, and richer provenance
 - full artifact store / artifact index plus richer result validation and artifact governance beyond the current minimal loop
 - a broader output schema registry; real strict support currently only covers `ui_milestone_review@1`
-- the internal runtime execution path still calls the existing complete / fail handlers directly and has not yet been fully converged onto the external `ticket-result-submit` command
+- the internal runtime execution path now converges on `ticket-result-submit`, but successful runner output is still limited to minimal placeholder artifact declarations rather than a fuller artifact store / index / richer governance layer
 - richer retry policy and broader auto-healing beyond the current minimal recovery loop
 - FTS / vector retrieval
 - React Boardroom UI
@@ -198,8 +199,7 @@ Override with:
 This slice only establishes the first control-plane loop. The next implementation layers still follow the written design:
 
 - richer projection reducer
-- converge the internal runtime execution path onto `ticket-result-submit`
-- extend the minimal output schema registry plus artifact/write-set governance
+- extend the minimal output schema registry plus artifact/write-set governance so the current placeholder runtime artifacts can grow into a real artifact store / index / richer validation path
 - expansion from the current reference-only compiler boundary to full compilation with artifact hydration, retrieval, and cache reuse
 - worker / checker execution chain
 - Board Review Pack and decision commands

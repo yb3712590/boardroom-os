@@ -40,8 +40,8 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-heartbeat` 为 `EXECUTING` ticket 提供显式活跃心跳，不再复用 lease 续命语义
 - `POST /api/v1/commands/ticket-result-submit` 已成为结构化 worker 结果的统一主入口；成功与失败都可从这一条命令进入，并会在完成前执行最小 output schema 校验与 `allowed_write_set` 写集校验
 - 最小 output schema 注册表已接入控制面；当前真实严格支持 `ui_milestone_review@1`
-- `POST /api/v1/commands/ticket-fail` 仍保留，用于兼容旧失败上报路径与内部最小运行时链路
-- `POST /api/v1/commands/ticket-complete` 仍保留，用于兼容旧完成路径与内部最小运行时链路
+- `POST /api/v1/commands/ticket-fail` 仍保留，用于兼容旧失败上报路径
+- `POST /api/v1/commands/ticket-complete` 仍保留，用于兼容旧完成路径
 - `ticket-complete -> review_request` 现在只负责声明 `developer_inspector_refs`；review-room 下的 inspector 文件来自该 ticket 已持久化的真实最小 compile 产物，若真实产物尚未存在则 companion projection 会诚实返回 `partial`
 - `ticket-result-submit` 若 payload 不符合 output schema，会转成受控 `SCHEMA_ERROR` 失败；若 `written_artifacts.path` 超出 `allowed_write_set`，会转成受控 `WRITE_SET_VIOLATION` 失败，并继续走现有 retry / incident / breaker 治理主线
 - 最小持久化 worker roster / executor pool
@@ -61,7 +61,8 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `CANCEL_REQUESTED / CANCELLED` 守卫已接入 lease / start / heartbeat / 结果提交；被取消 ticket 不会再被正常推进或被晚到结果重新推回完成 / 失败
 - dashboard `workforce_summary` 已接入最小真实投影
 - 独立 scheduler runner：`python -m app.scheduler_runner`
-- runner 已打通最小自动执行链：`TICKET_LEASED` 会在独立 runner 中继续推进到 `TICKET_STARTED`，并先经过最小 `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` 编译与持久化边界，再进入 `TICKET_COMPLETED` 或 `TICKET_FAILED`
+- runner 已打通最小自动执行链：`TICKET_LEASED` 会在独立 runner 中继续推进到 `TICKET_STARTED`，并先经过最小 `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` 编译与持久化边界，再统一通过 `ticket-result-submit` 进入 `TICKET_COMPLETED` 或 `TICKET_FAILED`
+- 内部最小运行时成功结果现在也会经过统一 schema / write-set 治理；当前生成的是最小结构化 review payload 与占位产物声明，不会真实落盘写文件
 - FastAPI 进程现在也可按环境变量显式开启进程内后台 scheduler loop；默认关闭，不改变现有启动语义；开启后会复用同一条最小调度与运行时链路
 - 最小 `CompiledContextBundle` / `CompileManifest` 已落地持久化与审计，可按 ticket 回看；当前 provenance 仍是 reference-only，不包含 artifact 正文 hydration
 - `POST /api/v1/commands/board-approve`
@@ -81,7 +82,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - 非 reference-only 的完整 Context Compiler 编译、artifact hydration、缓存复用与更丰富 provenance
 - 完整 artifact store / artifact index，以及超出当前最小闭环的更丰富结果校验与产物治理
 - 更完整的 output schema 注册表；当前只真实覆盖 `ui_milestone_review@1`
-- 运行时内部自动执行链仍直接调用现有完成 / 失败处理器，还没有全部收敛到 `ticket-result-submit` 这一个外部命令入口
+- 运行时内部自动执行链虽然已收敛到 `ticket-result-submit`，但当前成功结果仍只产出最小占位 artifact 声明，不包含真实 artifact store、artifact index 或更丰富结果治理
 - richer retry policy 与超出当前最小闭环的全局自动愈合
 - FTS / 向量检索
 - React Boardroom UI
@@ -205,8 +206,7 @@ python -m pytest tests -q
 当前后端切片只打通最小控制面闭环。后续仍按既定顺序推进：
 
 - 投影 reducer 继续扩展
-- 把运行时内部自动执行链也逐步收敛到 `ticket-result-submit` 这一条统一结果入口
-- 扩展最小 output schema 注册表与 artifact/write-set 治理
+- 扩展最小 output schema 注册表与 artifact/write-set 治理，把当前内部运行时的占位 artifact 声明推进到更真实的 artifact store / index / richer validation
 - 扩展当前 reference-only Context Compiler 到带 artifact hydration、检索与缓存复用的完整编译链
 - Worker / Checker 执行链
 - Board Review Pack 与审批命令

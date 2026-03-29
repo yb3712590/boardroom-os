@@ -79,7 +79,55 @@ def _seed_worker(repository, *, employee_id: str, provider_id: str) -> None:
                 "2026-03-28T10:00:00+08:00",
                 1,
             ),
-        )
+    )
+
+
+def _runtime_success_result(
+    *,
+    summary: str = "Runtime produced a structured UI milestone review.",
+    payload: dict | None = None,
+    written_artifacts: list[dict] | None = None,
+) -> RuntimeExecutionResult:
+    return RuntimeExecutionResult(
+        result_status="completed",
+        completion_summary=summary,
+        artifact_refs=["art://runtime/homepage/option-a.png", "art://runtime/homepage/option-b.png"],
+        result_payload=payload
+        or {
+            "summary": "Runtime produced a structured UI milestone review.",
+            "recommended_option_id": "option_a",
+            "options": [
+                {
+                    "option_id": "option_a",
+                    "label": "Option A",
+                    "summary": "Primary runtime-generated option.",
+                    "artifact_refs": ["art://runtime/homepage/option-a.png"],
+                },
+                {
+                    "option_id": "option_b",
+                    "label": "Option B",
+                    "summary": "Fallback runtime-generated option.",
+                    "artifact_refs": ["art://runtime/homepage/option-b.png"],
+                },
+            ],
+        },
+        written_artifacts=written_artifacts
+        or [
+            {
+                "path": "artifacts/ui/homepage/option-a.png",
+                "artifact_ref": "art://runtime/homepage/option-a.png",
+                "kind": "IMAGE",
+            },
+            {
+                "path": "artifacts/ui/homepage/option-b.png",
+                "artifact_ref": "art://runtime/homepage/option-b.png",
+                "kind": "IMAGE",
+            },
+        ],
+        assumptions=["Runtime used the minimal compiled context bundle."],
+        issues=[],
+        confidence=0.75,
+    )
 
 
 def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_ticket_time):
@@ -503,3 +551,91 @@ def test_scheduler_runner_auto_closes_recovering_incident_after_followup_success
     assert followup_ticket["status"] == "COMPLETED"
     assert incident_projection["status"] == "CLOSED"
     assert incident_projection["closed_at"] is not None
+
+
+def test_scheduler_runner_routes_success_results_through_schema_validation(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_schema_guard",
+            ticket_id="tkt_runner_schema_guard",
+            node_id="node_runner_schema_guard",
+            role_profile_ref="ui_designer_primary",
+            input_artifact_refs=["art://inputs/runtime-brief.md"],
+        ),
+    )
+
+    def _fake_execute(_execution_package):
+        return _runtime_success_result(
+            payload={
+                "summary": "Missing options should trip structured-result validation.",
+                "recommended_option_id": "option_a",
+            }
+        )
+
+    monkeypatch.setattr(runtime_module, "_execute_compiled_execution_package", _fake_execute)
+
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-schema-guard",
+        max_dispatches=10,
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_schema_guard")
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == "TICKET_FAILED"
+    ]
+
+    assert ticket_projection["status"] == "FAILED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "SCHEMA_ERROR"
+    assert "Result payload.options must be a non-empty array." in failed_events[-1]["payload"]["failure_message"]
+
+
+def test_scheduler_runner_routes_success_results_through_write_set_validation(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_write_set_guard",
+            ticket_id="tkt_runner_write_set_guard",
+            node_id="node_runner_write_set_guard",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+
+    def _fake_execute(_execution_package):
+        return _runtime_success_result(
+            written_artifacts=[
+                {
+                    "path": "artifacts/forbidden/option-a.png",
+                    "artifact_ref": "art://runtime/homepage/option-a.png",
+                    "kind": "IMAGE",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(runtime_module, "_execute_compiled_execution_package", _fake_execute)
+
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-write-set-guard",
+        max_dispatches=10,
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_write_set_guard")
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == "TICKET_FAILED"
+    ]
+
+    assert ticket_projection["status"] == "FAILED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "WRITE_SET_VIOLATION"
+    assert failed_events[-1]["payload"]["failure_detail"]["violating_paths"] == [
+        "artifacts/forbidden/option-a.png"
+    ]

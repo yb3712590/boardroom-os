@@ -1525,3 +1525,78 @@
 - broader output schema coverage beyond `ui_milestone_review@1`
 - full convergence of internal runtime execution onto `ticket-result-submit`
 - richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T04:25:00+08:00
+
+### Session Context
+- User asked to execute the runtime-governance `A` closeout plan directly in the existing Boardroom OS repo, then record the `B` vision as explicit follow-up todo instead of implementing it now.
+
+### Boundary Chosen
+- Single boundary for this round: converge the internal runtime automatic execution chain onto `ticket-result-submit`.
+- This round intentionally did not widen into full artifact storage, broader schema coverage, or external worker runtime handoff.
+
+### Design / Code Gap Identified
+- README and recent runtime-governance docs already treated `ticket-result-submit` as the unified result-governance entrypoint.
+- Code still had one important gap:
+  - `backend/app/core/runtime.py` started tickets and compiled execution packages, but successful and failed internal runtime results still bypassed `ticket-result-submit` and called the legacy complete/fail handlers directly.
+- That gap also exposed a second reality:
+  - the minimal runtime success payload was not yet shaped like `ui_milestone_review@1`
+  - the internal runner had no `written_artifacts` surface to exercise the same write-set governance path used by external structured submissions
+
+### Slice Landed
+- Internal runtime now builds `TicketResultSubmitCommand` for both success and failure paths and submits through `handle_ticket_result_submit`.
+- `RuntimeExecutionResult` now carries:
+  - structured result payload
+  - `written_artifacts`
+  - assumptions
+  - issues
+  - confidence
+- Minimal runtime success execution now emits a schema-valid `ui_milestone_review_v1` payload with:
+  - `summary`
+  - `recommended_option_id`
+  - `options`
+- Internal runtime now also emits deterministic placeholder artifact refs plus `written_artifacts` entries whose paths are derived conservatively from the first allowed write-set pattern for the ticket.
+- Result:
+  - runner-driven success now passes through the same schema validation gate as external structured submissions
+  - runner-driven success now passes through the same write-set validation gate as external structured submissions
+  - compile/input/runtime failures still flow into the existing retry / incident / breaker governance path, but now via the unified structured-result ingress
+
+### Conservative Handling
+- This round did not introduce real artifact file writes.
+- The internal runner still produces only placeholder artifact declarations, not a true artifact store entry or persisted runtime output file.
+- `ticket-complete` and `ticket-fail` remain public compatibility commands; they were not removed.
+- No public route names changed, and no database schema changes were added.
+
+### Tests Added
+- Scheduler runner coverage for:
+  - internal runtime success being rejected with controlled `SCHEMA_ERROR` when the success payload does not satisfy `ui_milestone_review@1`
+  - internal runtime success being rejected with controlled `WRITE_SET_VIOLATION` when runtime-written artifacts fall outside `allowed_write_set`
+- Existing scheduler runner and in-process scheduler success-path tests continued to pass after the convergence.
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `memory.txt`
+
+### Verification
+- `cd /Users/bill/projects/boardroom-os/.worktrees/runtime-governance-a-closeout`
+- `/Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest backend/tests/test_scheduler_runner.py -q`
+- `/Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest backend/tests/test_inprocess_scheduler.py -q`
+- `/Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest backend/tests/test_api.py -q -k 'ticket_result_submit or ticket_complete_without_review_request or ticket_cancel_transitions_executing_ticket_to_cancel_requested_and_blocks_progress'`
+- Result:
+  - `10 passed` in `backend/tests/test_scheduler_runner.py`
+  - `4 passed` in `backend/tests/test_inprocess_scheduler.py`
+  - `5 passed, 76 deselected` in the targeted API regression run
+
+### B Vision Recorded As Todo
+- Next runtime-governance expansion should move from `A` to `B` without changing the public command surface:
+  - expand the output schema registry beyond `ui_milestone_review@1`
+  - replace placeholder runtime artifact declarations with a fuller artifact store / artifact index path
+  - add richer result validation and artifact governance on top of the now-unified `ticket-result-submit` ingress
+
+### Still Not Done
+- full external worker runtime handoff
+- full artifact store / artifact index
+- broader output schema coverage beyond `ui_milestone_review@1`
+- richer runtime artifact governance beyond placeholder declarations
+- richer provider routing and multi-provider control-plane surface
