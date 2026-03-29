@@ -8,6 +8,7 @@ from typing import Any
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
+    IncidentFollowupAction,
     IncidentResolveCommand,
     SchedulerWorkerCandidate,
     SchedulerTickCommand,
@@ -383,6 +384,50 @@ def _should_retry_timeout(
         return False
     escalation_policy = created_spec.get("escalation_policy") or {}
     return escalation_policy.get("on_timeout") == "retry"
+
+
+def _validate_restore_and_retry_followup(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    incident: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    incident_ticket_id = incident.get("ticket_id")
+    if incident_ticket_id is None:
+        raise ValueError(f"Incident {incident['incident_id']} is missing its source ticket.")
+
+    latest_terminal_event = repository.get_latest_ticket_terminal_event(connection, incident_ticket_id)
+    if latest_terminal_event is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "has no terminal event."
+        )
+    if latest_terminal_event["event_type"] != EVENT_TICKET_TIMED_OUT:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the latest terminal "
+            "event is not a timeout."
+        )
+
+    created_spec = repository.get_latest_ticket_created_payload(connection, incident_ticket_id)
+    if created_spec is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "created spec is missing."
+        )
+
+    current_ticket = repository.get_current_ticket_projection(incident_ticket_id, connection=connection)
+    if current_ticket is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "projection is missing."
+        )
+    if not _should_retry_timeout(current_ticket=current_ticket, created_spec=created_spec):
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the retry budget "
+            "is exhausted or timeout retry is disabled."
+        )
+
+    return current_ticket, created_spec
 
 
 def _schedule_retry(
@@ -939,12 +984,34 @@ def handle_incident_resolve(
             )
 
         workflow_id = incident["workflow_id"]
+        followup_ticket_id: str | None = None
+        followup_action = payload.followup_action.value
+        retry_ticket: dict[str, Any] | None = None
+        retry_created_spec: dict[str, Any] | None = None
+        if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
+            try:
+                retry_ticket, retry_created_spec = _validate_restore_and_retry_followup(
+                    repository=repository,
+                    connection=connection,
+                    incident=incident,
+                )
+            except ValueError as exc:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=str(exc),
+                )
+
         resolution_payload = {
             "incident_id": payload.incident_id,
             "node_id": incident.get("node_id"),
             "ticket_id": incident.get("ticket_id"),
             "resolved_by": payload.resolved_by,
             "resolution_summary": payload.resolution_summary,
+            "followup_action": followup_action,
+            "followup_ticket_id": None,
         }
 
         breaker_closed_event = repository.insert_event(
@@ -969,6 +1036,26 @@ def handle_incident_resolve(
                 received_at=received_at,
                 incident_id=payload.incident_id,
             )
+
+        if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
+            assert retry_ticket is not None
+            assert retry_created_spec is not None
+            followup_ticket_id = _schedule_retry(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=workflow_id,
+                failed_ticket_id=str(incident["ticket_id"]),
+                node_id=str(incident["node_id"]),
+                created_spec=retry_created_spec,
+                failure_payload={
+                    "failure_fingerprint": incident.get("fingerprint"),
+                },
+                retry_source_event_type=EVENT_TICKET_TIMED_OUT,
+                idempotency_key_base=f"{payload.idempotency_key}:followup-timeout",
+            )
+            resolution_payload["followup_ticket_id"] = followup_ticket_id
 
         incident_closed_event = repository.insert_event(
             connection,

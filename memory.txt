@@ -1219,3 +1219,91 @@
 
 ### Likely Next Step
 - Keep runtime governance on one boundary and add the smallest real breaker recovery / incident close path, or switch boundaries and tackle provider quota / outage pause-resume governance as a separate slice.
+
+## 2026-03-29T13:47:01+08:00
+
+### Session Context
+- User asked to keep moving inside the existing Boardroom OS repo and explicitly implement the planned runtime-governance slice.
+- This round stayed inside one boundary only: controlled manual recovery for timeout incidents.
+
+### Boundary Chosen
+- Single boundary for this round: manual recovery of timeout incidents after a circuit breaker has opened.
+- The new rule remains conservative:
+  - default recovery still only restores dispatch
+  - explicit follow-up can additionally create one bounded retry for the latest timeout ticket
+
+### Design / Code Gap Identified
+- `incident-resolve` already closed the breaker and the incident, but it still forced the operator to issue a separate `ticket-create` if they wanted execution to resume immediately.
+- The docs also intentionally said recovery does not auto-create retry, so the implementation had to preserve that default instead of silently changing behavior.
+
+### Slice Landed
+- Extended `IncidentResolveCommand` with `followup_action`:
+  - `RESTORE_ONLY`
+  - `RESTORE_AND_RETRY_LATEST_TIMEOUT`
+- `RESTORE_ONLY` preserves the old behavior and remains the default for backward compatibility.
+- `RESTORE_AND_RETRY_LATEST_TIMEOUT` now:
+  - validates the incident source ticket still exists
+  - validates the latest terminal event is still timeout-based
+  - validates the source ticket create spec still exists
+  - validates timeout retry policy / retry budget still allow one more retry
+  - closes the breaker
+  - appends `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`
+  - closes the incident in the same transaction
+- `INCIDENT_CLOSED.payload` now records:
+  - `followup_action`
+  - `followup_ticket_id`
+
+### Conservative Handling
+- The default recovery path still does not create retry automatically.
+- Recovery-triggered retry still reuses the existing timeout retry logic and timeout backoff rules instead of adding a separate policy path.
+- Recovery remains limited to timeout incidents; no general incident recovery framework was added.
+
+### Tests Added
+- API coverage for:
+  - default `RESTORE_ONLY` preserving old behavior
+  - explicit `RESTORE_AND_RETRY_LATEST_TIMEOUT` creating a follow-up retry ticket
+  - incident detail payload surfacing `followup_action` and `followup_ticket_id`
+  - scheduler dispatching the restored follow-up ticket
+  - rejecting restore-and-retry when retry budget is exhausted
+  - rejecting restore-and-retry when the source ticket create spec is missing
+  - rejecting restore-and-retry when the latest terminal event is no longer timeout-based
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `boardroom-data-contracts.md`
+- `message-bus-design.md`
+- `memory.txt`
+
+### Still Not Done
+- automatic recovery without operator action
+- automatic incident close after a later successful run
+- recovery for non-timeout incident families
+- a dedicated recovery workflow UI beyond the existing command and incident detail projection
+
+### Verification
+- Verified TDD red step with targeted new tests before implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py -k 'incident_resolve_can_restore_and_retry_latest_timeout_in_one_command or incident_resolve_restore_and_retry_rejects_when_retry_budget_is_exhausted or incident_resolve_restore_and_retry_rejects_when_source_ticket_spec_is_missing or incident_resolve_restore_and_retry_rejects_when_latest_terminal_event_is_not_timeout or incident_resolve_closes_breaker_and_removes_open_incident_from_dashboard_and_inbox' -q`
+  - result: `5 failed`
+- Verified green step after implementation:
+  - same targeted command
+  - result: `5 passed`
+- Verified full backend test suite:
+  - `backend/.venv/bin/python -m pytest backend/tests -q`
+  - result: `93 passed`
+- Verified patch cleanliness:
+  - `git diff --check`
+  - result: clean
+
+### Files Updated
+- `/Users/bill/projects/boardroom-os/backend/app/contracts/commands.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/ticket_handlers.py`
+- `/Users/bill/projects/boardroom-os/backend/tests/test_api.py`
+- `/Users/bill/projects/boardroom-os/README.md`
+- `/Users/bill/projects/boardroom-os/README.en.md`
+- `/Users/bill/projects/boardroom-os/boardroom-data-contracts.md`
+- `/Users/bill/projects/boardroom-os/message-bus-design.md`
+- `/Users/bill/projects/boardroom-os/memory.txt`
+
+### Likely Next Step
+- Stay on runtime governance and add the next conservative slice: provider outage / quota pause-resume governance, or switch to a different single boundary such as richer cancel / recovery state handling.

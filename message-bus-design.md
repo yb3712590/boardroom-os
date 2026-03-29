@@ -791,7 +791,8 @@ Current minimal implementation status:
 - timeout-triggered retry create may widen both total timeout and lease / heartbeat window using bounded backoff
 - the breaker currently blocks automatic dispatch on that node only
 - minimal manual restore is now implemented via `CIRCUIT_BREAKER_CLOSED` followed by `INCIDENT_CLOSED`
-- close / restore still does not imply automatic retry creation or automatic incident closure after later success
+- `incident-resolve` defaults to restore-only, but an explicit `RESTORE_AND_RETRY_LATEST_TIMEOUT` can add one bounded timeout retry before closing the incident
+- close / restore still does not imply automatic retry creation by default or automatic incident closure after later success
 
 ## 14.3 Failure Snapshot Should Include
 

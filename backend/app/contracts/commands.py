@@ -48,6 +48,11 @@ class BlockingScope(StrEnum):
     WORKFLOW = "WORKFLOW"
 
 
+class IncidentFollowupAction(StrEnum):
+    RESTORE_ONLY = "RESTORE_ONLY"
+    RESTORE_AND_RETRY_LATEST_TIMEOUT = "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+
+
 class ProjectInitCommand(StrictModel):
     north_star_goal: str = Field(min_length=1)
     hard_constraints: list[str]
@@ -148,6 +153,7 @@ class IncidentResolveCommand(StrictModel):
     incident_id: str = Field(min_length=1)
     resolved_by: str = Field(min_length=1)
     resolution_summary: str = Field(min_length=1)
+    followup_action: IncidentFollowupAction = IncidentFollowupAction.RESTORE_ONLY
     idempotency_key: str = Field(min_length=1)
 
 

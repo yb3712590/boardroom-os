@@ -284,13 +284,17 @@ def _incident_resolve_payload(
     resolved_by: str = "emp_ops_1",
     resolution_summary: str = "Operator confirmed mitigation and reopened dispatch on the node.",
     idempotency_key: str | None = None,
+    followup_action: str | None = None,
 ) -> dict:
-    return {
+    payload = {
         "incident_id": incident_id,
         "resolved_by": resolved_by,
         "resolution_summary": resolution_summary,
         "idempotency_key": idempotency_key or f"incident-resolve:{incident_id}",
     }
+    if followup_action is not None:
+        payload["followup_action"] = followup_action
+    return payload
 
 
 def _create_and_lease_ticket(
@@ -1165,8 +1169,82 @@ def test_incident_resolve_closes_breaker_and_removes_open_incident_from_dashboar
     assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["closed_at"] is not None
     assert incident_response.json()["data"]["incident"]["payload"]["resolved_by"] == "emp_ops_1"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "RESTORE_ONLY"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] is None
     assert duplicate_response.status_code == 200
     assert duplicate_response.json()["status"] == "DUPLICATE"
+
+
+def test_incident_resolve_can_restore_and_retry_latest_timeout_in_one_command(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=3)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:resolve-retry-first"),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:resolve-retry-second"),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+    retry_scheduled_before = repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED)
+
+    set_ticket_time("2026-03-28T11:20:00+08:00")
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key="incident-resolve:restore-and-retry",
+            followup_action="RESTORE_AND_RETRY_LATEST_TIMEOUT",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    latest_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    latest_ticket = repository.get_current_ticket_projection(latest_ticket_id)
+
+    set_ticket_time("2026-03-28T11:21:00+08:00")
+    tick_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:resolve-retry-third"),
+    )
+    leased_ticket = repository.get_current_ticket_projection(latest_ticket_id)
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert latest_ticket_id not in {"tkt_visual_001", second_ticket_id}
+    assert latest_ticket["status"] == TICKET_STATUS_PENDING
+    assert latest_ticket["retry_count"] == 2
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == retry_scheduled_before + 1
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+    )
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == latest_ticket_id
+    assert tick_response.status_code == 200
+    assert tick_response.json()["status"] == "ACCEPTED"
+    assert leased_ticket["status"] == TICKET_STATUS_LEASED
 
 
 def test_incident_resolve_reopens_scheduler_dispatch_for_same_node(client, set_ticket_time):
@@ -1281,6 +1359,189 @@ def test_incident_resolve_rejects_missing_or_closed_incidents(client, set_ticket
     assert first_response.json()["status"] == "ACCEPTED"
     assert second_response.status_code == 200
     assert second_response.json()["status"] == "REJECTED"
+
+
+def test_incident_resolve_restore_and_retry_rejects_when_retry_budget_is_exhausted(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=1)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:budget-first"),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:budget-second"),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    set_ticket_time("2026-03-28T11:20:00+08:00")
+    response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key="incident-resolve:budget-exhausted",
+            followup_action="RESTORE_AND_RETRY_LATEST_TIMEOUT",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "retry budget" in response.json()["reason"].lower()
+    assert incident_response.json()["data"]["incident"]["status"] == "OPEN"
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 1
+
+
+def test_incident_resolve_restore_and_retry_rejects_when_source_ticket_spec_is_missing(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:missing-spec-first"),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:missing-spec-second"),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM events
+            WHERE event_type = 'TICKET_CREATED' AND json_extract(payload_json, '$.ticket_id') = ?
+            """,
+            (second_ticket_id,),
+        )
+
+    set_ticket_time("2026-03-28T11:20:00+08:00")
+    response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key="incident-resolve:missing-spec",
+            followup_action="RESTORE_AND_RETRY_LATEST_TIMEOUT",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "created spec" in response.json()["reason"].lower()
+
+
+def test_incident_resolve_restore_and_retry_rejects_when_latest_terminal_event_is_not_timeout(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:not-timeout-first"),
+    )
+
+    repository = client.app.state.repository
+    second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_ticket_id),
+    )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:not-timeout-second"),
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+    ][0]
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_FAILED,
+            actor_type="system",
+            actor_id="test",
+            workflow_id="wf_seed",
+            idempotency_key="test:not-timeout-terminal",
+            causation_id="cmd_test_not_timeout",
+            correlation_id="wf_seed",
+            payload={
+                "ticket_id": second_ticket_id,
+                "node_id": "node_homepage_visual",
+                "failure_kind": "RUNTIME_ERROR",
+                "failure_message": "Injected non-timeout terminal event for guard coverage.",
+                "failure_detail": {},
+                "failure_fingerprint": "test-not-timeout",
+            },
+            occurred_at=set_ticket_time("2026-03-28T11:19:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key="incident-resolve:not-timeout",
+            followup_action="RESTORE_AND_RETRY_LATEST_TIMEOUT",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "latest terminal" in response.json()["reason"].lower()
 
 
 def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(client, set_ticket_time):

@@ -46,7 +46,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
 - dashboard / inbox incident and circuit-breaker counts are now backed by real projections instead of fixed zeros
 - repeated runtime timeouts now open a minimal incident and circuit breaker on the affected node and block further automatic dispatch on that node
-- `POST /api/v1/commands/incident-resolve` now provides the minimal manual recovery path: it closes the circuit breaker and closes the incident in one step, after which new tickets on that node can be dispatched again without creating an automatic retry
+- `POST /api/v1/commands/incident-resolve` now provides a controlled manual recovery path: by default it still only closes the circuit breaker and the incident, but an explicit `RESTORE_AND_RETRY_LATEST_TIMEOUT` follow-up can reopen the node and create one bounded retry for the latest timeout ticket in the same transaction
 - independent scheduler runner via `python -m app.scheduler_runner`
 - runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
 - FastAPI can now also host an optional in-process background scheduler loop behind an explicit env flag; it stays off by default so app startup behavior does not change unless requested
