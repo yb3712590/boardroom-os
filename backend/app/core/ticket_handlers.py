@@ -8,6 +8,7 @@ from typing import Any
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
+    IncidentResolveCommand,
     SchedulerWorkerCandidate,
     SchedulerTickCommand,
     TicketCompletedCommand,
@@ -18,12 +19,15 @@ from app.contracts.commands import (
     TicketStartCommand,
 )
 from app.core.constants import (
+    CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_LEASE_TIMEOUT_SEC,
     DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER,
     DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER,
     DEFAULT_TIMEOUT_REPEAT_THRESHOLD,
+    EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_OPENED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
@@ -33,6 +37,7 @@ from app.core.constants import (
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
     EVENT_TICKET_TIMED_OUT,
+    INCIDENT_STATUS_CLOSED,
     INCIDENT_STATUS_OPEN,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     NODE_STATUS_EXECUTING,
@@ -99,6 +104,41 @@ def _scheduler_duplicate_ack(
         received_at=received_at,
         reason="An identical scheduler-tick command was already accepted.",
         causation_hint="scheduler:tick",
+    )
+
+
+def _incident_duplicate_ack(
+    *,
+    command_id: str,
+    idempotency_key: str,
+    received_at: datetime,
+    incident_id: str,
+) -> CommandAckEnvelope:
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=idempotency_key,
+        status=CommandAckStatus.DUPLICATE,
+        received_at=received_at,
+        reason="An identical incident-resolve command was already accepted.",
+        causation_hint=f"incident:{incident_id}",
+    )
+
+
+def _incident_rejected_ack(
+    *,
+    command_id: str,
+    idempotency_key: str,
+    received_at: datetime,
+    incident_id: str,
+    reason: str,
+) -> CommandAckEnvelope:
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=idempotency_key,
+        status=CommandAckStatus.REJECTED,
+        received_at=received_at,
+        reason=reason,
+        causation_hint=f"incident:{incident_id}",
     )
 
 
@@ -849,6 +889,119 @@ def run_scheduler_tick(
         received_at=received_at,
         reason=None,
         causation_hint="scheduler:tick",
+    )
+
+
+def handle_incident_resolve(
+    repository: ControlPlaneRepository,
+    payload: IncidentResolveCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _incident_duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                incident_id=payload.incident_id,
+            )
+
+        incident = repository.get_incident_projection(payload.incident_id, connection=connection)
+        if incident is None:
+            return _incident_rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                incident_id=payload.incident_id,
+                reason=f"Incident {payload.incident_id} does not exist.",
+            )
+        if incident["status"] != INCIDENT_STATUS_OPEN:
+            return _incident_rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                incident_id=payload.incident_id,
+                reason=f"Incident {payload.incident_id} is already closed.",
+            )
+        if incident.get("circuit_breaker_state") != CIRCUIT_BREAKER_STATE_OPEN:
+            return _incident_rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                incident_id=payload.incident_id,
+                reason=(
+                    f"Incident {payload.incident_id} cannot be resolved because its circuit breaker "
+                    "is not OPEN."
+                ),
+            )
+
+        workflow_id = incident["workflow_id"]
+        resolution_payload = {
+            "incident_id": payload.incident_id,
+            "node_id": incident.get("node_id"),
+            "ticket_id": incident.get("ticket_id"),
+            "resolved_by": payload.resolved_by,
+            "resolution_summary": payload.resolution_summary,
+        }
+
+        breaker_closed_event = repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_CLOSED,
+            actor_type="operator",
+            actor_id=payload.resolved_by,
+            workflow_id=workflow_id,
+            idempotency_key=f"{payload.idempotency_key}:breaker-closed",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                **resolution_payload,
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_CLOSED,
+            },
+            occurred_at=received_at,
+        )
+        if breaker_closed_event is None:
+            return _incident_duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                incident_id=payload.incident_id,
+            )
+
+        incident_closed_event = repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_CLOSED,
+            actor_type="operator",
+            actor_id=payload.resolved_by,
+            workflow_id=workflow_id,
+            idempotency_key=payload.idempotency_key,
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                **resolution_payload,
+                "status": INCIDENT_STATUS_CLOSED,
+            },
+            occurred_at=received_at,
+        )
+        if incident_closed_event is None:
+            return _incident_duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                incident_id=payload.incident_id,
+            )
+
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"incident:{payload.incident_id}",
     )
 
 

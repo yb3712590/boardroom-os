@@ -6,6 +6,7 @@ from app.contracts.commands import (
     BoardApproveCommand,
     BoardRejectCommand,
     CommandAckEnvelope,
+    IncidentResolveCommand,
     ModifyConstraintsCommand,
     ProjectInitCommand,
     SchedulerTickCommand,
@@ -24,6 +25,7 @@ from app.core.approval_handlers import (
 )
 from app.core.command_handlers import handle_project_init
 from app.core.ticket_handlers import (
+    handle_incident_resolve,
     handle_scheduler_tick,
     handle_ticket_completed,
     handle_ticket_create,
@@ -84,6 +86,12 @@ def ticket_complete(request: Request, payload: TicketCompletedCommand) -> Comman
 def scheduler_tick(request: Request, payload: SchedulerTickCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_scheduler_tick(repository, payload)
+
+
+@router.post("/incident-resolve", response_model=CommandAckEnvelope)
+def incident_resolve(request: Request, payload: IncidentResolveCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_incident_resolve(repository, payload)
 
 
 @router.post("/board-approve", response_model=CommandAckEnvelope)

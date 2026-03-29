@@ -790,7 +790,8 @@ Current minimal implementation status:
 - repeated `TIMEOUT_SLA_EXCEEDED` and `HEARTBEAT_TIMEOUT` on the same `workflow_id + node_id` retry chain can open the breaker
 - timeout-triggered retry create may widen both total timeout and lease / heartbeat window using bounded backoff
 - the breaker currently blocks automatic dispatch on that node only
-- close / restore flow is intentionally deferred to a later slice
+- minimal manual restore is now implemented via `CIRCUIT_BREAKER_CLOSED` followed by `INCIDENT_CLOSED`
+- close / restore still does not imply automatic retry creation or automatic incident closure after later success
 
 ## 14.3 Failure Snapshot Should Include
 

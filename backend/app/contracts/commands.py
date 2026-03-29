@@ -144,6 +144,13 @@ class SchedulerTickCommand(StrictModel):
     idempotency_key: str = Field(min_length=1)
 
 
+class IncidentResolveCommand(StrictModel):
+    incident_id: str = Field(min_length=1)
+    resolved_by: str = Field(min_length=1)
+    resolution_summary: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
 class TicketReviewOption(StrictModel):
     option_id: str = Field(min_length=1)
     label: str = Field(min_length=1)

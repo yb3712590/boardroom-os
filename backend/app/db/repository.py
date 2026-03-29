@@ -11,7 +11,9 @@ from typing import Any
 from app.contracts.runtime import CompileManifest, CompiledContextBundle
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
+    CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
+    EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_COMPLETED,
@@ -19,6 +21,7 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_COMPLETED,
@@ -1324,7 +1327,12 @@ class ControlPlaneRepository:
             EVENT_TICKET_TIMED_OUT,
         }:
             return "ticket"
-        if event_type in {EVENT_INCIDENT_OPENED, EVENT_CIRCUIT_BREAKER_OPENED}:
+        if event_type in {
+            EVENT_INCIDENT_OPENED,
+            EVENT_INCIDENT_CLOSED,
+            EVENT_CIRCUIT_BREAKER_OPENED,
+            EVENT_CIRCUIT_BREAKER_CLOSED,
+        }:
             return "system"
         if event_type in {
             EVENT_BOARD_REVIEW_REQUIRED,
@@ -1345,6 +1353,8 @@ class ControlPlaneRepository:
             EVENT_TICKET_STARTED,
             EVENT_TICKET_COMPLETED,
             EVENT_BOARD_REVIEW_APPROVED,
+            EVENT_INCIDENT_CLOSED,
+            EVENT_CIRCUIT_BREAKER_CLOSED,
         }:
             return "info"
         if event_type in {
@@ -1382,8 +1392,12 @@ class ControlPlaneRepository:
             return f"TICKET_RETRY_SCHEDULED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_INCIDENT_OPENED:
             return f"INCIDENT_OPENED for {event.get('incident_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_INCIDENT_CLOSED:
+            return f"INCIDENT_CLOSED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_CIRCUIT_BREAKER_OPENED:
             return f"CIRCUIT_BREAKER_OPENED for {event.get('incident_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_CIRCUIT_BREAKER_CLOSED:
+            return f"CIRCUIT_BREAKER_CLOSED for {event.get('incident_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_BOARD_REVIEW_REQUIRED:
             return "BOARD_REVIEW_REQUIRED pending board action"
         if event["event_type"] == EVENT_BOARD_REVIEW_APPROVED:
@@ -1463,12 +1477,26 @@ class ControlPlaneRepository:
                 "refresh_after_ms": 250,
                 "toast": "Timeout incident opened.",
             }
+        if event_type == EVENT_INCIDENT_CLOSED:
+            return {
+                "invalidate": ["dashboard", "inbox", "incidents"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Incident closed.",
+            }
         if event_type == EVENT_CIRCUIT_BREAKER_OPENED:
             return {
                 "invalidate": ["dashboard", "inbox", "incidents"],
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Circuit breaker opened.",
+            }
+        if event_type == EVENT_CIRCUIT_BREAKER_CLOSED:
+            return {
+                "invalidate": ["dashboard", "inbox", "incidents"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Circuit breaker closed.",
             }
         if event_type == EVENT_BOARD_REVIEW_REQUIRED:
             return {

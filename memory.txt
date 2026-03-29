@@ -199,6 +199,60 @@
 - The accepted form is not a "rude auditor who yells", but a structured adversarial review mechanism.
 - Checker should be modeled as skeptical, evidence-driven, and defect-seeking rather than emotional or high-noise.
 
+## 2026-03-29T06:58:00+08:00
+
+### Session Context
+- User asked to continue incremental development inside the existing Boardroom OS repo without rebuilding any scaffold.
+- This slice was constrained to the `运行时治理` boundary and specifically targeted the missing minimal breaker restore / incident close path.
+
+### Boundary Chosen
+- Single boundary for this round: minimal manual recovery for timeout-governance incidents.
+- The chosen policy was the most conservative one-step path:
+  - operator calls one command
+  - runtime closes the circuit breaker
+  - runtime closes the incident
+- This slice intentionally does not add auto-retry, auto-close-after-success, or broader recovery state machines.
+
+### What Landed
+- Added `POST /api/v1/commands/incident-resolve`.
+- Added runtime governance events:
+  - `CIRCUIT_BREAKER_CLOSED`
+  - `INCIDENT_CLOSED`
+- Added closed-state constants for incident and breaker projection replay.
+- Reducer now replays breaker-close and incident-close events so incident detail can show:
+  - `status = CLOSED`
+  - `circuit_breaker_state = CLOSED`
+  - `closed_at`
+  - merged resolution metadata in incident payload
+- Event stream / preview / UI hints now surface the close events, so frontend consumers can observe recovery honestly.
+- Reopening dispatch is now real:
+  - once an incident is resolved, the existing scheduler breaker guard no longer blocks the same node
+  - later explicitly created `PENDING` tickets on that node can be leased again
+
+### Tests Added
+- API coverage for:
+  - successful `incident-resolve`
+  - duplicate `incident-resolve`
+  - reject missing incident
+  - reject already closed incident
+  - incident detail / dashboard / inbox updates after close
+  - scheduler dispatch reopening on the same node after close
+  - close events appearing in the event stream
+- Reducer coverage for:
+  - `INCIDENT_OPENED -> CIRCUIT_BREAKER_OPENED -> CIRCUIT_BREAKER_CLOSED -> INCIDENT_CLOSED`
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `boardroom-data-contracts.md`
+- `message-bus-design.md`
+- `memory.txt`
+
+### Still Not Done
+- automatic retry creation after manual restore
+- automatic incident close after a later successful ticket
+- richer recovery workflows beyond the one-step manual operator path
+
 ### Design Rules Captured
 - Important artifacts should not go directly from Maker to CEO or mainline; they should first enter an internal review stage.
 - Runtime should automatically create a `REVIEW_TICKET` after qualifying Maker outputs.

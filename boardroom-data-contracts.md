@@ -272,7 +272,33 @@ Purpose:
 }
 ```
 
-This endpoint is intentionally minimal in the current slice. It exposes the active incident record and circuit-breaker state, but not a broader restore / close workflow yet.
+This endpoint remains intentionally minimal in the current slice. It now also reflects the resolved state after the operator calls the minimal restore command, but it still does not expose a broader automated recovery workflow.
+
+## 5.2 Incident Resolve Command
+
+Suggested endpoint:
+
+- `POST /api/v1/commands/incident-resolve`
+
+Purpose:
+
+- let an operator manually reopen dispatch on a fused node
+- close the minimal timeout incident in the same transaction
+
+```json
+{
+  "incident_id": "inc_093",
+  "resolved_by": "emp_ops_1",
+  "resolution_summary": "Operator confirmed mitigation and reopened dispatch on the node.",
+  "idempotency_key": "incident-resolve:inc_093"
+}
+```
+
+Implementation rules:
+
+- command is accepted only when the incident exists, `status=OPEN`, and `circuit_breaker_state=OPEN`
+- accepted command emits `CIRCUIT_BREAKER_CLOSED` first and `INCIDENT_CLOSED` second
+- closing the incident does not auto-create a retry ticket; it only removes the runtime fuse so later explicit tickets can dispatch again
 
 ## 6. Workforce Projection
 

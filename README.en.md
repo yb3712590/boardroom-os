@@ -46,6 +46,7 @@ Implemented code lives in [backend/](backend/). The current backend slice includ
 - dashboard `workforce_summary` backed by real roster and ticket state instead of fixed zeros
 - dashboard / inbox incident and circuit-breaker counts are now backed by real projections instead of fixed zeros
 - repeated runtime timeouts now open a minimal incident and circuit breaker on the affected node and block further automatic dispatch on that node
+- `POST /api/v1/commands/incident-resolve` now provides the minimal manual recovery path: it closes the circuit breaker and closes the incident in one step, after which new tickets on that node can be dispatched again without creating an automatic retry
 - independent scheduler runner via `python -m app.scheduler_runner`
 - runner-driven minimal automatic execution chain from `TICKET_LEASED` to `TICKET_STARTED`, then through a minimal `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` compile-and-persist boundary before `TICKET_COMPLETED` or `TICKET_FAILED`
 - FastAPI can now also host an optional in-process background scheduler loop behind an explicit env flag; it stays off by default so app startup behavior does not change unless requested
@@ -61,7 +62,7 @@ The following are still pending or stubbed:
 
 - full compiled execution package delivery and external worker runtime handoff beyond the in-process minimal compiler boundary
 - employee hire / replace / freeze lifecycle beyond the seeded roster
-- cancel / richer retry policy / incident recovery and close state beyond the current minimal loop
+- cancel / richer retry policy / automatic incident recovery and close state beyond the current minimal loop
 - external AI provider quota / outage pause-and-resume governance
 - Maker-Checker review loop
 - richer Review Room evidence assembly beyond persisted approval packs
@@ -88,6 +89,7 @@ The first backend slice already locks the route names and API boundaries:
 - `POST /api/v1/commands/ticket-fail`
 - `POST /api/v1/commands/ticket-complete`
 - `POST /api/v1/commands/scheduler-tick`
+- `POST /api/v1/commands/incident-resolve`
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`

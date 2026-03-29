@@ -45,6 +45,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/scheduler-tick` 真实落地显式 scheduler tick，默认从持久化 roster 读取 workers，用于总执行超时、heartbeat 超时、timeout retry 轻量退让、重复超时 incident / circuit-breaker 升级与 expired lease dispatch
 - dashboard / inbox 的 incident 与 circuit-breaker 计数已接入真实投影，不再写死为 0
 - repeated runtime timeout 现在会在同一 node 的重试链路上打开最小 incident 与 circuit-breaker，并阻断该 node 的后续自动 dispatch
+- `POST /api/v1/commands/incident-resolve` 已打通最小人工恢复链：一次性关闭 circuit breaker 并关闭 incident；关闭后同 node 的新 ticket 可再次进入调度，但不会自动补发 retry
 - dashboard `workforce_summary` 已接入最小真实投影
 - 独立 scheduler runner：`python -m app.scheduler_runner`
 - runner 已打通最小自动执行链：`TICKET_LEASED` 会在独立 runner 中继续推进到 `TICKET_STARTED`，并先经过最小 `CompileRequest -> CompiledContextBundle / CompileManifest -> CompiledExecutionPackage` 编译与持久化边界，再进入 `TICKET_COMPLETED` 或 `TICKET_FAILED`
@@ -61,7 +62,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 
 - 完整 compiled execution package 交付 / 外部 worker runtime 实际交付（当前仅落地进程内最小编译边界）
 - employee hire / replace / freeze 生命周期
-- 超出当前最小闭环的 cancel / richer retry policy / incident 恢复与关闭状态
+- 超出当前最小闭环的 cancel / richer retry policy / incident 自动恢复与自动关闭状态
 - 外部 AI 提供方配额不足 / 服务波动后的暂停恢复治理
 - Maker-Checker Review Loop
 - Review Room 仍只支持已持久化审批包，不含更完整的证据拼装
@@ -88,6 +89,7 @@ Boardroom OS 是一个基于事件溯源的 Agent 治理框架。
 - `POST /api/v1/commands/ticket-fail`
 - `POST /api/v1/commands/ticket-complete`
 - `POST /api/v1/commands/scheduler-tick`
+- `POST /api/v1/commands/incident-resolve`
 - `POST /api/v1/commands/board-approve`
 - `POST /api/v1/commands/board-reject`
 - `POST /api/v1/commands/modify-constraints`

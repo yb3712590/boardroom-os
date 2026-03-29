@@ -9,6 +9,7 @@ from app.core.constants import (
     BLOCKING_REASON_BOARD_REJECTED,
     BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
     BLOCKING_REASON_MODIFY_CONSTRAINTS,
+    CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_BOARD_GATE_STATE,
     DEFAULT_WORKFLOW_STAGE,
@@ -16,7 +17,9 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_OPENED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
@@ -535,6 +538,39 @@ def rebuild_incident_projections(events: Iterable[dict]) -> list[dict]:
                 "ticket_id": payload.get("ticket_id", projections.get(incident_id, {}).get("ticket_id")),
                 "fingerprint": payload.get("fingerprint", projections.get(incident_id, {}).get("fingerprint")),
                 "circuit_breaker_state": payload.get("circuit_breaker_state", CIRCUIT_BREAKER_STATE_OPEN),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_CIRCUIT_BREAKER_CLOSED:
+            projections[incident_id] = {
+                **projections.get(incident_id, _base_incident_projection(event, payload)),
+                "workflow_id": event["workflow_id"],
+                "node_id": payload.get("node_id", projections.get(incident_id, {}).get("node_id")),
+                "ticket_id": payload.get("ticket_id", projections.get(incident_id, {}).get("ticket_id")),
+                "circuit_breaker_state": payload.get(
+                    "circuit_breaker_state",
+                    CIRCUIT_BREAKER_STATE_CLOSED,
+                ),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_INCIDENT_CLOSED:
+            previous_projection = projections.get(incident_id, _base_incident_projection(event, payload))
+            projections[incident_id] = {
+                **previous_projection,
+                "workflow_id": event["workflow_id"],
+                "node_id": payload.get("node_id", previous_projection.get("node_id")),
+                "ticket_id": payload.get("ticket_id", previous_projection.get("ticket_id")),
+                "status": payload.get("status", "CLOSED"),
+                "closed_at": occurred_at,
+                "payload": {
+                    **(previous_projection.get("payload") or {}),
+                    **payload,
+                },
                 "updated_at": occurred_at,
                 "version": version,
             }
