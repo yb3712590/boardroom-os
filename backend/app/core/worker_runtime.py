@@ -244,6 +244,59 @@ def _validate_bootstrap_claims_against_state(
         )
 
 
+def _validate_bootstrap_issue_against_claims(
+    claims: WorkerBootstrapTokenClaims,
+    *,
+    issue_row: dict[str, Any] | None,
+    at: datetime,
+) -> None:
+    if claims.issue_id is None:
+        return
+    if issue_row is None:
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker bootstrap token is invalid.",
+            reason_code="bootstrap_invalid",
+            worker_id=claims.worker_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
+    if issue_row.get("revoked_at") is not None:
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker bootstrap token has been revoked.",
+            reason_code="bootstrap_revoked",
+            worker_id=claims.worker_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
+    if issue_row.get("expires_at") is None or issue_row["expires_at"] <= at:
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker bootstrap token has expired.",
+            reason_code="bootstrap_expired",
+            worker_id=claims.worker_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
+    if (
+        str(issue_row.get("worker_id") or "") != claims.worker_id
+        or str(issue_row.get("tenant_id") or "") != claims.tenant_id
+        or str(issue_row.get("workspace_id") or "") != claims.workspace_id
+        or int(issue_row.get("credential_version") or 0) != claims.credential_version
+        or issue_row.get("issued_at") != claims.issued_at
+        or issue_row.get("expires_at") != claims.expires_at
+    ):
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker bootstrap token is invalid.",
+            reason_code="bootstrap_invalid",
+            worker_id=claims.worker_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
+
+
 def _validate_session_claims_against_state(
     claims: WorkerSessionTokenClaims | WorkerDeliveryTokenClaims,
     *,
@@ -592,6 +645,16 @@ def _authenticate_worker_bootstrap(
             at=current_time,
             tenant_id=claims.tenant_id,
             workspace_id=claims.workspace_id,
+        )
+        issue_row = (
+            repository.get_worker_bootstrap_issue(claims.issue_id, connection=connection)
+            if claims.issue_id is not None
+            else None
+        )
+        _validate_bootstrap_issue_against_claims(
+            claims,
+            issue_row=issue_row,
+            at=current_time,
         )
         _validate_bootstrap_claims_against_state(claims, state)
         _require_active_worker_projection(repository, claims.worker_id, connection=connection)

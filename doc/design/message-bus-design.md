@@ -472,7 +472,9 @@ Current conservative reality:
 - Each execution-package URL, artifact content/download/preview URL, and command URL now creates its own persisted `worker_delivery_grant`, so one specific URL may be revoked without invalidating sibling URLs from the same session.
 - Those signed delivery URLs are now bound to both one worker session and one persisted delivery grant, so revoking a session or rotating a bootstrap credential invalidates the related active grants without waiting for delivery-token expiry.
 - `BOARDROOM_OS_PUBLIC_BASE_URL` can override the URL base used for these signed delivery links, while `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can be rotated independently from the bootstrap signing secret if desired.
-- Worker-side `tenant_id/workspace_id` binding is now real across workflow projection, ticket projection, bootstrap state, session state, and delivery grants; one worker may now keep multiple bootstrap bindings, while each session and delivery grant remains bound to exactly one scope.
+- Worker-side `tenant_id/workspace_id` binding is now real across workflow projection, ticket projection, bootstrap state, bootstrap issue records, session state, and delivery grants; one worker may now keep multiple bootstrap bindings, while each session and delivery grant remains bound to exactly one scope.
+- New bootstrap tokens now carry `issue_id`; runtime still accepts legacy bootstrap tokens without that claim until they expire naturally, but if `issue_id` is present the backend also requires a matching non-revoked persisted `worker_bootstrap_issue`.
+- Local operator tooling now includes explicit binding lifecycle commands (`create-binding`, enriched `list-bindings`, `cleanup-bindings`) and a projection read model on `GET /api/v1/projections/worker-runtime` for aligned binding/session/grant/rejection inspection.
 - Assignment and delivery validation now reject on four layers:
   - token claim route match
   - persisted bootstrap/session/grant state match
@@ -606,6 +608,9 @@ Current minimal handoff reality:
   - it returns only the current worker's `LEASED` / `EXECUTING` / `CANCEL_REQUESTED` tickets
   - it now also returns `session_id`, `session_token`, and `session_expires_at`
   - each assignment now includes a short-lived signed `execution_package_url` plus `delivery_expires_at`
+- Bootstrap-token validation is now split in two paths:
+  - legacy tokens without `issue_id` still validate only against persisted bootstrap state until they expire
+  - newer tokens with `issue_id` must also match one persisted `worker_bootstrap_issue` row on worker, scope, credential version, issue time, and expiry
 - `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package` now requires a signed `access_token`, returns the latest persisted package for the currently leased worker, compiles it on demand if that attempt has not been persisted yet, and also returns `delivery_expires_at`.
 - Artifact access descriptors inside the delivered package remain reference-first, but their `content_url` / `preview_url` / `download_url` are now rewritten into worker-scoped absolute signed URLs for that request; each of those URLs gets its own persisted delivery grant.
 - `GET /api/v1/worker-runtime/artifacts/by-ref` conservatively reuses any valid artifact token for the same `ticket_id + artifact_ref`; there is no separate metadata-only grant.

@@ -20,6 +20,7 @@ class WorkerBootstrapTokenClaims:
     credential_version: int
     tenant_id: str
     workspace_id: str
+    issue_id: str | None
     issued_at: datetime
     expires_at: datetime
 
@@ -106,6 +107,7 @@ def issue_worker_bootstrap_token(
     credential_version: int,
     tenant_id: str,
     workspace_id: str,
+    issue_id: str | None,
     issued_at: datetime,
     ttl_sec: int,
 ) -> tuple[str, datetime]:
@@ -119,6 +121,8 @@ def issue_worker_bootstrap_token(
         "issued_at": issued_at.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
+    if issue_id:
+        payload["issue_id"] = issue_id
     return _issue_token(signing_secret, payload), expires_at
 
 
@@ -138,6 +142,7 @@ def validate_worker_bootstrap_token(
     credential_version = _parse_int(payload.get("credential_version"), detail=detail)
     tenant_id = str(payload.get("tenant_id") or "")
     workspace_id = str(payload.get("workspace_id") or "")
+    issue_id = str(payload.get("issue_id") or "") or None
     if not worker_id or credential_version <= 0 or not tenant_id or not workspace_id:
         raise HTTPException(status_code=401, detail=detail)
     return WorkerBootstrapTokenClaims(
@@ -146,6 +151,7 @@ def validate_worker_bootstrap_token(
         credential_version=credential_version,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
+        issue_id=issue_id,
         issued_at=issued_at,
         expires_at=expires_at,
     )

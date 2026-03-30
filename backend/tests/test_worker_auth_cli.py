@@ -647,3 +647,220 @@ def test_worker_auth_cli_revoke_delivery_grant_only_revokes_target_url(
     assert output["revoked_count"] == 1
     assert preview_response.status_code == 401
     assert content_response.status_code == 200
+
+
+def test_worker_auth_cli_create_binding_is_idempotent_and_list_bindings_returns_admin_fields(
+    db_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+
+    from app.worker_auth_cli import main
+
+    exit_code = main(
+        [
+            "create-binding",
+            "--worker-id",
+            "emp_frontend_2",
+            "--tenant-id",
+            "tenant_blue",
+            "--workspace-id",
+            "ws_design",
+        ]
+    )
+    created_output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert created_output["tenant_id"] == "tenant_blue"
+    assert created_output["workspace_id"] == "ws_design"
+
+    exit_code = main(
+        [
+            "create-binding",
+            "--worker-id",
+            "emp_frontend_2",
+            "--tenant-id",
+            "tenant_blue",
+            "--workspace-id",
+            "ws_design",
+        ]
+    )
+    second_output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert second_output == created_output
+
+    exit_code = main(["list-bindings", "--worker-id", "emp_frontend_2"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    binding = output["bindings"][0]
+    assert binding["tenant_id"] == "tenant_blue"
+    assert binding["workspace_id"] == "ws_design"
+    assert binding["active_session_count"] == 0
+    assert binding["active_delivery_grant_count"] == 0
+    assert binding["active_ticket_count"] == 0
+    assert binding["latest_bootstrap_issue_at"] is None
+    assert binding["latest_bootstrap_issue_source"] is None
+    assert binding["cleanup_eligible"] is True
+
+
+def test_worker_auth_cli_cleanup_bindings_supports_dry_run_and_removes_only_eligible_scope(
+    db_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+
+    from app.worker_auth_cli import main
+
+    assert (
+        main(
+            [
+                "create-binding",
+                "--worker-id",
+                "emp_frontend_2",
+                "--tenant-id",
+                "tenant_blue",
+                "--workspace-id",
+                "ws_design",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "create-binding",
+                "--worker-id",
+                "emp_frontend_2",
+                "--tenant-id",
+                "tenant_green",
+                "--workspace-id",
+                "ws_ops",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "issue-bootstrap",
+                "--worker-id",
+                "emp_frontend_2",
+                "--tenant-id",
+                "tenant_green",
+                "--workspace-id",
+                "ws_ops",
+                "--ttl-sec",
+                "120",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(["cleanup-bindings", "--worker-id", "emp_frontend_2", "--dry-run"])
+    dry_run_output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert dry_run_output["dry_run"] is True
+    assert dry_run_output["deleted_count"] == 0
+    assert {(
+        binding["tenant_id"],
+        binding["workspace_id"],
+        binding["cleanup_eligible"],
+    ) for binding in dry_run_output["bindings"]} == {
+        ("tenant_blue", "ws_design", True),
+        ("tenant_green", "ws_ops", False),
+    }
+
+    exit_code = main(["cleanup-bindings", "--worker-id", "emp_frontend_2"])
+    cleanup_output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert cleanup_output["dry_run"] is False
+    assert cleanup_output["deleted_count"] == 1
+
+    exit_code = main(["list-bindings", "--worker-id", "emp_frontend_2"])
+    remaining_output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert remaining_output["count"] == 1
+    assert remaining_output["bindings"][0]["tenant_id"] == "tenant_green"
+    assert remaining_output["bindings"][0]["workspace_id"] == "ws_ops"
+
+
+def test_worker_auth_cli_issue_bootstrap_returns_issue_metadata_and_honors_ttl_policy(
+    db_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_DEFAULT_TTL_SEC", "300")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_MAX_TTL_SEC", "600")
+
+    from app.worker_auth_cli import main
+
+    exit_code = main(
+        [
+            "issue-bootstrap",
+            "--worker-id",
+            "emp_frontend_2",
+            "--issued-by",
+            "ops@example.com",
+            "--reason",
+            "Initial runtime bootstrap",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["issue_id"]
+    assert output["issued_via"] == "worker_auth_cli"
+    assert output["issued_by"] == "ops@example.com"
+    assert output["reason"] == "Initial runtime bootstrap"
+
+    assert main(["issue-bootstrap", "--worker-id", "emp_frontend_2", "--ttl-sec", "601"]) == 1
+    assert "max" in capsys.readouterr().err.lower()
+
+
+def test_worker_auth_cli_issue_bootstrap_rejects_tenant_outside_allowlist(
+    db_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS", "tenant_default")
+
+    from app.worker_auth_cli import main
+
+    assert (
+        main(
+            [
+                "create-binding",
+                "--worker-id",
+                "emp_frontend_2",
+                "--tenant-id",
+                "tenant_blue",
+                "--workspace-id",
+                "ws_design",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "issue-bootstrap",
+                "--worker-id",
+                "emp_frontend_2",
+                "--tenant-id",
+                "tenant_blue",
+                "--workspace-id",
+                "ws_design",
+            ]
+        )
+        == 1
+    )
+    assert "allow" in capsys.readouterr().err.lower()

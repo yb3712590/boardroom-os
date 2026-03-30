@@ -110,6 +110,7 @@ class ControlPlaneRepository:
             self._ensure_node_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
             self._ensure_worker_bootstrap_state_shape(connection)
+            self._ensure_worker_bootstrap_issue_shape(connection)
             self._ensure_worker_session_shape(connection)
             self._ensure_worker_delivery_grant_shape(connection)
             self._ensure_worker_auth_rejection_log_shape(connection)
@@ -728,6 +729,109 @@ class ControlPlaneRepository:
             rows = owned_connection.execute(query, tuple(params)).fetchall()
             return [self._convert_worker_bootstrap_state_row(row) for row in rows]
 
+    def list_worker_binding_admin_views(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        worker_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        at: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        if (tenant_id is None) != (workspace_id is None):
+            raise ValueError("tenant_id and workspace_id must be provided together.")
+        active_at = (at or now_local()).isoformat()
+        clauses: list[str] = []
+        params: list[Any] = [
+            active_at,
+            active_at,
+            TICKET_STATUS_LEASED,
+            TICKET_STATUS_EXECUTING,
+            "CANCEL_REQUESTED",
+        ]
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT
+                worker_id,
+                credential_version,
+                tenant_id,
+                workspace_id,
+                revoked_before,
+                rotated_at,
+                updated_at,
+                (
+                    SELECT COUNT(*)
+                    FROM worker_session
+                    WHERE worker_session.worker_id = worker_bootstrap_state.worker_id
+                      AND worker_session.tenant_id = worker_bootstrap_state.tenant_id
+                      AND worker_session.workspace_id = worker_bootstrap_state.workspace_id
+                      AND worker_session.revoked_at IS NULL
+                      AND worker_session.expires_at > ?
+                ) AS active_session_count,
+                (
+                    SELECT COUNT(*)
+                    FROM worker_delivery_grant
+                    WHERE worker_delivery_grant.worker_id = worker_bootstrap_state.worker_id
+                      AND worker_delivery_grant.tenant_id = worker_bootstrap_state.tenant_id
+                      AND worker_delivery_grant.workspace_id = worker_bootstrap_state.workspace_id
+                      AND worker_delivery_grant.revoked_at IS NULL
+                      AND worker_delivery_grant.expires_at > ?
+                ) AS active_delivery_grant_count,
+                (
+                    SELECT COUNT(*)
+                    FROM ticket_projection
+                    WHERE ticket_projection.lease_owner = worker_bootstrap_state.worker_id
+                      AND ticket_projection.tenant_id = worker_bootstrap_state.tenant_id
+                      AND ticket_projection.workspace_id = worker_bootstrap_state.workspace_id
+                      AND ticket_projection.status IN (?, ?, ?)
+                ) AS active_ticket_count,
+                (
+                    SELECT COUNT(*)
+                    FROM worker_bootstrap_issue
+                    WHERE worker_bootstrap_issue.worker_id = worker_bootstrap_state.worker_id
+                      AND worker_bootstrap_issue.tenant_id = worker_bootstrap_state.tenant_id
+                      AND worker_bootstrap_issue.workspace_id = worker_bootstrap_state.workspace_id
+                ) AS bootstrap_issue_count,
+                (
+                    SELECT issued_at
+                    FROM worker_bootstrap_issue
+                    WHERE worker_bootstrap_issue.worker_id = worker_bootstrap_state.worker_id
+                      AND worker_bootstrap_issue.tenant_id = worker_bootstrap_state.tenant_id
+                      AND worker_bootstrap_issue.workspace_id = worker_bootstrap_state.workspace_id
+                    ORDER BY issued_at DESC, issue_id DESC
+                    LIMIT 1
+                ) AS latest_bootstrap_issue_at,
+                (
+                    SELECT issued_via
+                    FROM worker_bootstrap_issue
+                    WHERE worker_bootstrap_issue.worker_id = worker_bootstrap_state.worker_id
+                      AND worker_bootstrap_issue.tenant_id = worker_bootstrap_state.tenant_id
+                      AND worker_bootstrap_issue.workspace_id = worker_bootstrap_state.workspace_id
+                    ORDER BY issued_at DESC, issue_id DESC
+                    LIMIT 1
+                ) AS latest_bootstrap_issue_source
+            FROM worker_bootstrap_state
+            {where_clause}
+            ORDER BY worker_id ASC, tenant_id ASC, workspace_id ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_binding_admin_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_binding_admin_row(row) for row in rows]
+
     def ensure_worker_bootstrap_state(
         self,
         connection: sqlite3.Connection,
@@ -770,6 +874,187 @@ class ControlPlaneRepository:
             raise RuntimeError("Worker bootstrap state could not be created.")
         return created
 
+    def delete_worker_bootstrap_state(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        worker_id: str,
+        tenant_id: str,
+        workspace_id: str,
+    ) -> int:
+        cursor = connection.execute(
+            """
+            DELETE FROM worker_bootstrap_state
+            WHERE worker_id = ? AND tenant_id = ? AND workspace_id = ?
+            """,
+            (worker_id, tenant_id, workspace_id),
+        )
+        return int(cursor.rowcount or 0)
+
+    def get_worker_bootstrap_issue(
+        self,
+        issue_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM worker_bootstrap_issue WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_worker_bootstrap_issue_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM worker_bootstrap_issue WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_worker_bootstrap_issue_row(row)
+
+    def create_worker_bootstrap_issue(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        worker_id: str,
+        tenant_id: str,
+        workspace_id: str,
+        credential_version: int,
+        issued_at: datetime,
+        expires_at: datetime,
+        issued_via: str,
+        issued_by: str | None,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        issue_id = new_prefixed_id("wbissue")
+        connection.execute(
+            """
+            INSERT INTO worker_bootstrap_issue (
+                issue_id,
+                worker_id,
+                tenant_id,
+                workspace_id,
+                credential_version,
+                issued_at,
+                expires_at,
+                issued_via,
+                issued_by,
+                reason,
+                revoked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                issue_id,
+                worker_id,
+                tenant_id,
+                workspace_id,
+                credential_version,
+                issued_at.isoformat(),
+                expires_at.isoformat(),
+                issued_via,
+                issued_by,
+                reason,
+                None,
+            ),
+        )
+        created = self.get_worker_bootstrap_issue(issue_id, connection=connection)
+        if created is None:
+            raise RuntimeError("Worker bootstrap issue could not be created.")
+        return created
+
+    def list_worker_bootstrap_issues(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        issue_id: str | None = None,
+        worker_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        active_only: bool = False,
+        at: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if (tenant_id is None) != (workspace_id is None):
+            raise ValueError("tenant_id and workspace_id must be provided together.")
+        clauses: list[str] = []
+        params: list[Any] = []
+        if issue_id is not None:
+            clauses.append("issue_id = ?")
+            params.append(issue_id)
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        if active_only:
+            active_at = (at or now_local()).isoformat()
+            clauses.append("revoked_at IS NULL")
+            clauses.append("expires_at > ?")
+            params.append(active_at)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
+        query = f"""
+            SELECT * FROM worker_bootstrap_issue
+            {where_clause}
+            ORDER BY issued_at DESC, issue_id DESC
+            {limit_clause}
+        """
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_bootstrap_issue_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_bootstrap_issue_row(row) for row in rows]
+
+    def revoke_worker_bootstrap_issues(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        revoked_at: datetime,
+        issue_id: str | None = None,
+        worker_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> int:
+        if issue_id is None and worker_id is None:
+            raise ValueError("Either issue_id or worker_id is required to revoke bootstrap issues.")
+        if (tenant_id is None) != (workspace_id is None):
+            raise ValueError("tenant_id and workspace_id must be provided together.")
+
+        clauses: list[str] = ["revoked_at IS NULL", "expires_at > ?"]
+        params: list[Any] = [revoked_at.isoformat(), revoked_at.isoformat()]
+        if issue_id is not None:
+            clauses.append("issue_id = ?")
+            params.append(issue_id)
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        cursor = connection.execute(
+            f"""
+            UPDATE worker_bootstrap_issue
+            SET revoked_at = ?
+            WHERE {' AND '.join(clauses)}
+            """,
+            tuple(params),
+        )
+        return int(cursor.rowcount or 0)
+
     def rotate_worker_bootstrap_state(
         self,
         connection: sqlite3.Connection,
@@ -810,6 +1095,13 @@ class ControlPlaneRepository:
             ),
         )
         self.revoke_worker_sessions(
+            connection,
+            worker_id=worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            revoked_at=rotated_at,
+        )
+        self.revoke_worker_bootstrap_issues(
             connection,
             worker_id=worker_id,
             tenant_id=tenant_id,
@@ -868,6 +1160,13 @@ class ControlPlaneRepository:
             ),
         )
         self.revoke_worker_sessions(
+            connection,
+            worker_id=worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            revoked_at=revoked_at,
+        )
+        self.revoke_worker_bootstrap_issues(
             connection,
             worker_id=worker_id,
             tenant_id=tenant_id,
@@ -2428,6 +2727,37 @@ class ControlPlaneRepository:
         converted["credential_version"] = int(converted.get("credential_version") or 0)
         return converted
 
+    def _convert_worker_binding_admin_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = self._convert_worker_bootstrap_state_row(row)
+        converted["active_session_count"] = int(converted.get("active_session_count") or 0)
+        converted["active_delivery_grant_count"] = int(
+            converted.get("active_delivery_grant_count") or 0
+        )
+        converted["active_ticket_count"] = int(converted.get("active_ticket_count") or 0)
+        converted["bootstrap_issue_count"] = int(converted.get("bootstrap_issue_count") or 0)
+        if converted.get("latest_bootstrap_issue_at"):
+            converted["latest_bootstrap_issue_at"] = datetime.fromisoformat(
+                converted["latest_bootstrap_issue_at"]
+            )
+        converted["cleanup_eligible"] = (
+            converted["active_session_count"] == 0
+            and converted["active_delivery_grant_count"] == 0
+            and converted["active_ticket_count"] == 0
+            and (
+                converted.get("revoked_before") is not None
+                or converted["bootstrap_issue_count"] == 0
+            )
+        )
+        return converted
+
+    def _convert_worker_bootstrap_issue_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("issued_at", "expires_at", "revoked_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["credential_version"] = int(converted.get("credential_version") or 0)
+        return converted
+
     def _convert_worker_session_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         for field in ("issued_at", "expires_at", "last_seen_at", "revoked_at"):
@@ -2961,6 +3291,56 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_session_scope ON worker_session(tenant_id, workspace_id)"
+        )
+
+    def _ensure_worker_bootstrap_issue_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_bootstrap_issue (
+                issue_id TEXT PRIMARY KEY,
+                worker_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                credential_version INTEGER NOT NULL,
+                issued_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                issued_via TEXT NOT NULL,
+                issued_by TEXT,
+                reason TEXT,
+                revoked_at TEXT
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(worker_bootstrap_issue)").fetchall()
+        }
+        required_columns = {
+            "issue_id": "TEXT",
+            "worker_id": "TEXT",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
+            "credential_version": "INTEGER",
+            "issued_at": "TEXT",
+            "expires_at": "TEXT",
+            "issued_via": "TEXT",
+            "issued_by": "TEXT",
+            "reason": "TEXT",
+            "revoked_at": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE worker_bootstrap_issue ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_bootstrap_issue_worker_id ON worker_bootstrap_issue(worker_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_bootstrap_issue_scope ON worker_bootstrap_issue(tenant_id, workspace_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_bootstrap_issue_expires_at ON worker_bootstrap_issue(expires_at)"
         )
 
     def _worker_bootstrap_state_requires_rebuild(self, connection: sqlite3.Connection) -> bool:

@@ -41,6 +41,7 @@
 - Delivery grants can be listed and revoked from the local worker auth CLI.
 - Scope binding now exists across workflow, ticket, worker bootstrap and session, delivery grants, and compiled execution package metadata.
 - One worker can now keep multiple bootstrap bindings keyed by `worker_id + tenant_id + workspace_id`; each session and delivery grant still stays bound to exactly one scope.
+- Worker bootstrap issuance is now also persisted as `worker_bootstrap_issue`, so newer bootstrap tokens carry `issue_id` and may be invalidated conservatively without changing the compatibility path for older tokens.
 - Output schema enforcement is currently real for `ui_milestone_review@1` and `consensus_document@1`.
 
 ### Durable Open Gaps
@@ -67,6 +68,9 @@
 - Added tenant and workspace binding across the worker runtime chain and surfaced scope in assignments and execution-package responses.
 - Extended worker bootstrap state from single-binding to multi-binding, so one worker can now hold multiple tenant/workspace scopes without mixing sessions or delivery grants across them.
 - Added `list-bindings` plus explicit-scope CLI safeguards for multi-binding workers, and kept assignment polling strict: known alternate bindings are filtered by scope, while unknown dirty scopes still reject and audit.
+- Added explicit `create-binding`, enriched `list-bindings`, and `cleanup-bindings`, so local operators can now manage multi-scope worker bindings as lifecycle state instead of only minting tokens.
+- Added `GET /api/v1/projections/worker-runtime`, which aligns binding, session, delivery-grant, and auth-rejection reads under one worker/scope filter instead of requiring multiple local CLI calls.
+- Tightened bootstrap issuance governance with persisted `worker_bootstrap_issue` records, `issue_id` claims on new bootstrap tokens, runtime validation for new tokens, and CLI-side default TTL / max TTL / optional tenant allowlist policy.
 - The most recent archived full-suite verification claim was `backend/tests -q` -> `163 passed`.
 
 ### Current Watch-Outs

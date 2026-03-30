@@ -408,3 +408,251 @@ def test_worker_bootstrap_multi_scope_rotation_and_revoke_are_scope_bound(db_pat
     assert alternate_session_after_revoke["revoked_at"] == revoked_at
     assert alternate_grant_after_revoke is not None
     assert alternate_grant_after_revoke["revoked_at"] == revoked_at
+
+
+def test_worker_bootstrap_issue_round_trip_and_scope_revoke(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+    issued_at = datetime.fromisoformat("2026-03-30T10:00:00+08:00")
+    expires_at = datetime.fromisoformat("2026-03-30T12:00:00+08:00")
+    revoked_at = datetime.fromisoformat("2026-03-30T11:00:00+08:00")
+
+    with repository.transaction() as connection:
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            at=issued_at,
+        )
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            at=issued_at,
+        )
+        default_issue = repository.create_worker_bootstrap_issue(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            credential_version=1,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            issued_via="worker_auth_cli",
+            issued_by="ops@example.com",
+            reason="Default scope bootstrap",
+        )
+        alternate_issue = repository.create_worker_bootstrap_issue(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            credential_version=1,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            issued_via="worker_auth_cli",
+            issued_by="ops@example.com",
+            reason="Design scope bootstrap",
+        )
+
+        revoked_count = repository.revoke_worker_bootstrap_issues(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            revoked_at=revoked_at,
+        )
+
+        default_issue_after_revoke = repository.get_worker_bootstrap_issue(
+            str(default_issue["issue_id"]),
+            connection=connection,
+        )
+        alternate_issue_after_revoke = repository.get_worker_bootstrap_issue(
+            str(alternate_issue["issue_id"]),
+            connection=connection,
+        )
+
+    active_issues = repository.list_worker_bootstrap_issues(
+        worker_id="emp_frontend_2",
+        active_only=True,
+        at=issued_at,
+    )
+
+    assert revoked_count == 1
+    assert default_issue_after_revoke is not None
+    assert default_issue_after_revoke["revoked_at"] == revoked_at
+    assert alternate_issue_after_revoke is not None
+    assert alternate_issue_after_revoke["revoked_at"] is None
+    assert len(active_issues) == 1
+    assert active_issues[0]["tenant_id"] == "tenant_blue"
+    assert active_issues[0]["workspace_id"] == "ws_design"
+
+
+def test_list_worker_binding_admin_views_reports_counts_and_cleanup_eligibility(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+    issued_at = datetime.fromisoformat("2026-03-30T10:00:00+08:00")
+    expires_at = datetime.fromisoformat("2026-03-30T12:00:00+08:00")
+
+    with repository.transaction() as connection:
+        busy_binding = repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            at=issued_at,
+        )
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            at=issued_at,
+        )
+        repository.create_worker_bootstrap_issue(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            credential_version=1,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            issued_via="worker_auth_cli",
+            issued_by="ops@example.com",
+            reason="Default scope bootstrap",
+        )
+        session = repository.create_worker_session(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            issued_at=issued_at,
+            expires_at=expires_at,
+            credential_version=int(busy_binding["credential_version"]),
+        )
+        repository.create_worker_delivery_grant(
+            connection,
+            scope="execution_package",
+            worker_id="emp_frontend_2",
+            session_id=str(session["session_id"]),
+            credential_version=int(busy_binding["credential_version"]),
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            ticket_id="tkt_default",
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+        connection.execute(
+            """
+            INSERT INTO workflow_projection (
+                workflow_id,
+                title,
+                north_star_goal,
+                current_stage,
+                status,
+                board_gate_state,
+                budget_total,
+                budget_used,
+                deadline_at,
+                started_at,
+                updated_at,
+                version,
+                tenant_id,
+                workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "wf_worker_admin",
+                "Worker Admin",
+                "Track worker admin state",
+                "EXECUTION",
+                "EXECUTING",
+                "UNREQUESTED",
+                10,
+                0,
+                None,
+                issued_at.isoformat(),
+                issued_at.isoformat(),
+                1,
+                "tenant_default",
+                "ws_default",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO ticket_projection (
+                ticket_id,
+                workflow_id,
+                node_id,
+                status,
+                lease_owner,
+                lease_expires_at,
+                started_at,
+                last_heartbeat_at,
+                heartbeat_expires_at,
+                heartbeat_timeout_sec,
+                retry_count,
+                retry_budget,
+                timeout_sla_sec,
+                priority,
+                last_failure_kind,
+                last_failure_message,
+                last_failure_fingerprint,
+                blocking_reason_code,
+                updated_at,
+                version,
+                tenant_id,
+                workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "tkt_worker_admin",
+                "wf_worker_admin",
+                "node_worker_admin",
+                "LEASED",
+                "emp_frontend_2",
+                expires_at.isoformat(),
+                None,
+                None,
+                None,
+                600,
+                0,
+                1,
+                1800,
+                "high",
+                None,
+                None,
+                None,
+                None,
+                issued_at.isoformat(),
+                1,
+                "tenant_default",
+                "ws_default",
+            ),
+        )
+
+    bindings = repository.list_worker_binding_admin_views(
+        worker_id="emp_frontend_2",
+        at=issued_at,
+    )
+
+    assert len(bindings) == 2
+    default_binding = next(
+        binding for binding in bindings if binding["tenant_id"] == "tenant_default"
+    )
+    assert default_binding["active_session_count"] == 1
+    assert default_binding["active_delivery_grant_count"] == 1
+    assert default_binding["active_ticket_count"] == 1
+    assert default_binding["latest_bootstrap_issue_source"] == "worker_auth_cli"
+    assert default_binding["latest_bootstrap_issue_at"] == issued_at
+    assert default_binding["cleanup_eligible"] is False
+
+    design_binding = next(binding for binding in bindings if binding["tenant_id"] == "tenant_blue")
+    assert design_binding["active_session_count"] == 0
+    assert design_binding["active_delivery_grant_count"] == 0
+    assert design_binding["active_ticket_count"] == 0
+    assert design_binding["latest_bootstrap_issue_at"] is None
+    assert design_binding["latest_bootstrap_issue_source"] is None
+    assert design_binding["cleanup_eligible"] is True

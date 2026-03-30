@@ -200,3 +200,93 @@ class IncidentDetailProjectionData(StrictModel):
 
 class IncidentDetailProjectionEnvelope(ProjectionEnvelopeBase):
     data: IncidentDetailProjectionData
+
+
+class WorkerRuntimeProjectionSummary(StrictModel):
+    binding_count: int
+    cleanup_eligible_binding_count: int
+    active_session_count: int
+    active_delivery_grant_count: int
+    recent_rejection_count: int
+
+
+class WorkerRuntimeProjectionFilters(StrictModel):
+    worker_id: str | None = None
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+    active_only: bool = False
+    rejection_limit: int
+    grant_limit: int
+
+
+class WorkerBindingAdminProjection(StrictModel):
+    worker_id: str
+    credential_version: int
+    tenant_id: str
+    workspace_id: str
+    revoked_before: datetime | None = None
+    rotated_at: datetime | None = None
+    updated_at: datetime
+    active_session_count: int
+    active_delivery_grant_count: int
+    active_ticket_count: int
+    latest_bootstrap_issue_at: datetime | None = None
+    latest_bootstrap_issue_source: str | None = None
+    cleanup_eligible: bool
+
+
+class WorkerSessionAdminProjection(StrictModel):
+    session_id: str
+    worker_id: str
+    tenant_id: str
+    workspace_id: str
+    issued_at: datetime
+    expires_at: datetime
+    last_seen_at: datetime
+    revoked_at: datetime | None = None
+    credential_version: int
+    is_active: bool
+
+
+class WorkerDeliveryGrantAdminProjection(StrictModel):
+    grant_id: str
+    scope: str
+    worker_id: str
+    session_id: str
+    credential_version: int
+    tenant_id: str
+    workspace_id: str
+    ticket_id: str
+    artifact_ref: str | None = None
+    artifact_action: str | None = None
+    command_name: str | None = None
+    issued_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    revoke_reason: str | None = None
+    is_active: bool
+
+
+class WorkerAuthRejectionAdminProjection(StrictModel):
+    occurred_at: datetime
+    route_family: str
+    reason_code: str
+    worker_id: str | None = None
+    session_id: str | None = None
+    grant_id: str | None = None
+    ticket_id: str | None = None
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+
+
+class WorkerRuntimeProjectionData(StrictModel):
+    summary: WorkerRuntimeProjectionSummary
+    filters: WorkerRuntimeProjectionFilters
+    bindings: list[WorkerBindingAdminProjection]
+    sessions: list[WorkerSessionAdminProjection]
+    delivery_grants: list[WorkerDeliveryGrantAdminProjection]
+    auth_rejections: list[WorkerAuthRejectionAdminProjection]
+
+
+class WorkerRuntimeProjectionEnvelope(ProjectionEnvelopeBase):
+    data: WorkerRuntimeProjectionData

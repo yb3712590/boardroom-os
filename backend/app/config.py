@@ -21,6 +21,9 @@ class Settings:
     worker_session_ttl_sec: int
     worker_delivery_token_ttl_sec: int
     worker_delivery_signing_secret: str | None
+    worker_bootstrap_default_ttl_sec: int
+    worker_bootstrap_max_ttl_sec: int
+    worker_bootstrap_allowed_tenant_ids: tuple[str, ...]
     busy_timeout_ms: int = 5000
     recent_event_limit: int = 10
     scheduler_poll_interval_sec: float = 5.0
@@ -91,6 +94,21 @@ def get_settings() -> Settings:
     worker_delivery_signing_secret = os.environ.get(
         "BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET"
     )
+    worker_bootstrap_default_ttl_sec = int(
+        os.environ.get("BOARDROOM_OS_WORKER_BOOTSTRAP_DEFAULT_TTL_SEC", "86400")
+    )
+    worker_bootstrap_max_ttl_sec = int(
+        os.environ.get("BOARDROOM_OS_WORKER_BOOTSTRAP_MAX_TTL_SEC", "604800")
+    )
+    raw_allowed_tenants = os.environ.get("BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS")
+    if raw_allowed_tenants:
+        worker_bootstrap_allowed_tenant_ids = tuple(
+            tenant_id
+            for tenant_id in (item.strip() for item in raw_allowed_tenants.split(","))
+            if tenant_id
+        )
+    else:
+        worker_bootstrap_allowed_tenant_ids = ()
     enable_inprocess_scheduler = _read_bool_env(
         "BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER",
         default=False,
@@ -106,6 +124,9 @@ def get_settings() -> Settings:
         worker_session_ttl_sec=worker_session_ttl_sec,
         worker_delivery_token_ttl_sec=worker_delivery_token_ttl_sec,
         worker_delivery_signing_secret=worker_delivery_signing_secret,
+        worker_bootstrap_default_ttl_sec=worker_bootstrap_default_ttl_sec,
+        worker_bootstrap_max_ttl_sec=worker_bootstrap_max_ttl_sec,
+        worker_bootstrap_allowed_tenant_ids=worker_bootstrap_allowed_tenant_ids,
         busy_timeout_ms=busy_timeout_ms,
         recent_event_limit=recent_event_limit,
         scheduler_poll_interval_sec=scheduler_poll_interval_sec,

@@ -4,9 +4,13 @@
 
 ## Runtime / Backend
 
-- 在已落地的 worker 侧 `tenant_id/workspace_id` 绑定、assignments / delivery 四层校验、CLI scope 查询和拒绝审计日志基础上，继续推进更强多租户远端隔离：
-  - 把当前 CLI 级多 binding 能力继续推进成更清晰的租户管理面和运维面，而不只是本地命令入口
-  - 收紧公开互联网场景下的安全边界，例如更强的 bootstrap 签发治理、独立租户管理面和更细粒度的外网暴露策略
+- 多租户 worker 运维面第一批连续切片已落地：
+  - CLI 现在已有显式 `create-binding`、enriched `list-bindings`、`cleanup-bindings`
+  - `GET /api/v1/projections/worker-runtime` 已能按 worker / scope 统一观察 binding、session、delivery grant 和拒绝日志
+  - 新签发 bootstrap token 已带 `issue_id`，并开始执行默认 TTL / 最大 TTL / 可选租户 allowlist 治理
+- 继续推进更强多租户远端隔离：
+  - 把当前读面和本地 CLI 运维继续推进成更完整的租户管理面，而不只是 operator 级查询 / 清理
+  - 收紧公开互联网场景下的安全边界，例如更强的外网暴露策略、独立租户管理面和更完整的身份层
 - 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
 - 补齐更完整的 provider 路由、多 provider 控制面和恢复策略

@@ -28,7 +28,7 @@ What is already real:
 - a ticket artifacts projection plus strict output-schema validation for `ui_milestone_review@1` and `consensus_document@1`
 - artifact metadata / content / preview endpoints keyed by `artifact_ref`
 - artifact lifecycle commands for delete and cleanup
-- an external worker handoff surface where workers bootstrap with per-worker tokens, refresh per-worker sessions, and then continue through short-lived signed URLs under `/api/v1/worker-runtime/*`, now backed by persisted per-URL delivery grants plus worker-side multi-binding `tenant_id/workspace_id` scope state
+- an external worker handoff surface where workers bootstrap with per-worker tokens, refresh per-worker sessions, and then continue through short-lived signed URLs under `/api/v1/worker-runtime/*`, now backed by persisted per-URL delivery grants, worker-side multi-binding `tenant_id/workspace_id` scope state, and issue-backed bootstrap governance
 
 ## Quick Start
 
@@ -64,7 +64,9 @@ Issue a bootstrap token for one worker:
 cd backend
 source .venv/bin/activate
 python -m app.worker_auth_cli issue-bootstrap --worker-id emp_frontend_2
+python -m app.worker_auth_cli create-binding --worker-id emp_frontend_2 --tenant-id tenant_blue --workspace-id ws_design
 python -m app.worker_auth_cli list-bindings --worker-id emp_frontend_2
+python -m app.worker_auth_cli cleanup-bindings --worker-id emp_frontend_2 --dry-run
 python -m app.worker_auth_cli list-delivery-grants --worker-id emp_frontend_2
 python -m app.worker_auth_cli list-sessions --worker-id emp_frontend_2
 python -m app.worker_auth_cli list-auth-rejections --worker-id emp_frontend_2
@@ -84,16 +86,22 @@ Mode notes:
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` remains the default, and the runner / in-process scheduler still executes leased tickets locally.
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` keeps scheduling and leasing, but stops automatic local `start / execute / result-submit`.
 - Recommended bootstrap flow: issue a worker-specific bootstrap token with `python -m app.worker_auth_cli issue-bootstrap --worker-id <employee_id>`, then call `GET /api/v1/worker-runtime/assignments` with `X-Boardroom-Worker-Bootstrap`.
+- Operators may now create a binding explicitly with `python -m app.worker_auth_cli create-binding --worker-id <employee_id> --tenant-id <tenant_id> --workspace-id <workspace_id>`, then later prune unused bindings with `cleanup-bindings` when they have no active session, delivery grant, or ticket.
 - Worker bootstrap state is now keyed by `worker_id + tenant_id + workspace_id`, so one worker may keep multiple bindings at once; sessions and delivery grants still stay bound to exactly one scope.
 - When a worker already has multiple bindings, `issue-bootstrap`, `rotate-bootstrap`, and `revoke-bootstrap` must receive both `--tenant-id` and `--workspace-id`; single-binding workers still keep the old convenience behavior.
+- `list-bindings` now returns active session / delivery-grant / ticket counts plus latest bootstrap issue metadata and a cleanup-eligible flag for each binding.
 - The assignments response now also returns `tenant_id`, `workspace_id`, `session_id`, `session_token`, and `session_expires_at`; workers can keep polling assignments with `X-Boardroom-Worker-Session` and receive a refreshed session token plus a fresh batch of delivery URLs.
 - Assignment polling now returns only tickets for the current session scope; if the backend finds a ticket owned by that worker under an unknown scope with no matching bootstrap binding, it still rejects and logs the mismatch instead of silently hiding it.
 - The returned execution-package URLs, artifact URLs, and worker command URLs all carry short-lived `access_token` query parameters and are now backed by persisted delivery grants.
 - Delivered execution-package payloads now also expose `tenant_id` and `workspace_id`, while backend authorization still treats persisted worker/session/grant/ticket state as the source of truth.
 - Those signed delivery URLs are claim-bound, session-bound, grant-bound, and ticket/workflow-scope-bound, so revoking one worker session invalidates that session's URLs, one specific URL can be revoked independently through the local CLI, and cross-tenant or cross-workspace mismatches are rejected instead of being silently filtered around.
 - `/api/v1/worker-runtime/tickets/*`, `/api/v1/worker-runtime/artifacts/*`, and `/api/v1/worker-runtime/commands/*` no longer accept the old shared-secret request fallback.
+- `GET /api/v1/projections/worker-runtime` now exposes a scope-aligned operational read model for bindings, sessions, delivery grants, and recent auth rejections.
 - Local operators can inspect and revoke delivery grants through `python -m app.worker_auth_cli list-delivery-grants`, inspect active sessions through `python -m app.worker_auth_cli list-sessions`, and inspect worker auth rejection audit rows through `python -m app.worker_auth_cli list-auth-rejections`.
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` signs bootstrap tokens and falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when omitted.
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_DEFAULT_TTL_SEC` defaults CLI bootstrap issuance when `--ttl-sec` is omitted.
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_MAX_TTL_SEC` rejects oversized CLI bootstrap TTL requests.
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS` optionally limits CLI bootstrap issuance to a comma-separated tenant allowlist.
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` defaults to `86400` and controls assignment-session refresh windows.
 - `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites those delivery URLs for remotely reachable workers; if omitted, the backend falls back to the incoming request base URL.
 - `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` defaults to `3600`, and `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when not set.
@@ -115,8 +123,8 @@ Known realities:
 
 - `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
 - Binary uploads currently go through inline base64 in `ticket-result-submit`; there is no multipart, chunked-upload, or object-storage path yet.
-- External worker handoff now supports worker-side multi-binding `tenant_id/workspace_id` scope state across workflow, ticket, bootstrap state, session, and delivery grant, plus four-layer runtime validation and persisted auth-rejection audit rows.
-- Broader multi-tenant administration is still not implemented: workers can now hold multiple bindings, but dedicated tenant-management flows and stronger public-internet hardening beyond the current token/session/grant/ticket-scope checks remain open work.
+- External worker handoff now supports worker-side multi-binding `tenant_id/workspace_id` scope state across workflow, ticket, bootstrap state, session, delivery grant, and bootstrap issue records, plus a dedicated operational projection and persisted auth-rejection audit rows.
+- Broader multi-tenant administration is still not implemented: workers can now hold multiple bindings and operators can inspect them more directly, but dedicated tenant-management flows and stronger public-internet hardening beyond the current token/session/grant/ticket-scope checks remain open work.
 
 ## Docs
 

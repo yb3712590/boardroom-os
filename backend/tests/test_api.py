@@ -135,6 +135,7 @@ def _issue_worker_bootstrap_token(
         credential_version=credential_version,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
+        issue_id=None,
         issued_at=datetime.fromisoformat(issued_at),
         ttl_sec=ttl_sec,
     )
@@ -312,6 +313,17 @@ def _list_worker_auth_rejections(client) -> list[dict]:
             """
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+def _bootstrap_worker_execution_package(client, bootstrap_token: str) -> tuple[dict, dict]:
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": bootstrap_token},
+    )
+    assignments_data = assignments_response.json()["data"]
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    return assignments_data, execution_package_response.json()["data"]
 
 
 def _revoke_worker_delivery_grant(
@@ -5214,3 +5226,238 @@ def test_ticket_complete_review_request_emits_required_event(client):
 
     assert client.app.state.repository.count_events_by_type(EVENT_TICKET_COMPLETED) == 1
     assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_REQUIRED) == 1
+
+
+def test_worker_runtime_projection_requires_scope_pair(client):
+    response = client.get("/api/v1/projections/worker-runtime?tenant_id=tenant_default")
+
+    assert response.status_code == 400
+
+
+def test_worker_runtime_projection_returns_scope_aligned_operational_view(
+    client,
+    set_ticket_time,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    from app.worker_auth_cli import main
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_projection_scope",
+        ticket_id="tkt_projection_scope",
+        node_id="node_projection_scope",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_projection_scope",
+        ticket_id="tkt_projection_reject",
+        node_id="node_projection_reject",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    assert (
+        main(
+            [
+                "issue-bootstrap",
+                "--worker-id",
+                "emp_frontend_2",
+                "--tenant-id",
+                "tenant_blue",
+                "--workspace-id",
+                "ws_design",
+                "--ttl-sec",
+                "120",
+            ]
+        )
+        == 0
+    )
+    bootstrap_output = json.loads(capsys.readouterr().out)
+    assignments_data, _ = _bootstrap_worker_execution_package(client, bootstrap_output["bootstrap_token"])
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET workspace_id = ?
+            WHERE ticket_id = ?
+            """,
+            ("ws_other", "tkt_projection_reject"),
+        )
+
+    rejected_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(assignments_data["session_token"]),
+    )
+    assert rejected_response.status_code == 403
+
+    response = client.get(
+        "/api/v1/projections/worker-runtime",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "grant_limit": 20,
+            "rejection_limit": 10,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["summary"]["binding_count"] == 1
+    assert data["summary"]["cleanup_eligible_binding_count"] == 0
+    assert data["summary"]["active_session_count"] == 1
+    assert data["summary"]["active_delivery_grant_count"] > 0
+    assert data["summary"]["recent_rejection_count"] == 1
+    assert data["filters"]["worker_id"] == "emp_frontend_2"
+    assert data["filters"]["tenant_id"] == "tenant_blue"
+    assert data["filters"]["workspace_id"] == "ws_design"
+    assert data["bindings"][0]["tenant_id"] == "tenant_blue"
+    assert data["bindings"][0]["workspace_id"] == "ws_design"
+    assert data["bindings"][0]["active_ticket_count"] == 1
+    assert data["bindings"][0]["active_session_count"] == 1
+    assert data["bindings"][0]["latest_bootstrap_issue_source"] == "worker_auth_cli"
+    assert data["bindings"][0]["cleanup_eligible"] is False
+    assert data["sessions"][0]["is_active"] is True
+    assert all(grant["is_active"] is True for grant in data["delivery_grants"])
+    assert data["auth_rejections"][0]["reason_code"] == "workspace_mismatch"
+    assert data["auth_rejections"][0]["route_family"] == "assignments"
+
+
+def test_worker_runtime_projection_active_only_hides_inactive_sessions_and_grants_but_keeps_binding(
+    client,
+    set_ticket_time,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    from app.worker_auth_cli import main
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_projection_active",
+        ticket_id="tkt_projection_active",
+        node_id="node_projection_active",
+    )
+
+    assert main(["issue-bootstrap", "--worker-id", "emp_frontend_2", "--ttl-sec", "120"]) == 0
+    bootstrap_output = json.loads(capsys.readouterr().out)
+    assignments_data, _ = _bootstrap_worker_execution_package(client, bootstrap_output["bootstrap_token"])
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE worker_session
+            SET expires_at = ?, revoked_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                "2026-03-28T10:01:00+08:00",
+                "2026-03-28T10:01:00+08:00",
+                assignments_data["session_id"],
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE worker_delivery_grant
+            SET expires_at = ?, revoked_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                "2026-03-28T10:01:00+08:00",
+                "2026-03-28T10:01:00+08:00",
+                assignments_data["session_id"],
+            ),
+        )
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    response = client.get(
+        "/api/v1/projections/worker-runtime",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+            "active_only": "true",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["summary"]["binding_count"] == 1
+    assert data["summary"]["active_session_count"] == 0
+    assert data["summary"]["active_delivery_grant_count"] == 0
+    assert len(data["bindings"]) == 1
+    assert data["sessions"] == []
+    assert data["delivery_grants"] == []
+
+
+def test_worker_runtime_assignments_reject_revoked_bootstrap_issue_but_accept_legacy_bootstrap_token(
+    client,
+    set_ticket_time,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+
+    from app.worker_auth_cli import main
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_issue_runtime",
+        ticket_id="tkt_issue_runtime",
+        node_id="node_issue_runtime",
+    )
+
+    assert (
+        main(
+            [
+                "issue-bootstrap",
+                "--worker-id",
+                "emp_frontend_2",
+                "--ttl-sec",
+                "120",
+                "--issued-by",
+                "ops@example.com",
+            ]
+        )
+        == 0
+    )
+    bootstrap_output = json.loads(capsys.readouterr().out)
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.revoke_worker_bootstrap_issues(
+            connection,
+            issue_id=bootstrap_output["issue_id"],
+            revoked_at=datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        )
+
+    issue_backed_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": bootstrap_output["bootstrap_token"]},
+    )
+    legacy_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(issued_at="2026-03-28T10:01:00+08:00", ttl_sec=120),
+    )
+
+    assert issue_backed_response.status_code == 401
+    assert legacy_response.status_code == 200

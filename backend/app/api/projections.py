@@ -9,6 +9,7 @@ from app.contracts.projections import (
     ReviewRoomDeveloperInspectorProjectionEnvelope,
     ReviewRoomProjectionEnvelope,
     TicketArtifactsProjectionEnvelope,
+    WorkerRuntimeProjectionEnvelope,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.projections import (
@@ -18,6 +19,7 @@ from app.core.projections import (
     build_review_room_developer_inspector_projection,
     build_review_room_projection,
     build_ticket_artifacts_projection,
+    build_worker_runtime_projection,
 )
 from app.db.repository import ControlPlaneRepository
 
@@ -34,6 +36,33 @@ def get_dashboard(request: Request) -> DashboardProjectionEnvelope:
 def get_inbox(request: Request) -> InboxProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return build_inbox_projection(repository)
+
+
+@router.get("/worker-runtime", response_model=WorkerRuntimeProjectionEnvelope)
+def get_worker_runtime_projection(
+    request: Request,
+    worker_id: str | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    active_only: bool = False,
+    rejection_limit: int = 20,
+    grant_limit: int = 50,
+) -> WorkerRuntimeProjectionEnvelope:
+    if (tenant_id is None) != (workspace_id is None):
+        raise HTTPException(
+            status_code=400,
+            detail="tenant_id and workspace_id must be provided together.",
+        )
+    repository: ControlPlaneRepository = request.app.state.repository
+    return build_worker_runtime_projection(
+        repository,
+        worker_id=worker_id,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        active_only=active_only,
+        rejection_limit=rejection_limit,
+        grant_limit=grant_limit,
+    )
 
 
 @router.get("/tickets/{ticket_id}/artifacts", response_model=TicketArtifactsProjectionEnvelope)

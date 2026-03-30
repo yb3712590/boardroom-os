@@ -23,16 +23,16 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 已支持 review room、board approve/reject/modify constraints
 - 已有独立 `scheduler_runner` 和可选的进程内 scheduler loop
 - 已有最小 artifact store / artifact index，`JSON` / `TEXT` / `MARKDOWN` 与图片 / PDF / 其它中等体量二进制都可通过 `ticket-result-submit` 真实落盘
-- 已有外部 worker handoff 面：worker 先用 per-worker bootstrap token 领取 assignment，拿到可刷新的 session 后，再通过 per-ticket 短时签名 URL 拉取 persisted execution package、读取 artifact、回写 start / heartbeat / result-submit；这些 URL 现在都落成可单独撤销的 delivery grant，并且 worker 侧已经补上可并存多组的 `tenant_id/workspace_id` 绑定
+- 已有外部 worker handoff 面：worker 先用 per-worker bootstrap token 领取 assignment，拿到可刷新的 session 后，再通过 per-ticket 短时签名 URL 拉取 persisted execution package、读取 artifact、回写 start / heartbeat / result-submit；这些 URL 现在都落成可单独撤销的 delivery grant，并且 worker 侧已经补上可并存多组的 `tenant_id/workspace_id` 绑定、可查询的运维读面，以及带 `issue_id` 的 bootstrap 签发记录
 
 当前更像一个最小控制面原型，而不是完整产品。
 
 ## 已实现能力
 
 - 命令面：`project-init`、ticket 生命周期命令、`ticket-result-submit`、`artifact-delete`、`artifact-cleanup`、board 审批命令、`incident-resolve`
-- 投影面：`dashboard`、`inbox`、`incident detail`、`review room`、developer inspector companion、ticket artifacts
+- 投影面：`dashboard`、`inbox`、`incident detail`、`review room`、developer inspector companion、ticket artifacts、`worker-runtime`
 - artifact 读取面：按 `artifact_ref` 的 metadata / content / preview 接口，可供 review、incident 和外部调用复用
-- worker handoff：`BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 下由 scheduler 只负责 dispatch / lease；外部 worker 先用 `python -m app.worker_auth_cli` 签发的 bootstrap token 调 `GET /api/v1/worker-runtime/assignments`，拿到 `session_token` 后继续轮询 assignment，再沿 execution package 中的短时签名 URL 完成 artifact 读取和结构化回写；delivery URL 现在都有持久化 grant，可按单条 URL 撤销
+- worker handoff：`BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 下由 scheduler 只负责 dispatch / lease；外部 worker 先用 `python -m app.worker_auth_cli` 签发带 `issue_id` 的 bootstrap token 调 `GET /api/v1/worker-runtime/assignments`，拿到 `session_token` 后继续轮询 assignment，再沿 execution package 中的短时签名 URL 完成 artifact 读取和结构化回写；delivery URL 现在都有持久化 grant，可按单条 URL 撤销，绑定 / session / grant / 拒绝日志也已补到统一投影读面
 - 运行时治理：重复失败升级、provider 级暂停恢复、协作式取消、`ticket-result-submit` 统一结果入口、artifact 物化 / 索引 / 生命周期治理
 - 输出 schema：已真实注册并严格校验 `ui_milestone_review@1`、`consensus_document@1`
 - 审计能力：事件流、SQLite WAL、最小 compile manifest / context bundle / compiled execution package 持久化
@@ -76,7 +76,9 @@ uvicorn app.main:app --reload
 cd backend
 source .venv/bin/activate
 python -m app.worker_auth_cli issue-bootstrap --worker-id emp_frontend_2
+python -m app.worker_auth_cli create-binding --worker-id emp_frontend_2 --tenant-id tenant_blue --workspace-id ws_design
 python -m app.worker_auth_cli list-bindings --worker-id emp_frontend_2
+python -m app.worker_auth_cli cleanup-bindings --worker-id emp_frontend_2 --dry-run
 python -m app.worker_auth_cli list-delivery-grants --worker-id emp_frontend_2
 python -m app.worker_auth_cli list-sessions --worker-id emp_frontend_2
 python -m app.worker_auth_cli list-auth-rejections --worker-id emp_frontend_2
@@ -96,15 +98,21 @@ python -m app.scheduler_runner
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` 是默认值，runner / in-process scheduler 会在 `LEASED` 后直接执行当前最小 runtime。
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 时，runner / in-process scheduler 只负责 dispatch / lease，不再自动 `start / execute / result-submit`。
 - 推荐的外部 worker bootstrap 路径是：先用 `python -m app.worker_auth_cli issue-bootstrap --worker-id <employee_id>` 生成 bootstrap token，再携带 `X-Boardroom-Worker-Bootstrap` 调 `GET /api/v1/worker-runtime/assignments`；响应会返回 `session_id`、`session_token`、`session_expires_at` 和 assignment 列表。
+- 现在也可以先用 `python -m app.worker_auth_cli create-binding --worker-id <employee_id> --tenant-id <tenant_id> --workspace-id <workspace_id>` 显式建立 binding；还没真正签发过 bootstrap、且没有活跃 session / grant / ticket 的 binding，可以再用 `cleanup-bindings` 清理掉。
 - worker 的 bootstrap state 现在按 `worker_id + tenant_id + workspace_id` 形成可并存多组 binding；session 和 delivery grant 仍然各自只绑定到其中一组 scope。
 - 当一个 worker 已经有多组 binding 时，`issue-bootstrap`、`rotate-bootstrap`、`revoke-bootstrap` 必须显式传 `--tenant-id` 和 `--workspace-id`；单 binding worker 仍可省略，沿用现有绑定。
+- `list-bindings` 现在返回每个 binding 的活跃 session 数、活跃 grant 数、活跃 ticket 数、最近一次 bootstrap 签发时间 / 来源，以及当前是否可清理，方便本地运维直接判断脏 binding。
 - `GET /api/v1/worker-runtime/assignments` 现在也会返回 `tenant_id`、`workspace_id`，交付给 worker 的 execution package 响应也会带上同样的 scope 字段，便于远端排障和审计。
 - worker 拿到 `session_token` 后，可以继续用 `X-Boardroom-Worker-Session` 轮询 `GET /api/v1/worker-runtime/assignments`；同一个 session 会刷新过期时间，并重新返回一批新的 per-ticket 短时签名 URL。
 - assignment 现在会按当前 session 的 scope 只返回匹配的 ticket；如果发现当前 worker 名下存在一个没有对应 binding 的脏 scope ticket，仍会拒绝并写入审计日志，而不是静默吞掉。
 - execution package URL、artifact URL 和 command URL 都继续使用 `access_token` 短时签名参数；这些 token 现在同时绑定到 token claim、持久化 grant、session/bootstrap state，以及 ticket/workflow 的 `tenant_id/workspace_id` 真值，所以既能在 session 级联失效，也能按单条 URL 单独撤销，并且跨租户或跨工作区会直接拒绝。
 - `/api/v1/worker-runtime/tickets/*`、`/api/v1/worker-runtime/artifacts/*` 和 `/api/v1/worker-runtime/commands/*` 现在只接受 signed URL，不再接受旧的共享密钥请求 fallback。
+- 现在还可以用 `GET /api/v1/projections/worker-runtime` 一次看到 binding、session、delivery grant 和最近拒绝日志的同 scope 观察面，不再只能靠本地 CLI 零散排查。
 - 本地运维可通过 `python -m app.worker_auth_cli list-delivery-grants` 查看 grant，通过 `python -m app.worker_auth_cli list-sessions` 查看活跃 session，通过 `python -m app.worker_auth_cli list-auth-rejections` 查看最近被拒的 worker 请求，再用 `python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>` 撤销某一条具体 URL。
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` 用来签发 bootstrap token；未设置时会回退到 `BOARDROOM_OS_WORKER_SHARED_SECRET`。
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_DEFAULT_TTL_SEC` 默认是 `86400` 秒；CLI 未显式传 `--ttl-sec` 时会用这个默认值。
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_MAX_TTL_SEC` 默认是 `604800` 秒；CLI 显式传入更大的 `--ttl-sec` 会直接拒绝。
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS` 可选，用逗号分隔；一旦设置，CLI 只允许对名单内租户签发 bootstrap。
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` 默认是 `86400` 秒，用来控制 `session_token` 的刷新窗口。
 - `BOARDROOM_OS_PUBLIC_BASE_URL` 用来把这些 worker 交付 URL 改写成外部 worker 真正可达的公开基座；未设置时回退到请求里的 `base_url`。
 - `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` 默认是 `3600` 秒，`BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` 未设置时会回退到 `BOARDROOM_OS_WORKER_SHARED_SECRET`。
@@ -126,8 +134,9 @@ python -m pytest tests -q
 
 - 全新环境下 `pip install -e .[dev]` 可能因为 `backend/` 的平铺布局触发 `setuptools` 打包识别问题，本轮没有修改这一点。
 - 当前二进制上传仍走 `ticket-result-submit` 内联 `base64`，没有 multipart / 分片 / 对象存储链路，适合中等体量文件，不适合超大文件。
-- 当前外部 worker handoff 已经支持 per-worker bootstrap token、可刷新 session、bootstrap rotate/revoke、按 session 失效的 signed delivery、独立 delivery grant / 单 URL 撤销，以及 worker 侧多组 `tenant_id/workspace_id` binding 与四层校验。
-- 仍未完成的是更完整的多租户管理面：虽然一个 worker 现在可以并存多组 binding，但公开互联网场景下更细粒度的安全边界、租户管理面和更强签发治理还要继续收紧。
+- 当前外部 worker handoff 已经支持 per-worker bootstrap token、可刷新 session、bootstrap rotate/revoke、按 session 失效的 signed delivery、独立 delivery grant / 单 URL 撤销、binding 生命周期运维动作、统一 `worker-runtime` 投影观察面，以及 worker 侧多组 `tenant_id/workspace_id` binding 与四层校验。
+- 这轮对 bootstrap 又补了一层保守治理：新签发 token 会带 `issue_id` 并校验签发记录，CLI 也开始执行默认 TTL / 最大 TTL / 可选租户 allowlist 约束；但这还不是完整的公网身份体系。
+- 仍未完成的是更完整的多租户管理面：虽然一个 worker 现在可以并存多组 binding，也已有基础运维读面，但公开互联网场景下更细粒度的安全边界、独立租户管理面和更强外网暴露策略还要继续收紧。
 
 ## 文档入口
 

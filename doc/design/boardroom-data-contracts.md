@@ -1235,11 +1235,19 @@ Behavior rules:
   - per-ticket `execution_package_url`
   - per-ticket `delivery_expires_at`
 - `GET /api/v1/worker-runtime/assignments` now accepts only `X-Boardroom-Worker-Bootstrap` or `X-Boardroom-Worker-Session`; `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` are no longer accepted on worker-runtime routes
-- `python -m app.worker_auth_cli list-bindings --worker-id ...` returns the worker's persisted bootstrap bindings
+- `python -m app.worker_auth_cli create-binding --worker-id ... --tenant-id ... --workspace-id ...` explicitly creates one persisted bootstrap binding without minting a token
+- `python -m app.worker_auth_cli list-bindings --worker-id ...` returns the worker's persisted bootstrap bindings plus active session / grant / ticket counts, latest bootstrap issue metadata, and `cleanup_eligible`
+- `python -m app.worker_auth_cli cleanup-bindings --worker-id ... [--tenant-id ... --workspace-id ...] [--dry-run]` removes only bindings that have no active session, no active grant, no active ticket, and are either revoked or never issued a bootstrap token
 - if a worker already has multiple bootstrap bindings, `issue-bootstrap`, `rotate-bootstrap`, and `revoke-bootstrap` require both `--tenant-id` and `--workspace-id`; single-binding workers may still omit them and reuse the only binding
 - bootstrap-token calls create a fresh worker session
 - session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`
 - assignment polling only returns tickets from the current session scope; if the backend encounters a ticket owned by that worker under a scope with no matching bootstrap binding, it still rejects and audits the mismatch instead of silently hiding it
+- `GET /api/v1/projections/worker-runtime` now returns one aligned operational projection for:
+  - matching bindings
+  - matching sessions with `is_active`
+  - matching delivery grants with `is_active`
+  - recent matching auth rejections
+  - summary counts and echoed filters
 - execution-package reads require a signed `access_token`, enforce current lease ownership, and return:
   - `tenant_id`
   - `workspace_id`
@@ -1266,6 +1274,9 @@ Behavior rules:
   - current worker ownership of the ticket plus ticket / workflow `tenant_id/workspace_id` consistency
   - existing artifact access and lifecycle rules
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` signs bootstrap tokens and falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when omitted
+- newer bootstrap tokens now also carry `issue_id`; runtime requires that claim to match one persisted `worker_bootstrap_issue`, while older bootstrap tokens without `issue_id` stay on the compatibility path until natural expiry
+- CLI bootstrap issuance now records `issued_via`, optional `issued_by`, and optional `reason` in `worker_bootstrap_issue`
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_DEFAULT_TTL_SEC` provides the default CLI bootstrap TTL, `BOARDROOM_OS_WORKER_BOOTSTRAP_MAX_TTL_SEC` caps explicit CLI TTL requests, and `BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS` optionally limits issuance to a comma-separated tenant allowlist
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` controls how long a returned `session_token` stays valid before the worker must refresh it on `assignments`
 - `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites the absolute delivery base, `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` controls expiry, and `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can differ from the bootstrap signing secret
 - artifact routes keep existing lifecycle semantics:

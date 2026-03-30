@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Sequence
 
 from app.config import get_settings
@@ -12,7 +12,7 @@ from app.core.time import now_local
 from app.core.worker_bootstrap_tokens import issue_worker_bootstrap_token
 from app.db.repository import ControlPlaneRepository
 
-DEFAULT_BOOTSTRAP_TTL_SEC = 30 * 24 * 60 * 60
+ISSUED_VIA_WORKER_AUTH_CLI = "worker_auth_cli"
 
 
 def _build_repository() -> ControlPlaneRepository:
@@ -32,6 +32,35 @@ def _resolve_bootstrap_signing_secret() -> str:
     if not signing_secret:
         raise RuntimeError("Worker bootstrap signing secret is not configured.")
     return signing_secret
+
+
+def _resolve_bootstrap_default_ttl_sec() -> int:
+    return get_settings().worker_bootstrap_default_ttl_sec
+
+
+def _resolve_bootstrap_max_ttl_sec() -> int:
+    return get_settings().worker_bootstrap_max_ttl_sec
+
+
+def _validate_bootstrap_tenant_allowed(tenant_id: str) -> None:
+    allowed_tenant_ids = get_settings().worker_bootstrap_allowed_tenant_ids
+    if allowed_tenant_ids and tenant_id not in allowed_tenant_ids:
+        raise RuntimeError(
+            f"Tenant '{tenant_id}' is not allowed by BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS."
+        )
+
+
+def _resolve_requested_bootstrap_ttl_sec(args: argparse.Namespace) -> int:
+    ttl_sec = getattr(args, "ttl_sec", None)
+    resolved = _resolve_bootstrap_default_ttl_sec() if ttl_sec is None else int(ttl_sec)
+    max_ttl_sec = _resolve_bootstrap_max_ttl_sec()
+    if resolved <= 0:
+        raise RuntimeError("Bootstrap TTL must be greater than zero.")
+    if resolved > max_ttl_sec:
+        raise RuntimeError(
+            f"Requested bootstrap TTL exceeds configured max TTL ({max_ttl_sec} seconds)."
+        )
+    return resolved
 
 
 def _require_active_worker(repository: ControlPlaneRepository, worker_id: str, *, connection=None) -> None:
@@ -100,9 +129,30 @@ def _select_worker_binding(
     return str(selected["tenant_id"]), str(selected["workspace_id"]), selected
 
 
+def _create_binding(args: argparse.Namespace) -> int:
+    repository = _build_repository()
+    created_at = now_local()
+    with repository.transaction() as connection:
+        _require_active_worker(repository, args.worker_id, connection=connection)
+        tenant_id, workspace_id = _resolve_scope_args(args)
+        if tenant_id is None or workspace_id is None:
+            raise RuntimeError("create-binding requires both --tenant-id and --workspace-id.")
+        binding = repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id=args.worker_id,
+            at=created_at,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
+    _print_json(_serialize_datetimes(binding))
+    return 0
+
+
 def _issue_bootstrap(args: argparse.Namespace) -> int:
     repository = _build_repository()
     issued_at = now_local()
+    ttl_sec = _resolve_requested_bootstrap_ttl_sec(args)
+    planned_expires_at = issued_at + timedelta(seconds=ttl_sec)
     with repository.transaction() as connection:
         _require_active_worker(repository, args.worker_id, connection=connection)
         tenant_id, workspace_id = _resolve_scope_args(args)
@@ -114,6 +164,7 @@ def _issue_bootstrap(args: argparse.Namespace) -> int:
             workspace_id=workspace_id,
             allow_create=True,
         )
+        _validate_bootstrap_tenant_allowed(tenant_id)
         state = repository.ensure_worker_bootstrap_state(
             connection,
             worker_id=args.worker_id,
@@ -121,21 +172,38 @@ def _issue_bootstrap(args: argparse.Namespace) -> int:
             tenant_id=tenant_id,
             workspace_id=workspace_id,
         )
+        issue = repository.create_worker_bootstrap_issue(
+            connection,
+            worker_id=args.worker_id,
+            tenant_id=str(state["tenant_id"]),
+            workspace_id=str(state["workspace_id"]),
+            credential_version=int(state["credential_version"]),
+            issued_at=issued_at,
+            expires_at=planned_expires_at,
+            issued_via=ISSUED_VIA_WORKER_AUTH_CLI,
+            issued_by=args.issued_by,
+            reason=args.reason,
+        )
     token, expires_at = issue_worker_bootstrap_token(
         signing_secret=_resolve_bootstrap_signing_secret(),
         worker_id=args.worker_id,
         credential_version=int(state["credential_version"]),
         tenant_id=str(state["tenant_id"]),
         workspace_id=str(state["workspace_id"]),
+        issue_id=str(issue["issue_id"]),
         issued_at=issued_at,
-        ttl_sec=args.ttl_sec,
+        ttl_sec=ttl_sec,
     )
     _print_json(
         {
+            "issue_id": str(issue["issue_id"]),
             "worker_id": args.worker_id,
             "credential_version": int(state["credential_version"]),
             "tenant_id": str(state["tenant_id"]),
             "workspace_id": str(state["workspace_id"]),
+            "issued_via": ISSUED_VIA_WORKER_AUTH_CLI,
+            "issued_by": args.issued_by,
+            "reason": args.reason,
             "bootstrap_token": token,
             "issued_at": issued_at.isoformat(),
             "expires_at": expires_at.isoformat(),
@@ -147,6 +215,8 @@ def _issue_bootstrap(args: argparse.Namespace) -> int:
 def _rotate_bootstrap(args: argparse.Namespace) -> int:
     repository = _build_repository()
     rotated_at = now_local()
+    ttl_sec = _resolve_requested_bootstrap_ttl_sec(args)
+    planned_expires_at = rotated_at + timedelta(seconds=ttl_sec)
     with repository.transaction() as connection:
         _require_active_worker(repository, args.worker_id, connection=connection)
         tenant_id, workspace_id = _resolve_scope_args(args)
@@ -158,6 +228,7 @@ def _rotate_bootstrap(args: argparse.Namespace) -> int:
             workspace_id=workspace_id,
             allow_create=False,
         )
+        _validate_bootstrap_tenant_allowed(tenant_id)
         state = repository.rotate_worker_bootstrap_state(
             connection,
             worker_id=args.worker_id,
@@ -165,21 +236,38 @@ def _rotate_bootstrap(args: argparse.Namespace) -> int:
             workspace_id=workspace_id,
             rotated_at=rotated_at,
         )
+        issue = repository.create_worker_bootstrap_issue(
+            connection,
+            worker_id=args.worker_id,
+            tenant_id=str(state["tenant_id"]),
+            workspace_id=str(state["workspace_id"]),
+            credential_version=int(state["credential_version"]),
+            issued_at=rotated_at,
+            expires_at=planned_expires_at,
+            issued_via=ISSUED_VIA_WORKER_AUTH_CLI,
+            issued_by=args.issued_by,
+            reason=args.reason,
+        )
     token, expires_at = issue_worker_bootstrap_token(
         signing_secret=_resolve_bootstrap_signing_secret(),
         worker_id=args.worker_id,
         credential_version=int(state["credential_version"]),
         tenant_id=str(state["tenant_id"]),
         workspace_id=str(state["workspace_id"]),
+        issue_id=str(issue["issue_id"]),
         issued_at=rotated_at,
-        ttl_sec=args.ttl_sec,
+        ttl_sec=ttl_sec,
     )
     _print_json(
         {
+            "issue_id": str(issue["issue_id"]),
             "worker_id": args.worker_id,
             "credential_version": int(state["credential_version"]),
             "tenant_id": str(state["tenant_id"]),
             "workspace_id": str(state["workspace_id"]),
+            "issued_via": ISSUED_VIA_WORKER_AUTH_CLI,
+            "issued_by": args.issued_by,
+            "reason": args.reason,
             "bootstrap_token": token,
             "issued_at": rotated_at.isoformat(),
             "expires_at": expires_at.isoformat(),
@@ -284,17 +372,53 @@ def _list_sessions(args: argparse.Namespace) -> int:
 
 def _list_bindings(args: argparse.Namespace) -> int:
     repository = _build_repository()
+    listed_at = now_local()
     with repository.connection() as connection:
-        bindings = repository.list_worker_bootstrap_states(
+        bindings = repository.list_worker_binding_admin_views(
             connection,
             worker_id=args.worker_id,
             tenant_id=args.tenant_id,
             workspace_id=args.workspace_id,
+            at=listed_at,
         )
     _print_json(
         {
             "bindings": [_serialize_datetimes(binding) for binding in bindings],
             "count": len(bindings),
+        }
+    )
+    return 0
+
+
+def _cleanup_bindings(args: argparse.Namespace) -> int:
+    repository = _build_repository()
+    cleaned_at = now_local()
+    with repository.transaction() as connection:
+        bindings = repository.list_worker_binding_admin_views(
+            connection,
+            worker_id=args.worker_id,
+            tenant_id=args.tenant_id,
+            workspace_id=args.workspace_id,
+            at=cleaned_at,
+        )
+        deleted_count = 0
+        if not args.dry_run:
+            for binding in bindings:
+                if not bool(binding.get("cleanup_eligible")):
+                    continue
+                deleted_count += repository.delete_worker_bootstrap_state(
+                    connection,
+                    worker_id=str(binding["worker_id"]),
+                    tenant_id=str(binding["tenant_id"]),
+                    workspace_id=str(binding["workspace_id"]),
+                )
+    _print_json(
+        {
+            "bindings": [_serialize_datetimes(binding) for binding in bindings],
+            "count": len(bindings),
+            "deleted_count": deleted_count,
+            "dry_run": bool(args.dry_run),
+            "cleaned_at": cleaned_at.isoformat(),
         }
     )
     return 0
@@ -344,22 +468,34 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.worker_auth_cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    create_binding_parser = subparsers.add_parser("create-binding")
+    create_binding_parser.add_argument("--worker-id", required=True)
+    create_binding_parser.add_argument("--tenant-id", required=True)
+    create_binding_parser.add_argument("--workspace-id", required=True)
+    create_binding_parser.set_defaults(handler=_create_binding)
+
     issue_parser = subparsers.add_parser("issue-bootstrap")
     issue_parser.add_argument("--worker-id", required=True)
-    issue_parser.add_argument("--ttl-sec", type=int, default=DEFAULT_BOOTSTRAP_TTL_SEC)
+    issue_parser.add_argument("--ttl-sec", type=int)
     issue_parser.add_argument("--tenant-id")
     issue_parser.add_argument("--workspace-id")
+    issue_parser.add_argument("--issued-by")
+    issue_parser.add_argument("--reason")
     issue_parser.set_defaults(handler=_issue_bootstrap)
 
     rotate_parser = subparsers.add_parser("rotate-bootstrap")
     rotate_parser.add_argument("--worker-id", required=True)
-    rotate_parser.add_argument("--ttl-sec", type=int, default=DEFAULT_BOOTSTRAP_TTL_SEC)
+    rotate_parser.add_argument("--ttl-sec", type=int)
     rotate_parser.add_argument("--tenant-id")
     rotate_parser.add_argument("--workspace-id")
+    rotate_parser.add_argument("--issued-by")
+    rotate_parser.add_argument("--reason")
     rotate_parser.set_defaults(handler=_rotate_bootstrap)
 
     revoke_bootstrap_parser = subparsers.add_parser("revoke-bootstrap")
     revoke_bootstrap_parser.add_argument("--worker-id", required=True)
+    revoke_bootstrap_parser.add_argument("--tenant-id")
+    revoke_bootstrap_parser.add_argument("--workspace-id")
     revoke_bootstrap_parser.set_defaults(handler=_revoke_bootstrap)
 
     revoke_session_parser = subparsers.add_parser("revoke-session")
@@ -388,6 +524,13 @@ def _build_parser() -> argparse.ArgumentParser:
     list_bindings_parser.add_argument("--tenant-id")
     list_bindings_parser.add_argument("--workspace-id")
     list_bindings_parser.set_defaults(handler=_list_bindings)
+
+    cleanup_bindings_parser = subparsers.add_parser("cleanup-bindings")
+    cleanup_bindings_parser.add_argument("--worker-id", required=True)
+    cleanup_bindings_parser.add_argument("--tenant-id")
+    cleanup_bindings_parser.add_argument("--workspace-id")
+    cleanup_bindings_parser.add_argument("--dry-run", action="store_true")
+    cleanup_bindings_parser.set_defaults(handler=_cleanup_bindings)
 
     list_auth_rejections_parser = subparsers.add_parser("list-auth-rejections")
     list_auth_rejections_parser.add_argument("--worker-id")
