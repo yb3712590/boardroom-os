@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime
 
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.constants import (
@@ -102,6 +103,64 @@ def _seed_worker(
                 "2026-03-28T10:00:00+08:00",
                 1,
             ),
+        )
+
+
+def _worker_headers(
+    shared_secret: str = "shared-secret",
+    worker_id: str = "emp_frontend_2",
+) -> dict[str, str]:
+    return {
+        "X-Boardroom-Worker-Key": shared_secret,
+        "X-Boardroom-Worker-Id": worker_id,
+    }
+
+
+def _seed_input_artifact(
+    client,
+    *,
+    artifact_ref: str = "art://inputs/brief.md",
+    logical_path: str = "artifacts/inputs/brief.md",
+    content: str = "# Brief\n\nMaterialized input.\n",
+    materialization_status: str = "MATERIALIZED",
+    lifecycle_status: str = "ACTIVE",
+    deleted_at: str | None = None,
+    deleted_by: str | None = None,
+    delete_reason: str | None = None,
+) -> None:
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    storage_relpath = None
+    content_hash = None
+    size_bytes = None
+
+    if materialization_status == "MATERIALIZED":
+        materialized = artifact_store.materialize_text(logical_path, content)
+        storage_relpath = materialized.storage_relpath
+        content_hash = materialized.content_hash
+        size_bytes = materialized.size_bytes
+
+    with repository.transaction() as connection:
+        repository.save_artifact_record(
+            connection,
+            artifact_ref=artifact_ref,
+            workflow_id="wf_seed_inputs",
+            ticket_id="tkt_seed_inputs",
+            node_id="node_seed_inputs",
+            logical_path=logical_path,
+            kind="MARKDOWN",
+            media_type="text/markdown",
+            materialization_status=materialization_status,
+            lifecycle_status=lifecycle_status,
+            storage_relpath=storage_relpath,
+            content_hash=content_hash,
+            size_bytes=size_bytes,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=datetime.fromisoformat(deleted_at) if deleted_at is not None else None,
+            deleted_by=deleted_by,
+            delete_reason=delete_reason,
+            created_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
         )
 
 
@@ -732,6 +791,402 @@ def test_ticket_start_moves_ticket_and_node_to_executing(client, set_ticket_time
     assert ticket_projection["heartbeat_expires_at"].isoformat() == "2026-03-28T10:15:00+08:00"
     assert ticket_projection["lease_expires_at"].isoformat() == "2026-03-28T10:10:00+08:00"
     assert node_projection["status"] == NODE_STATUS_EXECUTING
+
+
+def test_worker_runtime_assignments_require_valid_headers(client, set_ticket_time, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client)
+
+    missing_headers = client.get("/api/v1/worker-runtime/assignments")
+    wrong_secret = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_headers(shared_secret="wrong-secret"),
+    )
+    missing_worker_id = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Key": "shared-secret"},
+    )
+
+    assert missing_headers.status_code == 401
+    assert wrong_secret.status_code == 401
+    assert missing_worker_id.status_code == 401
+
+
+def test_worker_runtime_assignments_return_only_current_worker_tickets(client, set_ticket_time, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_leased",
+        node_id="node_worker_leased",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_executing",
+        node_id="node_worker_executing",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_other_worker",
+        node_id="node_other_worker",
+        leased_by="emp_checker_1",
+        role_profile_ref="checker_primary",
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_worker_runtime",
+            ticket_id="tkt_pending_worker",
+            node_id="node_pending_worker",
+        ),
+    )
+
+    response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_headers(),
+    )
+
+    assert response.status_code == 200
+    assignments = response.json()["data"]["assignments"]
+    assignment_ids = {item["ticket_id"] for item in assignments}
+    assert assignment_ids == {"tkt_worker_leased", "tkt_worker_executing"}
+    assert {item["status"] for item in assignments} == {"LEASED", "EXECUTING"}
+    assert all(
+        item["execution_package_url"].startswith(
+            "http://testserver/api/v1/worker-runtime/tickets/"
+        )
+        for item in assignments
+    )
+
+
+def test_worker_runtime_execution_package_returns_persisted_package_and_worker_urls(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_package",
+        node_id="node_worker_package",
+    )
+
+    first_response = client.get(
+        "/api/v1/worker-runtime/tickets/tkt_worker_package/execution-package",
+        headers=_worker_headers(),
+    )
+    second_response = client.get(
+        "/api/v1/worker-runtime/tickets/tkt_worker_package/execution-package",
+        headers=_worker_headers(),
+    )
+
+    repository = client.app.state.repository
+    latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket(
+        "tkt_worker_package"
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert latest_execution_package is not None
+    first_body = first_response.json()["data"]
+    second_body = second_response.json()["data"]
+    content_payload = first_body["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0][
+        "content_payload"
+    ]
+    assert first_body["ticket_id"] == "tkt_worker_package"
+    assert first_body["compile_request_id"] == latest_execution_package["compile_request_id"]
+    assert first_body["compile_request_id"] == second_body["compile_request_id"]
+    assert first_body["output_schema_body"]["required"] == [
+        "summary",
+        "recommended_option_id",
+        "options",
+    ]
+    assert (
+        first_body["compiled_execution_package"]["execution"]["output_schema_ref"]
+        == "ui_milestone_review"
+    )
+    assert content_payload["content_url"].startswith(
+        "http://testserver/api/v1/worker-runtime/artifacts/content"
+    )
+    assert content_payload["preview_url"].startswith(
+        "http://testserver/api/v1/worker-runtime/artifacts/preview"
+    )
+    assert content_payload["download_url"].startswith(
+        "http://testserver/api/v1/worker-runtime/artifacts/content"
+    )
+    assert first_body["command_endpoints"]["ticket_start_url"].endswith(
+        "/api/v1/worker-runtime/commands/ticket-start"
+    )
+
+
+def test_worker_runtime_execution_package_rejects_wrong_worker_owner(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_owned",
+        node_id="node_worker_owned",
+    )
+
+    response = client.get(
+        "/api/v1/worker-runtime/tickets/tkt_worker_owned/execution-package",
+        headers=_worker_headers(worker_id="emp_checker_1"),
+    )
+
+    assert response.status_code == 403
+
+
+def test_worker_runtime_artifact_routes_return_worker_scoped_metadata_and_content(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_artifact",
+        node_id="node_worker_artifact",
+    )
+
+    metadata_response = client.get(
+        "/api/v1/worker-runtime/artifacts/by-ref",
+        params={"artifact_ref": "art://inputs/brief.md"},
+        headers=_worker_headers(),
+    )
+    preview_response = client.get(
+        "/api/v1/worker-runtime/artifacts/preview",
+        params={"artifact_ref": "art://inputs/brief.md"},
+        headers=_worker_headers(),
+    )
+    content_response = client.get(
+        "/api/v1/worker-runtime/artifacts/content",
+        params={"artifact_ref": "art://inputs/brief.md", "disposition": "inline"},
+        headers=_worker_headers(),
+    )
+
+    assert metadata_response.status_code == 200
+    assert preview_response.status_code == 200
+    assert content_response.status_code == 200
+    assert metadata_response.json()["data"]["content_url"].startswith(
+        "http://testserver/api/v1/worker-runtime/artifacts/content"
+    )
+    assert metadata_response.json()["data"]["preview_url"].startswith(
+        "http://testserver/api/v1/worker-runtime/artifacts/preview"
+    )
+    assert preview_response.json()["data"]["preview_kind"] == "TEXT"
+    assert "# Brief" in preview_response.json()["data"]["text_content"]
+    assert "# Brief" in content_response.text
+
+
+def test_worker_runtime_artifact_routes_preserve_registered_only_and_deleted_behavior(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id="wf_worker_runtime",
+                ticket_id="tkt_worker_artifact_states",
+                node_id="node_worker_artifact_states",
+            ),
+            "input_artifact_refs": ["art://inputs/registered.md", "art://inputs/deleted.md"],
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_worker_runtime",
+            ticket_id="tkt_worker_artifact_states",
+            node_id="node_worker_artifact_states",
+        ),
+    )
+    _seed_input_artifact(
+        client,
+        artifact_ref="art://inputs/registered.md",
+        logical_path="artifacts/inputs/registered.md",
+        materialization_status="REGISTERED_ONLY",
+    )
+    _seed_input_artifact(
+        client,
+        artifact_ref="art://inputs/deleted.md",
+        logical_path="artifacts/inputs/deleted.md",
+        lifecycle_status="DELETED",
+        deleted_at="2026-03-28T10:05:00+08:00",
+        deleted_by="emp_ops_1",
+        delete_reason="Removed before worker pickup.",
+    )
+
+    registered_metadata = client.get(
+        "/api/v1/worker-runtime/artifacts/by-ref",
+        params={"artifact_ref": "art://inputs/registered.md"},
+        headers=_worker_headers(),
+    )
+    registered_content = client.get(
+        "/api/v1/worker-runtime/artifacts/content",
+        params={"artifact_ref": "art://inputs/registered.md", "disposition": "inline"},
+        headers=_worker_headers(),
+    )
+    deleted_content = client.get(
+        "/api/v1/worker-runtime/artifacts/content",
+        params={"artifact_ref": "art://inputs/deleted.md", "disposition": "inline"},
+        headers=_worker_headers(),
+    )
+
+    assert registered_metadata.status_code == 200
+    assert registered_metadata.json()["data"]["materialization_status"] == "REGISTERED_ONLY"
+    assert registered_content.status_code == 409
+    assert deleted_content.status_code == 410
+
+
+def test_worker_runtime_commands_start_heartbeat_and_result_submit_reuse_handlers(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_result",
+        node_id="node_worker_result",
+    )
+
+    start_response = client.post(
+        "/api/v1/worker-runtime/commands/ticket-start",
+        json={
+            "workflow_id": "wf_worker_runtime",
+            "ticket_id": "tkt_worker_result",
+            "node_id": "node_worker_result",
+            "idempotency_key": "worker-runtime:start:tkt_worker_result",
+        },
+        headers=_worker_headers(),
+    )
+    heartbeat_response = client.post(
+        "/api/v1/worker-runtime/commands/ticket-heartbeat",
+        json={
+            "workflow_id": "wf_worker_runtime",
+            "ticket_id": "tkt_worker_result",
+            "node_id": "node_worker_result",
+            "idempotency_key": "worker-runtime:heartbeat:tkt_worker_result",
+        },
+        headers=_worker_headers(),
+    )
+    result_payload = _ticket_result_submit_payload(
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_result",
+        node_id="node_worker_result",
+        artifact_refs=["art://worker/runtime-option-a.json"],
+        payload={
+            "summary": "Worker runtime produced a structured result.",
+            "recommended_option_id": "option_a",
+            "options": [
+                {
+                    "option_id": "option_a",
+                    "label": "Option A",
+                    "summary": "Single structured worker option.",
+                    "artifact_refs": ["art://worker/runtime-option-a.json"],
+                }
+            ],
+        },
+        written_artifacts=[
+            {
+                "path": "artifacts/ui/homepage/runtime-option-a.json",
+                "artifact_ref": "art://worker/runtime-option-a.json",
+                "kind": "JSON",
+                "content_json": {
+                    "option_id": "option_a",
+                    "headline": "Worker generated artifact.",
+                },
+            }
+        ],
+        idempotency_key="worker-runtime:result:tkt_worker_result",
+    )
+    result_payload.pop("submitted_by")
+    result_response = client.post(
+        "/api/v1/worker-runtime/commands/ticket-result-submit",
+        json=result_payload,
+        headers=_worker_headers(),
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_worker_result")
+    artifact_record = repository.get_artifact_by_ref("art://worker/runtime-option-a.json")
+    event_types = [event["event_type"] for event in repository.list_events_for_testing()]
+
+    assert start_response.status_code == 200
+    assert heartbeat_response.status_code == 200
+    assert result_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+    assert heartbeat_response.json()["status"] == "ACCEPTED"
+    assert result_response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
+    assert artifact_record is not None
+    assert artifact_record["materialization_status"] == "MATERIALIZED"
+    assert EVENT_TICKET_STARTED in event_types
+    assert EVENT_TICKET_HEARTBEAT_RECORDED in event_types
+    assert EVENT_TICKET_COMPLETED in event_types
+
+
+def test_worker_runtime_result_submit_preserves_schema_validation_path(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_schema_error",
+        node_id="node_worker_schema_error",
+        retry_budget=2,
+    )
+
+    result_payload = _ticket_result_submit_payload(
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_schema_error",
+        node_id="node_worker_schema_error",
+        payload={
+            "summary": "Worker runtime omitted options.",
+            "recommended_option_id": "option_a",
+        },
+        idempotency_key="worker-runtime:result:schema-error",
+    )
+    result_payload.pop("submitted_by")
+    response = client.post(
+        "/api/v1/worker-runtime/commands/ticket-result-submit",
+        json=result_payload,
+        headers=_worker_headers(),
+    )
+
+    repository = client.app.state.repository
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "SCHEMA_ERROR"
 
 
 def test_inbox_projection_returns_empty_items(client):

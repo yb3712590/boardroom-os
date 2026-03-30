@@ -4,8 +4,7 @@
 
 ## Runtime / Backend
 
-- 完成外部 worker runtime handoff，而不是只依赖当前进程内最小执行链
-- 把当前本地 artifact API / 相对 URL 交付推进到外部 worker 可直接消费的 handoff 机制，补齐远端可达性、鉴权和必要时的签名 URL
+- 把当前共享密钥版 external worker handoff 推进到更细粒度的签名 URL / per-ticket 短时令牌 / 更强远端可达边界
 - 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
 - 补齐更完整的 provider 路由、多 provider 控制面和恢复策略

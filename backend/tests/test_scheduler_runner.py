@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 
 import app.core.runtime as runtime_module
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
@@ -187,6 +188,49 @@ def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_tic
     assert ticket_projection["status"] == "COMPLETED"
     assert ticket_projection["lease_owner"] is None
     assert node_projection["status"] == "COMPLETED"
+
+
+def test_scheduler_runner_once_external_mode_leaves_ticket_leased(client, set_ticket_time, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_EXECUTION_MODE", "EXTERNAL")
+    scheduler_runner = importlib.import_module("app.scheduler_runner")
+    scheduler_runner = importlib.reload(scheduler_runner)
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_external",
+            ticket_id="tkt_runner_external",
+            node_id="node_runner_external",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    ack = scheduler_runner.run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-external-mode",
+        max_dispatches=10,
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_external")
+    node_projection = repository.get_current_node_projection("wf_runner_external", "node_runner_external")
+    latest_bundle = repository.get_latest_compiled_context_bundle_by_ticket("tkt_runner_external")
+    latest_manifest = repository.get_latest_compile_manifest_by_ticket("tkt_runner_external")
+    latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket(
+        "tkt_runner_external"
+    )
+    events = repository.list_events_for_testing()
+
+    assert ack.status.value == "ACCEPTED"
+    assert ticket_projection["status"] == "LEASED"
+    assert ticket_projection["lease_owner"] == "emp_frontend_2"
+    assert node_projection["status"] == "PENDING"
+    assert latest_bundle is None
+    assert latest_manifest is None
+    assert latest_execution_package is None
+    assert [event["event_type"] for event in events] == ["TICKET_CREATED", "TICKET_LEASED"]
 
 
 def test_scheduler_runner_loop_respects_tick_limit_and_dispatch_budget(client, set_ticket_time):

@@ -23,6 +23,7 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 已支持 review room、board approve/reject/modify constraints
 - 已有独立 `scheduler_runner` 和可选的进程内 scheduler loop
 - 已有最小 artifact store / artifact index，`JSON` / `TEXT` / `MARKDOWN` 与图片 / PDF / 其它中等体量二进制都可通过 `ticket-result-submit` 真实落盘
+- 已有受共享密钥保护的外部 worker handoff 面，可按 `/api/v1/worker-runtime/*` 领取 assignment、拉取 persisted execution package、读取 artifact、回写 start / heartbeat / result-submit
 
 当前更像一个最小控制面原型，而不是完整产品。
 
@@ -31,9 +32,10 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 命令面：`project-init`、ticket 生命周期命令、`ticket-result-submit`、`artifact-delete`、`artifact-cleanup`、board 审批命令、`incident-resolve`
 - 投影面：`dashboard`、`inbox`、`incident detail`、`review room`、developer inspector companion、ticket artifacts
 - artifact 读取面：按 `artifact_ref` 的 metadata / content / preview 接口，可供 review、incident 和外部调用复用
+- worker handoff：`BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 下由 scheduler 只负责 dispatch / lease，外部 worker 通过共享密钥和 `X-Boardroom-Worker-Id` 调用 `/api/v1/worker-runtime/*` 完成领取、读 artifact 和结构化回写
 - 运行时治理：重复失败升级、provider 级暂停恢复、协作式取消、`ticket-result-submit` 统一结果入口、artifact 物化 / 索引 / 生命周期治理
 - 输出 schema：已真实注册并严格校验 `ui_milestone_review@1`、`consensus_document@1`
-- 审计能力：事件流、SQLite WAL、最小 compile manifest / context bundle 持久化
+- 审计能力：事件流、SQLite WAL、最小 compile manifest / context bundle / compiled execution package 持久化
 - 测试覆盖：API、reducer、scheduler runner、in-process scheduler
 
 详细契约、状态机和设计边界已经迁移到 [doc/README.md](doc/README.md)。
@@ -56,6 +58,16 @@ source .venv/bin/activate
 BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER=true uvicorn app.main:app --reload
 ```
 
+切到外部 worker handoff 模式：
+
+```bash
+cd backend
+source .venv/bin/activate
+BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL \
+BOARDROOM_OS_WORKER_SHARED_SECRET=change-me \
+uvicorn app.main:app --reload
+```
+
 启动独立 runner：
 
 ```bash
@@ -63,6 +75,12 @@ cd backend
 source .venv/bin/activate
 python -m app.scheduler_runner
 ```
+
+说明：
+
+- `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` 是默认值，runner / in-process scheduler 会在 `LEASED` 后直接执行当前最小 runtime。
+- `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 时，runner / in-process scheduler 只负责 dispatch / lease，不再自动 `start / execute / result-submit`。
+- 外部 worker 需要携带 `X-Boardroom-Worker-Key` 和 `X-Boardroom-Worker-Id` 调用 `/api/v1/worker-runtime/*`。
 
 运行测试：
 
@@ -81,7 +99,7 @@ python -m pytest tests -q
 
 - 全新环境下 `pip install -e .[dev]` 可能因为 `backend/` 的平铺布局触发 `setuptools` 打包识别问题，本轮没有修改这一点。
 - 当前二进制上传仍走 `ticket-result-submit` 内联 `base64`，没有 multipart / 分片 / 对象存储链路，适合中等体量文件，不适合超大文件。
-- artifact 对外访问目前通过本地 API 相对 URL 暴露，外部 worker 的远端可达性、鉴权和签名 URL 还没有做完。
+- 当前外部 worker handoff 采用部署级共享密钥，artifact 在 worker 执行包里会被改写成 worker 专用绝对 URL；更细粒度的签名 URL、per-ticket 短时令牌和公开多租户安全边界还没做。
 
 ## 文档入口
 

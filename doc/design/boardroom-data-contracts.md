@@ -311,7 +311,8 @@ Implementation rules:
 - `content` returns raw persisted bytes only when `materialization_status = MATERIALIZED` and `lifecycle_status = ACTIVE`
 - `content` should return conflict-style errors for `REGISTERED_ONLY`, and gone-style errors for `DELETED` / `EXPIRED`
 - `preview` returns parsed JSON for `JSON`, text for `TEXT` / `MARKDOWN`, inline-media metadata for images and PDFs, and `download_only` for other binaries
-- review room, incident detail, and future external workers should consume these routes via `artifact_ref` instead of inventing special-case artifact readers
+- review room and incident detail consume these local routes via `artifact_ref`
+- external workers now consume the worker-scoped equivalents under `/api/v1/worker-runtime/artifacts/*`, rather than inventing special-case artifact readers
 
 ## 5.2 Incident Detail Projection
 
@@ -1199,7 +1200,42 @@ This endpoint currently provides only the minimum explicit scheduler surface:
 - dispatch `PENDING` or expired-lease tickets by appending `TICKET_LEASED`
 - it does not replace explicit `ticket-start`
 - it does not replace explicit `ticket-heartbeat`
-- it does not imply compiled execution package delivery, worker runtime dispatch, or background scheduler loops
+- it does not itself deliver compiled execution packages
+- in `EXTERNAL` mode workers continue through `/api/v1/worker-runtime/*`
+
+### 10.1.8 External Worker Runtime
+
+Current minimal authenticated worker handoff:
+
+- `GET /api/v1/worker-runtime/assignments`
+- `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package`
+- `GET /api/v1/worker-runtime/artifacts/by-ref?artifact_ref=...`
+- `GET /api/v1/worker-runtime/artifacts/content?artifact_ref=...&disposition=inline|attachment`
+- `GET /api/v1/worker-runtime/artifacts/preview?artifact_ref=...`
+- `POST /api/v1/worker-runtime/commands/ticket-start`
+- `POST /api/v1/worker-runtime/commands/ticket-heartbeat`
+- `POST /api/v1/worker-runtime/commands/ticket-result-submit`
+
+Authentication headers:
+
+- `X-Boardroom-Worker-Key`: deployment-level shared secret
+- `X-Boardroom-Worker-Id`: the current `employee_id`
+
+Behavior rules:
+
+- assignment list includes only the current worker's `LEASED`, `EXECUTING`, and `CANCEL_REQUESTED` tickets
+- execution-package reads require current lease ownership and return:
+  - persisted `CompiledExecutionPackage`
+  - `output_schema_body`
+  - `bundle_id`
+  - `compile_id`
+  - `compile_request_id`
+  - worker command endpoint URLs
+- if the current attempt has no persisted execution package yet, backend compiles and persists bundle / manifest / execution package before responding
+- artifact routes keep existing lifecycle semantics:
+  - `REGISTERED_ONLY` content reads return conflict-style errors
+  - `DELETED` / `EXPIRED` content reads return gone-style errors
+- worker command routes inject worker identity from headers and then reuse the existing ticket handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker governance stay unchanged
 
 ### 10.2 Board Approve
 

@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 
 from app.config import Settings, get_settings
+from app.core.artifact_store import ArtifactStore
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.ticket_handlers import run_scheduler_tick
 from app.core.time import now_local
@@ -21,6 +22,7 @@ def build_repository(settings: Settings | None = None) -> ControlPlaneRepository
         db_path=resolved_settings.db_path,
         busy_timeout_ms=resolved_settings.busy_timeout_ms,
         recent_event_limit=resolved_settings.recent_event_limit,
+        artifact_store=ArtifactStore(resolved_settings.artifact_store_root),
     )
 
 
@@ -37,7 +39,8 @@ def run_scheduler_once(
         idempotency_key=idempotency_key or _build_runner_idempotency_key(tick_index),
         max_dispatches=max_dispatches or settings.scheduler_max_dispatches,
     )
-    run_leased_ticket_runtime(repository)
+    if settings.runtime_execution_mode == "INPROCESS":
+        run_leased_ticket_runtime(repository)
     return scheduler_ack
 
 

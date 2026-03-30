@@ -557,4 +557,9 @@ def compile_and_persist_execution_artifacts(
         artifacts = compile_audit_artifacts(compile_request)
         repository.save_compiled_context_bundle(connection, artifacts.compiled_context_bundle)
         repository.save_compile_manifest(connection, artifacts.compile_manifest)
+        repository.save_compiled_execution_package(
+            connection,
+            artifacts.compiled_execution_package,
+            compiled_at=artifacts.compile_manifest.compile_meta.compiled_at,
+        )
         return artifacts

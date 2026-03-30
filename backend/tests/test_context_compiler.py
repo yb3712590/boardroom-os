@@ -223,9 +223,13 @@ def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(clie
     compiled_artifacts = compile_and_persist_execution_artifacts(repository, ticket)
     latest_bundle = repository.get_latest_compiled_context_bundle_by_ticket("tkt_compile_001")
     latest_manifest = repository.get_latest_compile_manifest_by_ticket("tkt_compile_001")
+    latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket(
+        "tkt_compile_001"
+    )
 
     assert latest_bundle is not None
     assert latest_manifest is not None
+    assert latest_execution_package is not None
     assert latest_bundle["bundle_id"] == compiled_artifacts.compiled_context_bundle.meta.bundle_id
     assert latest_bundle["payload"]["meta"]["bundle_id"] == latest_bundle["bundle_id"]
     assert latest_bundle["payload"]["context_blocks"][0]["source_hash"]
@@ -235,6 +239,12 @@ def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(clie
     assert latest_manifest["payload"]["source_log"][0]["status"] == "USED"
     assert latest_manifest["payload"]["degradation"]["warnings"]
     assert repository.get_compile_manifest(latest_manifest["compile_id"]) is not None
+    assert latest_execution_package["compile_request_id"] == (
+        compiled_artifacts.compiled_execution_package.meta.compile_request_id
+    )
+    assert latest_execution_package["payload"]["meta"]["ticket_id"] == "tkt_compile_001"
+    assert latest_execution_package["payload"]["execution"]["output_schema_ref"] == "ui_milestone_review"
+    assert repository.get_compiled_execution_package(latest_execution_package["compile_request_id"]) is not None
 
 
 def test_export_latest_compile_artifacts_to_developer_inspector_writes_real_persisted_payloads(

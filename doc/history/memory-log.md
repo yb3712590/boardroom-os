@@ -1786,3 +1786,95 @@
 - multipart or large-file upload flows
 - automatic background cleanup scheduling and richer retention classes
 - broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+
+## 2026-03-30T17:20:00+08:00
+
+### Session Context
+- User asked to execute the Runtime / Backend external worker handoff closeout plan directly in the existing Boardroom OS repo and treat it as the last linked batch on the backend control-plane MVP path.
+- This round had to stay on the same Runtime / Backend artifact-delivery boundary and close the worker handoff loop without widening into provider routing, frontend, or richer auth models.
+
+### Boundary Chosen
+- Single boundary for this round: external worker handoff on top of the existing artifact + compiled-execution-package chain.
+- The slice chain stayed on one path:
+  - runtime execution mode split
+  - compiled execution package persistence
+  - authenticated worker read surface
+  - authenticated worker write-back surface
+
+### Design / Code Gap Identified
+- Code already had `CompiledExecutionPackage`, `CompiledContextBundle`, `CompileManifest`, artifact metadata routes, and unified structured result ingress.
+- But one major control-plane gap remained:
+  - `scheduler_runner` and the in-process scheduler still continued directly into local runtime execution after `TICKET_LEASED`
+  - there was no persisted execution package table
+  - there was no authenticated worker-facing API for assignments, execution package fetch, artifact reads, or structured write-back
+
+### Slice Landed
+- Added `BOARDROOM_OS_RUNTIME_EXECUTION_MODE` with `INPROCESS` and `EXTERNAL`.
+- `INPROCESS` remains the default.
+- In `EXTERNAL` mode, scheduler runner now stops after dispatch / lease and no longer auto-starts local runtime execution.
+- Added persisted `compiled_execution_package` storage plus repository helpers:
+  - save by `compile_request_id`
+  - fetch by `compile_request_id`
+  - fetch latest by `ticket_id`
+- `compile_and_persist_execution_artifacts()` now persists:
+  - `CompiledContextBundle`
+  - `CompileManifest`
+  - `CompiledExecutionPackage`
+- Added worker runtime contracts and routes under `/api/v1/worker-runtime/*`.
+- Added deployment-level shared-secret auth with:
+  - `X-Boardroom-Worker-Key`
+  - `X-Boardroom-Worker-Id`
+- Added worker handoff read APIs:
+  - `GET /api/v1/worker-runtime/assignments`
+  - `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package`
+- Added worker artifact APIs:
+  - `GET /api/v1/worker-runtime/artifacts/by-ref`
+  - `GET /api/v1/worker-runtime/artifacts/content`
+  - `GET /api/v1/worker-runtime/artifacts/preview`
+- Worker execution-package delivery now:
+  - enforces current lease ownership
+  - compiles and persists the current attempt on demand if missing
+  - returns `bundle_id`, `compile_id`, `compile_request_id`, `output_schema_body`, and the persisted execution package
+  - rewrites artifact access descriptors into worker-scoped absolute artifact URLs for that request
+- Added worker write-back wrappers:
+  - `POST /api/v1/worker-runtime/commands/ticket-start`
+  - `POST /api/v1/worker-runtime/commands/ticket-heartbeat`
+  - `POST /api/v1/worker-runtime/commands/ticket-result-submit`
+- These wrappers inject worker identity from headers and then reuse the existing handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker logic remain unchanged.
+
+### Conservative Handling
+- This round intentionally uses a deployment-level shared secret, not per-ticket signed URLs or short-lived delivery tokens.
+- Worker artifact access is allowed only through the current worker's active ticket scope:
+  - the worker's currently owned ticket ids
+  - the current ticket's explicit `input_artifact_refs`
+- UI / review routes still use the existing local `/api/v1/artifacts/*` contract.
+- Context Compiler still remains reference-first and still does not hydrate artifact bodies into the execution package.
+
+### Tests Added
+- Scheduler runner coverage for:
+  - `EXTERNAL` mode leaving leased tickets in `LEASED` instead of auto-executing them
+- Context Compiler coverage for:
+  - persisted `compiled_execution_package` retrieval by latest ticket
+- API coverage for:
+  - worker auth header enforcement
+  - worker assignment listing
+  - persisted execution package delivery
+  - worker-scoped artifact metadata / preview / content reads
+  - registered-only and deleted artifact behavior through worker routes
+  - worker start / heartbeat / result-submit wrappers
+  - schema-error routing still going through controlled failure paths from worker wrappers
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- signed URLs, per-ticket short-lived tokens, and stronger external delivery isolation beyond the current shared-secret model
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface

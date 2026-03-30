@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.contracts.runtime import CompileManifest, CompiledContextBundle
+from app.contracts.runtime import CompileManifest, CompiledContextBundle, CompiledExecutionPackage
 from app.core.artifact_store import ArtifactStore
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
@@ -104,6 +104,7 @@ class ControlPlaneRepository:
             self._ensure_node_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
             self._ensure_incident_projection_shape(connection)
+            self._ensure_compiled_execution_package_shape(connection)
             self._ensure_artifact_index_shape(connection)
             self._seed_employee_roster(connection)
 
@@ -790,6 +791,39 @@ class ControlPlaneRepository:
             ),
         )
 
+    def save_compiled_execution_package(
+        self,
+        connection: sqlite3.Connection,
+        execution_package: CompiledExecutionPackage,
+        *,
+        compiled_at: datetime,
+    ) -> None:
+        payload = execution_package.model_dump(mode="json")
+        connection.execute(
+            """
+            INSERT INTO compiled_execution_package (
+                compile_request_id,
+                ticket_id,
+                workflow_id,
+                node_id,
+                compiler_version,
+                compiled_at,
+                package_version,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                execution_package.meta.compile_request_id,
+                execution_package.meta.ticket_id,
+                execution_package.meta.workflow_id,
+                execution_package.meta.node_id,
+                execution_package.meta.compiler_version,
+                compiled_at.isoformat(),
+                "CompiledExecutionPackage_v1",
+                json.dumps(payload, sort_keys=True),
+            ),
+        )
+
     def get_compiled_context_bundle(
         self,
         bundle_id: str,
@@ -862,6 +896,30 @@ class ControlPlaneRepository:
                 return None
             return self._convert_compile_manifest_row(row)
 
+    def get_compiled_execution_package(
+        self,
+        compile_request_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM compiled_execution_package WHERE compile_request_id = ?",
+                (compile_request_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_compiled_execution_package_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM compiled_execution_package WHERE compile_request_id = ?",
+                (compile_request_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_compiled_execution_package_row(row)
+
     def get_latest_compile_manifest_by_ticket(
         self,
         ticket_id: str,
@@ -885,6 +943,30 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_compile_manifest_row(row)
+
+    def get_latest_compiled_execution_package_by_ticket(
+        self,
+        ticket_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM compiled_execution_package
+            WHERE ticket_id = ?
+            ORDER BY compiled_at DESC, compile_request_id DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (ticket_id,)).fetchone()
+            if row is None:
+                return None
+            return self._convert_compiled_execution_package_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (ticket_id,)).fetchone()
+            if row is None:
+                return None
+            return self._convert_compiled_execution_package_row(row)
 
     def get_cursor_and_version(self) -> tuple[str | None, int]:
         self.initialize()
@@ -1527,6 +1609,12 @@ class ControlPlaneRepository:
         converted["payload"] = json.loads(converted["payload_json"])
         return converted
 
+    def _convert_compiled_execution_package_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["compiled_at"] = datetime.fromisoformat(converted["compiled_at"])
+        converted["payload"] = json.loads(converted["payload_json"])
+        return converted
+
     def _convert_artifact_index_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["created_at"] = datetime.fromisoformat(converted["created_at"])
@@ -2020,6 +2108,47 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint ON incident_projection(fingerprint)"
+        )
+
+    def _ensure_compiled_execution_package_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compiled_execution_package (
+                compile_request_id TEXT PRIMARY KEY,
+                ticket_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                compiler_version TEXT NOT NULL,
+                compiled_at TEXT NOT NULL,
+                package_version TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(compiled_execution_package)").fetchall()
+        }
+        required_columns = {
+            "compile_request_id": "TEXT",
+            "ticket_id": "TEXT",
+            "workflow_id": "TEXT",
+            "node_id": "TEXT",
+            "compiler_version": "TEXT",
+            "compiled_at": "TEXT",
+            "package_version": "TEXT",
+            "payload_json": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE compiled_execution_package ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compiled_execution_package_ticket_id ON compiled_execution_package(ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compiled_execution_package_compile_request_id ON compiled_execution_package(compile_request_id)"
         )
 
     def _ensure_artifact_index_shape(self, connection: sqlite3.Connection) -> None:

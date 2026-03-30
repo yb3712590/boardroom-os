@@ -28,6 +28,7 @@ What is already real:
 - a ticket artifacts projection plus strict output-schema validation for `ui_milestone_review@1` and `consensus_document@1`
 - artifact metadata / content / preview endpoints keyed by `artifact_ref`
 - artifact lifecycle commands for delete and cleanup
+- a shared-secret-protected external worker handoff surface under `/api/v1/worker-runtime/*`
 
 ## Quick Start
 
@@ -45,6 +46,16 @@ source .venv/bin/activate
 BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER=true uvicorn app.main:app --reload
 ```
 
+Switch into external-worker handoff mode:
+
+```bash
+cd backend
+source .venv/bin/activate
+BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL \
+BOARDROOM_OS_WORKER_SHARED_SECRET=change-me \
+uvicorn app.main:app --reload
+```
+
 Run the standalone scheduler runner:
 
 ```bash
@@ -52,6 +63,12 @@ cd backend
 source .venv/bin/activate
 python -m app.scheduler_runner
 ```
+
+Mode notes:
+
+- `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` remains the default, and the runner / in-process scheduler still executes leased tickets locally.
+- `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` keeps scheduling and leasing, but stops automatic local `start / execute / result-submit`.
+- External workers authenticate with `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` against `/api/v1/worker-runtime/*`.
 
 Run tests:
 
@@ -70,7 +87,7 @@ Known realities:
 
 - `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
 - Binary uploads currently go through inline base64 in `ticket-result-submit`; there is no multipart, chunked-upload, or object-storage path yet.
-- Artifact access currently uses local relative API URLs. External-worker reachability, auth, and signed-URL delivery are still not implemented.
+- External worker handoff now exists with a deployment-level shared secret and worker-scoped absolute artifact URLs, but finer-grained signed URLs, per-ticket short-lived tokens, and stronger multi-tenant delivery boundaries are still not implemented.
 
 ## Docs
 

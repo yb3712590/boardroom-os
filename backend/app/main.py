@@ -8,6 +8,7 @@ from app.api.artifacts import router as artifacts_router
 from app.api.commands import router as commands_router
 from app.api.events import router as events_router
 from app.api.projections import router as projections_router
+from app.api.worker_runtime import router as worker_runtime_router
 from app.config import get_settings
 from app.core.artifact_store import ArtifactStore
 from app.core.developer_inspector import DeveloperInspectorStore
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(commands_router)
     app.include_router(projections_router)
     app.include_router(events_router)
+    app.include_router(worker_runtime_router)
     return app
 
 

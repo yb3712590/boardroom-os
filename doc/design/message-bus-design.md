@@ -466,7 +466,9 @@ Current conservative reality:
 
 - `storage_relpath` currently uses normalized internal relative paths instead of external signed URLs.
 - Binary upload currently uses inline `base64` in `ticket-result-submit`; multipart upload, chunking, and object storage are still out of scope for the current MVP.
-- Artifact access URLs are currently local relative API paths, not externally reachable signed URLs.
+- UI / review surfaces still use local relative artifact API paths.
+- External worker handoff now rewrites artifact access descriptors into absolute `/api/v1/worker-runtime/artifacts/*` URLs protected by a deployment-level shared secret plus explicit worker identity.
+- Signed URLs and finer-grained per-ticket delivery credentials are still not implemented.
 
 ## 10. Ticket Contract
 
@@ -582,6 +584,14 @@ Rule:
 - workers should consume compiled execution packages, not raw references when execution starts
 - control-plane refs stay in storage for audit and replay
 - runtime expands refs into concrete execution input before dispatch
+
+Current minimal handoff reality:
+
+- `CompiledExecutionPackage` is now persisted alongside `CompiledContextBundle` and `CompileManifest`.
+- `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package` returns the latest persisted package for the currently leased worker, and compiles it on demand if that attempt has not been persisted yet.
+- Artifact access descriptors inside the delivered package remain reference-first, but their `content_url` / `preview_url` / `download_url` are rewritten into worker-scoped absolute URLs for that request.
+- `GET /api/v1/worker-runtime/assignments` exposes the current worker's `LEASED` / `EXECUTING` / `CANCEL_REQUESTED` tickets.
+- `POST /api/v1/worker-runtime/commands/ticket-start|ticket-heartbeat|ticket-result-submit` are protected wrappers around the existing command handlers; they do not introduce a second governance path.
 
 ## 10.3 Ticket Lifecycle
 

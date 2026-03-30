@@ -1,0 +1,338 @@
+from __future__ import annotations
+
+import json
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+
+from app.contracts.artifacts import (
+    ArtifactMetadata,
+    ArtifactMetadataEnvelope,
+    ArtifactPreviewData,
+    ArtifactPreviewEnvelope,
+)
+from app.contracts.commands import (
+    CommandAckEnvelope,
+    TicketHeartbeatCommand,
+    TicketResultSubmitCommand,
+    TicketStartCommand,
+)
+from app.contracts.worker_runtime import (
+    WorkerAssignmentItem,
+    WorkerAssignmentsData,
+    WorkerAssignmentsEnvelope,
+    WorkerExecutionPackageData,
+    WorkerExecutionPackageEnvelope,
+    WorkerTicketHeartbeatCommand,
+    WorkerTicketResultSubmitCommand,
+    WorkerTicketStartCommand,
+)
+from app.core.artifact_store import ArtifactStore
+from app.core.artifacts import (
+    ARTIFACT_LIFECYCLE_ACTIVE,
+    ARTIFACT_STATUS_MATERIALIZED,
+    build_artifact_metadata,
+    classify_artifact_preview_kind,
+    resolve_artifact_lifecycle_status,
+)
+from app.core.ticket_handlers import (
+    handle_ticket_heartbeat,
+    handle_ticket_result_submit,
+    handle_ticket_start,
+)
+from app.core.worker_runtime import (
+    authenticate_worker,
+    build_output_schema_body_for_execution_package,
+    build_worker_artifact_metadata,
+    build_worker_command_endpoints,
+    build_worker_execution_package_payload,
+    build_worker_execution_package_url,
+    ensure_worker_execution_handoff,
+    list_worker_assignments,
+    require_worker_access_to_artifact,
+    require_worker_owned_ticket,
+)
+from app.db.repository import ControlPlaneRepository
+
+router = APIRouter(prefix="/api/v1/worker-runtime", tags=["worker-runtime"])
+
+
+def _authenticate_request(
+    request: Request,
+    x_boardroom_worker_key: str | None = Header(default=None),
+    x_boardroom_worker_id: str | None = Header(default=None),
+):
+    return authenticate_worker(
+        request,
+        worker_key=x_boardroom_worker_key,
+        worker_id=x_boardroom_worker_id,
+    )
+
+
+@router.get("/assignments", response_model=WorkerAssignmentsEnvelope)
+def get_worker_assignments(request: Request, principal=Depends(_authenticate_request)):
+    repository: ControlPlaneRepository = request.app.state.repository
+    assignments = list_worker_assignments(repository, worker_id=principal.worker_id)
+    return WorkerAssignmentsEnvelope(
+        data=WorkerAssignmentsData(
+            worker_id=principal.worker_id,
+            assignments=[
+                WorkerAssignmentItem(
+                    workflow_id=ticket["workflow_id"],
+                    ticket_id=ticket["ticket_id"],
+                    node_id=ticket["node_id"],
+                    status=ticket["status"],
+                    lease_expires_at=ticket.get("lease_expires_at"),
+                    execution_package_url=build_worker_execution_package_url(
+                        request,
+                        ticket["ticket_id"],
+                    ),
+                )
+                for ticket in assignments
+            ],
+        )
+    )
+
+
+@router.get(
+    "/tickets/{ticket_id}/execution-package",
+    response_model=WorkerExecutionPackageEnvelope,
+)
+def get_worker_execution_package(
+    request: Request,
+    ticket_id: str,
+    principal=Depends(_authenticate_request),
+) -> WorkerExecutionPackageEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    ticket = require_worker_owned_ticket(
+        repository,
+        ticket_id=ticket_id,
+        worker_id=principal.worker_id,
+    )
+    latest_bundle, latest_manifest, latest_execution_package = ensure_worker_execution_handoff(
+        repository,
+        ticket=ticket,
+    )
+    package_payload = build_worker_execution_package_payload(
+        request,
+        latest_execution_package=latest_execution_package,
+    )
+    return WorkerExecutionPackageEnvelope(
+        data=WorkerExecutionPackageData(
+            worker_id=principal.worker_id,
+            workflow_id=ticket["workflow_id"],
+            ticket_id=ticket["ticket_id"],
+            node_id=ticket["node_id"],
+            status=ticket["status"],
+            bundle_id=latest_bundle["bundle_id"],
+            compile_id=latest_manifest["compile_id"],
+            compile_request_id=latest_execution_package["compile_request_id"],
+            output_schema_body=build_output_schema_body_for_execution_package(package_payload),
+            compiled_execution_package=package_payload,
+            command_endpoints=build_worker_command_endpoints(request),
+        )
+    )
+
+
+@router.get("/artifacts/by-ref", response_model=ArtifactMetadataEnvelope)
+def get_worker_artifact_by_ref(
+    request: Request,
+    artifact_ref: str = Query(min_length=1),
+    principal=Depends(_authenticate_request),
+) -> ArtifactMetadataEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    artifact = require_worker_access_to_artifact(
+        repository,
+        artifact_ref=artifact_ref,
+        worker_id=principal.worker_id,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_ref}' was not found.")
+    metadata = build_worker_artifact_metadata(
+        request,
+        artifact=artifact,
+        metadata=build_artifact_metadata(artifact),
+    )
+    return ArtifactMetadataEnvelope(data=ArtifactMetadata.model_validate(metadata))
+
+
+@router.get("/artifacts/content")
+def get_worker_artifact_content(
+    request: Request,
+    artifact_ref: str = Query(min_length=1),
+    disposition: Literal["inline", "attachment"] = "inline",
+    principal=Depends(_authenticate_request),
+) -> Response:
+    repository: ControlPlaneRepository = request.app.state.repository
+    artifact_store: ArtifactStore = request.app.state.artifact_store
+    artifact = require_worker_access_to_artifact(
+        repository,
+        artifact_ref=artifact_ref,
+        worker_id=principal.worker_id,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_ref}' was not found.")
+
+    lifecycle_status = resolve_artifact_lifecycle_status(artifact)
+    if lifecycle_status != ARTIFACT_LIFECYCLE_ACTIVE:
+        raise HTTPException(
+            status_code=410,
+            detail=f"Artifact '{artifact_ref}' is no longer available ({lifecycle_status}).",
+        )
+    if artifact.get("materialization_status") != ARTIFACT_STATUS_MATERIALIZED or not artifact.get("storage_relpath"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Artifact '{artifact_ref}' is registered but not materialized.",
+        )
+
+    content = artifact_store.read_bytes(str(artifact["storage_relpath"]))
+    filename = str(artifact["logical_path"]).rsplit("/", 1)[-1]
+    media_type = artifact.get("media_type") or "application/octet-stream"
+    headers = {"Content-Disposition": f'{disposition}; filename="{filename}"'}
+    return Response(content=content, media_type=media_type, headers=headers)
+
+
+@router.get("/artifacts/preview", response_model=ArtifactPreviewEnvelope)
+def get_worker_artifact_preview(
+    request: Request,
+    artifact_ref: str = Query(min_length=1),
+    principal=Depends(_authenticate_request),
+) -> ArtifactPreviewEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    artifact_store: ArtifactStore = request.app.state.artifact_store
+    artifact = require_worker_access_to_artifact(
+        repository,
+        artifact_ref=artifact_ref,
+        worker_id=principal.worker_id,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_ref}' was not found.")
+
+    metadata = build_worker_artifact_metadata(
+        request,
+        artifact=artifact,
+        metadata=build_artifact_metadata(artifact),
+    )
+    lifecycle_status = resolve_artifact_lifecycle_status(artifact)
+    if lifecycle_status != ARTIFACT_LIFECYCLE_ACTIVE:
+        raise HTTPException(
+            status_code=410,
+            detail=f"Artifact '{artifact_ref}' is no longer available ({lifecycle_status}).",
+        )
+    if artifact.get("materialization_status") != ARTIFACT_STATUS_MATERIALIZED or not artifact.get("storage_relpath"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Artifact '{artifact_ref}' is registered but not materialized.",
+        )
+
+    preview_kind = classify_artifact_preview_kind(
+        kind=str(artifact["kind"]),
+        media_type=artifact.get("media_type"),
+    )
+    preview_payload = {
+        "artifact_ref": artifact_ref,
+        "preview_kind": preview_kind,
+        "media_type": artifact.get("media_type"),
+        "lifecycle_status": metadata["lifecycle_status"],
+        "content_url": metadata["content_url"],
+        "download_url": metadata["download_url"],
+        "json_content": None,
+        "text_content": None,
+    }
+    content = artifact_store.read_bytes(str(artifact["storage_relpath"]))
+    if preview_kind == "JSON":
+        preview_payload["json_content"] = json.loads(content.decode("utf-8"))
+    elif preview_kind == "TEXT":
+        preview_payload["text_content"] = content.decode("utf-8")
+
+    return ArtifactPreviewEnvelope(data=ArtifactPreviewData.model_validate(preview_payload))
+
+
+@router.post("/commands/ticket-start", response_model=CommandAckEnvelope)
+def worker_ticket_start(
+    request: Request,
+    payload: WorkerTicketStartCommand,
+    principal=Depends(_authenticate_request),
+) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    require_worker_owned_ticket(
+        repository,
+        ticket_id=payload.ticket_id,
+        worker_id=principal.worker_id,
+    )
+    return handle_ticket_start(
+        repository,
+        TicketStartCommand(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            node_id=payload.node_id,
+            started_by=principal.worker_id,
+            idempotency_key=payload.idempotency_key,
+        ),
+    )
+
+
+@router.post("/commands/ticket-heartbeat", response_model=CommandAckEnvelope)
+def worker_ticket_heartbeat(
+    request: Request,
+    payload: WorkerTicketHeartbeatCommand,
+    principal=Depends(_authenticate_request),
+) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    require_worker_owned_ticket(
+        repository,
+        ticket_id=payload.ticket_id,
+        worker_id=principal.worker_id,
+    )
+    return handle_ticket_heartbeat(
+        repository,
+        TicketHeartbeatCommand(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            node_id=payload.node_id,
+            reported_by=principal.worker_id,
+            idempotency_key=payload.idempotency_key,
+        ),
+    )
+
+
+@router.post("/commands/ticket-result-submit", response_model=CommandAckEnvelope)
+def worker_ticket_result_submit(
+    request: Request,
+    payload: WorkerTicketResultSubmitCommand,
+    principal=Depends(_authenticate_request),
+) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    artifact_store: ArtifactStore = request.app.state.artifact_store
+    developer_inspector_store = request.app.state.developer_inspector_store
+    require_worker_owned_ticket(
+        repository,
+        ticket_id=payload.ticket_id,
+        worker_id=principal.worker_id,
+    )
+    return handle_ticket_result_submit(
+        repository,
+        TicketResultSubmitCommand(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            node_id=payload.node_id,
+            submitted_by=principal.worker_id,
+            result_status=payload.result_status,
+            schema_version=payload.schema_version,
+            payload=payload.payload,
+            artifact_refs=payload.artifact_refs,
+            written_artifacts=payload.written_artifacts,
+            assumptions=payload.assumptions,
+            issues=payload.issues,
+            confidence=payload.confidence,
+            needs_escalation=payload.needs_escalation,
+            summary=payload.summary,
+            review_request=payload.review_request,
+            failure_kind=payload.failure_kind,
+            failure_message=payload.failure_message,
+            failure_detail=payload.failure_detail,
+            idempotency_key=payload.idempotency_key,
+        ),
+        developer_inspector_store,
+        artifact_store,
+    )
