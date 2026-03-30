@@ -1,5 +1,7 @@
 # Memory Log
 
+> Historical file paths in this log reflect the repo layout at the time each entry was written. The current documentation entrypoint is `doc/README.md`.
+
 ## 2026-03-27T23:39:10+08:00
 
 ### Session Context
