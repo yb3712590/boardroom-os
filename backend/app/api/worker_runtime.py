@@ -42,7 +42,6 @@ from app.core.ticket_handlers import (
 )
 from app.core.time import now_local
 from app.core.worker_runtime import (
-    authenticate_worker,
     authenticate_worker_assignments_request,
     authenticate_worker_request,
     build_output_schema_body_for_execution_package,
@@ -65,16 +64,12 @@ def get_worker_assignments(
     request: Request,
     x_boardroom_worker_bootstrap: str | None = Header(default=None),
     x_boardroom_worker_session: str | None = Header(default=None),
-    x_boardroom_worker_key: str | None = Header(default=None),
-    x_boardroom_worker_id: str | None = Header(default=None),
 ):
     repository: ControlPlaneRepository = request.app.state.repository
     auth_context = authenticate_worker_assignments_request(
         request,
         bootstrap_token=x_boardroom_worker_bootstrap,
         session_token=x_boardroom_worker_session,
-        worker_key=x_boardroom_worker_key,
-        worker_id=x_boardroom_worker_id,
     )
     assignments = list_worker_assignments(repository, worker_id=auth_context.principal.worker_id)
     issued_at = now_local()
@@ -118,14 +113,10 @@ def get_worker_execution_package(
     request: Request,
     ticket_id: str,
     access_token: str | None = Query(default=None),
-    x_boardroom_worker_key: str | None = Header(default=None),
-    x_boardroom_worker_id: str | None = Header(default=None),
 ) -> WorkerExecutionPackageEnvelope:
     principal = authenticate_worker_request(
         request,
         access_token=access_token,
-        worker_key=x_boardroom_worker_key,
-        worker_id=x_boardroom_worker_id,
         scope="execution_package",
         ticket_id=ticket_id,
     )
@@ -179,27 +170,16 @@ def get_worker_execution_package(
 def get_worker_artifact_by_ref(
     request: Request,
     artifact_ref: str = Query(min_length=1),
+    ticket_id: str = Query(min_length=1),
     access_token: str | None = Query(default=None),
-    x_boardroom_worker_key: str | None = Header(default=None),
-    x_boardroom_worker_id: str | None = Header(default=None),
 ) -> ArtifactMetadataEnvelope:
-    if access_token:
-        ticket_id = str(request.query_params.get("ticket_id") or "")
-        principal = authenticate_worker_request(
-            request,
-            access_token=access_token,
-            worker_key=x_boardroom_worker_key,
-            worker_id=x_boardroom_worker_id,
-            scope="artifact_read",
-            ticket_id=ticket_id,
-            artifact_ref=artifact_ref,
-        )
-    else:
-        principal = authenticate_worker(
-            request,
-            worker_key=x_boardroom_worker_key,
-            worker_id=x_boardroom_worker_id,
-        )
+    principal = authenticate_worker_request(
+        request,
+        access_token=access_token,
+        scope="artifact_read",
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+    )
     repository: ControlPlaneRepository = request.app.state.repository
     artifact = require_worker_access_to_artifact(
         repository,
@@ -225,30 +205,20 @@ def get_worker_artifact_by_ref(
 def get_worker_artifact_content(
     request: Request,
     artifact_ref: str = Query(min_length=1),
+    ticket_id: str = Query(min_length=1),
     disposition: Literal["inline", "attachment"] = "inline",
     access_token: str | None = Query(default=None),
-    x_boardroom_worker_key: str | None = Header(default=None),
-    x_boardroom_worker_id: str | None = Header(default=None),
 ) -> Response:
     repository: ControlPlaneRepository = request.app.state.repository
     artifact_store: ArtifactStore = request.app.state.artifact_store
-    if access_token:
-        ticket_id = str(request.query_params.get("ticket_id") or "")
-        principal = authenticate_worker_request(
-            request,
-            access_token=access_token,
-            worker_key=x_boardroom_worker_key,
-            worker_id=x_boardroom_worker_id,
-            scope="artifact_read",
-            ticket_id=ticket_id,
-            artifact_ref=artifact_ref,
-        )
-    else:
-        principal = authenticate_worker(
-            request,
-            worker_key=x_boardroom_worker_key,
-            worker_id=x_boardroom_worker_id,
-        )
+    principal = authenticate_worker_request(
+        request,
+        access_token=access_token,
+        scope="artifact_read",
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+        artifact_action="content_inline" if disposition == "inline" else "content_attachment",
+    )
     artifact = require_worker_access_to_artifact(
         repository,
         artifact_ref=artifact_ref,
@@ -280,29 +250,19 @@ def get_worker_artifact_content(
 def get_worker_artifact_preview(
     request: Request,
     artifact_ref: str = Query(min_length=1),
+    ticket_id: str = Query(min_length=1),
     access_token: str | None = Query(default=None),
-    x_boardroom_worker_key: str | None = Header(default=None),
-    x_boardroom_worker_id: str | None = Header(default=None),
 ) -> ArtifactPreviewEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     artifact_store: ArtifactStore = request.app.state.artifact_store
-    if access_token:
-        ticket_id = str(request.query_params.get("ticket_id") or "")
-        principal = authenticate_worker_request(
-            request,
-            access_token=access_token,
-            worker_key=x_boardroom_worker_key,
-            worker_id=x_boardroom_worker_id,
-            scope="artifact_read",
-            ticket_id=ticket_id,
-            artifact_ref=artifact_ref,
-        )
-    else:
-        principal = authenticate_worker(
-            request,
-            worker_key=x_boardroom_worker_key,
-            worker_id=x_boardroom_worker_id,
-        )
+    principal = authenticate_worker_request(
+        request,
+        access_token=access_token,
+        scope="artifact_read",
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+        artifact_action="preview",
+    )
     artifact = require_worker_access_to_artifact(
         repository,
         artifact_ref=artifact_ref,
@@ -361,14 +321,10 @@ def worker_ticket_start(
     request: Request,
     payload: WorkerTicketStartCommand,
     access_token: str | None = Query(default=None),
-    x_boardroom_worker_key: str | None = Header(default=None),
-    x_boardroom_worker_id: str | None = Header(default=None),
 ) -> CommandAckEnvelope:
     principal = authenticate_worker_request(
         request,
         access_token=access_token,
-        worker_key=x_boardroom_worker_key,
-        worker_id=x_boardroom_worker_id,
         scope="command",
         ticket_id=payload.ticket_id,
         command_name="ticket-start",
@@ -396,14 +352,10 @@ def worker_ticket_heartbeat(
     request: Request,
     payload: WorkerTicketHeartbeatCommand,
     access_token: str | None = Query(default=None),
-    x_boardroom_worker_key: str | None = Header(default=None),
-    x_boardroom_worker_id: str | None = Header(default=None),
 ) -> CommandAckEnvelope:
     principal = authenticate_worker_request(
         request,
         access_token=access_token,
-        worker_key=x_boardroom_worker_key,
-        worker_id=x_boardroom_worker_id,
         scope="command",
         ticket_id=payload.ticket_id,
         command_name="ticket-heartbeat",
@@ -431,14 +383,10 @@ def worker_ticket_result_submit(
     request: Request,
     payload: WorkerTicketResultSubmitCommand,
     access_token: str | None = Query(default=None),
-    x_boardroom_worker_key: str | None = Header(default=None),
-    x_boardroom_worker_id: str | None = Header(default=None),
 ) -> CommandAckEnvelope:
     principal = authenticate_worker_request(
         request,
         access_token=access_token,
-        worker_key=x_boardroom_worker_key,
-        worker_id=x_boardroom_worker_id,
         scope="command",
         ticket_id=payload.ticket_id,
         command_name="ticket-result-submit",

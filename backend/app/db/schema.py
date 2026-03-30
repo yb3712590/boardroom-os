@@ -112,6 +112,22 @@ CREATE TABLE IF NOT EXISTS worker_session (
     credential_version INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS worker_delivery_grant (
+    grant_id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL,
+    worker_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    credential_version INTEGER NOT NULL,
+    ticket_id TEXT NOT NULL,
+    artifact_ref TEXT,
+    artifact_action TEXT,
+    command_name TEXT,
+    issued_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    revoke_reason TEXT
+);
+
 CREATE TABLE IF NOT EXISTS incident_projection (
     incident_id TEXT PRIMARY KEY,
     workflow_id TEXT NOT NULL,
@@ -231,4 +247,16 @@ ON worker_session(worker_id);
 
 CREATE INDEX IF NOT EXISTS idx_worker_session_expires_at
 ON worker_session(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_session_id
+ON worker_delivery_grant(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_ticket_id
+ON worker_delivery_grant(ticket_id);
+
+CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_expires_at
+ON worker_delivery_grant(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_revoked_at
+ON worker_delivery_grant(revoked_at);
 """

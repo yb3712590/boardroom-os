@@ -105,6 +105,7 @@ class ControlPlaneRepository:
             self._ensure_employee_projection_shape(connection)
             self._ensure_worker_bootstrap_state_shape(connection)
             self._ensure_worker_session_shape(connection)
+            self._ensure_worker_delivery_grant_shape(connection)
             self._ensure_incident_projection_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_artifact_index_shape(connection)
@@ -686,6 +687,12 @@ class ControlPlaneRepository:
             ),
         )
         self.revoke_worker_sessions(connection, worker_id=worker_id, revoked_at=rotated_at)
+        self.revoke_worker_delivery_grants(
+            connection,
+            worker_id=worker_id,
+            revoked_at=rotated_at,
+            revoke_reason="Worker bootstrap credential rotated.",
+        )
         rotated = self.get_worker_bootstrap_state(worker_id, connection=connection)
         if rotated is None:
             raise RuntimeError("Rotated worker bootstrap state could not be loaded.")
@@ -815,6 +822,176 @@ class ControlPlaneRepository:
             f"""
             UPDATE worker_session
             SET revoked_at = COALESCE(revoked_at, ?)
+            WHERE {where_clause}
+            """,
+            tuple(params),
+        )
+        if cursor.rowcount:
+            self.revoke_worker_delivery_grants(
+                connection,
+                session_id=session_id,
+                worker_id=worker_id,
+                revoked_at=revoked_at,
+                revoke_reason="Worker session revoked.",
+            )
+        return int(cursor.rowcount or 0)
+
+    def get_worker_delivery_grant(
+        self,
+        grant_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM worker_delivery_grant WHERE grant_id = ?",
+                (grant_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_worker_delivery_grant_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM worker_delivery_grant WHERE grant_id = ?",
+                (grant_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_worker_delivery_grant_row(row)
+
+    def create_worker_delivery_grant(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        scope: str,
+        worker_id: str,
+        session_id: str,
+        credential_version: int,
+        ticket_id: str,
+        issued_at: datetime,
+        expires_at: datetime,
+        artifact_ref: str | None = None,
+        artifact_action: str | None = None,
+        command_name: str | None = None,
+    ) -> dict[str, Any]:
+        grant_id = new_prefixed_id("wgrant")
+        connection.execute(
+            """
+            INSERT INTO worker_delivery_grant (
+                grant_id,
+                scope,
+                worker_id,
+                session_id,
+                credential_version,
+                ticket_id,
+                artifact_ref,
+                artifact_action,
+                command_name,
+                issued_at,
+                expires_at,
+                revoked_at,
+                revoke_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                grant_id,
+                scope,
+                worker_id,
+                session_id,
+                credential_version,
+                ticket_id,
+                artifact_ref,
+                artifact_action,
+                command_name,
+                issued_at.isoformat(),
+                expires_at.isoformat(),
+                None,
+                None,
+            ),
+        )
+        created = self.get_worker_delivery_grant(grant_id, connection=connection)
+        if created is None:
+            raise RuntimeError("Worker delivery grant could not be created.")
+        return created
+
+    def list_worker_delivery_grants(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        worker_id: str | None = None,
+        session_id: str | None = None,
+        ticket_id: str | None = None,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if ticket_id is not None:
+            clauses.append("ticket_id = ?")
+            params.append(ticket_id)
+        if active_only:
+            clauses.append("revoked_at IS NULL")
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT * FROM worker_delivery_grant
+            {where_clause}
+            ORDER BY issued_at ASC, grant_id ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_delivery_grant_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_delivery_grant_row(row) for row in rows]
+
+    def revoke_worker_delivery_grants(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        revoked_at: datetime,
+        revoke_reason: str,
+        grant_id: str | None = None,
+        session_id: str | None = None,
+        worker_id: str | None = None,
+        ticket_id: str | None = None,
+    ) -> int:
+        if (
+            grant_id is None
+            and session_id is None
+            and worker_id is None
+            and ticket_id is None
+        ):
+            raise ValueError(
+                "At least one filter is required to revoke worker delivery grants."
+            )
+
+        clauses: list[str] = ["revoked_at IS NULL"]
+        params: list[Any] = [revoked_at.isoformat(), revoke_reason]
+        if grant_id is not None:
+            clauses.append("grant_id = ?")
+            params.append(grant_id)
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if ticket_id is not None:
+            clauses.append("ticket_id = ?")
+            params.append(ticket_id)
+        where_clause = " AND ".join(clauses)
+        cursor = connection.execute(
+            f"""
+            UPDATE worker_delivery_grant
+            SET revoked_at = ?, revoke_reason = ?
             WHERE {where_clause}
             """,
             tuple(params),
@@ -1906,6 +2083,14 @@ class ControlPlaneRepository:
         converted["credential_version"] = int(converted.get("credential_version") or 0)
         return converted
 
+    def _convert_worker_delivery_grant_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("issued_at", "expires_at", "revoked_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["credential_version"] = int(converted.get("credential_version") or 0)
+        return converted
+
     def _convert_incident_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         for field in ("opened_at", "closed_at", "updated_at"):
@@ -2368,6 +2553,63 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_session_expires_at ON worker_session(expires_at)"
+        )
+
+    def _ensure_worker_delivery_grant_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_delivery_grant (
+                grant_id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                credential_version INTEGER NOT NULL,
+                ticket_id TEXT NOT NULL,
+                artifact_ref TEXT,
+                artifact_action TEXT,
+                command_name TEXT,
+                issued_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                revoked_at TEXT,
+                revoke_reason TEXT
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(worker_delivery_grant)").fetchall()
+        }
+        required_columns = {
+            "grant_id": "TEXT",
+            "scope": "TEXT",
+            "worker_id": "TEXT",
+            "session_id": "TEXT",
+            "credential_version": "INTEGER",
+            "ticket_id": "TEXT",
+            "artifact_ref": "TEXT",
+            "artifact_action": "TEXT",
+            "command_name": "TEXT",
+            "issued_at": "TEXT",
+            "expires_at": "TEXT",
+            "revoked_at": "TEXT",
+            "revoke_reason": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE worker_delivery_grant ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_session_id ON worker_delivery_grant(session_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_ticket_id ON worker_delivery_grant(ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_expires_at ON worker_delivery_grant(expires_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_revoked_at ON worker_delivery_grant(revoked_at)"
         )
 
     def _ensure_incident_projection_shape(self, connection: sqlite3.Connection) -> None:

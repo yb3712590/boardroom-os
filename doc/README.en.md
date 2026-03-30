@@ -28,7 +28,7 @@ What is already real:
 - a ticket artifacts projection plus strict output-schema validation for `ui_milestone_review@1` and `consensus_document@1`
 - artifact metadata / content / preview endpoints keyed by `artifact_ref`
 - artifact lifecycle commands for delete and cleanup
-- an external worker handoff surface where workers bootstrap with per-worker tokens, refresh per-worker sessions, and then continue through short-lived signed URLs under `/api/v1/worker-runtime/*`
+- an external worker handoff surface where workers bootstrap with per-worker tokens, refresh per-worker sessions, and then continue through short-lived signed URLs under `/api/v1/worker-runtime/*`, now backed by persisted per-URL delivery grants
 
 ## Quick Start
 
@@ -64,6 +64,8 @@ Issue a bootstrap token for one worker:
 cd backend
 source .venv/bin/activate
 python -m app.worker_auth_cli issue-bootstrap --worker-id emp_frontend_2
+python -m app.worker_auth_cli list-delivery-grants --worker-id emp_frontend_2
+python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 ```
 
 Run the standalone scheduler runner:
@@ -80,9 +82,10 @@ Mode notes:
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` keeps scheduling and leasing, but stops automatic local `start / execute / result-submit`.
 - Recommended bootstrap flow: issue a worker-specific bootstrap token with `python -m app.worker_auth_cli issue-bootstrap --worker-id <employee_id>`, then call `GET /api/v1/worker-runtime/assignments` with `X-Boardroom-Worker-Bootstrap`.
 - The assignments response now also returns `session_id`, `session_token`, and `session_expires_at`; workers can keep polling assignments with `X-Boardroom-Worker-Session` and receive a refreshed session token plus a fresh batch of delivery URLs.
-- The returned execution-package URLs, artifact URLs, and worker command URLs all carry short-lived `access_token` query parameters and can be called without repeating the shared-secret headers.
-- Those signed delivery URLs are now session-bound, so revoking one worker session invalidates the URLs that were already issued for that session.
-- `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` still exist as a compatibility fallback for local debugging, but they are no longer the recommended default path.
+- The returned execution-package URLs, artifact URLs, and worker command URLs all carry short-lived `access_token` query parameters and are now backed by persisted delivery grants.
+- Those signed delivery URLs are session-bound and grant-bound, so revoking one worker session invalidates that session's URLs, and one specific URL can also be revoked independently through the local CLI.
+- `/api/v1/worker-runtime/tickets/*`, `/api/v1/worker-runtime/artifacts/*`, and `/api/v1/worker-runtime/commands/*` no longer accept the old shared-secret request fallback.
+- Local operators can inspect and revoke delivery grants through `python -m app.worker_auth_cli list-delivery-grants` and `python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>`.
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` signs bootstrap tokens and falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when omitted.
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` defaults to `86400` and controls assignment-session refresh windows.
 - `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites those delivery URLs for remotely reachable workers; if omitted, the backend falls back to the incoming request base URL.
@@ -105,7 +108,7 @@ Known realities:
 
 - `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
 - Binary uploads currently go through inline base64 in `ticket-result-submit`; there is no multipart, chunked-upload, or object-storage path yet.
-- External worker handoff now supports per-worker bootstrap tokens, refreshable sessions, bootstrap rotate / revoke, and session-bound signed delivery URLs, but stronger multi-tenant isolation, independent delivery-grant tracking / per-URL revocation, and more hardened public-internet boundaries are still not implemented.
+- External worker handoff now supports per-worker bootstrap tokens, refreshable sessions, bootstrap rotate / revoke, session-bound signed delivery URLs, and independent delivery-grant / per-URL revocation, but stronger multi-tenant isolation and more hardened public-internet boundaries are still not implemented.
 
 ## Docs
 

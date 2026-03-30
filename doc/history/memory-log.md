@@ -2093,3 +2093,88 @@
 - automatic background cleanup scheduling and richer retention classes
 - broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
 - richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T18:55:56+08:00
+
+### Session Context
+- User asked to directly implement the Runtime / Backend external worker delivery-grant closeout plan inside the existing Boardroom OS repo.
+- This round had to stay on the same external worker handoff boundary and finish the whole linked chain instead of stopping after one medium slice.
+
+### Boundary Chosen
+- Single boundary for this round: external worker delivery hardening on top of the existing `/api/v1/worker-runtime/*` chain.
+- The slice chain stayed on one path:
+  - persisted per-URL delivery grants
+  - grant-aware validation and revoke linkage
+  - removal of request-time legacy shared-secret fallback
+  - CLI, tests, and docs closeout
+
+### Design / Code Gap Identified
+- Code already had:
+  - persisted `CompiledExecutionPackage`
+  - worker bootstrap tokens
+  - refreshable worker sessions
+  - session-bound signed delivery URLs
+- But one clear delivery gap remained:
+  - signed delivery URLs were still stateless and could not be revoked one-by-one
+  - artifact read URLs still effectively shared one token scope
+  - request-time legacy shared-secret fallback still existed on `/api/v1/worker-runtime/*`
+
+### Slice Landed
+- Added persisted `worker_delivery_grant` storage plus repository helpers to create, read, list, and revoke grants.
+- Delivery token claims now carry:
+  - `grant_id`
+  - `artifact_action`
+- `artifact_action` is now differentiated as:
+  - `content_inline`
+  - `content_attachment`
+  - `preview`
+- Each execution-package URL, artifact `content_url`, artifact `download_url`, artifact `preview_url`, and worker command URL now gets its own persisted grant.
+- Worker delivery validation is now ordered as:
+  - token signature and expiry
+  - persisted grant existence / revoke / expiry / claim match
+  - session existence / revoke / credential-version match
+  - worker active-state and current ticket ownership
+  - existing artifact lifecycle and access rules
+- `revoke-session` and `rotate-bootstrap` now bulk-revoke related active grants with explicit revoke reasons.
+- `GET /api/v1/worker-runtime/assignments` now accepts only:
+  - `X-Boardroom-Worker-Bootstrap`
+  - `X-Boardroom-Worker-Session`
+- `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package`, `GET /api/v1/worker-runtime/artifacts/*`, and `POST /api/v1/worker-runtime/commands/*` now accept only signed `access_token`.
+- Added local worker-auth CLI commands:
+  - `list-delivery-grants`
+  - `revoke-delivery-grant`
+- Conservatively kept configuration fallback:
+  - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` may still fall back to `BOARDROOM_OS_WORKER_SHARED_SECRET`
+  - `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` may still fall back to `BOARDROOM_OS_WORKER_SHARED_SECRET`
+- `artifact by-ref` continues to reuse any valid artifact token for the same `ticket_id + artifact_ref`; this round did not add a metadata-only grant.
+
+### Tests Added / Updated
+- API coverage now includes:
+  - assignments rejecting legacy shared-secret headers
+  - delivery routes rejecting legacy header fallback
+  - execution package, artifact preview/content/download, and command URLs producing distinct grants
+  - revoking one grant invalidating only the target URL
+  - session revoke and bootstrap rotate invalidating related grants
+  - tampered / expired / wrong-scope tokens still being rejected
+- CLI coverage now includes:
+  - listing grants by worker, session, or ticket
+  - revoking one grant without invalidating sibling grants in the same session
+
+### Verification
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests -q`
+  - `155 passed`
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- stronger public multi-tenant delivery isolation and finer-grained public-internet security boundaries
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface

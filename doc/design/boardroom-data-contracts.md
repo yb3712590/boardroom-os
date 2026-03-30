@@ -1216,13 +1216,10 @@ Current minimal authenticated worker handoff:
 - `POST /api/v1/worker-runtime/commands/ticket-heartbeat`
 - `POST /api/v1/worker-runtime/commands/ticket-result-submit`
 
-Bootstrap authentication headers:
+Assignment authentication headers:
 
 - `X-Boardroom-Worker-Bootstrap`: per-worker bootstrap token minted by `python -m app.worker_auth_cli issue-bootstrap --worker-id ...`
 - `X-Boardroom-Worker-Session`: refreshable worker session token returned by `GET /api/v1/worker-runtime/assignments`
-- Legacy fallback:
-  - `X-Boardroom-Worker-Key`: deployment-level shared secret
-  - `X-Boardroom-Worker-Id`: the current `employee_id`
 
 Behavior rules:
 
@@ -1233,9 +1230,10 @@ Behavior rules:
   - `session_expires_at`
   - per-ticket `execution_package_url`
   - per-ticket `delivery_expires_at`
+- `GET /api/v1/worker-runtime/assignments` now accepts only `X-Boardroom-Worker-Bootstrap` or `X-Boardroom-Worker-Session`; `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` are no longer accepted on worker-runtime routes
 - bootstrap-token calls create a fresh worker session
 - session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`
-- execution-package reads require current lease ownership and return:
+- execution-package reads require a signed `access_token`, enforce current lease ownership, and return:
   - persisted `CompiledExecutionPackage`
   - `output_schema_body`
   - `bundle_id`
@@ -1248,15 +1246,26 @@ Behavior rules:
   - execution package URLs are scoped to one `ticket_id`
   - artifact URLs are scoped to one `ticket_id` plus one `artifact_ref`
   - worker command URLs are scoped to one `ticket_id` plus one command name
-- signed delivery URLs are also bound to one worker `session_id`; revoking that session invalidates the already issued URLs for that session
+- each execution-package URL, artifact content/download/preview URL, and command URL now gets its own persisted delivery grant; `grant_id` lives inside the signed token claim and local CLI output, but is not exposed as a first-class field in the public worker JSON contract
+- artifact URLs also distinguish `artifact_action = content_inline | content_attachment | preview`
+- `GET /api/v1/worker-runtime/artifacts/by-ref` conservatively reuses any valid artifact token for the same `ticket_id + artifact_ref`; backend does not mint a dedicated metadata-only grant
+- signed delivery URLs are bound to both one worker `session_id` and one persisted delivery grant; revoking that session or rotating the bootstrap credential invalidates the related active grants
+- signed delivery validation is ordered as:
+  - signature + expiry
+  - persisted grant exists, is not revoked, is not expired, and matches the claim set
+  - active session exists and is not revoked
+  - session credential version still matches the worker's current bootstrap credential version
+  - current worker ownership of the ticket
+  - existing artifact access and lifecycle rules
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` signs bootstrap tokens and falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when omitted
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` controls how long a returned `session_token` stays valid before the worker must refresh it on `assignments`
 - `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites the absolute delivery base, `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` controls expiry, and `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can differ from the bootstrap signing secret
 - artifact routes keep existing lifecycle semantics:
   - `REGISTERED_ONLY` content reads return conflict-style errors
   - `DELETED` / `EXPIRED` content reads return gone-style errors
-- signed URL calls do not need bootstrap headers, but header-based access remains as a compatibility fallback for local debugging
-- worker command routes inject worker identity from either signed token or headers and then reuse the existing ticket handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker governance stay unchanged
+- worker delivery routes reject the old shared-secret header fallback; local debugging should first call `assignments`, then use the returned signed URLs
+- local operators can inspect or revoke one specific delivery grant through `python -m app.worker_auth_cli list-delivery-grants` and `python -m app.worker_auth_cli revoke-delivery-grant --grant-id ...`
+- worker command routes inject worker identity from the signed token and then reuse the existing ticket handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker governance stay unchanged
 
 ### 10.2 Board Approve
 

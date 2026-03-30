@@ -158,6 +158,48 @@ def _worker_session_headers(session_token: str) -> dict[str, str]:
     return {"X-Boardroom-Worker-Session": session_token}
 
 
+def _worker_assignments_response(
+    client,
+    *,
+    worker_id: str = "emp_frontend_2",
+    credential_version: int = 1,
+    signing_secret: str = "bootstrap-secret",
+    issued_at: str = "2026-03-28T10:00:00+08:00",
+    ttl_sec: int = 3600,
+):
+    return client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(
+            worker_id=worker_id,
+            credential_version=credential_version,
+            signing_secret=signing_secret,
+            issued_at=issued_at,
+            ttl_sec=ttl_sec,
+        ),
+    )
+
+
+def _worker_assignments_data(
+    client,
+    *,
+    worker_id: str = "emp_frontend_2",
+    credential_version: int = 1,
+    signing_secret: str = "bootstrap-secret",
+    issued_at: str = "2026-03-28T10:00:00+08:00",
+    ttl_sec: int = 3600,
+) -> dict:
+    response = _worker_assignments_response(
+        client,
+        worker_id=worker_id,
+        credential_version=credential_version,
+        signing_secret=signing_secret,
+        issued_at=issued_at,
+        ttl_sec=ttl_sec,
+    )
+    assert response.status_code == 200
+    return response.json()["data"]
+
+
 def _local_path_from_url(url: str) -> str:
     parsed = urlsplit(url)
     if parsed.query:
@@ -170,6 +212,12 @@ def _query_value(url: str, name: str) -> str | None:
     if not values:
         return None
     return values[0]
+
+
+def _decode_worker_delivery_token_payload(token: str) -> dict:
+    payload_segment = token.split(".", 1)[0]
+    padding = "=" * (-len(payload_segment) % 4)
+    return json.loads(base64.urlsafe_b64decode(f"{payload_segment}{padding}").decode("utf-8"))
 
 
 def _replace_query_value(url: str, name: str, value: str) -> str:
@@ -185,6 +233,66 @@ def _replace_query_value(url: str, name: str, value: str) -> str:
             parsed.fragment,
         )
     )
+
+
+def _worker_artifact_payloads(execution_package_data: dict) -> dict[str, dict]:
+    payloads: dict[str, dict] = {}
+    for block in execution_package_data["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"]:
+        content_payload = block.get("content_payload") or {}
+        artifact_access = content_payload.get("artifact_access") or {}
+        artifact_ref = (
+            artifact_access.get("artifact_ref")
+            or content_payload.get("artifact_ref")
+            or content_payload.get("source_ref")
+        )
+        if isinstance(artifact_ref, str) and artifact_ref:
+            payloads[artifact_ref] = content_payload
+    return payloads
+
+
+def _list_worker_delivery_grants(client) -> list[dict]:
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                grant_id,
+                scope,
+                worker_id,
+                session_id,
+                credential_version,
+                ticket_id,
+                artifact_ref,
+                artifact_action,
+                command_name,
+                issued_at,
+                expires_at,
+                revoked_at,
+                revoke_reason
+            FROM worker_delivery_grant
+            ORDER BY issued_at, grant_id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _revoke_worker_delivery_grant(
+    client,
+    *,
+    grant_id: str,
+    revoked_at: str = "2026-03-28T10:06:00+08:00",
+    revoke_reason: str = "Manual single-URL revoke for testing.",
+) -> None:
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE worker_delivery_grant
+            SET revoked_at = ?, revoke_reason = ?
+            WHERE grant_id = ?
+            """,
+            (revoked_at, revoke_reason, grant_id),
+        )
 
 
 def _seed_input_artifact(
@@ -864,24 +972,31 @@ def test_ticket_start_moves_ticket_and_node_to_executing(client, set_ticket_time
     assert node_projection["status"] == NODE_STATUS_EXECUTING
 
 
-def test_worker_runtime_assignments_require_valid_headers(client, set_ticket_time, monkeypatch):
+def test_worker_runtime_assignments_require_bootstrap_or_session_headers(client, set_ticket_time, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(client)
 
     missing_headers = client.get("/api/v1/worker-runtime/assignments")
-    wrong_secret = client.get(
+    legacy_shared_secret = client.get(
         "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(shared_secret="wrong-secret"),
+        headers=_worker_headers(),
     )
-    missing_worker_id = client.get(
+    bootstrap_response = client.get(
         "/api/v1/worker-runtime/assignments",
-        headers={"X-Boardroom-Worker-Key": "shared-secret"},
+        headers=_worker_bootstrap_headers(),
+    )
+    session_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(bootstrap_response.json()["data"]["session_token"]),
     )
 
     assert missing_headers.status_code == 401
-    assert wrong_secret.status_code == 401
-    assert missing_worker_id.status_code == 401
+    assert legacy_shared_secret.status_code == 401
+    assert bootstrap_response.status_code == 200
+    assert session_response.status_code == 200
 
 
 def test_worker_runtime_assignments_return_only_current_worker_tickets_and_signed_execution_urls(
@@ -889,7 +1004,7 @@ def test_worker_runtime_assignments_return_only_current_worker_tickets_and_signe
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
@@ -923,10 +1038,7 @@ def test_worker_runtime_assignments_return_only_current_worker_tickets_and_signe
         ),
     )
 
-    response = client.get(
-        "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(),
-    )
+    response = _worker_assignments_response(client)
 
     assert response.status_code == 200
     data = response.json()["data"]
@@ -1163,7 +1275,9 @@ def test_worker_runtime_execution_package_signed_url_allows_token_only_access_an
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _seed_input_artifact(client)
@@ -1174,11 +1288,8 @@ def test_worker_runtime_execution_package_signed_url_allows_token_only_access_an
         node_id="node_worker_package",
     )
 
-    assignments_response = client.get(
-        "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(),
-    )
-    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
     first_response = client.get(_local_path_from_url(execution_package_url))
     second_response = client.get(_local_path_from_url(execution_package_url))
 
@@ -1220,20 +1331,35 @@ def test_worker_runtime_execution_package_signed_url_allows_token_only_access_an
     assert _query_value(content_payload["content_url"], "access_token")
     assert _query_value(content_payload["preview_url"], "access_token")
     assert _query_value(content_payload["download_url"], "access_token")
+    assert _query_value(content_payload["content_url"], "access_token") != _query_value(
+        content_payload["preview_url"], "access_token"
+    )
+    assert _query_value(content_payload["content_url"], "access_token") != _query_value(
+        content_payload["download_url"], "access_token"
+    )
     assert first_body["command_endpoints"]["ticket_start_url"].startswith(
         "https://workers.boardroom.test/api/v1/worker-runtime/commands/ticket-start"
     )
     assert _query_value(first_body["command_endpoints"]["ticket_start_url"], "access_token")
+    grants = _list_worker_delivery_grants(client)
+    assert len(grants) >= 7
+    assert any(grant["scope"] == "execution_package" for grant in grants)
+    assert {
+        grant["artifact_action"]
+        for grant in grants
+        if grant["scope"] == "artifact_read"
+    } == {"content_inline", "content_attachment", "preview"}
     artifact_content_response = client.get(_local_path_from_url(content_payload["content_url"]))
     assert artifact_content_response.status_code == 200
     assert "# Brief" in artifact_content_response.text
 
 
-def test_worker_runtime_execution_package_rejects_wrong_worker_owner(
+def test_worker_runtime_execution_package_rejects_legacy_header_fallback(
     client,
     set_ticket_time,
     monkeypatch,
 ):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(
@@ -1245,10 +1371,10 @@ def test_worker_runtime_execution_package_rejects_wrong_worker_owner(
 
     response = client.get(
         "/api/v1/worker-runtime/tickets/tkt_worker_owned/execution-package",
-        headers=_worker_headers(worker_id="emp_checker_1"),
+        headers=_worker_headers(),
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 def test_worker_runtime_artifact_routes_return_worker_scoped_metadata_and_content(
@@ -1256,7 +1382,8 @@ def test_worker_runtime_artifact_routes_return_worker_scoped_metadata_and_conten
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _seed_input_artifact(client)
     _create_and_lease_ticket(
@@ -1266,21 +1393,23 @@ def test_worker_runtime_artifact_routes_return_worker_scoped_metadata_and_conten
         node_id="node_worker_artifact",
     )
 
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    execution_package_data = execution_package_response.json()["data"]
+    artifact_payload = _worker_artifact_payloads(execution_package_data)["art://inputs/brief.md"]
+    artifact_token = _query_value(artifact_payload["content_url"], "access_token")
+
     metadata_response = client.get(
         "/api/v1/worker-runtime/artifacts/by-ref",
-        params={"artifact_ref": "art://inputs/brief.md"},
-        headers=_worker_headers(),
+        params={
+            "artifact_ref": "art://inputs/brief.md",
+            "ticket_id": "tkt_worker_artifact",
+            "access_token": artifact_token,
+        },
     )
-    preview_response = client.get(
-        "/api/v1/worker-runtime/artifacts/preview",
-        params={"artifact_ref": "art://inputs/brief.md"},
-        headers=_worker_headers(),
-    )
-    content_response = client.get(
-        "/api/v1/worker-runtime/artifacts/content",
-        params={"artifact_ref": "art://inputs/brief.md", "disposition": "inline"},
-        headers=_worker_headers(),
-    )
+    preview_response = client.get(_local_path_from_url(artifact_payload["preview_url"]))
+    content_response = client.get(_local_path_from_url(artifact_payload["content_url"]))
 
     assert metadata_response.status_code == 200
     assert preview_response.status_code == 200
@@ -1301,7 +1430,8 @@ def test_worker_runtime_artifact_routes_preserve_registered_only_and_deleted_beh
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post(
         "/api/v1/commands/ticket-create",
@@ -1338,20 +1468,27 @@ def test_worker_runtime_artifact_routes_preserve_registered_only_and_deleted_beh
         delete_reason="Removed before worker pickup.",
     )
 
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    artifact_payloads = _worker_artifact_payloads(execution_package_response.json()["data"])
+    registered_token = _query_value(
+        artifact_payloads["art://inputs/registered.md"]["content_url"],
+        "access_token",
+    )
     registered_metadata = client.get(
         "/api/v1/worker-runtime/artifacts/by-ref",
-        params={"artifact_ref": "art://inputs/registered.md"},
-        headers=_worker_headers(),
+        params={
+            "artifact_ref": "art://inputs/registered.md",
+            "ticket_id": "tkt_worker_artifact_states",
+            "access_token": registered_token,
+        },
     )
     registered_content = client.get(
-        "/api/v1/worker-runtime/artifacts/content",
-        params={"artifact_ref": "art://inputs/registered.md", "disposition": "inline"},
-        headers=_worker_headers(),
+        _local_path_from_url(artifact_payloads["art://inputs/registered.md"]["content_url"])
     )
     deleted_content = client.get(
-        "/api/v1/worker-runtime/artifacts/content",
-        params={"artifact_ref": "art://inputs/deleted.md", "disposition": "inline"},
-        headers=_worker_headers(),
+        _local_path_from_url(artifact_payloads["art://inputs/deleted.md"]["content_url"])
     )
 
     assert registered_metadata.status_code == 200
@@ -1365,7 +1502,8 @@ def test_worker_runtime_signed_command_urls_allow_token_only_writeback(
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(
@@ -1375,11 +1513,8 @@ def test_worker_runtime_signed_command_urls_allow_token_only_writeback(
         node_id="node_worker_token_result",
     )
 
-    assignments_response = client.get(
-        "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(),
-    )
-    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
     execution_package_response = client.get(_local_path_from_url(execution_package_url))
     command_endpoints = execution_package_response.json()["data"]["command_endpoints"]
 
@@ -1454,7 +1589,8 @@ def test_worker_runtime_signed_execution_package_url_rejects_expired_token(
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC", "60")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(
@@ -1464,11 +1600,8 @@ def test_worker_runtime_signed_execution_package_url_rejects_expired_token(
         node_id="node_worker_expired_token",
     )
 
-    assignments_response = client.get(
-        "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(),
-    )
-    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
     set_ticket_time("2026-03-28T10:02:00+08:00")
 
     response = client.get(_local_path_from_url(execution_package_url))
@@ -1482,7 +1615,8 @@ def test_worker_runtime_signed_artifact_url_rejects_tampered_token(
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _seed_input_artifact(client)
     _create_and_lease_ticket(
@@ -1492,11 +1626,8 @@ def test_worker_runtime_signed_artifact_url_rejects_tampered_token(
         node_id="node_worker_tampered_artifact",
     )
 
-    assignments_response = client.get(
-        "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(),
-    )
-    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
     execution_package_response = client.get(_local_path_from_url(execution_package_url))
     content_url = execution_package_response.json()["data"]["compiled_execution_package"]["atomic_context_bundle"][
         "context_blocks"
@@ -1521,7 +1652,8 @@ def test_worker_runtime_signed_artifact_url_rejects_artifact_scope_mismatch(
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _seed_input_artifact(client, artifact_ref="art://inputs/brief.md", logical_path="artifacts/inputs/brief.md")
     _seed_input_artifact(
@@ -1550,11 +1682,8 @@ def test_worker_runtime_signed_artifact_url_rejects_artifact_scope_mismatch(
         ),
     )
 
-    assignments_response = client.get(
-        "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(),
-    )
-    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
     execution_package_response = client.get(_local_path_from_url(execution_package_url))
     content_url = execution_package_response.json()["data"]["compiled_execution_package"]["atomic_context_bundle"][
         "context_blocks"
@@ -1571,7 +1700,8 @@ def test_worker_runtime_signed_command_url_rejects_command_scope_mismatch(
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(
         client,
@@ -1580,11 +1710,8 @@ def test_worker_runtime_signed_command_url_rejects_command_scope_mismatch(
         node_id="node_worker_wrong_command",
     )
 
-    assignments_response = client.get(
-        "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(),
-    )
-    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
     execution_package_response = client.get(_local_path_from_url(execution_package_url))
     command_endpoints = execution_package_response.json()["data"]["command_endpoints"]
     wrong_route = _local_path_from_url(command_endpoints["ticket_start_url"]).replace(
@@ -1610,7 +1737,8 @@ def test_worker_runtime_signed_execution_package_url_rejects_previous_worker_aft
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(
         client,
@@ -1619,11 +1747,8 @@ def test_worker_runtime_signed_execution_package_url_rejects_previous_worker_aft
         node_id="node_worker_reassigned",
     )
 
-    assignments_response = client.get(
-        "/api/v1/worker-runtime/assignments",
-        headers=_worker_headers(),
-    )
-    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
 
     set_ticket_time("2026-03-28T10:11:00+08:00")
     client.post(
@@ -1644,11 +1769,12 @@ def test_worker_runtime_signed_execution_package_url_rejects_previous_worker_aft
     assert response.status_code == 403
 
 
-def test_worker_runtime_commands_start_heartbeat_and_result_submit_reuse_handlers(
+def test_worker_runtime_command_routes_reject_legacy_header_fallback(
     client,
     set_ticket_time,
     monkeypatch,
 ):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(
@@ -1715,23 +1841,54 @@ def test_worker_runtime_commands_start_heartbeat_and_result_submit_reuse_handler
         headers=_worker_headers(),
     )
 
-    repository = client.app.state.repository
-    ticket_projection = repository.get_current_ticket_projection("tkt_worker_result")
-    artifact_record = repository.get_artifact_by_ref("art://worker/runtime-option-a.json")
-    event_types = [event["event_type"] for event in repository.list_events_for_testing()]
+    assert start_response.status_code == 401
+    assert heartbeat_response.status_code == 401
+    assert result_response.status_code == 401
 
-    assert start_response.status_code == 200
-    assert heartbeat_response.status_code == 200
-    assert result_response.status_code == 200
-    assert start_response.json()["status"] == "ACCEPTED"
-    assert heartbeat_response.json()["status"] == "ACCEPTED"
-    assert result_response.json()["status"] == "ACCEPTED"
-    assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
-    assert artifact_record is not None
-    assert artifact_record["materialization_status"] == "MATERIALIZED"
-    assert EVENT_TICKET_STARTED in event_types
-    assert EVENT_TICKET_HEARTBEAT_RECORDED in event_types
-    assert EVENT_TICKET_COMPLETED in event_types
+
+def test_worker_runtime_revoking_one_artifact_grant_only_invalidates_target_url(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_single_revoke",
+        node_id="node_worker_single_revoke",
+    )
+
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    execution_package_data = execution_package_response.json()["data"]
+    artifact_payload = _worker_artifact_payloads(execution_package_data)["art://inputs/brief.md"]
+    preview_url = artifact_payload["preview_url"]
+    content_url = artifact_payload["content_url"]
+    download_url = artifact_payload["download_url"]
+    preview_grant_id = _decode_worker_delivery_token_payload(
+        _query_value(preview_url, "access_token") or ""
+    )["grant_id"]
+
+    _revoke_worker_delivery_grant(client, grant_id=preview_grant_id)
+
+    preview_response = client.get(_local_path_from_url(preview_url))
+    content_response = client.get(_local_path_from_url(content_url))
+    download_response = client.get(_local_path_from_url(download_url))
+    refreshed_assignments = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(assignments_data["session_token"]),
+    )
+
+    assert preview_response.status_code == 401
+    assert content_response.status_code == 200
+    assert download_response.status_code == 200
+    assert refreshed_assignments.status_code == 200
 
 
 def test_worker_runtime_result_submit_preserves_schema_validation_path(
@@ -1739,7 +1896,8 @@ def test_worker_runtime_result_submit_preserves_schema_validation_path(
     set_ticket_time,
     monkeypatch,
 ):
-    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(
         client,
@@ -1749,6 +1907,12 @@ def test_worker_runtime_result_submit_preserves_schema_validation_path(
         retry_budget=2,
     )
 
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    result_submit_url = execution_package_response.json()["data"]["command_endpoints"][
+        "ticket_result_submit_url"
+    ]
     result_payload = _ticket_result_submit_payload(
         workflow_id="wf_worker_runtime",
         ticket_id="tkt_worker_schema_error",
@@ -1761,9 +1925,8 @@ def test_worker_runtime_result_submit_preserves_schema_validation_path(
     )
     result_payload.pop("submitted_by")
     response = client.post(
-        "/api/v1/worker-runtime/commands/ticket-result-submit",
+        _local_path_from_url(result_submit_url),
         json=result_payload,
-        headers=_worker_headers(),
     )
 
     repository = client.app.state.repository

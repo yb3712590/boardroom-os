@@ -20,6 +20,7 @@ from app.core.worker_bootstrap_tokens import (
     validate_worker_session_token,
 )
 from app.core.worker_delivery_tokens import (
+    WorkerArtifactAction,
     WorkerCommandName,
     WorkerDeliveryScope,
     WorkerDeliveryTokenClaims,
@@ -75,6 +76,16 @@ def _resolve_worker_public_base_url(request: Request) -> str:
 
 def _resolve_worker_session_ttl_sec() -> int:
     return get_settings().worker_session_ttl_sec
+
+
+def _resolve_worker_delivery_token_ttl_sec() -> int:
+    return get_settings().worker_delivery_token_ttl_sec
+
+
+def _require_delivery_access_token(access_token: str | None) -> str:
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Worker delivery access_token is required.")
+    return access_token
 
 
 def _require_active_worker_projection(
@@ -148,6 +159,38 @@ def _validate_session_claims_against_state(
     expires_at = session_row.get("expires_at")
     if expires_at is None or expires_at <= at:
         raise HTTPException(status_code=401, detail="Worker session token has expired.")
+
+
+def _validate_delivery_grant_against_claims(
+    grant: dict[str, Any] | None,
+    *,
+    claims: WorkerDeliveryTokenClaims,
+    at: datetime,
+) -> None:
+    if grant is None:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    if str(grant.get("scope") or "") != claims.scope:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    if str(grant.get("worker_id") or "") != claims.worker_id:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    if str(grant.get("session_id") or "") != claims.session_id:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    if int(grant.get("credential_version") or 0) != claims.credential_version:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    if str(grant.get("ticket_id") or "") != claims.ticket_id:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    if (grant.get("artifact_ref") or None) != claims.artifact_ref:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    if (grant.get("artifact_action") or None) != claims.artifact_action:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    if (grant.get("command_name") or None) != claims.command_name:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+    revoked_at = grant.get("revoked_at")
+    if revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Worker delivery token has been revoked.")
+    expires_at = grant.get("expires_at")
+    if expires_at is None or expires_at <= at:
+        raise HTTPException(status_code=401, detail="Worker delivery token has expired.")
 
 
 def _create_or_refresh_worker_session(
@@ -267,41 +310,11 @@ def _authenticate_worker_session(
     return _build_assignment_auth_context_from_session_row(refreshed_session, at=current_time)
 
 
-def _authenticate_worker_legacy_fallback(
-    request: Request,
-    *,
-    worker_key: str | None,
-    worker_id: str | None,
-) -> WorkerAssignmentAuthContext:
-    principal = authenticate_worker(
-        request,
-        worker_key=worker_key,
-        worker_id=worker_id,
-    )
-    repository: ControlPlaneRepository = request.app.state.repository
-    current_time = now_local()
-    with repository.transaction() as connection:
-        state = repository.ensure_worker_bootstrap_state(
-            connection,
-            worker_id=principal.worker_id,
-            at=current_time,
-        )
-    session_row = _create_or_refresh_worker_session(
-        repository,
-        worker_id=principal.worker_id,
-        credential_version=int(state["credential_version"]),
-        at=current_time,
-    )
-    return _build_assignment_auth_context_from_session_row(session_row, at=current_time)
-
-
 def authenticate_worker_assignments_request(
     request: Request,
     *,
     bootstrap_token: str | None,
     session_token: str | None,
-    worker_key: str | None,
-    worker_id: str | None,
 ) -> WorkerAssignmentAuthContext:
     if bootstrap_token:
         return _authenticate_worker_bootstrap(
@@ -313,14 +326,14 @@ def authenticate_worker_assignments_request(
             request,
             session_token=session_token,
         )
-    return _authenticate_worker_legacy_fallback(
-        request,
-        worker_key=worker_key,
-        worker_id=worker_id,
+    raise HTTPException(
+        status_code=401,
+        detail="Worker bootstrap or session headers are required.",
     )
 
 
 def _issue_worker_delivery_token(
+    request: Request,
     *,
     scope: WorkerDeliveryScope,
     worker_id: str,
@@ -329,21 +342,41 @@ def _issue_worker_delivery_token(
     ticket_id: str,
     issued_at: datetime,
     artifact_ref: str | None = None,
+    artifact_action: WorkerArtifactAction | None = None,
     command_name: WorkerCommandName | None = None,
 ) -> tuple[str, datetime]:
-    settings = get_settings()
-    return issue_worker_delivery_token(
+    repository: ControlPlaneRepository = request.app.state.repository
+    ttl_sec = _resolve_worker_delivery_token_ttl_sec()
+    expires_at = issued_at + timedelta(seconds=ttl_sec)
+    with repository.transaction() as connection:
+        grant = repository.create_worker_delivery_grant(
+            connection,
+            scope=scope,
+            worker_id=worker_id,
+            session_id=session_id,
+            credential_version=credential_version,
+            ticket_id=ticket_id,
+            artifact_ref=artifact_ref,
+            artifact_action=artifact_action,
+            command_name=command_name,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+    token, _ = issue_worker_delivery_token(
         signing_secret=_resolve_worker_delivery_signing_secret(),
+        grant_id=str(grant["grant_id"]),
         scope=scope,
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
         ticket_id=ticket_id,
         issued_at=issued_at,
-        ttl_sec=settings.worker_delivery_token_ttl_sec,
+        ttl_sec=ttl_sec,
         artifact_ref=artifact_ref,
+        artifact_action=artifact_action,
         command_name=command_name,
     )
+    return token, expires_at
 
 
 def authenticate_worker(
@@ -378,46 +411,45 @@ def authenticate_worker_request(
     request: Request,
     *,
     access_token: str | None,
-    worker_key: str | None,
-    worker_id: str | None,
     scope: WorkerDeliveryScope,
     ticket_id: str,
     artifact_ref: str | None = None,
+    artifact_action: WorkerArtifactAction | None = None,
     command_name: WorkerCommandName | None = None,
 ) -> WorkerPrincipal:
-    if access_token:
-        claims = validate_worker_delivery_token(
-            access_token,
-            signing_secret=_resolve_worker_delivery_signing_secret(),
-            expected_scope=scope,
-            expected_ticket_id=ticket_id,
-            expected_artifact_ref=artifact_ref,
-            expected_command_name=command_name,
-            at=now_local(),
-        )
-        repository: ControlPlaneRepository = request.app.state.repository
-        with repository.transaction() as connection:
-            state = repository.get_worker_bootstrap_state(claims.worker_id, connection=connection)
-            session_row = repository.get_worker_session(claims.session_id, connection=connection)
-            _validate_session_claims_against_state(
-                claims,
-                state=state,
-                session_row=session_row,
-                at=now_local(),
-            )
-            _require_active_worker_projection(repository, claims.worker_id, connection=connection)
-        return WorkerPrincipal(
-            worker_id=claims.worker_id,
-            session_id=claims.session_id,
-            credential_version=claims.credential_version,
-        )
-
-    auth_context = _authenticate_worker_legacy_fallback(
-        request,
-        worker_key=worker_key,
-        worker_id=worker_id,
+    current_time = now_local()
+    claims = validate_worker_delivery_token(
+        _require_delivery_access_token(access_token),
+        signing_secret=_resolve_worker_delivery_signing_secret(),
+        expected_scope=scope,
+        expected_ticket_id=ticket_id,
+        expected_artifact_ref=artifact_ref,
+        expected_artifact_action=artifact_action,
+        expected_command_name=command_name,
+        at=current_time,
     )
-    return auth_context.principal
+    repository: ControlPlaneRepository = request.app.state.repository
+    with repository.transaction() as connection:
+        grant = repository.get_worker_delivery_grant(claims.grant_id, connection=connection)
+        _validate_delivery_grant_against_claims(
+            grant,
+            claims=claims,
+            at=current_time,
+        )
+        state = repository.get_worker_bootstrap_state(claims.worker_id, connection=connection)
+        session_row = repository.get_worker_session(claims.session_id, connection=connection)
+        _validate_session_claims_against_state(
+            claims,
+            state=state,
+            session_row=session_row,
+            at=current_time,
+        )
+        _require_active_worker_projection(repository, claims.worker_id, connection=connection)
+    return WorkerPrincipal(
+        worker_id=claims.worker_id,
+        session_id=claims.session_id,
+        credential_version=claims.credential_version,
+    )
 
 
 def build_worker_artifact_urls(
@@ -431,27 +463,51 @@ def build_worker_artifact_urls(
     issued_at: datetime,
 ) -> tuple[dict[str, str], datetime]:
     base_url = _resolve_worker_public_base_url(request)
-    token, expires_at = _issue_worker_delivery_token(
+    content_token, expires_at = _issue_worker_delivery_token(
+        request,
         scope="artifact_read",
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
         ticket_id=ticket_id,
         artifact_ref=artifact_ref,
+        artifact_action="content_inline",
+        issued_at=issued_at,
+    )
+    download_token, _ = _issue_worker_delivery_token(
+        request,
+        scope="artifact_read",
+        worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+        artifact_action="content_attachment",
+        issued_at=issued_at,
+    )
+    preview_token, _ = _issue_worker_delivery_token(
+        request,
+        scope="artifact_read",
+        worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+        artifact_action="preview",
         issued_at=issued_at,
     )
     return {
         "content_url": (
             f"{base_url}/api/v1/worker-runtime/artifacts/content?"
-            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'disposition': 'inline', 'access_token': token})}"
+            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'disposition': 'inline', 'access_token': content_token})}"
         ),
         "download_url": (
             f"{base_url}/api/v1/worker-runtime/artifacts/content?"
-            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'disposition': 'attachment', 'access_token': token})}"
+            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'disposition': 'attachment', 'access_token': download_token})}"
         ),
         "preview_url": (
             f"{base_url}/api/v1/worker-runtime/artifacts/preview?"
-            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'access_token': token})}"
+            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'access_token': preview_token})}"
         ),
     }, expires_at
 
@@ -467,6 +523,7 @@ def build_worker_execution_package_url(
 ) -> tuple[str, datetime]:
     base_url = _resolve_worker_public_base_url(request)
     token, expires_at = _issue_worker_delivery_token(
+        request,
         scope="execution_package",
         worker_id=worker_id,
         session_id=session_id,
@@ -493,6 +550,7 @@ def _build_worker_command_url(
 ) -> tuple[str, datetime]:
     base_url = _resolve_worker_public_base_url(request)
     token, expires_at = _issue_worker_delivery_token(
+        request,
         scope="command",
         worker_id=worker_id,
         session_id=session_id,

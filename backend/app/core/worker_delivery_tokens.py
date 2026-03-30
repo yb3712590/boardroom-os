@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 WorkerDeliveryScope = Literal["execution_package", "artifact_read", "command"]
 WorkerCommandName = Literal["ticket-start", "ticket-heartbeat", "ticket-result-submit"]
+WorkerArtifactAction = Literal["content_inline", "content_attachment", "preview"]
 
 TOKEN_VERSION = "v1"
 
@@ -21,12 +22,14 @@ TOKEN_VERSION = "v1"
 @dataclass(frozen=True)
 class WorkerDeliveryTokenClaims:
     version: str
+    grant_id: str
     scope: WorkerDeliveryScope
     worker_id: str
     session_id: str
     credential_version: int
     ticket_id: str
     artifact_ref: str | None
+    artifact_action: WorkerArtifactAction | None
     command_name: WorkerCommandName | None
     issued_at: datetime
     expires_at: datetime
@@ -55,6 +58,7 @@ def _parse_datetime(value: str, *, detail: str) -> datetime:
 def issue_worker_delivery_token(
     *,
     signing_secret: str,
+    grant_id: str,
     scope: WorkerDeliveryScope,
     worker_id: str,
     session_id: str,
@@ -63,17 +67,20 @@ def issue_worker_delivery_token(
     issued_at: datetime,
     ttl_sec: int,
     artifact_ref: str | None = None,
+    artifact_action: WorkerArtifactAction | None = None,
     command_name: WorkerCommandName | None = None,
 ) -> tuple[str, datetime]:
     expires_at = issued_at + timedelta(seconds=ttl_sec)
     payload = {
         "version": TOKEN_VERSION,
+        "grant_id": grant_id,
         "scope": scope,
         "worker_id": worker_id,
         "session_id": session_id,
         "credential_version": credential_version,
         "ticket_id": ticket_id,
         "artifact_ref": artifact_ref,
+        "artifact_action": artifact_action,
         "command_name": command_name,
         "issued_at": issued_at.isoformat(),
         "expires_at": expires_at.isoformat(),
@@ -92,6 +99,7 @@ def validate_worker_delivery_token(
     expected_ticket_id: str,
     at: datetime,
     expected_artifact_ref: str | None = None,
+    expected_artifact_action: WorkerArtifactAction | None = None,
     expected_command_name: WorkerCommandName | None = None,
 ) -> WorkerDeliveryTokenClaims:
     try:
@@ -138,6 +146,7 @@ def validate_worker_delivery_token(
         raise HTTPException(status_code=401, detail="Worker delivery token is invalid.") from exc
     claims = WorkerDeliveryTokenClaims(
         version=str(payload["version"]),
+        grant_id=str(payload.get("grant_id") or ""),
         scope=str(payload.get("scope") or ""),
         worker_id=str(payload.get("worker_id") or ""),
         session_id=str(payload.get("session_id") or ""),
@@ -146,13 +155,16 @@ def validate_worker_delivery_token(
         artifact_ref=(
             str(payload["artifact_ref"]) if payload.get("artifact_ref") is not None else None
         ),
+        artifact_action=(
+            str(payload["artifact_action"]) if payload.get("artifact_action") is not None else None
+        ),
         command_name=(
             str(payload["command_name"]) if payload.get("command_name") is not None else None
         ),
         issued_at=issued_at,
         expires_at=expires_at,
     )
-    if not claims.session_id or claims.credential_version <= 0:
+    if not claims.grant_id or not claims.session_id or claims.credential_version <= 0:
         raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
 
     if claims.scope != expected_scope:
@@ -161,6 +173,8 @@ def validate_worker_delivery_token(
         raise HTTPException(status_code=403, detail="Worker delivery token does not match this ticket.")
     if expected_artifact_ref is not None and claims.artifact_ref != expected_artifact_ref:
         raise HTTPException(status_code=403, detail="Worker delivery token does not match this artifact.")
+    if expected_artifact_action is not None and claims.artifact_action != expected_artifact_action:
+        raise HTTPException(status_code=403, detail="Worker delivery token does not match this artifact action.")
     if expected_command_name is not None and claims.command_name != expected_command_name:
         raise HTTPException(status_code=403, detail="Worker delivery token does not match this command.")
 

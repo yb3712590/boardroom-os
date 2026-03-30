@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from typing import Sequence
 
 from app.config import get_settings
@@ -42,6 +43,16 @@ def _require_active_worker(repository: ControlPlaneRepository, worker_id: str, *
 
 def _print_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, sort_keys=True))
+
+
+def _serialize_datetimes(payload: dict[str, object]) -> dict[str, object]:
+    serialized: dict[str, object] = {}
+    for key, value in payload.items():
+        if isinstance(value, datetime):
+            serialized[key] = value.isoformat()
+        else:
+            serialized[key] = value
+    return serialized
 
 
 def _issue_bootstrap(args: argparse.Namespace) -> int:
@@ -144,6 +155,45 @@ def _revoke_session(args: argparse.Namespace) -> int:
     return 0
 
 
+def _list_delivery_grants(args: argparse.Namespace) -> int:
+    repository = _build_repository()
+    with repository.connection() as connection:
+        grants = repository.list_worker_delivery_grants(
+            connection,
+            worker_id=args.worker_id,
+            session_id=args.session_id,
+            ticket_id=args.ticket_id,
+        )
+    _print_json(
+        {
+            "grants": [_serialize_datetimes(grant) for grant in grants],
+            "count": len(grants),
+        }
+    )
+    return 0
+
+
+def _revoke_delivery_grant(args: argparse.Namespace) -> int:
+    repository = _build_repository()
+    revoked_at = now_local()
+    with repository.transaction() as connection:
+        revoked_count = repository.revoke_worker_delivery_grants(
+            connection,
+            grant_id=args.grant_id,
+            revoked_at=revoked_at,
+            revoke_reason=args.reason,
+        )
+    _print_json(
+        {
+            "grant_id": args.grant_id,
+            "revoked_count": revoked_count,
+            "revoked_at": revoked_at.isoformat(),
+            "reason": args.reason,
+        }
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.worker_auth_cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -167,6 +217,20 @@ def _build_parser() -> argparse.ArgumentParser:
     revoke_group.add_argument("--session-id")
     revoke_group.add_argument("--worker-id")
     revoke_session_parser.set_defaults(handler=_revoke_session)
+
+    list_grants_parser = subparsers.add_parser("list-delivery-grants")
+    list_grants_parser.add_argument("--worker-id")
+    list_grants_parser.add_argument("--session-id")
+    list_grants_parser.add_argument("--ticket-id")
+    list_grants_parser.set_defaults(handler=_list_delivery_grants)
+
+    revoke_grant_parser = subparsers.add_parser("revoke-delivery-grant")
+    revoke_grant_parser.add_argument("--grant-id", required=True)
+    revoke_grant_parser.add_argument(
+        "--reason",
+        default="Manually revoked worker delivery grant.",
+    )
+    revoke_grant_parser.set_defaults(handler=_revoke_delivery_grant)
 
     return parser
 

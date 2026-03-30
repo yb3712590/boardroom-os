@@ -23,7 +23,7 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 已支持 review room、board approve/reject/modify constraints
 - 已有独立 `scheduler_runner` 和可选的进程内 scheduler loop
 - 已有最小 artifact store / artifact index，`JSON` / `TEXT` / `MARKDOWN` 与图片 / PDF / 其它中等体量二进制都可通过 `ticket-result-submit` 真实落盘
-- 已有外部 worker handoff 面：worker 先用 per-worker bootstrap token 领取 assignment，拿到可刷新的 session 后，再通过 per-ticket 短时签名 URL 拉取 persisted execution package、读取 artifact、回写 start / heartbeat / result-submit
+- 已有外部 worker handoff 面：worker 先用 per-worker bootstrap token 领取 assignment，拿到可刷新的 session 后，再通过 per-ticket 短时签名 URL 拉取 persisted execution package、读取 artifact、回写 start / heartbeat / result-submit；这些 URL 现在都落成可单独撤销的 delivery grant
 
 当前更像一个最小控制面原型，而不是完整产品。
 
@@ -32,7 +32,7 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 命令面：`project-init`、ticket 生命周期命令、`ticket-result-submit`、`artifact-delete`、`artifact-cleanup`、board 审批命令、`incident-resolve`
 - 投影面：`dashboard`、`inbox`、`incident detail`、`review room`、developer inspector companion、ticket artifacts
 - artifact 读取面：按 `artifact_ref` 的 metadata / content / preview 接口，可供 review、incident 和外部调用复用
-- worker handoff：`BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 下由 scheduler 只负责 dispatch / lease；外部 worker 先用 `python -m app.worker_auth_cli` 签发的 bootstrap token 调 `GET /api/v1/worker-runtime/assignments`，拿到 `session_token` 后继续轮询 assignment，再沿 execution package 中的短时签名 URL 完成 artifact 读取和结构化回写；旧的 `X-Boardroom-Worker-Key` / `X-Boardroom-Worker-Id` 仍保留为兼容 fallback
+- worker handoff：`BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 下由 scheduler 只负责 dispatch / lease；外部 worker 先用 `python -m app.worker_auth_cli` 签发的 bootstrap token 调 `GET /api/v1/worker-runtime/assignments`，拿到 `session_token` 后继续轮询 assignment，再沿 execution package 中的短时签名 URL 完成 artifact 读取和结构化回写；delivery URL 现在都有持久化 grant，可按单条 URL 撤销
 - 运行时治理：重复失败升级、provider 级暂停恢复、协作式取消、`ticket-result-submit` 统一结果入口、artifact 物化 / 索引 / 生命周期治理
 - 输出 schema：已真实注册并严格校验 `ui_milestone_review@1`、`consensus_document@1`
 - 审计能力：事件流、SQLite WAL、最小 compile manifest / context bundle / compiled execution package 持久化
@@ -76,6 +76,8 @@ uvicorn app.main:app --reload
 cd backend
 source .venv/bin/activate
 python -m app.worker_auth_cli issue-bootstrap --worker-id emp_frontend_2
+python -m app.worker_auth_cli list-delivery-grants --worker-id emp_frontend_2
+python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 ```
 
 启动独立 runner：
@@ -92,8 +94,9 @@ python -m app.scheduler_runner
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 时，runner / in-process scheduler 只负责 dispatch / lease，不再自动 `start / execute / result-submit`。
 - 推荐的外部 worker bootstrap 路径是：先用 `python -m app.worker_auth_cli issue-bootstrap --worker-id <employee_id>` 生成 bootstrap token，再携带 `X-Boardroom-Worker-Bootstrap` 调 `GET /api/v1/worker-runtime/assignments`；响应会返回 `session_id`、`session_token`、`session_expires_at` 和 assignment 列表。
 - worker 拿到 `session_token` 后，可以继续用 `X-Boardroom-Worker-Session` 轮询 `GET /api/v1/worker-runtime/assignments`；同一个 session 会刷新过期时间，并重新返回一批新的 per-ticket 短时签名 URL。
-- execution package URL、artifact URL 和 command URL 都继续使用 `access_token` 短时签名参数；这些 token 现在会绑定到具体 session，所以单个 session 被撤销后，已发出的 URL 也会一起失效。
-- `X-Boardroom-Worker-Key` 和 `X-Boardroom-Worker-Id` 仍保留为兼容 fallback，适合本地调试，但不再是默认推荐路径。
+- execution package URL、artifact URL 和 command URL 都继续使用 `access_token` 短时签名参数；这些 token 现在同时绑定到具体 session 和持久化 delivery grant，所以既能在 session 级联失效，也能按单条 URL 单独撤销。
+- `/api/v1/worker-runtime/tickets/*`、`/api/v1/worker-runtime/artifacts/*` 和 `/api/v1/worker-runtime/commands/*` 现在只接受 signed URL，不再接受旧的共享密钥请求 fallback。
+- 本地运维可通过 `python -m app.worker_auth_cli list-delivery-grants` 查看 grant，再用 `python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>` 撤销某一条具体 URL。
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` 用来签发 bootstrap token；未设置时会回退到 `BOARDROOM_OS_WORKER_SHARED_SECRET`。
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` 默认是 `86400` 秒，用来控制 `session_token` 的刷新窗口。
 - `BOARDROOM_OS_PUBLIC_BASE_URL` 用来把这些 worker 交付 URL 改写成外部 worker 真正可达的公开基座；未设置时回退到请求里的 `base_url`。
@@ -116,7 +119,7 @@ python -m pytest tests -q
 
 - 全新环境下 `pip install -e .[dev]` 可能因为 `backend/` 的平铺布局触发 `setuptools` 打包识别问题，本轮没有修改这一点。
 - 当前二进制上传仍走 `ticket-result-submit` 内联 `base64`，没有 multipart / 分片 / 对象存储链路，适合中等体量文件，不适合超大文件。
-- 当前外部 worker handoff 已经支持 per-worker bootstrap token、可刷新 session、bootstrap rotate/revoke 和按 session 失效的 signed delivery；但仍未做到更强多租户隔离、独立 delivery grant 表 / 每条 URL 单独撤销，以及公开互联网场景下更细粒度的安全边界。
+- 当前外部 worker handoff 已经支持 per-worker bootstrap token、可刷新 session、bootstrap rotate/revoke、按 session 失效的 signed delivery，以及独立 delivery grant / 单 URL 撤销；但仍未做到更强多租户隔离，以及公开互联网场景下更细粒度的安全边界。
 
 ## 文档入口
 
