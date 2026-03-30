@@ -28,7 +28,7 @@ What is already real:
 - a ticket artifacts projection plus strict output-schema validation for `ui_milestone_review@1` and `consensus_document@1`
 - artifact metadata / content / preview endpoints keyed by `artifact_ref`
 - artifact lifecycle commands for delete and cleanup
-- a shared-secret-protected external worker handoff surface under `/api/v1/worker-runtime/*`
+- an external worker handoff surface where bootstrap still uses a shared secret, but delivery now continues through short-lived signed URLs under `/api/v1/worker-runtime/*`
 
 ## Quick Start
 
@@ -53,6 +53,7 @@ cd backend
 source .venv/bin/activate
 BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL \
 BOARDROOM_OS_WORKER_SHARED_SECRET=change-me \
+BOARDROOM_OS_PUBLIC_BASE_URL=http://127.0.0.1:8000 \
 uvicorn app.main:app --reload
 ```
 
@@ -68,7 +69,10 @@ Mode notes:
 
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` remains the default, and the runner / in-process scheduler still executes leased tickets locally.
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` keeps scheduling and leasing, but stops automatic local `start / execute / result-submit`.
-- External workers authenticate with `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` against `/api/v1/worker-runtime/*`.
+- External workers first bootstrap with `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` on `GET /api/v1/worker-runtime/assignments`.
+- The returned execution-package URLs, artifact URLs, and worker command URLs all carry short-lived `access_token` query parameters and can be called without repeating the shared-secret headers.
+- `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites those delivery URLs for remotely reachable workers; if omitted, the backend falls back to the incoming request base URL.
+- `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` defaults to `3600`, and `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when not set.
 
 Run tests:
 
@@ -87,7 +91,7 @@ Known realities:
 
 - `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
 - Binary uploads currently go through inline base64 in `ticket-result-submit`; there is no multipart, chunked-upload, or object-storage path yet.
-- External worker handoff now exists with a deployment-level shared secret and worker-scoped absolute artifact URLs, but finer-grained signed URLs, per-ticket short-lived tokens, and stronger multi-tenant delivery boundaries are still not implemented.
+- External worker handoff now uses a deployment-level shared-secret bootstrap plus per-ticket short-lived signed delivery URLs, but stronger multi-tenant isolation, independent token revocation / rotation, and more hardened public-internet delivery boundaries are still not implemented.
 
 ## Docs
 

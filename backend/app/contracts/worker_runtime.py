@@ -20,6 +20,7 @@ class WorkerAssignmentItem(StrictModel):
     status: str = Field(min_length=1)
     lease_expires_at: datetime | None = None
     execution_package_url: str = Field(min_length=1)
+    delivery_expires_at: datetime
 
 
 class WorkerAssignmentsData(StrictModel):
@@ -49,6 +50,7 @@ class WorkerExecutionPackageData(StrictModel):
     output_schema_body: dict[str, Any] = Field(default_factory=dict)
     compiled_execution_package: dict[str, Any] = Field(default_factory=dict)
     command_endpoints: WorkerCommandEndpoints
+    delivery_expires_at: datetime
 
 
 class WorkerExecutionPackageEnvelope(StrictModel):

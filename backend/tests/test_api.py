@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.constants import (
@@ -114,6 +115,35 @@ def _worker_headers(
         "X-Boardroom-Worker-Key": shared_secret,
         "X-Boardroom-Worker-Id": worker_id,
     }
+
+
+def _local_path_from_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if parsed.query:
+        return f"{parsed.path}?{parsed.query}"
+    return parsed.path
+
+
+def _query_value(url: str, name: str) -> str | None:
+    values = parse_qs(urlsplit(url).query).get(name)
+    if not values:
+        return None
+    return values[0]
+
+
+def _replace_query_value(url: str, name: str, value: str) -> str:
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query[name] = [value]
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query, doseq=True),
+            parsed.fragment,
+        )
+    )
 
 
 def _seed_input_artifact(
@@ -813,8 +843,13 @@ def test_worker_runtime_assignments_require_valid_headers(client, set_ticket_tim
     assert missing_worker_id.status_code == 401
 
 
-def test_worker_runtime_assignments_return_only_current_worker_tickets(client, set_ticket_time, monkeypatch):
+def test_worker_runtime_assignments_return_only_current_worker_tickets_and_signed_execution_urls(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
     monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(
         client,
@@ -857,18 +892,21 @@ def test_worker_runtime_assignments_return_only_current_worker_tickets(client, s
     assert {item["status"] for item in assignments} == {"LEASED", "EXECUTING"}
     assert all(
         item["execution_package_url"].startswith(
-            "http://testserver/api/v1/worker-runtime/tickets/"
+            "https://workers.boardroom.test/api/v1/worker-runtime/tickets/"
         )
         for item in assignments
     )
+    assert all(item["delivery_expires_at"] == "2026-03-28T11:00:00+08:00" for item in assignments)
+    assert all(_query_value(item["execution_package_url"], "access_token") for item in assignments)
 
 
-def test_worker_runtime_execution_package_returns_persisted_package_and_worker_urls(
+def test_worker_runtime_execution_package_signed_url_allows_token_only_access_and_rewrites_signed_urls(
     client,
     set_ticket_time,
     monkeypatch,
 ):
     monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _seed_input_artifact(client)
     _create_and_lease_ticket(
@@ -878,14 +916,13 @@ def test_worker_runtime_execution_package_returns_persisted_package_and_worker_u
         node_id="node_worker_package",
     )
 
-    first_response = client.get(
-        "/api/v1/worker-runtime/tickets/tkt_worker_package/execution-package",
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
         headers=_worker_headers(),
     )
-    second_response = client.get(
-        "/api/v1/worker-runtime/tickets/tkt_worker_package/execution-package",
-        headers=_worker_headers(),
-    )
+    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    first_response = client.get(_local_path_from_url(execution_package_url))
+    second_response = client.get(_local_path_from_url(execution_package_url))
 
     repository = client.app.state.repository
     latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket(
@@ -903,6 +940,7 @@ def test_worker_runtime_execution_package_returns_persisted_package_and_worker_u
     assert first_body["ticket_id"] == "tkt_worker_package"
     assert first_body["compile_request_id"] == latest_execution_package["compile_request_id"]
     assert first_body["compile_request_id"] == second_body["compile_request_id"]
+    assert first_body["delivery_expires_at"] == "2026-03-28T11:00:00+08:00"
     assert first_body["output_schema_body"]["required"] == [
         "summary",
         "recommended_option_id",
@@ -913,17 +951,24 @@ def test_worker_runtime_execution_package_returns_persisted_package_and_worker_u
         == "ui_milestone_review"
     )
     assert content_payload["content_url"].startswith(
-        "http://testserver/api/v1/worker-runtime/artifacts/content"
+        "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/content"
     )
     assert content_payload["preview_url"].startswith(
-        "http://testserver/api/v1/worker-runtime/artifacts/preview"
+        "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/preview"
     )
     assert content_payload["download_url"].startswith(
-        "http://testserver/api/v1/worker-runtime/artifacts/content"
+        "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/content"
     )
-    assert first_body["command_endpoints"]["ticket_start_url"].endswith(
-        "/api/v1/worker-runtime/commands/ticket-start"
+    assert _query_value(content_payload["content_url"], "access_token")
+    assert _query_value(content_payload["preview_url"], "access_token")
+    assert _query_value(content_payload["download_url"], "access_token")
+    assert first_body["command_endpoints"]["ticket_start_url"].startswith(
+        "https://workers.boardroom.test/api/v1/worker-runtime/commands/ticket-start"
     )
+    assert _query_value(first_body["command_endpoints"]["ticket_start_url"], "access_token")
+    artifact_content_response = client.get(_local_path_from_url(content_payload["content_url"]))
+    assert artifact_content_response.status_code == 200
+    assert "# Brief" in artifact_content_response.text
 
 
 def test_worker_runtime_execution_package_rejects_wrong_worker_owner(
@@ -1055,6 +1100,290 @@ def test_worker_runtime_artifact_routes_preserve_registered_only_and_deleted_beh
     assert registered_metadata.json()["data"]["materialization_status"] == "REGISTERED_ONLY"
     assert registered_content.status_code == 409
     assert deleted_content.status_code == 410
+
+
+def test_worker_runtime_signed_command_urls_allow_token_only_writeback(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_token_result",
+        node_id="node_worker_token_result",
+    )
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_headers(),
+    )
+    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    command_endpoints = execution_package_response.json()["data"]["command_endpoints"]
+
+    start_response = client.post(
+        _local_path_from_url(command_endpoints["ticket_start_url"]),
+        json={
+            "workflow_id": "wf_worker_runtime",
+            "ticket_id": "tkt_worker_token_result",
+            "node_id": "node_worker_token_result",
+            "idempotency_key": "worker-runtime:start:tkt_worker_token_result",
+        },
+    )
+    heartbeat_response = client.post(
+        _local_path_from_url(command_endpoints["ticket_heartbeat_url"]),
+        json={
+            "workflow_id": "wf_worker_runtime",
+            "ticket_id": "tkt_worker_token_result",
+            "node_id": "node_worker_token_result",
+            "idempotency_key": "worker-runtime:heartbeat:tkt_worker_token_result",
+        },
+    )
+    result_payload = _ticket_result_submit_payload(
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_token_result",
+        node_id="node_worker_token_result",
+        artifact_refs=["art://worker/runtime-token-option-a.json"],
+        payload={
+            "summary": "Worker runtime produced a structured result through signed command URLs.",
+            "recommended_option_id": "option_a",
+            "options": [
+                {
+                    "option_id": "option_a",
+                    "label": "Option A",
+                    "summary": "Single structured worker option.",
+                    "artifact_refs": ["art://worker/runtime-token-option-a.json"],
+                }
+            ],
+        },
+        written_artifacts=[
+            {
+                "path": "artifacts/ui/homepage/runtime-token-option-a.json",
+                "artifact_ref": "art://worker/runtime-token-option-a.json",
+                "kind": "JSON",
+                "content_json": {
+                    "option_id": "option_a",
+                    "headline": "Worker generated artifact through signed URL.",
+                },
+            }
+        ],
+        idempotency_key="worker-runtime:result:tkt_worker_token_result",
+    )
+    result_payload.pop("submitted_by")
+    result_response = client.post(
+        _local_path_from_url(command_endpoints["ticket_result_submit_url"]),
+        json=result_payload,
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_worker_token_result")
+    artifact_record = repository.get_artifact_by_ref("art://worker/runtime-token-option-a.json")
+
+    assert start_response.status_code == 200
+    assert heartbeat_response.status_code == 200
+    assert result_response.status_code == 200
+    assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
+    assert artifact_record is not None
+    assert artifact_record["materialization_status"] == "MATERIALIZED"
+
+
+def test_worker_runtime_signed_execution_package_url_rejects_expired_token(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC", "60")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_expired_token",
+        node_id="node_worker_expired_token",
+    )
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_headers(),
+    )
+    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+
+    response = client.get(_local_path_from_url(execution_package_url))
+
+    assert response.status_code == 401
+    assert "expired" in response.json()["detail"].lower()
+
+
+def test_worker_runtime_signed_artifact_url_rejects_tampered_token(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_tampered_artifact",
+        node_id="node_worker_tampered_artifact",
+    )
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_headers(),
+    )
+    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    content_url = execution_package_response.json()["data"]["compiled_execution_package"]["atomic_context_bundle"][
+        "context_blocks"
+    ][0]["content_payload"]["content_url"]
+    original_token = _query_value(content_url, "access_token")
+    assert original_token is not None
+    replacement_char = "a" if original_token[-1] != "a" else "b"
+    tampered_url = _replace_query_value(
+        content_url,
+        "access_token",
+        f"{original_token[:-1]}{replacement_char}",
+    )
+
+    response = client.get(_local_path_from_url(tampered_url))
+
+    assert response.status_code == 401
+    assert "invalid" in response.json()["detail"].lower()
+
+
+def test_worker_runtime_signed_artifact_url_rejects_artifact_scope_mismatch(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client, artifact_ref="art://inputs/brief.md", logical_path="artifacts/inputs/brief.md")
+    _seed_input_artifact(
+        client,
+        artifact_ref="art://inputs/brand-guide.md",
+        logical_path="artifacts/inputs/brand-guide.md",
+        content="# Brand Guide\n\nMaterialized input.\n",
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id="wf_worker_runtime",
+                ticket_id="tkt_worker_scope_mismatch",
+                node_id="node_worker_scope_mismatch",
+            ),
+            "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_worker_runtime",
+            ticket_id="tkt_worker_scope_mismatch",
+            node_id="node_worker_scope_mismatch",
+        ),
+    )
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_headers(),
+    )
+    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    content_url = execution_package_response.json()["data"]["compiled_execution_package"]["atomic_context_bundle"][
+        "context_blocks"
+    ][0]["content_payload"]["content_url"]
+    swapped_url = _replace_query_value(content_url, "artifact_ref", "art://inputs/brand-guide.md")
+
+    response = client.get(_local_path_from_url(swapped_url))
+
+    assert response.status_code == 403
+
+
+def test_worker_runtime_signed_command_url_rejects_command_scope_mismatch(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_wrong_command",
+        node_id="node_worker_wrong_command",
+    )
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_headers(),
+    )
+    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    command_endpoints = execution_package_response.json()["data"]["command_endpoints"]
+    wrong_route = _local_path_from_url(command_endpoints["ticket_start_url"]).replace(
+        "/ticket-start?",
+        "/ticket-heartbeat?",
+    )
+
+    response = client.post(
+        wrong_route,
+        json={
+            "workflow_id": "wf_worker_runtime",
+            "ticket_id": "tkt_worker_wrong_command",
+            "node_id": "node_worker_wrong_command",
+            "idempotency_key": "worker-runtime:heartbeat:tkt_worker_wrong_command",
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_worker_runtime_signed_execution_package_url_rejects_previous_worker_after_reassignment(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_reassigned",
+        node_id="node_worker_reassigned",
+    )
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_headers(),
+    )
+    execution_package_url = assignments_response.json()["data"]["assignments"][0]["execution_package_url"]
+
+    set_ticket_time("2026-03-28T10:11:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            **_ticket_lease_payload(
+                workflow_id="wf_worker_runtime",
+                ticket_id="tkt_worker_reassigned",
+                node_id="node_worker_reassigned",
+                leased_by="emp_checker_1",
+            ),
+            "idempotency_key": "ticket-lease:wf_worker_runtime:tkt_worker_reassigned:emp_checker_1",
+        },
+    )
+
+    response = client.get(_local_path_from_url(execution_package_url))
+
+    assert response.status_code == 403
 
 
 def test_worker_runtime_commands_start_heartbeat_and_result_submit_reuse_handlers(

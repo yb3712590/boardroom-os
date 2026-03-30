@@ -2,14 +2,22 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import urlencode
 
 from fastapi import HTTPException, Request
 
 from app.config import get_settings
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.output_schemas import get_output_schema_body
+from app.core.time import now_local
+from app.core.worker_delivery_tokens import (
+    WorkerCommandName,
+    WorkerDeliveryScope,
+    issue_worker_delivery_token,
+    validate_worker_delivery_token,
+)
 from app.db.repository import ControlPlaneRepository
 
 ACTIVE_WORKER_TICKET_STATUSES = {"LEASED", "EXECUTING", "CANCEL_REQUESTED"}
@@ -18,6 +26,44 @@ ACTIVE_WORKER_TICKET_STATUSES = {"LEASED", "EXECUTING", "CANCEL_REQUESTED"}
 @dataclass(frozen=True)
 class WorkerPrincipal:
     worker_id: str
+
+
+def _resolve_worker_delivery_signing_secret() -> str:
+    settings = get_settings()
+    signing_secret = settings.worker_delivery_signing_secret or settings.worker_shared_secret
+    if not signing_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Worker delivery signing secret is not configured.",
+        )
+    return signing_secret
+
+
+def _resolve_worker_public_base_url(request: Request) -> str:
+    settings = get_settings()
+    return settings.public_base_url or str(request.base_url).rstrip("/")
+
+
+def _issue_worker_delivery_token(
+    *,
+    scope: WorkerDeliveryScope,
+    worker_id: str,
+    ticket_id: str,
+    issued_at: datetime,
+    artifact_ref: str | None = None,
+    command_name: WorkerCommandName | None = None,
+) -> tuple[str, datetime]:
+    settings = get_settings()
+    return issue_worker_delivery_token(
+        signing_secret=_resolve_worker_delivery_signing_secret(),
+        scope=scope,
+        worker_id=worker_id,
+        ticket_id=ticket_id,
+        issued_at=issued_at,
+        ttl_sec=settings.worker_delivery_token_ttl_sec,
+        artifact_ref=artifact_ref,
+        command_name=command_name,
+    )
 
 
 def authenticate_worker(
@@ -54,34 +100,152 @@ def authenticate_worker(
     return WorkerPrincipal(worker_id=worker_id)
 
 
-def build_worker_artifact_urls(request: Request, artifact_ref: str) -> dict[str, str]:
-    encoded_ref = quote(artifact_ref, safe="")
-    base_url = str(request.base_url).rstrip("/")
+def authenticate_worker_request(
+    request: Request,
+    *,
+    access_token: str | None,
+    worker_key: str | None,
+    worker_id: str | None,
+    scope: WorkerDeliveryScope,
+    ticket_id: str,
+    artifact_ref: str | None = None,
+    command_name: WorkerCommandName | None = None,
+) -> WorkerPrincipal:
+    if access_token:
+        claims = validate_worker_delivery_token(
+            access_token,
+            signing_secret=_resolve_worker_delivery_signing_secret(),
+            expected_scope=scope,
+            expected_ticket_id=ticket_id,
+            expected_artifact_ref=artifact_ref,
+            expected_command_name=command_name,
+            at=now_local(),
+        )
+        repository: ControlPlaneRepository = request.app.state.repository
+        employee = repository.get_employee_projection(claims.worker_id)
+        if employee is None:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Worker '{claims.worker_id}' is not registered.",
+            )
+        return WorkerPrincipal(worker_id=claims.worker_id)
+
+    return authenticate_worker(
+        request,
+        worker_key=worker_key,
+        worker_id=worker_id,
+    )
+
+
+def build_worker_artifact_urls(
+    request: Request,
+    *,
+    worker_id: str,
+    ticket_id: str,
+    artifact_ref: str,
+    issued_at: datetime,
+) -> tuple[dict[str, str], datetime]:
+    base_url = _resolve_worker_public_base_url(request)
+    token, expires_at = _issue_worker_delivery_token(
+        scope="artifact_read",
+        worker_id=worker_id,
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+        issued_at=issued_at,
+    )
     return {
         "content_url": (
-            f"{base_url}/api/v1/worker-runtime/artifacts/content"
-            f"?artifact_ref={encoded_ref}&disposition=inline"
+            f"{base_url}/api/v1/worker-runtime/artifacts/content?"
+            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'disposition': 'inline', 'access_token': token})}"
         ),
         "download_url": (
-            f"{base_url}/api/v1/worker-runtime/artifacts/content"
-            f"?artifact_ref={encoded_ref}&disposition=attachment"
+            f"{base_url}/api/v1/worker-runtime/artifacts/content?"
+            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'disposition': 'attachment', 'access_token': token})}"
         ),
-        "preview_url": f"{base_url}/api/v1/worker-runtime/artifacts/preview?artifact_ref={encoded_ref}",
-    }
+        "preview_url": (
+            f"{base_url}/api/v1/worker-runtime/artifacts/preview?"
+            f"{urlencode({'artifact_ref': artifact_ref, 'ticket_id': ticket_id, 'access_token': token})}"
+        ),
+    }, expires_at
 
 
-def build_worker_execution_package_url(request: Request, ticket_id: str) -> str:
-    base_url = str(request.base_url).rstrip("/")
-    return f"{base_url}/api/v1/worker-runtime/tickets/{ticket_id}/execution-package"
+def build_worker_execution_package_url(
+    request: Request,
+    *,
+    worker_id: str,
+    ticket_id: str,
+    issued_at: datetime,
+) -> tuple[str, datetime]:
+    base_url = _resolve_worker_public_base_url(request)
+    token, expires_at = _issue_worker_delivery_token(
+        scope="execution_package",
+        worker_id=worker_id,
+        ticket_id=ticket_id,
+        issued_at=issued_at,
+    )
+    return (
+        f"{base_url}/api/v1/worker-runtime/tickets/{ticket_id}/execution-package?"
+        f"{urlencode({'access_token': token})}",
+        expires_at,
+    )
 
 
-def build_worker_command_endpoints(request: Request) -> dict[str, str]:
-    base_url = str(request.base_url).rstrip("/")
+def _build_worker_command_url(
+    request: Request,
+    *,
+    worker_id: str,
+    ticket_id: str,
+    command_name: WorkerCommandName,
+    issued_at: datetime,
+) -> tuple[str, datetime]:
+    base_url = _resolve_worker_public_base_url(request)
+    token, expires_at = _issue_worker_delivery_token(
+        scope="command",
+        worker_id=worker_id,
+        ticket_id=ticket_id,
+        command_name=command_name,
+        issued_at=issued_at,
+    )
+    return (
+        f"{base_url}/api/v1/worker-runtime/commands/{command_name}?"
+        f"{urlencode({'access_token': token})}",
+        expires_at,
+    )
+
+
+def build_worker_command_endpoints(
+    request: Request,
+    *,
+    worker_id: str,
+    ticket_id: str,
+    issued_at: datetime,
+) -> tuple[dict[str, str], datetime]:
+    ticket_start_url, expires_at = _build_worker_command_url(
+        request,
+        worker_id=worker_id,
+        ticket_id=ticket_id,
+        command_name="ticket-start",
+        issued_at=issued_at,
+    )
+    ticket_heartbeat_url, _ = _build_worker_command_url(
+        request,
+        worker_id=worker_id,
+        ticket_id=ticket_id,
+        command_name="ticket-heartbeat",
+        issued_at=issued_at,
+    )
+    ticket_result_submit_url, _ = _build_worker_command_url(
+        request,
+        worker_id=worker_id,
+        ticket_id=ticket_id,
+        command_name="ticket-result-submit",
+        issued_at=issued_at,
+    )
     return {
-        "ticket_start_url": f"{base_url}/api/v1/worker-runtime/commands/ticket-start",
-        "ticket_heartbeat_url": f"{base_url}/api/v1/worker-runtime/commands/ticket-heartbeat",
-        "ticket_result_submit_url": f"{base_url}/api/v1/worker-runtime/commands/ticket-result-submit",
-    }
+        "ticket_start_url": ticket_start_url,
+        "ticket_heartbeat_url": ticket_heartbeat_url,
+        "ticket_result_submit_url": ticket_result_submit_url,
+    }, expires_at
 
 
 def list_worker_assignments(
@@ -196,8 +360,12 @@ def build_worker_execution_package_payload(
     request: Request,
     *,
     latest_execution_package: dict[str, Any],
-) -> dict[str, Any]:
+    worker_id: str,
+    ticket_id: str,
+    issued_at: datetime,
+) -> tuple[dict[str, Any], datetime | None]:
     payload = deepcopy(latest_execution_package["payload"])
+    delivery_expires_at: datetime | None = None
     for block in payload.get("atomic_context_bundle", {}).get("context_blocks", []):
         content_payload = block.get("content_payload") or {}
         artifact_access = content_payload.get("artifact_access")
@@ -208,22 +376,40 @@ def build_worker_execution_package_payload(
             artifact_ref = content_payload.get("artifact_ref") or content_payload.get("source_ref")
         if not isinstance(artifact_ref, str) or not artifact_ref:
             continue
-        worker_urls = build_worker_artifact_urls(request, artifact_ref)
+        worker_urls, expires_at = build_worker_artifact_urls(
+            request,
+            worker_id=worker_id,
+            ticket_id=ticket_id,
+            artifact_ref=artifact_ref,
+            issued_at=issued_at,
+        )
+        if delivery_expires_at is None:
+            delivery_expires_at = expires_at
         if isinstance(artifact_access, dict):
             artifact_access.update(worker_urls)
         content_payload.update(worker_urls)
-    return payload
+    return payload, delivery_expires_at
 
 
 def build_worker_artifact_metadata(
     request: Request,
     *,
+    worker_id: str,
+    ticket_id: str,
+    issued_at: datetime,
     artifact: dict[str, Any],
     metadata: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], datetime]:
     rewritten = dict(metadata)
-    rewritten.update(build_worker_artifact_urls(request, str(artifact["artifact_ref"])))
-    return rewritten
+    worker_urls, expires_at = build_worker_artifact_urls(
+        request,
+        worker_id=worker_id,
+        ticket_id=ticket_id,
+        artifact_ref=str(artifact["artifact_ref"]),
+        issued_at=issued_at,
+    )
+    rewritten.update(worker_urls)
+    return rewritten, expires_at
 
 
 def build_output_schema_body_for_execution_package(

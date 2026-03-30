@@ -1878,3 +1878,112 @@
 - automatic background cleanup scheduling and richer retention classes
 - broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
 - richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T18:40:00+08:00
+
+### Session Context
+- User asked to keep pushing on the Runtime / Backend artifact line inside the existing Boardroom OS repo and try to close the backend control-plane MVP.
+- The concrete target for this round was the remaining external worker delivery gap after artifact persistence, lifecycle, and worker-runtime routes were already real.
+
+### Boundary Chosen
+- Single boundary for this round: external worker delivery hardening on top of the existing `/api/v1/worker-runtime/*` chain.
+- The slice chain stayed on one path:
+  - public delivery URL base
+  - per-ticket short-lived signed delivery tokens
+  - token-scoped artifact / command access
+  - compatibility fallback plus docs closeout
+
+### Design / Code Gap Identified
+- Code already had:
+  - persisted `CompiledExecutionPackage`
+  - worker assignments
+  - worker artifact reads
+  - worker write-back wrappers
+- But delivery still had one obvious MVP gap:
+  - bootstrap and all follow-up reads / writes still depended on the same deployment-level shared-secret header model
+  - execution-package and artifact URLs were only absolute rewrites, not scoped short-lived delivery links
+  - there was no public-base override for worker-facing delivery URLs
+
+### Slice Landed
+- Added new runtime settings:
+  - `BOARDROOM_OS_PUBLIC_BASE_URL`
+  - `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC`
+  - `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET`
+- Added a small stateless worker-delivery token helper using `hmac + sha256 + base64url`.
+- Signed delivery token claims now carry:
+  - `version`
+  - `scope`
+  - `worker_id`
+  - `ticket_id`
+  - optional `artifact_ref`
+  - optional `command_name`
+  - `issued_at`
+  - `expires_at`
+- `GET /api/v1/worker-runtime/assignments` remains the bootstrap endpoint and still uses:
+  - `X-Boardroom-Worker-Key`
+  - `X-Boardroom-Worker-Id`
+- Assignment payload now returns per-ticket signed `execution_package_url` plus `delivery_expires_at`.
+- `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package` now accepts either:
+  - signed `access_token`
+  - or the legacy header-auth path
+- Delivered execution packages now rewrite:
+  - artifact `content_url`
+  - artifact `preview_url`
+  - artifact `download_url`
+  - worker command endpoints
+  into signed absolute URLs, and also return `delivery_expires_at`.
+- Worker artifact routes and worker command routes now accept token-only calls and validate in this order:
+  - token signature
+  - token expiry
+  - scope / ticket / artifact / command exact match
+  - current ticket ownership
+  - existing artifact access / lifecycle rules
+- Header-auth fallback was intentionally kept for local debugging and conservative compatibility.
+
+### Conservative Handling
+- This round still keeps shared-secret bootstrap on assignments instead of replacing it with a separate session or grant table.
+- Signed delivery tokens remain stateless:
+  - no delivery grant table
+  - no per-token server-side revocation list
+  - revocation still depends on current ownership / status checks plus TTL expiry
+- Public UI / review artifact routes were not changed; only `/api/v1/worker-runtime/*` moved to signed delivery.
+- This round did not widen into multipart uploads, object storage, background cleanup, or provider routing.
+
+### Tests Added
+- API coverage now includes:
+  - signed assignment delivery URLs
+  - `BOARDROOM_OS_PUBLIC_BASE_URL` rewrite behavior
+  - token-only execution-package reads
+  - token-only artifact reads
+  - token-only worker command write-back
+  - expired token rejection
+  - tampered token rejection
+  - artifact scope mismatch rejection
+  - command scope mismatch rejection
+  - signed URL invalidation after worker reassignment
+  - legacy header-auth compatibility
+
+### Verification
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_api.py -q`
+  - `107 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_context_compiler.py -q`
+  - `6 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_scheduler_runner.py -q`
+  - `11 passed`
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- replacing shared-secret bootstrap with a stronger worker bootstrap / session model
+- independent signed-token revocation and rotation controls beyond TTL + ownership checks
+- stronger public multi-tenant delivery isolation
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface

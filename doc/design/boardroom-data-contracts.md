@@ -1216,7 +1216,7 @@ Current minimal authenticated worker handoff:
 - `POST /api/v1/worker-runtime/commands/ticket-heartbeat`
 - `POST /api/v1/worker-runtime/commands/ticket-result-submit`
 
-Authentication headers:
+Bootstrap authentication headers:
 
 - `X-Boardroom-Worker-Key`: deployment-level shared secret
 - `X-Boardroom-Worker-Id`: the current `employee_id`
@@ -1224,6 +1224,7 @@ Authentication headers:
 Behavior rules:
 
 - assignment list includes only the current worker's `LEASED`, `EXECUTING`, and `CANCEL_REQUESTED` tickets
+- `GET /api/v1/worker-runtime/assignments` remains the bootstrap call and now returns per-ticket `execution_package_url` plus `delivery_expires_at`
 - execution-package reads require current lease ownership and return:
   - persisted `CompiledExecutionPackage`
   - `output_schema_body`
@@ -1231,11 +1232,18 @@ Behavior rules:
   - `compile_id`
   - `compile_request_id`
   - worker command endpoint URLs
+  - `delivery_expires_at`
 - if the current attempt has no persisted execution package yet, backend compiles and persists bundle / manifest / execution package before responding
+- signed delivery URLs now use `access_token` query parameters scoped to one worker, one ticket, and one route family:
+  - execution package URLs are scoped to one `ticket_id`
+  - artifact URLs are scoped to one `ticket_id` plus one `artifact_ref`
+  - worker command URLs are scoped to one `ticket_id` plus one command name
+- `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites the absolute delivery base, `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` controls expiry, and `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can differ from the bootstrap shared secret
 - artifact routes keep existing lifecycle semantics:
   - `REGISTERED_ONLY` content reads return conflict-style errors
   - `DELETED` / `EXPIRED` content reads return gone-style errors
-- worker command routes inject worker identity from headers and then reuse the existing ticket handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker governance stay unchanged
+- signed URL calls do not need bootstrap headers, but header-based access remains as a compatibility fallback for local debugging
+- worker command routes inject worker identity from either signed token or headers and then reuse the existing ticket handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker governance stay unchanged
 
 ### 10.2 Board Approve
 
