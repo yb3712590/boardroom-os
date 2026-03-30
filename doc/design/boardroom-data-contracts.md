@@ -1238,6 +1238,15 @@ Behavior rules:
 - `python -m app.worker_auth_cli create-binding --worker-id ... --tenant-id ... --workspace-id ...` explicitly creates one persisted bootstrap binding without minting a token
 - `python -m app.worker_auth_cli list-bindings --worker-id ...` returns the worker's persisted bootstrap bindings plus active session / grant / ticket counts, latest bootstrap issue metadata, and `cleanup_eligible`
 - `python -m app.worker_auth_cli cleanup-bindings --worker-id ... [--tenant-id ... --workspace-id ...] [--dry-run]` removes only bindings that have no active session, no active grant, no active ticket, and are either revoked or never issued a bootstrap token
+- trusted control-plane operators may now use the matching HTTP management surface instead of only local CLI:
+  - `GET /api/v1/worker-admin/bindings`
+  - `GET /api/v1/worker-admin/bootstrap-issues`
+  - `POST /api/v1/worker-admin/create-binding`
+  - `POST /api/v1/worker-admin/issue-bootstrap`
+  - `POST /api/v1/worker-admin/revoke-bootstrap`
+  - `POST /api/v1/worker-admin/cleanup-bindings`
+- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, and conservative cleanup eligibility
+- `worker-admin` is still a trusted control-plane surface, not a finished public tenant self-service or identity layer
 - if a worker already has multiple bootstrap bindings, `issue-bootstrap`, `rotate-bootstrap`, and `revoke-bootstrap` require both `--tenant-id` and `--workspace-id`; single-binding workers may still omit them and reuse the only binding
 - bootstrap-token calls create a fresh worker session
 - session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`

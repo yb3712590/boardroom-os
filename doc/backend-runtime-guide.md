@@ -14,7 +14,7 @@
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
-- 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录
+- 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及最小 `worker-admin` HTTP 管理面
 
 ## 本地运行
 
@@ -99,6 +99,40 @@ python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 - `cleanup-bindings` 只会清掉没有活跃 session、没有活跃 grant、没有活跃 ticket，且已 revoke 或从未签发过 bootstrap 的 binding
 - 当一个 worker 已经有多组 binding 时，`issue-bootstrap`、`rotate-bootstrap`、`revoke-bootstrap` 必须显式传 `--tenant-id` 和 `--workspace-id`
 
+## Worker admin HTTP 管理面
+
+现在也可以直接走后端控制面，而不是只能回本地 CLI：
+
+```bash
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/bindings?worker_id=emp_frontend_2'
+
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/bootstrap-issues?worker_id=emp_frontend_2&active_only=true'
+
+curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/create-binding' \
+  -H 'Content-Type: application/json' \
+  -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design"}'
+
+curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/issue-bootstrap' \
+  -H 'Content-Type: application/json' \
+  -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design","ttl_sec":120,"issued_by":"ops@example.com","reason":"tenant admin bootstrap"}'
+```
+
+当前已实现的管理接口：
+
+- `GET /api/v1/worker-admin/bindings`
+- `GET /api/v1/worker-admin/bootstrap-issues`
+- `POST /api/v1/worker-admin/create-binding`
+- `POST /api/v1/worker-admin/issue-bootstrap`
+- `POST /api/v1/worker-admin/revoke-bootstrap`
+- `POST /api/v1/worker-admin/cleanup-bindings`
+
+说明：
+
+- 这批接口复用和 CLI 完全同一套 scope 校验、TTL 上限、tenant allowlist 和 cleanup 规则
+- `tenant_id` 和 `workspace_id` 必须成对出现；多 binding worker 在 `issue-bootstrap` / `revoke-bootstrap` 上也仍然要显式带 scope
+- 这是一层“受信控制面”入口，不代表项目已经补齐公网身份层或租户自助权限模型
+- 目前 HTTP 管理面只覆盖 binding / bootstrap 这条链；session revoke、delivery grant revoke 仍然保留在 CLI
+
 ## Worker handoff 现状
 
 - 推荐路径是：先用 `issue-bootstrap` 生成 bootstrap token，再携带 `X-Boardroom-Worker-Bootstrap` 调 `GET /api/v1/worker-runtime/assignments`
@@ -106,7 +140,7 @@ python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 - worker 拿到 `session_token` 后，可以继续用 `X-Boardroom-Worker-Session` 轮询 `GET /api/v1/worker-runtime/assignments`
 - execution package URL、artifact URL 和 command URL 都使用短时 `access_token`
 - `/api/v1/worker-runtime/tickets/*`、`/api/v1/worker-runtime/artifacts/*` 和 `/api/v1/worker-runtime/commands/*` 只接受 signed URL，不再接受旧的共享密钥请求 fallback
-- 现在也可以用 `GET /api/v1/projections/worker-runtime` 按同一组 filter 一次看到 binding、session、delivery grant 和最近拒绝日志
+- 现在也可以用 `GET /api/v1/projections/worker-runtime` 按同一组 filter 一次看到 binding、session、delivery grant 和最近拒绝日志，再用 `worker-admin` HTTP 或本地 CLI 做最小 scope 级处理
 
 ## 关键环境变量
 
@@ -117,7 +151,7 @@ python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_MAX_TTL_SEC`
   CLI 显式传入的 bootstrap TTL 上限
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS`
-  可选，逗号分隔；一旦设置，只允许对名单内租户签发 bootstrap
+  可选，逗号分隔；一旦设置，只允许对名单内租户通过 CLI 或 `worker-admin` HTTP 签发 bootstrap
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC`
   `session_token` 的刷新窗口
 - `BOARDROOM_OS_PUBLIC_BASE_URL`
@@ -146,4 +180,4 @@ python -m pytest tests -q
 
 - `backend/pyproject.toml` 的 editable install 还没完全补平
 - 当前二进制上传仍走 `ticket-result-submit` 内联 `base64`
-- 公开互联网场景下还没有完整身份层，只是把现有 bootstrap / session / grant 边界收得更保守
+- 公开互联网场景下还没有完整身份层，当前 `worker-admin` 也只是受信控制面入口，不适合直接当公网租户自助面暴露
