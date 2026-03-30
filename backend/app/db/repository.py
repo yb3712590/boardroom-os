@@ -654,12 +654,28 @@ class ControlPlaneRepository:
     def get_worker_bootstrap_state(
         self,
         worker_id: str,
+        *,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
         connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any] | None:
+        if (tenant_id is None) != (workspace_id is None):
+            raise ValueError("tenant_id and workspace_id must be provided together.")
+        if tenant_id is None and workspace_id is None:
+            bindings = self.list_worker_bootstrap_states(
+                connection=connection,
+                worker_id=worker_id,
+            )
+            if len(bindings) != 1:
+                return None
+            return bindings[0]
         if connection is not None:
             row = connection.execute(
-                "SELECT * FROM worker_bootstrap_state WHERE worker_id = ?",
-                (worker_id,),
+                """
+                SELECT * FROM worker_bootstrap_state
+                WHERE worker_id = ? AND tenant_id = ? AND workspace_id = ?
+                """,
+                (worker_id, tenant_id, workspace_id),
             ).fetchone()
             if row is None:
                 return None
@@ -668,12 +684,49 @@ class ControlPlaneRepository:
         self.initialize()
         with self.connection() as owned_connection:
             row = owned_connection.execute(
-                "SELECT * FROM worker_bootstrap_state WHERE worker_id = ?",
-                (worker_id,),
+                """
+                SELECT * FROM worker_bootstrap_state
+                WHERE worker_id = ? AND tenant_id = ? AND workspace_id = ?
+                """,
+                (worker_id, tenant_id, workspace_id),
             ).fetchone()
             if row is None:
                 return None
             return self._convert_worker_bootstrap_state_row(row)
+
+    def list_worker_bootstrap_states(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        worker_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT * FROM worker_bootstrap_state
+            {where_clause}
+            ORDER BY worker_id ASC, tenant_id ASC, workspace_id ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_bootstrap_state_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_bootstrap_state_row(row) for row in rows]
 
     def ensure_worker_bootstrap_state(
         self,
@@ -684,7 +737,12 @@ class ControlPlaneRepository:
         tenant_id: str = DEFAULT_TENANT_ID,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, Any]:
-        existing = self.get_worker_bootstrap_state(worker_id, connection=connection)
+        existing = self.get_worker_bootstrap_state(
+            worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            connection=connection,
+        )
         if existing is not None:
             return existing
 
@@ -702,7 +760,12 @@ class ControlPlaneRepository:
             """,
             (worker_id, 1, tenant_id, workspace_id, None, None, at.isoformat()),
         )
-        created = self.get_worker_bootstrap_state(worker_id, connection=connection)
+        created = self.get_worker_bootstrap_state(
+            worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            connection=connection,
+        )
         if created is None:
             raise RuntimeError("Worker bootstrap state could not be created.")
         return created
@@ -712,9 +775,20 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         *,
         worker_id: str,
+        tenant_id: str,
+        workspace_id: str,
         rotated_at: datetime,
     ) -> dict[str, Any]:
-        current = self.ensure_worker_bootstrap_state(connection, worker_id=worker_id, at=rotated_at)
+        current = self.get_worker_bootstrap_state(
+            worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            connection=connection,
+        )
+        if current is None:
+            raise RuntimeError(
+                "Worker bootstrap state could not be found for the requested tenant/workspace scope."
+            )
         next_version = int(current["credential_version"]) + 1
         connection.execute(
             """
@@ -723,7 +797,7 @@ class ControlPlaneRepository:
                 revoked_before = ?,
                 rotated_at = ?,
                 updated_at = ?
-            WHERE worker_id = ?
+            WHERE worker_id = ? AND tenant_id = ? AND workspace_id = ?
             """,
             (
                 next_version,
@@ -731,16 +805,31 @@ class ControlPlaneRepository:
                 rotated_at.isoformat(),
                 rotated_at.isoformat(),
                 worker_id,
+                tenant_id,
+                workspace_id,
             ),
         )
-        self.revoke_worker_sessions(connection, worker_id=worker_id, revoked_at=rotated_at)
+        self.revoke_worker_sessions(
+            connection,
+            worker_id=worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            revoked_at=rotated_at,
+        )
         self.revoke_worker_delivery_grants(
             connection,
             worker_id=worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
             revoked_at=rotated_at,
             revoke_reason="Worker bootstrap credential rotated.",
         )
-        rotated = self.get_worker_bootstrap_state(worker_id, connection=connection)
+        rotated = self.get_worker_bootstrap_state(
+            worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            connection=connection,
+        )
         if rotated is None:
             raise RuntimeError("Rotated worker bootstrap state could not be loaded.")
         return rotated
@@ -750,18 +839,55 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         *,
         worker_id: str,
+        tenant_id: str,
+        workspace_id: str,
         revoked_at: datetime,
     ) -> dict[str, Any]:
-        self.ensure_worker_bootstrap_state(connection, worker_id=worker_id, at=revoked_at)
+        current = self.get_worker_bootstrap_state(
+            worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            connection=connection,
+        )
+        if current is None:
+            raise RuntimeError(
+                "Worker bootstrap state could not be found for the requested tenant/workspace scope."
+            )
         connection.execute(
             """
             UPDATE worker_bootstrap_state
             SET revoked_before = ?, updated_at = ?
-            WHERE worker_id = ?
+            WHERE worker_id = ? AND tenant_id = ? AND workspace_id = ?
             """,
-            (revoked_at.isoformat(), revoked_at.isoformat(), worker_id),
+            (
+                revoked_at.isoformat(),
+                revoked_at.isoformat(),
+                worker_id,
+                tenant_id,
+                workspace_id,
+            ),
         )
-        revoked = self.get_worker_bootstrap_state(worker_id, connection=connection)
+        self.revoke_worker_sessions(
+            connection,
+            worker_id=worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            revoked_at=revoked_at,
+        )
+        self.revoke_worker_delivery_grants(
+            connection,
+            worker_id=worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            revoked_at=revoked_at,
+            revoke_reason="Worker bootstrap credential revoked.",
+        )
+        revoked = self.get_worker_bootstrap_state(
+            worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            connection=connection,
+        )
         if revoked is None:
             raise RuntimeError("Revoked worker bootstrap state could not be loaded.")
         return revoked
@@ -895,9 +1021,13 @@ class ControlPlaneRepository:
         revoked_at: datetime,
         session_id: str | None = None,
         worker_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> int:
         if session_id is None and worker_id is None:
             raise ValueError("Either session_id or worker_id is required to revoke worker sessions.")
+        if (tenant_id is None) != (workspace_id is None):
+            raise ValueError("tenant_id and workspace_id must be provided together.")
 
         clauses: list[str] = []
         params: list[Any] = [revoked_at.isoformat()]
@@ -907,6 +1037,12 @@ class ControlPlaneRepository:
         if worker_id is not None:
             clauses.append("worker_id = ?")
             params.append(worker_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
         where_clause = " AND ".join(clauses)
         cursor = connection.execute(
             f"""
@@ -921,6 +1057,8 @@ class ControlPlaneRepository:
                 connection,
                 session_id=session_id,
                 worker_id=worker_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
                 revoked_at=revoked_at,
                 revoke_reason="Worker session revoked.",
             )
@@ -1066,16 +1204,22 @@ class ControlPlaneRepository:
         session_id: str | None = None,
         worker_id: str | None = None,
         ticket_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> int:
         if (
             grant_id is None
             and session_id is None
             and worker_id is None
             and ticket_id is None
+            and tenant_id is None
+            and workspace_id is None
         ):
             raise ValueError(
                 "At least one filter is required to revoke worker delivery grants."
             )
+        if (tenant_id is None) != (workspace_id is None):
+            raise ValueError("tenant_id and workspace_id must be provided together.")
 
         clauses: list[str] = ["revoked_at IS NULL"]
         params: list[Any] = [revoked_at.isoformat(), revoke_reason]
@@ -1091,6 +1235,12 @@ class ControlPlaneRepository:
         if ticket_id is not None:
             clauses.append("ticket_id = ?")
             params.append(ticket_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
         where_clause = " AND ".join(clauses)
         cursor = connection.execute(
             f"""
@@ -2726,16 +2876,19 @@ class ControlPlaneRepository:
         )
 
     def _ensure_worker_bootstrap_state_shape(self, connection: sqlite3.Connection) -> None:
+        if self._worker_bootstrap_state_requires_rebuild(connection):
+            self._rebuild_worker_bootstrap_state_table(connection)
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS worker_bootstrap_state (
-                worker_id TEXT PRIMARY KEY,
+                worker_id TEXT NOT NULL,
                 credential_version INTEGER NOT NULL,
                 tenant_id TEXT NOT NULL,
                 workspace_id TEXT NOT NULL,
                 revoked_before TEXT,
                 rotated_at TEXT,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (worker_id, tenant_id, workspace_id)
             )
             """
         )
@@ -2757,6 +2910,12 @@ class ControlPlaneRepository:
                 connection.execute(
                     f"ALTER TABLE worker_bootstrap_state ADD COLUMN {column_name} {column_type}"
                 )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_bootstrap_state_worker_id ON worker_bootstrap_state(worker_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_bootstrap_state_scope ON worker_bootstrap_state(tenant_id, workspace_id)"
+        )
 
     def _ensure_worker_session_shape(self, connection: sqlite3.Connection) -> None:
         connection.execute(
@@ -2803,6 +2962,73 @@ class ControlPlaneRepository:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_session_scope ON worker_session(tenant_id, workspace_id)"
         )
+
+    def _worker_bootstrap_state_requires_rebuild(self, connection: sqlite3.Connection) -> bool:
+        rows = connection.execute("PRAGMA table_info(worker_bootstrap_state)").fetchall()
+        if not rows:
+            return False
+        pk_rows = [row for row in rows if int(row["pk"] or 0) > 0]
+        pk_columns = [
+            str(row["name"])
+            for row in sorted(pk_rows, key=lambda item: int(item["pk"] or 0))
+        ]
+        return pk_columns != ["worker_id", "tenant_id", "workspace_id"]
+
+    def _rebuild_worker_bootstrap_state_table(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(worker_bootstrap_state)").fetchall()
+        }
+        tenant_expr = "COALESCE(NULLIF(TRIM(tenant_id), ''), ?)" if "tenant_id" in existing_columns else "?"
+        workspace_expr = (
+            "COALESCE(NULLIF(TRIM(workspace_id), ''), ?)" if "workspace_id" in existing_columns else "?"
+        )
+        updated_expr = "COALESCE(updated_at, ?)" if "updated_at" in existing_columns else "?"
+        migrated_at = now_local().isoformat()
+
+        connection.execute("ALTER TABLE worker_bootstrap_state RENAME TO worker_bootstrap_state_legacy")
+        connection.execute(
+            """
+            CREATE TABLE worker_bootstrap_state (
+                worker_id TEXT NOT NULL,
+                credential_version INTEGER NOT NULL,
+                tenant_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                revoked_before TEXT,
+                rotated_at TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (worker_id, tenant_id, workspace_id)
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            INSERT INTO worker_bootstrap_state (
+                worker_id,
+                credential_version,
+                tenant_id,
+                workspace_id,
+                revoked_before,
+                rotated_at,
+                updated_at
+            )
+            SELECT
+                worker_id,
+                credential_version,
+                {tenant_expr},
+                {workspace_expr},
+                revoked_before,
+                rotated_at,
+                {updated_expr}
+            FROM worker_bootstrap_state_legacy
+            """,
+            (
+                DEFAULT_TENANT_ID,
+                DEFAULT_WORKSPACE_ID,
+                migrated_at,
+            ),
+        )
+        connection.execute("DROP TABLE worker_bootstrap_state_legacy")
 
     def _ensure_worker_delivery_grant_shape(self, connection: sqlite3.Connection) -> None:
         connection.execute(

@@ -794,7 +794,12 @@ def authenticate_worker_request(
                 claims=claims,
                 at=current_time,
             )
-            state = repository.get_worker_bootstrap_state(claims.worker_id, connection=connection)
+            state = repository.get_worker_bootstrap_state(
+                claims.worker_id,
+                tenant_id=claims.tenant_id,
+                workspace_id=claims.workspace_id,
+                connection=connection,
+            )
             session_row = repository.get_worker_session(claims.session_id, connection=connection)
             _validate_session_claims_against_state(
                 claims,
@@ -1110,15 +1115,40 @@ def list_worker_assignments(
                 if ticket.get("lease_owner") == principal.worker_id
                 and ticket["status"] in ACTIVE_WORKER_TICKET_STATUSES
             ]
-            return [
+            scoped_tickets: list[dict[str, Any]] = []
+            for ticket in owned_tickets:
+                ticket_tenant_id = str(ticket.get("tenant_id") or "")
+                ticket_workspace_id = str(ticket.get("workspace_id") or "")
+                if (
+                    ticket_tenant_id == principal.tenant_id
+                    and ticket_workspace_id == principal.workspace_id
+                ):
+                    scoped_tickets.append(
+                        _validate_ticket_scope_and_ownership(
+                            repository,
+                            ticket=ticket,
+                            principal=principal,
+                            connection=connection,
+                        )
+                    )
+                    continue
+
+                alternate_binding = repository.get_worker_bootstrap_state(
+                    principal.worker_id,
+                    tenant_id=ticket_tenant_id,
+                    workspace_id=ticket_workspace_id,
+                    connection=connection,
+                )
+                if alternate_binding is not None:
+                    continue
+
                 _validate_ticket_scope_and_ownership(
                     repository,
                     ticket=ticket,
                     principal=principal,
                     connection=connection,
                 )
-                for ticket in owned_tickets
-            ]
+            return scoped_tickets
     except WorkerAuthError as exc:
         _log_worker_auth_rejection(
             repository,

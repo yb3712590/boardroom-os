@@ -56,13 +56,64 @@ def _serialize_datetimes(payload: dict[str, object]) -> dict[str, object]:
     return serialized
 
 
+def _resolve_scope_args(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    tenant_id = getattr(args, "tenant_id", None)
+    workspace_id = getattr(args, "workspace_id", None)
+    if (tenant_id is None) != (workspace_id is None):
+        raise RuntimeError("Please provide both --tenant-id and --workspace-id together.")
+    return tenant_id, workspace_id
+
+
+def _select_worker_binding(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    worker_id: str,
+    tenant_id: str | None,
+    workspace_id: str | None,
+    allow_create: bool,
+) -> tuple[str, str, dict[str, object] | None]:
+    bindings = repository.list_worker_bootstrap_states(connection, worker_id=worker_id)
+    if tenant_id is not None and workspace_id is not None:
+        selected = repository.get_worker_bootstrap_state(
+            worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            connection=connection,
+        )
+        if selected is None and not allow_create:
+            raise RuntimeError(
+                "Worker bootstrap binding was not found for the requested tenant/workspace scope."
+            )
+        return tenant_id, workspace_id, selected
+
+    if not bindings:
+        if allow_create:
+            return DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID, None
+        raise RuntimeError("Worker does not have any bootstrap bindings yet.")
+    if len(bindings) > 1:
+        raise RuntimeError(
+            "Worker has multiple bootstrap bindings. Please explicitly provide both --tenant-id and --workspace-id."
+        )
+
+    selected = bindings[0]
+    return str(selected["tenant_id"]), str(selected["workspace_id"]), selected
+
+
 def _issue_bootstrap(args: argparse.Namespace) -> int:
     repository = _build_repository()
     issued_at = now_local()
-    tenant_id = args.tenant_id or DEFAULT_TENANT_ID
-    workspace_id = args.workspace_id or DEFAULT_WORKSPACE_ID
     with repository.transaction() as connection:
         _require_active_worker(repository, args.worker_id, connection=connection)
+        tenant_id, workspace_id = _resolve_scope_args(args)
+        tenant_id, workspace_id, _ = _select_worker_binding(
+            repository,
+            connection,
+            worker_id=args.worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            allow_create=True,
+        )
         state = repository.ensure_worker_bootstrap_state(
             connection,
             worker_id=args.worker_id,
@@ -98,20 +149,20 @@ def _rotate_bootstrap(args: argparse.Namespace) -> int:
     rotated_at = now_local()
     with repository.transaction() as connection:
         _require_active_worker(repository, args.worker_id, connection=connection)
-        state = repository.ensure_worker_bootstrap_state(
+        tenant_id, workspace_id = _resolve_scope_args(args)
+        tenant_id, workspace_id, _ = _select_worker_binding(
+            repository,
             connection,
             worker_id=args.worker_id,
-            at=rotated_at,
-            tenant_id=args.tenant_id or DEFAULT_TENANT_ID,
-            workspace_id=args.workspace_id or DEFAULT_WORKSPACE_ID,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            allow_create=False,
         )
-        if args.tenant_id and args.tenant_id != str(state["tenant_id"]):
-            raise RuntimeError("rotate-bootstrap cannot change the worker tenant binding.")
-        if args.workspace_id and args.workspace_id != str(state["workspace_id"]):
-            raise RuntimeError("rotate-bootstrap cannot change the worker workspace binding.")
         state = repository.rotate_worker_bootstrap_state(
             connection,
             worker_id=args.worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
             rotated_at=rotated_at,
         )
     token, expires_at = issue_worker_bootstrap_token(
@@ -143,15 +194,28 @@ def _revoke_bootstrap(args: argparse.Namespace) -> int:
     revoked_at = now_local()
     with repository.transaction() as connection:
         _require_active_worker(repository, args.worker_id, connection=connection)
+        tenant_id, workspace_id = _resolve_scope_args(args)
+        tenant_id, workspace_id, _ = _select_worker_binding(
+            repository,
+            connection,
+            worker_id=args.worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            allow_create=False,
+        )
         state = repository.revoke_worker_bootstrap_state(
             connection,
             worker_id=args.worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
             revoked_at=revoked_at,
         )
     _print_json(
         {
             "worker_id": args.worker_id,
             "credential_version": int(state["credential_version"]),
+            "tenant_id": str(state["tenant_id"]),
+            "workspace_id": str(state["workspace_id"]),
             "revoked_before": revoked_at.isoformat(),
         }
     )
@@ -213,6 +277,24 @@ def _list_sessions(args: argparse.Namespace) -> int:
         {
             "sessions": [_serialize_datetimes(session) for session in sessions],
             "count": len(sessions),
+        }
+    )
+    return 0
+
+
+def _list_bindings(args: argparse.Namespace) -> int:
+    repository = _build_repository()
+    with repository.connection() as connection:
+        bindings = repository.list_worker_bootstrap_states(
+            connection,
+            worker_id=args.worker_id,
+            tenant_id=args.tenant_id,
+            workspace_id=args.workspace_id,
+        )
+    _print_json(
+        {
+            "bindings": [_serialize_datetimes(binding) for binding in bindings],
+            "count": len(bindings),
         }
     )
     return 0
@@ -300,6 +382,12 @@ def _build_parser() -> argparse.ArgumentParser:
     list_sessions_parser.add_argument("--workspace-id")
     list_sessions_parser.add_argument("--active-only", action="store_true")
     list_sessions_parser.set_defaults(handler=_list_sessions)
+
+    list_bindings_parser = subparsers.add_parser("list-bindings")
+    list_bindings_parser.add_argument("--worker-id", required=True)
+    list_bindings_parser.add_argument("--tenant-id")
+    list_bindings_parser.add_argument("--workspace-id")
+    list_bindings_parser.set_defaults(handler=_list_bindings)
 
     list_auth_rejections_parser = subparsers.add_parser("list-auth-rejections")
     list_auth_rejections_parser.add_argument("--worker-id")

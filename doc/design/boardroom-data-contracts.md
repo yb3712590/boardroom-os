@@ -1224,7 +1224,8 @@ Assignment authentication headers:
 Behavior rules:
 
 - assignment list includes only the current worker's `LEASED`, `EXECUTING`, and `CANCEL_REQUESTED` tickets
-- bootstrap state, active session, and each persisted delivery grant are now bound to one worker `tenant_id/workspace_id` scope
+- one worker may now keep multiple bootstrap bindings keyed by `worker_id + tenant_id + workspace_id`
+- each active session and each persisted delivery grant still stay bound to exactly one worker `tenant_id/workspace_id` scope
 - `GET /api/v1/worker-runtime/assignments` remains the bootstrap call and now returns:
   - `tenant_id`
   - `workspace_id`
@@ -1234,8 +1235,11 @@ Behavior rules:
   - per-ticket `execution_package_url`
   - per-ticket `delivery_expires_at`
 - `GET /api/v1/worker-runtime/assignments` now accepts only `X-Boardroom-Worker-Bootstrap` or `X-Boardroom-Worker-Session`; `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` are no longer accepted on worker-runtime routes
+- `python -m app.worker_auth_cli list-bindings --worker-id ...` returns the worker's persisted bootstrap bindings
+- if a worker already has multiple bootstrap bindings, `issue-bootstrap`, `rotate-bootstrap`, and `revoke-bootstrap` require both `--tenant-id` and `--workspace-id`; single-binding workers may still omit them and reuse the only binding
 - bootstrap-token calls create a fresh worker session
 - session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`
+- assignment polling only returns tickets from the current session scope; if the backend encounters a ticket owned by that worker under a scope with no matching bootstrap binding, it still rejects and audits the mismatch instead of silently hiding it
 - execution-package reads require a signed `access_token`, enforce current lease ownership, and return:
   - `tenant_id`
   - `workspace_id`

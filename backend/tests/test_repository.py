@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 
 from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
 from app.db.repository import ControlPlaneRepository
@@ -251,15 +252,21 @@ def test_initialize_backfills_default_scope_for_legacy_rows(db_path):
 
     workflow = repository.get_workflow_projection("wf_legacy")
     ticket = repository.get_current_ticket_projection("tkt_legacy")
-    bootstrap_state = repository.get_worker_bootstrap_state("emp_frontend_2")
+    bootstrap_state = repository.get_worker_bootstrap_state(
+        "emp_frontend_2",
+        tenant_id=DEFAULT_TENANT_ID,
+        workspace_id=DEFAULT_WORKSPACE_ID,
+    )
     session = repository.get_worker_session("wsess_legacy")
     grant = repository.get_worker_delivery_grant("wgrant_legacy")
+    bindings = repository.list_worker_bootstrap_states(worker_id="emp_frontend_2")
 
     assert workflow is not None
     assert ticket is not None
     assert bootstrap_state is not None
     assert session is not None
     assert grant is not None
+    assert len(bindings) == 1
     assert workflow["tenant_id"] == DEFAULT_TENANT_ID
     assert workflow["workspace_id"] == DEFAULT_WORKSPACE_ID
     assert ticket["tenant_id"] == DEFAULT_TENANT_ID
@@ -270,3 +277,134 @@ def test_initialize_backfills_default_scope_for_legacy_rows(db_path):
     assert session["workspace_id"] == DEFAULT_WORKSPACE_ID
     assert grant["tenant_id"] == DEFAULT_TENANT_ID
     assert grant["workspace_id"] == DEFAULT_WORKSPACE_ID
+
+
+def test_worker_bootstrap_multi_scope_rotation_and_revoke_are_scope_bound(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+    issued_at = datetime.fromisoformat("2026-03-30T10:00:00+08:00")
+    expires_at = datetime.fromisoformat("2026-03-30T11:00:00+08:00")
+    rotated_at = datetime.fromisoformat("2026-03-30T10:05:00+08:00")
+    revoked_at = datetime.fromisoformat("2026-03-30T10:10:00+08:00")
+
+    with repository.transaction() as connection:
+        default_binding = repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            at=issued_at,
+        )
+        alternate_binding = repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            at=issued_at,
+        )
+        default_session = repository.create_worker_session(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            issued_at=issued_at,
+            expires_at=expires_at,
+            credential_version=int(default_binding["credential_version"]),
+        )
+        alternate_session = repository.create_worker_session(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            issued_at=issued_at,
+            expires_at=expires_at,
+            credential_version=int(alternate_binding["credential_version"]),
+        )
+        default_grant = repository.create_worker_delivery_grant(
+            connection,
+            scope="execution_package",
+            worker_id="emp_frontend_2",
+            session_id=str(default_session["session_id"]),
+            credential_version=int(default_binding["credential_version"]),
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            ticket_id="tkt_default",
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+        alternate_grant = repository.create_worker_delivery_grant(
+            connection,
+            scope="execution_package",
+            worker_id="emp_frontend_2",
+            session_id=str(alternate_session["session_id"]),
+            credential_version=int(alternate_binding["credential_version"]),
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            ticket_id="tkt_blue",
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+
+        rotated_binding = repository.rotate_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            rotated_at=rotated_at,
+        )
+
+        default_session_after_rotate = repository.get_worker_session(
+            str(default_session["session_id"]),
+            connection=connection,
+        )
+        alternate_session_after_rotate = repository.get_worker_session(
+            str(alternate_session["session_id"]),
+            connection=connection,
+        )
+        default_grant_after_rotate = repository.get_worker_delivery_grant(
+            str(default_grant["grant_id"]),
+            connection=connection,
+        )
+        alternate_grant_after_rotate = repository.get_worker_delivery_grant(
+            str(alternate_grant["grant_id"]),
+            connection=connection,
+        )
+
+        revoked_binding = repository.revoke_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            revoked_at=revoked_at,
+        )
+
+        alternate_session_after_revoke = repository.get_worker_session(
+            str(alternate_session["session_id"]),
+            connection=connection,
+        )
+        alternate_grant_after_revoke = repository.get_worker_delivery_grant(
+            str(alternate_grant["grant_id"]),
+            connection=connection,
+        )
+
+    bindings = repository.list_worker_bootstrap_states(worker_id="emp_frontend_2")
+
+    assert len(bindings) == 2
+    assert rotated_binding["credential_version"] == 2
+    assert rotated_binding["tenant_id"] == "tenant_default"
+    assert rotated_binding["workspace_id"] == "ws_default"
+    assert default_session_after_rotate is not None
+    assert default_session_after_rotate["revoked_at"] == rotated_at
+    assert alternate_session_after_rotate is not None
+    assert alternate_session_after_rotate["revoked_at"] is None
+    assert default_grant_after_rotate is not None
+    assert default_grant_after_rotate["revoked_at"] == rotated_at
+    assert alternate_grant_after_rotate is not None
+    assert alternate_grant_after_rotate["revoked_at"] is None
+    assert revoked_binding["tenant_id"] == "tenant_blue"
+    assert revoked_binding["workspace_id"] == "ws_design"
+    assert revoked_binding["revoked_before"] == revoked_at
+    assert alternate_session_after_revoke is not None
+    assert alternate_session_after_revoke["revoked_at"] == revoked_at
+    assert alternate_grant_after_revoke is not None
+    assert alternate_grant_after_revoke["revoked_at"] == revoked_at

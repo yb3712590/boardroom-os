@@ -23,7 +23,7 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 已支持 review room、board approve/reject/modify constraints
 - 已有独立 `scheduler_runner` 和可选的进程内 scheduler loop
 - 已有最小 artifact store / artifact index，`JSON` / `TEXT` / `MARKDOWN` 与图片 / PDF / 其它中等体量二进制都可通过 `ticket-result-submit` 真实落盘
-- 已有外部 worker handoff 面：worker 先用 per-worker bootstrap token 领取 assignment，拿到可刷新的 session 后，再通过 per-ticket 短时签名 URL 拉取 persisted execution package、读取 artifact、回写 start / heartbeat / result-submit；这些 URL 现在都落成可单独撤销的 delivery grant，并且 worker 侧已经补上 `tenant_id/workspace_id` 绑定
+- 已有外部 worker handoff 面：worker 先用 per-worker bootstrap token 领取 assignment，拿到可刷新的 session 后，再通过 per-ticket 短时签名 URL 拉取 persisted execution package、读取 artifact、回写 start / heartbeat / result-submit；这些 URL 现在都落成可单独撤销的 delivery grant，并且 worker 侧已经补上可并存多组的 `tenant_id/workspace_id` 绑定
 
 当前更像一个最小控制面原型，而不是完整产品。
 
@@ -76,6 +76,7 @@ uvicorn app.main:app --reload
 cd backend
 source .venv/bin/activate
 python -m app.worker_auth_cli issue-bootstrap --worker-id emp_frontend_2
+python -m app.worker_auth_cli list-bindings --worker-id emp_frontend_2
 python -m app.worker_auth_cli list-delivery-grants --worker-id emp_frontend_2
 python -m app.worker_auth_cli list-sessions --worker-id emp_frontend_2
 python -m app.worker_auth_cli list-auth-rejections --worker-id emp_frontend_2
@@ -95,9 +96,11 @@ python -m app.scheduler_runner
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` 是默认值，runner / in-process scheduler 会在 `LEASED` 后直接执行当前最小 runtime。
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 时，runner / in-process scheduler 只负责 dispatch / lease，不再自动 `start / execute / result-submit`。
 - 推荐的外部 worker bootstrap 路径是：先用 `python -m app.worker_auth_cli issue-bootstrap --worker-id <employee_id>` 生成 bootstrap token，再携带 `X-Boardroom-Worker-Bootstrap` 调 `GET /api/v1/worker-runtime/assignments`；响应会返回 `session_id`、`session_token`、`session_expires_at` 和 assignment 列表。
-- worker 的 bootstrap state、session 和 delivery grant 现在都会绑定到同一组 `tenant_id/workspace_id`；`rotate-bootstrap` 会保留原绑定，不允许静默换租户或工作区。
+- worker 的 bootstrap state 现在按 `worker_id + tenant_id + workspace_id` 形成可并存多组 binding；session 和 delivery grant 仍然各自只绑定到其中一组 scope。
+- 当一个 worker 已经有多组 binding 时，`issue-bootstrap`、`rotate-bootstrap`、`revoke-bootstrap` 必须显式传 `--tenant-id` 和 `--workspace-id`；单 binding worker 仍可省略，沿用现有绑定。
 - `GET /api/v1/worker-runtime/assignments` 现在也会返回 `tenant_id`、`workspace_id`，交付给 worker 的 execution package 响应也会带上同样的 scope 字段，便于远端排障和审计。
 - worker 拿到 `session_token` 后，可以继续用 `X-Boardroom-Worker-Session` 轮询 `GET /api/v1/worker-runtime/assignments`；同一个 session 会刷新过期时间，并重新返回一批新的 per-ticket 短时签名 URL。
+- assignment 现在会按当前 session 的 scope 只返回匹配的 ticket；如果发现当前 worker 名下存在一个没有对应 binding 的脏 scope ticket，仍会拒绝并写入审计日志，而不是静默吞掉。
 - execution package URL、artifact URL 和 command URL 都继续使用 `access_token` 短时签名参数；这些 token 现在同时绑定到 token claim、持久化 grant、session/bootstrap state，以及 ticket/workflow 的 `tenant_id/workspace_id` 真值，所以既能在 session 级联失效，也能按单条 URL 单独撤销，并且跨租户或跨工作区会直接拒绝。
 - `/api/v1/worker-runtime/tickets/*`、`/api/v1/worker-runtime/artifacts/*` 和 `/api/v1/worker-runtime/commands/*` 现在只接受 signed URL，不再接受旧的共享密钥请求 fallback。
 - 本地运维可通过 `python -m app.worker_auth_cli list-delivery-grants` 查看 grant，通过 `python -m app.worker_auth_cli list-sessions` 查看活跃 session，通过 `python -m app.worker_auth_cli list-auth-rejections` 查看最近被拒的 worker 请求，再用 `python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>` 撤销某一条具体 URL。
@@ -123,8 +126,8 @@ python -m pytest tests -q
 
 - 全新环境下 `pip install -e .[dev]` 可能因为 `backend/` 的平铺布局触发 `setuptools` 打包识别问题，本轮没有修改这一点。
 - 当前二进制上传仍走 `ticket-result-submit` 内联 `base64`，没有 multipart / 分片 / 对象存储链路，适合中等体量文件，不适合超大文件。
-- 当前外部 worker handoff 已经支持 per-worker bootstrap token、可刷新 session、bootstrap rotate/revoke、按 session 失效的 signed delivery、独立 delivery grant / 单 URL 撤销，以及 worker 侧 `tenant_id/workspace_id` 绑定与四层校验。
-- 仍未完成的是更完整的多租户管理面：一个 worker 目前仍只绑定一组 `tenant_id/workspace_id`，公开互联网场景下更细粒度的安全边界也还要继续收紧。
+- 当前外部 worker handoff 已经支持 per-worker bootstrap token、可刷新 session、bootstrap rotate/revoke、按 session 失效的 signed delivery、独立 delivery grant / 单 URL 撤销，以及 worker 侧多组 `tenant_id/workspace_id` binding 与四层校验。
+- 仍未完成的是更完整的多租户管理面：虽然一个 worker 现在可以并存多组 binding，但公开互联网场景下更细粒度的安全边界、租户管理面和更强签发治理还要继续收紧。
 
 ## 文档入口
 

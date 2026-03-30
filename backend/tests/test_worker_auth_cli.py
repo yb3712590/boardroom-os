@@ -157,6 +157,80 @@ def test_worker_auth_cli_rotate_bootstrap_bumps_credential_version(db_path, monk
     assert output["bootstrap_token"]
 
 
+def test_worker_auth_cli_list_bindings_returns_all_worker_scopes(db_path, monkeypatch, capsys):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+
+    from app.worker_auth_cli import main
+
+    assert main(["issue-bootstrap", "--worker-id", "emp_frontend_2"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "issue-bootstrap",
+                "--worker-id",
+                "emp_frontend_2",
+                "--tenant-id",
+                "tenant_blue",
+                "--workspace-id",
+                "ws_design",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    exit_code = main(["list-bindings", "--worker-id", "emp_frontend_2"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["count"] == 2
+    assert {(
+        binding["tenant_id"],
+        binding["workspace_id"],
+    ) for binding in output["bindings"]} == {
+        ("tenant_default", "ws_default"),
+        ("tenant_blue", "ws_design"),
+    }
+
+
+def test_worker_auth_cli_requires_explicit_scope_when_worker_has_multiple_bindings(
+    db_path,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+
+    from app.worker_auth_cli import main
+
+    assert main(["issue-bootstrap", "--worker-id", "emp_frontend_2"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "issue-bootstrap",
+                "--worker-id",
+                "emp_frontend_2",
+                "--tenant-id",
+                "tenant_blue",
+                "--workspace-id",
+                "ws_design",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["issue-bootstrap", "--worker-id", "emp_frontend_2"]) == 1
+    assert "explicitly" in capsys.readouterr().err.lower()
+
+    assert main(["rotate-bootstrap", "--worker-id", "emp_frontend_2"]) == 1
+    assert "explicitly" in capsys.readouterr().err.lower()
+
+    assert main(["revoke-bootstrap", "--worker-id", "emp_frontend_2"]) == 1
+    assert "explicitly" in capsys.readouterr().err.lower()
+
+
 def test_worker_auth_cli_list_delivery_grants_supports_tenant_and_workspace_filters(
     client,
     db_path,

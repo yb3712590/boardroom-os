@@ -99,13 +99,14 @@ CREATE TABLE IF NOT EXISTS employee_projection (
 );
 
 CREATE TABLE IF NOT EXISTS worker_bootstrap_state (
-    worker_id TEXT PRIMARY KEY,
+    worker_id TEXT NOT NULL,
     credential_version INTEGER NOT NULL,
     tenant_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL,
     revoked_before TEXT,
     rotated_at TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (worker_id, tenant_id, workspace_id)
 );
 
 CREATE TABLE IF NOT EXISTS worker_session (
@@ -267,6 +268,12 @@ ON incident_projection(fingerprint);
 
 CREATE INDEX IF NOT EXISTS idx_worker_session_worker_id
 ON worker_session(worker_id);
+
+CREATE INDEX IF NOT EXISTS idx_worker_bootstrap_state_worker_id
+ON worker_bootstrap_state(worker_id);
+
+CREATE INDEX IF NOT EXISTS idx_worker_bootstrap_state_scope
+ON worker_bootstrap_state(tenant_id, workspace_id);
 
 CREATE INDEX IF NOT EXISTS idx_worker_session_scope
 ON worker_session(tenant_id, workspace_id);

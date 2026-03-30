@@ -472,7 +472,7 @@ Current conservative reality:
 - Each execution-package URL, artifact content/download/preview URL, and command URL now creates its own persisted `worker_delivery_grant`, so one specific URL may be revoked without invalidating sibling URLs from the same session.
 - Those signed delivery URLs are now bound to both one worker session and one persisted delivery grant, so revoking a session or rotating a bootstrap credential invalidates the related active grants without waiting for delivery-token expiry.
 - `BOARDROOM_OS_PUBLIC_BASE_URL` can override the URL base used for these signed delivery links, while `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can be rotated independently from the bootstrap signing secret if desired.
-- Worker-side `tenant_id/workspace_id` binding is now real across workflow projection, ticket projection, bootstrap state, session state, and delivery grants.
+- Worker-side `tenant_id/workspace_id` binding is now real across workflow projection, ticket projection, bootstrap state, session state, and delivery grants; one worker may now keep multiple bootstrap bindings, while each session and delivery grant remains bound to exactly one scope.
 - Assignment and delivery validation now reject on four layers:
   - token claim route match
   - persisted bootstrap/session/grant state match

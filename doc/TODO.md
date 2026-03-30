@@ -5,7 +5,7 @@
 ## Runtime / Backend
 
 - 在已落地的 worker 侧 `tenant_id/workspace_id` 绑定、assignments / delivery 四层校验、CLI scope 查询和拒绝审计日志基础上，继续推进更强多租户远端隔离：
-  - 支持一个 worker 并存多组 tenant/workspace 凭据，而不再固定为单绑定模型
+  - 把当前 CLI 级多 binding 能力继续推进成更清晰的租户管理面和运维面，而不只是本地命令入口
   - 收紧公开互联网场景下的安全边界，例如更强的 bootstrap 签发治理、独立租户管理面和更细粒度的外网暴露策略
 - 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`

@@ -40,11 +40,11 @@
 - External worker handoff is real: bootstrap token -> refreshable session -> signed delivery grants -> execution, artifact, and command URLs.
 - Delivery grants can be listed and revoked from the local worker auth CLI.
 - Scope binding now exists across workflow, ticket, worker bootstrap and session, delivery grants, and compiled execution package metadata.
+- One worker can now keep multiple bootstrap bindings keyed by `worker_id + tenant_id + workspace_id`; each session and delivery grant still stays bound to exactly one scope.
 - Output schema enforcement is currently real for `ui_milestone_review@1` and `consensus_document@1`.
 
 ### Durable Open Gaps
 
-- One worker still binds to one active `tenant_id/workspace_id`; multi-binding per worker is not implemented.
 - There is still no dedicated tenant-management control plane, OAuth or mTLS layer, or broader public-internet hardening.
 - Multipart or large-file upload and object-storage delivery are still missing.
 - Artifact cleanup scheduling and richer retention classes still need follow-through.
@@ -65,6 +65,8 @@
 - Brought external worker runtime handoff online: assignments, compiled execution package delivery, artifact access, and signed worker command endpoints.
 - Hardened delivery grants and worker auth with persisted per-URL grants, session-linked revocation, and CLI support for listing and revoking grants.
 - Added tenant and workspace binding across the worker runtime chain and surfaced scope in assignments and execution-package responses.
+- Extended worker bootstrap state from single-binding to multi-binding, so one worker can now hold multiple tenant/workspace scopes without mixing sessions or delivery grants across them.
+- Added `list-bindings` plus explicit-scope CLI safeguards for multi-binding workers, and kept assignment polling strict: known alternate bindings are filtered by scope, while unknown dirty scopes still reject and audit.
 - The most recent archived full-suite verification claim was `backend/tests -q` -> `163 passed`.
 
 ### Current Watch-Outs

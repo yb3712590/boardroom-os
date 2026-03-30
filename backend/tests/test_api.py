@@ -1224,6 +1224,67 @@ def test_worker_runtime_assignments_return_session_scope_fields(
     assert data["workspace_id"] == "ws_scope"
 
 
+def test_worker_runtime_assignments_isolate_scopes_for_same_worker(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_scope_default",
+        ticket_id="tkt_scope_default",
+        node_id="node_scope_default",
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_scope_blue",
+        ticket_id="tkt_scope_blue",
+        node_id="node_scope_blue",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+
+    default_assignments = _worker_assignments_data(client)
+    blue_assignments = _worker_assignments_data(
+        client,
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    assert {item["ticket_id"] for item in default_assignments["assignments"]} == {
+        "tkt_scope_default"
+    }
+    assert {item["ticket_id"] for item in blue_assignments["assignments"]} == {
+        "tkt_scope_blue"
+    }
+    assert default_assignments["tenant_id"] == "tenant_default"
+    assert default_assignments["workspace_id"] == "ws_default"
+    assert blue_assignments["tenant_id"] == "tenant_blue"
+    assert blue_assignments["workspace_id"] == "ws_design"
+
+
 def test_worker_runtime_assignments_reject_ticket_scope_mismatch_and_log_it(
     client,
     set_ticket_time,
@@ -1272,6 +1333,78 @@ def test_worker_runtime_assignments_reject_ticket_scope_mismatch_and_log_it(
     assert rejection_logs[-1]["ticket_id"] == "tkt_scope_mismatch"
     assert rejection_logs[-1]["tenant_id"] == "tenant_scope"
     assert rejection_logs[-1]["workspace_id"] == "ws_scope"
+
+
+def test_worker_runtime_scope_specific_rotation_does_not_revoke_other_scope_session(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_scope_default",
+        ticket_id="tkt_scope_default_rotation",
+        node_id="node_scope_default_rotation",
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_scope_blue",
+        ticket_id="tkt_scope_blue_rotation",
+        node_id="node_scope_blue_rotation",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+
+    default_assignments = _worker_assignments_data(client)
+    blue_assignments = _worker_assignments_data(
+        client,
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+    with repository.transaction() as connection:
+        repository.rotate_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            rotated_at=datetime.fromisoformat("2026-03-28T10:05:00+08:00"),
+        )
+
+    revoked_default_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(default_assignments["session_token"]),
+    )
+    surviving_blue_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(blue_assignments["session_token"]),
+    )
+
+    assert revoked_default_response.status_code == 401
+    assert surviving_blue_response.status_code == 200
+    assert {item["ticket_id"] for item in surviving_blue_response.json()["data"]["assignments"]} == {
+        "tkt_scope_blue_rotation"
+    }
 
 
 def test_worker_runtime_revoked_session_rejects_assignments_and_signed_delivery(
