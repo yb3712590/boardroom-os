@@ -1218,13 +1218,23 @@ Current minimal authenticated worker handoff:
 
 Bootstrap authentication headers:
 
-- `X-Boardroom-Worker-Key`: deployment-level shared secret
-- `X-Boardroom-Worker-Id`: the current `employee_id`
+- `X-Boardroom-Worker-Bootstrap`: per-worker bootstrap token minted by `python -m app.worker_auth_cli issue-bootstrap --worker-id ...`
+- `X-Boardroom-Worker-Session`: refreshable worker session token returned by `GET /api/v1/worker-runtime/assignments`
+- Legacy fallback:
+  - `X-Boardroom-Worker-Key`: deployment-level shared secret
+  - `X-Boardroom-Worker-Id`: the current `employee_id`
 
 Behavior rules:
 
 - assignment list includes only the current worker's `LEASED`, `EXECUTING`, and `CANCEL_REQUESTED` tickets
-- `GET /api/v1/worker-runtime/assignments` remains the bootstrap call and now returns per-ticket `execution_package_url` plus `delivery_expires_at`
+- `GET /api/v1/worker-runtime/assignments` remains the bootstrap call and now returns:
+  - `session_id`
+  - `session_token`
+  - `session_expires_at`
+  - per-ticket `execution_package_url`
+  - per-ticket `delivery_expires_at`
+- bootstrap-token calls create a fresh worker session
+- session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`
 - execution-package reads require current lease ownership and return:
   - persisted `CompiledExecutionPackage`
   - `output_schema_body`
@@ -1238,7 +1248,10 @@ Behavior rules:
   - execution package URLs are scoped to one `ticket_id`
   - artifact URLs are scoped to one `ticket_id` plus one `artifact_ref`
   - worker command URLs are scoped to one `ticket_id` plus one command name
-- `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites the absolute delivery base, `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` controls expiry, and `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can differ from the bootstrap shared secret
+- signed delivery URLs are also bound to one worker `session_id`; revoking that session invalidates the already issued URLs for that session
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` signs bootstrap tokens and falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when omitted
+- `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` controls how long a returned `session_token` stays valid before the worker must refresh it on `assignments`
+- `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites the absolute delivery base, `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` controls expiry, and `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can differ from the bootstrap signing secret
 - artifact routes keep existing lifecycle semantics:
   - `REGISTERED_ONLY` content reads return conflict-style errors
   - `DELETED` / `EXPIRED` content reads return gone-style errors

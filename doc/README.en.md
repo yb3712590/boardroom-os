@@ -28,7 +28,7 @@ What is already real:
 - a ticket artifacts projection plus strict output-schema validation for `ui_milestone_review@1` and `consensus_document@1`
 - artifact metadata / content / preview endpoints keyed by `artifact_ref`
 - artifact lifecycle commands for delete and cleanup
-- an external worker handoff surface where bootstrap still uses a shared secret, but delivery now continues through short-lived signed URLs under `/api/v1/worker-runtime/*`
+- an external worker handoff surface where workers bootstrap with per-worker tokens, refresh per-worker sessions, and then continue through short-lived signed URLs under `/api/v1/worker-runtime/*`
 
 ## Quick Start
 
@@ -52,9 +52,18 @@ Switch into external-worker handoff mode:
 cd backend
 source .venv/bin/activate
 BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL \
-BOARDROOM_OS_WORKER_SHARED_SECRET=change-me \
+BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET=bootstrap-signing-secret \
+BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET=delivery-signing-secret \
 BOARDROOM_OS_PUBLIC_BASE_URL=http://127.0.0.1:8000 \
 uvicorn app.main:app --reload
+```
+
+Issue a bootstrap token for one worker:
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.worker_auth_cli issue-bootstrap --worker-id emp_frontend_2
 ```
 
 Run the standalone scheduler runner:
@@ -69,8 +78,13 @@ Mode notes:
 
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` remains the default, and the runner / in-process scheduler still executes leased tickets locally.
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` keeps scheduling and leasing, but stops automatic local `start / execute / result-submit`.
-- External workers first bootstrap with `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` on `GET /api/v1/worker-runtime/assignments`.
+- Recommended bootstrap flow: issue a worker-specific bootstrap token with `python -m app.worker_auth_cli issue-bootstrap --worker-id <employee_id>`, then call `GET /api/v1/worker-runtime/assignments` with `X-Boardroom-Worker-Bootstrap`.
+- The assignments response now also returns `session_id`, `session_token`, and `session_expires_at`; workers can keep polling assignments with `X-Boardroom-Worker-Session` and receive a refreshed session token plus a fresh batch of delivery URLs.
 - The returned execution-package URLs, artifact URLs, and worker command URLs all carry short-lived `access_token` query parameters and can be called without repeating the shared-secret headers.
+- Those signed delivery URLs are now session-bound, so revoking one worker session invalidates the URLs that were already issued for that session.
+- `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id` still exist as a compatibility fallback for local debugging, but they are no longer the recommended default path.
+- `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` signs bootstrap tokens and falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when omitted.
+- `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` defaults to `86400` and controls assignment-session refresh windows.
 - `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites those delivery URLs for remotely reachable workers; if omitted, the backend falls back to the incoming request base URL.
 - `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC` defaults to `3600`, and `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when not set.
 
@@ -91,7 +105,7 @@ Known realities:
 
 - `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
 - Binary uploads currently go through inline base64 in `ticket-result-submit`; there is no multipart, chunked-upload, or object-storage path yet.
-- External worker handoff now uses a deployment-level shared-secret bootstrap plus per-ticket short-lived signed delivery URLs, but stronger multi-tenant isolation, independent token revocation / rotation, and more hardened public-internet delivery boundaries are still not implemented.
+- External worker handoff now supports per-worker bootstrap tokens, refreshable sessions, bootstrap rotate / revoke, and session-bound signed delivery URLs, but stronger multi-tenant isolation, independent delivery-grant tracking / per-URL revocation, and more hardened public-internet boundaries are still not implemented.
 
 ## Docs
 

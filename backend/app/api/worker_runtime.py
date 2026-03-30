@@ -43,6 +43,7 @@ from app.core.ticket_handlers import (
 from app.core.time import now_local
 from app.core.worker_runtime import (
     authenticate_worker,
+    authenticate_worker_assignments_request,
     authenticate_worker_request,
     build_output_schema_body_for_execution_package,
     build_worker_artifact_metadata,
@@ -59,26 +60,30 @@ from app.db.repository import ControlPlaneRepository
 router = APIRouter(prefix="/api/v1/worker-runtime", tags=["worker-runtime"])
 
 
-def _authenticate_request(
+@router.get("/assignments", response_model=WorkerAssignmentsEnvelope)
+def get_worker_assignments(
     request: Request,
+    x_boardroom_worker_bootstrap: str | None = Header(default=None),
+    x_boardroom_worker_session: str | None = Header(default=None),
     x_boardroom_worker_key: str | None = Header(default=None),
     x_boardroom_worker_id: str | None = Header(default=None),
 ):
-    return authenticate_worker(
+    repository: ControlPlaneRepository = request.app.state.repository
+    auth_context = authenticate_worker_assignments_request(
         request,
+        bootstrap_token=x_boardroom_worker_bootstrap,
+        session_token=x_boardroom_worker_session,
         worker_key=x_boardroom_worker_key,
         worker_id=x_boardroom_worker_id,
     )
-
-
-@router.get("/assignments", response_model=WorkerAssignmentsEnvelope)
-def get_worker_assignments(request: Request, principal=Depends(_authenticate_request)):
-    repository: ControlPlaneRepository = request.app.state.repository
-    assignments = list_worker_assignments(repository, worker_id=principal.worker_id)
+    assignments = list_worker_assignments(repository, worker_id=auth_context.principal.worker_id)
     issued_at = now_local()
     return WorkerAssignmentsEnvelope(
         data=WorkerAssignmentsData(
-            worker_id=principal.worker_id,
+            worker_id=auth_context.principal.worker_id,
+            session_id=auth_context.session_id,
+            session_token=auth_context.session_token,
+            session_expires_at=auth_context.session_expires_at,
             assignments=[
                 WorkerAssignmentItem(
                     workflow_id=ticket["workflow_id"],
@@ -93,7 +98,9 @@ def get_worker_assignments(request: Request, principal=Depends(_authenticate_req
                 for execution_package_url, delivery_expires_at in [
                     build_worker_execution_package_url(
                         request,
-                        worker_id=principal.worker_id,
+                        worker_id=auth_context.principal.worker_id,
+                        session_id=auth_context.session_id,
+                        credential_version=int(auth_context.principal.credential_version or 0),
                         ticket_id=ticket["ticket_id"],
                         issued_at=issued_at,
                     )
@@ -137,12 +144,16 @@ def get_worker_execution_package(
         request,
         latest_execution_package=latest_execution_package,
         worker_id=principal.worker_id,
+        session_id=str(principal.session_id or ""),
+        credential_version=int(principal.credential_version or 0),
         ticket_id=ticket["ticket_id"],
         issued_at=issued_at,
     )
     command_endpoints, command_delivery_expires_at = build_worker_command_endpoints(
         request,
         worker_id=principal.worker_id,
+        session_id=str(principal.session_id or ""),
+        credential_version=int(principal.credential_version or 0),
         ticket_id=ticket["ticket_id"],
         issued_at=issued_at,
     )
@@ -200,6 +211,8 @@ def get_worker_artifact_by_ref(
     metadata, _ = build_worker_artifact_metadata(
         request,
         worker_id=principal.worker_id,
+        session_id=str(principal.session_id or ""),
+        credential_version=int(principal.credential_version or 0),
         ticket_id=str(artifact["ticket_id"]),
         issued_at=now_local(),
         artifact=artifact,
@@ -301,6 +314,8 @@ def get_worker_artifact_preview(
     metadata, _ = build_worker_artifact_metadata(
         request,
         worker_id=principal.worker_id,
+        session_id=str(principal.session_id or ""),
+        credential_version=int(principal.credential_version or 0),
         ticket_id=str(artifact["ticket_id"]),
         issued_at=now_local(),
         artifact=artifact,

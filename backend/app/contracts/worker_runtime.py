@@ -25,6 +25,9 @@ class WorkerAssignmentItem(StrictModel):
 
 class WorkerAssignmentsData(StrictModel):
     worker_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    session_token: str = Field(min_length=1)
+    session_expires_at: datetime
     assignments: list[WorkerAssignmentItem] = Field(default_factory=list)
 
 

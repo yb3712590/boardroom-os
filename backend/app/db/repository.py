@@ -103,6 +103,8 @@ class ControlPlaneRepository:
             self._ensure_ticket_projection_shape(connection)
             self._ensure_node_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
+            self._ensure_worker_bootstrap_state_shape(connection)
+            self._ensure_worker_session_shape(connection)
             self._ensure_incident_projection_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_artifact_index_shape(connection)
@@ -604,6 +606,220 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_employee_projection_row(row)
+
+    def get_worker_bootstrap_state(
+        self,
+        worker_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM worker_bootstrap_state WHERE worker_id = ?",
+                (worker_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_worker_bootstrap_state_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM worker_bootstrap_state WHERE worker_id = ?",
+                (worker_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_worker_bootstrap_state_row(row)
+
+    def ensure_worker_bootstrap_state(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        worker_id: str,
+        at: datetime,
+    ) -> dict[str, Any]:
+        existing = self.get_worker_bootstrap_state(worker_id, connection=connection)
+        if existing is not None:
+            return existing
+
+        connection.execute(
+            """
+            INSERT INTO worker_bootstrap_state (
+                worker_id,
+                credential_version,
+                revoked_before,
+                rotated_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (worker_id, 1, None, None, at.isoformat()),
+        )
+        created = self.get_worker_bootstrap_state(worker_id, connection=connection)
+        if created is None:
+            raise RuntimeError("Worker bootstrap state could not be created.")
+        return created
+
+    def rotate_worker_bootstrap_state(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        worker_id: str,
+        rotated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.ensure_worker_bootstrap_state(connection, worker_id=worker_id, at=rotated_at)
+        next_version = int(current["credential_version"]) + 1
+        connection.execute(
+            """
+            UPDATE worker_bootstrap_state
+            SET credential_version = ?,
+                revoked_before = ?,
+                rotated_at = ?,
+                updated_at = ?
+            WHERE worker_id = ?
+            """,
+            (
+                next_version,
+                rotated_at.isoformat(),
+                rotated_at.isoformat(),
+                rotated_at.isoformat(),
+                worker_id,
+            ),
+        )
+        self.revoke_worker_sessions(connection, worker_id=worker_id, revoked_at=rotated_at)
+        rotated = self.get_worker_bootstrap_state(worker_id, connection=connection)
+        if rotated is None:
+            raise RuntimeError("Rotated worker bootstrap state could not be loaded.")
+        return rotated
+
+    def revoke_worker_bootstrap_state(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        worker_id: str,
+        revoked_at: datetime,
+    ) -> dict[str, Any]:
+        self.ensure_worker_bootstrap_state(connection, worker_id=worker_id, at=revoked_at)
+        connection.execute(
+            """
+            UPDATE worker_bootstrap_state
+            SET revoked_before = ?, updated_at = ?
+            WHERE worker_id = ?
+            """,
+            (revoked_at.isoformat(), revoked_at.isoformat(), worker_id),
+        )
+        revoked = self.get_worker_bootstrap_state(worker_id, connection=connection)
+        if revoked is None:
+            raise RuntimeError("Revoked worker bootstrap state could not be loaded.")
+        return revoked
+
+    def get_worker_session(
+        self,
+        session_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM worker_session WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_worker_session_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM worker_session WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_worker_session_row(row)
+
+    def create_worker_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        worker_id: str,
+        issued_at: datetime,
+        expires_at: datetime,
+        credential_version: int,
+    ) -> dict[str, Any]:
+        session_id = new_prefixed_id("wsess")
+        connection.execute(
+            """
+            INSERT INTO worker_session (
+                session_id,
+                worker_id,
+                issued_at,
+                expires_at,
+                last_seen_at,
+                revoked_at,
+                credential_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                worker_id,
+                issued_at.isoformat(),
+                expires_at.isoformat(),
+                issued_at.isoformat(),
+                None,
+                credential_version,
+            ),
+        )
+        created = self.get_worker_session(session_id, connection=connection)
+        if created is None:
+            raise RuntimeError("Worker session could not be created.")
+        return created
+
+    def refresh_worker_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        refreshed_at: datetime,
+        expires_at: datetime,
+    ) -> dict[str, Any] | None:
+        connection.execute(
+            """
+            UPDATE worker_session
+            SET expires_at = ?, last_seen_at = ?
+            WHERE session_id = ?
+            """,
+            (expires_at.isoformat(), refreshed_at.isoformat(), session_id),
+        )
+        return self.get_worker_session(session_id, connection=connection)
+
+    def revoke_worker_sessions(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        revoked_at: datetime,
+        session_id: str | None = None,
+        worker_id: str | None = None,
+    ) -> int:
+        if session_id is None and worker_id is None:
+            raise ValueError("Either session_id or worker_id is required to revoke worker sessions.")
+
+        clauses: list[str] = []
+        params: list[Any] = [revoked_at.isoformat()]
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        where_clause = " AND ".join(clauses)
+        cursor = connection.execute(
+            f"""
+            UPDATE worker_session
+            SET revoked_at = COALESCE(revoked_at, ?)
+            WHERE {where_clause}
+            """,
+            tuple(params),
+        )
+        return int(cursor.rowcount or 0)
 
     def list_ticket_projections_by_statuses(
         self,
@@ -1674,6 +1890,22 @@ class ControlPlaneRepository:
         converted["version"] = int(converted.get("version") or 0)
         return converted
 
+    def _convert_worker_bootstrap_state_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("revoked_before", "rotated_at", "updated_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["credential_version"] = int(converted.get("credential_version") or 0)
+        return converted
+
+    def _convert_worker_session_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("issued_at", "expires_at", "last_seen_at", "revoked_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["credential_version"] = int(converted.get("credential_version") or 0)
+        return converted
+
     def _convert_incident_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         for field in ("opened_at", "closed_at", "updated_at"):
@@ -2068,6 +2300,74 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_employee_projection_role_type ON employee_projection(role_type)"
+        )
+
+    def _ensure_worker_bootstrap_state_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_bootstrap_state (
+                worker_id TEXT PRIMARY KEY,
+                credential_version INTEGER NOT NULL,
+                revoked_before TEXT,
+                rotated_at TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(worker_bootstrap_state)").fetchall()
+        }
+        required_columns = {
+            "worker_id": "TEXT",
+            "credential_version": "INTEGER",
+            "revoked_before": "TEXT",
+            "rotated_at": "TEXT",
+            "updated_at": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE worker_bootstrap_state ADD COLUMN {column_name} {column_type}"
+                )
+
+    def _ensure_worker_session_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_session (
+                session_id TEXT PRIMARY KEY,
+                worker_id TEXT NOT NULL,
+                issued_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                revoked_at TEXT,
+                credential_version INTEGER NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(worker_session)").fetchall()
+        }
+        required_columns = {
+            "session_id": "TEXT",
+            "worker_id": "TEXT",
+            "issued_at": "TEXT",
+            "expires_at": "TEXT",
+            "last_seen_at": "TEXT",
+            "revoked_at": "TEXT",
+            "credential_version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE worker_session ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_session_worker_id ON worker_session(worker_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_session_expires_at ON worker_session(expires_at)"
         )
 
     def _ensure_incident_projection_shape(self, connection: sqlite3.Connection) -> None:

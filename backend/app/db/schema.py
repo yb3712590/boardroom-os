@@ -94,6 +94,24 @@ CREATE TABLE IF NOT EXISTS employee_projection (
     version INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS worker_bootstrap_state (
+    worker_id TEXT PRIMARY KEY,
+    credential_version INTEGER NOT NULL,
+    revoked_before TEXT,
+    rotated_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worker_session (
+    session_id TEXT PRIMARY KEY,
+    worker_id TEXT NOT NULL,
+    issued_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    revoked_at TEXT,
+    credential_version INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS incident_projection (
     incident_id TEXT PRIMARY KEY,
     workflow_id TEXT NOT NULL,
@@ -207,4 +225,10 @@ ON incident_projection(provider_id);
 
 CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint
 ON incident_projection(fingerprint);
+
+CREATE INDEX IF NOT EXISTS idx_worker_session_worker_id
+ON worker_session(worker_id);
+
+CREATE INDEX IF NOT EXISTS idx_worker_session_expires_at
+ON worker_session(expires_at);
 """

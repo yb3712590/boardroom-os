@@ -23,6 +23,8 @@ class WorkerDeliveryTokenClaims:
     version: str
     scope: WorkerDeliveryScope
     worker_id: str
+    session_id: str
+    credential_version: int
     ticket_id: str
     artifact_ref: str | None
     command_name: WorkerCommandName | None
@@ -55,6 +57,8 @@ def issue_worker_delivery_token(
     signing_secret: str,
     scope: WorkerDeliveryScope,
     worker_id: str,
+    session_id: str,
+    credential_version: int,
     ticket_id: str,
     issued_at: datetime,
     ttl_sec: int,
@@ -66,6 +70,8 @@ def issue_worker_delivery_token(
         "version": TOKEN_VERSION,
         "scope": scope,
         "worker_id": worker_id,
+        "session_id": session_id,
+        "credential_version": credential_version,
         "ticket_id": ticket_id,
         "artifact_ref": artifact_ref,
         "command_name": command_name,
@@ -126,10 +132,16 @@ def validate_worker_delivery_token(
     if expires_at <= at:
         raise HTTPException(status_code=401, detail="Worker delivery token has expired.")
 
+    try:
+        credential_version = int(payload.get("credential_version") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.") from exc
     claims = WorkerDeliveryTokenClaims(
         version=str(payload["version"]),
         scope=str(payload.get("scope") or ""),
         worker_id=str(payload.get("worker_id") or ""),
+        session_id=str(payload.get("session_id") or ""),
+        credential_version=credential_version,
         ticket_id=str(payload.get("ticket_id") or ""),
         artifact_ref=(
             str(payload["artifact_ref"]) if payload.get("artifact_ref") is not None else None
@@ -140,6 +152,8 @@ def validate_worker_delivery_token(
         issued_at=issued_at,
         expires_at=expires_at,
     )
+    if not claims.session_id or claims.credential_version <= 0:
+        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
 
     if claims.scope != expected_scope:
         raise HTTPException(status_code=403, detail="Worker delivery token scope does not match this route.")

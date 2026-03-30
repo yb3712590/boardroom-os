@@ -467,10 +467,11 @@ Current conservative reality:
 - `storage_relpath` currently uses normalized internal relative paths instead of external signed URLs.
 - Binary upload currently uses inline `base64` in `ticket-result-submit`; multipart upload, chunking, and object storage are still out of scope for the current MVP.
 - UI / review surfaces still use local relative artifact API paths.
-- External worker handoff now uses deployment-level shared-secret bootstrap only for `GET /api/v1/worker-runtime/assignments`.
+- External worker handoff now uses per-worker bootstrap tokens plus refreshable worker sessions on `GET /api/v1/worker-runtime/assignments`, while the old shared-secret headers remain only as a compatibility fallback.
 - The returned execution package, artifact access descriptors, and worker command endpoints are rewritten into absolute `/api/v1/worker-runtime/*` URLs carrying short-lived signed `access_token` query parameters scoped to one worker, one ticket, and one route family.
-- `BOARDROOM_OS_PUBLIC_BASE_URL` can override the URL base used for these signed delivery links, while `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can be rotated independently from the bootstrap shared secret if desired.
-- Stronger bootstrap isolation, explicit token revocation, and fuller public multi-tenant delivery boundaries are still not implemented.
+- Those signed delivery URLs are now also bound to one worker session, so revoking a session invalidates previously issued URLs for that session without waiting for delivery-token expiry.
+- `BOARDROOM_OS_PUBLIC_BASE_URL` can override the URL base used for these signed delivery links, while `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` can be rotated independently from the bootstrap signing secret if desired.
+- Stronger multi-tenant isolation, explicit delivery-grant tracking, and fuller public delivery boundaries are still not implemented.
 
 ## 10. Ticket Contract
 
@@ -591,14 +592,17 @@ Current minimal handoff reality:
 
 - `CompiledExecutionPackage` is now persisted alongside `CompiledContextBundle` and `CompileManifest`.
 - `GET /api/v1/worker-runtime/assignments` remains the bootstrap endpoint:
-  - it still requires `X-Boardroom-Worker-Key` and `X-Boardroom-Worker-Id`
+  - it now accepts either `X-Boardroom-Worker-Bootstrap`, `X-Boardroom-Worker-Session`, or the legacy `X-Boardroom-Worker-Key` + `X-Boardroom-Worker-Id` fallback
   - it returns only the current worker's `LEASED` / `EXECUTING` / `CANCEL_REQUESTED` tickets
+  - it now also returns `session_id`, `session_token`, and `session_expires_at`
   - each assignment now includes a short-lived signed `execution_package_url` plus `delivery_expires_at`
 - `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package` returns the latest persisted package for the currently leased worker, compiles it on demand if that attempt has not been persisted yet, and now also returns `delivery_expires_at`.
 - Artifact access descriptors inside the delivered package remain reference-first, but their `content_url` / `preview_url` / `download_url` are now rewritten into worker-scoped absolute signed URLs for that request.
 - `POST /api/v1/worker-runtime/commands/ticket-start|ticket-heartbeat|ticket-result-submit` can now be called through signed command URLs as well as the legacy header-auth path; both still reuse the existing command handlers and do not introduce a second governance path.
 - Signed delivery token validation is ordered as:
   - signature + expiry
+  - active session exists and is not revoked
+  - session credential version still matches the worker's current bootstrap credential version
   - scope / ticket / artifact / command exact match
   - current worker ownership of the ticket
   - existing artifact access and lifecycle rules

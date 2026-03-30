@@ -4,7 +4,7 @@
 
 ## Runtime / Backend
 
-- 把当前“共享密钥 bootstrap + 短时签名 URL 交付”的 external worker handoff 继续推进到 bootstrap 去共享密钥、独立 token 撤销 / 轮换和更强多租户远端隔离
+- 把当前“bootstrap token + refreshable session + per-ticket 短时签名 URL”的 external worker handoff 继续推进到去掉 legacy 共享密钥 fallback、更强多租户远端隔离、以及独立 delivery grant / 单 URL 撤销能力
 - 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
 - 补齐更完整的 provider 路由、多 provider 控制面和恢复策略

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -12,9 +12,17 @@ from app.config import get_settings
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.output_schemas import get_output_schema_body
 from app.core.time import now_local
+from app.core.worker_bootstrap_tokens import (
+    WorkerBootstrapTokenClaims,
+    WorkerSessionTokenClaims,
+    issue_worker_session_token as issue_worker_session_access_token,
+    validate_worker_bootstrap_token,
+    validate_worker_session_token,
+)
 from app.core.worker_delivery_tokens import (
     WorkerCommandName,
     WorkerDeliveryScope,
+    WorkerDeliveryTokenClaims,
     issue_worker_delivery_token,
     validate_worker_delivery_token,
 )
@@ -26,6 +34,27 @@ ACTIVE_WORKER_TICKET_STATUSES = {"LEASED", "EXECUTING", "CANCEL_REQUESTED"}
 @dataclass(frozen=True)
 class WorkerPrincipal:
     worker_id: str
+    session_id: str | None = None
+    credential_version: int | None = None
+
+
+@dataclass(frozen=True)
+class WorkerAssignmentAuthContext:
+    principal: WorkerPrincipal
+    session_id: str
+    session_token: str
+    session_expires_at: datetime
+
+
+def _resolve_worker_bootstrap_signing_secret() -> str:
+    settings = get_settings()
+    signing_secret = settings.worker_bootstrap_signing_secret or settings.worker_shared_secret
+    if not signing_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Worker bootstrap signing secret is not configured.",
+        )
+    return signing_secret
 
 
 def _resolve_worker_delivery_signing_secret() -> str:
@@ -44,10 +73,259 @@ def _resolve_worker_public_base_url(request: Request) -> str:
     return settings.public_base_url or str(request.base_url).rstrip("/")
 
 
+def _resolve_worker_session_ttl_sec() -> int:
+    return get_settings().worker_session_ttl_sec
+
+
+def _require_active_worker_projection(
+    repository: ControlPlaneRepository,
+    worker_id: str,
+    *,
+    connection=None,
+) -> dict[str, Any]:
+    employee = repository.get_employee_projection(worker_id, connection=connection)
+    if employee is None:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Worker '{worker_id}' is not registered.",
+        )
+    if str(employee.get("state") or "") != "ACTIVE":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Worker '{worker_id}' is not active.",
+        )
+    return employee
+
+
+def _issue_worker_session_token(
+    *,
+    session_id: str,
+    worker_id: str,
+    credential_version: int,
+    issued_at: datetime,
+) -> tuple[str, datetime]:
+    return issue_worker_session_access_token(
+        signing_secret=_resolve_worker_bootstrap_signing_secret(),
+        session_id=session_id,
+        worker_id=worker_id,
+        credential_version=credential_version,
+        issued_at=issued_at,
+        ttl_sec=_resolve_worker_session_ttl_sec(),
+    )
+
+
+def _validate_bootstrap_claims_against_state(
+    claims: WorkerBootstrapTokenClaims,
+    state: dict[str, Any],
+) -> None:
+    if claims.credential_version != int(state.get("credential_version") or 0):
+        raise HTTPException(status_code=401, detail="Worker bootstrap token is invalid.")
+    revoked_before = state.get("revoked_before")
+    if revoked_before is not None and claims.issued_at < revoked_before:
+        raise HTTPException(status_code=401, detail="Worker bootstrap token has been revoked.")
+
+
+def _validate_session_claims_against_state(
+    claims: WorkerSessionTokenClaims | WorkerDeliveryTokenClaims,
+    *,
+    state: dict[str, Any] | None,
+    session_row: dict[str, Any] | None,
+    at: datetime,
+) -> None:
+    if state is None:
+        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+    if claims.credential_version != int(state.get("credential_version") or 0):
+        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+    if session_row is None:
+        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+    if session_row.get("worker_id") != claims.worker_id:
+        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+    if int(session_row.get("credential_version") or 0) != claims.credential_version:
+        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+    revoked_at = session_row.get("revoked_at")
+    if revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Worker session token has been revoked.")
+    expires_at = session_row.get("expires_at")
+    if expires_at is None or expires_at <= at:
+        raise HTTPException(status_code=401, detail="Worker session token has expired.")
+
+
+def _create_or_refresh_worker_session(
+    repository: ControlPlaneRepository,
+    *,
+    worker_id: str,
+    credential_version: int,
+    at: datetime,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    expires_at = at + timedelta(seconds=_resolve_worker_session_ttl_sec())
+    with repository.transaction() as connection:
+        if session_id is None:
+            return repository.create_worker_session(
+                connection,
+                worker_id=worker_id,
+                issued_at=at,
+                expires_at=expires_at,
+                credential_version=credential_version,
+            )
+        refreshed = repository.refresh_worker_session(
+            connection,
+            session_id=session_id,
+            refreshed_at=at,
+            expires_at=expires_at,
+        )
+        if refreshed is None:
+            raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+        return refreshed
+
+
+def _build_assignment_auth_context_from_session_row(
+    session_row: dict[str, Any],
+    *,
+    at: datetime,
+) -> WorkerAssignmentAuthContext:
+    session_token, session_expires_at = _issue_worker_session_token(
+        session_id=str(session_row["session_id"]),
+        worker_id=str(session_row["worker_id"]),
+        credential_version=int(session_row["credential_version"]),
+        issued_at=at,
+    )
+    return WorkerAssignmentAuthContext(
+        principal=WorkerPrincipal(
+            worker_id=str(session_row["worker_id"]),
+            session_id=str(session_row["session_id"]),
+            credential_version=int(session_row["credential_version"]),
+        ),
+        session_id=str(session_row["session_id"]),
+        session_token=session_token,
+        session_expires_at=session_expires_at,
+    )
+
+
+def _authenticate_worker_bootstrap(
+    request: Request,
+    *,
+    bootstrap_token: str,
+) -> WorkerAssignmentAuthContext:
+    repository: ControlPlaneRepository = request.app.state.repository
+    current_time = now_local()
+    claims = validate_worker_bootstrap_token(
+        bootstrap_token,
+        signing_secret=_resolve_worker_bootstrap_signing_secret(),
+        at=current_time,
+    )
+    with repository.transaction() as connection:
+        state = repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id=claims.worker_id,
+            at=current_time,
+        )
+        _validate_bootstrap_claims_against_state(claims, state)
+        _require_active_worker_projection(repository, claims.worker_id, connection=connection)
+    session_row = _create_or_refresh_worker_session(
+        repository,
+        worker_id=claims.worker_id,
+        credential_version=int(state["credential_version"]),
+        at=current_time,
+    )
+    return _build_assignment_auth_context_from_session_row(session_row, at=current_time)
+
+
+def _authenticate_worker_session(
+    request: Request,
+    *,
+    session_token: str,
+) -> WorkerAssignmentAuthContext:
+    repository: ControlPlaneRepository = request.app.state.repository
+    current_time = now_local()
+    claims = validate_worker_session_token(
+        session_token,
+        signing_secret=_resolve_worker_bootstrap_signing_secret(),
+        at=current_time,
+    )
+    with repository.transaction() as connection:
+        state = repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id=claims.worker_id,
+            at=current_time,
+        )
+        session_row = repository.get_worker_session(claims.session_id, connection=connection)
+        _validate_session_claims_against_state(
+            claims,
+            state=state,
+            session_row=session_row,
+            at=current_time,
+        )
+        _require_active_worker_projection(repository, claims.worker_id, connection=connection)
+    refreshed_session = _create_or_refresh_worker_session(
+        repository,
+        worker_id=claims.worker_id,
+        credential_version=claims.credential_version,
+        at=current_time,
+        session_id=claims.session_id,
+    )
+    return _build_assignment_auth_context_from_session_row(refreshed_session, at=current_time)
+
+
+def _authenticate_worker_legacy_fallback(
+    request: Request,
+    *,
+    worker_key: str | None,
+    worker_id: str | None,
+) -> WorkerAssignmentAuthContext:
+    principal = authenticate_worker(
+        request,
+        worker_key=worker_key,
+        worker_id=worker_id,
+    )
+    repository: ControlPlaneRepository = request.app.state.repository
+    current_time = now_local()
+    with repository.transaction() as connection:
+        state = repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id=principal.worker_id,
+            at=current_time,
+        )
+    session_row = _create_or_refresh_worker_session(
+        repository,
+        worker_id=principal.worker_id,
+        credential_version=int(state["credential_version"]),
+        at=current_time,
+    )
+    return _build_assignment_auth_context_from_session_row(session_row, at=current_time)
+
+
+def authenticate_worker_assignments_request(
+    request: Request,
+    *,
+    bootstrap_token: str | None,
+    session_token: str | None,
+    worker_key: str | None,
+    worker_id: str | None,
+) -> WorkerAssignmentAuthContext:
+    if bootstrap_token:
+        return _authenticate_worker_bootstrap(
+            request,
+            bootstrap_token=bootstrap_token,
+        )
+    if session_token:
+        return _authenticate_worker_session(
+            request,
+            session_token=session_token,
+        )
+    return _authenticate_worker_legacy_fallback(
+        request,
+        worker_key=worker_key,
+        worker_id=worker_id,
+    )
+
+
 def _issue_worker_delivery_token(
     *,
     scope: WorkerDeliveryScope,
     worker_id: str,
+    session_id: str,
+    credential_version: int,
     ticket_id: str,
     issued_at: datetime,
     artifact_ref: str | None = None,
@@ -58,6 +336,8 @@ def _issue_worker_delivery_token(
         signing_secret=_resolve_worker_delivery_signing_secret(),
         scope=scope,
         worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
         ticket_id=ticket_id,
         issued_at=issued_at,
         ttl_sec=settings.worker_delivery_token_ttl_sec,
@@ -90,13 +370,7 @@ def authenticate_worker(
         )
 
     repository: ControlPlaneRepository = request.app.state.repository
-    employee = repository.get_employee_projection(worker_id)
-    if employee is None:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Worker '{worker_id}' is not registered.",
-        )
-
+    _require_active_worker_projection(repository, worker_id)
     return WorkerPrincipal(worker_id=worker_id)
 
 
@@ -122,25 +396,36 @@ def authenticate_worker_request(
             at=now_local(),
         )
         repository: ControlPlaneRepository = request.app.state.repository
-        employee = repository.get_employee_projection(claims.worker_id)
-        if employee is None:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Worker '{claims.worker_id}' is not registered.",
+        with repository.transaction() as connection:
+            state = repository.get_worker_bootstrap_state(claims.worker_id, connection=connection)
+            session_row = repository.get_worker_session(claims.session_id, connection=connection)
+            _validate_session_claims_against_state(
+                claims,
+                state=state,
+                session_row=session_row,
+                at=now_local(),
             )
-        return WorkerPrincipal(worker_id=claims.worker_id)
+            _require_active_worker_projection(repository, claims.worker_id, connection=connection)
+        return WorkerPrincipal(
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            credential_version=claims.credential_version,
+        )
 
-    return authenticate_worker(
+    auth_context = _authenticate_worker_legacy_fallback(
         request,
         worker_key=worker_key,
         worker_id=worker_id,
     )
+    return auth_context.principal
 
 
 def build_worker_artifact_urls(
     request: Request,
     *,
     worker_id: str,
+    session_id: str,
+    credential_version: int,
     ticket_id: str,
     artifact_ref: str,
     issued_at: datetime,
@@ -149,6 +434,8 @@ def build_worker_artifact_urls(
     token, expires_at = _issue_worker_delivery_token(
         scope="artifact_read",
         worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
         ticket_id=ticket_id,
         artifact_ref=artifact_ref,
         issued_at=issued_at,
@@ -173,6 +460,8 @@ def build_worker_execution_package_url(
     request: Request,
     *,
     worker_id: str,
+    session_id: str,
+    credential_version: int,
     ticket_id: str,
     issued_at: datetime,
 ) -> tuple[str, datetime]:
@@ -180,6 +469,8 @@ def build_worker_execution_package_url(
     token, expires_at = _issue_worker_delivery_token(
         scope="execution_package",
         worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
         ticket_id=ticket_id,
         issued_at=issued_at,
     )
@@ -194,6 +485,8 @@ def _build_worker_command_url(
     request: Request,
     *,
     worker_id: str,
+    session_id: str,
+    credential_version: int,
     ticket_id: str,
     command_name: WorkerCommandName,
     issued_at: datetime,
@@ -202,6 +495,8 @@ def _build_worker_command_url(
     token, expires_at = _issue_worker_delivery_token(
         scope="command",
         worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
         ticket_id=ticket_id,
         command_name=command_name,
         issued_at=issued_at,
@@ -217,12 +512,16 @@ def build_worker_command_endpoints(
     request: Request,
     *,
     worker_id: str,
+    session_id: str,
+    credential_version: int,
     ticket_id: str,
     issued_at: datetime,
 ) -> tuple[dict[str, str], datetime]:
     ticket_start_url, expires_at = _build_worker_command_url(
         request,
         worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
         ticket_id=ticket_id,
         command_name="ticket-start",
         issued_at=issued_at,
@@ -230,6 +529,8 @@ def build_worker_command_endpoints(
     ticket_heartbeat_url, _ = _build_worker_command_url(
         request,
         worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
         ticket_id=ticket_id,
         command_name="ticket-heartbeat",
         issued_at=issued_at,
@@ -237,6 +538,8 @@ def build_worker_command_endpoints(
     ticket_result_submit_url, _ = _build_worker_command_url(
         request,
         worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
         ticket_id=ticket_id,
         command_name="ticket-result-submit",
         issued_at=issued_at,
@@ -361,6 +664,8 @@ def build_worker_execution_package_payload(
     *,
     latest_execution_package: dict[str, Any],
     worker_id: str,
+    session_id: str,
+    credential_version: int,
     ticket_id: str,
     issued_at: datetime,
 ) -> tuple[dict[str, Any], datetime | None]:
@@ -379,6 +684,8 @@ def build_worker_execution_package_payload(
         worker_urls, expires_at = build_worker_artifact_urls(
             request,
             worker_id=worker_id,
+            session_id=session_id,
+            credential_version=credential_version,
             ticket_id=ticket_id,
             artifact_ref=artifact_ref,
             issued_at=issued_at,
@@ -395,6 +702,8 @@ def build_worker_artifact_metadata(
     request: Request,
     *,
     worker_id: str,
+    session_id: str,
+    credential_version: int,
     ticket_id: str,
     issued_at: datetime,
     artifact: dict[str, Any],
@@ -404,6 +713,8 @@ def build_worker_artifact_metadata(
     worker_urls, expires_at = build_worker_artifact_urls(
         request,
         worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
         ticket_id=ticket_id,
         artifact_ref=str(artifact["artifact_ref"]),
         issued_at=issued_at,

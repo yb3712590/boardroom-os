@@ -1987,3 +1987,109 @@
 - automatic background cleanup scheduling and richer retention classes
 - broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
 - richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T21:35:00+08:00
+
+### Session Context
+- User asked to directly implement the next Runtime / Backend batch inside the existing Boardroom OS repo.
+- The round had to stay on one direction only, keep the existing backend skeleton, and close the remaining bootstrap/auth gap on the external worker path.
+
+### Boundary Chosen
+- Single boundary for this round: external worker bootstrap/session hardening on top of the existing `/api/v1/worker-runtime/*` delivery chain.
+- The slice chain stayed on one path:
+  - worker bootstrap state persistence
+  - refreshable worker sessions
+  - session-bound delivery tokens
+  - local auth CLI plus docs closeout
+
+### Design / Code Gap Identified
+- Code already had:
+  - persisted `CompiledExecutionPackage`
+  - worker assignments
+  - worker artifact reads
+  - signed delivery URLs
+- But bootstrap still had one clear control-plane gap:
+  - `GET /api/v1/worker-runtime/assignments` still relied on deployment-level shared-secret headers
+  - there was no worker-specific bootstrap token or refreshable session state
+  - delivery tokens could expire or be invalidated by ownership changes, but they could not be invalidated by revoking one worker session
+
+### Slice Landed
+- Added new control-plane tables:
+  - `worker_bootstrap_state`
+  - `worker_session`
+- Added new runtime settings:
+  - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET`
+  - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC`
+- Added a dedicated bootstrap/session token helper at `backend/app/core/worker_bootstrap_tokens.py`.
+- Added local worker auth CLI at `python -m app.worker_auth_cli` with:
+  - `issue-bootstrap`
+  - `rotate-bootstrap`
+  - `revoke-bootstrap`
+  - `revoke-session`
+- `GET /api/v1/worker-runtime/assignments` now accepts:
+  - `X-Boardroom-Worker-Bootstrap`
+  - `X-Boardroom-Worker-Session`
+  - legacy `X-Boardroom-Worker-Key` + `X-Boardroom-Worker-Id` fallback
+- Assignment responses now also return:
+  - `session_id`
+  - `session_token`
+  - `session_expires_at`
+- Bootstrap-token calls now create a fresh worker session.
+- Session-token calls now refresh the existing session TTL and return a fresh session token for the same `session_id`.
+- Delivery token claims now also carry:
+  - `session_id`
+  - `credential_version`
+- Worker delivery validation now additionally checks:
+  - the bound session exists
+  - the session is not revoked
+  - the session credential version still matches the worker's current bootstrap credential version
+- Rotating one worker bootstrap credential now invalidates that worker's old bootstrap tokens and old sessions.
+- Revoking one worker session now invalidates the already issued execution-package, artifact, and worker-command URLs for that session.
+- Legacy shared-secret auth remains as a compatibility fallback and now also gets a refreshable session returned on `assignments`, rather than remaining a special case forever outside the new chain.
+
+### Conservative Handling
+- This round intentionally did not add a public HTTP admin API for worker credentials; bootstrap/session issue and revoke stay in the local CLI only.
+- Shared-secret fallback was kept for local debugging and conservative compatibility instead of being removed immediately.
+- Delivery-token invalidation is still session-bound, not a full per-URL server-side grant table.
+- This round did not widen into stronger multi-tenant tenancy boundaries, mTLS, OAuth, multipart upload, object storage, or provider routing.
+
+### Tests Added
+- API coverage now includes:
+  - bootstrap-token assignment bootstrap
+  - session refresh on repeated assignment polling
+  - session revocation invalidating assignments plus signed execution / artifact / command URLs
+  - bootstrap rotation invalidating old bootstrap tokens and old sessions
+  - inactive workers being rejected on bootstrap and session paths
+  - legacy shared-secret assignment fallback still returning session metadata
+- CLI coverage now includes:
+  - issuing bootstrap tokens
+  - rotating bootstrap credentials
+  - revoking bootstrap tokens
+  - revoking one session without killing another session
+
+### Verification
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_api.py -q`
+  - `111 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_context_compiler.py -q`
+  - `6 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_scheduler_runner.py -q`
+  - `11 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests -q`
+  - `152 passed`
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- removing the legacy shared-secret fallback entirely from worker bootstrap
+- stronger public multi-tenant delivery isolation
+- independent server-side delivery-grant tracking or per-URL revocation beyond session invalidation
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface

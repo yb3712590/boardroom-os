@@ -117,6 +117,47 @@ def _worker_headers(
     }
 
 
+def _issue_worker_bootstrap_token(
+    *,
+    worker_id: str = "emp_frontend_2",
+    credential_version: int = 1,
+    signing_secret: str = "bootstrap-secret",
+    issued_at: str = "2026-03-28T10:00:00+08:00",
+    ttl_sec: int = 3600,
+) -> tuple[str, datetime]:
+    from app.core.worker_bootstrap_tokens import issue_worker_bootstrap_token
+
+    return issue_worker_bootstrap_token(
+        signing_secret=signing_secret,
+        worker_id=worker_id,
+        credential_version=credential_version,
+        issued_at=datetime.fromisoformat(issued_at),
+        ttl_sec=ttl_sec,
+    )
+
+
+def _worker_bootstrap_headers(
+    *,
+    worker_id: str = "emp_frontend_2",
+    credential_version: int = 1,
+    signing_secret: str = "bootstrap-secret",
+    issued_at: str = "2026-03-28T10:00:00+08:00",
+    ttl_sec: int = 3600,
+) -> dict[str, str]:
+    token, _ = _issue_worker_bootstrap_token(
+        worker_id=worker_id,
+        credential_version=credential_version,
+        signing_secret=signing_secret,
+        issued_at=issued_at,
+        ttl_sec=ttl_sec,
+    )
+    return {"X-Boardroom-Worker-Bootstrap": token}
+
+
+def _worker_session_headers(session_token: str) -> dict[str, str]:
+    return {"X-Boardroom-Worker-Session": session_token}
+
+
 def _local_path_from_url(url: str) -> str:
     parsed = urlsplit(url)
     if parsed.query:
@@ -849,6 +890,8 @@ def test_worker_runtime_assignments_return_only_current_worker_tickets_and_signe
     monkeypatch,
 ):
     monkeypatch.setenv("BOARDROOM_OS_WORKER_SHARED_SECRET", "shared-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(
@@ -886,10 +929,14 @@ def test_worker_runtime_assignments_return_only_current_worker_tickets_and_signe
     )
 
     assert response.status_code == 200
-    assignments = response.json()["data"]["assignments"]
+    data = response.json()["data"]
+    assignments = data["assignments"]
     assignment_ids = {item["ticket_id"] for item in assignments}
     assert assignment_ids == {"tkt_worker_leased", "tkt_worker_executing"}
     assert {item["status"] for item in assignments} == {"LEASED", "EXECUTING"}
+    assert data["session_id"]
+    assert data["session_token"]
+    assert data["session_expires_at"] == "2026-03-28T10:10:00+08:00"
     assert all(
         item["execution_package_url"].startswith(
             "https://workers.boardroom.test/api/v1/worker-runtime/tickets/"
@@ -898,6 +945,217 @@ def test_worker_runtime_assignments_return_only_current_worker_tickets_and_signe
     )
     assert all(item["delivery_expires_at"] == "2026-03-28T11:00:00+08:00" for item in assignments)
     assert all(_query_value(item["execution_package_url"], "access_token") for item in assignments)
+
+
+def test_worker_runtime_assignments_accept_bootstrap_token_and_refresh_session(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_bootstrap",
+        node_id="node_worker_bootstrap",
+    )
+
+    bootstrap_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(),
+    )
+
+    assert bootstrap_response.status_code == 200
+    bootstrap_data = bootstrap_response.json()["data"]
+    assert bootstrap_data["worker_id"] == "emp_frontend_2"
+    assert bootstrap_data["session_id"]
+    assert bootstrap_data["session_token"]
+    assert bootstrap_data["session_expires_at"] == "2026-03-28T10:10:00+08:00"
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    refreshed_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(bootstrap_data["session_token"]),
+    )
+
+    assert refreshed_response.status_code == 200
+    refreshed_data = refreshed_response.json()["data"]
+    assert refreshed_data["session_id"] == bootstrap_data["session_id"]
+    assert refreshed_data["session_token"] != bootstrap_data["session_token"]
+    assert refreshed_data["session_expires_at"] == "2026-03-28T10:15:00+08:00"
+
+
+def test_worker_runtime_revoked_session_rejects_assignments_and_signed_delivery(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_revoked_session",
+        node_id="node_worker_revoked_session",
+    )
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(),
+    )
+    assignments_data = assignments_response.json()["data"]
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    execution_package_data = execution_package_response.json()["data"]
+    content_url = execution_package_data["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0][
+        "content_payload"
+    ]["content_url"]
+    ticket_start_url = execution_package_data["command_endpoints"]["ticket_start_url"]
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE worker_session
+            SET revoked_at = ?
+            WHERE session_id = ?
+            """,
+            ("2026-03-28T10:06:00+08:00", assignments_data["session_id"]),
+        )
+
+    assignments_after_revoke = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(assignments_data["session_token"]),
+    )
+    execution_after_revoke = client.get(_local_path_from_url(execution_package_url))
+    artifact_after_revoke = client.get(_local_path_from_url(content_url))
+    command_after_revoke = client.post(
+        _local_path_from_url(ticket_start_url),
+        json={
+            "workflow_id": "wf_worker_runtime",
+            "ticket_id": "tkt_worker_revoked_session",
+            "node_id": "node_worker_revoked_session",
+            "idempotency_key": "worker-runtime:start:tkt_worker_revoked_session",
+        },
+    )
+
+    assert assignments_after_revoke.status_code == 401
+    assert execution_after_revoke.status_code == 401
+    assert artifact_after_revoke.status_code == 401
+    assert command_after_revoke.status_code == 401
+
+
+def test_worker_runtime_rotated_bootstrap_rejects_old_bootstrap_and_old_session(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_rotated_bootstrap",
+        node_id="node_worker_rotated_bootstrap",
+    )
+
+    initial_bootstrap_headers = _worker_bootstrap_headers()
+    initial_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=initial_bootstrap_headers,
+    )
+    initial_session_token = initial_response.json()["data"]["session_token"]
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE worker_bootstrap_state
+            SET credential_version = 2,
+                revoked_before = ?,
+                rotated_at = ?,
+                updated_at = ?
+            WHERE worker_id = ?
+            """,
+            (
+                "2026-03-28T10:05:00+08:00",
+                "2026-03-28T10:05:00+08:00",
+                "2026-03-28T10:05:00+08:00",
+                "emp_frontend_2",
+            ),
+        )
+
+    old_bootstrap_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=initial_bootstrap_headers,
+    )
+    old_session_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(initial_session_token),
+    )
+    new_bootstrap_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(credential_version=2, issued_at="2026-03-28T10:05:00+08:00"),
+    )
+
+    assert old_bootstrap_response.status_code == 401
+    assert old_session_response.status_code == 401
+    assert new_bootstrap_response.status_code == 200
+
+
+def test_worker_runtime_inactive_worker_cannot_bootstrap_or_use_session(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime",
+        ticket_id="tkt_worker_inactive",
+        node_id="node_worker_inactive",
+    )
+
+    active_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(),
+    )
+    session_token = active_response.json()["data"]["session_token"]
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE employee_projection
+            SET state = ?, updated_at = ?, version = version + 1
+            WHERE employee_id = ?
+            """,
+            ("INACTIVE", "2026-03-28T10:06:00+08:00", "emp_frontend_2"),
+        )
+
+    bootstrap_after_deactivate = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(issued_at="2026-03-28T10:06:00+08:00"),
+    )
+    session_after_deactivate = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(session_token),
+    )
+
+    assert bootstrap_after_deactivate.status_code == 403
+    assert session_after_deactivate.status_code == 403
 
 
 def test_worker_runtime_execution_package_signed_url_allows_token_only_access_and_rewrites_signed_urls(

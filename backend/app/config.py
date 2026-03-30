@@ -15,8 +15,10 @@ class Settings:
     developer_inspector_root: Path
     artifact_store_root: Path
     runtime_execution_mode: RuntimeExecutionMode
+    worker_bootstrap_signing_secret: str | None
     worker_shared_secret: str | None
     public_base_url: str | None
+    worker_session_ttl_sec: int
     worker_delivery_token_ttl_sec: int
     worker_delivery_signing_secret: str | None
     busy_timeout_ms: int = 5000
@@ -72,11 +74,17 @@ def get_settings() -> Settings:
         os.environ.get("BOARDROOM_OS_SCHEDULER_MAX_DISPATCHES", "10")
     )
     runtime_execution_mode = _read_runtime_execution_mode()
+    worker_bootstrap_signing_secret = os.environ.get(
+        "BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET"
+    )
     worker_shared_secret = os.environ.get("BOARDROOM_OS_WORKER_SHARED_SECRET")
     public_base_url = os.environ.get("BOARDROOM_OS_PUBLIC_BASE_URL")
     if public_base_url is not None:
         normalized_public_base_url = public_base_url.strip().rstrip("/")
         public_base_url = normalized_public_base_url or None
+    worker_session_ttl_sec = int(
+        os.environ.get("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "86400")
+    )
     worker_delivery_token_ttl_sec = int(
         os.environ.get("BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC", "3600")
     )
@@ -92,8 +100,10 @@ def get_settings() -> Settings:
         developer_inspector_root=developer_inspector_root,
         artifact_store_root=artifact_store_root,
         runtime_execution_mode=runtime_execution_mode,
+        worker_bootstrap_signing_secret=worker_bootstrap_signing_secret,
         worker_shared_secret=worker_shared_secret,
         public_base_url=public_base_url,
+        worker_session_ttl_sec=worker_session_ttl_sec,
         worker_delivery_token_ttl_sec=worker_delivery_token_ttl_sec,
         worker_delivery_signing_secret=worker_delivery_signing_secret,
         busy_timeout_ms=busy_timeout_ms,
