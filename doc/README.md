@@ -5,7 +5,7 @@
 ## 先看这些
 
 - [TODO.md](TODO.md)：当前仍未完成的事项，已从 README、设计文档和最近历史记录里归纳去重
-- [README.en.md](README.en.md)：英文版概览
+- [backend-runtime-guide.md](backend-runtime-guide.md)：当前后端切片的运行方式、外部 worker handoff 和运维命令
 - [feature-spec.md](feature-spec.md)：项目治理规则、组织规则和产品边界总表
 
 ## 设计文档
