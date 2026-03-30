@@ -1,0 +1,2302 @@
+# Memory Log
+
+> Archived detailed memory. This file preserves the original session-by-session record that was split out of `doc/history/memory-log.md` on 2026-03-30 so the main memory file can stay compact.
+
+> Historical file paths in this log reflect the repo layout at the time each entry was written. The current documentation entrypoint is `doc/README.md`.
+
+## 2026-03-27T23:39:10+08:00
+
+### Session Context
+- User wants to build a new company-style Agent Team automation framework.
+- The visualized-agent-office direction in `cube-pets-office` is not the user's focus; the repository was read mainly for architecture reference.
+- A persistent memory file is required at repo root so future sessions or model switches can reconnect quickly.
+
+### Key Conclusions From Discussion
+- The desired operating model is: Board of Directors -> Main Agent / CEO -> autonomous team execution -> deliverable output.
+- The framework should not depend on the model voluntarily continuing work; "keep progressing until deliverable" must be enforced by runtime contracts and workflow governance.
+- Visual quality is treated as a first-class governance concern because first impression drives user satisfaction more than code quality alone.
+- Visual milestones must be reviewed by the Board; non-visual stages should remain autonomous.
+- The system should minimize unnecessary escalation to the Board and only escalate on defined high-risk or high-cost decisions.
+
+### Governance Rules Agreed So Far
+- The Board sets goals, constraints, and approval decisions, but does not participate in routine execution.
+- The CEO must continue driving work, assign responsibilities, enforce completion criteria, and prevent the team from stalling in discussion loops.
+- Agents should not default to "waiting for user confirmation" unless there is a formal blocking condition.
+- Each stage should produce explicit outputs such as conclusion, assumptions, artifacts, next inputs, and blocking status.
+
+### Visual Review Policy
+- Board approval is required for user-visible visual milestones.
+- Typical review gates include: information architecture draft, visual direction, key screen drafts, design system freeze, high-fidelity UI, brand visual, homepage first screen, major motion design, and final visual acceptance.
+- Board review packages should contain comparable options, rationale, expected user perception, risks, and a recommended direction.
+
+### Organization Design Policy
+- Company initialization should start with only one CEO Agent.
+- The CEO should recruit employees dynamically based on project size, complexity, risk, and timeline rather than using a fixed preset team.
+- Employee impact should be determined jointly by: skills, personality, and aesthetics.
+- Same-role employees should not be highly similar in personality; controlled heterogeneity is required to avoid blind spots, echo chambers, and defect amplification.
+- Core early hires should have their personality and aesthetic positioning approved by the Board.
+- Regular later hires can be approved autonomously by the CEO, but still must satisfy diversity constraints.
+
+### Suggested Runtime Objects For Later Design
+- `EmployeeProfile`
+- `HiringPolicy`
+- `BoardApprovalGate`
+- `TeamDiversityConstraint`
+
+### Files Updated
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\memory.txt`
+
+### Current State Of feature.txt
+- `feature.txt` now contains 20 governance-oriented feature statements.
+- Existing feature set covers:
+  - autonomous execution with limited Board review gates
+  - mandatory Board review at visual milestones
+  - CEO responsibility for continuous forward progress
+  - escalation rules
+  - anti-stall / anti-unnecessary-feedback rules
+  - dynamic hiring by the CEO
+  - employee modeling by skills + personality + aesthetics
+  - same-role heterogeneity requirements
+  - Board approval of core early hires
+
+### Repo Review Notes Worth Keeping
+- `cube-pets-office` already demonstrates a strong external workflow driver: fixed stages, review/revision loops, report generation, message routing rules, and runtime separation between shared kernel and adapters.
+- It does not fully solve the "GPT-style agents wait for user feedback" problem, because its agents are still single-call wrappers and lack a hard anti-stall governance layer.
+- The reusable part is its workflow skeleton and protocol discipline, not its visual office presentation.
+
+### Likely Next Discussion
+- Convert governance ideas into concrete runtime entities, policies, and state transitions.
+- Define how CEO hiring works in practice:
+  - hiring triggers
+  - diversity scoring
+  - core-role approval workflow
+  - replacement / expansion rules
+- Define the approval protocol for visual milestone gates.
+
+## 2026-03-28T00:47:08+08:00
+
+### Session Context
+- User provided a draft for the message mechanism covering event types, reducer rules, ticket schema, and Board Gate for visual milestones.
+- The task was to review that draft, identify gaps, then apply the corrected design into project files as the initial finalized version.
+
+### Key Design Decisions Finalized
+- The message mechanism remains based on an event-sourced workflow bus plus stateless ticket executors.
+- CEO is defined as compute-stateless, but durable company state remains in the event log and state projections.
+- Reducer purity is now explicit: agents only propose actions, reducer only validates and derives effects, runtime performs actual event commits.
+- Ticket completion validation is explicitly split into:
+  - schema validation
+  - write-set validation
+- Worker-facing input is no longer just a reference-based ticket; runtime must compile it into a closed execution package with:
+  - `compiled_role`
+  - `compiled_constraints`
+  - `atomic_context_bundle`
+- Event model was tightened to distinguish:
+  - ticket creation
+  - ticket lease
+  - ticket start
+  - ticket timeout
+  - circuit breaker open/close
+- Visual Board Gate state machine is now explicit:
+  - `PENDING`
+  - `EXECUTING`
+  - `BLOCKED_FOR_BOARD_REVIEW`
+  - `REWORK_REQUIRED`
+  - `COMPLETED`
+- Board rejection no longer rewinds a visual node to generic `PENDING`; rejected review state is preserved as `REWORK_REQUIRED`.
+- Board-gated freezes should apply only to the dependent subgraph, not to the whole workflow.
+- Failure handling is tied to repeated error fingerprints within the same node or ticket family, not just naive repeat counts.
+
+### Files Updated
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\message-bus-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State Of feature.txt
+- `feature.txt` now contains the earlier governance and hiring rules plus initial finalized message-mechanism rules.
+- New summary rules added to `feature.txt` cover:
+  - event taxonomy tightening
+  - reducer purity
+  - schema vs write-set validation split
+  - compiled execution package requirement
+  - explicit visual approval state machine
+
+### Current State Of message-bus-design.md
+- The detailed design document now includes:
+  - stricter reducer semantics
+  - expanded event catalog
+  - reducer-oriented validation rules
+  - control-plane ticket spec
+  - compiled execution package model
+  - explicit board-gated visual state machine
+  - dependent-subgraph freeze rule
+  - fingerprint-scoped circuit breaker guidance
+
+### Likely Next Discussion
+- Formalize reducer action types and payload schemas.
+- Define projection models and table schemas in executable detail.
+- Define the employee roster model:
+  - hire proposal schema
+  - diversity scoring
+  - board approval payload for core hires
+- Define artifact URI strategy and write-set enforcement model.
+
+## 2026-03-28T01:03:36+08:00
+
+### Session Context
+- User proposed a `Meeting Room Protocol` as a bounded exception to normal serial Ticket flow for cross-role alignment.
+- The required action in this step was to record the feature summary and create a dedicated design document for the protocol.
+
+### Key Decision
+- The Meeting Room is accepted as a controlled subworkflow, not as a persistent free-chat mode.
+- It is intended for high-coupling, cross-functional conflicts where repeated serial retries would waste more budget than a short structured alignment session.
+- It must remain event-driven, budget-bounded, participant-bounded, and schema-constrained.
+- It cannot bypass the main state bus, Reducer, or Board Gate.
+
+### Design Rules Captured
+- `feature.txt` now includes Meeting Room summary items `41`-`45`.
+- Meeting Room entry should require explicit conditions such as repeated cross-role rework, interface conflict, or CEO/governance-triggered bounded alignment need.
+- The room should use explicit events including:
+  - `MEETING_ROOM_REQUESTED`
+  - `MEETING_ROOM_OPENED`
+  - `MEETING_ROUND_COMPLETED`
+  - `MEETING_CONSENSUS_SUBMITTED`
+  - `MEETING_NO_CONSENSUS`
+  - `MEETING_ROOM_CLOSED`
+- The room should use structured rounds instead of open-ended discussion.
+- A designated recorder must output a schema-valid `Consensus_Document`.
+- If no consensus is reached within limits, the system must close the room and escalate rather than extending discussion indefinitely.
+
+### Files Updated
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\meeting-room-protocol.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Dedicated Meeting Room design doc created at `D:\\Codex\\meeting-room-protocol.md`.
+- The protocol now has documented:
+  - positioning and non-goals
+  - entry conditions
+  - event types
+  - state machine
+  - participant rules
+  - round protocol
+  - budget policy
+  - `Consensus_Document` schema
+  - no-consensus escalation
+  - audit retention
+  - relation to the main ticket bus
+
+### Likely Next Discussion
+- Define how Meeting Room outcomes map to concrete follow-up ticket templates.
+- Decide whether the recorder is always a worker role or can be a system summarizer role.
+- Define reopen policy and topic-family fingerprinting in executable detail.
+
+## 2026-03-28T01:22:45+08:00
+
+### Session Context
+- User proposed a `Maker-Checker` peer review and internal audit mechanism.
+- The proposal was evaluated against the existing company-style workflow framework and then accepted in a refined form for recording.
+
+### Key Decision
+- The feature is worth keeping because it reduces CEO review burden and introduces a controlled internal quality gate before merge or downstream progression.
+- The accepted form is not a "rude auditor who yells", but a structured adversarial review mechanism.
+- Checker should be modeled as skeptical, evidence-driven, and defect-seeking rather than emotional or high-noise.
+
+## 2026-03-29T06:58:00+08:00
+
+### Session Context
+- User asked to continue incremental development inside the existing Boardroom OS repo without rebuilding any scaffold.
+- This slice was constrained to the `运行时治理` boundary and specifically targeted the missing minimal breaker restore / incident close path.
+
+### Boundary Chosen
+- Single boundary for this round: minimal manual recovery for timeout-governance incidents.
+- The chosen policy was the most conservative one-step path:
+  - operator calls one command
+  - runtime closes the circuit breaker
+  - runtime closes the incident
+- This slice intentionally does not add auto-retry, auto-close-after-success, or broader recovery state machines.
+
+### What Landed
+- Added `POST /api/v1/commands/incident-resolve`.
+- Added runtime governance events:
+  - `CIRCUIT_BREAKER_CLOSED`
+  - `INCIDENT_CLOSED`
+- Added closed-state constants for incident and breaker projection replay.
+- Reducer now replays breaker-close and incident-close events so incident detail can show:
+  - `status = CLOSED`
+  - `circuit_breaker_state = CLOSED`
+  - `closed_at`
+  - merged resolution metadata in incident payload
+- Event stream / preview / UI hints now surface the close events, so frontend consumers can observe recovery honestly.
+- Reopening dispatch is now real:
+  - once an incident is resolved, the existing scheduler breaker guard no longer blocks the same node
+  - later explicitly created `PENDING` tickets on that node can be leased again
+
+### Tests Added
+- API coverage for:
+  - successful `incident-resolve`
+  - duplicate `incident-resolve`
+  - reject missing incident
+  - reject already closed incident
+  - incident detail / dashboard / inbox updates after close
+  - scheduler dispatch reopening on the same node after close
+  - close events appearing in the event stream
+- Reducer coverage for:
+  - `INCIDENT_OPENED -> CIRCUIT_BREAKER_OPENED -> CIRCUIT_BREAKER_CLOSED -> INCIDENT_CLOSED`
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `boardroom-data-contracts.md`
+- `message-bus-design.md`
+- `memory.txt`
+
+### Still Not Done
+- automatic retry creation after manual restore
+- automatic incident close after a later successful ticket
+- richer recovery workflows beyond the one-step manual operator path
+
+### Design Rules Captured
+- Important artifacts should not go directly from Maker to CEO or mainline; they should first enter an internal review stage.
+- Runtime should automatically create a `REVIEW_TICKET` after qualifying Maker outputs.
+- Checker should preferably be heterogeneous relative to Maker in risk preference, reasoning style, or aesthetic orientation.
+- Review output should be structured and should support at least:
+  - `APPROVED`
+  - `APPROVED_WITH_NOTES`
+  - `CHANGES_REQUIRED`
+  - `ESCALATED`
+- If review requires changes, findings should be compiled into a new `FIX_TICKET` for Maker instead of relying on CEO to manually relay feedback.
+- Repeated recurrence of the same finding fingerprint inside the Maker-Checker loop should trigger escalation, reassignment, or circuit-breaking rather than unlimited back-and-forth.
+
+### Files Updated
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- `feature.txt` now includes formalized Maker-Checker feature rules as items `46`-`50`.
+- No dedicated design document has been created yet; the concept is currently captured at the feature-governance layer.
+
+### Likely Next Discussion
+- Define which artifact classes must always pass Maker-Checker review and which can bypass it.
+- Decide whether visual work should first pass internal review before Board Gate, or only for selected milestones.
+- Define how review findings map to failure fingerprints and retry / fuse policy in the message bus.
+
+## 2026-03-28T01:33:24+08:00
+
+### Session Context
+- User proposed initial data contracts for `CompiledContextBundle` and `CompileManifest` for the `Context Compiler`.
+- The task was to evaluate the proposal, keep the core direction, refine it where needed, and land a dedicated design document.
+
+### Key Decision
+- The overall direction was accepted.
+- Two engineering upgrades were applied before finalizing:
+  - `CompiledContextBundle` was normalized into a provider-agnostic IR with explicit separation between control-plane instructions and typed data context blocks.
+  - `CompileManifest` was expanded beyond a simple budget log to include input fingerprinting, source-level traceability, degradation state, cache report, and transform history.
+
+### Design Rules Captured
+- `Context Compiler` is treated as deterministic middleware, not as an LLM role.
+- IR-first design is mandatory: bundle contract is primary, prompt/XML rendering is downstream.
+- Context sources now use explicit trust levels and instruction authority separation to reduce prompt injection risk.
+- Fragment selectors are first-class and should support values such as:
+  - `JSON_PATH`
+  - `AST_SYMBOL`
+  - `LINE_RANGE`
+  - `DIFF_HUNK`
+  - `MARKDOWN_SECTION`
+- Token control is budget-first rather than retrieve-everything-then-truncate.
+- Compiler should support both `FAIL_CLOSED` and `BEST_EFFORT` modes and record degradation in the manifest.
+- Compile caching and invalidation should be driven by ticket hash, artifact hashes, constraint versions, query plan hash, compiler version, and model profile.
+
+### Files Updated
+- `D:\\Codex\\context-compiler-design.md`
+- `D:\\Codex\\message-bus-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Dedicated Context Compiler design doc created at `D:\\Codex\\context-compiler-design.md`.
+- `message-bus-design.md` now points to the dedicated Context Compiler contract document.
+- The finalized design now covers:
+  - responsibility boundary
+  - fragment selector model
+  - trust and instruction authority model
+  - four-stage pipeline with preflight
+  - `CompiledContextBundle_v1`
+  - `CompileManifest_v1`
+  - fail mode policy
+  - cache and invalidation
+  - rendering contract
+
+### Likely Next Discussion
+- Define the `CompileRequest` schema explicitly.
+- Decide which task types map to which compression strategy set.
+- Define how repository code indexing and AST extraction are implemented on Windows-first local workspaces.
+
+## 2026-03-28T01:59:04+08:00
+
+### Session Context
+- User reviewed external feedback on the proposed `Boardroom UI`.
+- The task in this step was to decide which critiques to keep, which to reject, and then lock the UI direction.
+
+### Key Decision
+- The overall external critique was accepted with targeted corrections.
+- `Boardroom UI` is now finalized as a lightweight web control plane and human approval console.
+- BYOK policy was explicitly resolved in favor of cross-platform simplicity and ordinary-user usability, even if that means not depending on heavier system-level secret infrastructure.
+
+### Finalized Product Decisions
+- The UI is not a project management system and not an office animation product; it is an `Agent Workflow Control Plane + Human Approval Console`.
+- DAG visualization should not be the default homepage view, but should remain as a secondary dependency inspector instead of being deleted.
+- Startup should support two modes:
+  - guided setup for first-time or non-technical users
+  - quick-start command palette for repeat or technical users
+- Board review should follow `Inbox -> Review Room`, not a small modal popup.
+- Board-facing review content should default to a `Board Review Pack`, not raw `CompiledContextBundle`.
+- The main control surface should include:
+  - approval inbox
+  - pipeline view
+  - workforce and event stream panel
+  - persistent health strip
+- Frontend/backend contract should follow `snapshot + stream + command`.
+- MVP sync transport should use SSE first.
+
+### BYOK Policy Locked
+- BYOK should remain easy and cross-platform.
+- The product may allow users to enter API keys directly in the UI and store them locally.
+- System-specific secure storage is no longer treated as a hard dependency.
+- Advanced options such as env import or manual rotation can remain optional, but the default path should minimize setup friction.
+
+### Files Updated
+- `D:\\Codex\\boardroom-ui-design.md`
+- `D:\\Codex\\feature.txt`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Dedicated Boardroom UI design doc created at `D:\\Codex\\boardroom-ui-design.md`.
+- `feature.txt` now includes UI/control-plane rules as items `51`-`57`.
+
+### Likely Next Discussion
+- Define projection schemas for dashboard, inbox, workforce panel, and review room.
+- Define the `Board Review Pack` data contract explicitly.
+- Decide whether the MVP frontend should start with Vue or React and how strongly to optimize for clone-and-run simplicity.
+
+## 2026-03-28T02:03:59+08:00
+
+### Session Context
+- User asked for a first-pass concrete version of the Boardroom UI data layer so it could be compared against other design references.
+- The requested scope was the projection schemas plus the `Board Review Pack` contract.
+
+### Key Decision
+- A dedicated data-contract draft was created rather than continuing with only narrative design text.
+- This draft keeps feature rules unchanged and focuses only on UI-facing read models and approval payload shape.
+
+### Contracts Added
+- `dashboard` projection
+- `inbox` projection
+- `workforce` projection
+- `review-room` projection
+- `BoardReviewPack_v1`
+- event stream envelope
+- core board command payloads
+
+### Design Rules Captured
+- Projection APIs use a common envelope with:
+  - `schema_version`
+  - `generated_at`
+  - `projection_version`
+  - `cursor`
+  - `data`
+- Review Room is modeled as a projection wrapping a `BoardReviewPack`.
+- `BoardReviewPack` is explicitly human-facing and does not default to showing raw compiler IR.
+- Event stream is for incremental UI sync and cache invalidation hints, not for rebuilding all business logic in the browser.
+- MVP read model split should stay compact and avoid over-fragmented endpoints.
+
+### Files Updated
+- `D:\\Codex\\boardroom-data-contracts.md`
+- `D:\\Codex\\boardroom-ui-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Dedicated Boardroom data-contract draft created at `D:\\Codex\\boardroom-data-contracts.md`.
+- `boardroom-ui-design.md` now points to the dedicated contract doc for detailed schemas.
+
+### Likely Next Discussion
+- Decide whether `dashboard` should remain one fat bootstrap projection or split once the UI grows.
+- Define preview asset serving and artifact URI conventions for `BoardReviewPack`.
+- Decide whether review packs should carry embedded lightweight previews or only references.
+
+## 2026-03-28T02:10:13+08:00
+
+### Session Context
+- User provided external feedback on the first-pass Boardroom contracts and asked to record the recommended implementation patches.
+
+### Key Decision
+- The feedback was accepted in substance, but refined before recording.
+- The resulting patches stay at the UI/data-contract layer rather than being promoted into high-level feature rules.
+
+### Patches Recorded
+- Added command acknowledgement guidance with `command_id`, `idempotency_key`, acceptance status, and causation hints.
+- Added stale-write protection for board decisions via:
+  - `review_pack_version`
+  - `command_target_version`
+- Strengthened `WorkforceProjection.bound_model` to expose routing degradation through:
+  - `preferred_model_id`
+  - `actual_model_id`
+  - `route_mode`
+  - `is_fallback_active`
+  - `fallback_reason`
+  - `degraded_since`
+- Strengthened `BoardReviewPack` preview contracts with explicit preview asset delivery metadata.
+- Reworked budget-impact fields toward estimate ranges plus coarse human-facing risk:
+  - `tokens_if_approved_estimate_range`
+  - `tokens_if_rework_estimate_range`
+  - `estimate_confidence`
+  - `budget_risk`
+- Added SSE reconciliation notes for:
+  - invalidate-as-hint semantics
+  - debounce / batching
+  - full resync on drift
+  - causation hints for in-flight command reconciliation
+- Added `command in-flight state` to allowed frontend local state.
+
+### Files Updated
+- `D:\\Codex\\boardroom-data-contracts.md`
+- `D:\\Codex\\boardroom-ui-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- Boardroom contracts now include the main runtime hardening points identified by external review.
+- These patches improve safety around approval races, fallback visibility, preview delivery, and stream-driven UI consistency.
+
+### Likely Next Discussion
+- Decide whether command acknowledgements should remain synchronous HTTP responses only or also be projected into a command-status view.
+- Define exact artifact serving route shape for review previews.
+- Decide whether fallback metadata also needs to appear in dashboard-level aggregate projections.
+
+## 2026-03-28T02:14:41+08:00
+
+### Session Context
+- User asked to finalize the `CompileRequest` contract and decide the mapping between task types and compression strategies for the `Context Compiler`.
+- An external proposal was provided as the starting point.
+
+### Key Decision
+- The proposal was accepted in direction but refined before recording.
+- `CompileRequest` is now treated as a runtime-to-compiler control contract, not as a raw ticket copy.
+- Task-aware compression is now formalized as a stable strategy matrix rather than loose narrative guidance.
+
+### Main Refinements Applied
+- Replaced a vague total-token budget with:
+  - `max_input_tokens`
+  - `reserved_output_tokens`
+- Replaced an overly implementation-specific truncation enum with policy-level `overflow_policy`:
+  - `FAIL_CLOSED`
+  - `BEST_EFFORT`
+  - `STRICT_BUCKETS`
+- Expanded explicit source references beyond artifact IDs to support:
+  - `ARTIFACT`
+  - `REPO_FILE`
+  - `PROJECTION`
+  - `INCIDENT`
+  - `APPROVAL`
+  - `EVENT_SUMMARY`
+- Aligned selectors with the compiler design’s canonical selector model:
+  - `WHOLE_ARTIFACT`
+  - `JSON_PATH`
+  - `AST_SYMBOL`
+  - `LINE_RANGE`
+  - `DIFF_HUNK`
+  - `MARKDOWN_SECTION`
+  - `LOG_WINDOW`
+  - `TEST_CASE_ID`
+- Added `representation_hint` to let runtime request shapes such as `RAW`, `SKELETON`, `DIFF`, `SUMMARY`, or `PREVIEW`.
+- Expanded retrieval from a single opaque RAG string into a structured `retrieval_plan` with separate channels.
+- Added `preferred_modalities` so `DESIGN` and similar tasks can preserve visual or HTML preview fidelity instead of over-flattening into text.
+
+### Task Categories Finalized
+- `IMPLEMENTATION`
+- `DEBUGGING`
+- `REVIEW`
+- `DESIGN`
+- `PLANNING`
+- `TESTING`
+
+### Compression Matrix Finalized
+- `IMPLEMENTATION`
+  - target file full, dependencies reduced to signatures or skeletons
+- `DEBUGGING`
+  - diff-first, stack denoising, symbol neighborhood slicing
+- `REVIEW`
+  - diff-centric, constraint amplification, broad RAG heavily down-ranked
+- `DESIGN`
+  - long-text summarization plus multimodal reference preservation
+- `PLANNING`
+  - structured state and risk summaries over deep code bodies
+- `TESTING`
+  - acceptance-criteria and diff-centric with failing tests and environment context prioritized
+
+### Files Updated
+- `D:\\Codex\\context-compiler-design.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- `context-compiler-design.md` now contains:
+  - `CompileRequest_v1`
+  - canonical task categories
+  - task-type compression matrix
+  - strategy-override rules
+
+### Likely Next Discussion
+- Decide whether `TESTING` should remain a first-class task category or be folded into `IMPLEMENTATION` and `DEBUGGING`.
+- Define which fields are derived by runtime versus explicitly stored in ticket payloads.
+- Decide whether multimodal preview preservation should be gated only by task category or also by role profile capability.
+
+## 2026-03-28T03:05:54+08:00
+
+### Session Context
+- User requested homepage-friendly README files for `Boardroom OS`, with Chinese as the primary community-facing version and a separate English version.
+
+### Key Decision
+- Created a Chinese-first `README.md` as the default project homepage.
+- Created a separate `README.en.md` for English readers.
+- README content was written to match the current repo truth: design-finalization and bootstrap stage, not an already implemented production framework.
+
+### Files Updated
+- `D:\\Codex\\README.md`
+- `D:\\Codex\\README.en.md`
+- `D:\\Codex\\memory.txt`
+
+### Current State
+- `README.md` is now suitable as a GitHub homepage for the current stage of the project.
+- `README.en.md` provides a concise parallel English overview.
+- Both README files reflect the intended name and slogan:
+  - `Boardroom OS`
+  - `Event-sourced Agent Governance.`
+
+### Likely Next Discussion
+- Refresh README once the new implementation repo exists and real project structure, setup commands, and CI details land.
+- Decide final license before public release.
+
+## 2026-03-28T04:10:00+08:00
+
+### Session Context
+- User clarified that implementation should start directly in the current `boardroom-os` repo even though the actual repository state only contained design documents.
+- The implementation target for this round was the first runnable backend vertical slice, not frontend work.
+
+### Key Delivery Landed
+- Added a new `backend/` implementation root for the first executable control-plane slice.
+- Implemented a FastAPI backend with these routes:
+  - `POST /api/v1/commands/project-init`
+  - `GET /api/v1/projections/dashboard`
+  - `GET /api/v1/projections/inbox`
+  - `GET /api/v1/projections/review-room/{review_pack_id}`
+  - `GET /api/v1/events/stream?after={cursor}`
+- Implemented SQLite bootstrap with:
+  - `journal_mode=WAL`
+  - `busy_timeout`
+  - explicit transaction boundaries
+- Implemented event-store-backed idempotency rule so `SYSTEM_INITIALIZED` can only be committed once.
+- Implemented real `CommandAckEnvelope` with:
+  - `command_id`
+  - `idempotency_key`
+  - `status`
+  - `received_at`
+  - `reason`
+  - `causation_hint`
+- Implemented duplicate detection for identical `project-init` payloads and returns `DUPLICATE` consistently.
+- Implemented minimal reducer flow from event log into `workflow_projection`.
+- Reserved the `review-room` route name and contract boundary; current behavior is explicit `404` because no review packs are materialized yet.
+
+### Files Added Or Updated
+- `D:\Projects\boardroom-os\backend\pyproject.toml`
+- `D:\Projects\boardroom-os\backend\app\...`
+- `D:\Projects\boardroom-os\backend\tests\...`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Current Code State
+- The repo is no longer design-only.
+- The first runnable backend slice now exists, but it is still intentionally narrow.
+- Landed persistence tables are:
+  - `events`
+  - `workflow_projection`
+  - `approval_projection`
+- Landed event types actually used in code are:
+  - `SYSTEM_INITIALIZED`
+  - `BOARD_DIRECTIVE_RECEIVED`
+  - `WORKFLOW_CREATED`
+
+### Still Stub / Not Implemented
+- CEO tick scheduler
+- ticket lifecycle and lease protocol
+- worker execution chain
+- Maker-Checker loop
+- board approval commands
+- Board Review Pack generation
+- full review-room projection
+- Context Compiler execution
+- frontend UI
+
+### Verification Notes
+- Test files were added for API behavior and reducer replay.
+- Local test execution could not be completed in this environment because no runnable Python interpreter / pytest executable was available from the workspace shell.
+
+### Likely Next Discussion
+- Extend the event model beyond `project-init` into approval and ticket flows.
+- Add real `review-room` projection and board decision commands without renaming current routes.
+- Introduce `ticket_projection` and the next reducer layer.
+
+## 2026-03-28T05:05:00+08:00
+
+### Session Context
+- User asked to continue from the current repository state without rebuilding the existing backend slice.
+- The task was to read current code, compare it against root design docs, choose the smallest next vertical slice, and then implement it incrementally.
+
+### Relevant Design Constraints Used
+- Keep current stack and directory structure unchanged.
+- Preserve route names already locked in design docs, especially `review-room` and board command routes.
+- If design and code differ, note the gap first and take the most conservative path.
+- Do not claim unimplemented runtime producers or richer review assembly as complete.
+
+### Design/Code Gap Identified
+- `approval_projection` existed in schema but was not actually used.
+- `GET /api/v1/projections/review-room/{review_pack_id}` was only a reserved `404`, while the design contracts already treat it as a real projection boundary.
+- Board decision commands defined in docs were not implemented yet.
+
+### Slice Landed
+- Implemented the smallest adjacent approval slice without touching unrelated modules:
+  - real `review-room` projection for persisted approval records
+  - real `board-approve`
+  - real `board-reject`
+  - real `modify-constraints`
+  - inbox/dashboard approval counts backed by `approval_projection`
+- Added approval-related event types:
+  - `BOARD_REVIEW_REQUIRED`
+  - `BOARD_REVIEW_APPROVED`
+  - `BOARD_REVIEW_REJECTED`
+- Added stale-write validation on board commands using:
+  - `review_pack_version`
+  - `command_target_version`
+- `modify-constraints` currently reuses `BOARD_REVIEW_REJECTED` with explicit `decision_action=MODIFY_CONSTRAINTS` in payload because no dedicated modify event had been formalized in the written event set.
+
+### Current Scope Boundary
+- Approval read/decision path is now real for already persisted approval packs.
+- Automatic creation of approval requests from ticket outputs is still not implemented.
+- Review Room still uses persisted pack payloads and does not yet assemble richer evidence, deltas, or maker-checker summaries dynamically.
+
+### Verification
+- Ran backend tests with Python 3.12.10.
+- Current result: `17 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\contracts\commands.py`
+- `D:\Projects\boardroom-os\backend\app\contracts\events.py`
+- `D:\Projects\boardroom-os\backend\app\contracts\projections.py`
+- `D:\Projects\boardroom-os\backend\app\api\commands.py`
+- `D:\Projects\boardroom-os\backend\app\api\projections.py`
+- `D:\Projects\boardroom-os\backend\app\core\constants.py`
+- `D:\Projects\boardroom-os\backend\app\core\approval_handlers.py`
+- `D:\Projects\boardroom-os\backend\app\core\projections.py`
+- `D:\Projects\boardroom-os\backend\app\db\schema.py`
+- `D:\Projects\boardroom-os\backend\app\db\repository.py`
+- `D:\Projects\boardroom-os\backend\tests\test_api.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Add the producer path that creates approval requests from real workflow or ticket outcomes so Review Room no longer depends on seeded/persisted records only.
+
+## 2026-03-28T22:13:48.3248840+08:00
+
+### Session Context
+- User asked to continue from the current backend state and specifically land the smallest real runtime handoff after `TICKET_LEASED`.
+- The goal of this round was to stop relying on explicit `ticket-start` for runner-driven execution and connect leased tickets to a minimal automatic execution chain.
+
+### Relevant Design Constraints Used
+- Keep the existing FastAPI + SQLite + event-sourced control-plane structure.
+- Do not change the public `scheduler-tick` API contract to imply automatic execution.
+- If design and code differ, document the gap first and take the most conservative bridge.
+- Do not claim full Context Compiler, artifact storage, or external worker runtime as complete.
+
+### Design/Code Gap Identified
+- Design docs say workers should consume a compiled execution package, but code still had no Context Compiler, no artifact index, and no worker-result validator.
+- The repository already had a real scheduler runner that could produce `TICKET_LEASED`, but execution still stopped there unless an external caller manually posted `ticket-start`, `ticket-complete`, or `ticket-fail`.
+
+### Slice Landed
+- Added an internal runtime bridge module that:
+  - finds startable `LEASED` tickets
+  - appends `TICKET_STARTED` through the existing handler path
+  - builds a minimal internal bridge execution package from ticket create payload plus employee projection
+  - executes an in-process minimal bridge executor
+  - appends `TICKET_COMPLETED` or `TICKET_FAILED` through the existing handler paths
+- Extended the independent scheduler runner so each cycle now does:
+  - scheduler dispatch
+  - leased-ticket runtime execution
+- Kept `POST /api/v1/commands/scheduler-tick` unchanged: it still means scheduling only, not automatic execution by itself.
+
+### Current Scope Boundary
+- Automatic execution currently exists only inside the independent runner path.
+- The bridge execution package is internal-only and not treated as a stable external contract.
+- The bridge executor currently supports only the minimal seeded role/output combinations needed by the current backend slice.
+
+### New or Adjusted Boundaries
+- `ticket-start` remains a public API and debugging surface, but runner no longer depends on an external caller to invoke it.
+- `employee_projection` is now used not only for dispatch matching but also for the minimal runtime bridge package assembly.
+- Unsupported runtime inputs now fail closed through the normal `TICKET_FAILED` path instead of creating a parallel runtime-specific state machine.
+
+### Still Mock / Stub
+- Full compiled execution package generation
+- External worker runtime handoff
+- Artifact store / artifact index
+- Strict worker-result validator
+- Employee hire / replace / freeze lifecycle
+- Richer multi-role execution chain
+
+### Verification
+- Ran backend tests with Python 3.12.10.
+- Current result after this slice: `54 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\core\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\scheduler_runner.py`
+- `D:\Projects\boardroom-os\backend\app\db\repository.py`
+- `D:\Projects\boardroom-os\backend\tests\conftest.py`
+- `D:\Projects\boardroom-os\backend\tests\test_scheduler_runner.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Replace the internal runtime bridge package with a real minimal Context Compiler request/response boundary so automatic execution no longer depends on direct ticket-create payload hydration.
+
+## 2026-03-28T22:52:00.4204996+08:00
+
+### Session Context
+- User asked to implement the planned replacement of the internal runtime bridge package with the smallest real Context Compiler boundary.
+- The target was to keep the existing backend architecture and public APIs stable while making automatic execution consume an explicit runtime input layer.
+
+### Relevant Design Constraints Used
+- Keep the current FastAPI + SQLite + event-sourced control-plane structure.
+- Do not change `POST /api/v1/commands/ticket-create`, `POST /api/v1/commands/scheduler-tick`, or the scheduler state machine.
+- Use the current codebase as the source of truth and make the most conservative implementation where design and code were still apart.
+- Update README files only for landed facts, and append memory instead of rewriting prior notes.
+
+### Design/Code Gap Identified
+- Runtime execution still hydrated `TICKET_CREATED` payloads directly into an internal `RuntimeBridgeExecutionPackage`, so worker-facing runtime input was not separated from control-plane ticket storage.
+- The prior fail-closed path was incomplete: if runtime input was broken badly enough that the original create spec disappeared, `ticket-fail` could reject the failure event and leave the ticket stuck in `EXECUTING`.
+
+### Slice Landed
+- Added explicit internal runtime contracts for:
+  - `CompileRequest`
+  - `CompiledExecutionPackage`
+- Added a minimal deterministic compiler path that now does:
+  - ticket projection + persisted `TICKET_CREATED` payload + worker projection
+  - runtime translation into `CompileRequest`
+  - deterministic compilation into `CompiledExecutionPackage`
+  - runtime execution against the compiled package only
+- Replaced the old `RuntimeBridgeExecutionPackage` usage in `backend/app/core/runtime.py`.
+- Kept the actual compiled package conservative:
+  - `compiled_role` expands the assigned worker profile from `employee_projection`
+  - `compiled_constraints` keeps `constraints_ref` and empty expanded rule lists
+  - `atomic_context_bundle` turns `input_artifact_refs` into structured source-descriptor blocks instead of pretending artifacts were already hydrated
+  - execution and governance fields are copied into a stable runtime-facing shape
+
+### New or Adjusted Boundaries
+- Automatic execution no longer directly consumes raw `ticket-create` payload shape after lease; it now consumes `CompiledExecutionPackage`.
+- `CompileRequest` is now the internal runtime-to-compiler boundary for the current MVP slice.
+- `handle_ticket_fail` now allows a failure event to be recorded even when the original create spec is missing; retry is simply skipped in that degraded path.
+
+### Still Mock / Stub
+- Full `CompiledContextBundle` IR generation
+- `CompileManifest` persistence and audit trace storage
+- Artifact hydration / artifact index
+- External worker runtime handoff
+- Strict worker-result validation
+- Richer constraint expansion from `constraints_ref`
+
+### Verification
+- Ran targeted tests for compiler and runner paths.
+- Ran full backend test suite with Python 3.12.10.
+- Current result after this slice: `60 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\contracts\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\core\context_compiler.py`
+- `D:\Projects\boardroom-os\backend\app\core\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\core\ticket_handlers.py`
+- `D:\Projects\boardroom-os\backend\tests\test_context_compiler.py`
+- `D:\Projects\boardroom-os\backend\tests\test_scheduler_runner.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Expand the minimal compiler boundary into a persisted audit path for `CompiledContextBundle` / `CompileManifest`, while keeping the current runtime input contract stable.
+
+## 2026-03-28T23:38:12.4993270+08:00
+
+### Session Context
+- User asked to continue the compiler boundary into an auditable version by landing persisted `CompiledContextBundle` / `CompileManifest` plus minimal provenance.
+- The implementation had to stay incremental on top of the current backend slice without changing public API routes or broadening scope into artifact hydration.
+
+### Design/Code Gap Identified
+- The previous slice only produced an in-memory `CompiledExecutionPackage`, so the system could execute tickets but could not later prove what context bundle and compile trace were actually used.
+- Design docs already treated `CompiledContextBundle` and `CompileManifest` as the stable compiler contracts, but the code still had no persisted bundle, no persisted manifest, and no source-level provenance trail.
+
+### Slice Landed
+- Added internal persisted compiler contracts for:
+  - `CompiledContextBundle`
+  - `CompileManifest`
+  - `CompiledAuditArtifacts`
+- Added deterministic reference-only compilation that now produces three coupled outputs from the same compile request:
+  - persisted `CompiledContextBundle`
+  - persisted `CompileManifest`
+  - runtime-facing `CompiledExecutionPackage`
+- Added SQLite persistence for compiler audit artifacts through:
+  - `compiled_context_bundle`
+  - `compile_manifest`
+- Added repository read/write methods for:
+  - saving bundle / manifest
+  - looking up the latest bundle / manifest by `ticket_id`
+  - fetching bundle / manifest by primary id
+- Changed runtime execution flow so that automatic execution now:
+  - builds `CompileRequest`
+  - compiles audit artifacts
+  - persists bundle + manifest
+  - executes against the derived `CompiledExecutionPackage`
+
+### New or Adjusted Boundaries
+- `CompiledExecutionPackage` remains the runtime input contract; public routes and command payloads did not change.
+- `CompiledContextBundle` is now the persisted canonical compiler IR for the current MVP slice, but only in a conservative reference-only form.
+- `CompileManifest` is now the persisted audit contract for compilation and records:
+  - input fingerprint
+  - source log
+  - transform log
+  - degradation state
+  - token estimates
+  - cache report
+
+### Still Mock / Stub
+- Artifact body hydration
+- Artifact store / artifact index
+- Cache reuse across compile runs
+- FTS / vector retrieval
+- Rich constraint expansion from `constraints_ref`
+- External worker runtime handoff
+- Strict worker-result validation
+
+### Verification
+- Ran targeted compiler tests with Python 3.12.10.
+- Ran targeted scheduler runner tests with Python 3.12.10.
+- Ran full `tests/test_api.py`.
+- Ran the full backend test suite with Python 3.12.10.
+- Current result after this slice: `62 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\contracts\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\core\context_compiler.py`
+- `D:\Projects\boardroom-os\backend\app\core\runtime.py`
+- `D:\Projects\boardroom-os\backend\app\db\repository.py`
+- `D:\Projects\boardroom-os\backend\app\db\schema.py`
+- `D:\Projects\boardroom-os\backend\tests\test_context_compiler.py`
+- `D:\Projects\boardroom-os\backend\tests\test_scheduler_runner.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\context-compiler-design.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Add a minimal developer-inspector read path so persisted compiler artifacts referenced by review packs can be opened directly without widening the public API surface too much.
+
+## 2026-03-29T00:43:25.5474752+08:00
+
+### Session Context
+- User asked to implement the minimal developer inspector read path so `compiled_context_bundle_ref` and `compile_manifest_ref` in review packs point to truly viewable persisted artifacts.
+
+### Design/Code Gap Identified
+- `BoardReviewPack` already carried `developer_inspector_refs`, but code only stored the ref strings inside the persisted approval payload.
+- There was no persisted JSON artifact behind those refs and no review-room-scoped read endpoint for advanced inspection.
+
+### Slice Landed
+- Added a minimal filesystem-backed developer inspector store rooted by config.
+- Added safe ref parsing for:
+  - `ctx://...`
+  - `manifest://...`
+- Added optional `developer_inspector_payloads` under `ticket-complete -> review_request` so the current approval-production path can materialize:
+  - `compiled_context_bundle`
+  - `compile_manifest`
+- Added `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` to return:
+  - `review_pack_id`
+  - `compiled_context_bundle_ref`
+  - `compile_manifest_ref`
+  - `compiled_context_bundle`
+  - `compile_manifest`
+  - `availability`
+
+### New or Adjusted Boundaries
+- Review Room main projection remains board-facing and does not inline raw compiler JSON.
+- Developer inspector reading is scoped to an existing review pack and is not a global arbitrary artifact reader.
+- Large developer inspector payloads are stored on the filesystem, while SQLite still stores control-plane metadata and review-pack refs only.
+- Invalid developer inspector refs are now rejected during command validation.
+
+### Still Mock / Stub
+- Context Compiler execution
+- Generic artifact store / artifact index
+- Global artifact serving or arbitrary ref resolution
+- Frontend developer inspector UI
+
+### Verification
+- Ran targeted API regression for review-room, approval, and developer inspector paths.
+- Current targeted result after this slice: `11 passed`.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\config.py`
+- `D:\Projects\boardroom-os\backend\app\main.py`
+- `D:\Projects\boardroom-os\backend\app\api\commands.py`
+- `D:\Projects\boardroom-os\backend\app\api\projections.py`
+- `D:\Projects\boardroom-os\backend\app\contracts\commands.py`
+- `D:\Projects\boardroom-os\backend\app\contracts\projections.py`
+- `D:\Projects\boardroom-os\backend\app\core\developer_inspector.py`
+- `D:\Projects\boardroom-os\backend\app\core\projections.py`
+- `D:\Projects\boardroom-os\backend\app\core\ticket_handlers.py`
+- `D:\Projects\boardroom-os\backend\tests\conftest.py`
+- `D:\Projects\boardroom-os\backend\tests\test_api.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\boardroom-data-contracts.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Replace the ad hoc `developer_inspector_payloads` write path with a real minimal Context Compiler producer so review-pack inspector artifacts come from an actual compile run instead of manual ticket-complete payload injection.
+
+## 2026-03-29T01:57:56.0271110+08:00
+
+### Session Context
+- User asked to replace the ad hoc `developer_inspector_payloads` write path with a real minimal Context Compiler producer so review-pack inspector artifacts come from an actual compile run.
+
+### Design/Code Gap Identified
+- Runtime already persisted real minimal `compiled_context_bundle` and `compile_manifest` rows in SQLite.
+- Review-pack developer inspector files were still materialized from manual `ticket-complete -> review_request.developer_inspector_payloads` JSON injection instead of those real persisted compile artifacts.
+
+### Slice Landed
+- Removed `developer_inspector_payloads` from the review-request command contract so callers can no longer inject fake compiler JSON through `ticket-complete`.
+- Added `export_latest_compile_artifacts_to_developer_inspector(...)` in the minimal Context Compiler boundary.
+- `ticket-complete` now exports review-pack inspector files from the latest persisted compile bundle / manifest for the same ticket when matching refs are provided.
+- If the ticket has no persisted compile artifacts yet, review-pack creation still succeeds and the review-room developer-inspector projection remains honestly `partial`.
+- When both bundle and manifest are present for export, the exporter now validates that they belong to the same persisted compile lineage instead of mixing mismatched rows.
+
+### New or Adjusted Boundaries
+- `review_request.developer_inspector_refs` stays as the review-pack contract boundary.
+- Developer inspector filesystem payloads now have one allowed source of truth: persisted compile audit artifacts already written by the minimal Context Compiler path.
+- `ticket-complete` no longer accepts raw compiler payload bodies from external callers.
+
+### Still Mock / Stub
+- Artifact hydration beyond reference descriptors
+- Retrieval, cache reuse, and richer provenance in the Context Compiler
+- Frontend developer inspector UI
+- Automatic generation of `developer_inspector_refs`
+
+### Verification
+- Added targeted compile/export and API regression coverage for:
+  - exporting real persisted compile artifacts into the developer inspector store
+  - review-room developer-inspector `ready` state backed by a real compile before `ticket-complete`
+  - legacy `developer_inspector_payloads` rejection via `422`
+  - invalid developer inspector ref rejection via `422`
+- Tried to run local pytest, but the current session still has no usable Python interpreter on PATH beyond the inaccessible WindowsApps stub, so runtime execution verification could not be completed here.
+
+### Files Updated
+- `D:\Projects\boardroom-os\backend\app\contracts\commands.py`
+- `D:\Projects\boardroom-os\backend\app\core\context_compiler.py`
+- `D:\Projects\boardroom-os\backend\app\core\ticket_handlers.py`
+- `D:\Projects\boardroom-os\backend\tests\test_context_compiler.py`
+- `D:\Projects\boardroom-os\backend\tests\test_api.py`
+- `D:\Projects\boardroom-os\README.md`
+- `D:\Projects\boardroom-os\README.en.md`
+- `D:\Projects\boardroom-os\memory.txt`
+
+### Likely Next Step
+- Add a small runtime or approval-level signal that tells the review pack whether the referenced compile artifacts are stale relative to the latest ticket attempt, without widening the public read surface.
+
+## 2026-03-29T03:09:51+08:00
+
+### Session Context
+- User asked to keep developing the current Boardroom OS repository incrementally and land a medium-sized slice around the most suitable single boundary.
+- After reading the current code and docs, the chosen boundary for this round was the FastAPI in-process background scheduler loop.
+
+### Design Decision
+- The new in-process scheduler loop is optional and stays disabled by default.
+- The existing explicit `POST /api/v1/commands/scheduler-tick` contract remains unchanged.
+- The independent `python -m app.scheduler_runner` path remains valid and is not replaced by the new loop.
+- FastAPI startup now only hosts the same minimal scheduler/runtime chain when `BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER=true` is set.
+
+### Slice Landed
+- Added `enable_inprocess_scheduler` to backend settings with env parsing via `BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER`.
+- Added `InProcessSchedulerLoop` as a dedicated background service that:
+  - runs one scheduler iteration immediately on start
+  - keeps polling on a background thread
+  - logs iteration failures instead of crashing the app
+  - stops cleanly and tolerates repeated `start()` / `stop()` calls
+- Wired FastAPI lifespan to attach the scheduler service on `app.state`, start it only when enabled, and stop it during shutdown.
+- Added focused tests for:
+  - loop immediate execution and clean stop
+  - idempotent start/stop behavior
+  - default-disabled FastAPI behavior
+  - enabled FastAPI behavior that auto-consumes a pending ticket through the existing minimal runtime chain
+
+### Still Mock / Stub
+- External worker runtime handoff beyond the current in-process minimal runtime
+- Employee lifecycle beyond the seeded roster
+- Richer retry / heartbeat / cancel state machine behavior
+- Non-reference-only context hydration and richer compiler provenance
+
+### Documentation Sync
+- Updated `README.md` to move the FastAPI in-process scheduler loop into the implemented state, document that it is opt-in, and add the new env var.
+- Updated `README.en.md` with the same external-status change and enablement instructions.
+- README was updated in this round because the change affects how the backend can be run in real deployments, even though the default behavior stays unchanged.
+
+### Verification
+- Installed backend dev dependencies in a Python 3.12 virtual environment inside the worktree.
+- Verified clean baseline first: `backend/.venv/bin/python -m pytest backend/tests` -> `68 passed`.
+- Verified TDD red step for the new boundary: `backend/.venv/bin/python -m pytest backend/tests/test_inprocess_scheduler.py` -> `3 failed, 1 passed`.
+- Verified green step after implementation: `backend/.venv/bin/python -m pytest backend/tests/test_inprocess_scheduler.py` -> `4 passed`.
+
+### Files Updated
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/backend/app/config.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/backend/app/core/inprocess_scheduler.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/backend/app/main.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/backend/tests/test_inprocess_scheduler.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/README.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/README.en.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-inprocess-scheduler-loop/memory.txt`
+
+### Likely Next Step
+- Build the next medium slice around richer runtime governance, most likely heartbeat / timeout refinement or employee lifecycle, without widening beyond one boundary.
+
+## 2026-03-29T03:54:09+08:00
+
+### Session Context
+- User asked to continue from the current Boardroom OS repository with another medium-sized slice under the runtime-governance boundary.
+- This round focused on heartbeat / timeout refinement, not on employee lifecycle, incident governance, or broader runtime delivery.
+
+### Design / Code Gap Identified
+- The backend already had ticket lease expiry and total execution timeout, but there was no explicit worker heartbeat command once a ticket entered `EXECUTING`.
+- `ticket-lease` still mixed acquisition and liveness semantics, while total timeout relied on `updated_at`, which would become unsafe once heartbeats started refreshing execution activity.
+- SSE already exposed a frontend stream heartbeat, but that was unrelated to worker execution liveness and could not serve as a runtime-governance signal.
+
+### Slice Landed
+- Added explicit worker heartbeat command support:
+  - `POST /api/v1/commands/ticket-heartbeat`
+  - new event type `TICKET_HEARTBEAT_RECORDED`
+- Refined ticket runtime state with minimal internal fields:
+  - `started_at`
+  - `last_heartbeat_at`
+  - `heartbeat_expires_at`
+  - `heartbeat_timeout_sec`
+- Reducer now:
+  - seeds `heartbeat_timeout_sec` from `TICKET_LEASED`
+  - initializes heartbeat fields on `TICKET_STARTED`
+  - refreshes heartbeat fields on `TICKET_HEARTBEAT_RECORDED`
+  - clears active heartbeat timestamps on completion / failure / timeout / board-gated terminal transitions
+- Scheduler now evaluates two timeout classes for `EXECUTING` tickets:
+  - `TIMEOUT_SLA_EXCEEDED` from `started_at + timeout_sla_sec`
+  - `HEARTBEAT_TIMEOUT` from `heartbeat_expires_at`
+- Total execution timeout takes precedence when both conditions are true in the same scheduler tick.
+- Existing `LEASED` reclaim behavior and retry scheduling stayed intact.
+
+### Conservative Handling
+- No new ticket-create field was introduced; `heartbeat_timeout_sec` reuses the latest lease timeout value.
+- No new projection API or UI surface was added; the new fields stay inside internal projection state for runtime governance only.
+- Both timeout classes still reuse the existing `on_timeout` retry policy rather than introducing a new policy tree.
+
+### Still Mock / Stub
+- External worker runtime handoff beyond the current in-process minimal runtime
+- Broader incident / circuit-breaker escalation after repeated heartbeat or timeout failures
+- Cancel flow and richer retry policy beyond the existing minimal loop
+- Full artifact hydration and richer compiler provenance
+
+### Documentation Sync
+- Updated `README.md` and `README.en.md` because this round changed the public command surface and the project's real runtime-governance status.
+- Updated `boardroom-data-contracts.md` to add the new heartbeat command contract and clarify scheduler responsibility.
+- Updated `message-bus-design.md` to add the heartbeat event and separate runtime liveness from lease rules.
+
+### Verification
+- Rebuilt a Python 3.12 virtual environment in the worktree and installed backend dev dependencies.
+- Verified clean baseline first: `backend/.venv/bin/python -m pytest backend/tests` -> `68 passed`.
+- Verified TDD red step after adding new tests but before implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py backend/tests/test_reducer.py` -> collection failed because `EVENT_TICKET_HEARTBEAT_RECORDED` did not exist yet.
+- Verified green step after implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py backend/tests/test_reducer.py` -> `65 passed`
+- Verified full regression at the end:
+  - `backend/.venv/bin/python -m pytest backend/tests` -> `76 passed`
+
+### Files Updated
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/api/commands.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/contracts/commands.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/core/constants.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/core/reducer.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/core/ticket_handlers.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/db/repository.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/app/db/schema.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/tests/test_api.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/backend/tests/test_reducer.py`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/README.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/README.en.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/boardroom-data-contracts.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/message-bus-design.md`
+- `/Users/bill/.config/superpowers/worktrees/boardroom-os/codex-runtime-heartbeat-timeout/memory.txt`
+
+### Likely Next Step
+- Continue runtime governance on one boundary only, most likely repeated-timeout escalation into incident / circuit-breaker logic, now that explicit heartbeat and timeout classification are in place.
+
+## 2026-03-29T06:15:43+08:00
+
+### Session Context
+- User asked to implement the planned runtime-governance slice directly on `main`.
+- This round stayed inside one boundary only: repeated-timeout escalation plus bounded timeout backoff.
+
+### Design / Code Gap Identified
+- The backend already distinguished total timeout and heartbeat timeout, but repeated timeout behavior still ended at blind retry or plain timeout state.
+- `dashboard` / `inbox` contracts had already reserved incident and circuit-breaker visibility, yet backend projections still returned fixed zeros and had no incident detail route.
+- Existing retry accounting was too generic to represent consecutive timeout escalation safely, so the new logic had to track timeout streaks by retry chain instead of reusing general `retry_count`.
+
+### Slice Landed
+- Extended `ticket-create` governance input with minimal runtime-governance controls:
+  - `lease_timeout_sec`
+  - `escalation_policy.timeout_repeat_threshold`
+  - `escalation_policy.timeout_backoff_multiplier`
+  - `escalation_policy.timeout_backoff_cap_multiplier`
+- Added bounded timeout backoff for timeout-triggered retry only:
+  - next retry ticket widens `timeout_sla_sec`
+  - scheduler auto-lease now reuses widened `lease_timeout_sec`, so heartbeat window grows with the same retry
+  - schema-error / generic failure retry behavior stayed unchanged
+- Added minimal incident / circuit-breaker runtime chain:
+  - `INCIDENT_OPENED`
+  - `CIRCUIT_BREAKER_OPENED`
+  - repeated `TIMEOUT_SLA_EXCEEDED` and `HEARTBEAT_TIMEOUT` on the same `workflow_id + node_id` retry chain now open an incident and breaker
+  - open breaker blocks future automatic dispatch on that node only
+- Added real `incident_projection` persistence plus read-side support.
+- Added `GET /api/v1/projections/incidents/{incident_id}`.
+- Dashboard and Inbox now read real incident / breaker counts and emit real `INCIDENT_ESCALATION` items.
+- Event preview / SSE metadata now surface incident and breaker events.
+
+### Conservative Handling
+- Breaker open is one-way in this slice; there is still no restore / close command.
+- Repeated-timeout detection only covers runtime timeout classes and does not mix in generic `ticket-fail`.
+- External AI provider quota exhaustion, provider outage pause, and later resume flow are still intentionally out of scope.
+
+### Still Mock / Stub
+- External worker runtime handoff beyond the in-process minimal runtime
+- Provider-specific pause / resume governance for quota exhaustion or upstream outages
+- Breaker close / incident restore workflow
+- Cancel flow and richer retry policy beyond the current bounded timeout backoff
+- Full artifact hydration and richer compiler provenance
+
+### Documentation Sync
+- Updated `README.md` and `README.en.md` because this round changed public route surface and the project's externally visible runtime-governance status.
+- Updated `boardroom-data-contracts.md` to document incident detail projection plus the expanded `ticket-create` contract.
+- Updated `message-bus-design.md` to record the current minimal repeated-timeout breaker policy.
+
+### Verification
+- Created a local Python 3.12 virtual environment at `backend/.venv` and installed backend dev dependencies.
+- Verified TDD red step after adding tests and before implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py backend/tests/test_reducer.py -q` -> failed during collection because `EVENT_CIRCUIT_BREAKER_OPENED` / `EVENT_INCIDENT_OPENED` did not exist yet.
+- Verified green step after implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py backend/tests/test_reducer.py -q` -> `69 passed`
+
+### Files Updated
+- `/Users/bill/projects/boardroom-os/backend/app/api/projections.py`
+- `/Users/bill/projects/boardroom-os/backend/app/contracts/commands.py`
+- `/Users/bill/projects/boardroom-os/backend/app/contracts/projections.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/constants.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/projections.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/reducer.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/ticket_handlers.py`
+- `/Users/bill/projects/boardroom-os/backend/app/db/repository.py`
+- `/Users/bill/projects/boardroom-os/backend/app/db/schema.py`
+- `/Users/bill/projects/boardroom-os/backend/tests/test_api.py`
+- `/Users/bill/projects/boardroom-os/backend/tests/test_reducer.py`
+- `/Users/bill/projects/boardroom-os/README.md`
+- `/Users/bill/projects/boardroom-os/README.en.md`
+- `/Users/bill/projects/boardroom-os/boardroom-data-contracts.md`
+- `/Users/bill/projects/boardroom-os/message-bus-design.md`
+- `/Users/bill/projects/boardroom-os/memory.txt`
+
+### Likely Next Step
+- Keep runtime governance on one boundary and add the smallest real breaker recovery / incident close path, or switch boundaries and tackle provider quota / outage pause-resume governance as a separate slice.
+
+## 2026-03-29T13:47:01+08:00
+
+### Session Context
+- User asked to keep moving inside the existing Boardroom OS repo and explicitly implement the planned runtime-governance slice.
+- This round stayed inside one boundary only: controlled manual recovery for timeout incidents.
+
+### Boundary Chosen
+- Single boundary for this round: manual recovery of timeout incidents after a circuit breaker has opened.
+- The new rule remains conservative:
+  - default recovery still only restores dispatch
+  - explicit follow-up can additionally create one bounded retry for the latest timeout ticket
+
+### Design / Code Gap Identified
+- `incident-resolve` already closed the breaker and the incident, but it still forced the operator to issue a separate `ticket-create` if they wanted execution to resume immediately.
+- The docs also intentionally said recovery does not auto-create retry, so the implementation had to preserve that default instead of silently changing behavior.
+
+### Slice Landed
+- Extended `IncidentResolveCommand` with `followup_action`:
+  - `RESTORE_ONLY`
+  - `RESTORE_AND_RETRY_LATEST_TIMEOUT`
+- `RESTORE_ONLY` preserves the old behavior and remains the default for backward compatibility.
+- `RESTORE_AND_RETRY_LATEST_TIMEOUT` now:
+  - validates the incident source ticket still exists
+  - validates the latest terminal event is still timeout-based
+  - validates the source ticket create spec still exists
+  - validates timeout retry policy / retry budget still allow one more retry
+  - closes the breaker
+  - appends `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`
+  - closes the incident in the same transaction
+- `INCIDENT_CLOSED.payload` now records:
+  - `followup_action`
+  - `followup_ticket_id`
+
+### Conservative Handling
+- The default recovery path still does not create retry automatically.
+- Recovery-triggered retry still reuses the existing timeout retry logic and timeout backoff rules instead of adding a separate policy path.
+- Recovery remains limited to timeout incidents; no general incident recovery framework was added.
+
+### Tests Added
+- API coverage for:
+  - default `RESTORE_ONLY` preserving old behavior
+  - explicit `RESTORE_AND_RETRY_LATEST_TIMEOUT` creating a follow-up retry ticket
+  - incident detail payload surfacing `followup_action` and `followup_ticket_id`
+  - scheduler dispatching the restored follow-up ticket
+  - rejecting restore-and-retry when retry budget is exhausted
+  - rejecting restore-and-retry when the source ticket create spec is missing
+  - rejecting restore-and-retry when the latest terminal event is no longer timeout-based
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `boardroom-data-contracts.md`
+- `message-bus-design.md`
+- `memory.txt`
+
+### Still Not Done
+- automatic recovery without operator action
+- automatic incident close after a later successful run
+- recovery for non-timeout incident families
+- a dedicated recovery workflow UI beyond the existing command and incident detail projection
+
+### Verification
+- Verified TDD red step with targeted new tests before implementation:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py -k 'incident_resolve_can_restore_and_retry_latest_timeout_in_one_command or incident_resolve_restore_and_retry_rejects_when_retry_budget_is_exhausted or incident_resolve_restore_and_retry_rejects_when_source_ticket_spec_is_missing or incident_resolve_restore_and_retry_rejects_when_latest_terminal_event_is_not_timeout or incident_resolve_closes_breaker_and_removes_open_incident_from_dashboard_and_inbox' -q`
+  - result: `5 failed`
+- Verified green step after implementation:
+  - same targeted command
+  - result: `5 passed`
+- Verified full backend test suite:
+  - `backend/.venv/bin/python -m pytest backend/tests -q`
+  - result: `93 passed`
+- Verified patch cleanliness:
+  - `git diff --check`
+  - result: clean
+
+### Files Updated
+- `/Users/bill/projects/boardroom-os/backend/app/contracts/commands.py`
+- `/Users/bill/projects/boardroom-os/backend/app/core/ticket_handlers.py`
+- `/Users/bill/projects/boardroom-os/backend/tests/test_api.py`
+- `/Users/bill/projects/boardroom-os/README.md`
+- `/Users/bill/projects/boardroom-os/README.en.md`
+- `/Users/bill/projects/boardroom-os/boardroom-data-contracts.md`
+- `/Users/bill/projects/boardroom-os/message-bus-design.md`
+- `/Users/bill/projects/boardroom-os/memory.txt`
+
+### Likely Next Step
+- Stay on runtime governance and add the next conservative slice: provider outage / quota pause-resume governance, or switch to a different single boundary such as richer cancel / recovery state handling.
+
+## 2026-03-30 Provider Pause-Resume Governance Slice
+
+### Scope Decision
+- This round stayed inside one boundary only: provider quota exhaustion and upstream outage pause-resume governance inside the existing runtime incident chain.
+- The implementation reused the current `incident-resolve` command instead of adding a separate provider-resume command.
+
+### Why This Slice
+- The repo already had node-scoped timeout incident governance, but `provider_health_summary` and `provider_alerts` were still mostly placeholders.
+- README and prior memory explicitly marked provider quota / outage pause-resume as the next conservative runtime-governance slice.
+
+### What Landed
+- Seeded worker roster now carries internal `provider_id` bindings.
+- `PROVIDER_RATE_LIMITED` and `UPSTREAM_UNAVAILABLE` now open a provider-scoped incident plus circuit breaker keyed by `provider_id`.
+- Provider-scoped breaker now blocks:
+  - later automatic dispatch for workers bound to that provider
+  - manual `ticket-lease`
+  - manual `ticket-start`
+  - later runtime start of already leased tickets on the same provider
+- `incident-resolve` now supports `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` in addition to the existing timeout recovery path.
+- Provider recovery validates:
+  - the source ticket still exists
+  - the latest terminal event is still a provider failure
+  - retry budget still allows another retry
+- Dashboard and Inbox now surface real provider pause state:
+  - `ops_strip.provider_health_summary`
+  - `inbox_counts.provider_alerts`
+  - provider-specific inbox items and incident detail payload
+
+### Conservative Handling
+- This slice still does not introduce a full provider management subsystem or explicit provider CRUD.
+- Tickets remain provider-agnostic; if another worker on a different provider can satisfy the same role, scheduler may still dispatch the ticket there.
+- Provider incidents still recover only through explicit operator action; there is no automatic provider health probe or auto-resume loop yet.
+
+### Tests Added
+- API coverage for:
+  - provider failure opening provider incident and breaker
+  - manual lease rejection while provider is paused
+  - scheduler rerouting work to an alternate provider when available
+  - provider alert visibility in dashboard / inbox / incident detail
+  - `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` creating a bounded retry and reopening dispatch
+- Reducer coverage for:
+  - provider incident projection replay including `provider_id`
+  - provider incident close payload merge
+- Scheduler runtime coverage for:
+  - skipping later leased tickets on the same provider after the first provider failure opens the pause
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `boardroom-data-contracts.md`
+- `message-bus-design.md`
+- `memory.txt`
+
+### Still Not Done
+- automatic provider recovery or circuit-breaker close
+- richer provider routing policy and provider preference on tickets
+- a dedicated provider management view or provider projection API
+
+## 2026-03-30T02:12:06+08:00
+
+### Session Context
+- User asked to continue directly from the existing repo and implement the planned runtime-governance slice without widening the boundary.
+- This round stayed inside one boundary only: repeated ordinary failure escalation and controlled recovery on the existing runtime incident chain.
+
+### Boundary Chosen
+- Single boundary for this round: non-timeout repeated failure governance for ordinary `TICKET_FAILED` paths.
+- This slice intentionally did not change timeout escalation rules, provider pause rules, cancel flow, employee lifecycle, or compiler scope.
+
+### Design / Code Gap Identified
+- `TicketEscalationPolicy.on_repeat_failure` was already part of the public ticket contract, but runtime still treated most ordinary failures as blind retry within budget.
+- `incident-resolve` could restore timeout incidents and provider incidents, but had no symmetric recovery path for repeated ordinary failure incidents.
+
+### Slice Landed
+- Extended `TicketEscalationPolicy` with `repeat_failure_threshold`.
+- Added `REPEATED_FAILURE_ESCALATION` as a new node-scoped incident type for ordinary repeated failures.
+- Ordinary `TICKET_FAILED` events now participate in repeated-failure governance when all of the following match:
+  - same `workflow_id + node_id`
+  - same retry chain
+  - same `failure_fingerprint`
+  - not a provider-scoped failure kind
+- When `on_repeat_failure=escalate_ceo` and the repeated-failure streak reaches `repeat_failure_threshold`, runtime now:
+  - opens a repeated-failure incident
+  - opens a circuit breaker on that node
+  - stops later automatic dispatch on that node
+- Added `RESTORE_AND_RETRY_LATEST_FAILURE` to `incident-resolve`.
+- `RESTORE_AND_RETRY_LATEST_FAILURE` now:
+  - validates the incident type is `REPEATED_FAILURE_ESCALATION`
+  - validates the latest terminal event is still an ordinary `TICKET_FAILED`
+  - validates retry budget still allows one more retry
+  - closes the breaker
+  - appends `TICKET_RETRY_SCHEDULED` plus a new `TICKET_CREATED`
+  - closes the incident in the same transaction
+- Dashboard / inbox / incident detail / event preview wording now distinguishes repeated ordinary failure escalation from timeout escalation and provider pause.
+
+### Conservative Handling
+- Provider-scoped failures still use the existing provider pause / recovery path and are intentionally excluded from the new repeated ordinary failure streak.
+- This slice does not add automatic incident closure after later success.
+- This slice does not change generic retry semantics beyond enforcing the new repeated-failure escalation threshold when policy explicitly asks for escalation.
+
+### Tests Added
+- API coverage for:
+  - repeated ordinary failure opening a node-scoped incident and breaker
+  - different failure fingerprints continuing bounded retry without opening the new incident
+  - `RESTORE_AND_RETRY_LATEST_FAILURE` creating a bounded follow-up retry
+  - rejecting `RESTORE_AND_RETRY_LATEST_FAILURE` when retry budget is exhausted
+  - provider failures still going through the existing provider incident path
+- Reducer coverage for:
+  - repeated-failure incident replay including close payload merge
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `boardroom-data-contracts.md`
+- `message-bus-design.md`
+- `memory.txt`
+
+### Still Not Done
+- `TICKET_CANCELLED` and controlled cancel / interrupt governance
+- automatic incident closure after later successful recovery
+- richer provider routing and provider management surfaces
+
+## 2026-03-30T03:56:02+08:00
+
+### Session Context
+- User asked to continue from the existing repo and treat this round as the runtime-governance control-plane closeout, not another medium slice.
+- This round stayed inside the existing backend control plane and finished the remaining minimal governance loop without widening into external worker delivery, full artifact storage, or Maker-Checker.
+
+### Boundary Chosen
+- Single boundary for this round: runtime-governance control-plane closeout.
+- The work was delivered as one linked feature chain:
+  - unified structured result entry
+  - strict minimal result validation
+  - cooperative cancellation
+  - explicit recovering state plus automatic close on successful follow-up retry
+
+### Design / Code Gap Identified
+- Design expected result schema validation and write-set validation before `TICKET_COMPLETED`, but the code previously completed tickets without that strict gate.
+- Design mentioned `created -> cancelled`, but runtime had no cancel command or cancel-aware guards.
+- `incident-resolve` previously closed incidents immediately and had no explicit `RECOVERING` state.
+- Worker result ingress was split between `ticket-complete` and `ticket-fail`, which left the governance surface inconsistent.
+
+### Slice Landed
+- Added `POST /api/v1/commands/ticket-result-submit` as the new primary structured result command.
+- Added `TicketResultSubmitCommand`, `TicketResultStatus`, `TicketWrittenArtifact`, and `TicketCancelCommand`.
+- Added minimal output schema registry support in `backend/app/core/output_schemas.py`.
+- The registry now provides real strict payload validation for `ui_milestone_review@1`.
+- `ticket-result-submit` now:
+  - routes failed results into the existing controlled `ticket-fail` governance path
+  - validates `payload` against the created ticket's `output_schema_ref/output_schema_version`
+  - validates `written_artifacts[*].path` against `allowed_write_set`
+  - converts schema mismatch into controlled `SCHEMA_ERROR`
+  - converts write-set overreach into controlled `WRITE_SET_VIOLATION`
+  - reuses the existing retry / repeated-failure / incident / breaker logic instead of creating a side path
+- Added cooperative cancellation with:
+  - `POST /api/v1/commands/ticket-cancel`
+  - `TICKET_CANCEL_REQUESTED`
+  - `TICKET_CANCELLED`
+  - `CANCEL_REQUESTED` and `CANCELLED` ticket/node states
+- Cancellation semantics now behave conservatively:
+  - `PENDING / LEASED` cancel immediately to `CANCELLED`
+  - `EXECUTING` moves to `CANCEL_REQUESTED`
+  - late results after `CANCEL_REQUESTED` are accepted only to finalize `CANCELLED`
+  - cancelled tickets can no longer lease, start, heartbeat, or complete/fail normally
+- Added explicit incident recovery state with:
+  - `INCIDENT_RECOVERY_STARTED`
+  - `RECOVERING` incident status
+- `incident-resolve` no longer closes an incident immediately on recovery start.
+- When recovery requests bounded follow-up retry, the handler now:
+  - closes the relevant breaker
+  - records `INCIDENT_RECOVERY_STARTED`
+  - stores `followup_ticket_id` in the incident recovery payload
+- Successful completion of that follow-up retry now auto-closes matching `RECOVERING` incidents.
+- Existing reducer / projection / event preview / UI hint logic was extended to replay and expose the new cancel and recovery facts.
+- Legacy `ticket-complete` and `ticket-fail` were kept as compatibility entrypoints instead of being removed.
+
+### Conservative Handling
+- `get_output_schema_body()` still returns a placeholder body for unknown schema refs so existing unsupported-schema compiler behavior stays stable.
+- Strict validation at submit time still rejects unknown schema refs through `validate_output_payload()`.
+- Internal runner execution still calls the existing complete/fail handlers directly; this round did not rewire the whole runtime to call the new HTTP command.
+- Automatic incident close only applies to incidents already in `RECOVERING` with a matching follow-up retry that later completes successfully.
+
+### Tests Added
+- API coverage for:
+  - successful `ticket-result-submit`
+  - schema validation failure becoming `SCHEMA_ERROR`
+  - write-set violation becoming `WRITE_SET_VIOLATION`
+  - cooperative cancellation on executing tickets
+  - cancel guards blocking later progress
+  - `incident-resolve` moving incidents into `RECOVERING`
+- Reducer coverage for:
+  - replaying `CANCEL_REQUESTED` and `CANCELLED`
+  - replaying `RECOVERING` before later close
+- Scheduler runner coverage for:
+  - automatic close of a `RECOVERING` incident after successful follow-up retry
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `memory.txt`
+
+### Verification
+- Fresh full backend test suite:
+  - `cd /Users/bill/projects/boardroom-os/backend`
+  - `source .venv/bin/activate`
+  - `python -m pytest tests -q`
+  - Result: `111 passed in 2.38s`
+
+### Known Reality Left Unchanged
+- `backend/pyproject.toml` editable install still has a flat-layout packaging problem in fresh environments, so `pip install -e .[dev]` may fail until packaging configuration is fixed.
+- This round documented that reality in README instead of pretending the editable install path is already healthy.
+
+### Still Not Done
+- full external worker runtime handoff
+- full artifact store / artifact index
+- broader output schema coverage beyond `ui_milestone_review@1`
+- full convergence of internal runtime execution onto `ticket-result-submit`
+- richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T04:25:00+08:00
+
+### Session Context
+- User asked to execute the runtime-governance `A` closeout plan directly in the existing Boardroom OS repo, then record the `B` vision as explicit follow-up todo instead of implementing it now.
+
+### Boundary Chosen
+- Single boundary for this round: converge the internal runtime automatic execution chain onto `ticket-result-submit`.
+- This round intentionally did not widen into full artifact storage, broader schema coverage, or external worker runtime handoff.
+
+### Design / Code Gap Identified
+- README and recent runtime-governance docs already treated `ticket-result-submit` as the unified result-governance entrypoint.
+- Code still had one important gap:
+  - `backend/app/core/runtime.py` started tickets and compiled execution packages, but successful and failed internal runtime results still bypassed `ticket-result-submit` and called the legacy complete/fail handlers directly.
+- That gap also exposed a second reality:
+  - the minimal runtime success payload was not yet shaped like `ui_milestone_review@1`
+  - the internal runner had no `written_artifacts` surface to exercise the same write-set governance path used by external structured submissions
+
+### Slice Landed
+- Internal runtime now builds `TicketResultSubmitCommand` for both success and failure paths and submits through `handle_ticket_result_submit`.
+- `RuntimeExecutionResult` now carries:
+  - structured result payload
+  - `written_artifacts`
+  - assumptions
+  - issues
+  - confidence
+- Minimal runtime success execution now emits a schema-valid `ui_milestone_review_v1` payload with:
+  - `summary`
+  - `recommended_option_id`
+  - `options`
+- Internal runtime now also emits deterministic placeholder artifact refs plus `written_artifacts` entries whose paths are derived conservatively from the first allowed write-set pattern for the ticket.
+- Result:
+  - runner-driven success now passes through the same schema validation gate as external structured submissions
+  - runner-driven success now passes through the same write-set validation gate as external structured submissions
+  - compile/input/runtime failures still flow into the existing retry / incident / breaker governance path, but now via the unified structured-result ingress
+
+### Conservative Handling
+- This round did not introduce real artifact file writes.
+- The internal runner still produces only placeholder artifact declarations, not a true artifact store entry or persisted runtime output file.
+- `ticket-complete` and `ticket-fail` remain public compatibility commands; they were not removed.
+- No public route names changed, and no database schema changes were added.
+
+### Tests Added
+- Scheduler runner coverage for:
+  - internal runtime success being rejected with controlled `SCHEMA_ERROR` when the success payload does not satisfy `ui_milestone_review@1`
+  - internal runtime success being rejected with controlled `WRITE_SET_VIOLATION` when runtime-written artifacts fall outside `allowed_write_set`
+- Existing scheduler runner and in-process scheduler success-path tests continued to pass after the convergence.
+
+### Docs Updated
+- `README.md`
+- `README.en.md`
+- `memory.txt`
+
+### Verification
+- `cd /Users/bill/projects/boardroom-os/.worktrees/runtime-governance-a-closeout`
+- `/Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest backend/tests/test_scheduler_runner.py -q`
+- `/Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest backend/tests/test_inprocess_scheduler.py -q`
+- `/Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest backend/tests/test_api.py -q -k 'ticket_result_submit or ticket_complete_without_review_request or ticket_cancel_transitions_executing_ticket_to_cancel_requested_and_blocks_progress'`
+- Result:
+  - `10 passed` in `backend/tests/test_scheduler_runner.py`
+  - `4 passed` in `backend/tests/test_inprocess_scheduler.py`
+  - `5 passed, 76 deselected` in the targeted API regression run
+
+### B Vision Recorded As Todo
+- Next runtime-governance expansion should move from `A` to `B` without changing the public command surface:
+  - expand the output schema registry beyond `ui_milestone_review@1`
+  - replace placeholder runtime artifact declarations with a fuller artifact store / artifact index path
+  - add richer result validation and artifact governance on top of the now-unified `ticket-result-submit` ingress
+
+### Still Not Done
+- full external worker runtime handoff
+- full artifact store / artifact index
+- broader output schema coverage beyond `ui_milestone_review@1`
+- richer runtime artifact governance beyond placeholder declarations
+- richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T12:40:27+08:00
+
+### Session Context
+- User provided an explicit Runtime / Backend artifact-governance plan and asked for direct implementation inside the existing Boardroom OS repo without rebuilding the scaffold.
+- The round had to stay on one boundary only and deliver multiple linked slices in one batch instead of a single isolated patch.
+
+### Boundary Chosen
+- Single boundary for this round: Runtime / Backend artifact governance.
+- The slice chain stayed on one path:
+  - real structured artifact store
+  - artifact index persistence
+  - ticket artifacts projection
+  - output schema registry expansion
+
+### Design / Code Gap Identified
+- Design docs already described `artifact_index`, filesystem-backed artifacts, and richer result governance as the target state.
+- Code before this round still only enforced `written_artifacts` write-set validation and had no real artifact materialization or ticket-level artifact projection.
+- The internal runtime also still produced placeholder review artifact refs instead of persisted structured outputs.
+
+### Slice Landed
+- Added `artifact_store_root` config with default path `backend/data/artifacts/`.
+- Added a minimal filesystem-backed `ArtifactStore` with safe relative-path normalization, temp-file writes, and atomic replace.
+- Added SQLite `artifact_index` plus repository helpers for insert, lookup by ref, and list-by-ticket.
+- Extended `TicketWrittenArtifact` with `content_json` and `content_text`.
+- `ticket-result-submit` now:
+  - validates schema first
+  - validates `allowed_write_set`
+  - validates duplicate `artifact_ref` / duplicate path inside one submission
+  - materializes `JSON`, `TEXT`, and `MARKDOWN`
+  - indexes all written artifacts before `TICKET_COMPLETED`
+  - routes artifact validation or persistence problems back into the existing controlled failure chain
+- Added `GET /api/v1/projections/tickets/{ticket_id}/artifacts`.
+- Added artifact projection status semantics:
+  - `MATERIALIZED`
+  - `REGISTERED_ONLY`
+- Internal runtime success path no longer fabricates placeholder `.png` artifacts.
+- Runtime success now emits real structured JSON artifacts such as `option-a.json` and `option-b.json`, and those refs flow through the same `ticket-result-submit` path as external structured submissions.
+- Reworked output schema handling into an explicit registry and added strict validation coverage for `consensus_document@1` alongside the existing `ui_milestone_review@1`.
+
+### Conservative Handling
+- This round intentionally materializes only `JSON`, `TEXT`, and `MARKDOWN`.
+- `IMAGE` and other binary artifacts are accepted only as indexed refs and project as `REGISTERED_ONLY`.
+- No binary upload, preview, or download route was added.
+- `consensus_document@1` only expands registry coverage; it does not mean Meeting Room execution is now implemented.
+
+### Tests Added
+- API coverage for:
+  - JSON artifact submit with real file materialization and ticket artifacts projection
+  - text / markdown artifact submit with real file materialization
+  - image artifact staying `REGISTERED_ONLY`
+  - duplicate `artifact_ref`
+  - duplicate `path`
+  - kind/content mismatch
+  - missing ticket artifacts projection returning `404`
+- Scheduler runner coverage for:
+  - runtime success persisting real structured artifact files and artifact index records
+- Output schema coverage for:
+  - `consensus_document@1` positive and negative cases
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/TODO.md`
+- `doc/history/memory-log.md`
+
+### Verification
+- `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_output_schemas.py backend/tests/test_api.py -q`
+  - `91 passed`
+- `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -q`
+  - `10 passed`
+- `backend/.venv/Scripts/python.exe -m pytest backend/tests -q`
+  - `123 passed`
+
+### Still Not Done
+- full external worker runtime handoff
+- binary artifact upload / preview / download
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer artifact retention / lifecycle governance beyond the current ticket-level index and projection
+- richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T15:42:00+08:00
+
+### Session Context
+- User asked to implement the next linked Runtime / Backend artifact batch directly in the existing Boardroom OS repo.
+- This round had to stay on one boundary and close the whole chain instead of stopping after one medium slice:
+  - binary artifact materialization
+  - artifact-by-ref read / download / preview
+  - lifecycle delete / cleanup
+  - worker handoff contract alignment
+
+### Boundary Chosen
+- Single boundary for this round: Runtime / Backend artifact delivery and lifecycle.
+- The slice chain stayed on one path:
+  - binary write path on `ticket-result-submit`
+  - unified artifact read surface by `artifact_ref`
+  - retention / lifecycle governance
+  - compiled execution package access descriptors
+
+### Design / Code Gap Identified
+- The previous round had real artifact persistence only for `JSON` / `TEXT` / `MARKDOWN`.
+- Code already had `artifact_index` lookup helpers, but no public route for metadata lookup, content download, or preview by `artifact_ref`.
+- `artifact_index` had no retention or tombstone fields, so artifacts could exist physically but were not yet governed as lifecycle-managed assets.
+- Context Compiler still shipped reference-only source descriptors with no stable access metadata for workers or downstream consumers.
+
+### Slice Landed
+- Extended `TicketWrittenArtifact` with:
+  - `media_type`
+  - `content_base64`
+  - `retention_class`
+  - `retention_ttl_sec`
+- Extended filesystem `ArtifactStore` with:
+  - raw byte materialization
+  - raw byte reads by stored relative path
+- `ticket-result-submit` now:
+  - keeps existing JSON / text rules unchanged
+  - accepts binary `content_base64`
+  - materializes `IMAGE`, `PDF`, and other binary artifacts when body is present
+  - still allows body-less binary refs to remain `REGISTERED_ONLY`
+  - persists lifecycle / retention metadata into `artifact_index`
+- Added artifact read APIs:
+  - `GET /api/v1/artifacts/by-ref`
+  - `GET /api/v1/artifacts/content`
+  - `GET /api/v1/artifacts/preview`
+- Ticket artifacts projection now also exposes:
+  - `materialization_status`
+  - `lifecycle_status`
+  - `content_url`
+  - `download_url`
+  - `preview_url`
+- Added artifact lifecycle governance:
+  - `POST /api/v1/commands/artifact-delete`
+  - `POST /api/v1/commands/artifact-cleanup`
+  - `ACTIVE` / `DELETED` / `EXPIRED` lifecycle states
+  - tombstone metadata such as `deleted_at`, `deleted_by`, `delete_reason`
+- Added artifact lifecycle events:
+  - `ARTIFACT_DELETED`
+  - `ARTIFACT_EXPIRED`
+  - `ARTIFACT_CLEANUP_COMPLETED`
+- Context Compiler source descriptors now remain reference-first but include stable artifact access metadata such as:
+  - `logical_path`
+  - `media_type`
+  - `materialization_status`
+  - `lifecycle_status`
+  - `content_hash`
+  - `size_bytes`
+  - `content_url`
+  - `preview_url`
+  - `download_url`
+
+### Conservative Handling
+- Binary upload still uses inline `base64` in `ticket-result-submit`; this round does not add multipart upload, chunking, or object storage.
+- Artifact access URLs are still local relative backend URLs, not authenticated externally reachable signed URLs.
+- Context Compiler still does not hydrate artifact bodies into the execution package; it only ships access descriptors.
+- Review Room and incident detail payloads were not restructured; they continue to carry `artifact_ref` and can now resolve through the unified artifact APIs.
+
+### Tests Added
+- API coverage for:
+  - image binary materialization plus metadata / content / preview reads
+  - pdf binary materialization plus inline preview metadata
+  - invalid binary base64 converting into controlled failure
+  - registered-only artifacts returning conflict on content reads
+  - artifact delete tombstones and content gone behavior
+  - artifact cleanup expiring TTL-scoped artifacts
+  - ticket artifacts projection exposing lifecycle and artifact URLs
+- Context Compiler coverage for:
+  - indexed artifact access descriptors flowing into the compiled execution package
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- full external worker runtime handoff beyond the current in-process execution chain
+- remote-safe artifact delivery for external workers, including auth / signed URLs / reachability
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+
+## 2026-03-30T17:20:00+08:00
+
+### Session Context
+- User asked to execute the Runtime / Backend external worker handoff closeout plan directly in the existing Boardroom OS repo and treat it as the last linked batch on the backend control-plane MVP path.
+- This round had to stay on the same Runtime / Backend artifact-delivery boundary and close the worker handoff loop without widening into provider routing, frontend, or richer auth models.
+
+### Boundary Chosen
+- Single boundary for this round: external worker handoff on top of the existing artifact + compiled-execution-package chain.
+- The slice chain stayed on one path:
+  - runtime execution mode split
+  - compiled execution package persistence
+  - authenticated worker read surface
+  - authenticated worker write-back surface
+
+### Design / Code Gap Identified
+- Code already had `CompiledExecutionPackage`, `CompiledContextBundle`, `CompileManifest`, artifact metadata routes, and unified structured result ingress.
+- But one major control-plane gap remained:
+  - `scheduler_runner` and the in-process scheduler still continued directly into local runtime execution after `TICKET_LEASED`
+  - there was no persisted execution package table
+  - there was no authenticated worker-facing API for assignments, execution package fetch, artifact reads, or structured write-back
+
+### Slice Landed
+- Added `BOARDROOM_OS_RUNTIME_EXECUTION_MODE` with `INPROCESS` and `EXTERNAL`.
+- `INPROCESS` remains the default.
+- In `EXTERNAL` mode, scheduler runner now stops after dispatch / lease and no longer auto-starts local runtime execution.
+- Added persisted `compiled_execution_package` storage plus repository helpers:
+  - save by `compile_request_id`
+  - fetch by `compile_request_id`
+  - fetch latest by `ticket_id`
+- `compile_and_persist_execution_artifacts()` now persists:
+  - `CompiledContextBundle`
+  - `CompileManifest`
+  - `CompiledExecutionPackage`
+- Added worker runtime contracts and routes under `/api/v1/worker-runtime/*`.
+- Added deployment-level shared-secret auth with:
+  - `X-Boardroom-Worker-Key`
+  - `X-Boardroom-Worker-Id`
+- Added worker handoff read APIs:
+  - `GET /api/v1/worker-runtime/assignments`
+  - `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package`
+- Added worker artifact APIs:
+  - `GET /api/v1/worker-runtime/artifacts/by-ref`
+  - `GET /api/v1/worker-runtime/artifacts/content`
+  - `GET /api/v1/worker-runtime/artifacts/preview`
+- Worker execution-package delivery now:
+  - enforces current lease ownership
+  - compiles and persists the current attempt on demand if missing
+  - returns `bundle_id`, `compile_id`, `compile_request_id`, `output_schema_body`, and the persisted execution package
+  - rewrites artifact access descriptors into worker-scoped absolute artifact URLs for that request
+- Added worker write-back wrappers:
+  - `POST /api/v1/worker-runtime/commands/ticket-start`
+  - `POST /api/v1/worker-runtime/commands/ticket-heartbeat`
+  - `POST /api/v1/worker-runtime/commands/ticket-result-submit`
+- These wrappers inject worker identity from headers and then reuse the existing handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker logic remain unchanged.
+
+### Conservative Handling
+- This round intentionally uses a deployment-level shared secret, not per-ticket signed URLs or short-lived delivery tokens.
+- Worker artifact access is allowed only through the current worker's active ticket scope:
+  - the worker's currently owned ticket ids
+  - the current ticket's explicit `input_artifact_refs`
+- UI / review routes still use the existing local `/api/v1/artifacts/*` contract.
+- Context Compiler still remains reference-first and still does not hydrate artifact bodies into the execution package.
+
+### Tests Added
+- Scheduler runner coverage for:
+  - `EXTERNAL` mode leaving leased tickets in `LEASED` instead of auto-executing them
+- Context Compiler coverage for:
+  - persisted `compiled_execution_package` retrieval by latest ticket
+- API coverage for:
+  - worker auth header enforcement
+  - worker assignment listing
+  - persisted execution package delivery
+  - worker-scoped artifact metadata / preview / content reads
+  - registered-only and deleted artifact behavior through worker routes
+  - worker start / heartbeat / result-submit wrappers
+  - schema-error routing still going through controlled failure paths from worker wrappers
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- signed URLs, per-ticket short-lived tokens, and stronger external delivery isolation beyond the current shared-secret model
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T18:40:00+08:00
+
+### Session Context
+- User asked to keep pushing on the Runtime / Backend artifact line inside the existing Boardroom OS repo and try to close the backend control-plane MVP.
+- The concrete target for this round was the remaining external worker delivery gap after artifact persistence, lifecycle, and worker-runtime routes were already real.
+
+### Boundary Chosen
+- Single boundary for this round: external worker delivery hardening on top of the existing `/api/v1/worker-runtime/*` chain.
+- The slice chain stayed on one path:
+  - public delivery URL base
+  - per-ticket short-lived signed delivery tokens
+  - token-scoped artifact / command access
+  - compatibility fallback plus docs closeout
+
+### Design / Code Gap Identified
+- Code already had:
+  - persisted `CompiledExecutionPackage`
+  - worker assignments
+  - worker artifact reads
+  - worker write-back wrappers
+- But delivery still had one obvious MVP gap:
+  - bootstrap and all follow-up reads / writes still depended on the same deployment-level shared-secret header model
+  - execution-package and artifact URLs were only absolute rewrites, not scoped short-lived delivery links
+  - there was no public-base override for worker-facing delivery URLs
+
+### Slice Landed
+- Added new runtime settings:
+  - `BOARDROOM_OS_PUBLIC_BASE_URL`
+  - `BOARDROOM_OS_WORKER_DELIVERY_TOKEN_TTL_SEC`
+  - `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET`
+- Added a small stateless worker-delivery token helper using `hmac + sha256 + base64url`.
+- Signed delivery token claims now carry:
+  - `version`
+  - `scope`
+  - `worker_id`
+  - `ticket_id`
+  - optional `artifact_ref`
+  - optional `command_name`
+  - `issued_at`
+  - `expires_at`
+- `GET /api/v1/worker-runtime/assignments` remains the bootstrap endpoint and still uses:
+  - `X-Boardroom-Worker-Key`
+  - `X-Boardroom-Worker-Id`
+- Assignment payload now returns per-ticket signed `execution_package_url` plus `delivery_expires_at`.
+- `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package` now accepts either:
+  - signed `access_token`
+  - or the legacy header-auth path
+- Delivered execution packages now rewrite:
+  - artifact `content_url`
+  - artifact `preview_url`
+  - artifact `download_url`
+  - worker command endpoints
+  into signed absolute URLs, and also return `delivery_expires_at`.
+- Worker artifact routes and worker command routes now accept token-only calls and validate in this order:
+  - token signature
+  - token expiry
+  - scope / ticket / artifact / command exact match
+  - current ticket ownership
+  - existing artifact access / lifecycle rules
+- Header-auth fallback was intentionally kept for local debugging and conservative compatibility.
+
+### Conservative Handling
+- This round still keeps shared-secret bootstrap on assignments instead of replacing it with a separate session or grant table.
+- Signed delivery tokens remain stateless:
+  - no delivery grant table
+  - no per-token server-side revocation list
+  - revocation still depends on current ownership / status checks plus TTL expiry
+- Public UI / review artifact routes were not changed; only `/api/v1/worker-runtime/*` moved to signed delivery.
+- This round did not widen into multipart uploads, object storage, background cleanup, or provider routing.
+
+### Tests Added
+- API coverage now includes:
+  - signed assignment delivery URLs
+  - `BOARDROOM_OS_PUBLIC_BASE_URL` rewrite behavior
+  - token-only execution-package reads
+  - token-only artifact reads
+  - token-only worker command write-back
+  - expired token rejection
+  - tampered token rejection
+  - artifact scope mismatch rejection
+  - command scope mismatch rejection
+  - signed URL invalidation after worker reassignment
+  - legacy header-auth compatibility
+
+### Verification
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_api.py -q`
+  - `107 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_context_compiler.py -q`
+  - `6 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_scheduler_runner.py -q`
+  - `11 passed`
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- replacing shared-secret bootstrap with a stronger worker bootstrap / session model
+- independent signed-token revocation and rotation controls beyond TTL + ownership checks
+- stronger public multi-tenant delivery isolation
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T21:35:00+08:00
+
+### Session Context
+- User asked to directly implement the next Runtime / Backend batch inside the existing Boardroom OS repo.
+- The round had to stay on one direction only, keep the existing backend skeleton, and close the remaining bootstrap/auth gap on the external worker path.
+
+### Boundary Chosen
+- Single boundary for this round: external worker bootstrap/session hardening on top of the existing `/api/v1/worker-runtime/*` delivery chain.
+- The slice chain stayed on one path:
+  - worker bootstrap state persistence
+  - refreshable worker sessions
+  - session-bound delivery tokens
+  - local auth CLI plus docs closeout
+
+### Design / Code Gap Identified
+- Code already had:
+  - persisted `CompiledExecutionPackage`
+  - worker assignments
+  - worker artifact reads
+  - signed delivery URLs
+- But bootstrap still had one clear control-plane gap:
+  - `GET /api/v1/worker-runtime/assignments` still relied on deployment-level shared-secret headers
+  - there was no worker-specific bootstrap token or refreshable session state
+  - delivery tokens could expire or be invalidated by ownership changes, but they could not be invalidated by revoking one worker session
+
+### Slice Landed
+- Added new control-plane tables:
+  - `worker_bootstrap_state`
+  - `worker_session`
+- Added new runtime settings:
+  - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET`
+  - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC`
+- Added a dedicated bootstrap/session token helper at `backend/app/core/worker_bootstrap_tokens.py`.
+- Added local worker auth CLI at `python -m app.worker_auth_cli` with:
+  - `issue-bootstrap`
+  - `rotate-bootstrap`
+  - `revoke-bootstrap`
+  - `revoke-session`
+- `GET /api/v1/worker-runtime/assignments` now accepts:
+  - `X-Boardroom-Worker-Bootstrap`
+  - `X-Boardroom-Worker-Session`
+  - legacy `X-Boardroom-Worker-Key` + `X-Boardroom-Worker-Id` fallback
+- Assignment responses now also return:
+  - `session_id`
+  - `session_token`
+  - `session_expires_at`
+- Bootstrap-token calls now create a fresh worker session.
+- Session-token calls now refresh the existing session TTL and return a fresh session token for the same `session_id`.
+- Delivery token claims now also carry:
+  - `session_id`
+  - `credential_version`
+- Worker delivery validation now additionally checks:
+  - the bound session exists
+  - the session is not revoked
+  - the session credential version still matches the worker's current bootstrap credential version
+- Rotating one worker bootstrap credential now invalidates that worker's old bootstrap tokens and old sessions.
+- Revoking one worker session now invalidates the already issued execution-package, artifact, and worker-command URLs for that session.
+- Legacy shared-secret auth remains as a compatibility fallback and now also gets a refreshable session returned on `assignments`, rather than remaining a special case forever outside the new chain.
+
+### Conservative Handling
+- This round intentionally did not add a public HTTP admin API for worker credentials; bootstrap/session issue and revoke stay in the local CLI only.
+- Shared-secret fallback was kept for local debugging and conservative compatibility instead of being removed immediately.
+- Delivery-token invalidation is still session-bound, not a full per-URL server-side grant table.
+- This round did not widen into stronger multi-tenant tenancy boundaries, mTLS, OAuth, multipart upload, object storage, or provider routing.
+
+### Tests Added
+- API coverage now includes:
+  - bootstrap-token assignment bootstrap
+  - session refresh on repeated assignment polling
+  - session revocation invalidating assignments plus signed execution / artifact / command URLs
+  - bootstrap rotation invalidating old bootstrap tokens and old sessions
+  - inactive workers being rejected on bootstrap and session paths
+  - legacy shared-secret assignment fallback still returning session metadata
+- CLI coverage now includes:
+  - issuing bootstrap tokens
+  - rotating bootstrap credentials
+  - revoking bootstrap tokens
+  - revoking one session without killing another session
+
+### Verification
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_api.py -q`
+  - `111 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_context_compiler.py -q`
+  - `6 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_scheduler_runner.py -q`
+  - `11 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests -q`
+  - `152 passed`
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- removing the legacy shared-secret fallback entirely from worker bootstrap
+- stronger public multi-tenant delivery isolation
+- independent server-side delivery-grant tracking or per-URL revocation beyond session invalidation
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T18:55:56+08:00
+
+### Session Context
+- User asked to directly implement the Runtime / Backend external worker delivery-grant closeout plan inside the existing Boardroom OS repo.
+- This round had to stay on the same external worker handoff boundary and finish the whole linked chain instead of stopping after one medium slice.
+
+### Boundary Chosen
+- Single boundary for this round: external worker delivery hardening on top of the existing `/api/v1/worker-runtime/*` chain.
+- The slice chain stayed on one path:
+  - persisted per-URL delivery grants
+  - grant-aware validation and revoke linkage
+  - removal of request-time legacy shared-secret fallback
+  - CLI, tests, and docs closeout
+
+### Design / Code Gap Identified
+- Code already had:
+  - persisted `CompiledExecutionPackage`
+  - worker bootstrap tokens
+  - refreshable worker sessions
+  - session-bound signed delivery URLs
+- But one clear delivery gap remained:
+  - signed delivery URLs were still stateless and could not be revoked one-by-one
+  - artifact read URLs still effectively shared one token scope
+  - request-time legacy shared-secret fallback still existed on `/api/v1/worker-runtime/*`
+
+### Slice Landed
+- Added persisted `worker_delivery_grant` storage plus repository helpers to create, read, list, and revoke grants.
+- Delivery token claims now carry:
+  - `grant_id`
+  - `artifact_action`
+- `artifact_action` is now differentiated as:
+  - `content_inline`
+  - `content_attachment`
+  - `preview`
+- Each execution-package URL, artifact `content_url`, artifact `download_url`, artifact `preview_url`, and worker command URL now gets its own persisted grant.
+- Worker delivery validation is now ordered as:
+  - token signature and expiry
+  - persisted grant existence / revoke / expiry / claim match
+  - session existence / revoke / credential-version match
+  - worker active-state and current ticket ownership
+  - existing artifact lifecycle and access rules
+- `revoke-session` and `rotate-bootstrap` now bulk-revoke related active grants with explicit revoke reasons.
+- `GET /api/v1/worker-runtime/assignments` now accepts only:
+  - `X-Boardroom-Worker-Bootstrap`
+  - `X-Boardroom-Worker-Session`
+- `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package`, `GET /api/v1/worker-runtime/artifacts/*`, and `POST /api/v1/worker-runtime/commands/*` now accept only signed `access_token`.
+- Added local worker-auth CLI commands:
+  - `list-delivery-grants`
+  - `revoke-delivery-grant`
+- Conservatively kept configuration fallback:
+  - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` may still fall back to `BOARDROOM_OS_WORKER_SHARED_SECRET`
+  - `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET` may still fall back to `BOARDROOM_OS_WORKER_SHARED_SECRET`
+- `artifact by-ref` continues to reuse any valid artifact token for the same `ticket_id + artifact_ref`; this round did not add a metadata-only grant.
+
+### Tests Added / Updated
+- API coverage now includes:
+  - assignments rejecting legacy shared-secret headers
+  - delivery routes rejecting legacy header fallback
+  - execution package, artifact preview/content/download, and command URLs producing distinct grants
+  - revoking one grant invalidating only the target URL
+  - session revoke and bootstrap rotate invalidating related grants
+  - tampered / expired / wrong-scope tokens still being rejected
+- CLI coverage now includes:
+  - listing grants by worker, session, or ticket
+  - revoking one grant without invalidating sibling grants in the same session
+
+### Verification
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests -q`
+  - `155 passed`
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- stronger public multi-tenant delivery isolation and finer-grained public-internet security boundaries
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T23:58:00+08:00
+
+### Session Context
+- User asked to keep moving on the existing Runtime / Backend line and explicitly switch the focus to stronger multi-tenant remote isolation.
+- The requested slice chain had to stay on the current worker auth path instead of opening a new direction:
+  - workflow / ticket scope truth
+  - bootstrap / session / delivery-grant scope binding
+  - four-layer assignment and delivery validation
+  - CLI scope queries, rejection audit, tests, and docs
+
+### Boundary Chosen
+- Single boundary for this round: stronger multi-tenant remote isolation on top of the existing `bootstrap -> refreshable session -> persisted delivery grant` worker handoff chain.
+- The round intentionally did not widen into frontend work, OAuth / mTLS, object storage, or a general tenant-management system.
+
+### Design / Code Gap Identified
+- Code already had real worker bootstrap, refreshable sessions, and per-URL delivery grants.
+- But runtime truth still stopped at:
+  - `worker_id`
+  - `session_id`
+  - `credential_version`
+  - `ticket_id`
+  - `grant_id`
+- `tenant_id/workspace_id` existed only as UI-ish defaults and were not enforced across workflow, ticket, bootstrap state, session state, delivery grants, assignments, and delivery validation.
+
+### Slice Landed
+- Added `tenant_id` / `workspace_id` to:
+  - `ProjectInitCommand`
+  - `TicketCreateCommand`
+  - workflow projection
+  - ticket projection
+  - worker bootstrap state
+  - worker session
+  - worker delivery grant
+- Default compatibility remains:
+  - `tenant_default`
+  - `ws_default`
+- `project-init` now persists those scope fields into `BOARD_DIRECTIVE_RECEIVED` and `WORKFLOW_CREATED`.
+- `ticket-create` now:
+  - inherits workflow scope when the workflow projection exists
+  - rejects explicit scope mismatch against the workflow
+  - falls back to the default single-tenant scope when no workflow projection exists yet
+- Worker bootstrap and session tokens now carry `tenant_id/workspace_id`.
+- Delivery tokens and persisted delivery grants now also carry `tenant_id/workspace_id`.
+- Context Compiler now includes the ticket scope in:
+  - `CompileRequest.meta`
+  - `CompileRequest.worker_binding`
+  - `CompiledExecutionPackage.meta`
+- Assignment responses now return:
+  - `tenant_id`
+  - `workspace_id`
+- Delivered execution-package responses now also return:
+  - `tenant_id`
+  - `workspace_id`
+- Assignment selection and delivery auth now use one worker principal carrying:
+  - worker id
+  - session id
+  - credential version
+  - tenant id
+  - workspace id
+
+### Validation Hardening Landed
+- Assignment entry now enforces:
+  - bootstrap/session token validity
+  - claim vs persisted bootstrap/session state match
+  - active worker check
+  - owned ticket plus `tenant_id/workspace_id` consistency
+- Delivery entry now enforces:
+  - token claim route match
+  - claim vs persisted delivery grant match
+  - claim vs bootstrap/session state match
+  - owned ticket plus ticket/workflow `tenant_id/workspace_id` consistency
+- Runtime no longer silently skips cross-scope tickets for a worker session; scope mismatch now rejects the request.
+
+### New Audit / CLI Surface
+- Added persisted `worker_auth_rejection_log`.
+- Rejection rows now store:
+  - `occurred_at`
+  - `route_family`
+  - `reason_code`
+  - `worker_id`
+  - `session_id`
+  - `grant_id`
+  - `ticket_id`
+  - `tenant_id`
+  - `workspace_id`
+- Added worker auth CLI scope support:
+  - `issue-bootstrap` and `rotate-bootstrap` now print scope fields
+  - `list-delivery-grants` now filters by `tenant_id/workspace_id`
+  - new `list-sessions`
+  - new `list-auth-rejections`
+
+### Design / Test Adjustments
+- Reducer replay now defaults legacy events without explicit scope to:
+  - `tenant_default`
+  - `ws_default`
+- Reducer tests were updated to reflect those real defaulted scope fields.
+- One new API test was tightened to create a real workflow before mutating workflow scope, so it verifies the intended workflow-side mismatch instead of mutating a row that never existed.
+
+### Verification
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_api.py backend\tests\test_worker_auth_cli.py backend\tests\test_context_compiler.py -q`
+  - `132 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests -q`
+  - `163 passed`
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- one worker still binds to one active `tenant_id/workspace_id`; multi-binding per worker is still not implemented
+- there is still no dedicated tenant-management control plane or broader public-internet auth stack beyond the current token/session/grant/ticket-scope checks
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface

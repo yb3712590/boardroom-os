@@ -136,7 +136,7 @@ python -m pytest tests -q
 - [doc/design/meeting-room-protocol.md](doc/design/meeting-room-protocol.md)：会议室协议
 - [doc/design/boardroom-ui-design.md](doc/design/boardroom-ui-design.md)：Boardroom UI 产品设计
 - [doc/design/boardroom-data-contracts.md](doc/design/boardroom-data-contracts.md)：UI 投影与命令契约
-- [doc/history/memory-log.md](doc/history/memory-log.md)：历史讨论与迭代记录
+- [doc/history/memory-log.md](doc/history/memory-log.md)：精简后的长期记忆与近期记忆；详细逐轮记录见 `doc/history/archive/`
 
 ## 项目哲学
 

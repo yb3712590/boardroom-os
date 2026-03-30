@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+import sqlite3
+
+from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
+from app.db.repository import ControlPlaneRepository
+
+
+def test_initialize_backfills_default_scope_for_legacy_rows(db_path):
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE workflow_projection (
+            workflow_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            north_star_goal TEXT NOT NULL,
+            current_stage TEXT NOT NULL,
+            status TEXT NOT NULL,
+            budget_total INTEGER NOT NULL,
+            budget_used INTEGER NOT NULL,
+            board_gate_state TEXT NOT NULL,
+            deadline_at TEXT,
+            started_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            version INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE ticket_projection (
+            ticket_id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            lease_owner TEXT,
+            lease_expires_at TEXT,
+            started_at TEXT,
+            last_heartbeat_at TEXT,
+            heartbeat_expires_at TEXT,
+            heartbeat_timeout_sec INTEGER,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            retry_budget INTEGER,
+            timeout_sla_sec INTEGER,
+            priority TEXT,
+            last_failure_kind TEXT,
+            last_failure_message TEXT,
+            last_failure_fingerprint TEXT,
+            blocking_reason_code TEXT,
+            updated_at TEXT NOT NULL,
+            version INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE worker_bootstrap_state (
+            worker_id TEXT PRIMARY KEY,
+            credential_version INTEGER NOT NULL,
+            revoked_before TEXT,
+            rotated_at TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE worker_session (
+            session_id TEXT PRIMARY KEY,
+            worker_id TEXT NOT NULL,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            revoked_at TEXT,
+            credential_version INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE worker_delivery_grant (
+            grant_id TEXT PRIMARY KEY,
+            scope TEXT NOT NULL,
+            worker_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            credential_version INTEGER NOT NULL,
+            ticket_id TEXT NOT NULL,
+            artifact_ref TEXT,
+            artifact_action TEXT,
+            command_name TEXT,
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            revoked_at TEXT,
+            revoke_reason TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO workflow_projection (
+            workflow_id,
+            title,
+            north_star_goal,
+            current_stage,
+            status,
+            budget_total,
+            budget_used,
+            board_gate_state,
+            deadline_at,
+            started_at,
+            updated_at,
+            version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "wf_legacy",
+            "Legacy workflow",
+            "Legacy goal",
+            "DISCOVERY",
+            "ACTIVE",
+            10,
+            0,
+            "OPEN",
+            None,
+            "2026-03-30T10:00:00+08:00",
+            "2026-03-30T10:00:00+08:00",
+            1,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO ticket_projection (
+            ticket_id,
+            workflow_id,
+            node_id,
+            status,
+            lease_owner,
+            lease_expires_at,
+            started_at,
+            last_heartbeat_at,
+            heartbeat_expires_at,
+            heartbeat_timeout_sec,
+            retry_count,
+            retry_budget,
+            timeout_sla_sec,
+            priority,
+            last_failure_kind,
+            last_failure_message,
+            last_failure_fingerprint,
+            blocking_reason_code,
+            updated_at,
+            version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "tkt_legacy",
+            "wf_legacy",
+            "node_legacy",
+            "LEASED",
+            "emp_frontend_2",
+            "2026-03-30T10:30:00+08:00",
+            None,
+            None,
+            None,
+            600,
+            0,
+            1,
+            1800,
+            "high",
+            None,
+            None,
+            None,
+            None,
+            "2026-03-30T10:00:00+08:00",
+            1,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO worker_bootstrap_state (
+            worker_id,
+            credential_version,
+            revoked_before,
+            rotated_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        ("emp_frontend_2", 1, None, None, "2026-03-30T10:00:00+08:00"),
+    )
+    connection.execute(
+        """
+        INSERT INTO worker_session (
+            session_id,
+            worker_id,
+            issued_at,
+            expires_at,
+            last_seen_at,
+            revoked_at,
+            credential_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "wsess_legacy",
+            "emp_frontend_2",
+            "2026-03-30T10:00:00+08:00",
+            "2026-03-30T11:00:00+08:00",
+            "2026-03-30T10:00:00+08:00",
+            None,
+            1,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO worker_delivery_grant (
+            grant_id,
+            scope,
+            worker_id,
+            session_id,
+            credential_version,
+            ticket_id,
+            artifact_ref,
+            artifact_action,
+            command_name,
+            issued_at,
+            expires_at,
+            revoked_at,
+            revoke_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "wgrant_legacy",
+            "execution_package",
+            "emp_frontend_2",
+            "wsess_legacy",
+            1,
+            "tkt_legacy",
+            None,
+            None,
+            None,
+            "2026-03-30T10:00:00+08:00",
+            "2026-03-30T11:00:00+08:00",
+            None,
+            None,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    workflow = repository.get_workflow_projection("wf_legacy")
+    ticket = repository.get_current_ticket_projection("tkt_legacy")
+    bootstrap_state = repository.get_worker_bootstrap_state("emp_frontend_2")
+    session = repository.get_worker_session("wsess_legacy")
+    grant = repository.get_worker_delivery_grant("wgrant_legacy")
+
+    assert workflow is not None
+    assert ticket is not None
+    assert bootstrap_state is not None
+    assert session is not None
+    assert grant is not None
+    assert workflow["tenant_id"] == DEFAULT_TENANT_ID
+    assert workflow["workspace_id"] == DEFAULT_WORKSPACE_ID
+    assert ticket["tenant_id"] == DEFAULT_TENANT_ID
+    assert ticket["workspace_id"] == DEFAULT_WORKSPACE_ID
+    assert bootstrap_state["tenant_id"] == DEFAULT_TENANT_ID
+    assert bootstrap_state["workspace_id"] == DEFAULT_WORKSPACE_ID
+    assert session["tenant_id"] == DEFAULT_TENANT_ID
+    assert session["workspace_id"] == DEFAULT_WORKSPACE_ID
+    assert grant["tenant_id"] == DEFAULT_TENANT_ID
+    assert grant["workspace_id"] == DEFAULT_WORKSPACE_ID

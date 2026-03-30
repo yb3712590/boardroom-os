@@ -295,3 +295,5 @@ ON worker_auth_rejection_log(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_worker_auth_rejection_log_scope
 ON worker_auth_rejection_log(tenant_id, workspace_id);
 """
+
+TABLE_SCHEMA_SQL = SCHEMA_SQL.split("CREATE INDEX IF NOT EXISTS", 1)[0]

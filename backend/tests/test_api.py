@@ -1882,11 +1882,12 @@ def test_worker_runtime_signed_artifact_url_rejects_tampered_token(
     ][0]["content_payload"]["content_url"]
     original_token = _query_value(content_url, "access_token")
     assert original_token is not None
-    replacement_char = "a" if original_token[-1] != "a" else "b"
+    payload_segment, signature_segment = original_token.split(".", 1)
+    replacement_char = "a" if signature_segment[0] != "a" else "b"
     tampered_url = _replace_query_value(
         content_url,
         "access_token",
-        f"{original_token[:-1]}{replacement_char}",
+        f"{payload_segment}.{replacement_char}{signature_segment[1:]}",
     )
 
     response = client.get(_local_path_from_url(tampered_url))

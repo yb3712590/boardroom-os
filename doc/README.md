@@ -18,7 +18,8 @@
 
 ## 历史记录
 
-- [history/memory-log.md](history/memory-log.md)：连续多轮设计和开发记录
+- [history/memory-log.md](history/memory-log.md)：精简后的长期记忆 + 近期记忆，适合作为会话入口
+- `history/archive/`：按需查阅的详细历史归档，不应作为每次会话的默认入口
 
 说明：
-`memory-log.md` 中保留了部分旧路径和旧文件名，用于忠实记录当时的工作上下文，不代表当前仓库布局。
+`memory-log.md` 和归档文件中保留了部分旧路径和旧文件名，用于忠实记录当时的工作上下文，不代表当前仓库布局。

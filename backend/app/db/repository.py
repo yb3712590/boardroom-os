@@ -56,7 +56,7 @@ from app.core.reducer import (
     rebuild_workflow_projections,
 )
 from app.core.time import now_local
-from app.db.schema import SCHEMA_SQL
+from app.db.schema import TABLE_SCHEMA_SQL
 
 DEFAULT_EMPLOYEE_ROSTER = (
     {
@@ -96,11 +96,14 @@ class ControlPlaneRepository:
         self.busy_timeout_ms = busy_timeout_ms
         self.recent_event_limit = recent_event_limit
         self.artifact_store = artifact_store
+        self._initialized = False
 
     def initialize(self) -> None:
+        if self._initialized:
+            return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as connection:
-            connection.executescript(SCHEMA_SQL)
+            connection.executescript(TABLE_SCHEMA_SQL)
             self._ensure_approval_projection_shape(connection)
             self._ensure_workflow_projection_shape(connection)
             self._ensure_ticket_projection_shape(connection)
@@ -111,9 +114,13 @@ class ControlPlaneRepository:
             self._ensure_worker_delivery_grant_shape(connection)
             self._ensure_worker_auth_rejection_log_shape(connection)
             self._ensure_incident_projection_shape(connection)
+            self._ensure_compiled_context_bundle_shape(connection)
+            self._ensure_compile_manifest_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_artifact_index_shape(connection)
+            self._backfill_scope_defaults(connection)
             self._seed_employee_roster(connection)
+        self._initialized = True
 
     @contextmanager
     def connection(self):
@@ -2946,6 +2953,94 @@ class ControlPlaneRepository:
             "CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint ON incident_projection(fingerprint)"
         )
 
+    def _ensure_compiled_context_bundle_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compiled_context_bundle (
+                bundle_id TEXT PRIMARY KEY,
+                compile_request_id TEXT NOT NULL,
+                ticket_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                compiler_version TEXT NOT NULL,
+                compiled_at TEXT NOT NULL,
+                bundle_version TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(compiled_context_bundle)").fetchall()
+        }
+        required_columns = {
+            "bundle_id": "TEXT",
+            "compile_request_id": "TEXT",
+            "ticket_id": "TEXT",
+            "workflow_id": "TEXT",
+            "node_id": "TEXT",
+            "compiler_version": "TEXT",
+            "compiled_at": "TEXT",
+            "bundle_version": "TEXT",
+            "payload_json": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE compiled_context_bundle ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compiled_context_bundle_ticket_id ON compiled_context_bundle(ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compiled_context_bundle_compile_request_id ON compiled_context_bundle(compile_request_id)"
+        )
+
+    def _ensure_compile_manifest_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compile_manifest (
+                compile_id TEXT PRIMARY KEY,
+                bundle_id TEXT NOT NULL,
+                compile_request_id TEXT NOT NULL,
+                ticket_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                compiler_version TEXT NOT NULL,
+                compiled_at TEXT NOT NULL,
+                manifest_version TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(compile_manifest)").fetchall()
+        }
+        required_columns = {
+            "compile_id": "TEXT",
+            "bundle_id": "TEXT",
+            "compile_request_id": "TEXT",
+            "ticket_id": "TEXT",
+            "workflow_id": "TEXT",
+            "node_id": "TEXT",
+            "compiler_version": "TEXT",
+            "compiled_at": "TEXT",
+            "manifest_version": "TEXT",
+            "payload_json": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE compile_manifest ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compile_manifest_ticket_id ON compile_manifest(ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compile_manifest_compile_request_id ON compile_manifest(compile_request_id)"
+        )
+
     def _ensure_compiled_execution_package_shape(self, connection: sqlite3.Connection) -> None:
         connection.execute(
             """
@@ -3049,6 +3144,172 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_artifact_index_node_id ON artifact_index(node_id)"
+        )
+
+    def _backfill_scope_defaults(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            UPDATE workflow_projection
+            SET tenant_id = ?
+            WHERE tenant_id IS NULL OR TRIM(tenant_id) = ''
+            """,
+            (DEFAULT_TENANT_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE workflow_projection
+            SET workspace_id = ?
+            WHERE workspace_id IS NULL OR TRIM(workspace_id) = ''
+            """,
+            (DEFAULT_WORKSPACE_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET tenant_id = COALESCE(
+                (
+                    SELECT CASE
+                        WHEN workflow_projection.tenant_id IS NULL OR TRIM(workflow_projection.tenant_id) = ''
+                            THEN NULL
+                        ELSE workflow_projection.tenant_id
+                    END
+                    FROM workflow_projection
+                    WHERE workflow_projection.workflow_id = ticket_projection.workflow_id
+                ),
+                ?
+            )
+            WHERE tenant_id IS NULL OR TRIM(tenant_id) = ''
+            """,
+            (DEFAULT_TENANT_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET workspace_id = COALESCE(
+                (
+                    SELECT CASE
+                        WHEN workflow_projection.workspace_id IS NULL OR TRIM(workflow_projection.workspace_id) = ''
+                            THEN NULL
+                        ELSE workflow_projection.workspace_id
+                    END
+                    FROM workflow_projection
+                    WHERE workflow_projection.workflow_id = ticket_projection.workflow_id
+                ),
+                ?
+            )
+            WHERE workspace_id IS NULL OR TRIM(workspace_id) = ''
+            """,
+            (DEFAULT_WORKSPACE_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE worker_bootstrap_state
+            SET tenant_id = ?
+            WHERE tenant_id IS NULL OR TRIM(tenant_id) = ''
+            """,
+            (DEFAULT_TENANT_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE worker_bootstrap_state
+            SET workspace_id = ?
+            WHERE workspace_id IS NULL OR TRIM(workspace_id) = ''
+            """,
+            (DEFAULT_WORKSPACE_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE worker_session
+            SET tenant_id = COALESCE(
+                (
+                    SELECT CASE
+                        WHEN worker_bootstrap_state.tenant_id IS NULL OR TRIM(worker_bootstrap_state.tenant_id) = ''
+                            THEN NULL
+                        ELSE worker_bootstrap_state.tenant_id
+                    END
+                    FROM worker_bootstrap_state
+                    WHERE worker_bootstrap_state.worker_id = worker_session.worker_id
+                ),
+                ?
+            )
+            WHERE tenant_id IS NULL OR TRIM(tenant_id) = ''
+            """,
+            (DEFAULT_TENANT_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE worker_session
+            SET workspace_id = COALESCE(
+                (
+                    SELECT CASE
+                        WHEN worker_bootstrap_state.workspace_id IS NULL OR TRIM(worker_bootstrap_state.workspace_id) = ''
+                            THEN NULL
+                        ELSE worker_bootstrap_state.workspace_id
+                    END
+                    FROM worker_bootstrap_state
+                    WHERE worker_bootstrap_state.worker_id = worker_session.worker_id
+                ),
+                ?
+            )
+            WHERE workspace_id IS NULL OR TRIM(workspace_id) = ''
+            """,
+            (DEFAULT_WORKSPACE_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE worker_delivery_grant
+            SET tenant_id = COALESCE(
+                (
+                    SELECT CASE
+                        WHEN worker_session.tenant_id IS NULL OR TRIM(worker_session.tenant_id) = ''
+                            THEN NULL
+                        ELSE worker_session.tenant_id
+                    END
+                    FROM worker_session
+                    WHERE worker_session.session_id = worker_delivery_grant.session_id
+                ),
+                (
+                    SELECT CASE
+                        WHEN ticket_projection.tenant_id IS NULL OR TRIM(ticket_projection.tenant_id) = ''
+                            THEN NULL
+                        ELSE ticket_projection.tenant_id
+                    END
+                    FROM ticket_projection
+                    WHERE ticket_projection.ticket_id = worker_delivery_grant.ticket_id
+                ),
+                ?
+            )
+            WHERE tenant_id IS NULL OR TRIM(tenant_id) = ''
+            """,
+            (DEFAULT_TENANT_ID,),
+        )
+        connection.execute(
+            """
+            UPDATE worker_delivery_grant
+            SET workspace_id = COALESCE(
+                (
+                    SELECT CASE
+                        WHEN worker_session.workspace_id IS NULL OR TRIM(worker_session.workspace_id) = ''
+                            THEN NULL
+                        ELSE worker_session.workspace_id
+                    END
+                    FROM worker_session
+                    WHERE worker_session.session_id = worker_delivery_grant.session_id
+                ),
+                (
+                    SELECT CASE
+                        WHEN ticket_projection.workspace_id IS NULL OR TRIM(ticket_projection.workspace_id) = ''
+                            THEN NULL
+                        ELSE ticket_projection.workspace_id
+                    END
+                    FROM ticket_projection
+                    WHERE ticket_projection.ticket_id = worker_delivery_grant.ticket_id
+                ),
+                ?
+            )
+            WHERE workspace_id IS NULL OR TRIM(workspace_id) = ''
+            """,
+            (DEFAULT_WORKSPACE_ID,),
         )
 
     def _seed_employee_roster(self, connection: sqlite3.Connection) -> None:
