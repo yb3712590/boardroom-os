@@ -25,6 +25,8 @@ class WorkerAssignmentItem(StrictModel):
 
 class WorkerAssignmentsData(StrictModel):
     worker_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     session_token: str = Field(min_length=1)
     session_expires_at: datetime
@@ -43,6 +45,8 @@ class WorkerCommandEndpoints(StrictModel):
 
 class WorkerExecutionPackageData(StrictModel):
     worker_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
     ticket_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)

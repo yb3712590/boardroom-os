@@ -35,6 +35,8 @@ ACTIVE_WORKER_TICKET_STATUSES = {"LEASED", "EXECUTING", "CANCEL_REQUESTED"}
 @dataclass(frozen=True)
 class WorkerPrincipal:
     worker_id: str
+    tenant_id: str
+    workspace_id: str
     session_id: str | None = None
     credential_version: int | None = None
 
@@ -45,6 +47,79 @@ class WorkerAssignmentAuthContext:
     session_id: str
     session_token: str
     session_expires_at: datetime
+
+
+class WorkerAuthError(Exception):
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        detail: str,
+        reason_code: str,
+        worker_id: str | None = None,
+        session_id: str | None = None,
+        grant_id: str | None = None,
+        ticket_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+        self.reason_code = reason_code
+        self.worker_id = worker_id
+        self.session_id = session_id
+        self.grant_id = grant_id
+        self.ticket_id = ticket_id
+        self.tenant_id = tenant_id
+        self.workspace_id = workspace_id
+
+
+def _raise_worker_auth_error(
+    *,
+    status_code: int,
+    detail: str,
+    reason_code: str,
+    worker_id: str | None = None,
+    session_id: str | None = None,
+    grant_id: str | None = None,
+    ticket_id: str | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> None:
+    raise WorkerAuthError(
+        status_code=status_code,
+        detail=detail,
+        reason_code=reason_code,
+        worker_id=worker_id,
+        session_id=session_id,
+        grant_id=grant_id,
+        ticket_id=ticket_id,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    )
+
+
+def _log_worker_auth_rejection(
+    repository: ControlPlaneRepository,
+    *,
+    route_family: str,
+    error: WorkerAuthError,
+    occurred_at: datetime,
+) -> None:
+    with repository.transaction() as connection:
+        repository.append_worker_auth_rejection_log(
+            connection,
+            occurred_at=occurred_at,
+            route_family=route_family,
+            reason_code=error.reason_code,
+            worker_id=error.worker_id,
+            session_id=error.session_id,
+            grant_id=error.grant_id,
+            ticket_id=error.ticket_id,
+            tenant_id=error.tenant_id,
+            workspace_id=error.workspace_id,
+        )
 
 
 def _resolve_worker_bootstrap_signing_secret() -> str:
@@ -60,7 +135,11 @@ def _resolve_worker_bootstrap_signing_secret() -> str:
 
 def _resolve_worker_delivery_signing_secret() -> str:
     settings = get_settings()
-    signing_secret = settings.worker_delivery_signing_secret or settings.worker_shared_secret
+    signing_secret = (
+        settings.worker_delivery_signing_secret
+        or settings.worker_shared_secret
+        or settings.worker_bootstrap_signing_secret
+    )
     if not signing_secret:
         raise HTTPException(
             status_code=503,
@@ -113,6 +192,8 @@ def _issue_worker_session_token(
     session_id: str,
     worker_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     issued_at: datetime,
 ) -> tuple[str, datetime]:
     return issue_worker_session_access_token(
@@ -120,6 +201,8 @@ def _issue_worker_session_token(
         session_id=session_id,
         worker_id=worker_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         issued_at=issued_at,
         ttl_sec=_resolve_worker_session_ttl_sec(),
     )
@@ -130,10 +213,35 @@ def _validate_bootstrap_claims_against_state(
     state: dict[str, Any],
 ) -> None:
     if claims.credential_version != int(state.get("credential_version") or 0):
-        raise HTTPException(status_code=401, detail="Worker bootstrap token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker bootstrap token is invalid.",
+            reason_code="bootstrap_invalid",
+            worker_id=claims.worker_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
+    if claims.tenant_id != str(state.get("tenant_id") or "") or claims.workspace_id != str(
+        state.get("workspace_id") or ""
+    ):
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker bootstrap token scope does not match the stored worker binding.",
+            reason_code="session_scope_mismatch",
+            worker_id=claims.worker_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     revoked_before = state.get("revoked_before")
     if revoked_before is not None and claims.issued_at < revoked_before:
-        raise HTTPException(status_code=401, detail="Worker bootstrap token has been revoked.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker bootstrap token has been revoked.",
+            reason_code="bootstrap_revoked",
+            worker_id=claims.worker_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
 
 
 def _validate_session_claims_against_state(
@@ -144,21 +252,101 @@ def _validate_session_claims_against_state(
     at: datetime,
 ) -> None:
     if state is None:
-        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token is invalid.",
+            reason_code="session_invalid",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if claims.credential_version != int(state.get("credential_version") or 0):
-        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token is invalid.",
+            reason_code="session_invalid",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
+    if claims.tenant_id != str(state.get("tenant_id") or "") or claims.workspace_id != str(
+        state.get("workspace_id") or ""
+    ):
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token scope does not match the stored worker binding.",
+            reason_code="session_scope_mismatch",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if session_row is None:
-        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token is invalid.",
+            reason_code="session_invalid",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if session_row.get("worker_id") != claims.worker_id:
-        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token is invalid.",
+            reason_code="session_invalid",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if int(session_row.get("credential_version") or 0) != claims.credential_version:
-        raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token is invalid.",
+            reason_code="session_invalid",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
+    if claims.tenant_id != str(session_row.get("tenant_id") or "") or claims.workspace_id != str(
+        session_row.get("workspace_id") or ""
+    ):
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token scope does not match the active session.",
+            reason_code="session_scope_mismatch",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     revoked_at = session_row.get("revoked_at")
     if revoked_at is not None:
-        raise HTTPException(status_code=401, detail="Worker session token has been revoked.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token has been revoked.",
+            reason_code="session_revoked",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     expires_at = session_row.get("expires_at")
     if expires_at is None or expires_at <= at:
-        raise HTTPException(status_code=401, detail="Worker session token has expired.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker session token has expired.",
+            reason_code="session_expired",
+            worker_id=claims.worker_id,
+            session_id=getattr(claims, "session_id", None),
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
 
 
 def _validate_delivery_grant_against_claims(
@@ -168,29 +356,153 @@ def _validate_delivery_grant_against_claims(
     at: datetime,
 ) -> None:
     if grant is None:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if str(grant.get("scope") or "") != claims.scope:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if str(grant.get("worker_id") or "") != claims.worker_id:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if str(grant.get("session_id") or "") != claims.session_id:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if int(grant.get("credential_version") or 0) != claims.credential_version:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
+    if claims.tenant_id != str(grant.get("tenant_id") or "") or claims.workspace_id != str(
+        grant.get("workspace_id") or ""
+    ):
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token scope does not match the persisted grant.",
+            reason_code="grant_scope_mismatch",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if str(grant.get("ticket_id") or "") != claims.ticket_id:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if (grant.get("artifact_ref") or None) != claims.artifact_ref:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if (grant.get("artifact_action") or None) != claims.artifact_action:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     if (grant.get("command_name") or None) != claims.command_name:
-        raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token is invalid.",
+            reason_code="grant_invalid",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     revoked_at = grant.get("revoked_at")
     if revoked_at is not None:
-        raise HTTPException(status_code=401, detail="Worker delivery token has been revoked.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token has been revoked.",
+            reason_code="grant_revoked",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
     expires_at = grant.get("expires_at")
     if expires_at is None or expires_at <= at:
-        raise HTTPException(status_code=401, detail="Worker delivery token has expired.")
+        _raise_worker_auth_error(
+            status_code=401,
+            detail="Worker delivery token has expired.",
+            reason_code="grant_expired",
+            worker_id=claims.worker_id,
+            session_id=claims.session_id,
+            grant_id=claims.grant_id,
+            ticket_id=claims.ticket_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+        )
 
 
 def _create_or_refresh_worker_session(
@@ -198,6 +510,8 @@ def _create_or_refresh_worker_session(
     *,
     worker_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     at: datetime,
     session_id: str | None = None,
 ) -> dict[str, Any]:
@@ -207,6 +521,8 @@ def _create_or_refresh_worker_session(
             return repository.create_worker_session(
                 connection,
                 worker_id=worker_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
                 issued_at=at,
                 expires_at=expires_at,
                 credential_version=credential_version,
@@ -218,7 +534,15 @@ def _create_or_refresh_worker_session(
             expires_at=expires_at,
         )
         if refreshed is None:
-            raise HTTPException(status_code=401, detail="Worker session token is invalid.")
+            _raise_worker_auth_error(
+                status_code=401,
+                detail="Worker session token is invalid.",
+                reason_code="session_invalid",
+                worker_id=worker_id,
+                session_id=session_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            )
         return refreshed
 
 
@@ -231,11 +555,15 @@ def _build_assignment_auth_context_from_session_row(
         session_id=str(session_row["session_id"]),
         worker_id=str(session_row["worker_id"]),
         credential_version=int(session_row["credential_version"]),
+        tenant_id=str(session_row["tenant_id"]),
+        workspace_id=str(session_row["workspace_id"]),
         issued_at=at,
     )
     return WorkerAssignmentAuthContext(
         principal=WorkerPrincipal(
             worker_id=str(session_row["worker_id"]),
+            tenant_id=str(session_row["tenant_id"]),
+            workspace_id=str(session_row["workspace_id"]),
             session_id=str(session_row["session_id"]),
             credential_version=int(session_row["credential_version"]),
         ),
@@ -262,6 +590,8 @@ def _authenticate_worker_bootstrap(
             connection,
             worker_id=claims.worker_id,
             at=current_time,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
         )
         _validate_bootstrap_claims_against_state(claims, state)
         _require_active_worker_projection(repository, claims.worker_id, connection=connection)
@@ -269,6 +599,8 @@ def _authenticate_worker_bootstrap(
         repository,
         worker_id=claims.worker_id,
         credential_version=int(state["credential_version"]),
+        tenant_id=str(state["tenant_id"]),
+        workspace_id=str(state["workspace_id"]),
         at=current_time,
     )
     return _build_assignment_auth_context_from_session_row(session_row, at=current_time)
@@ -291,6 +623,8 @@ def _authenticate_worker_session(
             connection,
             worker_id=claims.worker_id,
             at=current_time,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
         )
         session_row = repository.get_worker_session(claims.session_id, connection=connection)
         _validate_session_claims_against_state(
@@ -304,6 +638,8 @@ def _authenticate_worker_session(
         repository,
         worker_id=claims.worker_id,
         credential_version=claims.credential_version,
+        tenant_id=claims.tenant_id,
+        workspace_id=claims.workspace_id,
         at=current_time,
         session_id=claims.session_id,
     )
@@ -316,20 +652,31 @@ def authenticate_worker_assignments_request(
     bootstrap_token: str | None,
     session_token: str | None,
 ) -> WorkerAssignmentAuthContext:
-    if bootstrap_token:
-        return _authenticate_worker_bootstrap(
-            request,
-            bootstrap_token=bootstrap_token,
+    repository: ControlPlaneRepository = request.app.state.repository
+    current_time = now_local()
+    try:
+        if bootstrap_token:
+            return _authenticate_worker_bootstrap(
+                request,
+                bootstrap_token=bootstrap_token,
+            )
+        if session_token:
+            return _authenticate_worker_session(
+                request,
+                session_token=session_token,
+            )
+        raise HTTPException(
+            status_code=401,
+            detail="Worker bootstrap or session headers are required.",
         )
-    if session_token:
-        return _authenticate_worker_session(
-            request,
-            session_token=session_token,
+    except WorkerAuthError as exc:
+        _log_worker_auth_rejection(
+            repository,
+            route_family="assignments",
+            error=exc,
+            occurred_at=current_time,
         )
-    raise HTTPException(
-        status_code=401,
-        detail="Worker bootstrap or session headers are required.",
-    )
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 def _issue_worker_delivery_token(
@@ -339,6 +686,8 @@ def _issue_worker_delivery_token(
     worker_id: str,
     session_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     ticket_id: str,
     issued_at: datetime,
     artifact_ref: str | None = None,
@@ -355,6 +704,8 @@ def _issue_worker_delivery_token(
             worker_id=worker_id,
             session_id=session_id,
             credential_version=credential_version,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
             ticket_id=ticket_id,
             artifact_ref=artifact_ref,
             artifact_action=artifact_action,
@@ -369,6 +720,8 @@ def _issue_worker_delivery_token(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         issued_at=issued_at,
         ttl_sec=ttl_sec,
@@ -404,7 +757,11 @@ def authenticate_worker(
 
     repository: ControlPlaneRepository = request.app.state.repository
     _require_active_worker_projection(repository, worker_id)
-    return WorkerPrincipal(worker_id=worker_id)
+    return WorkerPrincipal(
+        worker_id=worker_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+    )
 
 
 def authenticate_worker_request(
@@ -418,38 +775,139 @@ def authenticate_worker_request(
     command_name: WorkerCommandName | None = None,
 ) -> WorkerPrincipal:
     current_time = now_local()
-    claims = validate_worker_delivery_token(
-        _require_delivery_access_token(access_token),
-        signing_secret=_resolve_worker_delivery_signing_secret(),
-        expected_scope=scope,
-        expected_ticket_id=ticket_id,
-        expected_artifact_ref=artifact_ref,
-        expected_artifact_action=artifact_action,
-        expected_command_name=command_name,
-        at=current_time,
-    )
     repository: ControlPlaneRepository = request.app.state.repository
-    with repository.transaction() as connection:
-        grant = repository.get_worker_delivery_grant(claims.grant_id, connection=connection)
-        _validate_delivery_grant_against_claims(
-            grant,
-            claims=claims,
+    try:
+        claims = validate_worker_delivery_token(
+            _require_delivery_access_token(access_token),
+            signing_secret=_resolve_worker_delivery_signing_secret(),
+            expected_scope=scope,
+            expected_ticket_id=ticket_id,
+            expected_artifact_ref=artifact_ref,
+            expected_artifact_action=artifact_action,
+            expected_command_name=command_name,
             at=current_time,
         )
-        state = repository.get_worker_bootstrap_state(claims.worker_id, connection=connection)
-        session_row = repository.get_worker_session(claims.session_id, connection=connection)
-        _validate_session_claims_against_state(
-            claims,
-            state=state,
-            session_row=session_row,
-            at=current_time,
+        with repository.transaction() as connection:
+            grant = repository.get_worker_delivery_grant(claims.grant_id, connection=connection)
+            _validate_delivery_grant_against_claims(
+                grant,
+                claims=claims,
+                at=current_time,
+            )
+            state = repository.get_worker_bootstrap_state(claims.worker_id, connection=connection)
+            session_row = repository.get_worker_session(claims.session_id, connection=connection)
+            _validate_session_claims_against_state(
+                claims,
+                state=state,
+                session_row=session_row,
+                at=current_time,
+            )
+            _require_active_worker_projection(repository, claims.worker_id, connection=connection)
+            ticket = repository.get_current_ticket_projection(ticket_id, connection=connection)
+            _validate_ticket_scope_and_ownership(
+                repository,
+                ticket=ticket,
+                principal=WorkerPrincipal(
+                    worker_id=claims.worker_id,
+                    tenant_id=claims.tenant_id,
+                    workspace_id=claims.workspace_id,
+                    session_id=claims.session_id,
+                    credential_version=claims.credential_version,
+                ),
+                connection=connection,
+            )
+        return WorkerPrincipal(
+            worker_id=claims.worker_id,
+            tenant_id=claims.tenant_id,
+            workspace_id=claims.workspace_id,
+            session_id=claims.session_id,
+            credential_version=claims.credential_version,
         )
-        _require_active_worker_projection(repository, claims.worker_id, connection=connection)
-    return WorkerPrincipal(
-        worker_id=claims.worker_id,
-        session_id=claims.session_id,
-        credential_version=claims.credential_version,
-    )
+    except WorkerAuthError as exc:
+        _log_worker_auth_rejection(
+            repository,
+            route_family=scope,
+            error=exc,
+            occurred_at=current_time,
+        )
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+def _validate_ticket_scope_and_ownership(
+    repository: ControlPlaneRepository,
+    *,
+    ticket: dict[str, Any] | None,
+    principal: WorkerPrincipal,
+    connection=None,
+) -> dict[str, Any]:
+    if ticket is None:
+        _raise_worker_auth_error(
+            status_code=404,
+            detail="Worker ticket was not found.",
+            reason_code="ticket_not_found",
+            worker_id=principal.worker_id,
+            session_id=principal.session_id,
+            tenant_id=principal.tenant_id,
+            workspace_id=principal.workspace_id,
+        )
+    if ticket.get("lease_owner") != principal.worker_id or ticket["status"] not in ACTIVE_WORKER_TICKET_STATUSES:
+        _raise_worker_auth_error(
+            status_code=403,
+            detail=f"Worker '{principal.worker_id}' does not currently own ticket '{ticket['ticket_id']}'.",
+            reason_code="ticket_ownership_mismatch",
+            worker_id=principal.worker_id,
+            session_id=principal.session_id,
+            ticket_id=str(ticket["ticket_id"]),
+            tenant_id=principal.tenant_id,
+            workspace_id=principal.workspace_id,
+        )
+    if str(ticket.get("tenant_id") or "") != principal.tenant_id:
+        _raise_worker_auth_error(
+            status_code=403,
+            detail="Worker tenant does not match the ticket tenant scope.",
+            reason_code="tenant_mismatch",
+            worker_id=principal.worker_id,
+            session_id=principal.session_id,
+            ticket_id=str(ticket["ticket_id"]),
+            tenant_id=principal.tenant_id,
+            workspace_id=principal.workspace_id,
+        )
+    if str(ticket.get("workspace_id") or "") != principal.workspace_id:
+        _raise_worker_auth_error(
+            status_code=403,
+            detail="Worker workspace does not match the ticket workspace scope.",
+            reason_code="workspace_mismatch",
+            worker_id=principal.worker_id,
+            session_id=principal.session_id,
+            ticket_id=str(ticket["ticket_id"]),
+            tenant_id=principal.tenant_id,
+            workspace_id=principal.workspace_id,
+        )
+    workflow = repository.get_workflow_projection(str(ticket["workflow_id"]), connection=connection)
+    if workflow is not None:
+        if str(workflow.get("tenant_id") or "") != principal.tenant_id:
+            _raise_worker_auth_error(
+                status_code=403,
+                detail="Worker tenant does not match the workflow tenant scope.",
+                reason_code="tenant_mismatch",
+                worker_id=principal.worker_id,
+                session_id=principal.session_id,
+                ticket_id=str(ticket["ticket_id"]),
+                tenant_id=principal.tenant_id,
+                workspace_id=principal.workspace_id,
+            )
+        if str(workflow.get("workspace_id") or "") != principal.workspace_id:
+            _raise_worker_auth_error(
+                status_code=403,
+                detail="Worker workspace does not match the workflow workspace scope.",
+                reason_code="workspace_mismatch",
+                worker_id=principal.worker_id,
+                session_id=principal.session_id,
+                ticket_id=str(ticket["ticket_id"]),
+                tenant_id=principal.tenant_id,
+                workspace_id=principal.workspace_id,
+            )
+    return ticket
 
 
 def build_worker_artifact_urls(
@@ -458,6 +916,8 @@ def build_worker_artifact_urls(
     worker_id: str,
     session_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     ticket_id: str,
     artifact_ref: str,
     issued_at: datetime,
@@ -469,6 +929,8 @@ def build_worker_artifact_urls(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         artifact_ref=artifact_ref,
         artifact_action="content_inline",
@@ -480,6 +942,8 @@ def build_worker_artifact_urls(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         artifact_ref=artifact_ref,
         artifact_action="content_attachment",
@@ -491,6 +955,8 @@ def build_worker_artifact_urls(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         artifact_ref=artifact_ref,
         artifact_action="preview",
@@ -518,6 +984,8 @@ def build_worker_execution_package_url(
     worker_id: str,
     session_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     ticket_id: str,
     issued_at: datetime,
 ) -> tuple[str, datetime]:
@@ -528,6 +996,8 @@ def build_worker_execution_package_url(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         issued_at=issued_at,
     )
@@ -544,6 +1014,8 @@ def _build_worker_command_url(
     worker_id: str,
     session_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     ticket_id: str,
     command_name: WorkerCommandName,
     issued_at: datetime,
@@ -555,6 +1027,8 @@ def _build_worker_command_url(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         command_name=command_name,
         issued_at=issued_at,
@@ -572,6 +1046,8 @@ def build_worker_command_endpoints(
     worker_id: str,
     session_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     ticket_id: str,
     issued_at: datetime,
 ) -> tuple[dict[str, str], datetime]:
@@ -580,6 +1056,8 @@ def build_worker_command_endpoints(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         command_name="ticket-start",
         issued_at=issued_at,
@@ -589,6 +1067,8 @@ def build_worker_command_endpoints(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         command_name="ticket-heartbeat",
         issued_at=issued_at,
@@ -598,6 +1078,8 @@ def build_worker_command_endpoints(
         worker_id=worker_id,
         session_id=session_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         ticket_id=ticket_id,
         command_name="ticket-result-submit",
         issued_at=issued_at,
@@ -612,59 +1094,81 @@ def build_worker_command_endpoints(
 def list_worker_assignments(
     repository: ControlPlaneRepository,
     *,
-    worker_id: str,
+    principal: WorkerPrincipal,
 ) -> list[dict[str, Any]]:
-    tickets = repository.list_ticket_projections_by_statuses_readonly(
-        list(ACTIVE_WORKER_TICKET_STATUSES)
-    )
-    return [
-        ticket
-        for ticket in tickets
-        if ticket.get("lease_owner") == worker_id and ticket["status"] in ACTIVE_WORKER_TICKET_STATUSES
-    ]
+    current_time = now_local()
+    try:
+        repository.initialize()
+        with repository.connection() as connection:
+            tickets = repository.list_ticket_projections_by_statuses(
+                connection,
+                list(ACTIVE_WORKER_TICKET_STATUSES),
+            )
+            owned_tickets = [
+                ticket
+                for ticket in tickets
+                if ticket.get("lease_owner") == principal.worker_id
+                and ticket["status"] in ACTIVE_WORKER_TICKET_STATUSES
+            ]
+            return [
+                _validate_ticket_scope_and_ownership(
+                    repository,
+                    ticket=ticket,
+                    principal=principal,
+                    connection=connection,
+                )
+                for ticket in owned_tickets
+            ]
+    except WorkerAuthError as exc:
+        _log_worker_auth_rejection(
+            repository,
+            route_family="assignments",
+            error=exc,
+            occurred_at=current_time,
+        )
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 def require_worker_owned_ticket(
     repository: ControlPlaneRepository,
     *,
     ticket_id: str,
-    worker_id: str,
+    principal: WorkerPrincipal,
 ) -> dict[str, Any]:
-    ticket = repository.get_current_ticket_projection(ticket_id)
-    if ticket is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Ticket '{ticket_id}' was not found.",
+    repository.initialize()
+    with repository.connection() as connection:
+        ticket = repository.get_current_ticket_projection(ticket_id, connection=connection)
+        return _validate_ticket_scope_and_ownership(
+            repository,
+            ticket=ticket,
+            principal=principal,
+            connection=connection,
         )
-    if ticket.get("lease_owner") != worker_id or ticket["status"] not in ACTIVE_WORKER_TICKET_STATUSES:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Worker '{worker_id}' does not currently own ticket '{ticket_id}'.",
-        )
-    return ticket
 
 
 def _worker_ticket_scope(
     repository: ControlPlaneRepository,
     *,
-    worker_id: str,
+    principal: WorkerPrincipal,
+    ticket_id: str,
 ) -> tuple[set[str], set[str]]:
     repository.initialize()
     with repository.connection() as connection:
-        ticket_rows = repository.list_ticket_projections_by_statuses(
-            connection,
-            list(ACTIVE_WORKER_TICKET_STATUSES),
+        ticket = repository.get_current_ticket_projection(ticket_id, connection=connection)
+        validated_ticket = _validate_ticket_scope_and_ownership(
+            repository,
+            ticket=ticket,
+            principal=principal,
+            connection=connection,
         )
-        owned_tickets = {
-            ticket["ticket_id"]: repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"]) or {}
-            for ticket in ticket_rows
-            if ticket.get("lease_owner") == worker_id
-        }
+        created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            validated_ticket["ticket_id"],
+        ) or {}
 
-    owned_ticket_ids = set(owned_tickets.keys())
+    owned_ticket_ids = {str(validated_ticket["ticket_id"])}
     allowed_input_refs = {
         str(artifact_ref)
-        for created_spec in owned_tickets.values()
         for artifact_ref in list(created_spec.get("input_artifact_refs") or [])
     }
     return owned_ticket_ids, allowed_input_refs
@@ -674,9 +1178,14 @@ def require_worker_access_to_artifact(
     repository: ControlPlaneRepository,
     *,
     artifact_ref: str,
-    worker_id: str,
+    ticket_id: str,
+    principal: WorkerPrincipal,
 ) -> dict[str, Any] | None:
-    owned_ticket_ids, allowed_input_refs = _worker_ticket_scope(repository, worker_id=worker_id)
+    owned_ticket_ids, allowed_input_refs = _worker_ticket_scope(
+        repository,
+        principal=principal,
+        ticket_id=ticket_id,
+    )
     artifact = repository.get_artifact_by_ref(artifact_ref)
 
     if artifact_ref in allowed_input_refs:
@@ -686,7 +1195,7 @@ def require_worker_access_to_artifact(
 
     raise HTTPException(
         status_code=403,
-        detail=f"Worker '{worker_id}' cannot access artifact '{artifact_ref}'.",
+        detail=f"Worker '{principal.worker_id}' cannot access artifact '{artifact_ref}'.",
     )
 
 
@@ -721,13 +1230,15 @@ def build_worker_execution_package_payload(
     request: Request,
     *,
     latest_execution_package: dict[str, Any],
-    worker_id: str,
-    session_id: str,
-    credential_version: int,
+    principal: WorkerPrincipal,
     ticket_id: str,
     issued_at: datetime,
 ) -> tuple[dict[str, Any], datetime | None]:
     payload = deepcopy(latest_execution_package["payload"])
+    payload.setdefault("meta", {})
+    if isinstance(payload["meta"], dict):
+        payload["meta"]["tenant_id"] = principal.tenant_id
+        payload["meta"]["workspace_id"] = principal.workspace_id
     delivery_expires_at: datetime | None = None
     for block in payload.get("atomic_context_bundle", {}).get("context_blocks", []):
         content_payload = block.get("content_payload") or {}
@@ -741,9 +1252,11 @@ def build_worker_execution_package_payload(
             continue
         worker_urls, expires_at = build_worker_artifact_urls(
             request,
-            worker_id=worker_id,
-            session_id=session_id,
-            credential_version=credential_version,
+            worker_id=principal.worker_id,
+            session_id=str(principal.session_id or ""),
+            credential_version=int(principal.credential_version or 0),
+            tenant_id=principal.tenant_id,
+            workspace_id=principal.workspace_id,
             ticket_id=ticket_id,
             artifact_ref=artifact_ref,
             issued_at=issued_at,
@@ -759,9 +1272,7 @@ def build_worker_execution_package_payload(
 def build_worker_artifact_metadata(
     request: Request,
     *,
-    worker_id: str,
-    session_id: str,
-    credential_version: int,
+    principal: WorkerPrincipal,
     ticket_id: str,
     issued_at: datetime,
     artifact: dict[str, Any],
@@ -770,9 +1281,11 @@ def build_worker_artifact_metadata(
     rewritten = dict(metadata)
     worker_urls, expires_at = build_worker_artifact_urls(
         request,
-        worker_id=worker_id,
-        session_id=session_id,
-        credential_version=credential_version,
+        worker_id=principal.worker_id,
+        session_id=str(principal.session_id or ""),
+        credential_version=int(principal.credential_version or 0),
+        tenant_id=principal.tenant_id,
+        workspace_id=principal.workspace_id,
         ticket_id=ticket_id,
         artifact_ref=str(artifact["artifact_ref"]),
         issued_at=issued_at,

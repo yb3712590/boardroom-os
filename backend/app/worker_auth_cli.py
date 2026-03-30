@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Sequence
 
 from app.config import get_settings
+from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
 from app.core.time import now_local
 from app.core.worker_bootstrap_tokens import issue_worker_bootstrap_token
 from app.db.repository import ControlPlaneRepository
@@ -58,17 +59,23 @@ def _serialize_datetimes(payload: dict[str, object]) -> dict[str, object]:
 def _issue_bootstrap(args: argparse.Namespace) -> int:
     repository = _build_repository()
     issued_at = now_local()
+    tenant_id = args.tenant_id or DEFAULT_TENANT_ID
+    workspace_id = args.workspace_id or DEFAULT_WORKSPACE_ID
     with repository.transaction() as connection:
         _require_active_worker(repository, args.worker_id, connection=connection)
         state = repository.ensure_worker_bootstrap_state(
             connection,
             worker_id=args.worker_id,
             at=issued_at,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
         )
     token, expires_at = issue_worker_bootstrap_token(
         signing_secret=_resolve_bootstrap_signing_secret(),
         worker_id=args.worker_id,
         credential_version=int(state["credential_version"]),
+        tenant_id=str(state["tenant_id"]),
+        workspace_id=str(state["workspace_id"]),
         issued_at=issued_at,
         ttl_sec=args.ttl_sec,
     )
@@ -76,6 +83,8 @@ def _issue_bootstrap(args: argparse.Namespace) -> int:
         {
             "worker_id": args.worker_id,
             "credential_version": int(state["credential_version"]),
+            "tenant_id": str(state["tenant_id"]),
+            "workspace_id": str(state["workspace_id"]),
             "bootstrap_token": token,
             "issued_at": issued_at.isoformat(),
             "expires_at": expires_at.isoformat(),
@@ -89,6 +98,17 @@ def _rotate_bootstrap(args: argparse.Namespace) -> int:
     rotated_at = now_local()
     with repository.transaction() as connection:
         _require_active_worker(repository, args.worker_id, connection=connection)
+        state = repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id=args.worker_id,
+            at=rotated_at,
+            tenant_id=args.tenant_id or DEFAULT_TENANT_ID,
+            workspace_id=args.workspace_id or DEFAULT_WORKSPACE_ID,
+        )
+        if args.tenant_id and args.tenant_id != str(state["tenant_id"]):
+            raise RuntimeError("rotate-bootstrap cannot change the worker tenant binding.")
+        if args.workspace_id and args.workspace_id != str(state["workspace_id"]):
+            raise RuntimeError("rotate-bootstrap cannot change the worker workspace binding.")
         state = repository.rotate_worker_bootstrap_state(
             connection,
             worker_id=args.worker_id,
@@ -98,6 +118,8 @@ def _rotate_bootstrap(args: argparse.Namespace) -> int:
         signing_secret=_resolve_bootstrap_signing_secret(),
         worker_id=args.worker_id,
         credential_version=int(state["credential_version"]),
+        tenant_id=str(state["tenant_id"]),
+        workspace_id=str(state["workspace_id"]),
         issued_at=rotated_at,
         ttl_sec=args.ttl_sec,
     )
@@ -105,6 +127,8 @@ def _rotate_bootstrap(args: argparse.Namespace) -> int:
         {
             "worker_id": args.worker_id,
             "credential_version": int(state["credential_version"]),
+            "tenant_id": str(state["tenant_id"]),
+            "workspace_id": str(state["workspace_id"]),
             "bootstrap_token": token,
             "issued_at": rotated_at.isoformat(),
             "expires_at": expires_at.isoformat(),
@@ -163,11 +187,51 @@ def _list_delivery_grants(args: argparse.Namespace) -> int:
             worker_id=args.worker_id,
             session_id=args.session_id,
             ticket_id=args.ticket_id,
+            tenant_id=args.tenant_id,
+            workspace_id=args.workspace_id,
         )
     _print_json(
         {
             "grants": [_serialize_datetimes(grant) for grant in grants],
             "count": len(grants),
+        }
+    )
+    return 0
+
+
+def _list_sessions(args: argparse.Namespace) -> int:
+    repository = _build_repository()
+    with repository.connection() as connection:
+        sessions = repository.list_worker_sessions(
+            connection,
+            worker_id=args.worker_id,
+            tenant_id=args.tenant_id,
+            workspace_id=args.workspace_id,
+            active_only=args.active_only,
+        )
+    _print_json(
+        {
+            "sessions": [_serialize_datetimes(session) for session in sessions],
+            "count": len(sessions),
+        }
+    )
+    return 0
+
+
+def _list_auth_rejections(args: argparse.Namespace) -> int:
+    repository = _build_repository()
+    with repository.connection() as connection:
+        rejections = repository.list_worker_auth_rejection_logs(
+            connection,
+            worker_id=args.worker_id,
+            tenant_id=args.tenant_id,
+            workspace_id=args.workspace_id,
+            route_family=args.route_family,
+        )
+    _print_json(
+        {
+            "rejections": [_serialize_datetimes(rejection) for rejection in rejections],
+            "count": len(rejections),
         }
     )
     return 0
@@ -201,11 +265,15 @@ def _build_parser() -> argparse.ArgumentParser:
     issue_parser = subparsers.add_parser("issue-bootstrap")
     issue_parser.add_argument("--worker-id", required=True)
     issue_parser.add_argument("--ttl-sec", type=int, default=DEFAULT_BOOTSTRAP_TTL_SEC)
+    issue_parser.add_argument("--tenant-id")
+    issue_parser.add_argument("--workspace-id")
     issue_parser.set_defaults(handler=_issue_bootstrap)
 
     rotate_parser = subparsers.add_parser("rotate-bootstrap")
     rotate_parser.add_argument("--worker-id", required=True)
     rotate_parser.add_argument("--ttl-sec", type=int, default=DEFAULT_BOOTSTRAP_TTL_SEC)
+    rotate_parser.add_argument("--tenant-id")
+    rotate_parser.add_argument("--workspace-id")
     rotate_parser.set_defaults(handler=_rotate_bootstrap)
 
     revoke_bootstrap_parser = subparsers.add_parser("revoke-bootstrap")
@@ -222,7 +290,23 @@ def _build_parser() -> argparse.ArgumentParser:
     list_grants_parser.add_argument("--worker-id")
     list_grants_parser.add_argument("--session-id")
     list_grants_parser.add_argument("--ticket-id")
+    list_grants_parser.add_argument("--tenant-id")
+    list_grants_parser.add_argument("--workspace-id")
     list_grants_parser.set_defaults(handler=_list_delivery_grants)
+
+    list_sessions_parser = subparsers.add_parser("list-sessions")
+    list_sessions_parser.add_argument("--worker-id")
+    list_sessions_parser.add_argument("--tenant-id")
+    list_sessions_parser.add_argument("--workspace-id")
+    list_sessions_parser.add_argument("--active-only", action="store_true")
+    list_sessions_parser.set_defaults(handler=_list_sessions)
+
+    list_auth_rejections_parser = subparsers.add_parser("list-auth-rejections")
+    list_auth_rejections_parser.add_argument("--worker-id")
+    list_auth_rejections_parser.add_argument("--tenant-id")
+    list_auth_rejections_parser.add_argument("--workspace-id")
+    list_auth_rejections_parser.add_argument("--route-family")
+    list_auth_rejections_parser.set_defaults(handler=_list_auth_rejections)
 
     revoke_grant_parser = subparsers.add_parser("revoke-delivery-grant")
     revoke_grant_parser.add_argument("--grant-id", required=True)

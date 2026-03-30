@@ -71,11 +71,13 @@ def get_worker_assignments(
         bootstrap_token=x_boardroom_worker_bootstrap,
         session_token=x_boardroom_worker_session,
     )
-    assignments = list_worker_assignments(repository, worker_id=auth_context.principal.worker_id)
+    assignments = list_worker_assignments(repository, principal=auth_context.principal)
     issued_at = now_local()
     return WorkerAssignmentsEnvelope(
         data=WorkerAssignmentsData(
             worker_id=auth_context.principal.worker_id,
+            tenant_id=auth_context.principal.tenant_id,
+            workspace_id=auth_context.principal.workspace_id,
             session_id=auth_context.session_id,
             session_token=auth_context.session_token,
             session_expires_at=auth_context.session_expires_at,
@@ -96,6 +98,8 @@ def get_worker_assignments(
                         worker_id=auth_context.principal.worker_id,
                         session_id=auth_context.session_id,
                         credential_version=int(auth_context.principal.credential_version or 0),
+                        tenant_id=auth_context.principal.tenant_id,
+                        workspace_id=auth_context.principal.workspace_id,
                         ticket_id=ticket["ticket_id"],
                         issued_at=issued_at,
                     )
@@ -124,7 +128,7 @@ def get_worker_execution_package(
     ticket = require_worker_owned_ticket(
         repository,
         ticket_id=ticket_id,
-        worker_id=principal.worker_id,
+        principal=principal,
     )
     latest_bundle, latest_manifest, latest_execution_package = ensure_worker_execution_handoff(
         repository,
@@ -134,9 +138,7 @@ def get_worker_execution_package(
     package_payload, payload_delivery_expires_at = build_worker_execution_package_payload(
         request,
         latest_execution_package=latest_execution_package,
-        worker_id=principal.worker_id,
-        session_id=str(principal.session_id or ""),
-        credential_version=int(principal.credential_version or 0),
+        principal=principal,
         ticket_id=ticket["ticket_id"],
         issued_at=issued_at,
     )
@@ -145,12 +147,16 @@ def get_worker_execution_package(
         worker_id=principal.worker_id,
         session_id=str(principal.session_id or ""),
         credential_version=int(principal.credential_version or 0),
+        tenant_id=principal.tenant_id,
+        workspace_id=principal.workspace_id,
         ticket_id=ticket["ticket_id"],
         issued_at=issued_at,
     )
     return WorkerExecutionPackageEnvelope(
         data=WorkerExecutionPackageData(
             worker_id=principal.worker_id,
+            tenant_id=principal.tenant_id,
+            workspace_id=principal.workspace_id,
             workflow_id=ticket["workflow_id"],
             ticket_id=ticket["ticket_id"],
             node_id=ticket["node_id"],
@@ -184,15 +190,14 @@ def get_worker_artifact_by_ref(
     artifact = require_worker_access_to_artifact(
         repository,
         artifact_ref=artifact_ref,
-        worker_id=principal.worker_id,
+        ticket_id=ticket_id,
+        principal=principal,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_ref}' was not found.")
     metadata, _ = build_worker_artifact_metadata(
         request,
-        worker_id=principal.worker_id,
-        session_id=str(principal.session_id or ""),
-        credential_version=int(principal.credential_version or 0),
+        principal=principal,
         ticket_id=str(artifact["ticket_id"]),
         issued_at=now_local(),
         artifact=artifact,
@@ -222,7 +227,8 @@ def get_worker_artifact_content(
     artifact = require_worker_access_to_artifact(
         repository,
         artifact_ref=artifact_ref,
-        worker_id=principal.worker_id,
+        ticket_id=ticket_id,
+        principal=principal,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_ref}' was not found.")
@@ -266,16 +272,15 @@ def get_worker_artifact_preview(
     artifact = require_worker_access_to_artifact(
         repository,
         artifact_ref=artifact_ref,
-        worker_id=principal.worker_id,
+        ticket_id=ticket_id,
+        principal=principal,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_ref}' was not found.")
 
     metadata, _ = build_worker_artifact_metadata(
         request,
-        worker_id=principal.worker_id,
-        session_id=str(principal.session_id or ""),
-        credential_version=int(principal.credential_version or 0),
+        principal=principal,
         ticket_id=str(artifact["ticket_id"]),
         issued_at=now_local(),
         artifact=artifact,
@@ -333,7 +338,7 @@ def worker_ticket_start(
     require_worker_owned_ticket(
         repository,
         ticket_id=payload.ticket_id,
-        worker_id=principal.worker_id,
+        principal=principal,
     )
     return handle_ticket_start(
         repository,
@@ -364,7 +369,7 @@ def worker_ticket_heartbeat(
     require_worker_owned_ticket(
         repository,
         ticket_id=payload.ticket_id,
-        worker_id=principal.worker_id,
+        principal=principal,
     )
     return handle_ticket_heartbeat(
         repository,
@@ -397,7 +402,7 @@ def worker_ticket_result_submit(
     require_worker_owned_ticket(
         repository,
         ticket_id=payload.ticket_id,
-        worker_id=principal.worker_id,
+        principal=principal,
     )
     return handle_ticket_result_submit(
         repository,

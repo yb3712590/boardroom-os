@@ -85,6 +85,8 @@ def test_reducer_rebuilds_projection_from_workflow_created_events():
     assert len(projections) == 1
     assert projections[0]["workflow_id"] == "wf_123"
     assert projections[0]["north_star_goal"] == "Ship MVP A"
+    assert projections[0]["tenant_id"] == "tenant_default"
+    assert projections[0]["workspace_id"] == "ws_default"
     assert projections[0]["version"] == 2
 
 
@@ -214,6 +216,8 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             "ticket_id": "tkt_001",
             "workflow_id": "wf_123",
             "node_id": "node_homepage_visual",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
             "status": TICKET_STATUS_COMPLETED,
             "lease_owner": None,
             "lease_expires_at": None,

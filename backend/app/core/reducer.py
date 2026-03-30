@@ -12,8 +12,10 @@ from app.core.constants import (
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_BOARD_GATE_STATE,
+    DEFAULT_TENANT_ID,
     DEFAULT_WORKFLOW_STAGE,
     DEFAULT_WORKFLOW_STATUS,
+    DEFAULT_WORKSPACE_ID,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
@@ -65,6 +67,8 @@ def _base_ticket_projection(event: dict[str, Any], payload: dict[str, Any]) -> d
         "ticket_id": payload["ticket_id"],
         "workflow_id": event["workflow_id"],
         "node_id": payload["node_id"],
+        "tenant_id": payload.get("tenant_id", DEFAULT_TENANT_ID),
+        "workspace_id": payload.get("workspace_id", DEFAULT_WORKSPACE_ID),
         "lease_owner": None,
         "lease_expires_at": None,
         "started_at": None,
@@ -89,6 +93,24 @@ def _base_node_projection(event: dict[str, Any], payload: dict[str, Any]) -> dic
         "latest_ticket_id": payload["ticket_id"],
         "blocking_reason_code": None,
     }
+
+
+def _resolve_scope(
+    payload: dict[str, Any],
+    previous_projection: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    previous_projection = previous_projection or {}
+    tenant_id = str(
+        payload.get("tenant_id")
+        or previous_projection.get("tenant_id")
+        or DEFAULT_TENANT_ID
+    )
+    workspace_id = str(
+        payload.get("workspace_id")
+        or previous_projection.get("workspace_id")
+        or DEFAULT_WORKSPACE_ID
+    )
+    return tenant_id, workspace_id
 
 
 def _base_incident_projection(event: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
@@ -122,6 +144,8 @@ def rebuild_workflow_projections(events: Iterable[dict]) -> list[dict]:
             "workflow_id": workflow_id,
             "title": payload.get("title") or payload["north_star_goal"],
             "north_star_goal": payload["north_star_goal"],
+            "tenant_id": payload.get("tenant_id", DEFAULT_TENANT_ID),
+            "workspace_id": payload.get("workspace_id", DEFAULT_WORKSPACE_ID),
             "current_stage": DEFAULT_WORKFLOW_STAGE,
             "status": DEFAULT_WORKFLOW_STATUS,
             "budget_total": payload["budget_cap"],
@@ -160,10 +184,13 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
 
         if event_type == EVENT_TICKET_LEASED:
             ticket_id = payload["ticket_id"]
+            tenant_id, workspace_id = _resolve_scope(payload, projections.get(ticket_id))
             projections[ticket_id] = {
                 **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_LEASED,
                 "lease_owner": payload.get("leased_by"),
                 "lease_expires_at": payload.get("lease_expires_at"),
@@ -184,6 +211,7 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
             ticket_id = payload["ticket_id"]
             node_id = payload["node_id"]
             previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            tenant_id, workspace_id = _resolve_scope(payload, previous_projection)
             heartbeat_timeout_sec = previous_projection.get("heartbeat_timeout_sec")
             heartbeat_expires_at = None
             if heartbeat_timeout_sec is not None:
@@ -194,6 +222,8 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 **previous_projection,
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_EXECUTING,
                 "started_at": occurred_at,
                 "last_heartbeat_at": occurred_at,
@@ -210,6 +240,7 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
         if event_type == EVENT_TICKET_HEARTBEAT_RECORDED:
             ticket_id = payload["ticket_id"]
             previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            tenant_id, workspace_id = _resolve_scope(payload, previous_projection)
             heartbeat_timeout_sec = previous_projection.get("heartbeat_timeout_sec")
             heartbeat_expires_at = payload.get("heartbeat_expires_at")
             if heartbeat_expires_at is None and heartbeat_timeout_sec is not None:
@@ -220,6 +251,8 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 **previous_projection,
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_EXECUTING,
                 "last_heartbeat_at": occurred_at,
                 "heartbeat_expires_at": heartbeat_expires_at,
@@ -232,10 +265,13 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
         if event_type == EVENT_TICKET_CANCEL_REQUESTED:
             ticket_id = payload["ticket_id"]
             previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            tenant_id, workspace_id = _resolve_scope(payload, previous_projection)
             projections[ticket_id] = {
                 **previous_projection,
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_CANCEL_REQUESTED,
                 "lease_owner": None,
                 "lease_expires_at": None,
@@ -251,10 +287,13 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
         if event_type == EVENT_TICKET_CANCELLED:
             ticket_id = payload["ticket_id"]
             previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            tenant_id, workspace_id = _resolve_scope(payload, previous_projection)
             projections[ticket_id] = {
                 **previous_projection,
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_CANCELLED,
                 "lease_owner": None,
                 "lease_expires_at": None,
@@ -269,10 +308,13 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
 
         if event_type == EVENT_TICKET_COMPLETED:
             ticket_id = payload["ticket_id"]
+            tenant_id, workspace_id = _resolve_scope(payload, projections.get(ticket_id))
             projections[ticket_id] = {
                 **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_COMPLETED,
                 "lease_owner": None,
                 "lease_expires_at": None,
@@ -290,10 +332,13 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
 
         if event_type == EVENT_TICKET_FAILED:
             ticket_id = payload["ticket_id"]
+            tenant_id, workspace_id = _resolve_scope(payload, projections.get(ticket_id))
             projections[ticket_id] = {
                 **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_FAILED,
                 "lease_owner": None,
                 "lease_expires_at": None,
@@ -311,10 +356,13 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
 
         if event_type == EVENT_TICKET_TIMED_OUT:
             ticket_id = payload["ticket_id"]
+            tenant_id, workspace_id = _resolve_scope(payload, projections.get(ticket_id))
             projections[ticket_id] = {
                 **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_TIMED_OUT,
                 "lease_owner": None,
                 "lease_expires_at": None,
@@ -338,10 +386,13 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
             node_id = payload.get("node_id")
             if ticket_id is None or node_id is None:
                 continue
+            tenant_id, workspace_id = _resolve_scope(payload, projections.get(ticket_id))
             projections[ticket_id] = {
                 **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
                 "lease_owner": None,
                 "lease_expires_at": None,
@@ -362,10 +413,13 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
             node_id = payload.get("node_id")
             if ticket_id is None or node_id is None:
                 continue
+            tenant_id, workspace_id = _resolve_scope(payload, projections.get(ticket_id))
             projections[ticket_id] = {
                 **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_COMPLETED,
                 "lease_owner": None,
                 "lease_expires_at": None,
@@ -386,6 +440,7 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
             node_id = payload.get("node_id")
             if ticket_id is None or node_id is None:
                 continue
+            tenant_id, workspace_id = _resolve_scope(payload, projections.get(ticket_id))
             blocking_reason = (
                 BLOCKING_REASON_MODIFY_CONSTRAINTS
                 if payload.get("decision_action") == "MODIFY_CONSTRAINTS"
@@ -395,6 +450,8 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
                 **projections.get(ticket_id, _base_ticket_projection(event, payload)),
                 "workflow_id": event["workflow_id"],
                 "node_id": node_id,
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
                 "status": TICKET_STATUS_REWORK_REQUIRED,
                 "lease_owner": None,
                 "lease_expires_at": None,

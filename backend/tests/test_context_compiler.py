@@ -20,8 +20,10 @@ def _ticket_create_payload(
     ticket_id: str = "tkt_compile_001",
     node_id: str = "node_compile_001",
     input_artifact_refs: list[str] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> dict:
-    return {
+    payload = {
         "ticket_id": ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
@@ -54,6 +56,11 @@ def _ticket_create_payload(
         },
         "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
     }
+    if tenant_id is not None:
+        payload["tenant_id"] = tenant_id
+    if workspace_id is not None:
+        payload["workspace_id"] = workspace_id
+    return payload
 
 
 def _ticket_lease_payload(
@@ -84,8 +91,12 @@ def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time
 
     assert compile_request.meta.ticket_id == "tkt_compile_001"
     assert compile_request.meta.workflow_id == "wf_compile"
+    assert compile_request.meta.tenant_id == "tenant_default"
+    assert compile_request.meta.workspace_id == "ws_default"
     assert compile_request.worker_binding.lease_owner == "emp_frontend_2"
     assert compile_request.worker_binding.employee_role_type == "frontend_engineer"
+    assert compile_request.worker_binding.tenant_id == "tenant_default"
+    assert compile_request.worker_binding.workspace_id == "ws_default"
     assert compile_request.budget_policy.max_input_tokens == 3000
     assert compile_request.budget_policy.overflow_policy == "FAIL_CLOSED"
     assert [source.source_ref for source in compile_request.explicit_sources] == [
@@ -109,6 +120,8 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
 
     assert compiled_package.meta.ticket_id == "tkt_compile_001"
     assert compiled_package.meta.lease_owner == "emp_frontend_2"
+    assert compiled_package.meta.tenant_id == "tenant_default"
+    assert compiled_package.meta.workspace_id == "ws_default"
     assert compiled_package.meta.compiler_version == MINIMAL_CONTEXT_COMPILER_VERSION
     assert compiled_package.compiled_role.role_profile_ref == "ui_designer_primary"
     assert compiled_package.compiled_role.employee_role_type == "frontend_engineer"

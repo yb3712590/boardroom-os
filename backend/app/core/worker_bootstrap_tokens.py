@@ -18,6 +18,8 @@ class WorkerBootstrapTokenClaims:
     version: str
     worker_id: str
     credential_version: int
+    tenant_id: str
+    workspace_id: str
     issued_at: datetime
     expires_at: datetime
 
@@ -28,6 +30,8 @@ class WorkerSessionTokenClaims:
     session_id: str
     worker_id: str
     credential_version: int
+    tenant_id: str
+    workspace_id: str
     issued_at: datetime
     expires_at: datetime
 
@@ -100,6 +104,8 @@ def issue_worker_bootstrap_token(
     signing_secret: str,
     worker_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     issued_at: datetime,
     ttl_sec: int,
 ) -> tuple[str, datetime]:
@@ -108,6 +114,8 @@ def issue_worker_bootstrap_token(
         "version": TOKEN_VERSION,
         "worker_id": worker_id,
         "credential_version": credential_version,
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "issued_at": issued_at.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
@@ -128,12 +136,16 @@ def validate_worker_bootstrap_token(
         raise HTTPException(status_code=401, detail="Worker bootstrap token has expired.")
     worker_id = str(payload.get("worker_id") or "")
     credential_version = _parse_int(payload.get("credential_version"), detail=detail)
-    if not worker_id or credential_version <= 0:
+    tenant_id = str(payload.get("tenant_id") or "")
+    workspace_id = str(payload.get("workspace_id") or "")
+    if not worker_id or credential_version <= 0 or not tenant_id or not workspace_id:
         raise HTTPException(status_code=401, detail=detail)
     return WorkerBootstrapTokenClaims(
         version=str(payload["version"]),
         worker_id=worker_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         issued_at=issued_at,
         expires_at=expires_at,
     )
@@ -145,6 +157,8 @@ def issue_worker_session_token(
     session_id: str,
     worker_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     issued_at: datetime,
     ttl_sec: int,
 ) -> tuple[str, datetime]:
@@ -154,6 +168,8 @@ def issue_worker_session_token(
         "session_id": session_id,
         "worker_id": worker_id,
         "credential_version": credential_version,
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "issued_at": issued_at.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
@@ -175,13 +191,17 @@ def validate_worker_session_token(
     session_id = str(payload.get("session_id") or "")
     worker_id = str(payload.get("worker_id") or "")
     credential_version = _parse_int(payload.get("credential_version"), detail=detail)
-    if not session_id or not worker_id or credential_version <= 0:
+    tenant_id = str(payload.get("tenant_id") or "")
+    workspace_id = str(payload.get("workspace_id") or "")
+    if not session_id or not worker_id or credential_version <= 0 or not tenant_id or not workspace_id:
         raise HTTPException(status_code=401, detail=detail)
     return WorkerSessionTokenClaims(
         version=str(payload["version"]),
         session_id=session_id,
         worker_id=worker_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         issued_at=issued_at,
         expires_at=expires_at,
     )

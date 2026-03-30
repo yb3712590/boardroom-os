@@ -122,6 +122,8 @@ def _issue_worker_bootstrap_token(
     worker_id: str = "emp_frontend_2",
     credential_version: int = 1,
     signing_secret: str = "bootstrap-secret",
+    tenant_id: str = "tenant_default",
+    workspace_id: str = "ws_default",
     issued_at: str = "2026-03-28T10:00:00+08:00",
     ttl_sec: int = 3600,
 ) -> tuple[str, datetime]:
@@ -131,6 +133,8 @@ def _issue_worker_bootstrap_token(
         signing_secret=signing_secret,
         worker_id=worker_id,
         credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         issued_at=datetime.fromisoformat(issued_at),
         ttl_sec=ttl_sec,
     )
@@ -141,6 +145,8 @@ def _worker_bootstrap_headers(
     worker_id: str = "emp_frontend_2",
     credential_version: int = 1,
     signing_secret: str = "bootstrap-secret",
+    tenant_id: str = "tenant_default",
+    workspace_id: str = "ws_default",
     issued_at: str = "2026-03-28T10:00:00+08:00",
     ttl_sec: int = 3600,
 ) -> dict[str, str]:
@@ -148,6 +154,8 @@ def _worker_bootstrap_headers(
         worker_id=worker_id,
         credential_version=credential_version,
         signing_secret=signing_secret,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         issued_at=issued_at,
         ttl_sec=ttl_sec,
     )
@@ -164,6 +172,8 @@ def _worker_assignments_response(
     worker_id: str = "emp_frontend_2",
     credential_version: int = 1,
     signing_secret: str = "bootstrap-secret",
+    tenant_id: str = "tenant_default",
+    workspace_id: str = "ws_default",
     issued_at: str = "2026-03-28T10:00:00+08:00",
     ttl_sec: int = 3600,
 ):
@@ -173,6 +183,8 @@ def _worker_assignments_response(
             worker_id=worker_id,
             credential_version=credential_version,
             signing_secret=signing_secret,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
             issued_at=issued_at,
             ttl_sec=ttl_sec,
         ),
@@ -185,6 +197,8 @@ def _worker_assignments_data(
     worker_id: str = "emp_frontend_2",
     credential_version: int = 1,
     signing_secret: str = "bootstrap-secret",
+    tenant_id: str = "tenant_default",
+    workspace_id: str = "ws_default",
     issued_at: str = "2026-03-28T10:00:00+08:00",
     ttl_sec: int = 3600,
 ) -> dict:
@@ -193,6 +207,8 @@ def _worker_assignments_data(
         worker_id=worker_id,
         credential_version=credential_version,
         signing_secret=signing_secret,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         issued_at=issued_at,
         ttl_sec=ttl_sec,
     )
@@ -273,7 +289,29 @@ def _list_worker_delivery_grants(client) -> list[dict]:
             ORDER BY issued_at, grant_id
             """
         ).fetchall()
-    return [dict(row) for row in rows]
+        return [dict(row) for row in rows]
+
+
+def _list_worker_auth_rejections(client) -> list[dict]:
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                occurred_at,
+                route_family,
+                reason_code,
+                worker_id,
+                session_id,
+                grant_id,
+                ticket_id,
+                tenant_id,
+                workspace_id
+            FROM worker_auth_rejection_log
+            ORDER BY occurred_at ASC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def _revoke_worker_delivery_grant(
@@ -561,8 +599,10 @@ def _ticket_create_payload(
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> dict:
-    return {
+    payload = {
         "ticket_id": ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
@@ -601,6 +641,11 @@ def _ticket_create_payload(
         },
         "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
     }
+    if tenant_id is not None:
+        payload["tenant_id"] = tenant_id
+    if workspace_id is not None:
+        payload["workspace_id"] = workspace_id
+    return payload
 
 
 def _ticket_start_payload(
@@ -715,6 +760,8 @@ def _create_and_lease_ticket(
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -733,6 +780,8 @@ def _create_and_lease_ticket(
             timeout_repeat_threshold=timeout_repeat_threshold,
             timeout_backoff_multiplier=timeout_backoff_multiplier,
             timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
         ),
     )
     assert create_response.status_code == 200
@@ -769,6 +818,8 @@ def _create_lease_and_start_ticket(
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> None:
     _create_and_lease_ticket(
         client,
@@ -787,6 +838,8 @@ def _create_lease_and_start_ticket(
         timeout_repeat_threshold=timeout_repeat_threshold,
         timeout_backoff_multiplier=timeout_backoff_multiplier,
         timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
     )
     start_response = client.post(
         "/api/v1/commands/ticket-start",
@@ -870,6 +923,48 @@ def test_system_initialized_is_written_only_once(client):
     assert duplicate.json()["status"] == "DUPLICATE"
     assert repository.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 1
     assert repository.count_events_by_type(EVENT_WORKFLOW_CREATED) == 1
+
+
+def test_project_init_defaults_tenant_and_workspace_in_workflow_projection(client):
+    response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    workflow = client.app.state.repository.get_workflow_projection(workflow_id)
+
+    assert response.status_code == 200
+    assert workflow is not None
+    assert workflow["tenant_id"] == "tenant_default"
+    assert workflow["workspace_id"] == "ws_default"
+
+
+def test_ticket_create_persists_explicit_tenant_and_workspace_and_matches_workflow(client):
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json={
+            **_project_init_payload("Ship scoped MVP"),
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+        },
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_scoped_ticket",
+            node_id="node_scoped_ticket",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+        ),
+    )
+
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_scoped_ticket")
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["tenant_id"] == "tenant_blue"
+    assert ticket_projection["workspace_id"] == "ws_design"
 
 
 def test_dashboard_returns_latest_active_workflow(client):
@@ -1098,6 +1193,85 @@ def test_worker_runtime_assignments_accept_bootstrap_token_and_refresh_session(
     assert refreshed_data["session_id"] == bootstrap_data["session_id"]
     assert refreshed_data["session_token"] != bootstrap_data["session_token"]
     assert refreshed_data["session_expires_at"] == "2026-03-28T10:15:00+08:00"
+
+
+def test_worker_runtime_assignments_return_session_scope_fields(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_scope_runtime",
+        ticket_id="tkt_scope_runtime",
+        node_id="node_scope_runtime",
+        tenant_id="tenant_scope",
+        workspace_id="ws_scope",
+    )
+
+    response = _worker_assignments_response(
+        client,
+        tenant_id="tenant_scope",
+        workspace_id="ws_scope",
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["tenant_id"] == "tenant_scope"
+    assert data["workspace_id"] == "ws_scope"
+
+
+def test_worker_runtime_assignments_reject_ticket_scope_mismatch_and_log_it(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_scope_runtime",
+        ticket_id="tkt_scope_mismatch",
+        node_id="node_scope_mismatch",
+        tenant_id="tenant_scope",
+        workspace_id="ws_scope",
+    )
+    bootstrap_response = _worker_assignments_response(
+        client,
+        tenant_id="tenant_scope",
+        workspace_id="ws_scope",
+    )
+    session_token = bootstrap_response.json()["data"]["session_token"]
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET workspace_id = ?
+            WHERE ticket_id = ?
+            """,
+            ("ws_other", "tkt_scope_mismatch"),
+        )
+
+    response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(session_token),
+    )
+
+    rejection_logs = _list_worker_auth_rejections(client)
+
+    assert response.status_code == 403
+    assert "workspace" in response.json()["detail"].lower()
+    assert rejection_logs[-1]["route_family"] == "assignments"
+    assert rejection_logs[-1]["reason_code"] == "workspace_mismatch"
+    assert rejection_logs[-1]["ticket_id"] == "tkt_scope_mismatch"
+    assert rejection_logs[-1]["tenant_id"] == "tenant_scope"
+    assert rejection_logs[-1]["workspace_id"] == "ws_scope"
 
 
 def test_worker_runtime_revoked_session_rejects_assignments_and_signed_delivery(
@@ -1582,6 +1756,80 @@ def test_worker_runtime_signed_command_urls_allow_token_only_writeback(
     assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
     assert artifact_record is not None
     assert artifact_record["materialization_status"] == "MATERIALIZED"
+
+
+def test_worker_runtime_delivery_routes_reject_workspace_mismatch_and_log_it(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json={
+            **_project_init_payload("Delivery scope workflow"),
+            "tenant_id": "tenant_scope",
+            "workspace_id": "ws_scope",
+        },
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_delivery_scope",
+        node_id="node_delivery_scope",
+        tenant_id="tenant_scope",
+        workspace_id="ws_scope",
+    )
+
+    assignments_data = _worker_assignments_data(
+        client,
+        tenant_id="tenant_scope",
+        workspace_id="ws_scope",
+    )
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package_response = client.get(_local_path_from_url(execution_package_url))
+    execution_package_data = execution_package_response.json()["data"]
+    artifact_payload = _worker_artifact_payloads(execution_package_data)["art://inputs/brief.md"]
+    command_url = execution_package_data["command_endpoints"]["ticket_start_url"]
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE workflow_projection
+            SET workspace_id = ?
+            WHERE workflow_id = ?
+            """,
+            ("ws_other", workflow_id),
+        )
+
+    rejected_execution = client.get(_local_path_from_url(execution_package_url))
+    rejected_artifact = client.get(_local_path_from_url(artifact_payload["content_url"]))
+    rejected_command = client.post(
+        _local_path_from_url(command_url),
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": "tkt_delivery_scope",
+            "node_id": "node_delivery_scope",
+            "idempotency_key": "worker-runtime:start:tkt_delivery_scope",
+        },
+    )
+
+    rejection_logs = _list_worker_auth_rejections(client)
+
+    assert rejected_execution.status_code == 403
+    assert rejected_artifact.status_code == 403
+    assert rejected_command.status_code == 403
+    assert {log["route_family"] for log in rejection_logs[-3:]} == {
+        "execution_package",
+        "artifact_read",
+        "command",
+    }
+    assert all(log["reason_code"] == "workspace_mismatch" for log in rejection_logs[-3:])
 
 
 def test_worker_runtime_signed_execution_package_url_rejects_expired_token(

@@ -27,6 +27,8 @@ class WorkerDeliveryTokenClaims:
     worker_id: str
     session_id: str
     credential_version: int
+    tenant_id: str
+    workspace_id: str
     ticket_id: str
     artifact_ref: str | None
     artifact_action: WorkerArtifactAction | None
@@ -63,6 +65,8 @@ def issue_worker_delivery_token(
     worker_id: str,
     session_id: str,
     credential_version: int,
+    tenant_id: str,
+    workspace_id: str,
     ticket_id: str,
     issued_at: datetime,
     ttl_sec: int,
@@ -78,6 +82,8 @@ def issue_worker_delivery_token(
         "worker_id": worker_id,
         "session_id": session_id,
         "credential_version": credential_version,
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "ticket_id": ticket_id,
         "artifact_ref": artifact_ref,
         "artifact_action": artifact_action,
@@ -151,6 +157,8 @@ def validate_worker_delivery_token(
         worker_id=str(payload.get("worker_id") or ""),
         session_id=str(payload.get("session_id") or ""),
         credential_version=credential_version,
+        tenant_id=str(payload.get("tenant_id") or ""),
+        workspace_id=str(payload.get("workspace_id") or ""),
         ticket_id=str(payload.get("ticket_id") or ""),
         artifact_ref=(
             str(payload["artifact_ref"]) if payload.get("artifact_ref") is not None else None
@@ -164,7 +172,13 @@ def validate_worker_delivery_token(
         issued_at=issued_at,
         expires_at=expires_at,
     )
-    if not claims.grant_id or not claims.session_id or claims.credential_version <= 0:
+    if (
+        not claims.grant_id
+        or not claims.session_id
+        or claims.credential_version <= 0
+        or not claims.tenant_id
+        or not claims.workspace_id
+    ):
         raise HTTPException(status_code=401, detail="Worker delivery token is invalid.")
 
     if claims.scope != expected_scope:

@@ -58,6 +58,8 @@ def _create_leased_worker_ticket(client, *, workflow_id: str, ticket_id: str, no
                 "on_schema_error": "retry",
                 "on_repeat_failure": "escalate_ceo",
             },
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
             "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
         },
     )
@@ -130,6 +132,8 @@ def test_worker_auth_cli_issue_bootstrap_prints_usable_token(db_path, monkeypatc
     assert exit_code == 0
     assert output["worker_id"] == "emp_frontend_2"
     assert output["credential_version"] == 1
+    assert output["tenant_id"] == "tenant_default"
+    assert output["workspace_id"] == "ws_default"
     assert output["bootstrap_token"]
     assert output["expires_at"]
 
@@ -148,7 +152,166 @@ def test_worker_auth_cli_rotate_bootstrap_bumps_credential_version(db_path, monk
     assert exit_code == 0
     assert output["worker_id"] == "emp_frontend_2"
     assert output["credential_version"] == 2
+    assert output["tenant_id"] == "tenant_default"
+    assert output["workspace_id"] == "ws_default"
     assert output["bootstrap_token"]
+
+
+def test_worker_auth_cli_list_delivery_grants_supports_tenant_and_workspace_filters(
+    client,
+    db_path,
+    set_ticket_time,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    from app.worker_auth_cli import main
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_leased_worker_ticket(
+        client,
+        workflow_id="wf_cli_scope",
+        ticket_id="tkt_cli_scope",
+        node_id="node_cli_scope",
+    )
+
+    assert main(["issue-bootstrap", "--worker-id", "emp_frontend_2", "--ttl-sec", "120"]) == 0
+    bootstrap_output = json.loads(capsys.readouterr().out)
+    _bootstrap_worker_execution_package(client, bootstrap_output["bootstrap_token"])
+
+    exit_code = main(
+        [
+            "list-delivery-grants",
+            "--tenant-id",
+            "tenant_default",
+            "--workspace-id",
+            "ws_default",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["count"] > 0
+    assert all(grant["tenant_id"] == "tenant_default" for grant in output["grants"])
+    assert all(grant["workspace_id"] == "ws_default" for grant in output["grants"])
+
+
+def test_worker_auth_cli_list_sessions_filters_by_scope(
+    client,
+    db_path,
+    set_ticket_time,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+
+    from app.worker_auth_cli import main
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_leased_worker_ticket(
+        client,
+        workflow_id="wf_cli_sessions",
+        ticket_id="tkt_cli_sessions",
+        node_id="node_cli_sessions",
+    )
+
+    assert main(["issue-bootstrap", "--worker-id", "emp_frontend_2", "--ttl-sec", "120"]) == 0
+    bootstrap_output = json.loads(capsys.readouterr().out)
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": bootstrap_output["bootstrap_token"]},
+    )
+    assert assignments_response.status_code == 200
+
+    exit_code = main(
+        [
+            "list-sessions",
+            "--worker-id",
+            "emp_frontend_2",
+            "--tenant-id",
+            "tenant_default",
+            "--workspace-id",
+            "ws_default",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["count"] == 1
+    assert output["sessions"][0]["worker_id"] == "emp_frontend_2"
+    assert output["sessions"][0]["tenant_id"] == "tenant_default"
+    assert output["sessions"][0]["workspace_id"] == "ws_default"
+
+
+def test_worker_auth_cli_list_auth_rejections_returns_scope_filtered_rows(
+    client,
+    db_path,
+    set_ticket_time,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+
+    from app.worker_auth_cli import main
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_leased_worker_ticket(
+        client,
+        workflow_id="wf_cli_rejections",
+        ticket_id="tkt_cli_rejections",
+        node_id="node_cli_rejections",
+    )
+
+    assert main(["issue-bootstrap", "--worker-id", "emp_frontend_2", "--ttl-sec", "120"]) == 0
+    bootstrap_output = json.loads(capsys.readouterr().out)
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": bootstrap_output["bootstrap_token"]},
+    )
+    session_token = assignments_response.json()["data"]["session_token"]
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET workspace_id = ?
+            WHERE ticket_id = ?
+            """,
+            ("ws_other", "tkt_cli_rejections"),
+        )
+
+    rejected_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Session": session_token},
+    )
+    assert rejected_response.status_code == 403
+
+    exit_code = main(
+        [
+            "list-auth-rejections",
+            "--worker-id",
+            "emp_frontend_2",
+            "--tenant-id",
+            "tenant_default",
+            "--workspace-id",
+            "ws_default",
+            "--route-family",
+            "assignments",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["count"] == 1
+    assert output["rejections"][0]["route_family"] == "assignments"
+    assert output["rejections"][0]["reason_code"] == "workspace_mismatch"
 
 
 def test_worker_auth_cli_revoke_bootstrap_invalidates_old_token(

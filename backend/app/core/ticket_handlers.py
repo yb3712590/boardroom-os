@@ -40,6 +40,8 @@ from app.core.artifacts import (
 from app.core.constants import (
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
+    DEFAULT_TENANT_ID,
+    DEFAULT_WORKSPACE_ID,
     DEFAULT_LEASE_TIMEOUT_SEC,
     DEFAULT_REPEAT_FAILURE_THRESHOLD,
     DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER,
@@ -2027,6 +2029,37 @@ def handle_ticket_create(
                 ),
             )
 
+        workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
+        tenant_id = payload.tenant_id or (
+            str(workflow.get("tenant_id")) if workflow is not None else DEFAULT_TENANT_ID
+        )
+        workspace_id = payload.workspace_id or (
+            str(workflow.get("workspace_id")) if workflow is not None else DEFAULT_WORKSPACE_ID
+        )
+        if workflow is not None:
+            if tenant_id != str(workflow.get("tenant_id") or ""):
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        f"Ticket {payload.ticket_id} tenant_id {tenant_id} does not match workflow "
+                        f"{payload.workflow_id} tenant_id {workflow['tenant_id']}."
+                    ),
+                )
+            if workspace_id != str(workflow.get("workspace_id") or ""):
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        f"Ticket {payload.ticket_id} workspace_id {workspace_id} does not match workflow "
+                        f"{payload.workflow_id} workspace_id {workflow['workspace_id']}."
+                    ),
+                )
+
         event_row = repository.insert_event(
             connection,
             event_type=EVENT_TICKET_CREATED,
@@ -2036,7 +2069,11 @@ def handle_ticket_create(
             idempotency_key=payload.idempotency_key,
             causation_id=command_id,
             correlation_id=payload.workflow_id,
-            payload=payload.model_dump(mode="json"),
+            payload={
+                **payload.model_dump(mode="json"),
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+            },
             occurred_at=received_at,
         )
         if event_row is None:

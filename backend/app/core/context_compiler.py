@@ -46,6 +46,7 @@ from app.contracts.runtime import (
     CompileRequestWorkerBinding,
 )
 from app.core.artifacts import build_artifact_access_descriptor
+from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import get_output_schema_body
 from app.core.time import now_local
@@ -143,6 +144,8 @@ def _build_execution_package_meta(compile_request: CompileRequest) -> CompiledEx
         node_id=compile_request.meta.node_id,
         attempt_no=compile_request.meta.attempt_no,
         lease_owner=compile_request.worker_binding.lease_owner,
+        tenant_id=compile_request.meta.tenant_id,
+        workspace_id=compile_request.meta.workspace_id,
         compiler_version=MINIMAL_CONTEXT_COMPILER_VERSION,
     )
 
@@ -238,6 +241,10 @@ def build_compile_request(
     attempt_no = int(created_spec.get("attempt_no") or 0)
     if attempt_no <= 0:
         raise ValueError("Ticket attempt_no is missing for runtime compilation.")
+    tenant_id = str(ticket.get("tenant_id") or created_spec.get("tenant_id") or DEFAULT_TENANT_ID)
+    workspace_id = str(
+        ticket.get("workspace_id") or created_spec.get("workspace_id") or DEFAULT_WORKSPACE_ID
+    )
 
     return CompileRequest(
         meta=CompileRequestMeta(
@@ -246,6 +253,8 @@ def build_compile_request(
             workflow_id=ticket["workflow_id"],
             node_id=ticket["node_id"],
             attempt_no=attempt_no,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
         ),
         control_refs=CompileRequestControlRefs(
             role_profile_ref=str(created_spec.get("role_profile_ref") or ""),
@@ -257,6 +266,8 @@ def build_compile_request(
             lease_owner=lease_owner,
             employee_id=lease_owner,
             employee_role_type=str(employee.get("role_type") or "unknown"),
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
             skill_profile=dict(employee.get("skill_profile_json") or {}),
             personality_profile=dict(employee.get("personality_profile_json") or {}),
             aesthetic_profile=dict(employee.get("aesthetic_profile_json") or {}),

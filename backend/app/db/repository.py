@@ -14,6 +14,8 @@ from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
+    DEFAULT_TENANT_ID,
+    DEFAULT_WORKSPACE_ID,
     EVENT_ARTIFACT_CLEANUP_COMPLETED,
     EVENT_ARTIFACT_DELETED,
     EVENT_ARTIFACT_EXPIRED,
@@ -100,12 +102,14 @@ class ControlPlaneRepository:
         with self.connection() as connection:
             connection.executescript(SCHEMA_SQL)
             self._ensure_approval_projection_shape(connection)
+            self._ensure_workflow_projection_shape(connection)
             self._ensure_ticket_projection_shape(connection)
             self._ensure_node_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
             self._ensure_worker_bootstrap_state_shape(connection)
             self._ensure_worker_session_shape(connection)
             self._ensure_worker_delivery_grant_shape(connection)
+            self._ensure_worker_auth_rejection_log_shape(connection)
             self._ensure_incident_projection_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_artifact_index_shape(connection)
@@ -227,6 +231,8 @@ class ControlPlaneRepository:
                     workflow_id,
                     title,
                     north_star_goal,
+                    tenant_id,
+                    workspace_id,
                     current_stage,
                     status,
                     budget_total,
@@ -236,12 +242,14 @@ class ControlPlaneRepository:
                     started_at,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["workflow_id"],
                     projection["title"],
                     projection["north_star_goal"],
+                    projection["tenant_id"],
+                    projection["workspace_id"],
                     projection["current_stage"],
                     projection["status"],
                     projection["budget_total"],
@@ -267,6 +275,8 @@ class ControlPlaneRepository:
                     ticket_id,
                     workflow_id,
                     node_id,
+                    tenant_id,
+                    workspace_id,
                     status,
                     lease_owner,
                     lease_expires_at,
@@ -284,12 +294,14 @@ class ControlPlaneRepository:
                     blocking_reason_code,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["ticket_id"],
                     projection["workflow_id"],
                     projection["node_id"],
+                    projection["tenant_id"],
+                    projection["workspace_id"],
                     projection["status"],
                     projection.get("lease_owner"),
                     projection.get("lease_expires_at"),
@@ -405,7 +417,31 @@ class ControlPlaneRepository:
             ).fetchone()
             if row is None:
                 return None
-            return dict(row)
+            return self._convert_workflow_projection_row(row)
+
+    def get_workflow_projection(
+        self,
+        workflow_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM workflow_projection WHERE workflow_id = ?",
+                (workflow_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_workflow_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM workflow_projection WHERE workflow_id = ?",
+                (workflow_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_workflow_projection_row(row)
 
     def get_current_ticket_projection(
         self,
@@ -638,6 +674,8 @@ class ControlPlaneRepository:
         *,
         worker_id: str,
         at: datetime,
+        tenant_id: str = DEFAULT_TENANT_ID,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> dict[str, Any]:
         existing = self.get_worker_bootstrap_state(worker_id, connection=connection)
         if existing is not None:
@@ -648,12 +686,14 @@ class ControlPlaneRepository:
             INSERT INTO worker_bootstrap_state (
                 worker_id,
                 credential_version,
+                tenant_id,
+                workspace_id,
                 revoked_before,
                 rotated_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (worker_id, 1, None, None, at.isoformat()),
+            (worker_id, 1, tenant_id, workspace_id, None, None, at.isoformat()),
         )
         created = self.get_worker_bootstrap_state(worker_id, connection=connection)
         if created is None:
@@ -748,6 +788,8 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         *,
         worker_id: str,
+        tenant_id: str,
+        workspace_id: str,
         issued_at: datetime,
         expires_at: datetime,
         credential_version: int,
@@ -758,16 +800,20 @@ class ControlPlaneRepository:
             INSERT INTO worker_session (
                 session_id,
                 worker_id,
+                tenant_id,
+                workspace_id,
                 issued_at,
                 expires_at,
                 last_seen_at,
                 revoked_at,
                 credential_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
                 worker_id,
+                tenant_id,
+                workspace_id,
                 issued_at.isoformat(),
                 expires_at.isoformat(),
                 issued_at.isoformat(),
@@ -797,6 +843,43 @@ class ControlPlaneRepository:
             (expires_at.isoformat(), refreshed_at.isoformat(), session_id),
         )
         return self.get_worker_session(session_id, connection=connection)
+
+    def list_worker_sessions(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        worker_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        if active_only:
+            clauses.append("revoked_at IS NULL")
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT * FROM worker_session
+            {where_clause}
+            ORDER BY issued_at ASC, session_id ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_session_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_session_row(row) for row in rows]
 
     def revoke_worker_sessions(
         self,
@@ -868,6 +951,8 @@ class ControlPlaneRepository:
         worker_id: str,
         session_id: str,
         credential_version: int,
+        tenant_id: str,
+        workspace_id: str,
         ticket_id: str,
         issued_at: datetime,
         expires_at: datetime,
@@ -884,6 +969,8 @@ class ControlPlaneRepository:
                 worker_id,
                 session_id,
                 credential_version,
+                tenant_id,
+                workspace_id,
                 ticket_id,
                 artifact_ref,
                 artifact_action,
@@ -892,7 +979,7 @@ class ControlPlaneRepository:
                 expires_at,
                 revoked_at,
                 revoke_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 grant_id,
@@ -900,6 +987,8 @@ class ControlPlaneRepository:
                 worker_id,
                 session_id,
                 credential_version,
+                tenant_id,
+                workspace_id,
                 ticket_id,
                 artifact_ref,
                 artifact_action,
@@ -922,6 +1011,8 @@ class ControlPlaneRepository:
         worker_id: str | None = None,
         session_id: str | None = None,
         ticket_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
         active_only: bool = False,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
@@ -935,6 +1026,12 @@ class ControlPlaneRepository:
         if ticket_id is not None:
             clauses.append("ticket_id = ?")
             params.append(ticket_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
         if active_only:
             clauses.append("revoked_at IS NULL")
         where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -997,6 +1094,95 @@ class ControlPlaneRepository:
             tuple(params),
         )
         return int(cursor.rowcount or 0)
+
+    def append_worker_auth_rejection_log(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        occurred_at: datetime,
+        route_family: str,
+        reason_code: str,
+        worker_id: str | None = None,
+        session_id: str | None = None,
+        grant_id: str | None = None,
+        ticket_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        rejection_id = new_prefixed_id("wreject")
+        connection.execute(
+            """
+            INSERT INTO worker_auth_rejection_log (
+                rejection_id,
+                occurred_at,
+                route_family,
+                reason_code,
+                worker_id,
+                session_id,
+                grant_id,
+                ticket_id,
+                tenant_id,
+                workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rejection_id,
+                occurred_at.isoformat(),
+                route_family,
+                reason_code,
+                worker_id,
+                session_id,
+                grant_id,
+                ticket_id,
+                tenant_id,
+                workspace_id,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM worker_auth_rejection_log WHERE rejection_id = ?",
+            (rejection_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Worker auth rejection log could not be created.")
+        return self._convert_worker_auth_rejection_row(row)
+
+    def list_worker_auth_rejection_logs(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        worker_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        route_family: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        if route_family is not None:
+            clauses.append("route_family = ?")
+            params.append(route_family)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT * FROM worker_auth_rejection_log
+            {where_clause}
+            ORDER BY occurred_at ASC, rejection_id ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_auth_rejection_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_auth_rejection_row(row) for row in rows]
 
     def list_ticket_projections_by_statuses(
         self,
@@ -2020,6 +2206,16 @@ class ControlPlaneRepository:
         converted["path"] = converted["logical_path"]
         return converted
 
+    def _convert_workflow_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("deadline_at", "started_at", "updated_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["budget_total"] = int(converted.get("budget_total") or 0)
+        converted["budget_used"] = int(converted.get("budget_used") or 0)
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
     def _convert_ticket_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         if converted.get("updated_at"):
@@ -2089,6 +2285,12 @@ class ControlPlaneRepository:
             if converted.get(field):
                 converted[field] = datetime.fromisoformat(converted[field])
         converted["credential_version"] = int(converted.get("credential_version") or 0)
+        return converted
+
+    def _convert_worker_auth_rejection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        if converted.get("occurred_at"):
+            converted["occurred_at"] = datetime.fromisoformat(converted["occurred_at"])
         return converted
 
     def _convert_incident_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -2392,6 +2594,33 @@ class ControlPlaneRepository:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_projection_review_pack_id ON approval_projection(review_pack_id)"
         )
 
+    def _ensure_workflow_projection_shape(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(workflow_projection)").fetchall()
+        }
+        required_columns = {
+            "workflow_id": "TEXT",
+            "title": "TEXT",
+            "north_star_goal": "TEXT",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
+            "current_stage": "TEXT",
+            "status": "TEXT",
+            "budget_total": "INTEGER",
+            "budget_used": "INTEGER",
+            "board_gate_state": "TEXT",
+            "deadline_at": "TEXT",
+            "started_at": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE workflow_projection ADD COLUMN {column_name} {column_type}"
+                )
+
     def _ensure_ticket_projection_shape(self, connection: sqlite3.Connection) -> None:
         existing_columns = {
             row["name"]
@@ -2401,6 +2630,8 @@ class ControlPlaneRepository:
             "ticket_id": "TEXT",
             "workflow_id": "TEXT",
             "node_id": "TEXT",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
             "status": "TEXT",
             "lease_owner": "TEXT",
             "lease_expires_at": "TEXT",
@@ -2493,6 +2724,8 @@ class ControlPlaneRepository:
             CREATE TABLE IF NOT EXISTS worker_bootstrap_state (
                 worker_id TEXT PRIMARY KEY,
                 credential_version INTEGER NOT NULL,
+                tenant_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
                 revoked_before TEXT,
                 rotated_at TEXT,
                 updated_at TEXT NOT NULL
@@ -2506,6 +2739,8 @@ class ControlPlaneRepository:
         required_columns = {
             "worker_id": "TEXT",
             "credential_version": "INTEGER",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
             "revoked_before": "TEXT",
             "rotated_at": "TEXT",
             "updated_at": "TEXT",
@@ -2522,6 +2757,8 @@ class ControlPlaneRepository:
             CREATE TABLE IF NOT EXISTS worker_session (
                 session_id TEXT PRIMARY KEY,
                 worker_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
                 issued_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL,
@@ -2537,6 +2774,8 @@ class ControlPlaneRepository:
         required_columns = {
             "session_id": "TEXT",
             "worker_id": "TEXT",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
             "issued_at": "TEXT",
             "expires_at": "TEXT",
             "last_seen_at": "TEXT",
@@ -2554,6 +2793,9 @@ class ControlPlaneRepository:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_session_expires_at ON worker_session(expires_at)"
         )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_session_scope ON worker_session(tenant_id, workspace_id)"
+        )
 
     def _ensure_worker_delivery_grant_shape(self, connection: sqlite3.Connection) -> None:
         connection.execute(
@@ -2564,6 +2806,8 @@ class ControlPlaneRepository:
                 worker_id TEXT NOT NULL,
                 session_id TEXT NOT NULL,
                 credential_version INTEGER NOT NULL,
+                tenant_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
                 ticket_id TEXT NOT NULL,
                 artifact_ref TEXT,
                 artifact_action TEXT,
@@ -2585,6 +2829,8 @@ class ControlPlaneRepository:
             "worker_id": "TEXT",
             "session_id": "TEXT",
             "credential_version": "INTEGER",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
             "ticket_id": "TEXT",
             "artifact_ref": "TEXT",
             "artifact_action": "TEXT",
@@ -2610,6 +2856,54 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_revoked_at ON worker_delivery_grant(revoked_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_scope ON worker_delivery_grant(tenant_id, workspace_id)"
+        )
+
+    def _ensure_worker_auth_rejection_log_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_auth_rejection_log (
+                rejection_id TEXT PRIMARY KEY,
+                occurred_at TEXT NOT NULL,
+                route_family TEXT NOT NULL,
+                reason_code TEXT NOT NULL,
+                worker_id TEXT,
+                session_id TEXT,
+                grant_id TEXT,
+                ticket_id TEXT,
+                tenant_id TEXT,
+                workspace_id TEXT
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(worker_auth_rejection_log)").fetchall()
+        }
+        required_columns = {
+            "rejection_id": "TEXT",
+            "occurred_at": "TEXT",
+            "route_family": "TEXT",
+            "reason_code": "TEXT",
+            "worker_id": "TEXT",
+            "session_id": "TEXT",
+            "grant_id": "TEXT",
+            "ticket_id": "TEXT",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE worker_auth_rejection_log ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_auth_rejection_log_occurred_at ON worker_auth_rejection_log(occurred_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_auth_rejection_log_scope ON worker_auth_rejection_log(tenant_id, workspace_id)"
         )
 
     def _ensure_incident_projection_shape(self, connection: sqlite3.Connection) -> None:

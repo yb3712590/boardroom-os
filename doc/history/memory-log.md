@@ -2178,3 +2178,123 @@
 - automatic background cleanup scheduling and richer retention classes
 - broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
 - richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T23:58:00+08:00
+
+### Session Context
+- User asked to keep moving on the existing Runtime / Backend line and explicitly switch the focus to stronger multi-tenant remote isolation.
+- The requested slice chain had to stay on the current worker auth path instead of opening a new direction:
+  - workflow / ticket scope truth
+  - bootstrap / session / delivery-grant scope binding
+  - four-layer assignment and delivery validation
+  - CLI scope queries, rejection audit, tests, and docs
+
+### Boundary Chosen
+- Single boundary for this round: stronger multi-tenant remote isolation on top of the existing `bootstrap -> refreshable session -> persisted delivery grant` worker handoff chain.
+- The round intentionally did not widen into frontend work, OAuth / mTLS, object storage, or a general tenant-management system.
+
+### Design / Code Gap Identified
+- Code already had real worker bootstrap, refreshable sessions, and per-URL delivery grants.
+- But runtime truth still stopped at:
+  - `worker_id`
+  - `session_id`
+  - `credential_version`
+  - `ticket_id`
+  - `grant_id`
+- `tenant_id/workspace_id` existed only as UI-ish defaults and were not enforced across workflow, ticket, bootstrap state, session state, delivery grants, assignments, and delivery validation.
+
+### Slice Landed
+- Added `tenant_id` / `workspace_id` to:
+  - `ProjectInitCommand`
+  - `TicketCreateCommand`
+  - workflow projection
+  - ticket projection
+  - worker bootstrap state
+  - worker session
+  - worker delivery grant
+- Default compatibility remains:
+  - `tenant_default`
+  - `ws_default`
+- `project-init` now persists those scope fields into `BOARD_DIRECTIVE_RECEIVED` and `WORKFLOW_CREATED`.
+- `ticket-create` now:
+  - inherits workflow scope when the workflow projection exists
+  - rejects explicit scope mismatch against the workflow
+  - falls back to the default single-tenant scope when no workflow projection exists yet
+- Worker bootstrap and session tokens now carry `tenant_id/workspace_id`.
+- Delivery tokens and persisted delivery grants now also carry `tenant_id/workspace_id`.
+- Context Compiler now includes the ticket scope in:
+  - `CompileRequest.meta`
+  - `CompileRequest.worker_binding`
+  - `CompiledExecutionPackage.meta`
+- Assignment responses now return:
+  - `tenant_id`
+  - `workspace_id`
+- Delivered execution-package responses now also return:
+  - `tenant_id`
+  - `workspace_id`
+- Assignment selection and delivery auth now use one worker principal carrying:
+  - worker id
+  - session id
+  - credential version
+  - tenant id
+  - workspace id
+
+### Validation Hardening Landed
+- Assignment entry now enforces:
+  - bootstrap/session token validity
+  - claim vs persisted bootstrap/session state match
+  - active worker check
+  - owned ticket plus `tenant_id/workspace_id` consistency
+- Delivery entry now enforces:
+  - token claim route match
+  - claim vs persisted delivery grant match
+  - claim vs bootstrap/session state match
+  - owned ticket plus ticket/workflow `tenant_id/workspace_id` consistency
+- Runtime no longer silently skips cross-scope tickets for a worker session; scope mismatch now rejects the request.
+
+### New Audit / CLI Surface
+- Added persisted `worker_auth_rejection_log`.
+- Rejection rows now store:
+  - `occurred_at`
+  - `route_family`
+  - `reason_code`
+  - `worker_id`
+  - `session_id`
+  - `grant_id`
+  - `ticket_id`
+  - `tenant_id`
+  - `workspace_id`
+- Added worker auth CLI scope support:
+  - `issue-bootstrap` and `rotate-bootstrap` now print scope fields
+  - `list-delivery-grants` now filters by `tenant_id/workspace_id`
+  - new `list-sessions`
+  - new `list-auth-rejections`
+
+### Design / Test Adjustments
+- Reducer replay now defaults legacy events without explicit scope to:
+  - `tenant_default`
+  - `ws_default`
+- Reducer tests were updated to reflect those real defaulted scope fields.
+- One new API test was tightened to create a real workflow before mutating workflow scope, so it verifies the intended workflow-side mismatch instead of mutating a row that never existed.
+
+### Verification
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests\test_api.py backend\tests\test_worker_auth_cli.py backend\tests\test_context_compiler.py -q`
+  - `132 passed`
+- `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend\tests -q`
+  - `163 passed`
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- one worker still binds to one active `tenant_id/workspace_id`; multi-binding per worker is still not implemented
+- there is still no dedicated tenant-management control plane or broader public-internet auth stack beyond the current token/session/grant/ticket-scope checks
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer provider routing and multi-provider control-plane surface

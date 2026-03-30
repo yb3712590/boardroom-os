@@ -1224,7 +1224,10 @@ Assignment authentication headers:
 Behavior rules:
 
 - assignment list includes only the current worker's `LEASED`, `EXECUTING`, and `CANCEL_REQUESTED` tickets
+- bootstrap state, active session, and each persisted delivery grant are now bound to one worker `tenant_id/workspace_id` scope
 - `GET /api/v1/worker-runtime/assignments` remains the bootstrap call and now returns:
+  - `tenant_id`
+  - `workspace_id`
   - `session_id`
   - `session_token`
   - `session_expires_at`
@@ -1234,6 +1237,8 @@ Behavior rules:
 - bootstrap-token calls create a fresh worker session
 - session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`
 - execution-package reads require a signed `access_token`, enforce current lease ownership, and return:
+  - `tenant_id`
+  - `workspace_id`
   - persisted `CompiledExecutionPackage`
   - `output_schema_body`
   - `bundle_id`
@@ -1251,11 +1256,10 @@ Behavior rules:
 - `GET /api/v1/worker-runtime/artifacts/by-ref` conservatively reuses any valid artifact token for the same `ticket_id + artifact_ref`; backend does not mint a dedicated metadata-only grant
 - signed delivery URLs are bound to both one worker `session_id` and one persisted delivery grant; revoking that session or rotating the bootstrap credential invalidates the related active grants
 - signed delivery validation is ordered as:
-  - signature + expiry
+  - token claim exact match for route family, ticket id, and optional artifact / command target
   - persisted grant exists, is not revoked, is not expired, and matches the claim set
-  - active session exists and is not revoked
-  - session credential version still matches the worker's current bootstrap credential version
-  - current worker ownership of the ticket
+  - active session exists, is not revoked, and still matches the worker bootstrap binding
+  - current worker ownership of the ticket plus ticket / workflow `tenant_id/workspace_id` consistency
   - existing artifact access and lifecycle rules
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` signs bootstrap tokens and falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when omitted
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` controls how long a returned `session_token` stays valid before the worker must refresh it on `assignments`
@@ -1265,6 +1269,8 @@ Behavior rules:
   - `DELETED` / `EXPIRED` content reads return gone-style errors
 - worker delivery routes reject the old shared-secret header fallback; local debugging should first call `assignments`, then use the returned signed URLs
 - local operators can inspect or revoke one specific delivery grant through `python -m app.worker_auth_cli list-delivery-grants` and `python -m app.worker_auth_cli revoke-delivery-grant --grant-id ...`
+- local operators can inspect active worker sessions through `python -m app.worker_auth_cli list-sessions`
+- local operators can inspect persisted auth rejection rows through `python -m app.worker_auth_cli list-auth-rejections`
 - worker command routes inject worker identity from the signed token and then reuse the existing ticket handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker governance stay unchanged
 
 ### 10.2 Board Approve

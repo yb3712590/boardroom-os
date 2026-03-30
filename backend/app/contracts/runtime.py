@@ -15,6 +15,8 @@ class CompileRequestMeta(StrictModel):
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
+    tenant_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
 
 
 class CompileRequestControlRefs(StrictModel):
@@ -28,6 +30,8 @@ class CompileRequestWorkerBinding(StrictModel):
     lease_owner: str = Field(min_length=1)
     employee_id: str = Field(min_length=1)
     employee_role_type: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
     skill_profile: dict[str, Any] = Field(default_factory=dict)
     personality_profile: dict[str, Any] = Field(default_factory=dict)
     aesthetic_profile: dict[str, Any] = Field(default_factory=dict)
@@ -267,6 +271,8 @@ class CompiledExecutionPackageMeta(StrictModel):
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
     lease_owner: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
     compiler_version: str = Field(min_length=1)
 
 

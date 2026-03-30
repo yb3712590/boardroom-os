@@ -5,6 +5,8 @@ import json
 
 from app.contracts.commands import CommandAckEnvelope, CommandAckStatus, ProjectInitCommand
 from app.core.constants import (
+    DEFAULT_TENANT_ID,
+    DEFAULT_WORKSPACE_ID,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_WORKFLOW_CREATED,
@@ -38,6 +40,8 @@ def handle_project_init(
     directive_event_key = f"{command_key}:board-directive"
 
     with repository.transaction() as connection:
+        tenant_id = payload.tenant_id or DEFAULT_TENANT_ID
+        workspace_id = payload.workspace_id or DEFAULT_WORKSPACE_ID
         repository.insert_event(
             connection,
             event_type=EVENT_SYSTEM_INITIALIZED,
@@ -76,7 +80,11 @@ def handle_project_init(
             idempotency_key=directive_event_key,
             causation_id=command_id,
             correlation_id=workflow_id,
-            payload=payload.model_dump(mode="json"),
+            payload={
+                **payload.model_dump(mode="json"),
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+            },
             occurred_at=received_at,
         )
         repository.insert_event(
@@ -91,6 +99,8 @@ def handle_project_init(
             payload={
                 **payload.model_dump(mode="json"),
                 "title": payload.north_star_goal,
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
             },
             occurred_at=received_at,
         )

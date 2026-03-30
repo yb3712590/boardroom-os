@@ -28,7 +28,7 @@ What is already real:
 - a ticket artifacts projection plus strict output-schema validation for `ui_milestone_review@1` and `consensus_document@1`
 - artifact metadata / content / preview endpoints keyed by `artifact_ref`
 - artifact lifecycle commands for delete and cleanup
-- an external worker handoff surface where workers bootstrap with per-worker tokens, refresh per-worker sessions, and then continue through short-lived signed URLs under `/api/v1/worker-runtime/*`, now backed by persisted per-URL delivery grants
+- an external worker handoff surface where workers bootstrap with per-worker tokens, refresh per-worker sessions, and then continue through short-lived signed URLs under `/api/v1/worker-runtime/*`, now backed by persisted per-URL delivery grants plus worker-side `tenant_id/workspace_id` binding
 
 ## Quick Start
 
@@ -65,6 +65,8 @@ cd backend
 source .venv/bin/activate
 python -m app.worker_auth_cli issue-bootstrap --worker-id emp_frontend_2
 python -m app.worker_auth_cli list-delivery-grants --worker-id emp_frontend_2
+python -m app.worker_auth_cli list-sessions --worker-id emp_frontend_2
+python -m app.worker_auth_cli list-auth-rejections --worker-id emp_frontend_2
 python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 ```
 
@@ -81,11 +83,13 @@ Mode notes:
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` remains the default, and the runner / in-process scheduler still executes leased tickets locally.
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` keeps scheduling and leasing, but stops automatic local `start / execute / result-submit`.
 - Recommended bootstrap flow: issue a worker-specific bootstrap token with `python -m app.worker_auth_cli issue-bootstrap --worker-id <employee_id>`, then call `GET /api/v1/worker-runtime/assignments` with `X-Boardroom-Worker-Bootstrap`.
-- The assignments response now also returns `session_id`, `session_token`, and `session_expires_at`; workers can keep polling assignments with `X-Boardroom-Worker-Session` and receive a refreshed session token plus a fresh batch of delivery URLs.
+- The bootstrap, session, and delivery-grant state is now bound to one `tenant_id/workspace_id` pair per worker; `rotate-bootstrap` preserves that binding instead of silently changing scope.
+- The assignments response now also returns `tenant_id`, `workspace_id`, `session_id`, `session_token`, and `session_expires_at`; workers can keep polling assignments with `X-Boardroom-Worker-Session` and receive a refreshed session token plus a fresh batch of delivery URLs.
 - The returned execution-package URLs, artifact URLs, and worker command URLs all carry short-lived `access_token` query parameters and are now backed by persisted delivery grants.
-- Those signed delivery URLs are session-bound and grant-bound, so revoking one worker session invalidates that session's URLs, and one specific URL can also be revoked independently through the local CLI.
+- Delivered execution-package payloads now also expose `tenant_id` and `workspace_id`, while backend authorization still treats persisted worker/session/grant/ticket state as the source of truth.
+- Those signed delivery URLs are claim-bound, session-bound, grant-bound, and ticket/workflow-scope-bound, so revoking one worker session invalidates that session's URLs, one specific URL can be revoked independently through the local CLI, and cross-tenant or cross-workspace mismatches are rejected instead of being silently filtered around.
 - `/api/v1/worker-runtime/tickets/*`, `/api/v1/worker-runtime/artifacts/*`, and `/api/v1/worker-runtime/commands/*` no longer accept the old shared-secret request fallback.
-- Local operators can inspect and revoke delivery grants through `python -m app.worker_auth_cli list-delivery-grants` and `python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>`.
+- Local operators can inspect and revoke delivery grants through `python -m app.worker_auth_cli list-delivery-grants`, inspect active sessions through `python -m app.worker_auth_cli list-sessions`, and inspect worker auth rejection audit rows through `python -m app.worker_auth_cli list-auth-rejections`.
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET` signs bootstrap tokens and falls back to `BOARDROOM_OS_WORKER_SHARED_SECRET` when omitted.
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC` defaults to `86400` and controls assignment-session refresh windows.
 - `BOARDROOM_OS_PUBLIC_BASE_URL` rewrites those delivery URLs for remotely reachable workers; if omitted, the backend falls back to the incoming request base URL.
@@ -108,7 +112,8 @@ Known realities:
 
 - `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
 - Binary uploads currently go through inline base64 in `ticket-result-submit`; there is no multipart, chunked-upload, or object-storage path yet.
-- External worker handoff now supports per-worker bootstrap tokens, refreshable sessions, bootstrap rotate / revoke, session-bound signed delivery URLs, and independent delivery-grant / per-URL revocation, but stronger multi-tenant isolation and more hardened public-internet boundaries are still not implemented.
+- External worker handoff now supports worker-side `tenant_id/workspace_id` binding across workflow, ticket, bootstrap state, session, and delivery grant, plus four-layer runtime validation and persisted auth-rejection audit rows.
+- Broader multi-tenant administration is still not implemented: one worker still binds to one active `tenant_id/workspace_id`, and public-internet hardening beyond the current token/session/grant/ticket-scope checks remains open work.
 
 ## Docs
 

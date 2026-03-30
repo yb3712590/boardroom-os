@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS workflow_projection (
     workflow_id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     north_star_goal TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
     current_stage TEXT NOT NULL,
     status TEXT NOT NULL,
     budget_total INTEGER NOT NULL,
@@ -50,6 +52,8 @@ CREATE TABLE IF NOT EXISTS ticket_projection (
     ticket_id TEXT PRIMARY KEY,
     workflow_id TEXT NOT NULL,
     node_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
     status TEXT NOT NULL,
     lease_owner TEXT,
     lease_expires_at TEXT,
@@ -97,6 +101,8 @@ CREATE TABLE IF NOT EXISTS employee_projection (
 CREATE TABLE IF NOT EXISTS worker_bootstrap_state (
     worker_id TEXT PRIMARY KEY,
     credential_version INTEGER NOT NULL,
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
     revoked_before TEXT,
     rotated_at TEXT,
     updated_at TEXT NOT NULL
@@ -105,6 +111,8 @@ CREATE TABLE IF NOT EXISTS worker_bootstrap_state (
 CREATE TABLE IF NOT EXISTS worker_session (
     session_id TEXT PRIMARY KEY,
     worker_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
     issued_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -118,6 +126,8 @@ CREATE TABLE IF NOT EXISTS worker_delivery_grant (
     worker_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
     credential_version INTEGER NOT NULL,
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
     ticket_id TEXT NOT NULL,
     artifact_ref TEXT,
     artifact_action TEXT,
@@ -126,6 +136,19 @@ CREATE TABLE IF NOT EXISTS worker_delivery_grant (
     expires_at TEXT NOT NULL,
     revoked_at TEXT,
     revoke_reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS worker_auth_rejection_log (
+    rejection_id TEXT PRIMARY KEY,
+    occurred_at TEXT NOT NULL,
+    route_family TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    worker_id TEXT,
+    session_id TEXT,
+    grant_id TEXT,
+    ticket_id TEXT,
+    tenant_id TEXT,
+    workspace_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS incident_projection (
@@ -245,6 +268,9 @@ ON incident_projection(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_worker_session_worker_id
 ON worker_session(worker_id);
 
+CREATE INDEX IF NOT EXISTS idx_worker_session_scope
+ON worker_session(tenant_id, workspace_id);
+
 CREATE INDEX IF NOT EXISTS idx_worker_session_expires_at
 ON worker_session(expires_at);
 
@@ -254,9 +280,18 @@ ON worker_delivery_grant(session_id);
 CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_ticket_id
 ON worker_delivery_grant(ticket_id);
 
+CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_scope
+ON worker_delivery_grant(tenant_id, workspace_id);
+
 CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_expires_at
 ON worker_delivery_grant(expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_worker_delivery_grant_revoked_at
 ON worker_delivery_grant(revoked_at);
+
+CREATE INDEX IF NOT EXISTS idx_worker_auth_rejection_log_occurred_at
+ON worker_auth_rejection_log(occurred_at);
+
+CREATE INDEX IF NOT EXISTS idx_worker_auth_rejection_log_scope
+ON worker_auth_rejection_log(tenant_id, workspace_id);
 """

@@ -71,6 +71,8 @@ class ProjectInitCommand(StrictModel):
     hard_constraints: list[str]
     budget_cap: int = Field(ge=0)
     deadline_at: datetime | None = None
+    tenant_id: str | None = Field(default=None, min_length=1)
+    workspace_id: str | None = Field(default=None, min_length=1)
 
 
 class ContextQueryPlan(StrictModel):
@@ -112,6 +114,8 @@ class TicketCreateCommand(StrictModel):
     priority: str = Field(min_length=1)
     timeout_sla_sec: int = Field(ge=1)
     deadline_at: datetime | None = None
+    tenant_id: str | None = Field(default=None, min_length=1)
+    workspace_id: str | None = Field(default=None, min_length=1)
     escalation_policy: TicketEscalationPolicy
     idempotency_key: str = Field(min_length=1)
 
