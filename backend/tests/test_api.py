@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 
 from app.core.context_compiler import compile_and_persist_execution_artifacts
@@ -56,6 +57,10 @@ def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
         "budget_cap": budget_cap,
         "deadline_at": None,
     }
+
+
+def _encode_base64(content: bytes) -> str:
+    return base64.b64encode(content).decode("ascii")
 
 
 def _seed_worker(
@@ -1060,7 +1065,12 @@ def test_ticket_result_submit_materializes_json_artifacts_and_exposes_ticket_art
     }
     assert artifacts_response.status_code == 200
     assert projected_by_ref["art://homepage/option-a.json"]["status"] == "MATERIALIZED"
+    assert projected_by_ref["art://homepage/option-a.json"]["materialization_status"] == "MATERIALIZED"
+    assert projected_by_ref["art://homepage/option-a.json"]["lifecycle_status"] == "ACTIVE"
     assert projected_by_ref["art://homepage/option-a.json"]["path"] == "artifacts/ui/homepage/option-a.json"
+    assert projected_by_ref["art://homepage/option-a.json"]["content_url"]
+    assert projected_by_ref["art://homepage/option-a.json"]["download_url"]
+    assert projected_by_ref["art://homepage/option-a.json"]["preview_url"]
 
 
 def test_ticket_result_submit_materializes_markdown_artifacts(client, set_ticket_time):
@@ -1131,6 +1141,343 @@ def test_ticket_result_submit_registers_binary_artifacts_without_materializing_t
     assert all(item["materialization_status"] == "REGISTERED_ONLY" for item in indexed_artifacts)
     assert all(item["storage_relpath"] is None for item in indexed_artifacts)
     assert all(item["status"] == "REGISTERED_ONLY" for item in artifacts_response.json()["data"]["artifacts"])
+
+    metadata_response = client.get(
+        "/api/v1/artifacts/by-ref",
+        params={"artifact_ref": "art://homepage/option-a.png"},
+    )
+    content_response = client.get(
+        "/api/v1/artifacts/content",
+        params={"artifact_ref": "art://homepage/option-a.png", "disposition": "inline"},
+    )
+
+    assert metadata_response.status_code == 200
+    assert metadata_response.json()["data"]["materialization_status"] == "REGISTERED_ONLY"
+    assert metadata_response.json()["data"]["lifecycle_status"] == "ACTIVE"
+    assert content_response.status_code == 409
+
+
+def test_ticket_result_submit_materializes_binary_image_and_exposes_read_endpoints(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    image_bytes = b"\x89PNG\r\n\x1a\nbinary-homepage-image"
+    artifact_ref = "art://homepage/mockup.png"
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=[artifact_ref],
+            payload={
+                "summary": "Homepage mockup image is attached as a materialized artifact.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Uses the uploaded mockup image.",
+                        "artifact_refs": [artifact_ref],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "artifacts/ui/homepage/mockup.png",
+                    "artifact_ref": artifact_ref,
+                    "kind": "IMAGE",
+                    "media_type": "image/png",
+                    "content_base64": _encode_base64(image_bytes),
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:binary-image",
+        ),
+    )
+
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    indexed_artifact = repository.get_artifact_by_ref(artifact_ref)
+    metadata_response = client.get("/api/v1/artifacts/by-ref", params={"artifact_ref": artifact_ref})
+    content_response = client.get(
+        "/api/v1/artifacts/content",
+        params={"artifact_ref": artifact_ref, "disposition": "inline"},
+    )
+    preview_response = client.get("/api/v1/artifacts/preview", params={"artifact_ref": artifact_ref})
+    projection_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+    projected_artifact = projection_response.json()["data"]["artifacts"][0]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert indexed_artifact is not None
+    assert indexed_artifact["materialization_status"] == "MATERIALIZED"
+    assert indexed_artifact["lifecycle_status"] == "ACTIVE"
+    assert indexed_artifact["media_type"] == "image/png"
+    assert indexed_artifact["retention_class"] == "PERSISTENT"
+    assert indexed_artifact["storage_relpath"] is not None
+    assert (artifact_store.root / indexed_artifact["storage_relpath"]).read_bytes() == image_bytes
+    assert metadata_response.status_code == 200
+    assert metadata_response.json()["data"]["artifact_ref"] == artifact_ref
+    assert metadata_response.json()["data"]["materialization_status"] == "MATERIALIZED"
+    assert metadata_response.json()["data"]["lifecycle_status"] == "ACTIVE"
+    assert metadata_response.json()["data"]["content_url"]
+    assert metadata_response.json()["data"]["download_url"]
+    assert metadata_response.json()["data"]["preview_url"]
+    assert content_response.status_code == 200
+    assert content_response.content == image_bytes
+    assert content_response.headers["content-type"] == "image/png"
+    assert "inline" in content_response.headers["content-disposition"]
+    assert preview_response.status_code == 200
+    assert preview_response.json()["data"]["preview_kind"] == "INLINE_MEDIA"
+    assert preview_response.json()["data"]["media_type"] == "image/png"
+    assert preview_response.json()["data"]["content_url"]
+    assert projected_artifact["status"] == "MATERIALIZED"
+    assert projected_artifact["materialization_status"] == "MATERIALIZED"
+    assert projected_artifact["lifecycle_status"] == "ACTIVE"
+    assert projected_artifact["content_url"]
+    assert projected_artifact["download_url"]
+    assert projected_artifact["preview_url"]
+
+
+def test_ticket_result_submit_materializes_pdf_and_preview_reports_inline_media(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    pdf_bytes = b"%PDF-1.7\nbinary board review pack\n%%EOF"
+    artifact_ref = "art://reports/homepage/board-pack.pdf"
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=[artifact_ref],
+            payload={
+                "summary": "Board review pack includes a materialized pdf artifact.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Board pack is attached as pdf.",
+                        "artifact_refs": [artifact_ref],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "reports/review/board-pack.pdf",
+                    "artifact_ref": artifact_ref,
+                    "kind": "PDF",
+                    "media_type": "application/pdf",
+                    "content_base64": _encode_base64(pdf_bytes),
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:pdf-binary",
+        ),
+    )
+
+    metadata_response = client.get("/api/v1/artifacts/by-ref", params={"artifact_ref": artifact_ref})
+    content_response = client.get(
+        "/api/v1/artifacts/content",
+        params={"artifact_ref": artifact_ref, "disposition": "attachment"},
+    )
+    preview_response = client.get("/api/v1/artifacts/preview", params={"artifact_ref": artifact_ref})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert metadata_response.status_code == 200
+    assert metadata_response.json()["data"]["materialization_status"] == "MATERIALIZED"
+    assert metadata_response.json()["data"]["media_type"] == "application/pdf"
+    assert content_response.status_code == 200
+    assert content_response.content == pdf_bytes
+    assert "attachment" in content_response.headers["content-disposition"]
+    assert preview_response.status_code == 200
+    assert preview_response.json()["data"]["preview_kind"] == "INLINE_MEDIA"
+    assert preview_response.json()["data"]["media_type"] == "application/pdf"
+
+
+def test_ticket_result_submit_invalid_binary_base64_converts_to_controlled_failure(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=["art://homepage/mockup.png"],
+            payload={
+                "summary": "Invalid binary payload should be rejected.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Single option for invalid base64 validation.",
+                        "artifact_refs": ["art://homepage/mockup.png"],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "artifacts/ui/homepage/mockup.png",
+                    "artifact_ref": "art://homepage/mockup.png",
+                    "kind": "IMAGE",
+                    "content_base64": "***not-base64***",
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:invalid-binary-base64",
+        ),
+    )
+
+    repository = client.app.state.repository
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "ARTIFACT_VALIDATION_ERROR"
+    assert "base64" in failed_events[-1]["payload"]["failure_message"].lower()
+
+
+def test_artifact_delete_marks_tombstone_and_blocks_content_reads(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    artifact_ref = "art://homepage/option-a.json"
+
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=[artifact_ref],
+            payload={
+                "summary": "Structured artifact is ready for deletion testing.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Single option for delete testing.",
+                        "artifact_refs": [artifact_ref],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "artifacts/ui/homepage/option-a.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": {"option_id": "option_a"},
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:delete-target",
+        ),
+    )
+
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    before_delete = repository.get_artifact_by_ref(artifact_ref)
+    delete_response = client.post(
+        "/api/v1/commands/artifact-delete",
+        json={
+            "artifact_ref": artifact_ref,
+            "deleted_by": "emp_ops_1",
+            "reason": "Outdated artifact should no longer be consumed.",
+            "idempotency_key": "artifact-delete:art://homepage/option-a.json",
+        },
+    )
+    after_delete = repository.get_artifact_by_ref(artifact_ref)
+    metadata_response = client.get("/api/v1/artifacts/by-ref", params={"artifact_ref": artifact_ref})
+    content_response = client.get(
+        "/api/v1/artifacts/content",
+        params={"artifact_ref": artifact_ref, "disposition": "inline"},
+    )
+    projection_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+    projected_artifact = projection_response.json()["data"]["artifacts"][0]
+    event_types = [event["event_type"] for event in repository.list_events_for_testing()]
+
+    assert submit_response.status_code == 200
+    assert before_delete is not None
+    assert before_delete["storage_relpath"] is not None
+    assert delete_response.status_code == 200
+    assert delete_response.json()["status"] == "ACCEPTED"
+    assert after_delete is not None
+    assert after_delete["lifecycle_status"] == "DELETED"
+    assert after_delete["deleted_by"] == "emp_ops_1"
+    assert after_delete["delete_reason"] == "Outdated artifact should no longer be consumed."
+    assert after_delete["deleted_at"] is not None
+    assert not (artifact_store.root / before_delete["storage_relpath"]).exists()
+    assert metadata_response.status_code == 200
+    assert metadata_response.json()["data"]["lifecycle_status"] == "DELETED"
+    assert content_response.status_code == 410
+    assert projected_artifact["lifecycle_status"] == "DELETED"
+    assert "ARTIFACT_DELETED" in event_types
+
+
+def test_artifact_cleanup_expires_elapsed_artifacts_and_deletes_files(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    artifact_ref = "art://reports/homepage/review-summary.md"
+
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=[artifact_ref],
+            payload={
+                "summary": "Ephemeral markdown artifact should expire.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Single option for cleanup testing.",
+                        "artifact_refs": [artifact_ref],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "reports/review/homepage-summary.md",
+                    "artifact_ref": artifact_ref,
+                    "kind": "MARKDOWN",
+                    "content_text": "# Summary\n\nEphemeral markdown artifact.\n",
+                    "retention_class": "EPHEMERAL",
+                    "retention_ttl_sec": 60,
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:cleanup-target",
+        ),
+    )
+
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    created_record = repository.get_artifact_by_ref(artifact_ref)
+    assert created_record is not None
+    assert created_record["storage_relpath"] is not None
+    stored_path = artifact_store.root / created_record["storage_relpath"]
+    assert stored_path.exists()
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    cleanup_response = client.post(
+        "/api/v1/commands/artifact-cleanup",
+        json={
+            "cleaned_by": "emp_ops_1",
+            "idempotency_key": "artifact-cleanup:expired-artifacts",
+        },
+    )
+    expired_record = repository.get_artifact_by_ref(artifact_ref)
+    metadata_response = client.get("/api/v1/artifacts/by-ref", params={"artifact_ref": artifact_ref})
+    content_response = client.get(
+        "/api/v1/artifacts/content",
+        params={"artifact_ref": artifact_ref, "disposition": "inline"},
+    )
+    event_types = [event["event_type"] for event in repository.list_events_for_testing()]
+
+    assert submit_response.status_code == 200
+    assert cleanup_response.status_code == 200
+    assert cleanup_response.json()["status"] == "ACCEPTED"
+    assert expired_record is not None
+    assert expired_record["lifecycle_status"] == "EXPIRED"
+    assert expired_record["deleted_at"] is not None
+    assert not stored_path.exists()
+    assert metadata_response.status_code == 200
+    assert metadata_response.json()["data"]["lifecycle_status"] == "EXPIRED"
+    assert content_response.status_code == 410
+    assert "ARTIFACT_EXPIRED" in event_types
+    assert "ARTIFACT_CLEANUP_COMPLETED" in event_types
 
 
 def test_ticket_result_submit_schema_error_converts_to_controlled_failure(client, set_ticket_time):

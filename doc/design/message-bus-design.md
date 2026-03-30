@@ -444,11 +444,13 @@ Large artifacts should not be stored inline in SQLite.
 
 Current minimal implementation status:
 
-- SQLite `artifact_index` stores artifact metadata, status, content hash, and optional filesystem location.
+- SQLite `artifact_index` stores artifact metadata, materialization status, lifecycle status, retention fields, content hash, and optional filesystem location.
 - Filesystem storage is rooted at `backend/data/artifacts/` by default and can be overridden with `BOARDROOM_OS_ARTIFACT_STORE_ROOT`.
-- `JSON`, `TEXT`, and `MARKDOWN` artifacts are materialized to normalized relative paths under that root.
-- `IMAGE` and other binary artifact kinds currently do not have a real upload path; they are accepted only as indexed refs with `materialization_status = REGISTERED_ONLY`.
+- `JSON`, `TEXT`, `MARKDOWN`, `IMAGE`, `PDF`, and other medium-sized binary artifacts can be materialized to normalized relative paths under that root through `ticket-result-submit`.
+- Binary artifacts may still be accepted without inline body and remain `materialization_status = REGISTERED_ONLY` for compatibility.
 - The current store uses safe relative-path normalization plus temporary-file write and atomic replace semantics.
+- Artifact lifecycle now distinguishes `ACTIVE`, `DELETED`, and `EXPIRED`.
+- Runtime exposes local artifact metadata / content / preview APIs keyed by `artifact_ref`.
 
 Recommended storage split:
 
@@ -463,7 +465,8 @@ Recommended URI patterns:
 Current conservative reality:
 
 - `storage_relpath` currently uses normalized internal relative paths instead of external signed URLs.
-- Binary upload, preview, and download routes are still out of scope for the current MVP.
+- Binary upload currently uses inline `base64` in `ticket-result-submit`; multipart upload, chunking, and object storage are still out of scope for the current MVP.
+- Artifact access URLs are currently local relative API paths, not externally reachable signed URLs.
 
 ## 10. Ticket Contract
 
@@ -650,9 +653,11 @@ Current `ticket-result-submit` rules:
 - `artifact_ref` and normalized `path` must both be unique within one submission.
 - `JSON` artifacts must include `content_json`.
 - `TEXT` and `MARKDOWN` artifacts must include `content_text`.
-- `IMAGE` and other binary kinds may omit inline content in the current MVP, but they are only indexed as `REGISTERED_ONLY`.
+- Binary kinds may include `content_base64` plus optional `media_type` to trigger real materialization; if the body is omitted they stay `REGISTERED_ONLY`.
+- Each written artifact may carry `retention_class` and optional `retention_ttl_sec`; cleanup later moves expired artifacts into `EXPIRED`.
 - Artifact validation and materialization happen before `TICKET_COMPLETED`; failures are converted into controlled `SCHEMA_ERROR`, `WRITE_SET_VIOLATION`, `ARTIFACT_VALIDATION_ERROR`, or `ARTIFACT_PERSIST_ERROR` paths instead of bypassing governance.
 - The in-process runtime success path now emits real structured JSON artifacts such as `option-a.json` and `option-b.json` instead of placeholder image refs.
+- Compiled execution packages still stay reference-first, but artifact source descriptors now include access metadata such as `materialization_status`, `lifecycle_status`, `content_url`, and `preview_url`.
 
 Current minimal output schema registry coverage:
 

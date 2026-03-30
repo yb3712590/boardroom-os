@@ -38,10 +38,24 @@ class CompileRequestBudgetPolicy(StrictModel):
     overflow_policy: Literal["FAIL_CLOSED"]
 
 
+class CompiledArtifactAccessDescriptor(StrictModel):
+    artifact_ref: str = Field(min_length=1)
+    logical_path: str | None = None
+    media_type: str | None = None
+    materialization_status: str = Field(min_length=1)
+    lifecycle_status: str = Field(min_length=1)
+    size_bytes: int | None = Field(default=None, ge=0)
+    content_hash: str | None = None
+    content_url: str | None = None
+    preview_url: str | None = None
+    download_url: str | None = None
+
+
 class CompileRequestExplicitSource(StrictModel):
     source_ref: str = Field(min_length=1)
     source_kind: Literal["ARTIFACT"]
     is_mandatory: bool = True
+    artifact_access: CompiledArtifactAccessDescriptor | None = None
 
 
 class CompileRequestExecution(StrictModel):

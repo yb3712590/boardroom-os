@@ -26,6 +26,17 @@ from app.contracts.commands import (
     TicketStartCommand,
 )
 from app.core.artifact_store import ArtifactStore, MaterializedArtifact, normalize_artifact_logical_path
+from app.core.artifacts import (
+    ARTIFACT_LIFECYCLE_ACTIVE,
+    ARTIFACT_RETENTION_PERSISTENT,
+    ARTIFACT_STATUS_MATERIALIZED,
+    ARTIFACT_STATUS_REGISTERED_ONLY,
+    compute_artifact_expiry,
+    decode_artifact_base64,
+    is_binary_artifact_kind,
+    normalize_retention_class,
+    resolve_artifact_media_type,
+)
 from app.core.constants import (
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
@@ -82,10 +93,6 @@ from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
 
-ARTIFACT_STATUS_MATERIALIZED = "MATERIALIZED"
-ARTIFACT_STATUS_REGISTERED_ONLY = "REGISTERED_ONLY"
-
-
 @dataclass(frozen=True)
 class PreparedTicketArtifact:
     artifact_ref: str
@@ -93,9 +100,15 @@ class PreparedTicketArtifact:
     kind: str
     media_type: str | None
     materialization_status: str
+    lifecycle_status: str
     storage_relpath: str | None
     content_hash: str | None
     size_bytes: int | None
+    retention_class: str
+    expires_at: datetime | None
+    deleted_at: datetime | None
+    deleted_by: str | None
+    delete_reason: str | None
 
 
 def _duplicate_ack(
@@ -206,26 +219,6 @@ def _match_allowed_write_set(path: str, allowed_write_set: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in allowed_write_set)
 
 
-def _artifact_media_type(kind: str, logical_path: str) -> str | None:
-    normalized_kind = kind.upper()
-    if normalized_kind == "JSON":
-        return "application/json"
-    if normalized_kind == "MARKDOWN":
-        return "text/markdown"
-    if normalized_kind == "TEXT":
-        return "text/plain"
-    if normalized_kind == "IMAGE":
-        suffix = logical_path.rsplit(".", 1)[-1].lower() if "." in logical_path else ""
-        return {
-            "png": "image/png",
-            "jpg": "image/jpeg",
-            "jpeg": "image/jpeg",
-            "gif": "image/gif",
-            "webp": "image/webp",
-        }.get(suffix, "image/*")
-    return None
-
-
 def _validate_written_artifacts(
     written_artifacts: list,
 ) -> list[tuple]:
@@ -244,23 +237,39 @@ def _validate_written_artifacts(
         seen_paths.add(logical_path)
 
         normalized_kind = item.kind.upper()
+        retention_class = normalize_retention_class(
+            item.retention_class.value if hasattr(item.retention_class, "value") else item.retention_class
+        )
         if normalized_kind == "JSON":
             if item.content_json is None:
                 raise ValueError("JSON artifacts require content_json.")
             if item.content_text is not None:
                 raise ValueError("JSON artifacts must not include content_text.")
+            if item.content_base64 is not None:
+                raise ValueError("JSON artifacts must not include content_base64.")
         elif normalized_kind in {"TEXT", "MARKDOWN"}:
             if item.content_text is None:
                 raise ValueError(f"{normalized_kind} artifacts require content_text.")
             if item.content_json is not None:
                 raise ValueError(f"{normalized_kind} artifacts must not include content_json.")
+            if item.content_base64 is not None:
+                raise ValueError(f"{normalized_kind} artifacts must not include content_base64.")
         else:
             if item.content_json is not None or item.content_text is not None:
                 raise ValueError(
                     f"{normalized_kind} artifacts cannot include inline structured content in the current MVP."
                 )
+            if item.content_base64 is not None:
+                decode_artifact_base64(item.content_base64)
 
-        validated.append((item, logical_path, _artifact_media_type(normalized_kind, logical_path)))
+        validated.append(
+            (
+                item,
+                logical_path,
+                resolve_artifact_media_type(normalized_kind, logical_path, item.media_type),
+                retention_class,
+            )
+        )
 
     return validated
 
@@ -269,13 +278,18 @@ def _prepare_ticket_artifacts(
     *,
     artifact_store: ArtifactStore | None,
     written_artifacts: list,
+    created_at: datetime,
 ) -> tuple[list[PreparedTicketArtifact], list[MaterializedArtifact]]:
     validated_items = _validate_written_artifacts(written_artifacts)
     prepared: list[PreparedTicketArtifact] = []
     materialized_artifacts: list[MaterializedArtifact] = []
 
-    for item, logical_path, media_type in validated_items:
+    for item, logical_path, media_type, retention_class in validated_items:
         normalized_kind = item.kind.upper()
+        expires_at = compute_artifact_expiry(
+            created_at=created_at,
+            retention_ttl_sec=item.retention_ttl_sec,
+        )
         if normalized_kind == "JSON":
             if artifact_store is None:
                 raise RuntimeError("Artifact store is required to materialize JSON artifacts.")
@@ -288,9 +302,15 @@ def _prepare_ticket_artifacts(
                     kind=normalized_kind,
                     media_type=media_type,
                     materialization_status=ARTIFACT_STATUS_MATERIALIZED,
+                    lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
                     storage_relpath=materialized.storage_relpath,
                     content_hash=materialized.content_hash,
                     size_bytes=materialized.size_bytes,
+                    retention_class=retention_class,
+                    expires_at=expires_at,
+                    deleted_at=None,
+                    deleted_by=None,
+                    delete_reason=None,
                 )
             )
             continue
@@ -306,9 +326,44 @@ def _prepare_ticket_artifacts(
                     kind=normalized_kind,
                     media_type=media_type,
                     materialization_status=ARTIFACT_STATUS_MATERIALIZED,
+                    lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
                     storage_relpath=materialized.storage_relpath,
                     content_hash=materialized.content_hash,
                     size_bytes=materialized.size_bytes,
+                    retention_class=retention_class,
+                    expires_at=expires_at,
+                    deleted_at=None,
+                    deleted_by=None,
+                    delete_reason=None,
+                )
+            )
+            continue
+        if item.content_base64 is not None:
+            if artifact_store is None:
+                raise RuntimeError(
+                    f"Artifact store is required to materialize {normalized_kind} artifacts."
+                )
+            materialized = artifact_store.materialize_bytes(
+                logical_path,
+                decode_artifact_base64(item.content_base64),
+            )
+            materialized_artifacts.append(materialized)
+            prepared.append(
+                PreparedTicketArtifact(
+                    artifact_ref=item.artifact_ref,
+                    logical_path=logical_path,
+                    kind=normalized_kind,
+                    media_type=media_type,
+                    materialization_status=ARTIFACT_STATUS_MATERIALIZED,
+                    lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
+                    storage_relpath=materialized.storage_relpath,
+                    content_hash=materialized.content_hash,
+                    size_bytes=materialized.size_bytes,
+                    retention_class=retention_class,
+                    expires_at=expires_at,
+                    deleted_at=None,
+                    deleted_by=None,
+                    delete_reason=None,
                 )
             )
             continue
@@ -320,9 +375,15 @@ def _prepare_ticket_artifacts(
                 kind=normalized_kind,
                 media_type=media_type,
                 materialization_status=ARTIFACT_STATUS_REGISTERED_ONLY,
+                lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
                 storage_relpath=None,
                 content_hash=None,
                 size_bytes=None,
+                retention_class=retention_class,
+                expires_at=expires_at,
+                deleted_at=None,
+                deleted_by=None,
+                delete_reason=None,
             )
         )
 
@@ -2729,12 +2790,15 @@ def handle_ticket_result_submit(
             ),
         )
 
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
     resolved_artifact_store = artifact_store or repository.artifact_store
     materialized_artifacts: list[MaterializedArtifact] = []
     try:
         prepared_artifacts, materialized_artifacts = _prepare_ticket_artifacts(
             artifact_store=resolved_artifact_store,
             written_artifacts=payload.written_artifacts,
+            created_at=received_at,
         )
     except ValueError as exc:
         return handle_ticket_fail(
@@ -2765,8 +2829,6 @@ def handle_ticket_result_submit(
             ),
         )
 
-    command_id = new_prefixed_id("cmd")
-    received_at = now_local()
     persisted_inspector_artifacts: list[PersistedDeveloperInspectorArtifact] = []
     try:
         with repository.transaction() as connection:
@@ -2791,9 +2853,15 @@ def handle_ticket_result_submit(
                     kind=artifact.kind,
                     media_type=artifact.media_type,
                     materialization_status=artifact.materialization_status,
+                    lifecycle_status=artifact.lifecycle_status,
                     storage_relpath=artifact.storage_relpath,
                     content_hash=artifact.content_hash,
                     size_bytes=artifact.size_bytes,
+                    retention_class=artifact.retention_class,
+                    expires_at=artifact.expires_at,
+                    deleted_at=artifact.deleted_at,
+                    deleted_by=artifact.deleted_by,
+                    delete_reason=artifact.delete_reason,
                     created_at=received_at,
                 )
 

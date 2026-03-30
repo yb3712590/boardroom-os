@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.contracts.commands import DeveloperInspectorRefs
 
 from app.core.context_compiler import (
@@ -124,6 +126,57 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
         block.content_type == "SOURCE_DESCRIPTOR"
         for block in compiled_package.atomic_context_bundle.context_blocks
     )
+
+
+def test_compile_execution_package_includes_indexed_artifact_access_descriptors(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    artifact_ref = "art://inputs/brief.md"
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(input_artifact_refs=[artifact_ref]),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    materialized = artifact_store.materialize_text("artifacts/inputs/brief.md", "# Brief\n\nMaterialized input.\n")
+    with repository.transaction() as connection:
+        repository.save_artifact_record(
+            connection,
+            artifact_ref=artifact_ref,
+            workflow_id="wf_seed_inputs",
+            ticket_id="tkt_seed_inputs",
+            node_id="node_seed_inputs",
+            logical_path="artifacts/inputs/brief.md",
+            kind="MARKDOWN",
+            media_type="text/markdown",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_relpath=materialized.storage_relpath,
+            content_hash=materialized.content_hash,
+            size_bytes=materialized.size_bytes,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+    compiled_package = compile_execution_package(compile_request)
+    content_payload = compiled_package.atomic_context_bundle.context_blocks[0].content_payload
+
+    assert content_payload["artifact_ref"] == artifact_ref
+    assert content_payload["logical_path"] == "artifacts/inputs/brief.md"
+    assert content_payload["media_type"] == "text/markdown"
+    assert content_payload["materialization_status"] == "MATERIALIZED"
+    assert content_payload["lifecycle_status"] == "ACTIVE"
+    assert content_payload["content_hash"] == materialized.content_hash
+    assert content_payload["size_bytes"] == materialized.size_bytes
+    assert "/api/v1/artifacts/content" in content_payload["content_url"]
+    assert "/api/v1/artifacts/preview" in content_payload["preview_url"]
 
 
 def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(client, set_ticket_time):

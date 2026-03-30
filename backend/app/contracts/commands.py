@@ -61,6 +61,11 @@ class TicketResultStatus(StrEnum):
     FAILED = "failed"
 
 
+class ArtifactRetentionClass(StrEnum):
+    PERSISTENT = "PERSISTENT"
+    EPHEMERAL = "EPHEMERAL"
+
+
 class ProjectInitCommand(StrictModel):
     north_star_goal: str = Field(min_length=1)
     hard_constraints: list[str]
@@ -160,8 +165,12 @@ class TicketWrittenArtifact(StrictModel):
     path: str = Field(min_length=1)
     artifact_ref: str = Field(min_length=1)
     kind: str = Field(min_length=1)
+    media_type: str | None = None
     content_json: JsonValue | None = None
     content_text: str | None = None
+    content_base64: str | None = None
+    retention_class: ArtifactRetentionClass = ArtifactRetentionClass.PERSISTENT
+    retention_ttl_sec: int | None = Field(default=None, ge=1)
 
 
 class TicketResultSubmitCommand(StrictModel):
@@ -212,6 +221,18 @@ class IncidentResolveCommand(StrictModel):
     resolved_by: str = Field(min_length=1)
     resolution_summary: str = Field(min_length=1)
     followup_action: IncidentFollowupAction = IncidentFollowupAction.RESTORE_ONLY
+    idempotency_key: str = Field(min_length=1)
+
+
+class ArtifactDeleteCommand(StrictModel):
+    artifact_ref: str = Field(min_length=1)
+    deleted_by: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class ArtifactCleanupCommand(StrictModel):
+    cleaned_by: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
 
 

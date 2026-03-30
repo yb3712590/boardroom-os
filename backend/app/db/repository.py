@@ -14,6 +14,9 @@ from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
+    EVENT_ARTIFACT_CLEANUP_COMPLETED,
+    EVENT_ARTIFACT_DELETED,
+    EVENT_ARTIFACT_EXPIRED,
     EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
@@ -910,9 +913,15 @@ class ControlPlaneRepository:
         kind: str,
         media_type: str | None,
         materialization_status: str,
+        lifecycle_status: str,
         storage_relpath: str | None,
         content_hash: str | None,
         size_bytes: int | None,
+        retention_class: str,
+        expires_at: datetime | None,
+        deleted_at: datetime | None,
+        deleted_by: str | None,
+        delete_reason: str | None,
         created_at: datetime,
     ) -> None:
         connection.execute(
@@ -926,11 +935,17 @@ class ControlPlaneRepository:
                 kind,
                 media_type,
                 materialization_status,
+                lifecycle_status,
                 storage_relpath,
                 content_hash,
                 size_bytes,
+                retention_class,
+                expires_at,
+                deleted_at,
+                deleted_by,
+                delete_reason,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 artifact_ref,
@@ -941,9 +956,15 @@ class ControlPlaneRepository:
                 kind,
                 media_type,
                 materialization_status,
+                lifecycle_status,
                 storage_relpath,
                 content_hash,
                 size_bytes,
+                retention_class,
+                expires_at.isoformat() if expires_at is not None else None,
+                deleted_at.isoformat() if deleted_at is not None else None,
+                deleted_by,
+                delete_reason,
                 created_at.isoformat(),
             ),
         )
@@ -991,6 +1012,51 @@ class ControlPlaneRepository:
             rows = owned_connection.execute(query, (ticket_id,)).fetchall()
             return [self._convert_artifact_index_row(row) for row in rows]
 
+    def list_artifacts_for_cleanup(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        expires_before: datetime,
+    ) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            """
+            SELECT * FROM artifact_index
+            WHERE (lifecycle_status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?)
+               OR (lifecycle_status IN ('DELETED', 'EXPIRED') AND storage_relpath IS NOT NULL)
+            ORDER BY created_at ASC, artifact_ref ASC
+            """,
+            (expires_before.isoformat(),),
+        ).fetchall()
+        return [self._convert_artifact_index_row(row) for row in rows]
+
+    def update_artifact_lifecycle(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        artifact_ref: str,
+        lifecycle_status: str,
+        deleted_at: datetime | None,
+        deleted_by: str | None,
+        delete_reason: str | None,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET lifecycle_status = ?,
+                deleted_at = ?,
+                deleted_by = ?,
+                delete_reason = ?
+            WHERE artifact_ref = ?
+            """,
+            (
+                lifecycle_status,
+                deleted_at.isoformat() if deleted_at is not None else None,
+                deleted_by,
+                delete_reason,
+                artifact_ref,
+            ),
+        )
+
     def get_recent_event_previews(self) -> list[dict[str, Any]]:
         self.initialize()
         with self.connection() as connection:
@@ -1014,7 +1080,8 @@ class ControlPlaneRepository:
                     "severity": self._event_severity(converted["event_type"]),
                     "message": self._event_preview_message(converted),
                     "related_ref": (
-                        converted.get("incident_id")
+                        converted.get("artifact_ref")
+                        or converted.get("incident_id")
                         or converted.get("ticket_id")
                         or converted.get("workflow_id")
                         or converted["event_id"]
@@ -1435,6 +1502,7 @@ class ControlPlaneRepository:
         converted["ticket_id"] = payload.get("ticket_id")
         converted["incident_id"] = payload.get("incident_id")
         converted["provider_id"] = payload.get("provider_id")
+        converted["artifact_ref"] = payload.get("artifact_ref")
         return converted
 
     def _convert_approval_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -1462,6 +1530,9 @@ class ControlPlaneRepository:
     def _convert_artifact_index_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["created_at"] = datetime.fromisoformat(converted["created_at"])
+        for field in ("expires_at", "deleted_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
         converted["size_bytes"] = (
             int(converted["size_bytes"]) if converted.get("size_bytes") is not None else None
         )
@@ -1557,6 +1628,9 @@ class ControlPlaneRepository:
 
     def _event_severity(self, event_type: str) -> str:
         if event_type in {
+            EVENT_ARTIFACT_CLEANUP_COMPLETED,
+            EVENT_ARTIFACT_DELETED,
+            EVENT_ARTIFACT_EXPIRED,
             EVENT_SYSTEM_INITIALIZED,
             EVENT_BOARD_DIRECTIVE_RECEIVED,
             EVENT_WORKFLOW_CREATED,
@@ -1610,6 +1684,13 @@ class ControlPlaneRepository:
             return f"TICKET_TIMED_OUT for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_RETRY_SCHEDULED:
             return f"TICKET_RETRY_SCHEDULED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_ARTIFACT_DELETED:
+            return f"ARTIFACT_DELETED for {event.get('artifact_ref') or event['workflow_id']}"
+        if event["event_type"] == EVENT_ARTIFACT_EXPIRED:
+            return f"ARTIFACT_EXPIRED for {event.get('artifact_ref') or event['workflow_id']}"
+        if event["event_type"] == EVENT_ARTIFACT_CLEANUP_COMPLETED:
+            expired_count = event.get("payload", {}).get("expired_count")
+            return f"ARTIFACT_CLEANUP_COMPLETED expired={expired_count}"
         if event["event_type"] == EVENT_INCIDENT_OPENED:
             if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
                 provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
@@ -1953,9 +2034,15 @@ class ControlPlaneRepository:
                 kind TEXT NOT NULL,
                 media_type TEXT,
                 materialization_status TEXT NOT NULL,
+                lifecycle_status TEXT NOT NULL,
                 storage_relpath TEXT,
                 content_hash TEXT,
                 size_bytes INTEGER,
+                retention_class TEXT NOT NULL,
+                expires_at TEXT,
+                deleted_at TEXT,
+                deleted_by TEXT,
+                delete_reason TEXT,
                 created_at TEXT NOT NULL
             )
             """
@@ -1973,9 +2060,15 @@ class ControlPlaneRepository:
             "kind": "TEXT",
             "media_type": "TEXT",
             "materialization_status": "TEXT",
+            "lifecycle_status": "TEXT",
             "storage_relpath": "TEXT",
             "content_hash": "TEXT",
             "size_bytes": "INTEGER",
+            "retention_class": "TEXT",
+            "expires_at": "TEXT",
+            "deleted_at": "TEXT",
+            "deleted_by": "TEXT",
+            "delete_reason": "TEXT",
             "created_at": "TEXT",
         }
         for column_name, column_type in required_columns.items():

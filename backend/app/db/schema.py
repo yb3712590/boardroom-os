@@ -146,9 +146,15 @@ CREATE TABLE IF NOT EXISTS artifact_index (
     kind TEXT NOT NULL,
     media_type TEXT,
     materialization_status TEXT NOT NULL,
+    lifecycle_status TEXT NOT NULL,
     storage_relpath TEXT,
     content_hash TEXT,
     size_bytes INTEGER,
+    retention_class TEXT NOT NULL,
+    expires_at TEXT,
+    deleted_at TEXT,
+    deleted_by TEXT,
+    delete_reason TEXT,
     created_at TEXT NOT NULL
 );
 

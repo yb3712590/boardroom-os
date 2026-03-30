@@ -21,6 +21,7 @@ from app.contracts.runtime import (
     CompileManifestSourceLogEntry,
     CompileManifestTransformLogEntry,
     CompiledAuditArtifacts,
+    CompiledArtifactAccessDescriptor,
     CompiledConstraints,
     CompiledContextBlock,
     CompiledContextBundle,
@@ -44,6 +45,7 @@ from app.contracts.runtime import (
     CompileRequestMeta,
     CompileRequestWorkerBinding,
 )
+from app.core.artifacts import build_artifact_access_descriptor
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import get_output_schema_body
 from app.core.time import now_local
@@ -157,6 +159,10 @@ def _build_reference_block(
         "source_kind": source.source_kind,
         "is_mandatory": source.is_mandatory,
     }
+    if source.artifact_access is not None:
+        artifact_access = source.artifact_access.model_dump(mode="json")
+        content_payload["artifact_access"] = artifact_access
+        content_payload.update(artifact_access)
     token_estimate = _estimate_tokens(content_payload)
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
@@ -264,6 +270,12 @@ def build_compile_request(
                 source_ref=str(source_ref),
                 source_kind="ARTIFACT",
                 is_mandatory=True,
+                artifact_access=CompiledArtifactAccessDescriptor.model_validate(
+                    build_artifact_access_descriptor(
+                        repository.get_artifact_by_ref(str(source_ref), connection=connection),
+                        artifact_ref=str(source_ref),
+                    )
+                ),
             )
             for source_ref in list(created_spec.get("input_artifact_refs") or [])
         ],

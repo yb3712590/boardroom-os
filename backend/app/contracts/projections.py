@@ -156,8 +156,16 @@ class TicketArtifactProjection(StrictModel):
     kind: str
     media_type: str | None = None
     status: str
+    materialization_status: str
+    lifecycle_status: str
+    retention_class: str | None = None
+    expires_at: datetime | None = None
+    deleted_at: datetime | None = None
     size_bytes: int | None = None
     content_hash: str | None = None
+    content_url: str | None = None
+    download_url: str | None = None
+    preview_url: str | None = None
     created_at: datetime
 
 

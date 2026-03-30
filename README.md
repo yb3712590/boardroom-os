@@ -22,15 +22,16 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 已具备最小 incident / circuit-breaker / retry 治理链
 - 已支持 review room、board approve/reject/modify constraints
 - 已有独立 `scheduler_runner` 和可选的进程内 scheduler loop
-- 已有最小 artifact store / artifact index，`JSON` / `TEXT` / `MARKDOWN` 会真实落盘，图片和其它二进制暂时只登记索引
+- 已有最小 artifact store / artifact index，`JSON` / `TEXT` / `MARKDOWN` 与图片 / PDF / 其它中等体量二进制都可通过 `ticket-result-submit` 真实落盘
 
 当前更像一个最小控制面原型，而不是完整产品。
 
 ## 已实现能力
 
-- 命令面：`project-init`、ticket 生命周期命令、`ticket-result-submit`、board 审批命令、`incident-resolve`
+- 命令面：`project-init`、ticket 生命周期命令、`ticket-result-submit`、`artifact-delete`、`artifact-cleanup`、board 审批命令、`incident-resolve`
 - 投影面：`dashboard`、`inbox`、`incident detail`、`review room`、developer inspector companion、ticket artifacts
-- 运行时治理：重复失败升级、provider 级暂停恢复、协作式取消、`ticket-result-submit` 统一结果入口、结构化 artifact 物化与索引
+- artifact 读取面：按 `artifact_ref` 的 metadata / content / preview 接口，可供 review、incident 和外部调用复用
+- 运行时治理：重复失败升级、provider 级暂停恢复、协作式取消、`ticket-result-submit` 统一结果入口、artifact 物化 / 索引 / 生命周期治理
 - 输出 schema：已真实注册并严格校验 `ui_milestone_review@1`、`consensus_document@1`
 - 审计能力：事件流、SQLite WAL、最小 compile manifest / context bundle 持久化
 - 测试覆盖：API、reducer、scheduler runner、in-process scheduler
@@ -79,7 +80,8 @@ python -m pytest tests -q
 当前仍有两个已知现实：
 
 - 全新环境下 `pip install -e .[dev]` 可能因为 `backend/` 的平铺布局触发 `setuptools` 打包识别问题，本轮没有修改这一点。
-- 二进制 artifact 目前还没有真实上传 / 预览链路，图片和其它二进制只会在 artifact index 与 ticket artifacts projection 中以 `REGISTERED_ONLY` 暴露。
+- 当前二进制上传仍走 `ticket-result-submit` 内联 `base64`，没有 multipart / 分片 / 对象存储链路，适合中等体量文件，不适合超大文件。
+- artifact 对外访问目前通过本地 API 相对 URL 暴露，外部 worker 的远端可达性、鉴权和签名 URL 还没有做完。
 
 ## 文档入口
 

@@ -5,8 +5,8 @@
 ## Runtime / Backend
 
 - 完成外部 worker runtime handoff，而不是只依赖当前进程内最小执行链
-- 补齐二进制 artifact 的真实上传 / 下载 / 预览链路，把当前 `REGISTERED_ONLY` 推进到真实物化
-- 给 artifact store / artifact index 增加更完整的读取、保留与生命周期治理，而不只是当前按 ticket 列表投影
+- 把当前本地 artifact API / 相对 URL 交付推进到外部 worker 可直接消费的 handoff 机制，补齐远端可达性、鉴权和必要时的签名 URL
+- 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
 - 补齐更完整的 provider 路由、多 provider 控制面和恢复策略
 - 解决 `backend/pyproject.toml` 的 editable install 打包问题，让 `pip install -e .[dev]` 在新环境可用

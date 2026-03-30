@@ -24,9 +24,10 @@ What is already real:
 - minimal incident, circuit-breaker, retry, and recovery governance
 - review room plus board approve / reject / modify-constraints commands
 - independent scheduler runner and optional in-process scheduler loop
-- a minimal artifact store and artifact index for `JSON` / `TEXT` / `MARKDOWN` ticket outputs
+- a minimal artifact store and artifact index for `JSON` / `TEXT` / `MARKDOWN` plus image / PDF / other medium-sized binary ticket outputs
 - a ticket artifacts projection plus strict output-schema validation for `ui_milestone_review@1` and `consensus_document@1`
-- image and other binary artifacts are still metadata-only and surface as `REGISTERED_ONLY`
+- artifact metadata / content / preview endpoints keyed by `artifact_ref`
+- artifact lifecycle commands for delete and cleanup
 
 ## Quick Start
 
@@ -68,7 +69,8 @@ Default storage roots:
 Known realities:
 
 - `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
-- Binary artifacts do not have a real upload / preview path yet; they are only indexed and projected as `REGISTERED_ONLY`.
+- Binary uploads currently go through inline base64 in `ticket-result-submit`; there is no multipart, chunked-upload, or object-storage path yet.
+- Artifact access currently uses local relative API URLs. External-worker reachability, auth, and signed-URL delivery are still not implemented.
 
 ## Docs
 

@@ -260,6 +260,11 @@ Purpose:
         "kind": "JSON",
         "media_type": "application/json",
         "status": "MATERIALIZED",
+        "materialization_status": "MATERIALIZED",
+        "lifecycle_status": "ACTIVE",
+        "content_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Foption-a.json&disposition=inline",
+        "download_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Foption-a.json&disposition=attachment",
+        "preview_url": "/api/v1/artifacts/preview?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Foption-a.json",
         "size_bytes": 114,
         "content_hash": "8f14e45fceea167a5a36dedd4bea2543af6c9426c6b8f4d95b2f7d0d6f8b4f9a",
         "created_at": "2026-03-30T11:58:00+08:00"
@@ -269,9 +274,14 @@ Purpose:
         "path": "artifacts/ui/homepage/mockup.png",
         "kind": "IMAGE",
         "media_type": "image/png",
-        "status": "REGISTERED_ONLY",
-        "size_bytes": null,
-        "content_hash": null,
+        "status": "MATERIALIZED",
+        "materialization_status": "MATERIALIZED",
+        "lifecycle_status": "ACTIVE",
+        "content_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Fmockup.png&disposition=inline",
+        "download_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Fmockup.png&disposition=attachment",
+        "preview_url": "/api/v1/artifacts/preview?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Fmockup.png",
+        "size_bytes": 24576,
+        "content_hash": "63f7f4ff7c0cfbce5b7cfe9f95cbd6fce431bd53f4e6f08d076b0b7bfb4e4d1a",
         "created_at": "2026-03-30T11:58:00+08:00"
       }
     ]
@@ -284,8 +294,24 @@ Rules:
 - missing ticket should return `404`
 - `status = MATERIALIZED` means the artifact body was persisted into the current artifact store and metadata such as `size_bytes` / `content_hash` may be present
 - `status = REGISTERED_ONLY` means the ref and metadata were accepted, but runtime has no stored body for that artifact yet
-- current MVP only materializes `JSON`, `TEXT`, and `MARKDOWN`; image and other binary artifacts remain `REGISTERED_ONLY`
-- this endpoint is index-oriented only; it does not yet imply a public artifact download or preview route
+- `materialization_status` keeps the raw storage fact, while `lifecycle_status` tells consumers whether the artifact is still consumable
+- `content_url` / `download_url` / `preview_url` are local backend artifact routes keyed by `artifact_ref`
+
+### 5.1.1 Artifact Read APIs
+
+Suggested endpoints:
+
+- `GET /api/v1/artifacts/by-ref?artifact_ref=...`
+- `GET /api/v1/artifacts/content?artifact_ref=...&disposition=inline|attachment`
+- `GET /api/v1/artifacts/preview?artifact_ref=...`
+
+Implementation rules:
+
+- `by-ref` returns metadata plus local content / download / preview URLs
+- `content` returns raw persisted bytes only when `materialization_status = MATERIALIZED` and `lifecycle_status = ACTIVE`
+- `content` should return conflict-style errors for `REGISTERED_ONLY`, and gone-style errors for `DELETED` / `EXPIRED`
+- `preview` returns parsed JSON for `JSON`, text for `TEXT` / `MARKDOWN`, inline-media metadata for images and PDFs, and `download_only` for other binaries
+- review room, incident detail, and future external workers should consume these routes via `artifact_ref` instead of inventing special-case artifact readers
 
 ## 5.2 Incident Detail Projection
 
@@ -1139,7 +1165,9 @@ Implementation rules:
 - the same submission must not repeat `artifact_ref` or normalized `path`
 - `JSON` requires `content_json`
 - `TEXT` and `MARKDOWN` require `content_text`
-- `IMAGE` and other binary artifact kinds may omit inline content in the current MVP and will be indexed as `REGISTERED_ONLY`
+- binary artifact kinds may provide `content_base64` plus optional `media_type` to trigger real materialization
+- binary artifact kinds may still omit inline body and remain `REGISTERED_ONLY` for compatibility
+- each written artifact may carry `retention_class` and optional `retention_ttl_sec`
 - artifact validation and materialization happen before the ticket is marked completed; failures are converted into the controlled governance paths `SCHEMA_ERROR`, `WRITE_SET_VIOLATION`, `ARTIFACT_VALIDATION_ERROR`, or `ARTIFACT_PERSIST_ERROR`
 
 ### 10.1.7 Scheduler Tick

@@ -27,6 +27,7 @@ from app.contracts.projections import (
     WorkforceSummaryProjection,
     WorkspaceSummary,
 )
+from app.core.artifacts import build_artifact_metadata
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
@@ -372,16 +373,25 @@ def build_ticket_artifacts_projection(
             ticket_id=ticket_id,
             artifacts=[
                 TicketArtifactProjection(
-                    artifact_ref=artifact["artifact_ref"],
-                    path=artifact["logical_path"],
-                    kind=artifact["kind"],
-                    media_type=artifact.get("media_type"),
-                    status=artifact["materialization_status"],
-                    size_bytes=artifact.get("size_bytes"),
-                    content_hash=artifact.get("content_hash"),
-                    created_at=artifact["created_at"],
+                    artifact_ref=metadata["artifact_ref"],
+                    path=metadata["path"],
+                    kind=metadata["kind"],
+                    media_type=metadata["media_type"],
+                    status=metadata["status"],
+                    materialization_status=metadata["materialization_status"],
+                    lifecycle_status=metadata["lifecycle_status"],
+                    retention_class=metadata["retention_class"],
+                    expires_at=metadata["expires_at"],
+                    deleted_at=metadata["deleted_at"],
+                    size_bytes=metadata["size_bytes"],
+                    content_hash=metadata["content_hash"],
+                    content_url=metadata["content_url"],
+                    download_url=metadata["download_url"],
+                    preview_url=metadata["preview_url"],
+                    created_at=metadata["created_at"],
                 )
                 for artifact in artifacts
+                for metadata in [build_artifact_metadata(artifact)]
             ],
         ),
     )

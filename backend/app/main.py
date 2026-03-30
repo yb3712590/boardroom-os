@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.artifacts import router as artifacts_router
 from app.api.commands import router as commands_router
 from app.api.events import router as events_router
 from app.api.projections import router as projections_router
@@ -50,6 +51,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.include_router(artifacts_router)
     app.include_router(commands_router)
     app.include_router(projections_router)
     app.include_router(events_router)

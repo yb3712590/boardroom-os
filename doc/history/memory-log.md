@@ -1684,3 +1684,105 @@
 - broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
 - richer artifact retention / lifecycle governance beyond the current ticket-level index and projection
 - richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T15:42:00+08:00
+
+### Session Context
+- User asked to implement the next linked Runtime / Backend artifact batch directly in the existing Boardroom OS repo.
+- This round had to stay on one boundary and close the whole chain instead of stopping after one medium slice:
+  - binary artifact materialization
+  - artifact-by-ref read / download / preview
+  - lifecycle delete / cleanup
+  - worker handoff contract alignment
+
+### Boundary Chosen
+- Single boundary for this round: Runtime / Backend artifact delivery and lifecycle.
+- The slice chain stayed on one path:
+  - binary write path on `ticket-result-submit`
+  - unified artifact read surface by `artifact_ref`
+  - retention / lifecycle governance
+  - compiled execution package access descriptors
+
+### Design / Code Gap Identified
+- The previous round had real artifact persistence only for `JSON` / `TEXT` / `MARKDOWN`.
+- Code already had `artifact_index` lookup helpers, but no public route for metadata lookup, content download, or preview by `artifact_ref`.
+- `artifact_index` had no retention or tombstone fields, so artifacts could exist physically but were not yet governed as lifecycle-managed assets.
+- Context Compiler still shipped reference-only source descriptors with no stable access metadata for workers or downstream consumers.
+
+### Slice Landed
+- Extended `TicketWrittenArtifact` with:
+  - `media_type`
+  - `content_base64`
+  - `retention_class`
+  - `retention_ttl_sec`
+- Extended filesystem `ArtifactStore` with:
+  - raw byte materialization
+  - raw byte reads by stored relative path
+- `ticket-result-submit` now:
+  - keeps existing JSON / text rules unchanged
+  - accepts binary `content_base64`
+  - materializes `IMAGE`, `PDF`, and other binary artifacts when body is present
+  - still allows body-less binary refs to remain `REGISTERED_ONLY`
+  - persists lifecycle / retention metadata into `artifact_index`
+- Added artifact read APIs:
+  - `GET /api/v1/artifacts/by-ref`
+  - `GET /api/v1/artifacts/content`
+  - `GET /api/v1/artifacts/preview`
+- Ticket artifacts projection now also exposes:
+  - `materialization_status`
+  - `lifecycle_status`
+  - `content_url`
+  - `download_url`
+  - `preview_url`
+- Added artifact lifecycle governance:
+  - `POST /api/v1/commands/artifact-delete`
+  - `POST /api/v1/commands/artifact-cleanup`
+  - `ACTIVE` / `DELETED` / `EXPIRED` lifecycle states
+  - tombstone metadata such as `deleted_at`, `deleted_by`, `delete_reason`
+- Added artifact lifecycle events:
+  - `ARTIFACT_DELETED`
+  - `ARTIFACT_EXPIRED`
+  - `ARTIFACT_CLEANUP_COMPLETED`
+- Context Compiler source descriptors now remain reference-first but include stable artifact access metadata such as:
+  - `logical_path`
+  - `media_type`
+  - `materialization_status`
+  - `lifecycle_status`
+  - `content_hash`
+  - `size_bytes`
+  - `content_url`
+  - `preview_url`
+  - `download_url`
+
+### Conservative Handling
+- Binary upload still uses inline `base64` in `ticket-result-submit`; this round does not add multipart upload, chunking, or object storage.
+- Artifact access URLs are still local relative backend URLs, not authenticated externally reachable signed URLs.
+- Context Compiler still does not hydrate artifact bodies into the execution package; it only ships access descriptors.
+- Review Room and incident detail payloads were not restructured; they continue to carry `artifact_ref` and can now resolve through the unified artifact APIs.
+
+### Tests Added
+- API coverage for:
+  - image binary materialization plus metadata / content / preview reads
+  - pdf binary materialization plus inline preview metadata
+  - invalid binary base64 converting into controlled failure
+  - registered-only artifacts returning conflict on content reads
+  - artifact delete tombstones and content gone behavior
+  - artifact cleanup expiring TTL-scoped artifacts
+  - ticket artifacts projection exposing lifecycle and artifact URLs
+- Context Compiler coverage for:
+  - indexed artifact access descriptors flowing into the compiled execution package
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/TODO.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/history/memory-log.md`
+
+### Still Not Done
+- full external worker runtime handoff beyond the current in-process execution chain
+- remote-safe artifact delivery for external workers, including auth / signed URLs / reachability
+- multipart or large-file upload flows
+- automatic background cleanup scheduling and richer retention classes
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`

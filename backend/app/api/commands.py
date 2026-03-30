@@ -3,6 +3,8 @@
 from fastapi import APIRouter, Request
 
 from app.contracts.commands import (
+    ArtifactCleanupCommand,
+    ArtifactDeleteCommand,
     BoardApproveCommand,
     BoardRejectCommand,
     CommandAckEnvelope,
@@ -19,6 +21,7 @@ from app.contracts.commands import (
     TicketResultSubmitCommand,
     TicketStartCommand,
 )
+from app.core.artifact_handlers import handle_artifact_cleanup, handle_artifact_delete
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.approval_handlers import (
     handle_board_approve,
@@ -105,6 +108,20 @@ def scheduler_tick(request: Request, payload: SchedulerTickCommand) -> CommandAc
 def incident_resolve(request: Request, payload: IncidentResolveCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_incident_resolve(repository, payload)
+
+
+@router.post("/artifact-delete", response_model=CommandAckEnvelope)
+def artifact_delete(request: Request, payload: ArtifactDeleteCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    artifact_store: ArtifactStore = request.app.state.artifact_store
+    return handle_artifact_delete(repository, payload, artifact_store)
+
+
+@router.post("/artifact-cleanup", response_model=CommandAckEnvelope)
+def artifact_cleanup(request: Request, payload: ArtifactCleanupCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    artifact_store: ArtifactStore = request.app.state.artifact_store
+    return handle_artifact_cleanup(repository, payload, artifact_store)
 
 
 @router.post("/ticket-cancel", response_model=CommandAckEnvelope)

@@ -46,8 +46,16 @@ class ArtifactStore:
     def materialize_text(self, logical_path: str, content: str) -> MaterializedArtifact:
         return self._write_bytes(logical_path, content.encode("utf-8"))
 
+    def materialize_bytes(self, logical_path: str, content: bytes) -> MaterializedArtifact:
+        return self._write_bytes(logical_path, content)
+
+    def read_bytes(self, storage_relpath: str) -> bytes:
+        normalized = normalize_artifact_logical_path(storage_relpath)
+        return (self.root / normalized).read_bytes()
+
     def delete(self, storage_relpath: str) -> None:
-        target_path = self.root / storage_relpath
+        normalized = normalize_artifact_logical_path(storage_relpath)
+        target_path = self.root / normalized
         target_path.unlink(missing_ok=True)
 
     def _write_bytes(self, logical_path: str, content: bytes) -> MaterializedArtifact:
