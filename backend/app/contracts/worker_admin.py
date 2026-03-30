@@ -101,6 +101,47 @@ class WorkerAdminRevokeBootstrapResponse(StrictModel):
     revoked_before: datetime
 
 
+class WorkerAdminRevokeSessionRequest(StrictModel):
+    session_id: str | None = None
+    worker_id: str | None = None
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+    revoked_by: str | None = None
+    reason: str | None = None
+
+
+class WorkerAdminRevokeSessionResponse(StrictModel):
+    session_id: str | None = None
+    worker_id: str
+    tenant_id: str
+    workspace_id: str
+    revoked_count: int
+    revoked_delivery_grant_count: int
+    revoked_at: datetime
+    revoked_via: str
+    revoked_by: str | None = None
+    revoke_reason: str
+
+
+class WorkerAdminRevokeDeliveryGrantRequest(StrictModel):
+    grant_id: str = Field(min_length=1)
+    revoked_by: str | None = None
+    reason: str | None = None
+
+
+class WorkerAdminRevokeDeliveryGrantResponse(StrictModel):
+    grant_id: str
+    session_id: str
+    worker_id: str
+    tenant_id: str
+    workspace_id: str
+    revoked_count: int
+    revoked_at: datetime
+    revoked_via: str
+    revoked_by: str | None = None
+    revoke_reason: str
+
+
 class WorkerAdminCleanupBindingsRequest(StrictModel):
     worker_id: str = Field(min_length=1)
     tenant_id: str | None = None

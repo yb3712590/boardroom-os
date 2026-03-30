@@ -486,6 +486,9 @@ def build_worker_runtime_projection(
             last_seen_at=session["last_seen_at"],
             revoked_at=session.get("revoked_at"),
             credential_version=int(session["credential_version"]),
+            revoke_reason=session.get("revoke_reason"),
+            revoked_via=session.get("revoked_via"),
+            revoked_by=session.get("revoked_by"),
             is_active=_is_worker_session_active(session, at=generated_at),
         )
         for session in sorted(
@@ -520,6 +523,8 @@ def build_worker_runtime_projection(
             expires_at=grant["expires_at"],
             revoked_at=grant.get("revoked_at"),
             revoke_reason=grant.get("revoke_reason"),
+            revoked_via=grant.get("revoked_via"),
+            revoked_by=grant.get("revoked_by"),
             is_active=_is_worker_delivery_grant_active(grant, at=generated_at),
         )
         for grant in sorted(

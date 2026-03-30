@@ -8,6 +8,8 @@ from typing import Sequence
 
 from app.config import get_settings
 from app.core.worker_admin import (
+    DEFAULT_DELIVERY_GRANT_REVOKE_REASON,
+    DEFAULT_SESSION_REVOKE_REASON,
     ISSUED_VIA_WORKER_AUTH_CLI,
     _resolve_bootstrap_signing_secret,
     _resolve_requested_bootstrap_ttl_sec,
@@ -18,7 +20,9 @@ from app.core.worker_admin import (
     issue_bootstrap,
     list_binding_admin_views,
     namespace_scope,
+    revoke_delivery_grant,
     revoke_bootstrap,
+    revoke_session,
 )
 from app.core.time import now_local
 from app.core.worker_bootstrap_tokens import issue_worker_bootstrap_token
@@ -170,22 +174,18 @@ def _revoke_bootstrap(args: argparse.Namespace) -> int:
 
 def _revoke_session(args: argparse.Namespace) -> int:
     repository = _build_repository()
-    revoked_at = now_local()
-    with repository.transaction() as connection:
-        revoked_count = repository.revoke_worker_sessions(
-            connection,
-            session_id=args.session_id,
-            worker_id=args.worker_id,
-            revoked_at=revoked_at,
-        )
-    _print_json(
-        {
-            "worker_id": args.worker_id,
-            "session_id": args.session_id,
-            "revoked_count": revoked_count,
-            "revoked_at": revoked_at.isoformat(),
-        }
+    tenant_id, workspace_id = namespace_scope(args)
+    revoked = revoke_session(
+        repository,
+        session_id=args.session_id,
+        worker_id=args.worker_id,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        revoked_by=getattr(args, "revoked_by", None),
+        reason=getattr(args, "reason", None),
+        revoked_via=ISSUED_VIA_WORKER_AUTH_CLI,
     )
+    _print_json(_serialize_datetimes(revoked))
     return 0
 
 
@@ -282,22 +282,14 @@ def _list_auth_rejections(args: argparse.Namespace) -> int:
 
 def _revoke_delivery_grant(args: argparse.Namespace) -> int:
     repository = _build_repository()
-    revoked_at = now_local()
-    with repository.transaction() as connection:
-        revoked_count = repository.revoke_worker_delivery_grants(
-            connection,
-            grant_id=args.grant_id,
-            revoked_at=revoked_at,
-            revoke_reason=args.reason,
-        )
-    _print_json(
-        {
-            "grant_id": args.grant_id,
-            "revoked_count": revoked_count,
-            "revoked_at": revoked_at.isoformat(),
-            "reason": args.reason,
-        }
+    revoked = revoke_delivery_grant(
+        repository,
+        grant_id=args.grant_id,
+        revoked_by=getattr(args, "revoked_by", None),
+        reason=args.reason,
+        revoked_via=ISSUED_VIA_WORKER_AUTH_CLI,
     )
+    _print_json(_serialize_datetimes(revoked))
     return 0
 
 
@@ -339,6 +331,13 @@ def _build_parser() -> argparse.ArgumentParser:
     revoke_group = revoke_session_parser.add_mutually_exclusive_group(required=True)
     revoke_group.add_argument("--session-id")
     revoke_group.add_argument("--worker-id")
+    revoke_session_parser.add_argument("--tenant-id")
+    revoke_session_parser.add_argument("--workspace-id")
+    revoke_session_parser.add_argument("--revoked-by")
+    revoke_session_parser.add_argument(
+        "--reason",
+        default=DEFAULT_SESSION_REVOKE_REASON,
+    )
     revoke_session_parser.set_defaults(handler=_revoke_session)
 
     list_grants_parser = subparsers.add_parser("list-delivery-grants")
@@ -378,9 +377,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     revoke_grant_parser = subparsers.add_parser("revoke-delivery-grant")
     revoke_grant_parser.add_argument("--grant-id", required=True)
+    revoke_grant_parser.add_argument("--revoked-by")
     revoke_grant_parser.add_argument(
         "--reason",
-        default="Manually revoked worker delivery grant.",
+        default=DEFAULT_DELIVERY_GRANT_REVOKE_REASON,
     )
     revoke_grant_parser.set_defaults(handler=_revoke_delivery_grant)
 

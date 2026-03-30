@@ -1100,6 +1100,8 @@ class ControlPlaneRepository:
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             revoked_at=rotated_at,
+            revoke_reason="Worker bootstrap credential rotated.",
+            revoked_via="worker_bootstrap_rotate",
         )
         self.revoke_worker_bootstrap_issues(
             connection,
@@ -1115,6 +1117,7 @@ class ControlPlaneRepository:
             workspace_id=workspace_id,
             revoked_at=rotated_at,
             revoke_reason="Worker bootstrap credential rotated.",
+            revoked_via="worker_bootstrap_rotate",
         )
         rotated = self.get_worker_bootstrap_state(
             worker_id,
@@ -1165,6 +1168,8 @@ class ControlPlaneRepository:
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             revoked_at=revoked_at,
+            revoke_reason="Worker bootstrap credential revoked.",
+            revoked_via="worker_bootstrap_revoke",
         )
         self.revoke_worker_bootstrap_issues(
             connection,
@@ -1180,6 +1185,7 @@ class ControlPlaneRepository:
             workspace_id=workspace_id,
             revoked_at=revoked_at,
             revoke_reason="Worker bootstrap credential revoked.",
+            revoked_via="worker_bootstrap_revoke",
         )
         revoked = self.get_worker_bootstrap_state(
             worker_id,
@@ -1322,14 +1328,22 @@ class ControlPlaneRepository:
         worker_id: str | None = None,
         tenant_id: str | None = None,
         workspace_id: str | None = None,
+        revoke_reason: str | None = None,
+        revoked_via: str | None = None,
+        revoked_by: str | None = None,
     ) -> int:
         if session_id is None and worker_id is None:
             raise ValueError("Either session_id or worker_id is required to revoke worker sessions.")
         if (tenant_id is None) != (workspace_id is None):
             raise ValueError("tenant_id and workspace_id must be provided together.")
 
-        clauses: list[str] = []
-        params: list[Any] = [revoked_at.isoformat()]
+        clauses: list[str] = ["revoked_at IS NULL"]
+        params: list[Any] = [
+            revoked_at.isoformat(),
+            revoke_reason,
+            revoked_via,
+            revoked_by,
+        ]
         if session_id is not None:
             clauses.append("session_id = ?")
             params.append(session_id)
@@ -1346,7 +1360,10 @@ class ControlPlaneRepository:
         cursor = connection.execute(
             f"""
             UPDATE worker_session
-            SET revoked_at = COALESCE(revoked_at, ?)
+            SET revoked_at = ?,
+                revoke_reason = ?,
+                revoked_via = ?,
+                revoked_by = ?
             WHERE {where_clause}
             """,
             tuple(params),
@@ -1359,7 +1376,9 @@ class ControlPlaneRepository:
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
                 revoked_at=revoked_at,
-                revoke_reason="Worker session revoked.",
+                revoke_reason=revoke_reason or "Worker session revoked.",
+                revoked_via=revoked_via,
+                revoked_by=revoked_by,
             )
         return int(cursor.rowcount or 0)
 
@@ -1499,6 +1518,8 @@ class ControlPlaneRepository:
         *,
         revoked_at: datetime,
         revoke_reason: str,
+        revoked_via: str | None = None,
+        revoked_by: str | None = None,
         grant_id: str | None = None,
         session_id: str | None = None,
         worker_id: str | None = None,
@@ -1521,7 +1542,7 @@ class ControlPlaneRepository:
             raise ValueError("tenant_id and workspace_id must be provided together.")
 
         clauses: list[str] = ["revoked_at IS NULL"]
-        params: list[Any] = [revoked_at.isoformat(), revoke_reason]
+        params: list[Any] = [revoked_at.isoformat(), revoke_reason, revoked_via, revoked_by]
         if grant_id is not None:
             clauses.append("grant_id = ?")
             params.append(grant_id)
@@ -1544,7 +1565,7 @@ class ControlPlaneRepository:
         cursor = connection.execute(
             f"""
             UPDATE worker_delivery_grant
-            SET revoked_at = ?, revoke_reason = ?
+            SET revoked_at = ?, revoke_reason = ?, revoked_via = ?, revoked_by = ?
             WHERE {where_clause}
             """,
             tuple(params),
@@ -3259,7 +3280,10 @@ class ControlPlaneRepository:
                 expires_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL,
                 revoked_at TEXT,
-                credential_version INTEGER NOT NULL
+                credential_version INTEGER NOT NULL,
+                revoke_reason TEXT,
+                revoked_via TEXT,
+                revoked_by TEXT
             )
             """
         )
@@ -3277,6 +3301,9 @@ class ControlPlaneRepository:
             "last_seen_at": "TEXT",
             "revoked_at": "TEXT",
             "credential_version": "INTEGER",
+            "revoke_reason": "TEXT",
+            "revoked_via": "TEXT",
+            "revoked_by": "TEXT",
         }
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
@@ -3428,7 +3455,9 @@ class ControlPlaneRepository:
                 issued_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
                 revoked_at TEXT,
-                revoke_reason TEXT
+                revoke_reason TEXT,
+                revoked_via TEXT,
+                revoked_by TEXT
             )
             """
         )
@@ -3452,6 +3481,8 @@ class ControlPlaneRepository:
             "expires_at": "TEXT",
             "revoked_at": "TEXT",
             "revoke_reason": "TEXT",
+            "revoked_via": "TEXT",
+            "revoked_by": "TEXT",
         }
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
