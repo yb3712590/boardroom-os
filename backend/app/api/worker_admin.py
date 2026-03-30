@@ -13,10 +13,17 @@ from app.contracts.worker_admin import (
     WorkerAdminIssueBootstrapResponse,
     WorkerAdminRevokeBootstrapRequest,
     WorkerAdminRevokeBootstrapResponse,
+    WorkerAdminRevokeDeliveryGrantRequest,
+    WorkerAdminRevokeDeliveryGrantResponse,
+    WorkerAdminRevokeSessionRequest,
+    WorkerAdminRevokeSessionResponse,
 )
 from app.core.worker_admin import (
+    WORKER_ADMIN_API_VIA,
     cleanup_bindings,
     create_binding,
+    revoke_delivery_grant,
+    revoke_session,
     list_binding_admin_views,
     list_bootstrap_issues,
     revoke_bootstrap,
@@ -112,7 +119,7 @@ def post_worker_admin_issue_bootstrap(
             workspace_id=payload.workspace_id,
             issued_by=payload.issued_by,
             reason=payload.reason,
-            issued_via="worker_admin_api",
+            issued_via=WORKER_ADMIN_API_VIA,
         )
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
@@ -135,6 +142,47 @@ def post_worker_admin_revoke_bootstrap(
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
     return WorkerAdminRevokeBootstrapResponse.model_validate(revoked)
+
+
+@router.post("/revoke-session", response_model=WorkerAdminRevokeSessionResponse)
+def post_worker_admin_revoke_session(
+    request: Request,
+    payload: WorkerAdminRevokeSessionRequest,
+) -> WorkerAdminRevokeSessionResponse:
+    repository: ControlPlaneRepository = request.app.state.repository
+    try:
+        revoked = revoke_session(
+            repository,
+            session_id=payload.session_id,
+            worker_id=payload.worker_id,
+            tenant_id=payload.tenant_id,
+            workspace_id=payload.workspace_id,
+            revoked_by=payload.revoked_by,
+            reason=payload.reason,
+            revoked_via=WORKER_ADMIN_API_VIA,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise _translate_worker_admin_error(exc) from exc
+    return WorkerAdminRevokeSessionResponse.model_validate(revoked)
+
+
+@router.post("/revoke-delivery-grant", response_model=WorkerAdminRevokeDeliveryGrantResponse)
+def post_worker_admin_revoke_delivery_grant(
+    request: Request,
+    payload: WorkerAdminRevokeDeliveryGrantRequest,
+) -> WorkerAdminRevokeDeliveryGrantResponse:
+    repository: ControlPlaneRepository = request.app.state.repository
+    try:
+        revoked = revoke_delivery_grant(
+            repository,
+            grant_id=payload.grant_id,
+            revoked_by=payload.revoked_by,
+            reason=payload.reason,
+            revoked_via=WORKER_ADMIN_API_VIA,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise _translate_worker_admin_error(exc) from exc
+    return WorkerAdminRevokeDeliveryGrantResponse.model_validate(revoked)
 
 
 @router.post("/cleanup-bindings", response_model=WorkerAdminCleanupBindingsResponse)

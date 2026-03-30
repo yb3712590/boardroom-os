@@ -245,6 +245,9 @@ class WorkerSessionAdminProjection(StrictModel):
     last_seen_at: datetime
     revoked_at: datetime | None = None
     credential_version: int
+    revoke_reason: str | None = None
+    revoked_via: str | None = None
+    revoked_by: str | None = None
     is_active: bool
 
 
@@ -264,6 +267,8 @@ class WorkerDeliveryGrantAdminProjection(StrictModel):
     expires_at: datetime
     revoked_at: datetime | None = None
     revoke_reason: str | None = None
+    revoked_via: str | None = None
+    revoked_by: str | None = None
     is_active: bool
 
 

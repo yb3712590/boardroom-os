@@ -1244,8 +1244,10 @@ Behavior rules:
   - `POST /api/v1/worker-admin/create-binding`
   - `POST /api/v1/worker-admin/issue-bootstrap`
   - `POST /api/v1/worker-admin/revoke-bootstrap`
+  - `POST /api/v1/worker-admin/revoke-session`
+  - `POST /api/v1/worker-admin/revoke-delivery-grant`
   - `POST /api/v1/worker-admin/cleanup-bindings`
-- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, and conservative cleanup eligibility
+- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, conservative cleanup eligibility, and revoke audit writing
 - `worker-admin` is still a trusted control-plane surface, not a finished public tenant self-service or identity layer
 - if a worker already has multiple bootstrap bindings, `issue-bootstrap`, `rotate-bootstrap`, and `revoke-bootstrap` require both `--tenant-id` and `--workspace-id`; single-binding workers may still omit them and reuse the only binding
 - bootstrap-token calls create a fresh worker session
@@ -1253,8 +1255,8 @@ Behavior rules:
 - assignment polling only returns tickets from the current session scope; if the backend encounters a ticket owned by that worker under a scope with no matching bootstrap binding, it still rejects and audits the mismatch instead of silently hiding it
 - `GET /api/v1/projections/worker-runtime` now returns one aligned operational projection for:
   - matching bindings
-  - matching sessions with `is_active`
-  - matching delivery grants with `is_active`
+  - matching sessions with `is_active`, `revoke_reason`, `revoked_via`, and `revoked_by`
+  - matching delivery grants with `is_active`, `revoke_reason`, `revoked_via`, and `revoked_by`
   - recent matching auth rejections
   - summary counts and echoed filters
 - execution-package reads require a signed `access_token`, enforce current lease ownership, and return:
@@ -1294,6 +1296,7 @@ Behavior rules:
 - worker delivery routes reject the old shared-secret header fallback; local debugging should first call `assignments`, then use the returned signed URLs
 - local operators can inspect or revoke one specific delivery grant through `python -m app.worker_auth_cli list-delivery-grants` and `python -m app.worker_auth_cli revoke-delivery-grant --grant-id ...`
 - local operators can inspect active worker sessions through `python -m app.worker_auth_cli list-sessions`
+- local operators or trusted control-plane operators can now revoke one session through CLI or `POST /api/v1/worker-admin/revoke-session`, and both paths persist `revoke_reason`, `revoked_via`, and `revoked_by`
 - local operators can inspect persisted auth rejection rows through `python -m app.worker_auth_cli list-auth-rejections`
 - worker command routes inject worker identity from the signed token and then reuse the existing ticket handlers, so schema validation, write-set validation, artifact persistence, retry, incident, and breaker governance stay unchanged
 

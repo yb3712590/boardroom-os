@@ -538,8 +538,21 @@ def test_worker_auth_cli_revoke_session_only_revokes_target_session(
     first_session = first_response.json()["data"]
     second_session = second_response.json()["data"]
 
-    assert main(["revoke-session", "--session-id", first_session["session_id"]]) == 0
-    capsys.readouterr()
+    assert (
+        main(
+            [
+                "revoke-session",
+                "--session-id",
+                first_session["session_id"],
+                "--revoked-by",
+                "ops@example.com",
+                "--reason",
+                "Manual session revoke from CLI test.",
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
 
     revoked_response = client.get(
         "/api/v1/worker-runtime/assignments",
@@ -550,6 +563,28 @@ def test_worker_auth_cli_revoke_session_only_revokes_target_session(
         headers={"X-Boardroom-Worker-Session": second_session["session_token"]},
     )
 
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        session_row = repository.get_worker_session(first_session["session_id"], connection=connection)
+        session_grants = repository.list_worker_delivery_grants(
+            connection,
+            session_id=first_session["session_id"],
+        )
+
+    assert output["session_id"] == first_session["session_id"]
+    assert output["revoked_count"] == 1
+    assert output["revoked_delivery_grant_count"] == len(session_grants)
+    assert output["revoked_via"] == "worker_auth_cli"
+    assert output["revoked_by"] == "ops@example.com"
+    assert output["revoke_reason"] == "Manual session revoke from CLI test."
+    assert session_row is not None
+    assert session_row["revoked_via"] == "worker_auth_cli"
+    assert session_row["revoked_by"] == "ops@example.com"
+    assert session_row["revoke_reason"] == "Manual session revoke from CLI test."
+    assert session_grants
+    assert all(grant["revoked_via"] == "worker_auth_cli" for grant in session_grants)
+    assert all(grant["revoked_by"] == "ops@example.com" for grant in session_grants)
+    assert all(grant["revoke_reason"] == "Manual session revoke from CLI test." for grant in session_grants)
     assert revoked_response.status_code == 401
     assert surviving_response.status_code == 200
 
@@ -635,6 +670,8 @@ def test_worker_auth_cli_revoke_delivery_grant_only_revokes_target_url(
             "revoke-delivery-grant",
             "--grant-id",
             preview_grant_id,
+            "--revoked-by",
+            "ops@example.com",
             "--reason",
             "Manual single-URL revoke from CLI test.",
         ]
@@ -645,6 +682,16 @@ def test_worker_auth_cli_revoke_delivery_grant_only_revokes_target_url(
 
     assert exit_code == 0
     assert output["revoked_count"] == 1
+    assert output["revoked_via"] == "worker_auth_cli"
+    assert output["revoked_by"] == "ops@example.com"
+    assert output["revoke_reason"] == "Manual single-URL revoke from CLI test."
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        grant_row = repository.get_worker_delivery_grant(preview_grant_id, connection=connection)
+    assert grant_row is not None
+    assert grant_row["revoked_via"] == "worker_auth_cli"
+    assert grant_row["revoked_by"] == "ops@example.com"
+    assert grant_row["revoke_reason"] == "Manual single-URL revoke from CLI test."
     assert preview_response.status_code == 401
     assert content_response.status_code == 200
 

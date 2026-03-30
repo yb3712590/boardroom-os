@@ -10,6 +10,11 @@ from app.core.worker_bootstrap_tokens import issue_worker_bootstrap_token
 from app.db.repository import ControlPlaneRepository
 
 ISSUED_VIA_WORKER_AUTH_CLI = "worker_auth_cli"
+WORKER_ADMIN_API_VIA = "worker_admin_api"
+WORKER_BOOTSTRAP_REVOKE_VIA = "worker_bootstrap_revoke"
+WORKER_BOOTSTRAP_ROTATE_VIA = "worker_bootstrap_rotate"
+DEFAULT_SESSION_REVOKE_REASON = "Manually revoked worker session."
+DEFAULT_DELIVERY_GRANT_REVOKE_REASON = "Manually revoked worker delivery grant."
 
 
 def _resolve_bootstrap_signing_secret() -> str:
@@ -267,6 +272,113 @@ def revoke_bootstrap(
         "tenant_id": str(state["tenant_id"]),
         "workspace_id": str(state["workspace_id"]),
         "revoked_before": revoked_at,
+    }
+
+
+def revoke_session(
+    repository: ControlPlaneRepository,
+    *,
+    session_id: str | None = None,
+    worker_id: str | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    revoked_by: str | None = None,
+    reason: str | None = None,
+    revoked_via: str = ISSUED_VIA_WORKER_AUTH_CLI,
+) -> dict[str, object]:
+    tenant_id, workspace_id = resolve_scope_args(tenant_id, workspace_id)
+    if session_id is not None:
+        if worker_id is not None or tenant_id is not None or workspace_id is not None:
+            raise RuntimeError(
+                "Please provide either session_id or worker_id with tenant_id/workspace_id, not both."
+            )
+    else:
+        if worker_id is None or tenant_id is None or workspace_id is None:
+            raise RuntimeError(
+                "Please provide either session_id or worker_id with tenant_id and workspace_id."
+            )
+
+    revoked_at = now_local()
+    resolved_reason = reason or DEFAULT_SESSION_REVOKE_REASON
+    with repository.transaction() as connection:
+        session: dict[str, object] | None = None
+        if session_id is not None:
+            session = repository.get_worker_session(session_id, connection=connection)
+            if session is None:
+                raise RuntimeError("Worker session was not found.")
+            worker_id = str(session["worker_id"])
+            tenant_id = str(session["tenant_id"])
+            workspace_id = str(session["workspace_id"])
+
+        revoked_delivery_grant_count = len(
+            repository.list_worker_delivery_grants(
+                connection,
+                session_id=session_id,
+                worker_id=worker_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                active_only=True,
+            )
+        )
+        revoked_count = repository.revoke_worker_sessions(
+            connection,
+            session_id=session_id,
+            worker_id=worker_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            revoked_at=revoked_at,
+            revoke_reason=resolved_reason,
+            revoked_via=revoked_via,
+            revoked_by=revoked_by,
+        )
+
+    return {
+        "session_id": session_id,
+        "worker_id": worker_id,
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "revoked_count": revoked_count,
+        "revoked_delivery_grant_count": revoked_delivery_grant_count,
+        "revoked_at": revoked_at,
+        "revoked_via": revoked_via,
+        "revoked_by": revoked_by,
+        "revoke_reason": resolved_reason,
+    }
+
+
+def revoke_delivery_grant(
+    repository: ControlPlaneRepository,
+    *,
+    grant_id: str,
+    revoked_by: str | None = None,
+    reason: str | None = None,
+    revoked_via: str = ISSUED_VIA_WORKER_AUTH_CLI,
+) -> dict[str, object]:
+    revoked_at = now_local()
+    resolved_reason = reason or DEFAULT_DELIVERY_GRANT_REVOKE_REASON
+    with repository.transaction() as connection:
+        grant = repository.get_worker_delivery_grant(grant_id, connection=connection)
+        if grant is None:
+            raise RuntimeError("Worker delivery grant was not found.")
+        revoked_count = repository.revoke_worker_delivery_grants(
+            connection,
+            grant_id=grant_id,
+            revoked_at=revoked_at,
+            revoke_reason=resolved_reason,
+            revoked_via=revoked_via,
+            revoked_by=revoked_by,
+        )
+    return {
+        "grant_id": grant_id,
+        "session_id": str(grant["session_id"]),
+        "worker_id": str(grant["worker_id"]),
+        "tenant_id": str(grant["tenant_id"]),
+        "workspace_id": str(grant["workspace_id"]),
+        "revoked_count": revoked_count,
+        "revoked_at": revoked_at,
+        "revoked_via": revoked_via,
+        "revoked_by": revoked_by,
+        "revoke_reason": resolved_reason,
     }
 
 

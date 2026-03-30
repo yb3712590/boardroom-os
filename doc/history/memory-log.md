@@ -38,11 +38,11 @@
 
 - Ticket lifecycle, review and board commands, incident and breaker governance, retry escalation, and structured result submission are implemented in the backend slice.
 - External worker handoff is real: bootstrap token -> refreshable session -> signed delivery grants -> execution, artifact, and command URLs.
-- Delivery grants can be listed and revoked from the local worker auth CLI.
+- Delivery grants can now be revoked from both the local worker auth CLI and the trusted `worker-admin` HTTP surface.
 - Scope binding now exists across workflow, ticket, worker bootstrap and session, delivery grants, and compiled execution package metadata.
 - One worker can now keep multiple bootstrap bindings keyed by `worker_id + tenant_id + workspace_id`; each session and delivery grant still stays bound to exactly one scope.
 - Worker bootstrap issuance is now also persisted as `worker_bootstrap_issue`, so newer bootstrap tokens carry `issue_id` and may be invalidated conservatively without changing the compatibility path for older tokens.
-- Trusted control-plane operators now also have a minimal `worker-admin` HTTP surface for binding and bootstrap management; CLI and HTTP reuse the same scope and issuance rules.
+- Trusted control-plane operators now also have a `worker-admin` HTTP surface for binding, bootstrap, session, and delivery-grant management; CLI and HTTP reuse the same scope and audit rules.
 - Output schema enforcement is currently real for `ui_milestone_review@1` and `consensus_document@1`.
 
 ### Durable Open Gaps
@@ -79,7 +79,11 @@
 - Added a shared worker admin service under the backend, so CLI and HTTP management no longer duplicate binding / bootstrap lifecycle rules.
 - Added `GET /api/v1/worker-admin/bindings`, `GET /api/v1/worker-admin/bootstrap-issues`, and the matching create / issue / revoke / cleanup POST routes, closing the minimal HTTP management loop for worker tenant operations.
 - Kept `worker-runtime` projections as the unified read surface and left session / delivery-grant revoke in CLI for now, rather than widening the HTTP management scope all at once.
-- Fresh full-suite verification is now `backend/tests -q` -> `186 passed`.
+- Extended `worker-admin` with `revoke-session` and `revoke-delivery-grant`, so tenant incident handling can now stay in one control-plane entrypoint instead of bouncing back to local CLI.
+- Added persisted revoke audit fields on worker sessions and delivery grants, and surfaced them back through `GET /api/v1/projections/worker-runtime` for direct post-action verification.
+- Fresh focused verification after this change is:
+  - `backend/tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `14 passed`
+  - `backend/tests/test_worker_auth_cli.py -q` -> `15 passed`
 
 ### Current Watch-Outs
 

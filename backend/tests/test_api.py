@@ -5240,6 +5240,15 @@ def test_worker_admin_bindings_requires_scope_pair(client):
     assert response.status_code == 400
 
 
+def test_worker_admin_revoke_session_requires_session_id_or_complete_scope(client):
+    response = client.post(
+        "/api/v1/worker-admin/revoke-session",
+        json={"worker_id": "emp_frontend_2"},
+    )
+
+    assert response.status_code == 400
+
+
 def test_worker_admin_bindings_returns_scope_filtered_bindings(
     client,
     monkeypatch,
@@ -5489,6 +5498,271 @@ def test_worker_admin_revoke_bootstrap_invalidates_issue_backed_token(
     assert revoke_response.status_code == 200
     assert revoke_response.json()["worker_id"] == "emp_frontend_2"
     assert assignments_response.status_code == 401
+
+
+def test_worker_admin_revoke_session_by_session_id_cascades_grants_and_updates_projection(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_revoke_session",
+        ticket_id="tkt_worker_admin_revoke_session",
+        node_id="node_worker_admin_revoke_session",
+    )
+
+    issue_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+    )
+    assert issue_response.status_code == 200
+    issued_payload = issue_response.json()
+    assignments_data, _ = _bootstrap_worker_execution_package(client, issued_payload["bootstrap_token"])
+
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        session_grants = repository.list_worker_delivery_grants(
+            connection,
+            session_id=assignments_data["session_id"],
+        )
+    assert session_grants
+
+    revoke_response = client.post(
+        "/api/v1/worker-admin/revoke-session",
+        json={
+            "session_id": assignments_data["session_id"],
+            "revoked_by": "ops@example.com",
+            "reason": "Tenant incident session revoke.",
+        },
+    )
+    assert revoke_response.status_code == 200
+    revoke_payload = revoke_response.json()
+    assert revoke_payload["session_id"] == assignments_data["session_id"]
+    assert revoke_payload["worker_id"] == "emp_frontend_2"
+    assert revoke_payload["tenant_id"] == "tenant_default"
+    assert revoke_payload["workspace_id"] == "ws_default"
+    assert revoke_payload["revoked_count"] == 1
+    assert revoke_payload["revoked_delivery_grant_count"] == len(session_grants)
+    assert revoke_payload["revoked_via"] == "worker_admin_api"
+    assert revoke_payload["revoked_by"] == "ops@example.com"
+    assert revoke_payload["revoke_reason"] == "Tenant incident session revoke."
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(assignments_data["session_token"]),
+    )
+    assert assignments_response.status_code == 401
+
+    projection_response = client.get(
+        "/api/v1/projections/worker-runtime",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+            "grant_limit": 20,
+        },
+    )
+    assert projection_response.status_code == 200
+    projection = projection_response.json()["data"]
+    session_item = next(
+        item for item in projection["sessions"] if item["session_id"] == assignments_data["session_id"]
+    )
+    assert session_item["revoke_reason"] == "Tenant incident session revoke."
+    assert session_item["revoked_via"] == "worker_admin_api"
+    assert session_item["revoked_by"] == "ops@example.com"
+    revoked_grants = [
+        item for item in projection["delivery_grants"] if item["session_id"] == assignments_data["session_id"]
+    ]
+    assert revoked_grants
+    assert all(item["revoked_via"] == "worker_admin_api" for item in revoked_grants)
+    assert all(item["revoked_by"] == "ops@example.com" for item in revoked_grants)
+    assert all(item["revoke_reason"] == "Tenant incident session revoke." for item in revoked_grants)
+
+
+def test_worker_admin_revoke_session_by_scope_only_hits_requested_scope(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_scope_default",
+        ticket_id="tkt_worker_admin_scope_default",
+        node_id="node_worker_admin_scope_default",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_scope_blue",
+        ticket_id="tkt_worker_admin_scope_blue",
+        node_id="node_worker_admin_scope_blue",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    default_issue = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+            "ttl_sec": 120,
+        },
+    )
+    blue_issue = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+        },
+    )
+    assert default_issue.status_code == 200
+    assert blue_issue.status_code == 200
+
+    default_assignments = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": default_issue.json()["bootstrap_token"]},
+    )
+    blue_assignments = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": blue_issue.json()["bootstrap_token"]},
+    )
+    default_session = default_assignments.json()["data"]
+    blue_session = blue_assignments.json()["data"]
+
+    revoke_response = client.post(
+        "/api/v1/worker-admin/revoke-session",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "revoked_by": "ops@example.com",
+            "reason": "Tenant-blue scope revoke.",
+        },
+    )
+    assert revoke_response.status_code == 200
+    revoke_payload = revoke_response.json()
+    assert revoke_payload["session_id"] is None
+    assert revoke_payload["worker_id"] == "emp_frontend_2"
+    assert revoke_payload["tenant_id"] == "tenant_blue"
+    assert revoke_payload["workspace_id"] == "ws_design"
+    assert revoke_payload["revoked_count"] == 1
+    assert revoke_payload["revoked_via"] == "worker_admin_api"
+
+    revoked_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(blue_session["session_token"]),
+    )
+    surviving_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(default_session["session_token"]),
+    )
+
+    assert revoked_response.status_code == 401
+    assert surviving_response.status_code == 200
+
+
+def test_worker_admin_revoke_delivery_grant_only_revokes_target_and_exposes_audit_fields(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_revoke_grant",
+        ticket_id="tkt_worker_admin_revoke_grant",
+        node_id="node_worker_admin_revoke_grant",
+    )
+
+    issue_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+    )
+    assert issue_response.status_code == 200
+    _, execution_package = _bootstrap_worker_execution_package(
+        client,
+        issue_response.json()["bootstrap_token"],
+    )
+    context_payload = execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0][
+        "content_payload"
+    ]
+    preview_url = context_payload["preview_url"]
+    content_url = context_payload["content_url"]
+    preview_grant_id = _decode_worker_delivery_token_payload(
+        _query_value(preview_url, "access_token") or ""
+    )["grant_id"]
+
+    revoke_response = client.post(
+        "/api/v1/worker-admin/revoke-delivery-grant",
+        json={
+            "grant_id": preview_grant_id,
+            "revoked_by": "ops@example.com",
+            "reason": "Manual preview revoke from HTTP.",
+        },
+    )
+    assert revoke_response.status_code == 200
+    revoke_payload = revoke_response.json()
+    assert revoke_payload["grant_id"] == preview_grant_id
+    assert revoke_payload["revoked_count"] == 1
+    assert revoke_payload["revoked_via"] == "worker_admin_api"
+    assert revoke_payload["revoked_by"] == "ops@example.com"
+    assert revoke_payload["revoke_reason"] == "Manual preview revoke from HTTP."
+
+    preview_response = client.get(_local_path_from_url(preview_url))
+    content_response = client.get(_local_path_from_url(content_url))
+    assert preview_response.status_code == 401
+    assert content_response.status_code == 200
+
+    projection_response = client.get(
+        "/api/v1/projections/worker-runtime",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+            "grant_limit": 20,
+        },
+    )
+    assert projection_response.status_code == 200
+    projection = projection_response.json()["data"]
+    grant_item = next(item for item in projection["delivery_grants"] if item["grant_id"] == preview_grant_id)
+    assert grant_item["revoked_via"] == "worker_admin_api"
+    assert grant_item["revoked_by"] == "ops@example.com"
+    assert grant_item["revoke_reason"] == "Manual preview revoke from HTTP."
 
 
 def test_worker_admin_cleanup_bindings_honors_dry_run_and_deletes_only_cleanup_eligible(client):

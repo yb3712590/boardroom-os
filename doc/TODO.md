@@ -7,10 +7,10 @@
 - 多租户 worker 运维面第二批连续切片已落地：
   - CLI 与后端现在共用同一套 worker admin 服务，不再各自复制 binding / bootstrap 规则
   - 新增 `GET /api/v1/worker-admin/bindings` 与 `GET /api/v1/worker-admin/bootstrap-issues`，可以直接按 worker / scope 看 binding 和 bootstrap issue
-  - 新增 `POST /api/v1/worker-admin/create-binding`、`issue-bootstrap`、`revoke-bootstrap`、`cleanup-bindings`，形成最小 HTTP 管理闭环
-  - `GET /api/v1/projections/worker-runtime` 继续负责统一观察 binding、session、delivery grant 和拒绝日志
+  - 新增 `POST /api/v1/worker-admin/create-binding`、`issue-bootstrap`、`revoke-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`cleanup-bindings`，把常见事故处置动作拉进同一控制面
+  - `GET /api/v1/projections/worker-runtime` 继续负责统一观察 binding、session、delivery grant 和拒绝日志，并回显更清楚的撤销审计字段
 - 继续推进更强多租户远端隔离：
-  - 把当前最小 HTTP 管理面继续推进成更完整的租户管理面，例如 session / delivery grant 管理、粒度更细的租户自助能力
+  - 把当前受信 `worker-admin` 继续推进成更完整的租户管理面，例如粒度更细的租户自助能力、更安全的权限边界和更明确的批量操作保护
   - 收紧公开互联网场景下的安全边界，例如更强的外网暴露策略、独立租户管理面和更完整的身份层
 - 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
