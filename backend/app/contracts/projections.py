@@ -150,6 +150,26 @@ class ReviewRoomDeveloperInspectorProjectionEnvelope(ProjectionEnvelopeBase):
     data: ReviewRoomDeveloperInspectorProjectionData
 
 
+class TicketArtifactProjection(StrictModel):
+    artifact_ref: str
+    path: str
+    kind: str
+    media_type: str | None = None
+    status: str
+    size_bytes: int | None = None
+    content_hash: str | None = None
+    created_at: datetime
+
+
+class TicketArtifactsProjectionData(StrictModel):
+    ticket_id: str
+    artifacts: list[TicketArtifactProjection]
+
+
+class TicketArtifactsProjectionEnvelope(ProjectionEnvelopeBase):
+    data: TicketArtifactsProjectionData
+
+
 class IncidentProjectionItem(StrictModel):
     incident_id: str
     workflow_id: str

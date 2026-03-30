@@ -86,12 +86,17 @@ def _runtime_success_result(
     *,
     summary: str = "Runtime produced a structured UI milestone review.",
     payload: dict | None = None,
+    artifact_refs: list[str] | None = None,
     written_artifacts: list[dict] | None = None,
 ) -> RuntimeExecutionResult:
+    resolved_artifact_refs = artifact_refs or [
+        "art://runtime/homepage/option-a.json",
+        "art://runtime/homepage/option-b.json",
+    ]
     return RuntimeExecutionResult(
         result_status="completed",
         completion_summary=summary,
-        artifact_refs=["art://runtime/homepage/option-a.png", "art://runtime/homepage/option-b.png"],
+        artifact_refs=resolved_artifact_refs,
         result_payload=payload
         or {
             "summary": "Runtime produced a structured UI milestone review.",
@@ -101,27 +106,35 @@ def _runtime_success_result(
                     "option_id": "option_a",
                     "label": "Option A",
                     "summary": "Primary runtime-generated option.",
-                    "artifact_refs": ["art://runtime/homepage/option-a.png"],
+                    "artifact_refs": [resolved_artifact_refs[0]],
                 },
                 {
                     "option_id": "option_b",
                     "label": "Option B",
                     "summary": "Fallback runtime-generated option.",
-                    "artifact_refs": ["art://runtime/homepage/option-b.png"],
+                    "artifact_refs": [resolved_artifact_refs[1]],
                 },
             ],
         },
         written_artifacts=written_artifacts
         or [
             {
-                "path": "artifacts/ui/homepage/option-a.png",
-                "artifact_ref": "art://runtime/homepage/option-a.png",
-                "kind": "IMAGE",
+                "path": "artifacts/ui/homepage/option-a.json",
+                "artifact_ref": resolved_artifact_refs[0],
+                "kind": "JSON",
+                "content_json": {
+                    "option_id": "option_a",
+                    "headline": "Primary runtime-generated structured review artifact.",
+                },
             },
             {
-                "path": "artifacts/ui/homepage/option-b.png",
-                "artifact_ref": "art://runtime/homepage/option-b.png",
-                "kind": "IMAGE",
+                "path": "artifacts/ui/homepage/option-b.json",
+                "artifact_ref": resolved_artifact_refs[1],
+                "kind": "JSON",
+                "content_json": {
+                    "option_id": "option_b",
+                    "headline": "Fallback runtime-generated structured review artifact.",
+                },
             },
         ],
         assumptions=["Runtime used the minimal compiled context bundle."],
@@ -154,8 +167,12 @@ def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_tic
     latest_manifest = client.app.state.repository.get_latest_compile_manifest_by_ticket(
         "tkt_runner_ui"
     )
+    indexed_artifacts = client.app.state.repository.list_ticket_artifacts("tkt_runner_ui")
     ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_runner_ui")
     node_projection = client.app.state.repository.get_current_node_projection("wf_runner", "node_runner_ui")
+    indexed_by_ref = {item["artifact_ref"]: item for item in indexed_artifacts}
+    stored_artifact = indexed_by_ref["art://runtime/tkt_runner_ui/option-a.json"]
+    artifact_store = client.app.state.artifact_store
 
     assert ack.status.value == "ACCEPTED"
     assert ack.causation_hint == "scheduler:tick"
@@ -163,6 +180,10 @@ def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_tic
     assert latest_manifest is not None
     assert latest_bundle["payload"]["meta"]["ticket_id"] == "tkt_runner_ui"
     assert latest_manifest["payload"]["compile_meta"]["ticket_id"] == "tkt_runner_ui"
+    assert len(indexed_artifacts) == 2
+    assert stored_artifact["materialization_status"] == "MATERIALIZED"
+    assert stored_artifact["storage_relpath"] is not None
+    assert (artifact_store.root / stored_artifact["storage_relpath"]).exists()
     assert ticket_projection["status"] == "COMPLETED"
     assert ticket_projection["lease_owner"] is None
     assert node_projection["status"] == "COMPLETED"

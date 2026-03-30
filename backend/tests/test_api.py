@@ -208,9 +208,18 @@ def _ticket_result_submit_payload(
     include_review_request: bool = False,
     schema_version: str = "ui_milestone_review_v1",
     payload: dict | None = None,
+    artifact_refs: list[str] | None = None,
     written_artifacts: list[dict] | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
+    resolved_artifact_refs = artifact_refs or [
+        "art://homepage/option-a.png",
+        "art://homepage/option-b.png",
+    ]
+    option_a_ref = resolved_artifact_refs[0]
+    option_b_ref = (
+        resolved_artifact_refs[1] if len(resolved_artifact_refs) > 1 else resolved_artifact_refs[0]
+    )
     result_payload = {
         "workflow_id": workflow_id,
         "ticket_id": ticket_id,
@@ -227,27 +236,27 @@ def _ticket_result_submit_payload(
                     "option_id": "option_a",
                     "label": "Option A",
                     "summary": "High-contrast review candidate.",
-                    "artifact_refs": ["art://homepage/option-a.png"],
+                    "artifact_refs": [option_a_ref],
                 },
                 {
                     "option_id": "option_b",
                     "label": "Option B",
                     "summary": "Lower contrast fallback.",
-                    "artifact_refs": ["art://homepage/option-b.png"],
+                    "artifact_refs": [option_b_ref],
                 },
             ],
         },
-        "artifact_refs": ["art://homepage/option-a.png", "art://homepage/option-b.png"],
+        "artifact_refs": resolved_artifact_refs,
         "written_artifacts": written_artifacts
         or [
             {
                 "path": "artifacts/ui/homepage/option-a.png",
-                "artifact_ref": "art://homepage/option-a.png",
+                "artifact_ref": option_a_ref,
                 "kind": "IMAGE",
             },
             {
                 "path": "artifacts/ui/homepage/option-b.png",
-                "artifact_ref": "art://homepage/option-b.png",
+                "artifact_ref": option_b_ref,
                 "kind": "IMAGE",
             },
         ],
@@ -973,6 +982,157 @@ def test_ticket_result_submit_completes_ticket_with_validated_structured_payload
     assert node_projection["status"] == NODE_STATUS_COMPLETED
 
 
+def test_ticket_result_submit_materializes_json_artifacts_and_exposes_ticket_artifacts_projection(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    artifact_refs = ["art://homepage/option-a.json", "art://homepage/option-b.json"]
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=artifact_refs,
+            payload={
+                "summary": "Homepage visual milestone is ready for downstream review.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Structured review artifact for option A.",
+                        "artifact_refs": ["art://homepage/option-a.json"],
+                    },
+                    {
+                        "option_id": "option_b",
+                        "label": "Option B",
+                        "summary": "Structured review artifact for option B.",
+                        "artifact_refs": ["art://homepage/option-b.json"],
+                    },
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "artifacts/ui/homepage/option-a.json",
+                    "artifact_ref": "art://homepage/option-a.json",
+                    "kind": "JSON",
+                    "content_json": {
+                        "option_id": "option_a",
+                        "headline": "Primary structured review artifact.",
+                    },
+                },
+                {
+                    "path": "artifacts/ui/homepage/option-b.json",
+                    "artifact_ref": "art://homepage/option-b.json",
+                    "kind": "JSON",
+                    "content_json": {
+                        "option_id": "option_b",
+                        "headline": "Fallback structured review artifact.",
+                    },
+                },
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:json-artifacts",
+        ),
+    )
+
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    indexed_artifacts = repository.list_ticket_artifacts("tkt_visual_001")
+    indexed_by_ref = {item["artifact_ref"]: item for item in indexed_artifacts}
+    stored_option_a = indexed_by_ref["art://homepage/option-a.json"]
+    artifacts_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+    projected_by_ref = {
+        item["artifact_ref"]: item for item in artifacts_response.json()["data"]["artifacts"]
+    }
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert len(indexed_artifacts) == 2
+    assert stored_option_a["materialization_status"] == "MATERIALIZED"
+    assert stored_option_a["storage_relpath"] is not None
+    assert stored_option_a["content_hash"]
+    assert stored_option_a["size_bytes"] > 0
+    assert (artifact_store.root / stored_option_a["storage_relpath"]).exists()
+    assert json.loads((artifact_store.root / stored_option_a["storage_relpath"]).read_text(encoding="utf-8")) == {
+        "headline": "Primary structured review artifact.",
+        "option_id": "option_a",
+    }
+    assert artifacts_response.status_code == 200
+    assert projected_by_ref["art://homepage/option-a.json"]["status"] == "MATERIALIZED"
+    assert projected_by_ref["art://homepage/option-a.json"]["path"] == "artifacts/ui/homepage/option-a.json"
+
+
+def test_ticket_result_submit_materializes_markdown_artifacts(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    artifact_ref = "art://reports/homepage/review-summary.md"
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=[artifact_ref],
+            payload={
+                "summary": "Homepage review package includes a markdown summary artifact.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Review summary is attached as markdown.",
+                        "artifact_refs": [artifact_ref],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "reports/review/homepage-summary.md",
+                    "artifact_ref": artifact_ref,
+                    "kind": "MARKDOWN",
+                    "content_text": "# Homepage Review\n\n- Keep stronger hero hierarchy.\n",
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:markdown-artifact",
+        ),
+    )
+
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    indexed_artifact = repository.get_artifact_by_ref(artifact_ref)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert indexed_artifact is not None
+    assert indexed_artifact["materialization_status"] == "MATERIALIZED"
+    assert indexed_artifact["media_type"] == "text/markdown"
+    assert (artifact_store.root / indexed_artifact["storage_relpath"]).read_text(encoding="utf-8") == (
+        "# Homepage Review\n\n- Keep stronger hero hierarchy.\n"
+    )
+
+
+def test_ticket_result_submit_registers_binary_artifacts_without_materializing_them(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:registered-only-images",
+        ),
+    )
+
+    repository = client.app.state.repository
+    indexed_artifacts = repository.list_ticket_artifacts("tkt_visual_001")
+    artifacts_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert indexed_artifacts
+    assert all(item["materialization_status"] == "REGISTERED_ONLY" for item in indexed_artifacts)
+    assert all(item["storage_relpath"] is None for item in indexed_artifacts)
+    assert all(item["status"] == "REGISTERED_ONLY" for item in artifacts_response.json()["data"]["artifacts"])
+
+
 def test_ticket_result_submit_schema_error_converts_to_controlled_failure(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client, retry_budget=2, on_schema_error="retry")
@@ -1032,6 +1192,147 @@ def test_ticket_result_submit_write_set_violation_converts_to_controlled_failure
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert failed_events[-1]["payload"]["failure_kind"] == "WRITE_SET_VIOLATION"
+
+
+def test_ticket_result_submit_duplicate_artifact_refs_convert_to_controlled_failure(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=["art://homepage/duplicate.json"],
+            payload={
+                "summary": "Duplicate artifact refs should be rejected.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Single option for duplicate artifact ref validation.",
+                        "artifact_refs": ["art://homepage/duplicate.json"],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "artifacts/ui/homepage/option-a.json",
+                    "artifact_ref": "art://homepage/duplicate.json",
+                    "kind": "JSON",
+                    "content_json": {"option_id": "option_a"},
+                },
+                {
+                    "path": "artifacts/ui/homepage/option-b.json",
+                    "artifact_ref": "art://homepage/duplicate.json",
+                    "kind": "JSON",
+                    "content_json": {"option_id": "option_b"},
+                },
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:duplicate-artifact-ref",
+        ),
+    )
+
+    repository = client.app.state.repository
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "ARTIFACT_VALIDATION_ERROR"
+    assert "artifact_ref" in failed_events[-1]["payload"]["failure_message"]
+
+
+def test_ticket_result_submit_duplicate_paths_convert_to_controlled_failure(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=["art://homepage/option-a.json", "art://homepage/option-b.json"],
+            payload={
+                "summary": "Duplicate artifact paths should be rejected.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Single option for duplicate path validation.",
+                        "artifact_refs": ["art://homepage/option-a.json"],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "artifacts/ui/homepage/duplicate.json",
+                    "artifact_ref": "art://homepage/option-a.json",
+                    "kind": "JSON",
+                    "content_json": {"option_id": "option_a"},
+                },
+                {
+                    "path": "artifacts/ui/homepage/duplicate.json",
+                    "artifact_ref": "art://homepage/option-b.json",
+                    "kind": "JSON",
+                    "content_json": {"option_id": "option_b"},
+                },
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:duplicate-path",
+        ),
+    )
+
+    repository = client.app.state.repository
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "ARTIFACT_VALIDATION_ERROR"
+    assert "path" in failed_events[-1]["payload"]["failure_message"]
+
+
+def test_ticket_result_submit_kind_content_mismatch_converts_to_controlled_failure(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client, retry_budget=2)
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=["art://homepage/invalid.json"],
+            payload={
+                "summary": "Artifact content kind mismatch should be rejected.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Single option for kind/content validation.",
+                        "artifact_refs": ["art://homepage/invalid.json"],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "artifacts/ui/homepage/invalid.json",
+                    "artifact_ref": "art://homepage/invalid.json",
+                    "kind": "JSON",
+                    "content_text": "{\"option_id\": \"option_a\"}",
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:kind-content-mismatch",
+        ),
+    )
+
+    repository = client.app.state.repository
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "ARTIFACT_VALIDATION_ERROR"
+    assert "content_json" in failed_events[-1]["payload"]["failure_message"]
 
 
 def test_ticket_cancel_transitions_executing_ticket_to_cancel_requested_and_blocks_progress(
@@ -2531,6 +2832,13 @@ def test_review_room_developer_inspector_returns_partial_when_refs_are_unmateria
 
 def test_review_room_developer_inspector_returns_404_for_missing_review_pack(client):
     response = client.get("/api/v1/projections/review-room/brp_missing/developer-inspector")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_ticket_artifacts_projection_returns_404_for_missing_ticket(client):
+    response = client.get("/api/v1/projections/tickets/tkt_missing/artifacts")
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()

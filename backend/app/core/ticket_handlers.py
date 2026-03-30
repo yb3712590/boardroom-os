@@ -3,6 +3,8 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -23,6 +25,7 @@ from app.contracts.commands import (
     TicketResultSubmitCommand,
     TicketStartCommand,
 )
+from app.core.artifact_store import ArtifactStore, MaterializedArtifact, normalize_artifact_logical_path
 from app.core.constants import (
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
@@ -77,6 +80,22 @@ from app.core.ids import new_prefixed_id
 from app.core.output_schemas import validate_output_payload
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
+
+
+ARTIFACT_STATUS_MATERIALIZED = "MATERIALIZED"
+ARTIFACT_STATUS_REGISTERED_ONLY = "REGISTERED_ONLY"
+
+
+@dataclass(frozen=True)
+class PreparedTicketArtifact:
+    artifact_ref: str
+    logical_path: str
+    kind: str
+    media_type: str | None
+    materialization_status: str
+    storage_relpath: str | None
+    content_hash: str | None
+    size_bytes: int | None
 
 
 def _duplicate_ack(
@@ -185,6 +204,129 @@ def _cancel_duplicate_ack(
 
 def _match_allowed_write_set(path: str, allowed_write_set: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in allowed_write_set)
+
+
+def _artifact_media_type(kind: str, logical_path: str) -> str | None:
+    normalized_kind = kind.upper()
+    if normalized_kind == "JSON":
+        return "application/json"
+    if normalized_kind == "MARKDOWN":
+        return "text/markdown"
+    if normalized_kind == "TEXT":
+        return "text/plain"
+    if normalized_kind == "IMAGE":
+        suffix = logical_path.rsplit(".", 1)[-1].lower() if "." in logical_path else ""
+        return {
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "webp": "image/webp",
+        }.get(suffix, "image/*")
+    return None
+
+
+def _validate_written_artifacts(
+    written_artifacts: list,
+) -> list[tuple]:
+    seen_refs: set[str] = set()
+    seen_paths: set[str] = set()
+    validated: list[tuple] = []
+
+    for item in written_artifacts:
+        if item.artifact_ref in seen_refs:
+            raise ValueError("Structured result contains a duplicate artifact_ref.")
+        seen_refs.add(item.artifact_ref)
+
+        logical_path = normalize_artifact_logical_path(item.path)
+        if logical_path in seen_paths:
+            raise ValueError("Structured result contains a duplicate artifact path.")
+        seen_paths.add(logical_path)
+
+        normalized_kind = item.kind.upper()
+        if normalized_kind == "JSON":
+            if item.content_json is None:
+                raise ValueError("JSON artifacts require content_json.")
+            if item.content_text is not None:
+                raise ValueError("JSON artifacts must not include content_text.")
+        elif normalized_kind in {"TEXT", "MARKDOWN"}:
+            if item.content_text is None:
+                raise ValueError(f"{normalized_kind} artifacts require content_text.")
+            if item.content_json is not None:
+                raise ValueError(f"{normalized_kind} artifacts must not include content_json.")
+        else:
+            if item.content_json is not None or item.content_text is not None:
+                raise ValueError(
+                    f"{normalized_kind} artifacts cannot include inline structured content in the current MVP."
+                )
+
+        validated.append((item, logical_path, _artifact_media_type(normalized_kind, logical_path)))
+
+    return validated
+
+
+def _prepare_ticket_artifacts(
+    *,
+    artifact_store: ArtifactStore | None,
+    written_artifacts: list,
+) -> tuple[list[PreparedTicketArtifact], list[MaterializedArtifact]]:
+    validated_items = _validate_written_artifacts(written_artifacts)
+    prepared: list[PreparedTicketArtifact] = []
+    materialized_artifacts: list[MaterializedArtifact] = []
+
+    for item, logical_path, media_type in validated_items:
+        normalized_kind = item.kind.upper()
+        if normalized_kind == "JSON":
+            if artifact_store is None:
+                raise RuntimeError("Artifact store is required to materialize JSON artifacts.")
+            materialized = artifact_store.materialize_json(logical_path, item.content_json)
+            materialized_artifacts.append(materialized)
+            prepared.append(
+                PreparedTicketArtifact(
+                    artifact_ref=item.artifact_ref,
+                    logical_path=logical_path,
+                    kind=normalized_kind,
+                    media_type=media_type,
+                    materialization_status=ARTIFACT_STATUS_MATERIALIZED,
+                    storage_relpath=materialized.storage_relpath,
+                    content_hash=materialized.content_hash,
+                    size_bytes=materialized.size_bytes,
+                )
+            )
+            continue
+        if normalized_kind in {"TEXT", "MARKDOWN"}:
+            if artifact_store is None:
+                raise RuntimeError(f"Artifact store is required to materialize {normalized_kind} artifacts.")
+            materialized = artifact_store.materialize_text(logical_path, item.content_text or "")
+            materialized_artifacts.append(materialized)
+            prepared.append(
+                PreparedTicketArtifact(
+                    artifact_ref=item.artifact_ref,
+                    logical_path=logical_path,
+                    kind=normalized_kind,
+                    media_type=media_type,
+                    materialization_status=ARTIFACT_STATUS_MATERIALIZED,
+                    storage_relpath=materialized.storage_relpath,
+                    content_hash=materialized.content_hash,
+                    size_bytes=materialized.size_bytes,
+                )
+            )
+            continue
+
+        prepared.append(
+            PreparedTicketArtifact(
+                artifact_ref=item.artifact_ref,
+                logical_path=logical_path,
+                kind=normalized_kind,
+                media_type=media_type,
+                materialization_status=ARTIFACT_STATUS_REGISTERED_ONLY,
+                storage_relpath=None,
+                content_hash=None,
+                size_bytes=None,
+            )
+        )
+
+    return prepared, materialized_artifacts
 
 
 def _insert_ticket_cancelled_event(
@@ -2437,6 +2579,7 @@ def handle_ticket_result_submit(
     repository: ControlPlaneRepository,
     payload: TicketResultSubmitCommand,
     developer_inspector_store: DeveloperInspectorStore | None = None,
+    artifact_store: ArtifactStore | None = None,
 ) -> CommandAckEnvelope:
     current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
     current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
@@ -2586,20 +2729,244 @@ def handle_ticket_result_submit(
             ),
         )
 
-    return handle_ticket_completed(
-        repository,
-        TicketCompletedCommand(
-            workflow_id=payload.workflow_id,
-            ticket_id=payload.ticket_id,
-            node_id=payload.node_id,
-            completed_by=payload.submitted_by,
-            completion_summary=payload.summary,
-            artifact_refs=payload.artifact_refs,
-            review_request=payload.review_request,
-            idempotency_key=payload.idempotency_key,
-        ),
-        developer_inspector_store,
+    resolved_artifact_store = artifact_store or repository.artifact_store
+    materialized_artifacts: list[MaterializedArtifact] = []
+    try:
+        prepared_artifacts, materialized_artifacts = _prepare_ticket_artifacts(
+            artifact_store=resolved_artifact_store,
+            written_artifacts=payload.written_artifacts,
+        )
+    except ValueError as exc:
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind="ARTIFACT_VALIDATION_ERROR",
+                failure_message=str(exc),
+                failure_detail={},
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+    except RuntimeError as exc:
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind="ARTIFACT_PERSIST_ERROR",
+                failure_message=str(exc),
+                failure_detail={},
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+    persisted_inspector_artifacts: list[PersistedDeveloperInspectorArtifact] = []
+    try:
+        with repository.transaction() as connection:
+            existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+            if existing_event is not None:
+                return _duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    action="ticket-result-submit",
+                )
+
+            for artifact in prepared_artifacts:
+                repository.save_artifact_record(
+                    connection,
+                    artifact_ref=artifact.artifact_ref,
+                    workflow_id=payload.workflow_id,
+                    ticket_id=payload.ticket_id,
+                    node_id=payload.node_id,
+                    logical_path=artifact.logical_path,
+                    kind=artifact.kind,
+                    media_type=artifact.media_type,
+                    materialization_status=artifact.materialization_status,
+                    storage_relpath=artifact.storage_relpath,
+                    content_hash=artifact.content_hash,
+                    size_bytes=artifact.size_bytes,
+                    created_at=received_at,
+                )
+
+            causation_hint = _complete_ticket_locked(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                received_at=received_at,
+                payload=TicketCompletedCommand(
+                    workflow_id=payload.workflow_id,
+                    ticket_id=payload.ticket_id,
+                    node_id=payload.node_id,
+                    completed_by=payload.submitted_by,
+                    completion_summary=payload.summary,
+                    artifact_refs=payload.artifact_refs,
+                    review_request=payload.review_request,
+                    idempotency_key=payload.idempotency_key,
+                ),
+                developer_inspector_store=developer_inspector_store,
+                persisted_artifacts=persisted_inspector_artifacts,
+            )
+    except sqlite3.IntegrityError:
+        if resolved_artifact_store is not None:
+            for artifact in materialized_artifacts:
+                resolved_artifact_store.delete(artifact.storage_relpath)
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind="ARTIFACT_VALIDATION_ERROR",
+                failure_message="Artifact ref already exists in artifact index.",
+                failure_detail={},
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+    except Exception:
+        if resolved_artifact_store is not None:
+            for artifact in materialized_artifacts:
+                resolved_artifact_store.delete(artifact.storage_relpath)
+        if developer_inspector_store is not None:
+            for artifact in persisted_inspector_artifacts:
+                developer_inspector_store.delete_ref(artifact.ref)
+        raise
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=causation_hint,
     )
+
+
+def _complete_ticket_locked(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    received_at: datetime,
+    payload: TicketCompletedCommand,
+    developer_inspector_store: DeveloperInspectorStore | None,
+    persisted_artifacts: list[PersistedDeveloperInspectorArtifact],
+) -> str:
+    current_node = repository.get_current_node_projection(
+        payload.workflow_id,
+        payload.node_id,
+        connection=connection,
+    )
+    if current_node is None:
+        raise RuntimeError("Ticket must be created and started before it can be completed.")
+    if current_node["status"] != NODE_STATUS_EXECUTING:
+        raise RuntimeError(
+            f"Node {payload.node_id} cannot accept a ticket result while status is {current_node['status']}."
+        )
+    if current_node["latest_ticket_id"] != payload.ticket_id:
+        raise RuntimeError("Node projection no longer points at this ticket.")
+
+    current_ticket = repository.get_current_ticket_projection(
+        payload.ticket_id,
+        connection=connection,
+    )
+    if current_ticket is None:
+        raise RuntimeError("Ticket projection is missing for the currently executing node.")
+    if (
+        current_ticket["workflow_id"] != payload.workflow_id
+        or current_ticket["node_id"] != payload.node_id
+    ):
+        raise RuntimeError("Ticket projection does not match the requested workflow or node.")
+    if current_ticket["status"] != TICKET_STATUS_EXECUTING:
+        raise RuntimeError(
+            f"Ticket {payload.ticket_id} cannot be completed while status is {current_ticket['status']}."
+        )
+
+    event_row = repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_COMPLETED,
+        actor_type="worker",
+        actor_id=payload.completed_by,
+        workflow_id=payload.workflow_id,
+        idempotency_key=payload.idempotency_key,
+        causation_id=command_id,
+        correlation_id=payload.workflow_id,
+        payload={
+            "ticket_id": payload.ticket_id,
+            "node_id": payload.node_id,
+            "completion_summary": payload.completion_summary,
+            "artifact_refs": payload.artifact_refs,
+            "board_review_requested": payload.review_request is not None,
+        },
+        occurred_at=received_at,
+    )
+    if event_row is None:
+        raise RuntimeError("An identical ticket-complete command was already accepted.")
+
+    causation_hint = f"ticket:{payload.ticket_id}"
+    if payload.review_request is not None:
+        if (
+            payload.review_request.developer_inspector_refs is not None
+            and developer_inspector_store is None
+        ):
+            raise RuntimeError("Developer inspector store is required to export inspector artifacts.")
+        if (
+            developer_inspector_store is not None
+            and payload.review_request.developer_inspector_refs is not None
+        ):
+            persisted_artifacts.extend(
+                export_latest_compile_artifacts_to_developer_inspector(
+                    repository,
+                    developer_inspector_store,
+                    payload.ticket_id,
+                    payload.review_request.developer_inspector_refs,
+                    connection=connection,
+                )
+            )
+        approval = repository.create_approval_request(
+            connection,
+            workflow_id=payload.workflow_id,
+            approval_type=payload.review_request.review_type.value,
+            requested_by=payload.completed_by,
+            review_pack=_build_review_pack(
+                payload=payload,
+                trigger_event_id=event_row["event_id"],
+                command_target_version=int(event_row["sequence_no"]),
+                occurred_at=received_at,
+            ),
+            available_actions=[action.value for action in payload.review_request.available_actions],
+            draft_defaults={
+                "selected_option_id": payload.review_request.draft_selected_option_id,
+                "comment_template": payload.review_request.comment_template,
+            },
+            inbox_title=payload.review_request.inbox_title or payload.review_request.title,
+            inbox_summary=payload.review_request.inbox_summary or payload.completion_summary,
+            badges=payload.review_request.badges,
+            priority=payload.review_request.priority.value,
+            occurred_at=received_at,
+            idempotency_key=f"{payload.idempotency_key}:approval-request",
+        )
+        causation_hint = f"approval:{approval['approval_id']}"
+
+    _auto_close_recovering_incidents_for_completed_ticket(
+        repository=repository,
+        connection=connection,
+        command_id=command_id,
+        occurred_at=received_at,
+        workflow_id=payload.workflow_id,
+        completed_ticket_id=payload.ticket_id,
+    )
+    repository.refresh_projections(connection)
+    return causation_hint
 
 
 def handle_ticket_completed(
@@ -2622,154 +2989,24 @@ def handle_ticket_completed(
                     ticket_id=payload.ticket_id,
                     action="ticket-complete",
                 )
-
-            current_node = repository.get_current_node_projection(
-                payload.workflow_id,
-                payload.node_id,
-                connection=connection,
-            )
-            if current_node is None:
+            try:
+                causation_hint = _complete_ticket_locked(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    received_at=received_at,
+                    payload=payload,
+                    developer_inspector_store=developer_inspector_store,
+                    persisted_artifacts=persisted_artifacts,
+                )
+            except RuntimeError as exc:
                 return _rejected_ack(
                     command_id=command_id,
                     idempotency_key=payload.idempotency_key,
                     received_at=received_at,
                     ticket_id=payload.ticket_id,
-                    reason="Ticket must be created and started before it can be completed.",
+                    reason=str(exc),
                 )
-            if current_node["status"] != NODE_STATUS_EXECUTING:
-                return _rejected_ack(
-                    command_id=command_id,
-                    idempotency_key=payload.idempotency_key,
-                    received_at=received_at,
-                    ticket_id=payload.ticket_id,
-                    reason=(
-                        f"Node {payload.node_id} cannot accept a ticket result while status is "
-                        f"{current_node['status']}."
-                    ),
-                )
-            if current_node["latest_ticket_id"] != payload.ticket_id:
-                return _rejected_ack(
-                    command_id=command_id,
-                    idempotency_key=payload.idempotency_key,
-                    received_at=received_at,
-                    ticket_id=payload.ticket_id,
-                    reason="Node projection no longer points at this ticket.",
-                )
-
-            current_ticket = repository.get_current_ticket_projection(
-                payload.ticket_id,
-                connection=connection,
-            )
-            if current_ticket is None:
-                return _rejected_ack(
-                    command_id=command_id,
-                    idempotency_key=payload.idempotency_key,
-                    received_at=received_at,
-                    ticket_id=payload.ticket_id,
-                    reason="Ticket projection is missing for the currently executing node.",
-                )
-            if (
-                current_ticket["workflow_id"] != payload.workflow_id
-                or current_ticket["node_id"] != payload.node_id
-            ):
-                return _rejected_ack(
-                    command_id=command_id,
-                    idempotency_key=payload.idempotency_key,
-                    received_at=received_at,
-                    ticket_id=payload.ticket_id,
-                    reason="Ticket projection does not match the requested workflow or node.",
-                )
-            if current_ticket["status"] != TICKET_STATUS_EXECUTING:
-                return _rejected_ack(
-                    command_id=command_id,
-                    idempotency_key=payload.idempotency_key,
-                    received_at=received_at,
-                    ticket_id=payload.ticket_id,
-                    reason=(
-                        f"Ticket {payload.ticket_id} cannot be completed while status is "
-                        f"{current_ticket['status']}."
-                    ),
-                )
-
-            event_row = repository.insert_event(
-                connection,
-                event_type=EVENT_TICKET_COMPLETED,
-                actor_type="worker",
-                actor_id=payload.completed_by,
-                workflow_id=payload.workflow_id,
-                idempotency_key=payload.idempotency_key,
-                causation_id=command_id,
-                correlation_id=payload.workflow_id,
-                payload={
-                    "ticket_id": payload.ticket_id,
-                    "node_id": payload.node_id,
-                    "completion_summary": payload.completion_summary,
-                    "artifact_refs": payload.artifact_refs,
-                    "board_review_requested": payload.review_request is not None,
-                },
-                occurred_at=received_at,
-            )
-            if event_row is None:
-                return _duplicate_ack(
-                    command_id=command_id,
-                    idempotency_key=payload.idempotency_key,
-                    received_at=received_at,
-                    ticket_id=payload.ticket_id,
-                    action="ticket-complete",
-                )
-
-            causation_hint = f"ticket:{payload.ticket_id}"
-            if payload.review_request is not None:
-                if (
-                    payload.review_request.developer_inspector_refs is not None
-                    and developer_inspector_store is None
-                ):
-                    raise RuntimeError("Developer inspector store is required to export inspector artifacts.")
-                if (
-                    developer_inspector_store is not None
-                    and payload.review_request.developer_inspector_refs is not None
-                ):
-                    persisted_artifacts = export_latest_compile_artifacts_to_developer_inspector(
-                        repository,
-                        developer_inspector_store,
-                        payload.ticket_id,
-                        payload.review_request.developer_inspector_refs,
-                        connection=connection,
-                    )
-                approval = repository.create_approval_request(
-                    connection,
-                    workflow_id=payload.workflow_id,
-                    approval_type=payload.review_request.review_type.value,
-                    requested_by=payload.completed_by,
-                    review_pack=_build_review_pack(
-                        payload=payload,
-                        trigger_event_id=event_row["event_id"],
-                        command_target_version=int(event_row["sequence_no"]),
-                        occurred_at=received_at,
-                    ),
-                    available_actions=[action.value for action in payload.review_request.available_actions],
-                    draft_defaults={
-                        "selected_option_id": payload.review_request.draft_selected_option_id,
-                        "comment_template": payload.review_request.comment_template,
-                    },
-                    inbox_title=payload.review_request.inbox_title or payload.review_request.title,
-                    inbox_summary=payload.review_request.inbox_summary or payload.completion_summary,
-                    badges=payload.review_request.badges,
-                    priority=payload.review_request.priority.value,
-                    occurred_at=received_at,
-                    idempotency_key=f"{payload.idempotency_key}:approval-request",
-                )
-                causation_hint = f"approval:{approval['approval_id']}"
-
-            _auto_close_recovering_incidents_for_completed_ticket(
-                repository=repository,
-                connection=connection,
-                command_id=command_id,
-                occurred_at=received_at,
-                workflow_id=payload.workflow_id,
-                completed_ticket_id=payload.ticket_id,
-            )
-            repository.refresh_projections(connection)
     except Exception:
         if developer_inspector_store is not None:
             for artifact in persisted_artifacts:

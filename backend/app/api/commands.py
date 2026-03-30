@@ -25,6 +25,7 @@ from app.core.approval_handlers import (
     handle_board_reject,
     handle_modify_constraints,
 )
+from app.core.artifact_store import ArtifactStore
 from app.core.command_handlers import handle_project_init
 from app.core.ticket_handlers import (
     handle_incident_resolve,
@@ -89,8 +90,9 @@ def ticket_complete(request: Request, payload: TicketCompletedCommand) -> Comman
 @router.post("/ticket-result-submit", response_model=CommandAckEnvelope)
 def ticket_result_submit(request: Request, payload: TicketResultSubmitCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
+    artifact_store: ArtifactStore = request.app.state.artifact_store
     developer_inspector_store: DeveloperInspectorStore = request.app.state.developer_inspector_store
-    return handle_ticket_result_submit(repository, payload, developer_inspector_store)
+    return handle_ticket_result_submit(repository, payload, developer_inspector_store, artifact_store)
 
 
 @router.post("/scheduler-tick", response_model=CommandAckEnvelope)

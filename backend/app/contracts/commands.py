@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from app.contracts.common import StrictModel
+from app.contracts.common import JsonValue, StrictModel
 from app.core.developer_inspector import parse_developer_inspector_ref
 from app.core.constants import (
     DEFAULT_LEASE_TIMEOUT_SEC,
@@ -160,6 +160,8 @@ class TicketWrittenArtifact(StrictModel):
     path: str = Field(min_length=1)
     artifact_ref: str = Field(min_length=1)
     kind: str = Field(min_length=1)
+    content_json: JsonValue | None = None
+    content_text: str | None = None
 
 
 class TicketResultSubmitCommand(StrictModel):

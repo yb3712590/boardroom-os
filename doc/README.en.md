@@ -24,6 +24,9 @@ What is already real:
 - minimal incident, circuit-breaker, retry, and recovery governance
 - review room plus board approve / reject / modify-constraints commands
 - independent scheduler runner and optional in-process scheduler loop
+- a minimal artifact store and artifact index for `JSON` / `TEXT` / `MARKDOWN` ticket outputs
+- a ticket artifacts projection plus strict output-schema validation for `ui_milestone_review@1` and `consensus_document@1`
+- image and other binary artifacts are still metadata-only and surface as `REGISTERED_ONLY`
 
 ## Quick Start
 
@@ -57,7 +60,15 @@ source .venv/bin/activate
 python -m pytest tests -q
 ```
 
-Known reality: `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
+Default storage roots:
+
+- `backend/data/boardroom_os.db`
+- `backend/data/artifacts/` (override with `BOARDROOM_OS_ARTIFACT_STORE_ROOT`)
+
+Known realities:
+
+- `pip install -e .[dev]` may still fail in a fresh environment because of the current flat backend packaging layout.
+- Binary artifacts do not have a real upload / preview path yet; they are only indexed and projected as `REGISTERED_ONLY`.
 
 ## Docs
 

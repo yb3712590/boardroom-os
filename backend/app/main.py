@@ -8,6 +8,7 @@ from app.api.commands import router as commands_router
 from app.api.events import router as events_router
 from app.api.projections import router as projections_router
 from app.config import get_settings
+from app.core.artifact_store import ArtifactStore
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.inprocess_scheduler import build_inprocess_scheduler
 from app.db.repository import ControlPlaneRepository
@@ -15,10 +16,12 @@ from app.db.repository import ControlPlaneRepository
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    artifact_store = ArtifactStore(settings.artifact_store_root)
     repository = ControlPlaneRepository(
         db_path=settings.db_path,
         busy_timeout_ms=settings.busy_timeout_ms,
         recent_event_limit=settings.recent_event_limit,
+        artifact_store=artifact_store,
     )
     developer_inspector_store = DeveloperInspectorStore(settings.developer_inspector_root)
     inprocess_scheduler = (
@@ -31,6 +34,7 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         repository.initialize()
         app.state.repository = repository
+        app.state.artifact_store = artifact_store
         app.state.developer_inspector_store = developer_inspector_store
         app.state.inprocess_scheduler = inprocess_scheduler
         if inprocess_scheduler is not None:

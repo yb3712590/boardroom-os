@@ -137,6 +137,21 @@ CREATE TABLE IF NOT EXISTS compile_manifest (
     payload_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS artifact_index (
+    artifact_ref TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    logical_path TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    media_type TEXT,
+    materialization_status TEXT NOT NULL,
+    storage_relpath TEXT,
+    content_hash TEXT,
+    size_bytes INTEGER,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_compiled_context_bundle_ticket_id
 ON compiled_context_bundle(ticket_id);
 
@@ -148,6 +163,15 @@ ON compile_manifest(ticket_id);
 
 CREATE INDEX IF NOT EXISTS idx_compile_manifest_compile_request_id
 ON compile_manifest(compile_request_id);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_index_ticket_id
+ON artifact_index(ticket_id);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_index_workflow_id
+ON artifact_index(workflow_id);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_index_node_id
+ON artifact_index(node_id);
 
 CREATE INDEX IF NOT EXISTS idx_incident_projection_workflow_id
 ON incident_projection(workflow_id);

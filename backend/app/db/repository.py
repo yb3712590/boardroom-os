@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.contracts.runtime import CompileManifest, CompiledContextBundle
+from app.core.artifact_store import ArtifactStore
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_CLOSED,
@@ -79,10 +80,17 @@ DEFAULT_EMPLOYEE_ROSTER = (
 
 
 class ControlPlaneRepository:
-    def __init__(self, db_path: Path, busy_timeout_ms: int, recent_event_limit: int = 10):
+    def __init__(
+        self,
+        db_path: Path,
+        busy_timeout_ms: int,
+        recent_event_limit: int = 10,
+        artifact_store: ArtifactStore | None = None,
+    ):
         self.db_path = db_path
         self.busy_timeout_ms = busy_timeout_ms
         self.recent_event_limit = recent_event_limit
+        self.artifact_store = artifact_store
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +101,7 @@ class ControlPlaneRepository:
             self._ensure_node_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
             self._ensure_incident_projection_shape(connection)
+            self._ensure_artifact_index_shape(connection)
             self._seed_employee_roster(connection)
 
     @contextmanager
@@ -889,6 +898,99 @@ class ControlPlaneRepository:
                 return None, 0
             return row["event_id"], int(row["sequence_no"])
 
+    def save_artifact_record(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        artifact_ref: str,
+        workflow_id: str,
+        ticket_id: str,
+        node_id: str,
+        logical_path: str,
+        kind: str,
+        media_type: str | None,
+        materialization_status: str,
+        storage_relpath: str | None,
+        content_hash: str | None,
+        size_bytes: int | None,
+        created_at: datetime,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO artifact_index (
+                artifact_ref,
+                workflow_id,
+                ticket_id,
+                node_id,
+                logical_path,
+                kind,
+                media_type,
+                materialization_status,
+                storage_relpath,
+                content_hash,
+                size_bytes,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                artifact_ref,
+                workflow_id,
+                ticket_id,
+                node_id,
+                logical_path,
+                kind,
+                media_type,
+                materialization_status,
+                storage_relpath,
+                content_hash,
+                size_bytes,
+                created_at.isoformat(),
+            ),
+        )
+
+    def get_artifact_by_ref(
+        self,
+        artifact_ref: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM artifact_index WHERE artifact_ref = ?",
+                (artifact_ref,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_artifact_index_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM artifact_index WHERE artifact_ref = ?",
+                (artifact_ref,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_artifact_index_row(row)
+
+    def list_ticket_artifacts(
+        self,
+        ticket_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM artifact_index
+            WHERE ticket_id = ?
+            ORDER BY created_at ASC, artifact_ref ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, (ticket_id,)).fetchall()
+            return [self._convert_artifact_index_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, (ticket_id,)).fetchall()
+            return [self._convert_artifact_index_row(row) for row in rows]
+
     def get_recent_event_previews(self) -> list[dict[str, Any]]:
         self.initialize()
         with self.connection() as connection:
@@ -1355,6 +1457,15 @@ class ControlPlaneRepository:
         converted = dict(row)
         converted["compiled_at"] = datetime.fromisoformat(converted["compiled_at"])
         converted["payload"] = json.loads(converted["payload_json"])
+        return converted
+
+    def _convert_artifact_index_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["created_at"] = datetime.fromisoformat(converted["created_at"])
+        converted["size_bytes"] = (
+            int(converted["size_bytes"]) if converted.get("size_bytes") is not None else None
+        )
+        converted["path"] = converted["logical_path"]
         return converted
 
     def _convert_ticket_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -1828,6 +1939,58 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint ON incident_projection(fingerprint)"
+        )
+
+    def _ensure_artifact_index_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS artifact_index (
+                artifact_ref TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                ticket_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                logical_path TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                media_type TEXT,
+                materialization_status TEXT NOT NULL,
+                storage_relpath TEXT,
+                content_hash TEXT,
+                size_bytes INTEGER,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(artifact_index)").fetchall()
+        }
+        required_columns = {
+            "artifact_ref": "TEXT",
+            "workflow_id": "TEXT",
+            "ticket_id": "TEXT",
+            "node_id": "TEXT",
+            "logical_path": "TEXT",
+            "kind": "TEXT",
+            "media_type": "TEXT",
+            "materialization_status": "TEXT",
+            "storage_relpath": "TEXT",
+            "content_hash": "TEXT",
+            "size_bytes": "INTEGER",
+            "created_at": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE artifact_index ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_artifact_index_ticket_id ON artifact_index(ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_artifact_index_workflow_id ON artifact_index(workflow_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_artifact_index_node_id ON artifact_index(node_id)"
         )
 
     def _seed_employee_roster(self, connection: sqlite3.Connection) -> None:

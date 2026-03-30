@@ -5,9 +5,9 @@
 ## Runtime / Backend
 
 - 完成外部 worker runtime handoff，而不是只依赖当前进程内最小执行链
-- 把 placeholder artifact 声明升级为真实 artifact store / artifact index
-- 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1`
-- 在统一 `ticket-result-submit` 入口上继续增强结果校验与 artifact 治理
+- 补齐二进制 artifact 的真实上传 / 下载 / 预览链路，把当前 `REGISTERED_ONLY` 推进到真实物化
+- 给 artifact store / artifact index 增加更完整的读取、保留与生命周期治理，而不只是当前按 ticket 列表投影
+- 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
 - 补齐更完整的 provider 路由、多 provider 控制面和恢复策略
 - 解决 `backend/pyproject.toml` 的 editable install 打包问题，让 `pip install -e .[dev]` 在新环境可用
 

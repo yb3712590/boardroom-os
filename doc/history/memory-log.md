@@ -1602,3 +1602,85 @@
 - broader output schema coverage beyond `ui_milestone_review@1`
 - richer runtime artifact governance beyond placeholder declarations
 - richer provider routing and multi-provider control-plane surface
+
+## 2026-03-30T12:40:27+08:00
+
+### Session Context
+- User provided an explicit Runtime / Backend artifact-governance plan and asked for direct implementation inside the existing Boardroom OS repo without rebuilding the scaffold.
+- The round had to stay on one boundary only and deliver multiple linked slices in one batch instead of a single isolated patch.
+
+### Boundary Chosen
+- Single boundary for this round: Runtime / Backend artifact governance.
+- The slice chain stayed on one path:
+  - real structured artifact store
+  - artifact index persistence
+  - ticket artifacts projection
+  - output schema registry expansion
+
+### Design / Code Gap Identified
+- Design docs already described `artifact_index`, filesystem-backed artifacts, and richer result governance as the target state.
+- Code before this round still only enforced `written_artifacts` write-set validation and had no real artifact materialization or ticket-level artifact projection.
+- The internal runtime also still produced placeholder review artifact refs instead of persisted structured outputs.
+
+### Slice Landed
+- Added `artifact_store_root` config with default path `backend/data/artifacts/`.
+- Added a minimal filesystem-backed `ArtifactStore` with safe relative-path normalization, temp-file writes, and atomic replace.
+- Added SQLite `artifact_index` plus repository helpers for insert, lookup by ref, and list-by-ticket.
+- Extended `TicketWrittenArtifact` with `content_json` and `content_text`.
+- `ticket-result-submit` now:
+  - validates schema first
+  - validates `allowed_write_set`
+  - validates duplicate `artifact_ref` / duplicate path inside one submission
+  - materializes `JSON`, `TEXT`, and `MARKDOWN`
+  - indexes all written artifacts before `TICKET_COMPLETED`
+  - routes artifact validation or persistence problems back into the existing controlled failure chain
+- Added `GET /api/v1/projections/tickets/{ticket_id}/artifacts`.
+- Added artifact projection status semantics:
+  - `MATERIALIZED`
+  - `REGISTERED_ONLY`
+- Internal runtime success path no longer fabricates placeholder `.png` artifacts.
+- Runtime success now emits real structured JSON artifacts such as `option-a.json` and `option-b.json`, and those refs flow through the same `ticket-result-submit` path as external structured submissions.
+- Reworked output schema handling into an explicit registry and added strict validation coverage for `consensus_document@1` alongside the existing `ui_milestone_review@1`.
+
+### Conservative Handling
+- This round intentionally materializes only `JSON`, `TEXT`, and `MARKDOWN`.
+- `IMAGE` and other binary artifacts are accepted only as indexed refs and project as `REGISTERED_ONLY`.
+- No binary upload, preview, or download route was added.
+- `consensus_document@1` only expands registry coverage; it does not mean Meeting Room execution is now implemented.
+
+### Tests Added
+- API coverage for:
+  - JSON artifact submit with real file materialization and ticket artifacts projection
+  - text / markdown artifact submit with real file materialization
+  - image artifact staying `REGISTERED_ONLY`
+  - duplicate `artifact_ref`
+  - duplicate `path`
+  - kind/content mismatch
+  - missing ticket artifacts projection returning `404`
+- Scheduler runner coverage for:
+  - runtime success persisting real structured artifact files and artifact index records
+- Output schema coverage for:
+  - `consensus_document@1` positive and negative cases
+
+### Docs Updated
+- `README.md`
+- `doc/README.en.md`
+- `doc/design/message-bus-design.md`
+- `doc/design/boardroom-data-contracts.md`
+- `doc/TODO.md`
+- `doc/history/memory-log.md`
+
+### Verification
+- `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_output_schemas.py backend/tests/test_api.py -q`
+  - `91 passed`
+- `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -q`
+  - `10 passed`
+- `backend/.venv/Scripts/python.exe -m pytest backend/tests -q`
+  - `123 passed`
+
+### Still Not Done
+- full external worker runtime handoff
+- binary artifact upload / preview / download
+- broader output schema coverage beyond `ui_milestone_review@1` and `consensus_document@1`
+- richer artifact retention / lifecycle governance beyond the current ticket-level index and projection
+- richer provider routing and multi-provider control-plane surface

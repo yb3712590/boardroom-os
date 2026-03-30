@@ -8,6 +8,7 @@ from app.contracts.projections import (
     InboxProjectionEnvelope,
     ReviewRoomDeveloperInspectorProjectionEnvelope,
     ReviewRoomProjectionEnvelope,
+    TicketArtifactsProjectionEnvelope,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.projections import (
@@ -16,6 +17,7 @@ from app.core.projections import (
     build_inbox_projection,
     build_review_room_developer_inspector_projection,
     build_review_room_projection,
+    build_ticket_artifacts_projection,
 )
 from app.db.repository import ControlPlaneRepository
 
@@ -32,6 +34,18 @@ def get_dashboard(request: Request) -> DashboardProjectionEnvelope:
 def get_inbox(request: Request) -> InboxProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return build_inbox_projection(repository)
+
+
+@router.get("/tickets/{ticket_id}/artifacts", response_model=TicketArtifactsProjectionEnvelope)
+def get_ticket_artifacts(request: Request, ticket_id: str) -> TicketArtifactsProjectionEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    projection = build_ticket_artifacts_projection(repository, ticket_id)
+    if projection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ticket '{ticket_id}' was not found.",
+        )
+    return projection
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentDetailProjectionEnvelope)

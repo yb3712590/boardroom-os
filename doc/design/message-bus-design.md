@@ -402,13 +402,17 @@ SQLite is the embedded control-plane store, not the universal content store.
 
 ### `artifact_index`
 
-- `artifact_id`
+- `artifact_ref`
 - `workflow_id`
-- `producer_ticket_id`
-- `artifact_type`
-- `storage_uri`
-- `hash`
-- `summary_json`
+- `ticket_id`
+- `node_id`
+- `logical_path`
+- `kind`
+- `media_type`
+- `materialization_status`
+- `storage_relpath`
+- `content_hash`
+- `size_bytes`
 - `created_at`
 
 ### `approval_projection`
@@ -438,6 +442,14 @@ SQLite is the embedded control-plane store, not the universal content store.
 
 Large artifacts should not be stored inline in SQLite.
 
+Current minimal implementation status:
+
+- SQLite `artifact_index` stores artifact metadata, status, content hash, and optional filesystem location.
+- Filesystem storage is rooted at `backend/data/artifacts/` by default and can be overridden with `BOARDROOM_OS_ARTIFACT_STORE_ROOT`.
+- `JSON`, `TEXT`, and `MARKDOWN` artifacts are materialized to normalized relative paths under that root.
+- `IMAGE` and other binary artifact kinds currently do not have a real upload path; they are accepted only as indexed refs with `materialization_status = REGISTERED_ONLY`.
+- The current store uses safe relative-path normalization plus temporary-file write and atomic replace semantics.
+
 Recommended storage split:
 
 - SQLite: metadata, references, hashes, summaries
@@ -447,6 +459,11 @@ Recommended URI patterns:
 
 - `file://...` or internal normalized relative paths
 - artifact hashes for content deduplication
+
+Current conservative reality:
+
+- `storage_relpath` currently uses normalized internal relative paths instead of external signed URLs.
+- Binary upload, preview, and download routes are still out of scope for the current MVP.
 
 ## 10. Ticket Contract
 
@@ -580,10 +597,12 @@ Every worker result should include:
 - `schema_version`
 - `payload`
 - `artifact_refs`
+- `written_artifacts`
 - `assumptions`
 - `issues`
 - `confidence`
 - `needs_escalation`
+- `summary`
 
 Example:
 
@@ -591,14 +610,55 @@ Example:
 {
   "result_status": "completed",
   "schema_version": "ui_milestone_review_v1",
-  "payload": {},
-  "artifact_refs": ["art_mockup_a", "art_mockup_b"],
+  "payload": {
+    "summary": "Runtime prepared a minimal review package.",
+    "recommended_option_id": "option_a",
+    "options": [
+      {
+        "option_id": "option_a",
+        "label": "Option A",
+        "summary": "Primary minimal runtime-generated review option.",
+        "artifact_refs": ["art://runtime/tkt_ui_home_03/option-a.json"]
+      }
+    ]
+  },
+  "artifact_refs": ["art://runtime/tkt_ui_home_03/option-a.json"],
+  "written_artifacts": [
+    {
+      "path": "reports/review/option-a.json",
+      "artifact_ref": "art://runtime/tkt_ui_home_03/option-a.json",
+      "kind": "JSON",
+      "content_json": {
+        "option_id": "option_a",
+        "headline": "Primary runtime-generated structured review artifact."
+      }
+    }
+  ],
   "assumptions": ["mobile first", "existing brand palette retained"],
   "issues": [],
   "confidence": 0.78,
-  "needs_escalation": false
+  "needs_escalation": false,
+  "summary": "Runtime prepared a minimal review package."
 }
 ```
+
+Current `ticket-result-submit` rules:
+
+- `POST /api/v1/commands/ticket-result-submit` is the unified structured result ingress.
+- `schema_version` plus `payload` must pass submit-time validation against the created ticket's `output_schema_ref/output_schema_version`.
+- `written_artifacts[*].path` must match the ticket `allowed_write_set`.
+- `artifact_ref` and normalized `path` must both be unique within one submission.
+- `JSON` artifacts must include `content_json`.
+- `TEXT` and `MARKDOWN` artifacts must include `content_text`.
+- `IMAGE` and other binary kinds may omit inline content in the current MVP, but they are only indexed as `REGISTERED_ONLY`.
+- Artifact validation and materialization happen before `TICKET_COMPLETED`; failures are converted into controlled `SCHEMA_ERROR`, `WRITE_SET_VIOLATION`, `ARTIFACT_VALIDATION_ERROR`, or `ARTIFACT_PERSIST_ERROR` paths instead of bypassing governance.
+- The in-process runtime success path now emits real structured JSON artifacts such as `option-a.json` and `option-b.json` instead of placeholder image refs.
+
+Current minimal output schema registry coverage:
+
+- `ui_milestone_review@1`
+- `consensus_document@1`
+- Unknown schema refs may still return a placeholder schema body for discovery, but submit-time validation rejects them.
 
 ## 11. CEO Tick Cycle
 

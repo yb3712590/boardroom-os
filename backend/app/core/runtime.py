@@ -123,8 +123,8 @@ def _build_runtime_default_artifacts(
 ) -> tuple[list[str], list[dict[str, Any]]]:
     ticket_id = execution_package.meta.ticket_id
     artifact_refs = [
-        f"art://runtime/{ticket_id}/option-a.png",
-        f"art://runtime/{ticket_id}/option-b.png",
+        f"art://runtime/{ticket_id}/option-a.json",
+        f"art://runtime/{ticket_id}/option-b.json",
     ]
     allowed_write_set = list(execution_package.execution.allowed_write_set)
     if not allowed_write_set:
@@ -132,14 +132,22 @@ def _build_runtime_default_artifacts(
     write_pattern = allowed_write_set[0]
     written_artifacts = [
         {
-            "path": _resolve_runtime_write_path(write_pattern, "option-a.png"),
+            "path": _resolve_runtime_write_path(write_pattern, "option-a.json"),
             "artifact_ref": artifact_refs[0],
-            "kind": "IMAGE",
+            "kind": "JSON",
+            "content_json": {
+                "option_id": "option_a",
+                "headline": "Primary runtime-generated structured review artifact.",
+            },
         },
         {
-            "path": _resolve_runtime_write_path(write_pattern, "option-b.png"),
+            "path": _resolve_runtime_write_path(write_pattern, "option-b.json"),
             "artifact_ref": artifact_refs[1],
-            "kind": "IMAGE",
+            "kind": "JSON",
+            "content_json": {
+                "option_id": "option_b",
+                "headline": "Fallback runtime-generated structured review artifact.",
+            },
         },
     ]
     return artifact_refs, written_artifacts
@@ -263,6 +271,8 @@ def _build_runtime_result_submit_command(
             path=str(item["path"]),
             artifact_ref=str(item["artifact_ref"]),
             kind=str(item["kind"]),
+            content_json=item.get("content_json"),
+            content_text=item.get("content_text"),
         )
         for item in execution_result.written_artifacts
     ]

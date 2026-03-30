@@ -20,6 +20,9 @@ from app.contracts.projections import (
     ReviewRoomDeveloperInspectorProjectionEnvelope,
     ReviewRoomProjectionData,
     ReviewRoomProjectionEnvelope,
+    TicketArtifactProjection,
+    TicketArtifactsProjectionData,
+    TicketArtifactsProjectionEnvelope,
     RouteTarget,
     WorkforceSummaryProjection,
     WorkspaceSummary,
@@ -345,6 +348,41 @@ def build_review_room_developer_inspector_projection(
             compiled_context_bundle=compiled_context_bundle,
             compile_manifest=compile_manifest,
             availability=availability,
+        ),
+    )
+
+
+def build_ticket_artifacts_projection(
+    repository: ControlPlaneRepository,
+    ticket_id: str,
+) -> TicketArtifactsProjectionEnvelope | None:
+    repository.initialize()
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    if ticket is None:
+        return None
+
+    cursor, projection_version = repository.get_cursor_and_version()
+    artifacts = repository.list_ticket_artifacts(ticket_id)
+    return TicketArtifactsProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=now_local(),
+        projection_version=projection_version,
+        cursor=cursor,
+        data=TicketArtifactsProjectionData(
+            ticket_id=ticket_id,
+            artifacts=[
+                TicketArtifactProjection(
+                    artifact_ref=artifact["artifact_ref"],
+                    path=artifact["logical_path"],
+                    kind=artifact["kind"],
+                    media_type=artifact.get("media_type"),
+                    status=artifact["materialization_status"],
+                    size_bytes=artifact.get("size_bytes"),
+                    content_hash=artifact.get("content_hash"),
+                    created_at=artifact["created_at"],
+                )
+                for artifact in artifacts
+            ],
         ),
     )
 

@@ -15,6 +15,7 @@ This draft covers:
 
 - dashboard projection
 - inbox projection
+- ticket artifacts projection
 - workforce projection
 - review room projection
 - `BoardReviewPack`
@@ -233,7 +234,60 @@ Recommended `item_type` enum:
 - `MEETING_ESCALATION`
 - `CORE_HIRE_APPROVAL`
 
-## 5.1 Incident Detail Projection
+## 5.1 Ticket Artifacts Projection
+
+Suggested endpoint:
+
+- `GET /api/v1/projections/tickets/{ticket_id}/artifacts`
+
+Purpose:
+
+- show the per-ticket artifact index without replaying raw events
+- expose whether each artifact is truly materialized or only registered
+
+```json
+{
+  "schema_version": "2026-03-28.boardroom.v1",
+  "generated_at": "2026-03-30T12:00:00+08:00",
+  "projection_version": 1910,
+  "cursor": "evt_0001910",
+  "data": {
+    "ticket_id": "tkt_ui_home_03",
+    "artifacts": [
+      {
+        "artifact_ref": "art://runtime/tkt_ui_home_03/option-a.json",
+        "path": "reports/review/option-a.json",
+        "kind": "JSON",
+        "media_type": "application/json",
+        "status": "MATERIALIZED",
+        "size_bytes": 114,
+        "content_hash": "8f14e45fceea167a5a36dedd4bea2543af6c9426c6b8f4d95b2f7d0d6f8b4f9a",
+        "created_at": "2026-03-30T11:58:00+08:00"
+      },
+      {
+        "artifact_ref": "art://runtime/tkt_ui_home_03/mockup.png",
+        "path": "artifacts/ui/homepage/mockup.png",
+        "kind": "IMAGE",
+        "media_type": "image/png",
+        "status": "REGISTERED_ONLY",
+        "size_bytes": null,
+        "content_hash": null,
+        "created_at": "2026-03-30T11:58:00+08:00"
+      }
+    ]
+  }
+}
+```
+
+Rules:
+
+- missing ticket should return `404`
+- `status = MATERIALIZED` means the artifact body was persisted into the current artifact store and metadata such as `size_bytes` / `content_hash` may be present
+- `status = REGISTERED_ONLY` means the ref and metadata were accepted, but runtime has no stored body for that artifact yet
+- current MVP only materializes `JSON`, `TEXT`, and `MARKDOWN`; image and other binary artifacts remain `REGISTERED_ONLY`
+- this endpoint is index-oriented only; it does not yet imply a public artifact download or preview route
+
+## 5.2 Incident Detail Projection
 
 Suggested endpoint:
 
@@ -293,7 +347,7 @@ For repeated ordinary failures, the same endpoint may expose:
 
 It still does not expose a broader automated recovery workflow.
 
-## 5.2 Incident Resolve Command
+## 5.3 Incident Resolve Command
 
 Suggested endpoint:
 
@@ -1027,7 +1081,68 @@ This command is only valid after `ticket-start`.
 
 It exists to prove that an `EXECUTING` ticket is still alive without overloading `ticket-lease` with mixed semantics.
 
-### 10.1.6 Scheduler Tick
+### 10.1.6 Ticket Result Submit
+
+`POST /api/v1/commands/ticket-result-submit`
+
+```json
+{
+  "workflow_id": "wf_001",
+  "ticket_id": "tkt_ui_home_03",
+  "node_id": "node_homepage_visual",
+  "submitted_by": "emp_frontend_2",
+  "result_status": "COMPLETED",
+  "schema_version": "ui_milestone_review_v1",
+  "payload": {
+    "summary": "Runtime prepared a minimal review package.",
+    "recommended_option_id": "option_a",
+    "options": [
+      {
+        "option_id": "option_a",
+        "label": "Option A",
+        "summary": "Primary minimal runtime-generated review option.",
+        "artifact_refs": ["art://runtime/tkt_ui_home_03/option-a.json"]
+      }
+    ]
+  },
+  "artifact_refs": [
+    "art://runtime/tkt_ui_home_03/option-a.json"
+  ],
+  "written_artifacts": [
+    {
+      "path": "reports/review/option-a.json",
+      "artifact_ref": "art://runtime/tkt_ui_home_03/option-a.json",
+      "kind": "JSON",
+      "content_json": {
+        "option_id": "option_a",
+        "headline": "Primary runtime-generated structured review artifact."
+      }
+    }
+  ],
+  "assumptions": [
+    "mobile first"
+  ],
+  "issues": [],
+  "confidence": 0.78,
+  "needs_escalation": false,
+  "summary": "Runtime prepared a minimal review package.",
+  "idempotency_key": "ticket-result-submit:wf_001:tkt_ui_home_03"
+}
+```
+
+Implementation rules:
+
+- this is the unified structured result ingress; legacy `ticket-complete` and `ticket-fail` remain compatibility routes, but new structured runtime output should use this command
+- `schema_version` and `payload` are validated against the created ticket's schema registry entry
+- current strict validator coverage includes `ui_milestone_review@1` and `consensus_document@1`
+- `written_artifacts[*].path` must remain inside `allowed_write_set`
+- the same submission must not repeat `artifact_ref` or normalized `path`
+- `JSON` requires `content_json`
+- `TEXT` and `MARKDOWN` require `content_text`
+- `IMAGE` and other binary artifact kinds may omit inline content in the current MVP and will be indexed as `REGISTERED_ONLY`
+- artifact validation and materialization happen before the ticket is marked completed; failures are converted into the controlled governance paths `SCHEMA_ERROR`, `WRITE_SET_VIOLATION`, `ARTIFACT_VALIDATION_ERROR`, or `ARTIFACT_PERSIST_ERROR`
+
+### 10.1.7 Scheduler Tick
 
 `POST /api/v1/commands/scheduler-tick`
 
