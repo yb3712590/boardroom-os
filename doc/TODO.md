@@ -27,7 +27,11 @@
   - 新增 `worker_admin_auth_rejection_log` 和 `GET /api/v1/projections/worker-admin-auth-rejections`，现在可以直接确认撤销后的令牌是否还在撞入口、后端是否已经拒绝
 - 继续推进更强多租户远端隔离：
   - 在现有签名令牌入口之外，继续收紧公开互联网场景下的安全边界，例如反向代理断言、更强的外网暴露策略、独立租户管理面，以及完整身份层
-- 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径
+- artifact 自动清理闭环已落地：
+  - `artifact_index` 现在会持久化 `storage_deleted_at`，物理文件删掉后不会再被重复当成 residual cleanup 目标
+  - scheduler / runner 现在会按 `BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC` 自动触发 artifact cleanup；`dashboard` 也会直接回显最近一次 cleanup 的触发来源、删除数量和当前积压
+  - `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `deleted_by`、`delete_reason` 和 `storage_deleted_at`，方便直接核对 artifact 是逻辑过期了，还是文件也已经物理删掉
+- 继续推进更细粒度 retention policy 和更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
 - 补齐更完整的 provider 路由、多 provider 控制面和恢复策略
 - 解决 `backend/pyproject.toml` 的 editable install 打包问题，让 `pip install -e .[dev]` 在新环境可用

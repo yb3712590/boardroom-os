@@ -819,3 +819,110 @@ def test_worker_admin_auth_rejection_log_round_trips_filters(db_path):
     assert listed[0]["operator_id"] == "tenant.admin@example.com"
     assert listed[0]["operator_role"] == "scope_admin"
     assert listed[0]["token_id"] == "wop_scope"
+
+
+def test_artifact_cleanup_candidates_ignore_storage_already_deleted_rows(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+    created_at = datetime.fromisoformat("2026-03-31T15:00:00+08:00")
+    expires_before = datetime.fromisoformat("2026-03-31T15:10:00+08:00")
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO artifact_index (
+                artifact_ref,
+                workflow_id,
+                ticket_id,
+                node_id,
+                logical_path,
+                kind,
+                media_type,
+                materialization_status,
+                lifecycle_status,
+                storage_relpath,
+                content_hash,
+                size_bytes,
+                retention_class,
+                expires_at,
+                deleted_at,
+                deleted_by,
+                delete_reason,
+                storage_deleted_at,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "art://cleanup/already-cleared.md",
+                "wf_cleanup",
+                "tkt_cleanup",
+                "node_cleanup",
+                "artifacts/cleanup/already-cleared.md",
+                "MARKDOWN",
+                "text/markdown",
+                "MATERIALIZED",
+                "EXPIRED",
+                "artifacts/cleanup/already-cleared.md",
+                "hash-cleared",
+                12,
+                "EPHEMERAL",
+                created_at.isoformat(),
+                created_at.isoformat(),
+                "emp_ops_1",
+                "Expired by artifact cleanup.",
+                created_at.isoformat(),
+                created_at.isoformat(),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO artifact_index (
+                artifact_ref,
+                workflow_id,
+                ticket_id,
+                node_id,
+                logical_path,
+                kind,
+                media_type,
+                materialization_status,
+                lifecycle_status,
+                storage_relpath,
+                content_hash,
+                size_bytes,
+                retention_class,
+                expires_at,
+                deleted_at,
+                deleted_by,
+                delete_reason,
+                storage_deleted_at,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "art://cleanup/pending-delete.md",
+                "wf_cleanup",
+                "tkt_cleanup",
+                "node_cleanup",
+                "artifacts/cleanup/pending-delete.md",
+                "MARKDOWN",
+                "text/markdown",
+                "MATERIALIZED",
+                "EXPIRED",
+                "artifacts/cleanup/pending-delete.md",
+                "hash-pending",
+                12,
+                "EPHEMERAL",
+                created_at.isoformat(),
+                created_at.isoformat(),
+                "emp_ops_1",
+                "Expired by artifact cleanup.",
+                None,
+                created_at.isoformat(),
+            ),
+        )
+        candidates = repository.list_artifacts_for_cleanup(
+            connection,
+            expires_before=expires_before,
+        )
+
+    assert [item["artifact_ref"] for item in candidates] == ["art://cleanup/pending-delete.md"]

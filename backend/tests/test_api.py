@@ -19,6 +19,7 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_ARTIFACT_CLEANUP_COMPLETED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_OPENED,
     EVENT_INCIDENT_RECOVERY_STARTED,
@@ -1162,6 +1163,66 @@ def test_dashboard_workforce_summary_reflects_seeded_roster_and_busy_worker(clie
     assert active_summary["active_workers"] == 1
     assert active_summary["idle_workers"] == 0
     assert active_summary["active_checkers"] == 0
+
+
+def test_dashboard_exposes_artifact_cleanup_maintenance_summary(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    artifact_ref = "art://reports/homepage/dashboard-cleanup.md"
+
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=[artifact_ref],
+            payload={
+                "summary": "Dashboard should expose artifact cleanup health.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Cleanup dashboard option.",
+                        "artifact_refs": [artifact_ref],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "reports/review/dashboard-cleanup.md",
+                    "artifact_ref": artifact_ref,
+                    "kind": "MARKDOWN",
+                    "content_text": "# Cleanup\n\nPending cleanup should show up on dashboard.\n",
+                    "retention_class": "EPHEMERAL",
+                    "retention_ttl_sec": 60,
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:dashboard-cleanup",
+        ),
+    )
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    cleanup_response = client.post(
+        "/api/v1/commands/artifact-cleanup",
+        json={
+            "cleaned_by": "emp_ops_1",
+            "idempotency_key": "artifact-cleanup:dashboard-maintenance",
+        },
+    )
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+
+    assert submit_response.status_code == 200
+    assert cleanup_response.status_code == 200
+    assert dashboard_response.status_code == 200
+    artifact_maintenance = dashboard_response.json()["data"]["artifact_maintenance"]
+    assert artifact_maintenance["auto_cleanup_enabled"] is True
+    assert artifact_maintenance["cleanup_interval_sec"] == 300
+    assert artifact_maintenance["pending_expired_count"] == 0
+    assert artifact_maintenance["pending_storage_cleanup_count"] == 0
+    assert artifact_maintenance["last_cleaned_by"] == "emp_ops_1"
+    assert artifact_maintenance["last_trigger"] == "manual_command"
+    assert artifact_maintenance["last_expired_count"] == 1
+    assert artifact_maintenance["last_storage_deleted_count"] == 1
+    assert artifact_maintenance["last_run_at"] is not None
 
 
 def test_ticket_create_moves_ticket_and_node_to_pending(client):
@@ -3224,12 +3285,81 @@ def test_artifact_cleanup_expires_elapsed_artifacts_and_deletes_files(client, se
     assert expired_record is not None
     assert expired_record["lifecycle_status"] == "EXPIRED"
     assert expired_record["deleted_at"] is not None
+    assert expired_record["storage_deleted_at"] is not None
     assert not stored_path.exists()
     assert metadata_response.status_code == 200
     assert metadata_response.json()["data"]["lifecycle_status"] == "EXPIRED"
     assert content_response.status_code == 410
     assert "ARTIFACT_EXPIRED" in event_types
     assert "ARTIFACT_CLEANUP_COMPLETED" in event_types
+
+
+def test_artifact_cleanup_does_not_recount_storage_already_cleared(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    artifact_ref = "art://reports/homepage/repeat-cleanup.md"
+
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=[artifact_ref],
+            payload={
+                "summary": "Repeated cleanup should not recount already deleted storage.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Repeat cleanup option.",
+                        "artifact_refs": [artifact_ref],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "reports/review/repeat-cleanup.md",
+                    "artifact_ref": artifact_ref,
+                    "kind": "MARKDOWN",
+                    "content_text": "# Cleanup\n\nRepeat cleanup should stay zero.\n",
+                    "retention_class": "EPHEMERAL",
+                    "retention_ttl_sec": 60,
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:repeat-cleanup",
+        ),
+    )
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    first_cleanup = client.post(
+        "/api/v1/commands/artifact-cleanup",
+        json={
+            "cleaned_by": "emp_ops_1",
+            "idempotency_key": "artifact-cleanup:repeat-first",
+        },
+    )
+    second_cleanup = client.post(
+        "/api/v1/commands/artifact-cleanup",
+        json={
+            "cleaned_by": "emp_ops_1",
+            "idempotency_key": "artifact-cleanup:repeat-second",
+        },
+    )
+
+    cleanup_events = [
+        event
+        for event in client.app.state.repository.list_events_for_testing()
+        if event["event_type"] == EVENT_ARTIFACT_CLEANUP_COMPLETED
+    ]
+
+    assert submit_response.status_code == 200
+    assert first_cleanup.status_code == 200
+    assert second_cleanup.status_code == 200
+    assert len(cleanup_events) == 2
+    assert cleanup_events[0]["payload"]["expired_count"] == 1
+    assert cleanup_events[0]["payload"]["storage_deleted_count"] == 1
+    assert cleanup_events[1]["payload"]["expired_count"] == 0
+    assert cleanup_events[1]["payload"]["storage_deleted_count"] == 0
+    assert cleanup_events[1]["payload"]["already_cleared_count"] == 0
 
 
 def test_ticket_result_submit_schema_error_converts_to_controlled_failure(client, set_ticket_time):
@@ -4941,6 +5071,62 @@ def test_ticket_artifacts_projection_returns_404_for_missing_ticket(client):
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
+
+
+def test_ticket_artifacts_projection_exposes_cleanup_audit_fields(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    artifact_ref = "art://reports/homepage/ticket-cleanup-fields.md"
+
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            artifact_refs=[artifact_ref],
+            payload={
+                "summary": "Ticket artifact projection should expose cleanup audit fields.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Projection field option.",
+                        "artifact_refs": [artifact_ref],
+                    }
+                ],
+            },
+            written_artifacts=[
+                {
+                    "path": "reports/review/ticket-cleanup-fields.md",
+                    "artifact_ref": artifact_ref,
+                    "kind": "MARKDOWN",
+                    "content_text": "# Cleanup\n\nProjection audit fields.\n",
+                    "retention_class": "EPHEMERAL",
+                    "retention_ttl_sec": 60,
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:ticket-cleanup-fields",
+        ),
+    )
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    cleanup_response = client.post(
+        "/api/v1/commands/artifact-cleanup",
+        json={
+            "cleaned_by": "emp_ops_1",
+            "idempotency_key": "artifact-cleanup:ticket-cleanup-fields",
+        },
+    )
+    projection_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+    projected_artifact = next(
+        item for item in projection_response.json()["data"]["artifacts"] if item["artifact_ref"] == artifact_ref
+    )
+
+    assert submit_response.status_code == 200
+    assert cleanup_response.status_code == 200
+    assert projection_response.status_code == 200
+    assert projected_artifact["lifecycle_status"] == "EXPIRED"
+    assert projected_artifact["deleted_by"] == "emp_ops_1"
+    assert projected_artifact["delete_reason"] == "Expired by artifact cleanup."
+    assert projected_artifact["storage_deleted_at"] is not None
 
 
 def test_ticket_complete_rejects_legacy_developer_inspector_payloads(client):

@@ -62,6 +62,18 @@ class InboxCountsProjection(StrictModel):
     provider_alerts: int
 
 
+class ArtifactMaintenanceProjection(StrictModel):
+    auto_cleanup_enabled: bool
+    cleanup_interval_sec: int
+    pending_expired_count: int
+    pending_storage_cleanup_count: int
+    last_run_at: datetime | None = None
+    last_cleaned_by: str | None = None
+    last_trigger: str | None = None
+    last_expired_count: int = 0
+    last_storage_deleted_count: int = 0
+
+
 class WorkforceSummaryProjection(StrictModel):
     active_workers: int
     idle_workers: int
@@ -86,6 +98,7 @@ class DashboardProjectionData(StrictModel):
     pipeline_summary: PipelineSummaryProjection
     inbox_counts: InboxCountsProjection
     workforce_summary: WorkforceSummaryProjection
+    artifact_maintenance: ArtifactMaintenanceProjection
     event_stream_preview: list[EventStreamPreviewItem]
 
 
@@ -161,6 +174,9 @@ class TicketArtifactProjection(StrictModel):
     retention_class: str | None = None
     expires_at: datetime | None = None
     deleted_at: datetime | None = None
+    deleted_by: str | None = None
+    delete_reason: str | None = None
+    storage_deleted_at: datetime | None = None
     size_bytes: int | None = None
     content_hash: str | None = None
     content_url: str | None = None

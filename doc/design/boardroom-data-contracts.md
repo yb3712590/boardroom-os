@@ -62,6 +62,7 @@ Purpose:
 
 - populate the main control screen in one round trip
 - avoid excessive chatty frontend bootstrapping
+- expose artifact cleanup health in the same snapshot, so值守时不用先翻命令或事件流才能知道 cleanup 有没有跑
 
 ```json
 {
@@ -138,6 +139,17 @@ Purpose:
       "incidents_pending": 1,
       "budget_alerts": 0,
       "provider_alerts": 1
+    },
+    "artifact_maintenance": {
+      "auto_cleanup_enabled": true,
+      "cleanup_interval_sec": 300,
+      "pending_expired_count": 0,
+      "pending_storage_cleanup_count": 0,
+      "last_run_at": "2026-03-31T18:05:00+08:00",
+      "last_cleaned_by": "system:artifact-cleanup",
+      "last_trigger": "auto_scheduler",
+      "last_expired_count": 2,
+      "last_storage_deleted_count": 2
     },
     "workforce_summary": {
       "active_workers": 6,
@@ -262,6 +274,9 @@ Purpose:
         "status": "MATERIALIZED",
         "materialization_status": "MATERIALIZED",
         "lifecycle_status": "ACTIVE",
+        "deleted_by": null,
+        "delete_reason": null,
+        "storage_deleted_at": null,
         "content_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Foption-a.json&disposition=inline",
         "download_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Foption-a.json&disposition=attachment",
         "preview_url": "/api/v1/artifacts/preview?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Foption-a.json",
@@ -277,6 +292,9 @@ Purpose:
         "status": "MATERIALIZED",
         "materialization_status": "MATERIALIZED",
         "lifecycle_status": "ACTIVE",
+        "deleted_by": null,
+        "delete_reason": null,
+        "storage_deleted_at": null,
         "content_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Fmockup.png&disposition=inline",
         "download_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Fmockup.png&disposition=attachment",
         "preview_url": "/api/v1/artifacts/preview?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Fmockup.png",
@@ -295,6 +313,7 @@ Rules:
 - `status = MATERIALIZED` means the artifact body was persisted into the current artifact store and metadata such as `size_bytes` / `content_hash` may be present
 - `status = REGISTERED_ONLY` means the ref and metadata were accepted, but runtime has no stored body for that artifact yet
 - `materialization_status` keeps the raw storage fact, while `lifecycle_status` tells consumers whether the artifact is still consumable
+- `deleted_by` / `delete_reason` / `storage_deleted_at` let the UI or值守读面区分“逻辑上已经失效”和“底层文件也已经清掉”
 - `content_url` / `download_url` / `preview_url` are local backend artifact routes keyed by `artifact_ref`
 
 ### 5.1.1 Artifact Read APIs

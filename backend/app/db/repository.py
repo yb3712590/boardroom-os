@@ -2441,6 +2441,7 @@ class ControlPlaneRepository:
         deleted_by: str | None,
         delete_reason: str | None,
         created_at: datetime,
+        storage_deleted_at: datetime | None = None,
     ) -> None:
         connection.execute(
             """
@@ -2462,8 +2463,9 @@ class ControlPlaneRepository:
                 deleted_at,
                 deleted_by,
                 delete_reason,
+                storage_deleted_at,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 artifact_ref,
@@ -2483,6 +2485,7 @@ class ControlPlaneRepository:
                 deleted_at.isoformat() if deleted_at is not None else None,
                 deleted_by,
                 delete_reason,
+                storage_deleted_at.isoformat() if storage_deleted_at is not None else None,
                 created_at.isoformat(),
             ),
         )
@@ -2540,12 +2543,35 @@ class ControlPlaneRepository:
             """
             SELECT * FROM artifact_index
             WHERE (lifecycle_status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?)
-               OR (lifecycle_status IN ('DELETED', 'EXPIRED') AND storage_relpath IS NOT NULL)
+               OR (
+                    lifecycle_status IN ('DELETED', 'EXPIRED')
+                    AND storage_relpath IS NOT NULL
+                    AND storage_deleted_at IS NULL
+               )
             ORDER BY created_at ASC, artifact_ref ASC
             """,
             (expires_before.isoformat(),),
         ).fetchall()
         return [self._convert_artifact_index_row(row) for row in rows]
+
+    def mark_artifact_storage_deleted(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        artifact_ref: str,
+        storage_deleted_at: datetime,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET storage_deleted_at = ?
+            WHERE artifact_ref = ?
+            """,
+            (
+                storage_deleted_at.isoformat(),
+                artifact_ref,
+            ),
+        )
 
     def update_artifact_lifecycle(
         self,
@@ -2662,6 +2688,51 @@ class ControlPlaneRepository:
                 (event_type,),
             ).fetchone()
             return int(row["total"])
+
+    def get_artifact_cleanup_summary(
+        self,
+        *,
+        at: datetime,
+    ) -> dict[str, Any]:
+        self.initialize()
+        with self.connection() as connection:
+            pending_expired_row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM artifact_index
+                WHERE lifecycle_status = 'ACTIVE'
+                  AND expires_at IS NOT NULL
+                  AND expires_at <= ?
+                """,
+                (at.isoformat(),),
+            ).fetchone()
+            pending_storage_row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM artifact_index
+                WHERE lifecycle_status IN ('DELETED', 'EXPIRED')
+                  AND storage_relpath IS NOT NULL
+                  AND storage_deleted_at IS NULL
+                """,
+            ).fetchone()
+            latest_cleanup_row = connection.execute(
+                """
+                SELECT * FROM events
+                WHERE event_type = ?
+                ORDER BY sequence_no DESC
+                LIMIT 1
+                """,
+                (EVENT_ARTIFACT_CLEANUP_COMPLETED,),
+            ).fetchone()
+
+        latest_cleanup_event = (
+            self._convert_event_row(latest_cleanup_row) if latest_cleanup_row is not None else None
+        )
+        return {
+            "pending_expired_count": int(pending_expired_row["total"]),
+            "pending_storage_cleanup_count": int(pending_storage_row["total"]),
+            "latest_cleanup_event": latest_cleanup_event,
+        }
 
     def count_open_approvals(self) -> int:
         self.initialize()
@@ -3054,7 +3125,7 @@ class ControlPlaneRepository:
     def _convert_artifact_index_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["created_at"] = datetime.fromisoformat(converted["created_at"])
-        for field in ("expires_at", "deleted_at"):
+        for field in ("expires_at", "deleted_at", "storage_deleted_at"):
             if converted.get(field):
                 converted[field] = datetime.fromisoformat(converted[field])
         converted["size_bytes"] = (
@@ -4307,6 +4378,7 @@ class ControlPlaneRepository:
                 deleted_at TEXT,
                 deleted_by TEXT,
                 delete_reason TEXT,
+                storage_deleted_at TEXT,
                 created_at TEXT NOT NULL
             )
             """
@@ -4333,6 +4405,7 @@ class ControlPlaneRepository:
             "deleted_at": "TEXT",
             "deleted_by": "TEXT",
             "delete_reason": "TEXT",
+            "storage_deleted_at": "TEXT",
             "created_at": "TEXT",
         }
         for column_name, column_type in required_columns.items():

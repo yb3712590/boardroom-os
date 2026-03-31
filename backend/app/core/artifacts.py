@@ -162,6 +162,7 @@ def build_artifact_metadata(
         "deleted_at": artifact.get("deleted_at"),
         "deleted_by": artifact.get("deleted_by"),
         "delete_reason": artifact.get("delete_reason"),
+        "storage_deleted_at": artifact.get("storage_deleted_at"),
         "size_bytes": artifact.get("size_bytes"),
         "content_hash": artifact.get("content_hash"),
         "created_at": artifact["created_at"],

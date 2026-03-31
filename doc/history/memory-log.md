@@ -49,7 +49,7 @@
 
 - There is still no dedicated tenant-management control plane, OAuth or mTLS layer, or broader public-internet hardening.
 - Multipart or large-file upload and object-storage delivery are still missing.
-- Artifact cleanup scheduling and richer retention classes still need follow-through.
+- Richer artifact retention classes and the larger-file upload path still need follow-through beyond the current local-store auto cleanup loop.
 - Provider routing, richer output schema coverage, and fuller Context Compiler retrieval and caching are still incomplete.
 
 ## Recent Memory
@@ -106,6 +106,13 @@
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_worker_admin_auth_cli.py -q` -> `4 passed`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -q` -> `7 passed`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "worker_admin" -q` -> `33 passed, 123 deselected`
+- Closed the manual-only artifact cleanup gap for the current local artifact store: `artifact_index` now persists `storage_deleted_at`, cleanup no longer re-counts already-cleared files, and scheduler / runner now trigger automatic cleanup on a bounded interval.
+- Extended `GET /api/v1/projections/dashboard` with `artifact_maintenance`, so排障时可以直接看到自动 cleanup 是否开启、当前过期待清理积压、以及最近一次 cleanup 的触发来源、操作者和删除数量。
+- Extended `GET /api/v1/projections/tickets/{ticket_id}/artifacts` with `deleted_by`, `delete_reason`, and `storage_deleted_at`, so单张 ticket 的 artifact 读面现在能直接区分“逻辑过期”与“文件已物理删除”。
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_cleanup_candidates_ignore_storage_already_deleted_rows" -q` -> `1 passed`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact_cleanup_does_not_recount_storage_already_cleared or dashboard_exposes_artifact_cleanup_maintenance_summary or ticket_artifacts_projection_exposes_cleanup_audit_fields or artifact_cleanup_expires_elapsed_artifacts_and_deletes_files" -q` -> `4 passed, 155 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "auto_runs_artifact_cleanup_once_per_interval_bucket" -q` -> `1 passed, 11 deselected`
 
 ### Current Watch-Outs
 

@@ -13,6 +13,7 @@
 - 最小 incident / circuit-breaker / retry 治理链
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
+- artifact cleanup 闭环：物理删除记账、scheduler 自动 cleanup，以及 `dashboard` 上可直接看的 cleanup 状态
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
 - 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及带签名操作人令牌入口、独立动作审计读面的 `worker-admin` HTTP 管理面
 
@@ -47,6 +48,12 @@ cd backend
 source .venv/bin/activate
 python -m app.scheduler_runner
 ```
+
+artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
+
+- 默认每 300 秒检查一次过期 artifact
+- `BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC <= 0` 时关闭自动 cleanup，只保留手动命令兜底
+- 自动 cleanup 的操作人默认记成 `system:artifact-cleanup`，可用 `BOARDROOM_OS_ARTIFACT_CLEANUP_OPERATOR_ID` 覆盖
 
 ## 运行模式
 
@@ -257,6 +264,33 @@ curl 'http://127.0.0.1:8000/api/v1/projections/worker-admin-auth-rejections?tena
 - 现在也可以用 `GET /api/v1/projections/worker-runtime` 按同一组 filter 一次看到 binding、session、delivery grant 和最近拒绝日志，再用 `worker-admin` HTTP 或本地 CLI 做最小 scope 级处理
 - `worker-runtime` 投影里的 session / delivery grant 现在会回显 `revoked_via`、`revoked_by`、`revoke_reason`，方便值守同学直接确认是谁、从哪、因为什么做了撤销
 
+## Artifact cleanup
+
+手动触发 cleanup 仍然保留，适合本地验证或值守兜底：
+
+```bash
+cd backend
+source .venv/bin/activate
+curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "cleaned_by": "emp_ops_1",
+    "idempotency_key": "artifact-cleanup:manual-001"
+  }'
+```
+
+当前真实行为：
+
+- `EPHEMERAL + retention_ttl_sec` 的 artifact 到期后会被 cleanup 标成 `EXPIRED`
+- 如果 artifact 有本地落盘文件，cleanup 会把文件删掉，并在 `artifact_index` 里写 `storage_deleted_at`
+- 已经写过 `storage_deleted_at` 的 artifact 不会在后续 cleanup 里被重复统计成 residual cleanup
+- `GET /api/v1/projections/dashboard` 现在会返回 `artifact_maintenance`，可以直接看：
+  - 自动 cleanup 是否开启
+  - cleanup 间隔
+  - 当前待过期 / 待物理删除积压
+  - 最近一次 cleanup 的时间、触发来源、操作者和删除数量
+- `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `deleted_by`、`delete_reason` 和 `storage_deleted_at`
+
 ## 关键环境变量
 
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET`
@@ -281,6 +315,10 @@ curl 'http://127.0.0.1:8000/api/v1/projections/worker-admin-auth-rejections?tena
   delivery URL 的默认过期时间
 - `BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET`
   delivery URL 的签名密钥；未设置时会回退到 `BOARDROOM_OS_WORKER_SHARED_SECRET`
+- `BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC`
+  自动 artifact cleanup 的检查间隔，默认 300 秒；设成 `0` 或负数可关闭自动 cleanup
+- `BOARDROOM_OS_ARTIFACT_CLEANUP_OPERATOR_ID`
+  自动 cleanup 写入事件和 artifact 审计时使用的操作人，默认 `system:artifact-cleanup`
 
 ## 测试与默认存储
 

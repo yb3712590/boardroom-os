@@ -107,6 +107,11 @@ def handle_artifact_delete(
 
         if resolved_artifact_store is not None and artifact.get("storage_relpath"):
             resolved_artifact_store.delete(str(artifact["storage_relpath"]))
+            repository.mark_artifact_storage_deleted(
+                connection,
+                artifact_ref=payload.artifact_ref,
+                storage_deleted_at=received_at,
+            )
 
         repository.update_artifact_lifecycle(
             connection,
@@ -151,6 +156,8 @@ def handle_artifact_cleanup(
     repository: ControlPlaneRepository,
     payload: ArtifactCleanupCommand,
     artifact_store: ArtifactStore | None = None,
+    *,
+    trigger: str = "manual_command",
 ) -> CommandAckEnvelope:
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
@@ -169,13 +176,21 @@ def handle_artifact_cleanup(
 
         artifacts = repository.list_artifacts_for_cleanup(connection, expires_before=received_at)
         expired_count = 0
-        residual_cleanup_count = 0
+        storage_deleted_count = 0
+        already_cleared_count = 0
 
         for artifact in artifacts:
             lifecycle_status = resolve_artifact_lifecycle_status(artifact, at=received_at)
             if resolved_artifact_store is not None and artifact.get("storage_relpath"):
                 resolved_artifact_store.delete(str(artifact["storage_relpath"]))
-                residual_cleanup_count += 1
+                repository.mark_artifact_storage_deleted(
+                    connection,
+                    artifact_ref=str(artifact["artifact_ref"]),
+                    storage_deleted_at=received_at,
+                )
+                storage_deleted_count += 1
+            elif artifact.get("storage_deleted_at") is not None:
+                already_cleared_count += 1
 
             if lifecycle_status == ARTIFACT_LIFECYCLE_EXPIRED and artifact.get("lifecycle_status") == ARTIFACT_LIFECYCLE_ACTIVE:
                 expired_count += 1
@@ -219,8 +234,10 @@ def handle_artifact_cleanup(
             correlation_id="artifact-cleanup",
             payload={
                 "cleaned_by": payload.cleaned_by,
+                "trigger": trigger,
                 "expired_count": expired_count,
-                "residual_cleanup_count": residual_cleanup_count,
+                "storage_deleted_count": storage_deleted_count,
+                "already_cleared_count": already_cleared_count,
             },
             occurred_at=received_at,
         )
