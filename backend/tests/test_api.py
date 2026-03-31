@@ -228,8 +228,96 @@ def _worker_admin_headers(
                 tenant_id=asserted_tenant_id if asserted_tenant_id is not None else tenant_id,
                 workspace_id=asserted_workspace_id if asserted_workspace_id is not None else workspace_id,
             )
-        )
+    )
     return headers
+
+
+def _issue_persisted_worker_admin_token(
+    client,
+    *,
+    operator_id: str = "ops@example.com",
+    role: str = "platform_admin",
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    ttl_sec: int = 3600,
+    issued_at: str | None = None,
+    signing_secret: str = "operator-secret",
+    issued_by: str | None = None,
+) -> tuple[str, dict]:
+    from app.core.worker_admin_tokens import issue_worker_admin_token
+
+    repository = client.app.state.repository
+    issued_at_value = (
+        datetime.fromisoformat(issued_at) if issued_at is not None else datetime.now().astimezone()
+    )
+    with repository.transaction() as connection:
+        token_issue = repository.create_worker_admin_token_issue(
+            connection,
+            token_id=None,
+            operator_id=operator_id,
+            role=role,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            issued_at=issued_at_value,
+            expires_at=issued_at_value,
+            issued_via="test_helper",
+            issued_by=issued_by or operator_id,
+        )
+        token, expires_at = issue_worker_admin_token(
+            signing_secret=signing_secret,
+            operator_id=operator_id,
+            role=role,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            token_id=str(token_issue["token_id"]),
+            issued_at=issued_at_value,
+            ttl_sec=ttl_sec,
+        )
+        token_issue = repository.update_worker_admin_token_issue_expiry(
+            connection,
+            token_id=str(token_issue["token_id"]),
+            expires_at=expires_at,
+        )
+    return token, token_issue
+
+
+def _persisted_worker_admin_headers(
+    client,
+    *,
+    operator_id: str = "ops@example.com",
+    role: str = "platform_admin",
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    ttl_sec: int = 3600,
+    issued_at: str | None = None,
+    signing_secret: str = "operator-secret",
+    include_assertion_headers: bool = True,
+    asserted_operator_id: str | None = None,
+    asserted_role: str | None = None,
+    asserted_tenant_id: str | None = None,
+    asserted_workspace_id: str | None = None,
+) -> tuple[dict[str, str], dict]:
+    token, token_issue = _issue_persisted_worker_admin_token(
+        client,
+        operator_id=operator_id,
+        role=role,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        ttl_sec=ttl_sec,
+        issued_at=issued_at,
+        signing_secret=signing_secret,
+    )
+    headers = {"X-Boardroom-Operator-Token": token}
+    if include_assertion_headers:
+        headers.update(
+            _legacy_worker_admin_headers(
+                operator_id=asserted_operator_id or operator_id,
+                role=asserted_role or role,
+                tenant_id=asserted_tenant_id if asserted_tenant_id is not None else tenant_id,
+                workspace_id=asserted_workspace_id if asserted_workspace_id is not None else workspace_id,
+            )
+        )
+    return headers, token_issue
 
 
 def _worker_assignments_response(
@@ -6989,6 +7077,116 @@ def test_worker_admin_rejects_signed_token_with_naive_datetime_claims(client):
     )
 
     assert response.status_code == 401
+
+
+def test_worker_admin_operator_tokens_lists_scope_local_tokens_and_blocks_platform_revoke(client):
+    platform_headers, platform_issue = _persisted_worker_admin_headers(
+        client,
+        operator_id="ops@example.com",
+        role="platform_admin",
+    )
+    _, _ = _persisted_worker_admin_headers(
+        client,
+        operator_id="tenant.admin@example.com",
+        role="scope_admin",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+    _, _ = _persisted_worker_admin_headers(
+        client,
+        operator_id="tenant.viewer@example.com",
+        role="scope_viewer",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+    scope_headers, _ = _persisted_worker_admin_headers(
+        client,
+        operator_id="tenant.admin@example.com",
+        role="scope_admin",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    list_response = client.get(
+        "/api/v1/worker-admin/operator-tokens",
+        params={"tenant_id": "tenant_blue", "workspace_id": "ws_design", "active_only": True},
+        headers=scope_headers,
+    )
+    revoke_response = client.post(
+        "/api/v1/worker-admin/revoke-operator-token",
+        json={
+            "token_id": platform_issue["token_id"],
+            "revoked_by": "tenant.admin@example.com",
+            "reason": "should not be allowed",
+        },
+        headers=scope_headers,
+    )
+    platform_list_response = client.get(
+        "/api/v1/worker-admin/operator-tokens",
+        params={"active_only": True},
+        headers=platform_headers,
+    )
+
+    assert list_response.status_code == 200
+    payload = list_response.json()
+    assert payload["count"] >= 2
+    assert all(item["tenant_id"] == "tenant_blue" for item in payload["tokens"])
+    assert all(item["workspace_id"] == "ws_design" for item in payload["tokens"])
+    assert all(item["role"] != "platform_admin" for item in payload["tokens"])
+    assert revoke_response.status_code == 403
+    assert platform_list_response.status_code == 200
+    assert any(
+        item["token_id"] == platform_issue["token_id"]
+        for item in platform_list_response.json()["tokens"]
+    )
+
+
+def test_worker_admin_revoked_operator_token_is_rejected_and_visible_in_auth_rejection_projection(
+    client,
+):
+    headers, token_issue = _persisted_worker_admin_headers(
+        client,
+        operator_id="ops@example.com",
+        role="platform_admin",
+    )
+    repository = client.app.state.repository
+    revoked_at = datetime.now().astimezone()
+    with repository.transaction() as connection:
+        repository.revoke_worker_admin_token_issue(
+            connection,
+            token_id=token_issue["token_id"],
+            revoked_at=revoked_at,
+            revoked_by="ops@example.com",
+            revoke_reason="manual test revoke",
+        )
+
+    rejected_response = client.get("/api/v1/worker-admin/bindings", headers=headers)
+    projection_response = client.get(
+        "/api/v1/projections/worker-admin-auth-rejections",
+        params={"token_id": token_issue["token_id"], "limit": 10},
+        headers=_worker_admin_headers(),
+    )
+
+    assert rejected_response.status_code == 401
+    assert rejected_response.json()["detail"] == "Worker-admin operator token has been revoked."
+    assert projection_response.status_code == 200
+    projection_payload = projection_response.json()
+    assert projection_payload["data"]["summary"]["count"] == 1
+    assert projection_payload["data"]["rejections"][0]["token_id"] == token_issue["token_id"]
+    assert projection_payload["data"]["rejections"][0]["reason_code"] == "revoked_token"
+
+
+def test_worker_admin_missing_token_is_logged_in_auth_rejection_projection(client):
+    rejected_response = client.get("/api/v1/worker-admin/bindings")
+    projection_response = client.get(
+        "/api/v1/projections/worker-admin-auth-rejections",
+        params={"route_path": "/api/v1/worker-admin/bindings", "limit": 10},
+        headers=_worker_admin_headers(),
+    )
+
+    assert rejected_response.status_code == 401
+    assert projection_response.status_code == 200
+    assert projection_response.json()["data"]["rejections"][0]["reason_code"] == "missing_operator_token"
 
 
 def test_worker_admin_audit_projection_validates_positive_limit(client):

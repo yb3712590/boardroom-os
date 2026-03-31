@@ -99,6 +99,13 @@
   - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `26 passed`
   - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_worker_auth_cli.py -q` -> `15 passed`
   - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_repository.py -q` -> `4 passed`
+- Closed the remaining `worker-admin` operator-token governance gap inside the trusted control plane: `issue-token` now persists `worker_admin_token_issue`, new operator tokens carry a durable `token_id`, and backend validation for new tokens now checks persisted issue state instead of trusting signature + TTL alone.
+- Added operator-token management surfaces on both paths: `python -m app.worker_admin_auth_cli list-tokens` / `revoke-token`, plus `GET /api/v1/worker-admin/operator-tokens` and `POST /api/v1/worker-admin/revoke-operator-token`, with the same platform-vs-scope role boundaries on listing and revoke.
+- Added a dedicated `worker_admin_auth_rejection_log` and `GET /api/v1/projections/worker-admin-auth-rejections`, so post-revoke verification no longer depends on manual `401` spot checks; operators can now see missing-token, bad-signature, expired, revoked, assertion-mismatch, and scope-denied failures directly.
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_worker_admin_auth_cli.py -q` -> `4 passed`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -q` -> `7 passed`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "worker_admin" -q` -> `33 passed, 123 deselected`
 
 ### Current Watch-Outs
 

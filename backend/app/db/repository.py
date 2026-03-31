@@ -114,6 +114,8 @@ class ControlPlaneRepository:
             self._ensure_worker_session_shape(connection)
             self._ensure_worker_delivery_grant_shape(connection)
             self._ensure_worker_auth_rejection_log_shape(connection)
+            self._ensure_worker_admin_token_issue_shape(connection)
+            self._ensure_worker_admin_auth_rejection_log_shape(connection)
             self._ensure_worker_admin_action_log_shape(connection)
             self._ensure_incident_projection_shape(connection)
             self._ensure_compiled_context_bundle_shape(connection)
@@ -1662,6 +1664,271 @@ class ControlPlaneRepository:
             rows = owned_connection.execute(query, tuple(params)).fetchall()
             return [self._convert_worker_auth_rejection_row(row) for row in rows]
 
+    def get_worker_admin_token_issue(
+        self,
+        token_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM worker_admin_token_issue WHERE token_id = ?",
+                (token_id,),
+            ).fetchone()
+            return None if row is None else self._convert_worker_admin_token_issue_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM worker_admin_token_issue WHERE token_id = ?",
+                (token_id,),
+            ).fetchone()
+            return None if row is None else self._convert_worker_admin_token_issue_row(row)
+
+    def create_worker_admin_token_issue(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        token_id: str | None,
+        operator_id: str,
+        role: str,
+        tenant_id: str | None,
+        workspace_id: str | None,
+        issued_at: datetime,
+        expires_at: datetime,
+        issued_via: str,
+        issued_by: str | None,
+    ) -> dict[str, Any]:
+        resolved_token_id = token_id or new_prefixed_id("wop")
+        connection.execute(
+            """
+            INSERT INTO worker_admin_token_issue (
+                token_id,
+                operator_id,
+                role,
+                tenant_id,
+                workspace_id,
+                issued_at,
+                expires_at,
+                issued_via,
+                issued_by,
+                revoked_at,
+                revoked_by,
+                revoke_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+            """,
+            (
+                resolved_token_id,
+                operator_id,
+                role,
+                tenant_id,
+                workspace_id,
+                issued_at.isoformat(),
+                expires_at.isoformat(),
+                issued_via,
+                issued_by,
+            ),
+        )
+        created = self.get_worker_admin_token_issue(resolved_token_id, connection=connection)
+        if created is None:
+            raise RuntimeError("Worker-admin token issue could not be created.")
+        return created
+
+    def update_worker_admin_token_issue_expiry(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        token_id: str,
+        expires_at: datetime,
+    ) -> dict[str, Any]:
+        connection.execute(
+            """
+            UPDATE worker_admin_token_issue
+            SET expires_at = ?
+            WHERE token_id = ?
+            """,
+            (expires_at.isoformat(), token_id),
+        )
+        updated = self.get_worker_admin_token_issue(token_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Worker-admin token issue was not found.")
+        return updated
+
+    def list_worker_admin_token_issues(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        operator_id: str | None = None,
+        role: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        active_only: bool = False,
+        at: datetime | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if operator_id is not None:
+            clauses.append("operator_id = ?")
+            params.append(operator_id)
+        if role is not None:
+            clauses.append("role = ?")
+            params.append(role)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        if active_only:
+            active_at = (at or now_local()).isoformat()
+            clauses.append("revoked_at IS NULL")
+            clauses.append("expires_at > ?")
+            params.append(active_at)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT * FROM worker_admin_token_issue
+            {where_clause}
+            ORDER BY issued_at DESC, token_id DESC
+            LIMIT ?
+        """
+        params.append(int(limit))
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_admin_token_issue_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_admin_token_issue_row(row) for row in rows]
+
+    def revoke_worker_admin_token_issue(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        token_id: str,
+        revoked_at: datetime,
+        revoked_by: str,
+        revoke_reason: str,
+    ) -> dict[str, Any]:
+        existing = self.get_worker_admin_token_issue(token_id, connection=connection)
+        if existing is None:
+            raise RuntimeError("Worker-admin token issue was not found.")
+        connection.execute(
+            """
+            UPDATE worker_admin_token_issue
+            SET revoked_at = ?, revoked_by = ?, revoke_reason = ?
+            WHERE token_id = ?
+            """,
+            (
+                revoked_at.isoformat(),
+                revoked_by,
+                revoke_reason,
+                token_id,
+            ),
+        )
+        updated = self.get_worker_admin_token_issue(token_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Worker-admin token issue could not be revoked.")
+        return updated
+
+    def append_worker_admin_auth_rejection_log(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        occurred_at: datetime,
+        route_path: str,
+        reason_code: str,
+        operator_id: str | None,
+        operator_role: str | None,
+        token_id: str | None,
+        tenant_id: str | None,
+        workspace_id: str | None,
+    ) -> dict[str, Any]:
+        rejection_id = new_prefixed_id("warej")
+        connection.execute(
+            """
+            INSERT INTO worker_admin_auth_rejection_log (
+                rejection_id,
+                occurred_at,
+                route_path,
+                reason_code,
+                operator_id,
+                operator_role,
+                token_id,
+                tenant_id,
+                workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rejection_id,
+                occurred_at.isoformat(),
+                route_path,
+                reason_code,
+                operator_id,
+                operator_role,
+                token_id,
+                tenant_id,
+                workspace_id,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM worker_admin_auth_rejection_log WHERE rejection_id = ?",
+            (rejection_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Worker-admin auth rejection log could not be created.")
+        return self._convert_worker_admin_auth_rejection_row(row)
+
+    def list_worker_admin_auth_rejection_logs(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        operator_id: str | None = None,
+        operator_role: str | None = None,
+        token_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        route_path: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if operator_id is not None:
+            clauses.append("operator_id = ?")
+            params.append(operator_id)
+        if operator_role is not None:
+            clauses.append("operator_role = ?")
+            params.append(operator_role)
+        if token_id is not None:
+            clauses.append("token_id = ?")
+            params.append(token_id)
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        if route_path is not None:
+            clauses.append("route_path = ?")
+            params.append(route_path)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT * FROM worker_admin_auth_rejection_log
+            {where_clause}
+            ORDER BY occurred_at DESC, rejection_id DESC
+            LIMIT ?
+        """
+        params.append(int(limit))
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_admin_auth_rejection_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_admin_auth_rejection_row(row) for row in rows]
+
     def append_worker_admin_action_log(
         self,
         connection: sqlite3.Connection,
@@ -2914,6 +3181,19 @@ class ControlPlaneRepository:
             converted["occurred_at"] = datetime.fromisoformat(converted["occurred_at"])
         return converted
 
+    def _convert_worker_admin_token_issue_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("issued_at", "expires_at", "revoked_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        return converted
+
+    def _convert_worker_admin_auth_rejection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        if converted.get("occurred_at"):
+            converted["occurred_at"] = datetime.fromisoformat(converted["occurred_at"])
+        return converted
+
     def _convert_worker_admin_action_log_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         if converted.get("occurred_at"):
@@ -3669,6 +3949,113 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_auth_rejection_log_scope ON worker_auth_rejection_log(tenant_id, workspace_id)"
+        )
+
+    def _ensure_worker_admin_token_issue_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_admin_token_issue (
+                token_id TEXT PRIMARY KEY,
+                operator_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                tenant_id TEXT,
+                workspace_id TEXT,
+                issued_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                issued_via TEXT NOT NULL,
+                issued_by TEXT,
+                revoked_at TEXT,
+                revoked_by TEXT,
+                revoke_reason TEXT
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(worker_admin_token_issue)").fetchall()
+        }
+        required_columns = {
+            "token_id": "TEXT",
+            "operator_id": "TEXT",
+            "role": "TEXT",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
+            "issued_at": "TEXT",
+            "expires_at": "TEXT",
+            "issued_via": "TEXT",
+            "issued_by": "TEXT",
+            "revoked_at": "TEXT",
+            "revoked_by": "TEXT",
+            "revoke_reason": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE worker_admin_token_issue ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_token_issue_operator_id ON worker_admin_token_issue(operator_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_token_issue_role ON worker_admin_token_issue(role)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_token_issue_scope ON worker_admin_token_issue(tenant_id, workspace_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_token_issue_expires_at ON worker_admin_token_issue(expires_at)"
+        )
+
+    def _ensure_worker_admin_auth_rejection_log_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_admin_auth_rejection_log (
+                rejection_id TEXT PRIMARY KEY,
+                occurred_at TEXT NOT NULL,
+                route_path TEXT NOT NULL,
+                reason_code TEXT NOT NULL,
+                operator_id TEXT,
+                operator_role TEXT,
+                token_id TEXT,
+                tenant_id TEXT,
+                workspace_id TEXT
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(worker_admin_auth_rejection_log)").fetchall()
+        }
+        required_columns = {
+            "rejection_id": "TEXT",
+            "occurred_at": "TEXT",
+            "route_path": "TEXT",
+            "reason_code": "TEXT",
+            "operator_id": "TEXT",
+            "operator_role": "TEXT",
+            "token_id": "TEXT",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE worker_admin_auth_rejection_log ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_auth_rejection_log_occurred_at ON worker_admin_auth_rejection_log(occurred_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_auth_rejection_log_scope ON worker_admin_auth_rejection_log(tenant_id, workspace_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_auth_rejection_log_token_id ON worker_admin_auth_rejection_log(token_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_auth_rejection_log_operator_id ON worker_admin_auth_rejection_log(operator_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_auth_rejection_log_route_path ON worker_admin_auth_rejection_log(route_path)"
         )
 
     def _ensure_worker_admin_action_log_shape(self, connection: sqlite3.Connection) -> None:

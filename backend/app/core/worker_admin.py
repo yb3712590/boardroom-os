@@ -11,12 +11,14 @@ from app.core.worker_bootstrap_tokens import issue_worker_bootstrap_token
 from app.db.repository import ControlPlaneRepository
 
 ISSUED_VIA_WORKER_AUTH_CLI = "worker_auth_cli"
+ISSUED_VIA_WORKER_ADMIN_AUTH_CLI = "worker_admin_auth_cli"
 WORKER_ADMIN_API_VIA = "worker_admin_api"
 WORKER_ADMIN_SCOPE_CONTAINMENT_VIA = "worker_admin_scope_containment"
 WORKER_BOOTSTRAP_REVOKE_VIA = "worker_bootstrap_revoke"
 WORKER_BOOTSTRAP_ROTATE_VIA = "worker_bootstrap_rotate"
 DEFAULT_SESSION_REVOKE_REASON = "Manually revoked worker session."
 DEFAULT_DELIVERY_GRANT_REVOKE_REASON = "Manually revoked worker delivery grant."
+DEFAULT_OPERATOR_TOKEN_REVOKE_REASON = "Manually revoked worker-admin operator token."
 
 
 class WorkerAdminConflictError(RuntimeError):
@@ -293,6 +295,61 @@ def list_auth_rejections(
             reverse=True,
         )
     ]
+
+
+def list_operator_tokens(
+    repository: ControlPlaneRepository,
+    *,
+    operator_id: str | None = None,
+    role: str | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    active_only: bool = False,
+) -> list[dict[str, object]]:
+    tenant_id, workspace_id = resolve_scope_args(tenant_id, workspace_id)
+    listed_at = now_local()
+    with repository.connection() as connection:
+        token_issues = repository.list_worker_admin_token_issues(
+            connection,
+            operator_id=operator_id,
+            role=role,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            active_only=False,
+        )
+    items = [
+        {
+            **token_issue,
+            "is_active": bool(
+                token_issue.get("revoked_at") is None
+                and token_issue.get("expires_at") is not None
+                and token_issue["expires_at"] > listed_at
+            ),
+        }
+        for token_issue in token_issues
+    ]
+    if active_only:
+        items = [item for item in items if bool(item["is_active"])]
+    return items
+
+
+def revoke_operator_token(
+    repository: ControlPlaneRepository,
+    *,
+    token_id: str,
+    revoked_by: str,
+    reason: str | None = None,
+) -> dict[str, object]:
+    revoked_at = now_local()
+    with repository.transaction() as connection:
+        revoked = repository.revoke_worker_admin_token_issue(
+            connection,
+            token_id=token_id,
+            revoked_at=revoked_at,
+            revoked_by=revoked_by,
+            revoke_reason=reason or DEFAULT_OPERATOR_TOKEN_REVOKE_REASON,
+        )
+    return revoked
 
 
 def build_scope_summary(

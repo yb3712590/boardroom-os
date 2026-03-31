@@ -24,6 +24,27 @@ class WorkerAdminBindingItem(StrictModel):
     cleanup_eligible: bool
 
 
+class WorkerAdminOperatorTokenItem(StrictModel):
+    token_id: str
+    operator_id: str
+    role: str
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+    issued_at: datetime
+    expires_at: datetime
+    issued_via: str
+    issued_by: str | None = None
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
+    revoke_reason: str | None = None
+    is_active: bool
+
+
+class WorkerAdminOperatorTokensResponse(StrictModel):
+    tokens: list[WorkerAdminOperatorTokenItem]
+    count: int
+
+
 class WorkerAdminBindingsResponse(StrictModel):
     bindings: list[WorkerAdminBindingItem]
     count: int
@@ -311,3 +332,24 @@ class WorkerAdminCleanupBindingsResponse(StrictModel):
     deleted_count: int
     dry_run: bool
     cleaned_at: datetime
+
+
+class WorkerAdminRevokeOperatorTokenRequest(StrictModel):
+    token_id: str = Field(min_length=1)
+    revoked_by: str | None = None
+    reason: str | None = None
+
+
+class WorkerAdminRevokeOperatorTokenResponse(StrictModel):
+    token_id: str
+    operator_id: str
+    role: str
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+    issued_at: datetime
+    expires_at: datetime
+    issued_via: str
+    issued_by: str | None = None
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
+    revoke_reason: str | None = None

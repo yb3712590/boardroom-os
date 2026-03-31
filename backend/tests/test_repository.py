@@ -718,3 +718,104 @@ def test_worker_admin_action_log_round_trips_filters_and_details(db_path):
     assert len(listed) == 1
     assert listed[0]["action_id"] == issue_action["action_id"]
     assert listed[0]["details"]["succeeded"] is True
+
+
+def test_worker_admin_token_issue_round_trips_filters_and_revoke(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+    issued_at = datetime.fromisoformat("2026-03-31T13:00:00+08:00")
+    expires_at = datetime.fromisoformat("2026-03-31T13:15:00+08:00")
+    revoked_at = datetime.fromisoformat("2026-03-31T13:05:00+08:00")
+
+    with repository.transaction() as connection:
+        global_issue = repository.create_worker_admin_token_issue(
+            connection,
+            token_id="wop_global",
+            operator_id="ops@example.com",
+            role="platform_admin",
+            tenant_id=None,
+            workspace_id=None,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            issued_via="worker_admin_auth_cli",
+            issued_by="ops@example.com",
+        )
+        scoped_issue = repository.create_worker_admin_token_issue(
+            connection,
+            token_id="wop_scope",
+            operator_id="tenant.admin@example.com",
+            role="scope_admin",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            issued_at=issued_at,
+            expires_at=expires_at,
+            issued_via="worker_admin_auth_cli",
+            issued_by="ops@example.com",
+        )
+        repository.revoke_worker_admin_token_issue(
+            connection,
+            token_id="wop_scope",
+            revoked_at=revoked_at,
+            revoked_by="ops@example.com",
+            revoke_reason="tenant offboarding",
+        )
+
+    active_scoped = repository.list_worker_admin_token_issues(
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+        active_only=True,
+    )
+    all_scoped = repository.list_worker_admin_token_issues(
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+        active_only=False,
+    )
+
+    assert global_issue["token_id"] == "wop_global"
+    assert scoped_issue["token_id"] == "wop_scope"
+    assert all_scoped[0]["token_id"] == "wop_scope"
+    assert all_scoped[0]["revoked_by"] == "ops@example.com"
+    assert all_scoped[0]["revoke_reason"] == "tenant offboarding"
+    assert active_scoped == []
+
+
+def test_worker_admin_auth_rejection_log_round_trips_filters(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    with repository.transaction() as connection:
+        repository.append_worker_admin_auth_rejection_log(
+            connection,
+            occurred_at=datetime.fromisoformat("2026-03-31T14:00:00+08:00"),
+            route_path="/api/v1/worker-admin/bindings",
+            reason_code="missing_operator_token",
+            operator_id=None,
+            operator_role=None,
+            token_id=None,
+            tenant_id=None,
+            workspace_id=None,
+        )
+        repository.append_worker_admin_auth_rejection_log(
+            connection,
+            occurred_at=datetime.fromisoformat("2026-03-31T14:05:00+08:00"),
+            route_path="/api/v1/worker-admin/operator-tokens",
+            reason_code="revoked_token",
+            operator_id="tenant.admin@example.com",
+            operator_role="scope_admin",
+            token_id="wop_scope",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+        )
+
+    listed = repository.list_worker_admin_auth_rejection_logs(
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+        token_id="wop_scope",
+        route_path="/api/v1/worker-admin/operator-tokens",
+    )
+
+    assert len(listed) == 1
+    assert listed[0]["reason_code"] == "revoked_token"
+    assert listed[0]["operator_id"] == "tenant.admin@example.com"
+    assert listed[0]["operator_role"] == "scope_admin"
+    assert listed[0]["token_id"] == "wop_scope"

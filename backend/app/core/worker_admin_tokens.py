@@ -7,19 +7,46 @@ import hmac
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
 from typing import Literal
 
 from fastapi import HTTPException
 
+if TYPE_CHECKING:
+    from app.db.repository import ControlPlaneRepository
+
 WorkerAdminOperatorRole = Literal["platform_admin", "scope_admin", "scope_viewer"]
 
-TOKEN_VERSION = "v1"
+LEGACY_TOKEN_VERSION = "v1"
+TOKEN_VERSION = "v2"
 _VALID_OPERATOR_ROLES = {"platform_admin", "scope_admin", "scope_viewer"}
+
+
+class WorkerAdminTokenValidationError(HTTPException):
+    def __init__(
+        self,
+        *,
+        detail: str,
+        reason_code: str,
+        operator_id: str | None = None,
+        role: str | None = None,
+        token_id: str | None = None,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+    ):
+        super().__init__(status_code=401, detail=detail)
+        self.reason_code = reason_code
+        self.operator_id = operator_id
+        self.role = role
+        self.token_id = token_id
+        self.tenant_id = tenant_id
+        self.workspace_id = workspace_id
 
 
 @dataclass(frozen=True)
 class WorkerAdminTokenClaims:
     version: str
+    token_id: str | None
     operator_id: str
     role: WorkerAdminOperatorRole
     tenant_id: str | None
@@ -41,13 +68,17 @@ def _serialize_payload(payload: dict[str, str | None]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _raise_validation_error(*, detail: str, reason_code: str) -> None:
+    raise WorkerAdminTokenValidationError(detail=detail, reason_code=reason_code)
+
+
 def _parse_datetime(value: str, *, detail: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=detail) from exc
+        raise WorkerAdminTokenValidationError(detail=detail, reason_code="invalid_token") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise HTTPException(status_code=401, detail=detail)
+        _raise_validation_error(detail=detail, reason_code="invalid_token")
     return parsed
 
 
@@ -60,7 +91,7 @@ def _normalize_scope_pair_for_validation(
     normalized_tenant_id = (tenant_id or "").strip() or None
     normalized_workspace_id = (workspace_id or "").strip() or None
     if (normalized_tenant_id is None) != (normalized_workspace_id is None):
-        raise HTTPException(status_code=401, detail=detail)
+        _raise_validation_error(detail=detail, reason_code="invalid_token")
     return normalized_tenant_id, normalized_workspace_id
 
 
@@ -83,6 +114,7 @@ def issue_worker_admin_token(
     role: WorkerAdminOperatorRole,
     tenant_id: str | None,
     workspace_id: str | None,
+    token_id: str | None = None,
     issued_at: datetime,
     ttl_sec: int,
     max_ttl_sec: int | None = None,
@@ -109,7 +141,8 @@ def issue_worker_admin_token(
 
     expires_at = issued_at + timedelta(seconds=ttl_sec)
     payload = {
-        "version": TOKEN_VERSION,
+        "version": TOKEN_VERSION if token_id is not None else LEGACY_TOKEN_VERSION,
+        "token_id": token_id.strip() if token_id is not None else None,
         "operator_id": normalized_operator_id,
         "role": role,
         "tenant_id": normalized_tenant_id,
@@ -127,18 +160,20 @@ def validate_worker_admin_token(
     *,
     signing_secret: str,
     at: datetime,
+    repository: ControlPlaneRepository | None = None,
+    require_persisted_issue: bool = False,
 ) -> WorkerAdminTokenClaims:
     detail = "Worker-admin operator token is invalid."
     try:
         payload_segment, signature_segment = token.split(".", 1)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=detail) from exc
+        raise WorkerAdminTokenValidationError(detail=detail, reason_code="invalid_token") from exc
 
     try:
         payload_bytes = _base64url_decode(payload_segment)
         actual_signature = _base64url_decode(signature_segment)
     except (ValueError, binascii.Error) as exc:
-        raise HTTPException(status_code=401, detail=detail) from exc
+        raise WorkerAdminTokenValidationError(detail=detail, reason_code="invalid_token") from exc
 
     expected_signature = hmac.new(
         signing_secret.encode("utf-8"),
@@ -146,35 +181,98 @@ def validate_worker_admin_token(
         hashlib.sha256,
     ).digest()
     if not hmac.compare_digest(actual_signature, expected_signature):
-        raise HTTPException(status_code=401, detail=detail)
+        _raise_validation_error(detail=detail, reason_code="invalid_token")
 
     try:
         payload = json.loads(payload_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=401, detail=detail) from exc
+        raise WorkerAdminTokenValidationError(detail=detail, reason_code="invalid_token") from exc
 
-    if payload.get("version") != TOKEN_VERSION:
-        raise HTTPException(status_code=401, detail=detail)
-
-    issued_at = _parse_datetime(str(payload.get("issued_at") or ""), detail=detail)
-    expires_at = _parse_datetime(str(payload.get("expires_at") or ""), detail=detail)
-    if expires_at <= at:
-        raise HTTPException(status_code=401, detail="Worker-admin operator token has expired.")
+    version = str(payload.get("version") or "").strip()
+    if version not in {LEGACY_TOKEN_VERSION, TOKEN_VERSION}:
+        _raise_validation_error(detail=detail, reason_code="invalid_token")
 
     operator_id = str(payload.get("operator_id") or "").strip()
     role = str(payload.get("role") or "").strip()
+    token_id = str(payload.get("token_id") or "").strip() or None
     tenant_id, workspace_id = _normalize_scope_pair_for_validation(
         tenant_id=payload.get("tenant_id"),
         workspace_id=payload.get("workspace_id"),
         detail=detail,
     )
+    issued_at = _parse_datetime(str(payload.get("issued_at") or ""), detail=detail)
+    expires_at = _parse_datetime(str(payload.get("expires_at") or ""), detail=detail)
+    if expires_at <= at:
+        raise WorkerAdminTokenValidationError(
+            detail="Worker-admin operator token has expired.",
+            reason_code="expired_token",
+            operator_id=operator_id,
+            role=role,
+            token_id=token_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     if not operator_id or role not in _VALID_OPERATOR_ROLES:
-        raise HTTPException(status_code=401, detail=detail)
+        _raise_validation_error(detail=detail, reason_code="invalid_token")
     if role in {"scope_admin", "scope_viewer"} and (tenant_id is None or workspace_id is None):
-        raise HTTPException(status_code=401, detail=detail)
+        _raise_validation_error(detail=detail, reason_code="invalid_token")
+    if version == TOKEN_VERSION and token_id is None:
+        _raise_validation_error(detail=detail, reason_code="invalid_token")
+
+    if version == TOKEN_VERSION and repository is not None and require_persisted_issue:
+        token_issue = repository.get_worker_admin_token_issue(token_id or "")
+        if token_issue is None:
+            raise WorkerAdminTokenValidationError(
+                detail=detail,
+                reason_code="token_issue_not_found",
+                operator_id=operator_id,
+                role=role,
+                token_id=token_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            )
+        if token_issue.get("revoked_at") is not None:
+            raise WorkerAdminTokenValidationError(
+                detail="Worker-admin operator token has been revoked.",
+                reason_code="revoked_token",
+                operator_id=operator_id,
+                role=role,
+                token_id=token_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            )
+        if token_issue["expires_at"] <= at:
+            raise WorkerAdminTokenValidationError(
+                detail="Worker-admin operator token has expired.",
+                reason_code="expired_token",
+                operator_id=operator_id,
+                role=role,
+                token_id=token_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            )
+        persisted_fields: dict[str, Any] = {
+            "operator_id": token_issue.get("operator_id"),
+            "role": token_issue.get("role"),
+            "tenant_id": token_issue.get("tenant_id"),
+            "workspace_id": token_issue.get("workspace_id"),
+            "issued_at": token_issue.get("issued_at"),
+            "expires_at": token_issue.get("expires_at"),
+        }
+        claimed_fields: dict[str, Any] = {
+            "operator_id": operator_id,
+            "role": role,
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        }
+        if persisted_fields != claimed_fields:
+            _raise_validation_error(detail=detail, reason_code="invalid_token")
 
     return WorkerAdminTokenClaims(
-        version=str(payload["version"]),
+        version=version,
+        token_id=token_id,
         operator_id=operator_id,
         role=role,  # type: ignore[arg-type]
         tenant_id=tenant_id,

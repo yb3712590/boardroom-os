@@ -26,10 +26,13 @@ from app.contracts.worker_admin import (
     WorkerAdminDeliveryGrantsResponse,
     WorkerAdminIssueBootstrapRequest,
     WorkerAdminIssueBootstrapResponse,
+    WorkerAdminOperatorTokensResponse,
     WorkerAdminRevokeBootstrapRequest,
     WorkerAdminRevokeBootstrapResponse,
     WorkerAdminRevokeDeliveryGrantRequest,
     WorkerAdminRevokeDeliveryGrantResponse,
+    WorkerAdminRevokeOperatorTokenRequest,
+    WorkerAdminRevokeOperatorTokenResponse,
     WorkerAdminRevokeSessionRequest,
     WorkerAdminRevokeSessionResponse,
     WorkerAdminScopeSummaryResponse,
@@ -37,6 +40,7 @@ from app.contracts.worker_admin import (
 )
 from app.core.worker_admin import (
     WORKER_ADMIN_API_VIA,
+    DEFAULT_OPERATOR_TOKEN_REVOKE_REASON,
     WorkerAdminConflictError,
     build_scope_summary,
     cleanup_bindings,
@@ -44,7 +48,9 @@ from app.core.worker_admin import (
     create_binding,
     list_auth_rejections,
     list_delivery_grants,
+    list_operator_tokens,
     revoke_delivery_grant,
+    revoke_operator_token,
     revoke_session,
     list_binding_admin_views,
     list_bootstrap_issues,
@@ -139,6 +145,37 @@ def get_worker_admin_bindings(
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
     return WorkerAdminBindingsResponse(bindings=bindings, count=len(bindings))
+
+
+@router.get("/operator-tokens", response_model=WorkerAdminOperatorTokensResponse)
+def get_worker_admin_operator_tokens(
+    request: Request,
+    operator_id: str | None = None,
+    role: str | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    active_only: bool = False,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
+) -> WorkerAdminOperatorTokensResponse:
+    repository: ControlPlaneRepository = request.app.state.repository
+    try:
+        resolve_scope_args(tenant_id, workspace_id)
+        require_worker_admin_read_scope(
+            operator,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
+        tokens = list_operator_tokens(
+            repository,
+            operator_id=operator_id,
+            role=role,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            active_only=active_only,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise _translate_worker_admin_error(exc) from exc
+    return WorkerAdminOperatorTokensResponse(tokens=tokens, count=len(tokens))
 
 
 @router.get("/bootstrap-issues", response_model=WorkerAdminBootstrapIssuesResponse)
@@ -294,6 +331,63 @@ def get_worker_admin_scope_summary(
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
     return WorkerAdminScopeSummaryResponse.model_validate(summary)
+
+
+@router.post("/revoke-operator-token", response_model=WorkerAdminRevokeOperatorTokenResponse)
+def post_worker_admin_revoke_operator_token(
+    request: Request,
+    payload: WorkerAdminRevokeOperatorTokenRequest,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
+) -> WorkerAdminRevokeOperatorTokenResponse:
+    repository: ControlPlaneRepository = request.app.state.repository
+    try:
+        token_issue = repository.get_worker_admin_token_issue(payload.token_id)
+        if token_issue is None:
+            raise RuntimeError("Worker-admin operator token issue was not found.")
+        require_worker_admin_write_scope(
+            operator,
+            tenant_id=token_issue.get("tenant_id"),
+            workspace_id=token_issue.get("workspace_id"),
+            explicit_scope_required_for_scoped=False,
+        )
+        if not operator.is_platform_admin and str(token_issue["role"]) == "platform_admin":
+            operator.log_auth_rejection("revoke_platform_token_forbidden")
+            raise HTTPException(
+                status_code=403,
+                detail="Scoped worker-admin operators cannot revoke platform_admin tokens.",
+            )
+        revoked_by = resolve_worker_admin_actor(
+            operator,
+            asserted_actor=payload.revoked_by,
+            field_name="revoked_by",
+        )
+        revoked = revoke_operator_token(
+            repository,
+            token_id=payload.token_id,
+            revoked_by=revoked_by,
+            reason=payload.reason or DEFAULT_OPERATOR_TOKEN_REVOKE_REASON,
+        )
+    except HTTPException:
+        raise
+    except (RuntimeError, ValueError) as exc:
+        raise _translate_worker_admin_error(exc) from exc
+    _append_worker_admin_action_log(
+        repository,
+        operator=operator,
+        action_type="revoke_operator_token",
+        dry_run=False,
+        tenant_id=revoked.get("tenant_id"),
+        workspace_id=revoked.get("workspace_id"),
+        details={
+            "token_id": revoked["token_id"],
+            "target_operator_id": revoked["operator_id"],
+            "target_role": revoked["role"],
+            "revoke_reason": revoked.get("revoke_reason"),
+            "succeeded": True,
+        },
+        occurred_at=revoked.get("revoked_at"),
+    )
+    return WorkerAdminRevokeOperatorTokenResponse.model_validate(revoked)
 
 
 @router.post("/contain-scope", response_model=WorkerAdminContainScopeResponse)

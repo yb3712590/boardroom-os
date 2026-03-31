@@ -21,6 +21,10 @@
   - `worker-admin` 不再单独信 `X-Boardroom-Operator-*` 裸头，所有入口现在都必须携带 `X-Boardroom-Operator-Token`；旧头只剩兼容断言作用，不再代表身份
   - 新增 `python -m app.worker_admin_auth_cli issue-token`，平台值守和租户管理员现在可以先签发短时效操作人令牌，再调用 `worker-admin`；默认 TTL 15 分钟，最大 TTL 1 小时
   - 新增 `worker_admin_action_log` 和 `GET /api/v1/projections/worker-admin-audit`，值守同学现在不只看 session / grant 被谁撤了，还能直接按 scope 看谁做过 `create-binding`、`issue-bootstrap`、`contain-scope`、`cleanup-bindings` 等动作，以及是不是 dry-run
+- 多租户 worker 运维面第六批连续切片已落地：
+  - `issue-token` 现在会持久化 `worker_admin_token_issue`，新签发令牌带 `token_id`；后端对新令牌不再只验签，还会校验这张票是否存在、是否未撤销、是否仍在有效期内
+  - 新增 `python -m app.worker_admin_auth_cli list-tokens`、`revoke-token`，以及 `GET /api/v1/worker-admin/operator-tokens`、`POST /api/v1/worker-admin/revoke-operator-token`，值守同学现在可以直接看和撤操作人令牌，不必只等 TTL 自然过期
+  - 新增 `worker_admin_auth_rejection_log` 和 `GET /api/v1/projections/worker-admin-auth-rejections`，现在可以直接确认撤销后的令牌是否还在撞入口、后端是否已经拒绝
 - 继续推进更强多租户远端隔离：
   - 在现有签名令牌入口之外，继续收紧公开互联网场景下的安全边界，例如反向代理断言、更强的外网暴露策略、独立租户管理面，以及完整身份层
 - 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径

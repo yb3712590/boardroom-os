@@ -16,6 +16,11 @@ from app.contracts.projections import (
     WorkerAdminAuditProjectionFilters,
     WorkerAdminAuditProjectionItem,
     WorkerAdminAuditProjectionSummary,
+    WorkerAdminAuthRejectionProjectionData,
+    WorkerAdminAuthRejectionProjectionEnvelope,
+    WorkerAdminAuthRejectionProjectionFilters,
+    WorkerAdminAuthRejectionProjectionItem,
+    WorkerAdminAuthRejectionProjectionSummary,
     InboxProjectionData,
     InboxProjectionEnvelope,
     OpsStripProjection,
@@ -671,6 +676,62 @@ def build_worker_admin_audit_projection(
                     details=dict(action.get("details") or {}),
                 )
                 for action in actions
+            ],
+        ),
+    )
+
+
+def build_worker_admin_auth_rejection_projection(
+    repository: ControlPlaneRepository,
+    *,
+    tenant_id: str | None,
+    workspace_id: str | None,
+    operator_id: str | None,
+    operator_role: str | None,
+    token_id: str | None,
+    route_path: str | None,
+    limit: int,
+) -> WorkerAdminAuthRejectionProjectionEnvelope:
+    repository.initialize()
+    generated_at = now_local()
+    cursor, projection_version = repository.get_cursor_and_version()
+    rejections = repository.list_worker_admin_auth_rejection_logs(
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        operator_id=operator_id,
+        operator_role=operator_role,
+        token_id=token_id,
+        route_path=route_path,
+        limit=limit,
+    )
+    return WorkerAdminAuthRejectionProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=generated_at,
+        projection_version=projection_version,
+        cursor=cursor,
+        data=WorkerAdminAuthRejectionProjectionData(
+            summary=WorkerAdminAuthRejectionProjectionSummary(count=len(rejections)),
+            filters=WorkerAdminAuthRejectionProjectionFilters(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                operator_id=operator_id,
+                operator_role=operator_role,
+                token_id=token_id,
+                route_path=route_path,
+                limit=limit,
+            ),
+            rejections=[
+                WorkerAdminAuthRejectionProjectionItem(
+                    occurred_at=rejection["occurred_at"],
+                    route_path=str(rejection["route_path"]),
+                    reason_code=str(rejection["reason_code"]),
+                    operator_id=rejection.get("operator_id"),
+                    operator_role=rejection.get("operator_role"),
+                    token_id=rejection.get("token_id"),
+                    tenant_id=rejection.get("tenant_id"),
+                    workspace_id=rejection.get("workspace_id"),
+                )
+                for rejection in rejections
             ],
         ),
     )

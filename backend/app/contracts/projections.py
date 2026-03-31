@@ -336,3 +336,38 @@ class WorkerAdminAuditProjectionData(StrictModel):
 
 class WorkerAdminAuditProjectionEnvelope(ProjectionEnvelopeBase):
     data: WorkerAdminAuditProjectionData
+
+
+class WorkerAdminAuthRejectionProjectionFilters(StrictModel):
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+    operator_id: str | None = None
+    operator_role: str | None = None
+    token_id: str | None = None
+    route_path: str | None = None
+    limit: int
+
+
+class WorkerAdminAuthRejectionProjectionSummary(StrictModel):
+    count: int
+
+
+class WorkerAdminAuthRejectionProjectionItem(StrictModel):
+    occurred_at: datetime
+    route_path: str
+    reason_code: str
+    operator_id: str | None = None
+    operator_role: str | None = None
+    token_id: str | None = None
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+
+
+class WorkerAdminAuthRejectionProjectionData(StrictModel):
+    summary: WorkerAdminAuthRejectionProjectionSummary
+    filters: WorkerAdminAuthRejectionProjectionFilters
+    rejections: list[WorkerAdminAuthRejectionProjectionItem]
+
+
+class WorkerAdminAuthRejectionProjectionEnvelope(ProjectionEnvelopeBase):
+    data: WorkerAdminAuthRejectionProjectionData
