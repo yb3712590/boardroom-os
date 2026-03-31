@@ -1241,25 +1241,34 @@ Behavior rules:
 - trusted control-plane operators may now use the matching HTTP management surface instead of only local CLI:
   - `GET /api/v1/worker-admin/bindings`
   - `GET /api/v1/worker-admin/bootstrap-issues`
+  - `GET /api/v1/worker-admin/sessions`
+  - `GET /api/v1/worker-admin/delivery-grants`
+  - `GET /api/v1/worker-admin/auth-rejections`
+  - `GET /api/v1/worker-admin/scope-summary`
   - `POST /api/v1/worker-admin/create-binding`
   - `POST /api/v1/worker-admin/issue-bootstrap`
   - `POST /api/v1/worker-admin/revoke-bootstrap`
   - `POST /api/v1/worker-admin/revoke-session`
   - `POST /api/v1/worker-admin/revoke-delivery-grant`
   - `POST /api/v1/worker-admin/cleanup-bindings`
-- every `worker-admin` HTTP request now requires operator headers:
+  - `POST /api/v1/worker-admin/contain-scope`
+- `python -m app.worker_admin_auth_cli issue-token --operator-id ... --role ... [--tenant-id ... --workspace-id ...] [--ttl-sec ...]` now mints the signed operator token used by the HTTP surface, with a configurable default TTL and max TTL guardrail
+- every `worker-admin` HTTP request now requires `X-Boardroom-Operator-Token`
+- the legacy compatibility headers are no longer identity truth:
   - `X-Boardroom-Operator-Id`
   - `X-Boardroom-Operator-Role`
-  - `X-Boardroom-Operator-Tenant-Id` plus `X-Boardroom-Operator-Workspace-Id` for scoped roles
+  - `X-Boardroom-Operator-Tenant-Id`
+  - `X-Boardroom-Operator-Workspace-Id`
 - current `worker-admin` role model is intentionally minimal:
   - `platform_admin`: global read/write
   - `scope_admin`: read/write only inside one exact `tenant_id + workspace_id` scope
   - `scope_viewer`: read-only inside one exact `tenant_id + workspace_id` scope
-- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, conservative cleanup eligibility, and revoke audit writing, but now also enforce the operator role/scope boundary above
+- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, conservative cleanup eligibility, and revoke audit writing, but now also enforce the signed operator-token boundary above
 - `worker-admin` is still a trusted control-plane surface, not a finished public tenant self-service or identity layer
 - scoped HTTP operators must always query or write against an explicit `tenant_id + workspace_id`; they may not use worker-only filters to sweep across scopes
 - if a worker already has multiple bootstrap bindings, `issue-bootstrap`, `rotate-bootstrap`, and `revoke-bootstrap` require both `--tenant-id` and `--workspace-id`; single-binding workers may still omit them and reuse the only binding
-- the HTTP compatibility fields `issued_by` and `revoked_by` no longer define operator identity; backend writes them from `X-Boardroom-Operator-Id`, and if the request body still supplies one of those fields it must match the header exactly or the request is rejected with `400`
+- the HTTP compatibility fields `issued_by` and `revoked_by` no longer define operator identity; backend writes them from the signed token's `operator_id`, and if the request body still supplies one of those fields it must match the signed identity exactly or the request is rejected with `400`
+- `GET /api/v1/projections/worker-admin-audit` now returns an independent audit read model for `create-binding`, `issue-bootstrap`, `revoke-bootstrap`, `revoke-session`, `revoke-delivery-grant`, `cleanup-bindings`, and `contain-scope`, including dry-run actions and operator/scope filters
 - bootstrap-token calls create a fresh worker session
 - session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`
 - assignment polling only returns tickets from the current session scope; if the backend encounters a ticket owned by that worker under a scope with no matching bootstrap binding, it still rejects and audits the mismatch instead of silently hiding it

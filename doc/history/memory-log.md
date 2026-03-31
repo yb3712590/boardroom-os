@@ -42,7 +42,7 @@
 - Scope binding now exists across workflow, ticket, worker bootstrap and session, delivery grants, and compiled execution package metadata.
 - One worker can now keep multiple bootstrap bindings keyed by `worker_id + tenant_id + workspace_id`; each session and delivery grant still stays bound to exactly one scope.
 - Worker bootstrap issuance is now also persisted as `worker_bootstrap_issue`, so newer bootstrap tokens carry `issue_id` and may be invalidated conservatively without changing the compatibility path for older tokens.
-- Trusted control-plane operators now also have a `worker-admin` HTTP surface for binding, bootstrap, session, and delivery-grant management; CLI and HTTP reuse the same scope and audit rules.
+- Trusted control-plane operators now also have a `worker-admin` HTTP surface for binding, bootstrap, session, and delivery-grant management; the HTTP side now requires signed operator tokens instead of trusting raw operator headers, and it also exposes a dedicated action-audit projection.
 - Output schema enforcement is currently real for `ui_milestone_review@1` and `consensus_document@1`.
 
 ### Durable Open Gaps
@@ -86,6 +86,14 @@
 - Closed the earlier legacy scope-backfill risk in current code: repository initialization now backfills default `tenant_id/workspace_id` values for old projection, bootstrap, session, and delivery-grant rows, and the repository test suite covers that upgrade path.
 - Added a minimal operator boundary on `worker-admin`: every HTTP request now requires operator headers, `platform_admin` keeps global read/write, `scope_admin` is limited to one exact tenant/workspace scope, and `scope_viewer` is read-only inside one exact scope.
 - Moved HTTP-side `issued_by` / `revoked_by` truth to the operator headers. Request-body fields with those names are now only compatibility assertions; if they disagree with `X-Boardroom-Operator-Id`, the backend returns `400` instead of silently trusting the body.
+- Tightened the `worker-admin` entry boundary again: HTTP requests now require `X-Boardroom-Operator-Token`, backend validates a short-lived signed operator token against `BOARDROOM_OS_WORKER_ADMIN_SIGNING_SECRET`, and the old `X-Boardroom-Operator-*` headers are now only optional compatibility assertions.
+- Added `python -m app.worker_admin_auth_cli issue-token`, so local operators can mint scoped `platform_admin` / `scope_admin` / `scope_viewer` tokens for real `worker-admin` calls instead of hand-crafting trusted headers.
+- Added persisted `worker_admin_action_log` plus `GET /api/v1/projections/worker-admin-audit`, so operators can now read an independent audit stream of `create-binding`, `issue-bootstrap`, `revoke-*`, `cleanup-bindings`, and `contain-scope` actions, including dry-run previews.
+- Fresh focused verification after this change is:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_worker_admin_auth_cli.py -q` -> `1 passed`
+  - `backend/.venv/bin/python -m pytest backend/tests/test_repository.py -k "worker_admin_action_log" -q` -> `1 passed`
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py -k "legacy_headers_without_signed_token or mismatched_assertion_headers_against_signed_token or audit_projection" -q` -> `4 passed`
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `30 passed`
 - Fresh focused verification after this change is:
   - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_api.py -k "worker_admin" -q` -> `23 passed`
   - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `26 passed`

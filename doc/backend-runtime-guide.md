@@ -14,7 +14,7 @@
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
-- 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及可直接按租户看 session / delivery grant / rejection、做 scope-summary 和 scope containment 的 `worker-admin` HTTP 管理面
+- 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及带签名操作人令牌入口、独立动作审计读面的 `worker-admin` HTTP 管理面
 
 ## 本地运行
 
@@ -24,6 +24,12 @@
 cd backend
 source .venv/bin/activate
 uvicorn app.main:app --reload
+```
+
+如果你这轮要直接调用 `worker-admin` HTTP 管理面，再额外带上：
+
+```bash
+BOARDROOM_OS_WORKER_ADMIN_SIGNING_SECRET=operator-signing-secret
 ```
 
 启用 FastAPI 进程内 scheduler：
@@ -104,78 +110,58 @@ python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 
 ## Worker admin HTTP 管理面
 
-现在也可以直接走后端控制面，而不是只能回本地 CLI：
+现在也可以直接走后端控制面，而不是只能回本地 CLI。和上一轮不同的是，`worker-admin` 不再单独信裸请求头，必须先拿到短时效签名令牌，再用它调用接口。
+
+当前默认约束是：
+
+- `python -m app.worker_admin_auth_cli issue-token` 不显式传 `--ttl-sec` 时，会使用 `BOARDROOM_OS_WORKER_ADMIN_DEFAULT_TTL_SEC`，默认 900 秒
+- 显式传入的 `--ttl-sec` 不能超过 `BOARDROOM_OS_WORKER_ADMIN_MAX_TTL_SEC`，默认 3600 秒
+- 令牌里的 `issued_at` / `expires_at` 必须带时区；后端只接受带时区的签名 claim，避免把无时区时间误当成可信身份
+
+先在本地签发一个平台管理员令牌：
 
 ```bash
+cd backend
+source .venv/bin/activate
+python -m app.worker_admin_auth_cli issue-token \
+  --operator-id ops@example.com \
+  --role platform_admin \
+  --ttl-sec 900
+```
+
+如果你要签发 scoped 角色令牌，就显式带上 scope：
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.worker_admin_auth_cli issue-token \
+  --operator-id tenant-admin@example.com \
+  --role scope_admin \
+  --tenant-id tenant_blue \
+  --workspace-id ws_design \
+  --ttl-sec 900
+```
+
+上面命令会回显 `operator_token`。后面的 HTTP 调用都把它放到 `X-Boardroom-Operator-Token`：
+
+```bash
+OPERATOR_TOKEN='<把 issue-token 输出里的 operator_token 粘进来>'
+
 curl 'http://127.0.0.1:8000/api/v1/worker-admin/bindings?worker_id=emp_frontend_2&tenant_id=tenant_blue&workspace_id=ws_design' \
-  -H 'X-Boardroom-Operator-Id: ops@example.com' \
-  -H 'X-Boardroom-Operator-Role: platform_admin'
-
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/bootstrap-issues?worker_id=emp_frontend_2&tenant_id=tenant_blue&workspace_id=ws_design&active_only=true' \
-  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
-  -H 'X-Boardroom-Operator-Role: scope_admin' \
-  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
-  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
-
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/sessions?tenant_id=tenant_blue&workspace_id=ws_design&active_only=true' \
-  -H 'X-Boardroom-Operator-Id: tenant-viewer@example.com' \
-  -H 'X-Boardroom-Operator-Role: scope_viewer' \
-  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
-  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
-
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/delivery-grants?tenant_id=tenant_blue&workspace_id=ws_design&ticket_id=tkt_123&active_only=true' \
-  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
-  -H 'X-Boardroom-Operator-Role: scope_admin' \
-  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
-  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
-
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/auth-rejections?tenant_id=tenant_blue&workspace_id=ws_design&route_family=assignments' \
-  -H 'X-Boardroom-Operator-Id: tenant-viewer@example.com' \
-  -H 'X-Boardroom-Operator-Role: scope_viewer' \
-  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
-  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
-
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/scope-summary?tenant_id=tenant_blue&workspace_id=ws_design' \
-  -H 'X-Boardroom-Operator-Id: tenant-viewer@example.com' \
-  -H 'X-Boardroom-Operator-Role: scope_viewer' \
-  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
-  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
-
-curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/create-binding' \
-  -H 'Content-Type: application/json' \
-  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
-  -H 'X-Boardroom-Operator-Role: scope_admin' \
-  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
-  -H 'X-Boardroom-Operator-Workspace-Id: ws_design' \
-  -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design"}'
+  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}"
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/issue-bootstrap' \
   -H 'Content-Type: application/json' \
-  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
-  -H 'X-Boardroom-Operator-Role: scope_admin' \
-  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
-  -H 'X-Boardroom-Operator-Workspace-Id: ws_design' \
+  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
   -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design","ttl_sec":120,"reason":"tenant admin bootstrap"}'
-
-curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/revoke-session' \
-  -H 'Content-Type: application/json' \
-  -H 'X-Boardroom-Operator-Id: ops@example.com' \
-  -H 'X-Boardroom-Operator-Role: platform_admin' \
-  -d '{"session_id":"wsess_123","reason":"tenant incident session revoke"}'
-
-curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/revoke-delivery-grant' \
-  -H 'Content-Type: application/json' \
-  -H 'X-Boardroom-Operator-Id: ops@example.com' \
-  -H 'X-Boardroom-Operator-Role: platform_admin' \
-  -d '{"grant_id":"wgrant_123","reason":"single URL revoke"}'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/contain-scope' \
   -H 'Content-Type: application/json' \
-  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
-  -H 'X-Boardroom-Operator-Role: scope_admin' \
-  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
-  -H 'X-Boardroom-Operator-Workspace-Id: ws_design' \
+  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
   -d '{"tenant_id":"tenant_blue","workspace_id":"ws_design","dry_run":true,"revoke_bootstrap_issues":true,"revoke_sessions":true,"reason":"tenant incident containment"}'
+
+curl 'http://127.0.0.1:8000/api/v1/projections/worker-admin-audit?tenant_id=tenant_blue&workspace_id=ws_design&limit=20' \
+  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}"
 ```
 
 当前已实现的管理接口：
@@ -194,26 +180,31 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/contain-scope' \
 - `POST /api/v1/worker-admin/cleanup-bindings`
 - `POST /api/v1/worker-admin/contain-scope`
 
+当前已实现的独立审计读面：
+
+- `GET /api/v1/projections/worker-admin-audit`
+
 说明：
 
-- `/api/v1/worker-admin/*` 现在必须带操作人头：`X-Boardroom-Operator-Id`、`X-Boardroom-Operator-Role`；如果是 scoped 角色，还必须再带 `X-Boardroom-Operator-Tenant-Id` 和 `X-Boardroom-Operator-Workspace-Id`
+- `/api/v1/worker-admin/*` 和 `GET /api/v1/projections/worker-admin-audit` 现在都必须带 `X-Boardroom-Operator-Token`
+- 旧的 `X-Boardroom-Operator-Id`、`X-Boardroom-Operator-Role`、`X-Boardroom-Operator-Tenant-Id`、`X-Boardroom-Operator-Workspace-Id` 现在只剩兼容断言作用；如果带了且和令牌 claim 不一致，接口会直接返回 `400`
 - 当前最小角色模型是：
   - `platform_admin`：可全局读写
   - `scope_admin`：只能读写自己 `tenant_id + workspace_id` 下的 worker 运维数据
   - `scope_viewer`：只能读取自己 `tenant_id + workspace_id` 下的 worker 运维数据，不能做任何止血或签发动作
-- 这批接口复用和 CLI 完全同一套 scope 校验、TTL 上限、tenant allowlist 和 cleanup 规则
-- scoped 角色现在必须显式查询自己的 `tenant_id + workspace_id` scope，不能再只带 `worker_id` 做跨 scope 浏览
+- scoped 角色现在必须显式查询或写入自己的 `tenant_id + workspace_id` scope，不能再只带 `worker_id` 做跨 scope 浏览
 - `tenant_id` 和 `workspace_id` 必须成对出现；多 binding worker 在 `issue-bootstrap` / `revoke-bootstrap` 上也仍然要显式带 scope
-- `issue-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`contain-scope` 响应里的 `issued_by` / `revoked_by` 现在统一来自 `X-Boardroom-Operator-Id`；请求体里如果还带这些字段，只会被当成兼容断言，和请求头不一致就直接返回 `400`
+- `issue-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`contain-scope` 响应里的 `issued_by` / `revoked_by` 现在统一来自签名令牌里的操作人；请求体里如果还带这些字段，只会被当成兼容断言
 - `sessions`、`delivery-grants`、`auth-rejections` 和 `scope-summary` 现在可以直接按 `tenant_id + workspace_id` 看整组租户 scope，而不必先知道具体 `worker_id`
+- `worker-admin-audit` 会独立记录 `create-binding`、`issue-bootstrap`、`revoke-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`cleanup-bindings`、`contain-scope` 这些动作，并保留 dry-run / 真执行差异
 - `revoke-session` 必须二选一：要么按 `session_id` 撤一条会话，要么按 `worker_id + tenant_id + workspace_id` 撤一个明确 scope 下的会话
 - `revoke-delivery-grant` 只按 `grant_id` 撤一条具体 delivery grant，不会把同 session 的兄弟 URL 一起撤掉
 - `revoke-session` 会同步回显并落盘级联撤掉的 delivery grant 数，以及 `revoked_via` / `revoked_by` / `revoke_reason`
-- `contain-scope` 用的是“先预演、再执行”的同一接口：`dry_run=true` 时只回显当前会命中的 bootstrap issue / session / delivery grant，不写库；`dry_run=false` 时必须同时带 `reason` 和 `expected_active_*` 计数
+- `contain-scope` 用的是“先预演、再执行”的同一接口：`dry_run=true` 时只回显当前会命中的 bootstrap issue / session / delivery grant，不改 worker 运行态，但会写一条独立动作审计；`dry_run=false` 时必须同时带 `reason` 和 `expected_active_*` 计数
 - `contain-scope` 真执行时会先撤活跃 bootstrap issue，再撤活跃 session，并让 session 继续沿现有级联逻辑撤活跃 delivery grant；它不会自动删 binding，也不会自动 cleanup binding
 - 如果 `expected_active_bootstrap_issue_count`、`expected_active_session_count`、`expected_active_delivery_grant_count` 任一和执行瞬间的真实值不一致，接口会直接返回 `409`，避免拿着过期预演结果误伤现场
 - scope containment 的批量止血会单独写 `revoked_via = worker_admin_scope_containment`，后续排障时可以和普通单条 revoke 区分开
-- 这是一层“受信控制面”入口，不代表项目已经补齐公网身份层或租户自助权限模型
+- 这是一层“受信控制面”入口，不代表项目已经补齐公网身份层、反向代理断言或租户自助权限模型
 
 ## Worker handoff 现状
 
@@ -235,6 +226,12 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/contain-scope' \
   CLI 显式传入的 bootstrap TTL 上限
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS`
   可选，逗号分隔；一旦设置，只允许对名单内租户通过 CLI 或 `worker-admin` HTTP 签发 bootstrap
+- `BOARDROOM_OS_WORKER_ADMIN_SIGNING_SECRET`
+  `worker-admin` 操作人令牌的签名密钥；未设置时，`worker-admin` 和 `worker-admin-audit` 入口会 fail-closed，直接拒绝请求
+- `BOARDROOM_OS_WORKER_ADMIN_DEFAULT_TTL_SEC`
+  `worker-admin` 操作人令牌 CLI 在没显式传 `--ttl-sec` 时使用的默认 TTL，默认 900 秒
+- `BOARDROOM_OS_WORKER_ADMIN_MAX_TTL_SEC`
+  `worker-admin` 操作人令牌 CLI 允许签发的最大 TTL，默认 3600 秒
 - `BOARDROOM_OS_WORKER_SESSION_TTL_SEC`
   `session_token` 的刷新窗口
 - `BOARDROOM_OS_PUBLIC_BASE_URL`

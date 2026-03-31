@@ -114,6 +114,7 @@ class ControlPlaneRepository:
             self._ensure_worker_session_shape(connection)
             self._ensure_worker_delivery_grant_shape(connection)
             self._ensure_worker_auth_rejection_log_shape(connection)
+            self._ensure_worker_admin_action_log_shape(connection)
             self._ensure_incident_projection_shape(connection)
             self._ensure_compiled_context_bundle_shape(connection)
             self._ensure_compile_manifest_shape(connection)
@@ -1661,6 +1662,118 @@ class ControlPlaneRepository:
             rows = owned_connection.execute(query, tuple(params)).fetchall()
             return [self._convert_worker_auth_rejection_row(row) for row in rows]
 
+    def append_worker_admin_action_log(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        occurred_at: datetime,
+        operator_id: str,
+        operator_role: str,
+        auth_source: str,
+        action_type: str,
+        dry_run: bool,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        worker_id: str | None = None,
+        session_id: str | None = None,
+        grant_id: str | None = None,
+        issue_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        action_id = new_prefixed_id("wact")
+        connection.execute(
+            """
+            INSERT INTO worker_admin_action_log (
+                action_id,
+                occurred_at,
+                operator_id,
+                operator_role,
+                auth_source,
+                tenant_id,
+                workspace_id,
+                worker_id,
+                session_id,
+                grant_id,
+                issue_id,
+                action_type,
+                dry_run,
+                details_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                action_id,
+                occurred_at.isoformat(),
+                operator_id,
+                operator_role,
+                auth_source,
+                tenant_id,
+                workspace_id,
+                worker_id,
+                session_id,
+                grant_id,
+                issue_id,
+                action_type,
+                1 if dry_run else 0,
+                json.dumps(details or {}, sort_keys=True),
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM worker_admin_action_log WHERE action_id = ?",
+            (action_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Worker admin action log could not be created.")
+        return self._convert_worker_admin_action_log_row(row)
+
+    def list_worker_admin_action_logs(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+        worker_id: str | None = None,
+        operator_id: str | None = None,
+        action_type: str | None = None,
+        dry_run: bool | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if operator_id is not None:
+            clauses.append("operator_id = ?")
+            params.append(operator_id)
+        if action_type is not None:
+            clauses.append("action_type = ?")
+            params.append(action_type)
+        if dry_run is not None:
+            clauses.append("dry_run = ?")
+            params.append(1 if dry_run else 0)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT * FROM worker_admin_action_log
+            {where_clause}
+            ORDER BY occurred_at DESC, action_id DESC
+            LIMIT ?
+        """
+        params.append(int(limit))
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_admin_action_log_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_worker_admin_action_log_row(row) for row in rows]
+
     def list_ticket_projections_by_statuses(
         self,
         connection: sqlite3.Connection,
@@ -2801,6 +2914,14 @@ class ControlPlaneRepository:
             converted["occurred_at"] = datetime.fromisoformat(converted["occurred_at"])
         return converted
 
+    def _convert_worker_admin_action_log_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        if converted.get("occurred_at"):
+            converted["occurred_at"] = datetime.fromisoformat(converted["occurred_at"])
+        converted["dry_run"] = bool(converted.get("dry_run"))
+        converted["details"] = json.loads(converted.get("details_json") or "{}")
+        return converted
+
     def _convert_incident_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         for field in ("opened_at", "closed_at", "updated_at"):
@@ -3548,6 +3669,65 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_auth_rejection_log_scope ON worker_auth_rejection_log(tenant_id, workspace_id)"
+        )
+
+    def _ensure_worker_admin_action_log_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_admin_action_log (
+                action_id TEXT PRIMARY KEY,
+                occurred_at TEXT NOT NULL,
+                operator_id TEXT NOT NULL,
+                operator_role TEXT NOT NULL,
+                auth_source TEXT NOT NULL,
+                tenant_id TEXT,
+                workspace_id TEXT,
+                worker_id TEXT,
+                session_id TEXT,
+                grant_id TEXT,
+                issue_id TEXT,
+                action_type TEXT NOT NULL,
+                dry_run INTEGER NOT NULL DEFAULT 0,
+                details_json TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(worker_admin_action_log)").fetchall()
+        }
+        required_columns = {
+            "action_id": "TEXT",
+            "occurred_at": "TEXT",
+            "operator_id": "TEXT",
+            "operator_role": "TEXT",
+            "auth_source": "TEXT",
+            "tenant_id": "TEXT",
+            "workspace_id": "TEXT",
+            "worker_id": "TEXT",
+            "session_id": "TEXT",
+            "grant_id": "TEXT",
+            "issue_id": "TEXT",
+            "action_type": "TEXT",
+            "dry_run": "INTEGER NOT NULL DEFAULT 0",
+            "details_json": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE worker_admin_action_log ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_action_log_occurred_at ON worker_admin_action_log(occurred_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_action_log_scope ON worker_admin_action_log(tenant_id, workspace_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_action_log_operator_id ON worker_admin_action_log(operator_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_worker_admin_action_log_action_type ON worker_admin_action_log(action_type)"
         )
 
     def _ensure_incident_projection_shape(self, connection: sqlite3.Connection) -> None:

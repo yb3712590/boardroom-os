@@ -5,6 +5,9 @@ from typing import Literal, cast
 
 from fastapi import Header, HTTPException
 
+from app.config import get_settings
+from app.core.time import now_local
+from app.core.worker_admin_tokens import validate_worker_admin_token
 
 WorkerAdminOperatorRole = Literal["platform_admin", "scope_admin", "scope_viewer"]
 
@@ -17,6 +20,7 @@ class WorkerAdminOperatorContext:
     role: WorkerAdminOperatorRole
     tenant_id: str | None = None
     workspace_id: str | None = None
+    auth_source: str = "signed_token"
 
     @property
     def is_platform_admin(self) -> bool:
@@ -39,7 +43,34 @@ def _normalize_optional_header(value: str | None) -> str | None:
     return normalized or None
 
 
+def _resolve_worker_admin_signing_secret() -> str:
+    signing_secret = get_settings().worker_admin_signing_secret
+    if not signing_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Worker-admin trusted entry is not configured.",
+        )
+    return signing_secret
+
+
+def _assert_worker_admin_header_match(
+    *,
+    header_name: str,
+    asserted_value: str | None,
+    expected_value: str | None,
+) -> None:
+    normalized = _normalize_optional_header(asserted_value)
+    if normalized is None:
+        return
+    if normalized != expected_value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{header_name} must match the signed worker-admin operator token when provided.",
+        )
+
+
 def get_worker_admin_operator_context(
+    x_boardroom_operator_token: str | None = Header(default=None, alias="X-Boardroom-Operator-Token"),
     x_boardroom_operator_id: str | None = Header(default=None, alias="X-Boardroom-Operator-Id"),
     x_boardroom_operator_role: str | None = Header(default=None, alias="X-Boardroom-Operator-Role"),
     x_boardroom_operator_tenant_id: str | None = Header(
@@ -51,35 +82,52 @@ def get_worker_admin_operator_context(
         alias="X-Boardroom-Operator-Workspace-Id",
     ),
 ) -> WorkerAdminOperatorContext:
-    operator_id = _normalize_required_header(
-        x_boardroom_operator_id,
-        header_name="X-Boardroom-Operator-Id",
+    operator_token = _normalize_required_header(
+        x_boardroom_operator_token,
+        header_name="X-Boardroom-Operator-Token",
     )
-    role = _normalize_required_header(
-        x_boardroom_operator_role,
-        header_name="X-Boardroom-Operator-Role",
+    claims = validate_worker_admin_token(
+        operator_token,
+        signing_secret=_resolve_worker_admin_signing_secret(),
+        at=now_local(),
     )
-    if role not in _VALID_OPERATOR_ROLES:
-        raise HTTPException(status_code=401, detail="Invalid worker-admin operator role.")
 
-    tenant_id = _normalize_optional_header(x_boardroom_operator_tenant_id)
-    workspace_id = _normalize_optional_header(x_boardroom_operator_workspace_id)
-    if (tenant_id is None) != (workspace_id is None):
+    asserted_tenant_id = _normalize_optional_header(x_boardroom_operator_tenant_id)
+    asserted_workspace_id = _normalize_optional_header(x_boardroom_operator_workspace_id)
+    if (asserted_tenant_id is None) != (asserted_workspace_id is None):
         raise HTTPException(
-            status_code=401,
+            status_code=400,
             detail="Worker-admin operator scope headers must provide both tenant and workspace together.",
         )
-    if role in {"scope_admin", "scope_viewer"} and (tenant_id is None or workspace_id is None):
-        raise HTTPException(
-            status_code=401,
-            detail="Scoped worker-admin operators must provide tenant and workspace scope headers.",
+
+    _assert_worker_admin_header_match(
+        header_name="X-Boardroom-Operator-Id",
+        asserted_value=x_boardroom_operator_id,
+        expected_value=claims.operator_id,
+    )
+    _assert_worker_admin_header_match(
+        header_name="X-Boardroom-Operator-Role",
+        asserted_value=x_boardroom_operator_role,
+        expected_value=claims.role,
+    )
+    if asserted_tenant_id is not None or asserted_workspace_id is not None:
+        _assert_worker_admin_header_match(
+            header_name="X-Boardroom-Operator-Tenant-Id",
+            asserted_value=asserted_tenant_id,
+            expected_value=claims.tenant_id,
+        )
+        _assert_worker_admin_header_match(
+            header_name="X-Boardroom-Operator-Workspace-Id",
+            asserted_value=asserted_workspace_id,
+            expected_value=claims.workspace_id,
         )
 
     return WorkerAdminOperatorContext(
-        operator_id=operator_id,
-        role=cast(WorkerAdminOperatorRole, role),
-        tenant_id=tenant_id,
-        workspace_id=workspace_id,
+        operator_id=claims.operator_id,
+        role=cast(WorkerAdminOperatorRole, claims.role),
+        tenant_id=claims.tenant_id,
+        workspace_id=claims.workspace_id,
+        auth_source="signed_token",
     )
 
 

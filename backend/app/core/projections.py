@@ -11,6 +11,11 @@ from app.contracts.projections import (
     IncidentProjectionItem,
     InboxCountsProjection,
     InboxItemProjection,
+    WorkerAdminAuditProjectionData,
+    WorkerAdminAuditProjectionEnvelope,
+    WorkerAdminAuditProjectionFilters,
+    WorkerAdminAuditProjectionItem,
+    WorkerAdminAuditProjectionSummary,
     InboxProjectionData,
     InboxProjectionEnvelope,
     OpsStripProjection,
@@ -605,5 +610,67 @@ def build_worker_runtime_projection(
             sessions=session_items,
             delivery_grants=grant_items,
             auth_rejections=rejection_items,
+        ),
+    )
+
+
+def build_worker_admin_audit_projection(
+    repository: ControlPlaneRepository,
+    *,
+    tenant_id: str | None,
+    workspace_id: str | None,
+    worker_id: str | None,
+    operator_id: str | None,
+    action_type: str | None,
+    dry_run: bool | None,
+    limit: int,
+) -> WorkerAdminAuditProjectionEnvelope:
+    repository.initialize()
+    generated_at = now_local()
+    cursor, projection_version = repository.get_cursor_and_version()
+    actions = repository.list_worker_admin_action_logs(
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        worker_id=worker_id,
+        operator_id=operator_id,
+        action_type=action_type,
+        dry_run=dry_run,
+        limit=limit,
+    )
+    return WorkerAdminAuditProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=generated_at,
+        projection_version=projection_version,
+        cursor=cursor,
+        data=WorkerAdminAuditProjectionData(
+            summary=WorkerAdminAuditProjectionSummary(count=len(actions)),
+            filters=WorkerAdminAuditProjectionFilters(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                worker_id=worker_id,
+                operator_id=operator_id,
+                action_type=action_type,
+                dry_run=dry_run,
+                limit=limit,
+            ),
+            actions=[
+                WorkerAdminAuditProjectionItem(
+                    action_id=str(action["action_id"]),
+                    occurred_at=action["occurred_at"],
+                    operator_id=str(action["operator_id"]),
+                    operator_role=str(action["operator_role"]),
+                    auth_source=str(action["auth_source"]),
+                    tenant_id=action.get("tenant_id"),
+                    workspace_id=action.get("workspace_id"),
+                    worker_id=action.get("worker_id"),
+                    session_id=action.get("session_id"),
+                    grant_id=action.get("grant_id"),
+                    issue_id=action.get("issue_id"),
+                    action_type=str(action["action_type"]),
+                    dry_run=bool(action["dry_run"]),
+                    details=dict(action.get("details") or {}),
+                )
+                for action in actions
+            ],
         ),
     )
