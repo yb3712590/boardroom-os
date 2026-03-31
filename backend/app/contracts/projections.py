@@ -295,3 +295,44 @@ class WorkerRuntimeProjectionData(StrictModel):
 
 class WorkerRuntimeProjectionEnvelope(ProjectionEnvelopeBase):
     data: WorkerRuntimeProjectionData
+
+
+class WorkerAdminAuditProjectionFilters(StrictModel):
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+    worker_id: str | None = None
+    operator_id: str | None = None
+    action_type: str | None = None
+    dry_run: bool | None = None
+    limit: int
+
+
+class WorkerAdminAuditProjectionSummary(StrictModel):
+    count: int
+
+
+class WorkerAdminAuditProjectionItem(StrictModel):
+    action_id: str
+    occurred_at: datetime
+    operator_id: str
+    operator_role: str
+    auth_source: str
+    tenant_id: str | None = None
+    workspace_id: str | None = None
+    worker_id: str | None = None
+    session_id: str | None = None
+    grant_id: str | None = None
+    issue_id: str | None = None
+    action_type: str
+    dry_run: bool
+    details: dict[str, object]
+
+
+class WorkerAdminAuditProjectionData(StrictModel):
+    summary: WorkerAdminAuditProjectionSummary
+    filters: WorkerAdminAuditProjectionFilters
+    actions: list[WorkerAdminAuditProjectionItem]
+
+
+class WorkerAdminAuditProjectionEnvelope(ProjectionEnvelopeBase):
+    data: WorkerAdminAuditProjectionData

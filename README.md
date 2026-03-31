@@ -18,7 +18,7 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 已跑通 ticket 生命周期、结构化结果提交、审批和 incident 治理
 - 已有 artifact 持久化、投影读面、事件流和审计基础
 - 已跑通外部 worker handoff，包括 bootstrap、session、signed delivery 和多租户 scope 约束
-- 已补到多租户 worker 的租户级运维闭环，包括 binding 生命周期、统一观察面、`worker-admin` 下的 bootstrap / session / delivery grant 管理、按租户读面、带 dry-run / 计数保护的 scope 止血入口，以及最小权限边界和操作人上下文
+- 已补到多租户 worker 的租户级运维闭环，包括 binding 生命周期、统一观察面、`worker-admin` 下的 bootstrap / session / delivery grant 管理、按租户读面、带 dry-run / 计数保护的 scope 止血入口，以及受信签名令牌入口和独立操作审计读面
 
 当前状态更接近“最小可运行控制面原型”，还不是完整产品。
 
@@ -27,12 +27,12 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 治理与审批：ticket 生命周期、Board 审批、incident / circuit-breaker / retry 治理已经串起来
 - 运行时交付：支持结构化结果入口、artifact 持久化、外部 worker handoff 和最小调度闭环
 - 审计与可追溯：事件流、projection、SQLite WAL、compile 相关产物都已真实落盘
-- 运维与排障：已有 `dashboard`、`inbox`、`review room`、`worker-runtime` 等读面，也有可直接按租户查看 session / grant / rejection、做 scope-summary，以及带 dry-run / `409` 保护、按操作人角色收口的 `worker-admin` HTTP 止血入口和本地 worker 运维 CLI
+- 运维与排障：已有 `dashboard`、`inbox`、`review room`、`worker-runtime` 等读面，也有可直接按租户查看 session / grant / rejection、做 scope-summary、看独立 `worker-admin` 动作审计，以及带 dry-run / `409` 保护、按签名操作人令牌收口的 `worker-admin` HTTP 止血入口和本地运维 CLI
 
 ## 开发主线
 
 - 当前最顺手的主线仍然是 `Runtime / Backend`
-- 最近一批完成的是“多租户 worker 运维面 -> 租户级读面 + 安全批量止血入口 + 最小权限边界/操作人审计”这一条链
+- 最近一批完成的是“多租户 worker 运维面 -> 租户级读面 + 安全批量止血入口 + 受信入口边界 + 独立操作审计读面”这一条链
 - 还在后面的主要方向包括：更强公网安全边界、artifact 自动清理与大文件链路、完整 Context Compiler、Search / Retrieval、React UI
 
 更细的进行中事项看 [doc/TODO.md](doc/TODO.md)。
@@ -70,7 +70,7 @@ python -m pytest tests -q
 
 - `backend/` 的 editable install 还没完全补平，新环境下 `pip install -e .[dev]` 仍可能出问题
 - 大文件上传还没有 multipart / 分片 / 对象存储链路，当前更适合中等体量文件
-- 公开互联网场景下的安全边界还在继续收紧，现在已有基础治理，但还没有完整身份层
+- `worker-admin` 现在已经要求短时效签名操作人令牌，不再单独信裸请求头；默认 TTL 为 15 分钟、最大 TTL 为 1 小时，但公开互联网场景下还没有完整身份层、反向代理断言或租户自助面
 
 ## 项目原则
 

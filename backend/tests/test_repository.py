@@ -656,3 +656,65 @@ def test_list_worker_binding_admin_views_reports_counts_and_cleanup_eligibility(
     assert design_binding["latest_bootstrap_issue_at"] is None
     assert design_binding["latest_bootstrap_issue_source"] is None
     assert design_binding["cleanup_eligible"] is True
+
+
+def test_worker_admin_action_log_round_trips_filters_and_details(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+    occurred_at = datetime.fromisoformat("2026-03-31T12:00:00+08:00")
+
+    with repository.transaction() as connection:
+        issue_action = repository.append_worker_admin_action_log(
+            connection,
+            occurred_at=occurred_at,
+            operator_id="ops@example.com",
+            operator_role="platform_admin",
+            auth_source="signed_token",
+            action_type="issue_bootstrap",
+            dry_run=False,
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            worker_id="emp_frontend_2",
+            details={
+                "reason": "tenant scoped bootstrap",
+                "issued": True,
+                "succeeded": True,
+            },
+        )
+        cleanup_action = repository.append_worker_admin_action_log(
+            connection,
+            occurred_at=datetime.fromisoformat("2026-03-31T12:05:00+08:00"),
+            operator_id="tenant.viewer@example.com",
+            operator_role="scope_viewer",
+            auth_source="signed_token",
+            action_type="cleanup_bindings",
+            dry_run=True,
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            worker_id="emp_frontend_2",
+            details={
+                "executed": False,
+                "candidate_count": 1,
+                "succeeded": True,
+            },
+        )
+
+    listed = repository.list_worker_admin_action_logs(
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+        operator_id="ops@example.com",
+        action_type="issue_bootstrap",
+        dry_run=False,
+        limit=10,
+    )
+
+    assert issue_action["operator_id"] == "ops@example.com"
+    assert issue_action["operator_role"] == "platform_admin"
+    assert issue_action["auth_source"] == "signed_token"
+    assert issue_action["action_type"] == "issue_bootstrap"
+    assert issue_action["details"]["reason"] == "tenant scoped bootstrap"
+    assert cleanup_action["dry_run"] is True
+    assert cleanup_action["details"]["executed"] is False
+    assert len(listed) == 1
+    assert listed[0]["action_id"] == issue_action["action_id"]
+    assert listed[0]["details"]["succeeded"] is True

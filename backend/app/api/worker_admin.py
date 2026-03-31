@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.worker_admin_auth import (
@@ -52,6 +54,7 @@ from app.core.worker_admin import (
     issue_bootstrap,
 )
 from app.db.repository import ControlPlaneRepository
+from app.core.time import now_local
 
 router = APIRouter(prefix="/api/v1/worker-admin", tags=["worker-admin"])
 
@@ -62,6 +65,53 @@ def _translate_worker_admin_error(exc: Exception) -> HTTPException:
 
 def _translate_worker_admin_conflict(exc: WorkerAdminConflictError) -> HTTPException:
     return HTTPException(status_code=409, detail=str(exc))
+
+
+def _serialize_worker_admin_audit_details(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {
+            str(key): _serialize_worker_admin_audit_details(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_serialize_worker_admin_audit_details(item) for item in value]
+    return value
+
+
+def _append_worker_admin_action_log(
+    repository: ControlPlaneRepository,
+    *,
+    operator: WorkerAdminOperatorContext,
+    action_type: str,
+    dry_run: bool,
+    tenant_id: str | None,
+    workspace_id: str | None,
+    worker_id: str | None = None,
+    session_id: str | None = None,
+    grant_id: str | None = None,
+    issue_id: str | None = None,
+    details: dict[str, object] | None = None,
+    occurred_at: datetime | None = None,
+) -> None:
+    with repository.transaction() as connection:
+        repository.append_worker_admin_action_log(
+            connection,
+            occurred_at=occurred_at or now_local(),
+            operator_id=operator.operator_id,
+            operator_role=operator.role,
+            auth_source=operator.auth_source,
+            action_type=action_type,
+            dry_run=dry_run,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            worker_id=worker_id,
+            session_id=session_id,
+            grant_id=grant_id,
+            issue_id=issue_id,
+            details=_serialize_worker_admin_audit_details(details or {}),
+        )
 
 
 @router.get("/bindings", response_model=WorkerAdminBindingsResponse)
@@ -283,6 +333,22 @@ def post_worker_admin_contain_scope(
         raise _translate_worker_admin_conflict(exc) from exc
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
+    _append_worker_admin_action_log(
+        repository,
+        operator=operator,
+        action_type="contain_scope",
+        dry_run=bool(result["dry_run"]),
+        tenant_id=payload.tenant_id,
+        workspace_id=payload.workspace_id,
+        worker_id=payload.worker_id,
+        details={
+            "requested_actions": result["requested_actions"],
+            "impact_summary": result["impact_summary"],
+            "executed": result["executed"],
+            "result": result.get("result"),
+            "succeeded": True,
+        },
+    )
     return WorkerAdminContainScopeResponse.model_validate(result)
 
 
@@ -308,6 +374,20 @@ def post_worker_admin_create_binding(
         )
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
+    _append_worker_admin_action_log(
+        repository,
+        operator=operator,
+        action_type="create_binding",
+        dry_run=False,
+        tenant_id=payload.tenant_id,
+        workspace_id=payload.workspace_id,
+        worker_id=payload.worker_id,
+        details={
+            "credential_version": binding["credential_version"],
+            "succeeded": True,
+        },
+        occurred_at=binding["updated_at"],
+    )
     return WorkerAdminCreateBindingResponse.model_validate(binding)
 
 
@@ -342,6 +422,23 @@ def post_worker_admin_issue_bootstrap(
         )
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
+    _append_worker_admin_action_log(
+        repository,
+        operator=operator,
+        action_type="issue_bootstrap",
+        dry_run=False,
+        tenant_id=str(issued["tenant_id"]),
+        workspace_id=str(issued["workspace_id"]),
+        worker_id=payload.worker_id,
+        issue_id=str(issued["issue_id"]),
+        details={
+            "issued_via": issued["issued_via"],
+            "reason": payload.reason,
+            "expires_at": issued["expires_at"],
+            "succeeded": True,
+        },
+        occurred_at=issued["issued_at"],
+    )
     return WorkerAdminIssueBootstrapResponse.model_validate(issued)
 
 
@@ -367,6 +464,21 @@ def post_worker_admin_revoke_bootstrap(
         )
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
+    _append_worker_admin_action_log(
+        repository,
+        operator=operator,
+        action_type="revoke_bootstrap",
+        dry_run=False,
+        tenant_id=str(revoked["tenant_id"]),
+        workspace_id=str(revoked["workspace_id"]),
+        worker_id=payload.worker_id,
+        details={
+            "credential_version": revoked["credential_version"],
+            "revoked_before": revoked["revoked_before"],
+            "succeeded": True,
+        },
+        occurred_at=revoked["revoked_before"],
+    )
     return WorkerAdminRevokeBootstrapResponse.model_validate(revoked)
 
 
@@ -416,6 +528,24 @@ def post_worker_admin_revoke_session(
         )
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
+    _append_worker_admin_action_log(
+        repository,
+        operator=operator,
+        action_type="revoke_session",
+        dry_run=False,
+        tenant_id=str(revoked["tenant_id"]),
+        workspace_id=str(revoked["workspace_id"]),
+        worker_id=str(revoked["worker_id"]),
+        session_id=payload.session_id,
+        details={
+            "revoked_count": revoked["revoked_count"],
+            "revoked_delivery_grant_count": revoked["revoked_delivery_grant_count"],
+            "revoke_reason": revoked["revoke_reason"],
+            "revoked_via": revoked["revoked_via"],
+            "succeeded": True,
+        },
+        occurred_at=revoked["revoked_at"],
+    )
     return WorkerAdminRevokeSessionResponse.model_validate(revoked)
 
 
@@ -454,6 +584,24 @@ def post_worker_admin_revoke_delivery_grant(
         )
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
+    _append_worker_admin_action_log(
+        repository,
+        operator=operator,
+        action_type="revoke_delivery_grant",
+        dry_run=False,
+        tenant_id=str(revoked["tenant_id"]),
+        workspace_id=str(revoked["workspace_id"]),
+        worker_id=str(revoked["worker_id"]),
+        session_id=str(revoked["session_id"]),
+        grant_id=payload.grant_id,
+        details={
+            "revoked_count": revoked["revoked_count"],
+            "revoke_reason": revoked["revoke_reason"],
+            "revoked_via": revoked["revoked_via"],
+            "succeeded": True,
+        },
+        occurred_at=revoked["revoked_at"],
+    )
     return WorkerAdminRevokeDeliveryGrantResponse.model_validate(revoked)
 
 
@@ -480,4 +628,27 @@ def post_worker_admin_cleanup_bindings(
         )
     except (RuntimeError, ValueError) as exc:
         raise _translate_worker_admin_error(exc) from exc
+    _append_worker_admin_action_log(
+        repository,
+        operator=operator,
+        action_type="cleanup_bindings",
+        dry_run=bool(payload.dry_run),
+        tenant_id=payload.tenant_id,
+        workspace_id=payload.workspace_id,
+        worker_id=payload.worker_id,
+        details={
+            "executed": not bool(payload.dry_run),
+            "candidate_count": cleaned["count"],
+            "deleted_count": cleaned["deleted_count"],
+            "binding_scopes": [
+                {
+                    "tenant_id": str(binding["tenant_id"]),
+                    "workspace_id": str(binding["workspace_id"]),
+                }
+                for binding in cleaned["bindings"]
+            ],
+            "succeeded": True,
+        },
+        occurred_at=cleaned["cleaned_at"],
+    )
     return WorkerAdminCleanupBindingsResponse.model_validate(cleaned)

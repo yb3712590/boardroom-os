@@ -5,6 +5,8 @@ import json
 from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
+import pytest
+
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.constants import (
     APPROVAL_STATUS_APPROVED,
@@ -167,7 +169,12 @@ def _worker_session_headers(session_token: str) -> dict[str, str]:
     return {"X-Boardroom-Worker-Session": session_token}
 
 
-def _worker_admin_headers(
+@pytest.fixture(autouse=True)
+def _set_worker_admin_signing_secret(monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_ADMIN_SIGNING_SECRET", "operator-secret")
+
+
+def _legacy_worker_admin_headers(
     *,
     operator_id: str = "ops@example.com",
     role: str = "platform_admin",
@@ -183,6 +190,45 @@ def _worker_admin_headers(
     if tenant_id is not None and workspace_id is not None:
         headers["X-Boardroom-Operator-Tenant-Id"] = tenant_id
         headers["X-Boardroom-Operator-Workspace-Id"] = workspace_id
+    return headers
+
+
+def _worker_admin_headers(
+    *,
+    operator_id: str = "ops@example.com",
+    role: str = "platform_admin",
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    ttl_sec: int = 3600,
+    issued_at: str | None = None,
+    signing_secret: str = "operator-secret",
+    include_assertion_headers: bool = True,
+    asserted_operator_id: str | None = None,
+    asserted_role: str | None = None,
+    asserted_tenant_id: str | None = None,
+    asserted_workspace_id: str | None = None,
+) -> dict[str, str]:
+    from app.core.worker_admin_tokens import issue_worker_admin_token
+
+    token, _ = issue_worker_admin_token(
+        signing_secret=signing_secret,
+        operator_id=operator_id,
+        role=role,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        issued_at=datetime.fromisoformat(issued_at) if issued_at is not None else datetime.now().astimezone(),
+        ttl_sec=ttl_sec,
+    )
+    headers = {"X-Boardroom-Operator-Token": token}
+    if include_assertion_headers:
+        headers.update(
+            _legacy_worker_admin_headers(
+                operator_id=asserted_operator_id or operator_id,
+                role=asserted_role or role,
+                tenant_id=asserted_tenant_id if asserted_tenant_id is not None else tenant_id,
+                workspace_id=asserted_workspace_id if asserted_workspace_id is not None else workspace_id,
+            )
+        )
     return headers
 
 
@@ -5275,6 +5321,49 @@ def test_worker_admin_requires_operator_headers(client):
     assert response.status_code == 401
 
 
+def test_worker_admin_rejects_legacy_headers_without_signed_token(client):
+    response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+        },
+        headers=_legacy_worker_admin_headers(),
+    )
+
+    assert response.status_code == 401
+    assert "X-Boardroom-Operator-Token" in response.json()["detail"]
+
+
+def test_worker_admin_rejects_mismatched_assertion_headers_against_signed_token(client):
+    response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+        },
+        headers=_worker_admin_headers(asserted_operator_id="other@example.com"),
+    )
+
+    assert response.status_code == 400
+
+
+def test_worker_admin_accepts_token_only_without_legacy_assertion_headers(client):
+    response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+        },
+        headers=_worker_admin_headers(include_assertion_headers=False),
+    )
+
+    assert response.status_code == 200
+
+
 def test_worker_admin_revoke_session_requires_session_id_or_complete_scope(client):
     response = client.post(
         "/api/v1/worker-admin/revoke-session",
@@ -6777,6 +6866,143 @@ def test_worker_admin_cleanup_bindings_honors_dry_run_and_deletes_only_cleanup_e
     assert len(remaining_bindings) == 1
     assert remaining_bindings[0]["tenant_id"] == "tenant_default"
     assert remaining_bindings[0]["workspace_id"] == "ws_default"
+
+
+def test_worker_admin_audit_projection_lists_logged_actions_with_dry_run_and_scope_filters(client, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+
+    create_response = client.post(
+        "/api/v1/worker-admin/create-binding",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+        },
+        headers=_worker_admin_headers(),
+    )
+    issue_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+            "reason": "tenant scoped bootstrap",
+        },
+        headers=_worker_admin_headers(),
+    )
+    cleanup_response = client.post(
+        "/api/v1/worker-admin/cleanup-bindings",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "dry_run": True,
+        },
+        headers=_worker_admin_headers(),
+    )
+    audit_response = client.get(
+        "/api/v1/projections/worker-admin-audit",
+        params={"tenant_id": "tenant_blue", "workspace_id": "ws_design", "limit": 10},
+        headers=_worker_admin_headers(),
+    )
+
+    assert create_response.status_code == 200
+    assert issue_response.status_code == 200
+    assert cleanup_response.status_code == 200
+    assert audit_response.status_code == 200
+    payload = audit_response.json()["data"]
+    assert payload["summary"]["count"] == 3
+    assert payload["filters"]["tenant_id"] == "tenant_blue"
+    assert payload["filters"]["workspace_id"] == "ws_design"
+    assert payload["filters"]["limit"] == 10
+    assert [item["action_type"] for item in payload["actions"]] == [
+        "cleanup_bindings",
+        "issue_bootstrap",
+        "create_binding",
+    ]
+    assert payload["actions"][0]["dry_run"] is True
+    assert payload["actions"][0]["details"]["executed"] is False
+    assert payload["actions"][1]["operator_id"] == "ops@example.com"
+    assert payload["actions"][1]["operator_role"] == "platform_admin"
+    assert payload["actions"][1]["auth_source"] == "signed_token"
+    assert payload["actions"][1]["details"]["succeeded"] is True
+
+
+def test_worker_admin_audit_projection_scope_viewer_reads_only_own_scope(client):
+    own_scope_headers = _worker_admin_headers(
+        operator_id="tenant.viewer@example.com",
+        role="scope_viewer",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    own_scope_response = client.get(
+        "/api/v1/projections/worker-admin-audit",
+        params={"tenant_id": "tenant_blue", "workspace_id": "ws_design"},
+        headers=own_scope_headers,
+    )
+    other_scope_response = client.get(
+        "/api/v1/projections/worker-admin-audit",
+        params={"tenant_id": "tenant_default", "workspace_id": "ws_default"},
+        headers=own_scope_headers,
+    )
+    missing_scope_response = client.get(
+        "/api/v1/projections/worker-admin-audit",
+        params={"operator_id": "tenant.viewer@example.com"},
+        headers=own_scope_headers,
+    )
+
+    assert own_scope_response.status_code == 200
+    assert other_scope_response.status_code == 403
+    assert missing_scope_response.status_code == 403
+
+
+def test_worker_admin_rejects_signed_token_with_naive_datetime_claims(client):
+    import base64
+    import hashlib
+    import hmac
+
+    payload = {
+        "version": "v1",
+        "operator_id": "ops@example.com",
+        "role": "platform_admin",
+        "tenant_id": None,
+        "workspace_id": None,
+        "issued_at": "2026-03-28T10:00:00",
+        "expires_at": "2026-03-28T11:00:00",
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload_segment = base64.urlsafe_b64encode(serialized).decode("ascii").rstrip("=")
+    signature = hmac.new(b"operator-secret", serialized, hashlib.sha256).digest()
+    signature_segment = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    token = f"{payload_segment}.{signature_segment}"
+
+    response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+        },
+        headers={"X-Boardroom-Operator-Token": token},
+    )
+
+    assert response.status_code == 401
+
+
+def test_worker_admin_audit_projection_validates_positive_limit(client):
+    response = client.get(
+        "/api/v1/projections/worker-admin-audit",
+        params={
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+            "limit": -1,
+        },
+        headers=_worker_admin_headers(),
+    )
+
+    assert response.status_code == 422
 
 
 def test_worker_runtime_projection_returns_scope_aligned_operational_view(

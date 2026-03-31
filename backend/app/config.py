@@ -16,6 +16,7 @@ class Settings:
     artifact_store_root: Path
     runtime_execution_mode: RuntimeExecutionMode
     worker_bootstrap_signing_secret: str | None
+    worker_admin_signing_secret: str | None
     worker_shared_secret: str | None
     public_base_url: str | None
     worker_session_ttl_sec: int
@@ -23,6 +24,8 @@ class Settings:
     worker_delivery_signing_secret: str | None
     worker_bootstrap_default_ttl_sec: int
     worker_bootstrap_max_ttl_sec: int
+    worker_admin_default_ttl_sec: int
+    worker_admin_max_ttl_sec: int
     worker_bootstrap_allowed_tenant_ids: tuple[str, ...]
     busy_timeout_ms: int = 5000
     recent_event_limit: int = 10
@@ -80,6 +83,7 @@ def get_settings() -> Settings:
     worker_bootstrap_signing_secret = os.environ.get(
         "BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET"
     )
+    worker_admin_signing_secret = os.environ.get("BOARDROOM_OS_WORKER_ADMIN_SIGNING_SECRET")
     worker_shared_secret = os.environ.get("BOARDROOM_OS_WORKER_SHARED_SECRET")
     public_base_url = os.environ.get("BOARDROOM_OS_PUBLIC_BASE_URL")
     if public_base_url is not None:
@@ -100,6 +104,12 @@ def get_settings() -> Settings:
     worker_bootstrap_max_ttl_sec = int(
         os.environ.get("BOARDROOM_OS_WORKER_BOOTSTRAP_MAX_TTL_SEC", "604800")
     )
+    worker_admin_default_ttl_sec = int(
+        os.environ.get("BOARDROOM_OS_WORKER_ADMIN_DEFAULT_TTL_SEC", "900")
+    )
+    worker_admin_max_ttl_sec = int(
+        os.environ.get("BOARDROOM_OS_WORKER_ADMIN_MAX_TTL_SEC", "3600")
+    )
     raw_allowed_tenants = os.environ.get("BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS")
     if raw_allowed_tenants:
         worker_bootstrap_allowed_tenant_ids = tuple(
@@ -119,6 +129,7 @@ def get_settings() -> Settings:
         artifact_store_root=artifact_store_root,
         runtime_execution_mode=runtime_execution_mode,
         worker_bootstrap_signing_secret=worker_bootstrap_signing_secret,
+        worker_admin_signing_secret=worker_admin_signing_secret,
         worker_shared_secret=worker_shared_secret,
         public_base_url=public_base_url,
         worker_session_ttl_sec=worker_session_ttl_sec,
@@ -126,6 +137,8 @@ def get_settings() -> Settings:
         worker_delivery_signing_secret=worker_delivery_signing_secret,
         worker_bootstrap_default_ttl_sec=worker_bootstrap_default_ttl_sec,
         worker_bootstrap_max_ttl_sec=worker_bootstrap_max_ttl_sec,
+        worker_admin_default_ttl_sec=worker_admin_default_ttl_sec,
+        worker_admin_max_ttl_sec=worker_admin_max_ttl_sec,
         worker_bootstrap_allowed_tenant_ids=worker_bootstrap_allowed_tenant_ids,
         busy_timeout_ms=busy_timeout_ms,
         recent_event_limit=recent_event_limit,
