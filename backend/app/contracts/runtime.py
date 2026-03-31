@@ -42,6 +42,29 @@ class CompileRequestBudgetPolicy(StrictModel):
     overflow_policy: Literal["FAIL_CLOSED"]
 
 
+class CompileRequestRetrievalPlan(StrictModel):
+    scope_tenant_id: str = Field(min_length=1)
+    scope_workspace_id: str = Field(min_length=1)
+    exclude_workflow_id: str = Field(min_length=1)
+    normalized_terms: list[str] = Field(default_factory=list)
+    max_hits_by_channel: dict[str, int] = Field(default_factory=dict)
+
+
+class CompileRequestRetrievedSummary(StrictModel):
+    channel: Literal["review_summaries", "incident_summaries", "artifact_summaries"]
+    source_ref: str = Field(min_length=1)
+    source_workflow_id: str = Field(min_length=1)
+    source_ticket_id: str | None = None
+    headline: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    matched_terms: list[str] = Field(default_factory=list)
+    why_it_matched: str = Field(min_length=1)
+    review_pack_id: str | None = None
+    incident_id: str | None = None
+    artifact_ref: str | None = None
+    preview_url: str | None = None
+
+
 class CompiledArtifactAccessDescriptor(StrictModel):
     artifact_ref: str = Field(min_length=1)
     logical_path: str | None = None
@@ -86,7 +109,9 @@ class CompileRequest(StrictModel):
     control_refs: CompileRequestControlRefs
     worker_binding: CompileRequestWorkerBinding
     budget_policy: CompileRequestBudgetPolicy
+    retrieval_plan: CompileRequestRetrievalPlan
     explicit_sources: list[CompileRequestExplicitSource]
+    retrieved_summaries: list[CompileRequestRetrievedSummary] = Field(default_factory=list)
     execution: CompileRequestExecution
     governance: CompileRequestGovernance
 
@@ -135,7 +160,7 @@ class CompiledContextSelector(StrictModel):
 class CompiledContextBlock(StrictModel):
     block_id: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
-    source_kind: Literal["ARTIFACT_REFERENCE"]
+    source_kind: Literal["ARTIFACT_REFERENCE", "RETRIEVAL_SUMMARY"]
     trust_level: Literal[1, 2, 3]
     instruction_authority: Literal["DATA_ONLY"]
     priority_class: Literal["P1", "P2", "P3"]
@@ -263,6 +288,8 @@ class CompileManifestFinalBundleStats(StrictModel):
     hydrated_block_count: int = Field(ge=0)
     partially_hydrated_block_count: int = Field(ge=0)
     negative_pattern_count: int = Field(ge=0)
+    retrieved_block_count: int = Field(default=0, ge=0)
+    dropped_retrieval_count: int = Field(default=0, ge=0)
 
 
 class CompileManifest(StrictModel):
@@ -308,7 +335,7 @@ class CompiledConstraints(StrictModel):
 class AtomicContextBlock(StrictModel):
     block_id: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
-    source_kind: Literal["ARTIFACT"]
+    source_kind: Literal["ARTIFACT", "RETRIEVAL"]
     content_type: Literal["TEXT", "JSON", "SOURCE_DESCRIPTOR"]
     content_mode: Literal["INLINE_FULL", "INLINE_PARTIAL", "REFERENCE_ONLY"]
     content_payload: dict[str, Any] = Field(default_factory=dict)

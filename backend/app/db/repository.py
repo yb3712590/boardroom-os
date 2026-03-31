@@ -16,7 +16,9 @@ from app.core.artifacts import (
     ARTIFACT_RETENTION_POLICY_BACKFILLED_CLASS_DEFAULT,
     ARTIFACT_RETENTION_POLICY_LEGACY_UNKNOWN,
     ARTIFACT_RETENTION_POLICY_NO_EXPIRY,
+    build_artifact_access_descriptor,
     build_artifact_retention_defaults,
+    normalize_artifact_kind,
 )
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
@@ -2805,6 +2807,243 @@ class ControlPlaneRepository:
             rows = owned_connection.execute(query, (ticket_id,)).fetchall()
             return [self._convert_artifact_index_row(row) for row in rows]
 
+    def list_retrieval_review_summary_candidates(
+        self,
+        *,
+        tenant_id: str,
+        workspace_id: str,
+        exclude_workflow_id: str,
+        normalized_terms: list[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        query = """
+            SELECT approval_projection.*
+            FROM approval_projection
+            LEFT JOIN workflow_projection
+              ON workflow_projection.workflow_id = approval_projection.workflow_id
+            WHERE approval_projection.workflow_id != ?
+              AND approval_projection.status != ?
+              AND COALESCE(workflow_projection.tenant_id, ?) = ?
+              AND COALESCE(workflow_projection.workspace_id, ?) = ?
+            ORDER BY approval_projection.updated_at DESC, approval_projection.approval_id DESC
+            LIMIT 24
+        """
+        with self.connection() as connection:
+            rows = connection.execute(
+                query,
+                (
+                    exclude_workflow_id,
+                    APPROVAL_STATUS_OPEN,
+                    DEFAULT_TENANT_ID,
+                    tenant_id,
+                    DEFAULT_WORKSPACE_ID,
+                    workspace_id,
+                ),
+            ).fetchall()
+
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            converted = self._convert_approval_row(row)
+            payload = converted["payload"]
+            review_pack = payload.get("review_pack") or {}
+            subject = review_pack.get("subject") or {}
+            recommendation = review_pack.get("recommendation") or {}
+            resolution = payload.get("resolution") or {}
+            matched_terms = self._matched_retrieval_terms(
+                normalized_terms,
+                [
+                    subject.get("title"),
+                    recommendation.get("summary"),
+                    payload.get("inbox_title"),
+                    payload.get("inbox_summary"),
+                    resolution.get("board_comment"),
+                ],
+            )
+            if not matched_terms:
+                continue
+            candidates.append(
+                {
+                    "channel": "review_summaries",
+                    "source_ref": converted["review_pack_id"],
+                    "source_workflow_id": converted["workflow_id"],
+                    "source_ticket_id": subject.get("source_ticket_id"),
+                    "review_pack_id": converted["review_pack_id"],
+                    "headline": str(subject.get("title") or payload.get("inbox_title") or converted["review_pack_id"]),
+                    "summary": str(
+                        recommendation.get("summary")
+                        or payload.get("inbox_summary")
+                        or resolution.get("board_comment")
+                        or "Historical review summary."
+                    ),
+                    "matched_terms": matched_terms,
+                    "why_it_matched": (
+                        "Matched "
+                        + ", ".join(matched_terms)
+                        + " in a historical review summary from the same local workspace."
+                    ),
+                    "updated_at": converted.get("updated_at"),
+                }
+            )
+
+        return self._sort_retrieval_candidates(candidates)[:limit]
+
+    def list_retrieval_incident_summary_candidates(
+        self,
+        *,
+        tenant_id: str,
+        workspace_id: str,
+        exclude_workflow_id: str,
+        normalized_terms: list[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        query = """
+            SELECT incident_projection.*
+            FROM incident_projection
+            LEFT JOIN workflow_projection
+              ON workflow_projection.workflow_id = incident_projection.workflow_id
+            WHERE incident_projection.workflow_id != ?
+              AND COALESCE(workflow_projection.tenant_id, ?) = ?
+              AND COALESCE(workflow_projection.workspace_id, ?) = ?
+            ORDER BY incident_projection.updated_at DESC, incident_projection.incident_id DESC
+            LIMIT 24
+        """
+        with self.connection() as connection:
+            rows = connection.execute(
+                query,
+                (
+                    exclude_workflow_id,
+                    DEFAULT_TENANT_ID,
+                    tenant_id,
+                    DEFAULT_WORKSPACE_ID,
+                    workspace_id,
+                ),
+            ).fetchall()
+
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            converted = self._convert_incident_projection_row(row)
+            payload = converted["payload"]
+            matched_terms = self._matched_retrieval_terms(
+                normalized_terms,
+                [
+                    payload.get("headline"),
+                    payload.get("summary"),
+                    converted.get("incident_type"),
+                    converted.get("fingerprint"),
+                ],
+            )
+            if not matched_terms:
+                continue
+            candidates.append(
+                {
+                    "channel": "incident_summaries",
+                    "source_ref": converted["incident_id"],
+                    "source_workflow_id": converted["workflow_id"],
+                    "source_ticket_id": converted.get("ticket_id"),
+                    "incident_id": converted["incident_id"],
+                    "headline": str(payload.get("headline") or converted.get("incident_type") or converted["incident_id"]),
+                    "summary": str(payload.get("summary") or "Historical incident summary."),
+                    "matched_terms": matched_terms,
+                    "why_it_matched": (
+                        "Matched "
+                        + ", ".join(matched_terms)
+                        + " in a historical incident summary from the same local workspace."
+                    ),
+                    "updated_at": converted.get("updated_at"),
+                }
+            )
+
+        return self._sort_retrieval_candidates(candidates)[:limit]
+
+    def list_retrieval_artifact_summary_candidates(
+        self,
+        *,
+        tenant_id: str,
+        workspace_id: str,
+        exclude_workflow_id: str,
+        normalized_terms: list[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        query = """
+            SELECT artifact_index.*
+            FROM artifact_index
+            LEFT JOIN workflow_projection
+              ON workflow_projection.workflow_id = artifact_index.workflow_id
+            WHERE artifact_index.workflow_id != ?
+              AND artifact_index.lifecycle_status = 'ACTIVE'
+              AND artifact_index.materialization_status = 'MATERIALIZED'
+              AND artifact_index.kind IN ('TEXT', 'MARKDOWN', 'JSON')
+              AND COALESCE(workflow_projection.tenant_id, ?) = ?
+              AND COALESCE(workflow_projection.workspace_id, ?) = ?
+            ORDER BY artifact_index.created_at DESC, artifact_index.artifact_ref DESC
+            LIMIT 24
+        """
+        with self.connection() as connection:
+            rows = connection.execute(
+                query,
+                (
+                    exclude_workflow_id,
+                    DEFAULT_TENANT_ID,
+                    tenant_id,
+                    DEFAULT_WORKSPACE_ID,
+                    workspace_id,
+                ),
+            ).fetchall()
+
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            converted = self._convert_artifact_index_row(row)
+            coarse_matched_terms = self._matched_retrieval_terms(
+                normalized_terms,
+                [
+                    converted.get("path"),
+                    converted.get("kind"),
+                    converted.get("media_type"),
+                ],
+            )
+            if not coarse_matched_terms:
+                continue
+            artifact_body = self._read_retrieval_artifact_body(converted)
+            if artifact_body is None:
+                continue
+            matched_terms = self._matched_retrieval_terms(
+                normalized_terms,
+                [
+                    converted.get("path"),
+                    artifact_body,
+                ],
+            )
+            if not matched_terms:
+                continue
+            access = build_artifact_access_descriptor(
+                converted,
+                artifact_ref=str(converted["artifact_ref"]),
+            )
+            candidates.append(
+                {
+                    "channel": "artifact_summaries",
+                    "source_ref": converted["artifact_ref"],
+                    "source_workflow_id": converted["workflow_id"],
+                    "source_ticket_id": converted.get("ticket_id"),
+                    "artifact_ref": converted["artifact_ref"],
+                    "preview_url": access.get("preview_url"),
+                    "headline": str(converted.get("path") or converted["artifact_ref"]),
+                    "summary": self._summarize_retrieval_text(artifact_body),
+                    "matched_terms": matched_terms,
+                    "why_it_matched": (
+                        "Matched "
+                        + ", ".join(matched_terms)
+                        + " in a historical artifact from the same local workspace."
+                    ),
+                    "updated_at": converted.get("created_at"),
+                }
+            )
+
+        return self._sort_retrieval_candidates(candidates)[:limit]
+
     def list_artifacts_for_cleanup(
         self,
         connection: sqlite3.Connection,
@@ -3707,6 +3946,69 @@ class ControlPlaneRepository:
         converted["payload"] = json.loads(converted["payload_json"])
         converted["version"] = int(converted.get("version") or 0)
         return converted
+
+    def _matched_retrieval_terms(
+        self,
+        normalized_terms: list[str],
+        values: list[str | None],
+    ) -> list[str]:
+        haystack = " ".join(
+            str(value).lower()
+            for value in values
+            if value is not None and str(value).strip()
+        )
+        return [term for term in normalized_terms if term in haystack]
+
+    def _sort_retrieval_candidates(
+        self,
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        channel_rank = {
+            "review_summaries": 0,
+            "incident_summaries": 1,
+            "artifact_summaries": 2,
+        }
+        return sorted(
+            candidates,
+            key=lambda candidate: (
+                -len(candidate.get("matched_terms") or []),
+                channel_rank.get(str(candidate.get("channel") or ""), 99),
+                -(
+                    candidate["updated_at"].timestamp()
+                    if isinstance(candidate.get("updated_at"), datetime)
+                    else 0.0
+                ),
+            ),
+        )
+
+    def _read_retrieval_artifact_body(self, artifact: dict[str, Any]) -> str | None:
+        if self.artifact_store is None:
+            return None
+        try:
+            body = self.artifact_store.read_bytes(
+                artifact.get("storage_relpath"),
+                storage_object_key=artifact.get("storage_object_key"),
+            )
+        except Exception:
+            return None
+
+        normalized_kind = normalize_artifact_kind(str(artifact.get("kind") or ""))
+        if normalized_kind == "JSON":
+            try:
+                parsed = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
+            return json.dumps(parsed, ensure_ascii=True, sort_keys=True)
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+    def _summarize_retrieval_text(self, value: str, *, limit: int = 180) -> str:
+        compact = " ".join(value.split())
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 3].rstrip() + "..."
 
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:

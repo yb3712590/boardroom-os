@@ -17,8 +17,8 @@
 - 把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
 - 把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级和更明确的 fix 票约束，剩余重点是换人策略
 - 把 `Context Compiler` 从“文本类 artifact 可内联”的当前版本继续推进，补完二进制 / 大文件 / 检索增强下的编译与降级策略
-  - 当前已完成：`TEXT / MARKDOWN / JSON` 可完整内联；超预算文本 / JSON 会退到确定性预览；bundle / manifest / developer inspector 已暴露结构化降级原因
-  - 当前仍缺：二进制与大文件的更细粒度编译策略、真正的检索增强、以及更强的预算压缩矩阵
+  - 当前已完成：`TEXT / MARKDOWN / JSON` 可完整内联；超预算文本 / JSON 会退到确定性预览；bundle / manifest / developer inspector 已暴露结构化降级原因；编译时还能拉入同 workspace、跨 workflow 的本地 `review / incident / artifact` 历史摘要卡片
+  - 当前仍缺：二进制与大文件的更细粒度编译策略、更强的预算压缩矩阵，以及向量/联网之外是否还需要更丰富的本地检索策略
 - 收敛 runtime 默认路径，优先保证本地单机执行稳定，而不是继续扩远程 handoff 面
 - 明确 MVP 的最小 schema、role profile、ticket 路径，不再边做边膨胀
 
@@ -37,7 +37,7 @@
 - MVP 后补上 Meeting Room 专用界面
 - MVP 后补上 dependency graph explorer
 - MVP 后补上历史分析、多 workspace 管理和更深入的员工画像浏览
-- 再评估是否需要更丰富的 Search / Retrieval
+- 再评估是否需要在当前本地历史摘要检索之上继续扩更丰富的 Search / Retrieval
 - 再评估是否需要更完整的 provider routing / recovery
 
 ## 已实现但暂停扩张

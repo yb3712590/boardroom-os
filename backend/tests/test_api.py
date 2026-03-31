@@ -1209,6 +1209,158 @@ def _seed_review_request(
     return approvals[0]
 
 
+def _seed_cross_workflow_compile_history(client) -> None:
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    materialized = artifact_store.materialize_text(
+        "reports/review/history-homepage.md",
+        "# History\n\nApproved homepage brand direction with clearer hierarchy.\n",
+    )
+    review_payload = {
+        "review_pack": {
+            "meta": {
+                "review_pack_id": "brp_history_compile",
+                "workflow_id": "wf_history_compile_review",
+                "review_type": "VISUAL_MILESTONE",
+                "created_at": "2026-03-27T10:00:00+08:00",
+                "priority": "high",
+            },
+            "subject": {
+                "title": "Historical homepage approval",
+                "source_node_id": "node_history_review",
+                "source_ticket_id": "tkt_history_review",
+                "blocking_scope": "NODE_ONLY",
+            },
+            "trigger": {
+                "trigger_event_id": "evt_history_review",
+                "trigger_reason": "Historical review result",
+                "why_now": "Useful for local retrieval",
+            },
+            "recommendation": {
+                "recommended_action": "APPROVE",
+                "recommended_option_id": "A",
+                "summary": "Approved homepage direction with strong brand hierarchy.",
+            },
+            "options": [
+                {
+                    "option_id": "A",
+                    "label": "Approved",
+                    "summary": "Approved homepage direction with strong brand hierarchy.",
+                    "artifact_refs": [],
+                    "preview_assets": [],
+                    "pros": [],
+                    "cons": [],
+                    "risks": [],
+                    "estimated_budget_impact_range": None,
+                }
+            ],
+            "evidence_summary": [],
+            "delta_summary": None,
+            "maker_checker_summary": None,
+            "risk_summary": None,
+            "budget_impact": None,
+            "decision_form": {
+                "allowed_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+                "command_target_version": 1,
+                "requires_comment_on_reject": True,
+                "requires_constraint_patch_on_modify": True,
+            },
+            "developer_inspector_refs": None,
+        },
+        "available_actions": [],
+        "draft_defaults": {},
+        "inbox_title": "Historical homepage approval",
+        "inbox_summary": "Approved homepage direction with strong brand hierarchy.",
+        "badges": ["history", "review"],
+        "priority": "high",
+        "resolution": {
+            "selected_option_id": "A",
+            "board_comment": "Approved and archived.",
+        },
+    }
+    incident_payload = {
+        "incident_id": "inc_history_compile",
+        "workflow_id": "wf_history_compile_incident",
+        "node_id": "node_history_incident",
+        "ticket_id": "tkt_history_incident",
+        "incident_type": "REPEATED_FAILURE_ESCALATION",
+        "status": "OPEN",
+        "severity": "high",
+        "fingerprint": "wf_history_compile_incident:history:fingerprint",
+        "headline": "Repeated checker rejection",
+        "summary": "Homepage run failed after checker rejected weak brand alignment.",
+    }
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO approval_projection (
+                approval_id,
+                review_pack_id,
+                workflow_id,
+                approval_type,
+                status,
+                requested_by,
+                resolved_by,
+                resolved_at,
+                created_at,
+                updated_at,
+                review_pack_version,
+                command_target_version,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "apr_history_compile",
+                "brp_history_compile",
+                "wf_history_compile_review",
+                "VISUAL_MILESTONE",
+                "APPROVED",
+                "board",
+                "board",
+                "2026-03-27T10:10:00+08:00",
+                "2026-03-27T10:00:00+08:00",
+                "2026-03-27T10:10:00+08:00",
+                1,
+                1,
+                json.dumps(review_payload, sort_keys=True),
+            ),
+        )
+        repository.insert_event(
+            connection,
+            event_type="INCIDENT_OPENED",
+            actor_type="system",
+            actor_id="system",
+            workflow_id="wf_history_compile_incident",
+            idempotency_key="incident-opened:wf_history_compile_incident:inc_history_compile",
+            causation_id=None,
+            correlation_id="wf_history_compile_incident",
+            payload=incident_payload,
+            occurred_at=datetime.fromisoformat("2026-03-27T10:20:00+08:00"),
+        )
+        repository.save_artifact_record(
+            connection,
+            artifact_ref="art://history/compile-homepage.md",
+            workflow_id="wf_history_compile_artifact",
+            ticket_id="tkt_history_compile_artifact",
+            node_id="node_history_compile_artifact",
+            logical_path="reports/review/history-homepage.md",
+            kind="MARKDOWN",
+            media_type="text/markdown",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_relpath=materialized.storage_relpath,
+            content_hash=materialized.content_hash,
+            size_bytes=materialized.size_bytes,
+            retention_class="REVIEW_EVIDENCE",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat("2026-03-27T10:30:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+
 def test_startup_initializes_schema_and_wal_mode(client, db_path):
     assert db_path.exists()
     repository = client.app.state.repository
@@ -6280,6 +6432,7 @@ def test_review_room_route_returns_existing_projection(client):
 
 
 def test_review_room_developer_inspector_returns_materialized_payloads(client):
+    _seed_cross_workflow_compile_history(client)
     approval = _seed_review_request(client, materialize_real_compile=True)
 
     response = client.get(
@@ -6301,6 +6454,13 @@ def test_review_room_developer_inspector_returns_materialized_payloads(client):
     assert body["compile_summary"]["source_count"] >= 1
     assert body["compile_summary"]["degraded_source_count"] >= 1
     assert body["compile_summary"]["reason_counts"]["ARTIFACT_NOT_INDEXED"] >= 1
+    assert body["compile_summary"]["retrieved_source_count"] == 3
+    assert body["compile_summary"]["retrieval_channel_counts"] == {
+        "artifact_summaries": 1,
+        "incident_summaries": 1,
+        "review_summaries": 1,
+    }
+    assert body["compile_summary"]["dropped_retrieval_count"] == 0
     assert body["compiled_context_bundle"]["meta"]["bundle_id"] == latest_bundle["bundle_id"]
     assert body["compile_manifest"]["compile_meta"]["compile_id"] == latest_manifest["compile_id"]
     assert store.resolve_path("ctx://homepage/visual-v1").exists()

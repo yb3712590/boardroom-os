@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from pydantic import Field
+
 from app.contracts.common import ProjectionEnvelopeBase, StrictModel
 from app.contracts.events import EventSeverity
 
@@ -162,6 +164,9 @@ class ReviewRoomDeveloperInspectorCompileSummary(StrictModel):
     degraded_source_count: int
     missing_critical_source_count: int
     reason_counts: dict[str, int]
+    retrieved_source_count: int = 0
+    retrieval_channel_counts: dict[str, int] = Field(default_factory=dict)
+    dropped_retrieval_count: int = 0
 
 
 class ReviewRoomDeveloperInspectorProjectionData(StrictModel):

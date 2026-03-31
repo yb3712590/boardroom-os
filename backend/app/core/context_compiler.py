@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +45,8 @@ from app.contracts.runtime import (
     CompileRequestExplicitSource,
     CompileRequestGovernance,
     CompileRequestMeta,
+    CompileRequestRetrievedSummary,
+    CompileRequestRetrievalPlan,
     CompileRequestWorkerBinding,
 )
 from app.core.artifacts import (
@@ -82,6 +85,16 @@ FALLBACK_REASON_ARTIFACT_READ_FAILED = "ARTIFACT_READ_FAILED"
 FALLBACK_REASON_ARTIFACT_JSON_DECODE_FAILED = "ARTIFACT_JSON_DECODE_FAILED"
 FALLBACK_REASON_ARTIFACT_TEXT_DECODE_FAILED = "ARTIFACT_TEXT_DECODE_FAILED"
 FALLBACK_REASON_INLINE_BUDGET_EXCEEDED = "INLINE_BUDGET_EXCEEDED"
+FALLBACK_REASON_RETRIEVAL_DROPPED_FOR_BUDGET = "RETRIEVAL_DROPPED_FOR_BUDGET"
+RETRIEVAL_MATCH_REASON_REVIEW = "RETRIEVAL_REVIEW_MATCH"
+RETRIEVAL_MATCH_REASON_INCIDENT = "RETRIEVAL_INCIDENT_MATCH"
+RETRIEVAL_MATCH_REASON_ARTIFACT = "RETRIEVAL_ARTIFACT_MATCH"
+
+_RETRIEVAL_REASON_BY_CHANNEL = {
+    "review_summaries": RETRIEVAL_MATCH_REASON_REVIEW,
+    "incident_summaries": RETRIEVAL_MATCH_REASON_INCIDENT,
+    "artifact_summaries": RETRIEVAL_MATCH_REASON_ARTIFACT,
+}
 
 
 @dataclass(frozen=True)
@@ -111,6 +124,15 @@ def _stable_hash(value: Any) -> str:
 
 def _estimate_tokens(value: Any) -> int:
     return max(1, (len(_canonical_json(value)) + 3) // 4)
+
+
+def _normalize_retrieval_terms(*values: str) -> list[str]:
+    terms: set[str] = set()
+    for value in values:
+        for term in re.findall(r"[a-z0-9]+", value.lower()):
+            if len(term) >= 3:
+                terms.add(term)
+    return sorted(terms)
 
 
 def _build_descriptor_payload(source: CompileRequestExplicitSource) -> dict[str, Any]:
@@ -536,7 +558,7 @@ def _build_atomic_context_bundle(context_blocks: list[CompiledContextBlock], tok
             AtomicContextBlock(
                 block_id=block.block_id,
                 source_ref=block.source_ref,
-                source_kind="ARTIFACT",
+                source_kind="ARTIFACT" if block.source_kind == "ARTIFACT_REFERENCE" else "RETRIEVAL",
                 content_type=block.content_type,
                 content_mode=block.content_mode,
                 content_payload=dict(block.content_payload),
@@ -546,6 +568,121 @@ def _build_atomic_context_bundle(context_blocks: list[CompiledContextBlock], tok
         ],
         token_budget=token_budget,
     )
+
+
+def _build_retrieval_plan(
+    *,
+    tenant_id: str,
+    workspace_id: str,
+    workflow_id: str,
+    context_query_plan: dict[str, Any],
+) -> CompileRequestRetrievalPlan:
+    normalized_terms = _normalize_retrieval_terms(
+        *[str(value) for value in list(context_query_plan.get("keywords") or [])],
+        *[str(value) for value in list(context_query_plan.get("semantic_queries") or [])],
+    )
+    return CompileRequestRetrievalPlan(
+        scope_tenant_id=tenant_id,
+        scope_workspace_id=workspace_id,
+        exclude_workflow_id=workflow_id,
+        normalized_terms=normalized_terms,
+        max_hits_by_channel={
+            "review_summaries": 2,
+            "incident_summaries": 2,
+            "artifact_summaries": 3,
+        },
+    )
+
+
+def _build_retrieved_summaries(
+    repository: ControlPlaneRepository,
+    retrieval_plan: CompileRequestRetrievalPlan,
+) -> list[CompileRequestRetrievedSummary]:
+    if not retrieval_plan.normalized_terms:
+        return []
+
+    summaries: list[CompileRequestRetrievedSummary] = []
+    channel_loaders = (
+        (
+            "review_summaries",
+            repository.list_retrieval_review_summary_candidates,
+        ),
+        (
+            "incident_summaries",
+            repository.list_retrieval_incident_summary_candidates,
+        ),
+        (
+            "artifact_summaries",
+            repository.list_retrieval_artifact_summary_candidates,
+        ),
+    )
+    for channel, loader in channel_loaders:
+        rows = loader(
+            tenant_id=retrieval_plan.scope_tenant_id,
+            workspace_id=retrieval_plan.scope_workspace_id,
+            exclude_workflow_id=retrieval_plan.exclude_workflow_id,
+            normalized_terms=list(retrieval_plan.normalized_terms),
+            limit=int(retrieval_plan.max_hits_by_channel.get(channel, 0)),
+        )
+        summaries.extend(
+            CompileRequestRetrievedSummary.model_validate(
+                {key: value for key, value in row.items() if key != "updated_at"}
+            )
+            for row in rows
+        )
+    return summaries
+
+
+def _build_retrieval_block(
+    summary: CompileRequestRetrievedSummary,
+) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
+    selector = CompiledContextSelector(
+        selector_type="SOURCE_REF",
+        selector_value=summary.source_ref,
+    )
+    content_payload = summary.model_dump(mode="json", exclude_none=True)
+    reason_code = _RETRIEVAL_REASON_BY_CHANNEL[summary.channel]
+    token_estimate = _estimate_tokens(content_payload)
+    block = CompiledContextBlock(
+        block_id=new_prefixed_id("ctxblk"),
+        source_ref=summary.source_ref,
+        source_kind="RETRIEVAL_SUMMARY",
+        trust_level=1,
+        instruction_authority="DATA_ONLY",
+        priority_class="P2",
+        selector=selector,
+        transform_chain=["RETRIEVE"],
+        content_type="JSON",
+        content_mode="INLINE_FULL",
+        content_payload=content_payload,
+        degradation_reason_code=None,
+        token_estimate=token_estimate,
+        relevance_score=0.6 + (0.1 * min(len(summary.matched_terms), 3)),
+        source_hash=_stable_hash(content_payload),
+        trust_note=summary.why_it_matched,
+    )
+    source_log = CompileManifestSourceLogEntry(
+        source_ref=summary.source_ref,
+        source_kind=reason_code,
+        priority_class=block.priority_class,
+        trust_level=block.trust_level,
+        selector_used=f"{selector.selector_type}:{selector.selector_value}",
+        content_mode=block.content_mode,
+        critical=False,
+        status="USED",
+        tokens_before=token_estimate,
+        tokens_after=token_estimate,
+        reason=summary.why_it_matched,
+        reason_code=reason_code,
+    )
+    transform_log = CompileManifestTransformLogEntry(
+        stage="RETRIEVAL",
+        operation_type="RETRIEVE",
+        target_ref=summary.source_ref,
+        output_block_id=block.block_id,
+        reason=summary.why_it_matched,
+    )
+    return block, source_log, transform_log
 
 
 def build_compile_request(
@@ -571,6 +708,12 @@ def build_compile_request(
     tenant_id = str(ticket.get("tenant_id") or created_spec.get("tenant_id") or DEFAULT_TENANT_ID)
     workspace_id = str(
         ticket.get("workspace_id") or created_spec.get("workspace_id") or DEFAULT_WORKSPACE_ID
+    )
+    retrieval_plan = _build_retrieval_plan(
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        workflow_id=ticket["workflow_id"],
+        context_query_plan=context_query_plan,
     )
 
     explicit_sources = []
@@ -628,7 +771,9 @@ def build_compile_request(
             max_input_tokens=max_input_tokens,
             overflow_policy="FAIL_CLOSED",
         ),
+        retrieval_plan=retrieval_plan,
         explicit_sources=explicit_sources,
+        retrieved_summaries=_build_retrieved_summaries(repository, retrieval_plan),
         execution=CompileRequestExecution(
             acceptance_criteria=list(created_spec.get("acceptance_criteria") or []),
             allowed_tools=list(created_spec.get("allowed_tools") or []),
@@ -660,6 +805,8 @@ def compile_audit_artifacts(
     hydrated_block_count = 0
     partially_hydrated_block_count = 0
     reference_block_count = 0
+    retrieved_block_count = 0
+    dropped_retrieval_count = 0
     remaining_budget = compile_request.budget_policy.max_input_tokens
 
     for source in compile_request.explicit_sources:
@@ -710,6 +857,54 @@ def compile_audit_artifacts(
         source_log.append(reference_source_log)
         transform_log.append(reference_transform_log)
         reference_block_count += 1
+
+    retrieval_budget = min(
+        compile_request.budget_policy.max_input_tokens // 4,
+        800,
+        remaining_budget,
+    )
+    retrieval_remaining_budget = max(0, retrieval_budget)
+    for summary in compile_request.retrieved_summaries:
+        retrieval_block, retrieval_source_log, retrieval_transform_log = _build_retrieval_block(summary)
+        if retrieval_block.token_estimate <= retrieval_remaining_budget:
+            context_blocks.append(retrieval_block)
+            source_log.append(retrieval_source_log)
+            transform_log.append(retrieval_transform_log)
+            retrieved_block_count += 1
+            retrieval_remaining_budget -= retrieval_block.token_estimate
+            remaining_budget -= retrieval_block.token_estimate
+            continue
+
+        source_log.append(
+            CompileManifestSourceLogEntry(
+                source_ref=summary.source_ref,
+                source_kind=_RETRIEVAL_REASON_BY_CHANNEL[summary.channel],
+                priority_class="P2",
+                trust_level=1,
+                selector_used=f"SOURCE_REF:{summary.source_ref}",
+                content_mode=None,
+                critical=False,
+                status="DROPPED",
+                tokens_before=retrieval_block.token_estimate,
+                tokens_after=0,
+                reason=(
+                    f"Retrieval summary for {summary.source_ref} was dropped because the retrieval "
+                    "budget was exhausted after higher-priority local history matches."
+                ),
+                reason_code=FALLBACK_REASON_RETRIEVAL_DROPPED_FOR_BUDGET,
+            )
+        )
+        transform_log.append(
+            CompileManifestTransformLogEntry(
+                stage="BUDGET_ENFORCEMENT",
+                operation_type="DROP",
+                target_ref=summary.source_ref,
+                output_block_id=None,
+                reason="Dropped retrieval summary because the retrieval budget was exhausted.",
+            )
+        )
+        warnings.append(f"Dropped retrieval summary for {summary.source_ref} because retrieval budget was exhausted.")
+        dropped_retrieval_count += 1
 
     compiled_context_bundle = CompiledContextBundle(
         meta=CompiledContextBundleMeta(
@@ -841,6 +1036,8 @@ def compile_audit_artifacts(
             hydrated_block_count=hydrated_block_count,
             partially_hydrated_block_count=partially_hydrated_block_count,
             negative_pattern_count=0,
+            retrieved_block_count=retrieved_block_count,
+            dropped_retrieval_count=dropped_retrieval_count,
         ),
     )
 

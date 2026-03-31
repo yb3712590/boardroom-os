@@ -435,11 +435,14 @@ def build_review_room_developer_inspector_projection(
     if compile_manifest is not None:
         source_entries = list(compile_manifest.get("source_log") or [])
         reason_counts: dict[str, int] = {}
+        retrieval_channel_counts: dict[str, int] = {}
         inline_full_count = 0
         inline_partial_count = 0
         reference_only_count = 0
         degraded_source_count = 0
         missing_critical_source_count = 0
+        retrieved_source_count = 0
+        dropped_retrieval_count = 0
         for entry in source_entries:
             if not isinstance(entry, dict):
                 continue
@@ -456,6 +459,18 @@ def build_review_room_developer_inspector_projection(
             reason_code = entry.get("reason_code")
             if isinstance(reason_code, str) and reason_code:
                 reason_counts[reason_code] = reason_counts.get(reason_code, 0) + 1
+            source_kind = str(entry.get("source_kind") or "")
+            if source_kind.startswith("RETRIEVAL_") and entry.get("status") != "DROPPED":
+                retrieved_source_count += 1
+                if source_kind == "RETRIEVAL_REVIEW_MATCH":
+                    channel = "review_summaries"
+                elif source_kind == "RETRIEVAL_INCIDENT_MATCH":
+                    channel = "incident_summaries"
+                else:
+                    channel = "artifact_summaries"
+                retrieval_channel_counts[channel] = retrieval_channel_counts.get(channel, 0) + 1
+            if reason_code == "RETRIEVAL_DROPPED_FOR_BUDGET":
+                dropped_retrieval_count += 1
             if entry.get("status") == "MISSING" and entry.get("critical") is True:
                 missing_critical_source_count += 1
 
@@ -467,6 +482,9 @@ def build_review_room_developer_inspector_projection(
             degraded_source_count=degraded_source_count,
             missing_critical_source_count=missing_critical_source_count,
             reason_counts=reason_counts,
+            retrieved_source_count=retrieved_source_count,
+            retrieval_channel_counts=retrieval_channel_counts,
+            dropped_retrieval_count=dropped_retrieval_count,
         )
 
     return ReviewRoomDeveloperInspectorProjectionEnvelope(

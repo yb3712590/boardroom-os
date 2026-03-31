@@ -159,9 +159,15 @@
 - Continued the Context Compiler along the local MVP path instead of widening governance scope: compile requests, context blocks, and manifest source logs now carry stable degradation reason codes such as `ARTIFACT_NOT_INDEXED`, `ARTIFACT_NOT_READABLE`, `UNSUPPORTED_ARTIFACT_KIND`, and `INLINE_BUDGET_EXCEEDED`.
 - Large-but-readable local `TEXT / MARKDOWN / JSON` inputs no longer collapse straight to pure descriptor form when full hydration would overflow the rough token budget. The compiler now emits deterministic head previews for text and top-level previews for JSON, while keeping artifact access URLs and marking the block as partial inline hydration.
 - `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` now adds a compact `compile_summary`, so debugging a blocked review no longer starts with manually reading raw manifest JSON just to answer “how many sources degraded, and why?”.
+- Continued the Context Compiler from “explicit inputs only” into a first real local knowledge path: compile requests now materialize a deterministic `retrieval_plan`, and compilation can pull in same-workspace, cross-workflow `review / incident / artifact` history as structured summary cards instead of leaving `keywords / semantic_queries` unused.
+- Kept that new retrieval path inside the local MVP boundary: no vector store, no web search, no external knowledge service; `semantic_queries` are normalized into deterministic local match terms, and artifact retrieval still prefers compact summary cards over raw historical bodies.
+- Compile manifests and Review Room developer-inspector summaries now expose retrieval counts by channel plus budget-driven retrieval drops, so排障时可以直接看到“本轮编译带进来了哪些历史经验，哪些因为预算被丢掉了”，不用再手翻完整 manifest。
 - Fresh focused verification after this change is:
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_context_compiler.py -q` -> `10 passed`
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py -k "review_room_developer_inspector" -q` -> `3 passed, 174 deselected`
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_context_compiler.py -q` -> `13 passed`
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py -k "review_room_developer_inspector or worker_runtime_execution_package" -q` -> `6 passed, 171 deselected`
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_worker_auth_cli.py -q` -> `15 passed`
 
 ### Current Watch-Outs
 

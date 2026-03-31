@@ -32,7 +32,7 @@ def _ticket_create_payload(
         "attempt_no": 1,
         "role_profile_ref": "ui_designer_primary",
         "constraints_ref": "global_constraints_v3",
-        "input_artifact_refs": input_artifact_refs or [
+        "input_artifact_refs": input_artifact_refs if input_artifact_refs is not None else [
             "art://inputs/brief.md",
             "art://inputs/brand-guide.md",
         ],
@@ -94,6 +94,9 @@ def _seed_artifact(
     deleted_at: str | None = None,
     deleted_by: str | None = None,
     delete_reason: str | None = None,
+    workflow_id: str = "wf_seed_inputs",
+    ticket_id: str = "tkt_seed_inputs",
+    node_id: str = "node_seed_inputs",
 ) -> None:
     repository = client.app.state.repository
     artifact_store = client.app.state.artifact_store
@@ -114,9 +117,9 @@ def _seed_artifact(
         repository.save_artifact_record(
             connection,
             artifact_ref=artifact_ref,
-            workflow_id="wf_seed_inputs",
-            ticket_id="tkt_seed_inputs",
-            node_id="node_seed_inputs",
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
             logical_path=logical_path,
             kind=kind,
             media_type=media_type,
@@ -131,6 +134,176 @@ def _seed_artifact(
             deleted_by=deleted_by,
             delete_reason=delete_reason,
             created_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+
+
+def _seed_historical_review_summary(
+    client,
+    *,
+    workflow_id: str,
+    review_pack_id: str,
+    title: str,
+    summary: str,
+) -> None:
+    repository = client.app.state.repository
+    payload = {
+        "review_pack": {
+            "meta": {
+                "review_pack_id": review_pack_id,
+                "workflow_id": workflow_id,
+                "review_type": "VISUAL_MILESTONE",
+                "created_at": "2026-03-27T10:00:00+08:00",
+                "priority": "high",
+            },
+            "subject": {
+                "title": title,
+                "source_node_id": "node_history_review",
+                "source_ticket_id": f"tkt_{review_pack_id}",
+                "blocking_scope": "NODE_ONLY",
+            },
+            "trigger": {
+                "trigger_event_id": f"evt_{review_pack_id}",
+                "trigger_reason": "Historical review result",
+                "why_now": "Useful for later work",
+            },
+            "recommendation": {
+                "recommended_action": "APPROVE",
+                "recommended_option_id": "A",
+                "summary": summary,
+            },
+            "options": [
+                {
+                    "option_id": "A",
+                    "label": "Approved",
+                    "summary": summary,
+                    "artifact_refs": [],
+                    "preview_assets": [],
+                    "pros": [],
+                    "cons": [],
+                    "risks": [],
+                    "estimated_budget_impact_range": None,
+                }
+            ],
+            "evidence_summary": [],
+            "delta_summary": None,
+            "maker_checker_summary": None,
+            "risk_summary": None,
+            "budget_impact": None,
+            "decision_form": {
+                "allowed_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+                "command_target_version": 1,
+                "requires_comment_on_reject": True,
+                "requires_constraint_patch_on_modify": True,
+            },
+            "developer_inspector_refs": None,
+        },
+        "available_actions": [],
+        "draft_defaults": {},
+        "inbox_title": title,
+        "inbox_summary": summary,
+        "badges": ["history", "review"],
+        "priority": "high",
+        "resolution": {
+            "selected_option_id": "A",
+            "board_comment": "Approved and archived for later retrieval.",
+        },
+    }
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO approval_projection (
+                approval_id,
+                review_pack_id,
+                workflow_id,
+                approval_type,
+                status,
+                requested_by,
+                resolved_by,
+                resolved_at,
+                created_at,
+                updated_at,
+                review_pack_version,
+                command_target_version,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"apr_{review_pack_id}",
+                review_pack_id,
+                workflow_id,
+                "VISUAL_MILESTONE",
+                "APPROVED",
+                "board",
+                "board",
+                "2026-03-27T10:10:00+08:00",
+                "2026-03-27T10:00:00+08:00",
+                "2026-03-27T10:10:00+08:00",
+                1,
+                1,
+                json.dumps(payload, sort_keys=True),
+            ),
+        )
+
+
+def _seed_historical_incident_summary(
+    client,
+    *,
+    workflow_id: str,
+    incident_id: str,
+    summary: str,
+    ticket_id: str,
+) -> None:
+    repository = client.app.state.repository
+    payload = {
+        "incident_id": incident_id,
+        "workflow_id": workflow_id,
+        "node_id": "node_history_incident",
+        "ticket_id": ticket_id,
+        "incident_type": "REPEATED_FAILURE_ESCALATION",
+        "status": "OPEN",
+        "severity": "high",
+        "fingerprint": f"{workflow_id}:history:fingerprint",
+        "summary": summary,
+        "headline": "Repeated checker rejection",
+    }
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO incident_projection (
+                incident_id,
+                workflow_id,
+                node_id,
+                ticket_id,
+                provider_id,
+                incident_type,
+                status,
+                severity,
+                fingerprint,
+                circuit_breaker_state,
+                opened_at,
+                closed_at,
+                payload_json,
+                updated_at,
+                version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                incident_id,
+                workflow_id,
+                "node_history_incident",
+                ticket_id,
+                None,
+                "REPEATED_FAILURE_ESCALATION",
+                "OPEN",
+                "high",
+                f"{workflow_id}:history:fingerprint",
+                "OPEN",
+                "2026-03-27T10:20:00+08:00",
+                None,
+                json.dumps(payload, sort_keys=True),
+                "2026-03-27T10:20:00+08:00",
+                1,
+            ),
         )
 
 
@@ -160,6 +333,32 @@ def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time
     ]
     assert compile_request.execution.allowed_write_set == ["artifacts/ui/homepage/*"]
     assert compile_request.governance.timeout_sla_sec == 1800
+
+
+def test_build_compile_request_includes_cross_workflow_retrieval_plan(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+
+    compile_request = build_compile_request(repository, ticket)
+
+    assert compile_request.retrieval_plan.scope_tenant_id == "tenant_default"
+    assert compile_request.retrieval_plan.scope_workspace_id == "ws_default"
+    assert compile_request.retrieval_plan.exclude_workflow_id == "wf_compile"
+    assert compile_request.retrieval_plan.normalized_terms == [
+        "approved",
+        "brand",
+        "direction",
+        "homepage",
+    ]
+    assert compile_request.retrieval_plan.max_hits_by_channel == {
+        "review_summaries": 2,
+        "incident_summaries": 2,
+        "artifact_summaries": 3,
+    }
 
 
 def test_compile_execution_package_builds_minimal_worker_input(client, set_ticket_time):
@@ -472,6 +671,142 @@ def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(cli
     assert manifest.budget_actual.final_bundle_tokens > 0
     assert compiled_package.meta.compile_request_id == compile_request.meta.compile_request_id
     assert compiled_package.atomic_context_bundle.context_blocks[0].block_id == bundle.context_blocks[0].block_id
+
+
+def test_compile_execution_package_adds_cross_workflow_retrieval_summary_cards(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(input_artifact_refs=[]),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_historical_review_summary(
+        client,
+        workflow_id="wf_history_review",
+        review_pack_id="brp_history_review",
+        title="Homepage review approval",
+        summary="Approved homepage direction with strong brand hierarchy.",
+    )
+    _seed_historical_incident_summary(
+        client,
+        workflow_id="wf_history_incident",
+        incident_id="inc_history_brand",
+        ticket_id="tkt_history_brand",
+        summary="Homepage run failed after checker rejected weak brand alignment.",
+    )
+    _seed_artifact(
+        client,
+        artifact_ref="art://history/homepage-notes.md",
+        logical_path="reports/review/homepage-notes.md",
+        kind="MARKDOWN",
+        media_type="text/markdown",
+        content_text="# Homepage\n\nApproved direction keeps brand visible in the hero.\n",
+        workflow_id="wf_history_artifact",
+        ticket_id="tkt_history_artifact",
+        node_id="node_history_artifact",
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_package = compile_execution_package(compile_request)
+    retrieval_blocks = [
+        block
+        for block in compiled_package.atomic_context_bundle.context_blocks
+        if block.source_kind == "RETRIEVAL"
+    ]
+
+    assert [block.content_type for block in retrieval_blocks] == ["JSON", "JSON", "JSON"]
+    assert [block.content_payload["channel"] for block in retrieval_blocks] == [
+        "review_summaries",
+        "incident_summaries",
+        "artifact_summaries",
+    ]
+    assert retrieval_blocks[0].content_payload["review_pack_id"] == "brp_history_review"
+    assert retrieval_blocks[1].content_payload["incident_id"] == "inc_history_brand"
+    assert retrieval_blocks[2].content_payload["artifact_ref"] == "art://history/homepage-notes.md"
+    assert retrieval_blocks[0].content_payload["matched_terms"] == [
+        "approved",
+        "brand",
+        "direction",
+        "homepage",
+    ]
+    assert "matched" in retrieval_blocks[0].content_payload["why_it_matched"].lower()
+
+
+def test_compile_audit_artifacts_drops_low_priority_retrieval_cards_when_budget_is_tight(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(input_artifact_refs=[]),
+            "context_query_plan": {
+                "keywords": ["homepage", "brand"],
+                "semantic_queries": ["approved direction"],
+                "max_context_tokens": 1000,
+            },
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_historical_review_summary(
+        client,
+        workflow_id="wf_history_review",
+        review_pack_id="brp_budget_review",
+        title="Budget review approval",
+        summary="Approved homepage direction and clear brand hierarchy.",
+    )
+    _seed_historical_incident_summary(
+        client,
+        workflow_id="wf_history_incident",
+        incident_id="inc_budget_incident",
+        ticket_id="tkt_budget_incident",
+        summary="Homepage work was rejected after brand guidance was ignored twice.",
+    )
+    _seed_artifact(
+        client,
+        artifact_ref="art://history/budget-notes.md",
+        logical_path="reports/review/homepage-budget-notes.md",
+        kind="MARKDOWN",
+        media_type="text/markdown",
+        content_text=(
+            "# Homepage Budget\n\nThis historical homepage artifact is intentionally verbose so "
+            "brand-focused artifact retrieval gets dropped before higher-value summaries under a "
+            "tight token budget while still matching the retrieval terms.\n"
+        ),
+        workflow_id="wf_history_artifact",
+        ticket_id="tkt_history_artifact",
+        node_id="node_history_artifact",
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    retrieval_blocks = [
+        block
+        for block in compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks
+        if block.source_kind == "RETRIEVAL"
+    ]
+    dropped_entries = [
+        entry
+        for entry in compiled_artifacts.compile_manifest.source_log
+        if entry.reason_code == "RETRIEVAL_DROPPED_FOR_BUDGET"
+    ]
+
+    assert [block.content_payload["channel"] for block in retrieval_blocks] == [
+        "review_summaries",
+        "incident_summaries",
+    ]
+    assert [entry.source_ref for entry in dropped_entries] == ["art://history/budget-notes.md"]
+    assert compiled_artifacts.compile_manifest.final_bundle_stats.retrieved_block_count == 2
+    assert compiled_artifacts.compile_manifest.final_bundle_stats.dropped_retrieval_count == 1
 
 
 def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(client, set_ticket_time):
