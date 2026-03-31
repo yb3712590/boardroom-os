@@ -14,7 +14,7 @@
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
-- 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及可直接撤 session / delivery grant 的 `worker-admin` HTTP 管理面
+- 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及可直接按租户看 session / delivery grant / rejection、做 scope-summary 和 scope containment 的 `worker-admin` HTTP 管理面
 
 ## 本地运行
 
@@ -111,6 +111,14 @@ curl 'http://127.0.0.1:8000/api/v1/worker-admin/bindings?worker_id=emp_frontend_
 
 curl 'http://127.0.0.1:8000/api/v1/worker-admin/bootstrap-issues?worker_id=emp_frontend_2&active_only=true'
 
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/sessions?tenant_id=tenant_blue&workspace_id=ws_design&active_only=true'
+
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/delivery-grants?tenant_id=tenant_blue&workspace_id=ws_design&ticket_id=tkt_123&active_only=true'
+
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/auth-rejections?tenant_id=tenant_blue&workspace_id=ws_design&route_family=assignments'
+
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/scope-summary?tenant_id=tenant_blue&workspace_id=ws_design'
+
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/create-binding' \
   -H 'Content-Type: application/json' \
   -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design"}'
@@ -126,26 +134,40 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/revoke-session' \
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/revoke-delivery-grant' \
   -H 'Content-Type: application/json' \
   -d '{"grant_id":"wgrant_123","revoked_by":"ops@example.com","reason":"single URL revoke"}'
+
+curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/contain-scope' \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id":"tenant_blue","workspace_id":"ws_design","dry_run":true,"revoke_bootstrap_issues":true,"revoke_sessions":true,"revoked_by":"ops@example.com","reason":"tenant incident containment"}'
 ```
 
 当前已实现的管理接口：
 
 - `GET /api/v1/worker-admin/bindings`
 - `GET /api/v1/worker-admin/bootstrap-issues`
+- `GET /api/v1/worker-admin/sessions`
+- `GET /api/v1/worker-admin/delivery-grants`
+- `GET /api/v1/worker-admin/auth-rejections`
+- `GET /api/v1/worker-admin/scope-summary`
 - `POST /api/v1/worker-admin/create-binding`
 - `POST /api/v1/worker-admin/issue-bootstrap`
 - `POST /api/v1/worker-admin/revoke-bootstrap`
 - `POST /api/v1/worker-admin/revoke-session`
 - `POST /api/v1/worker-admin/revoke-delivery-grant`
 - `POST /api/v1/worker-admin/cleanup-bindings`
+- `POST /api/v1/worker-admin/contain-scope`
 
 说明：
 
 - 这批接口复用和 CLI 完全同一套 scope 校验、TTL 上限、tenant allowlist 和 cleanup 规则
 - `tenant_id` 和 `workspace_id` 必须成对出现；多 binding worker 在 `issue-bootstrap` / `revoke-bootstrap` 上也仍然要显式带 scope
+- `sessions`、`delivery-grants`、`auth-rejections` 和 `scope-summary` 现在可以直接按 `tenant_id + workspace_id` 看整组租户 scope，而不必先知道具体 `worker_id`
 - `revoke-session` 必须二选一：要么按 `session_id` 撤一条会话，要么按 `worker_id + tenant_id + workspace_id` 撤一个明确 scope 下的会话
 - `revoke-delivery-grant` 只按 `grant_id` 撤一条具体 delivery grant，不会把同 session 的兄弟 URL 一起撤掉
 - `revoke-session` 会同步回显并落盘级联撤掉的 delivery grant 数，以及 `revoked_via` / `revoked_by` / `revoke_reason`
+- `contain-scope` 用的是“先预演、再执行”的同一接口：`dry_run=true` 时只回显当前会命中的 bootstrap issue / session / delivery grant，不写库；`dry_run=false` 时必须同时带 `revoked_by`、`reason` 和 `expected_active_*` 计数
+- `contain-scope` 真执行时会先撤活跃 bootstrap issue，再撤活跃 session，并让 session 继续沿现有级联逻辑撤活跃 delivery grant；它不会自动删 binding，也不会自动 cleanup binding
+- 如果 `expected_active_bootstrap_issue_count`、`expected_active_session_count`、`expected_active_delivery_grant_count` 任一和执行瞬间的真实值不一致，接口会直接返回 `409`，避免拿着过期预演结果误伤现场
+- scope containment 的批量止血会单独写 `revoked_via = worker_admin_scope_containment`，后续排障时可以和普通单条 revoke 区分开
 - 这是一层“受信控制面”入口，不代表项目已经补齐公网身份层或租户自助权限模型
 
 ## Worker handoff 现状

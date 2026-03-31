@@ -81,13 +81,16 @@
 - Kept `worker-runtime` projections as the unified read surface and left session / delivery-grant revoke in CLI for now, rather than widening the HTTP management scope all at once.
 - Extended `worker-admin` with `revoke-session` and `revoke-delivery-grant`, so tenant incident handling can now stay in one control-plane entrypoint instead of bouncing back to local CLI.
 - Added persisted revoke audit fields on worker sessions and delivery grants, and surfaced them back through `GET /api/v1/projections/worker-runtime` for direct post-action verification.
+- Extended `worker-admin` again with `GET /api/v1/worker-admin/sessions`, `delivery-grants`, `auth-rejections`, and `scope-summary`, so operators can now inspect one tenant/workspace scope directly instead of pivoting through one worker at a time.
+- Added `POST /api/v1/worker-admin/contain-scope`, which supports dry-run impact preview first and then real scope containment with `expected_active_*` count checks; the write path now stamps `revoked_via = worker_admin_scope_containment` for batch stop-the-bleeding actions.
+- Closed the earlier legacy scope-backfill risk in current code: repository initialization now backfills default `tenant_id/workspace_id` values for old projection, bootstrap, session, and delivery-grant rows, and the repository test suite covers that upgrade path.
 - Fresh focused verification after this change is:
-  - `backend/tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `14 passed`
+  - `backend/tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `21 passed`
   - `backend/tests/test_worker_auth_cli.py -q` -> `15 passed`
+  - `backend/tests/test_repository.py -q` -> `4 passed`
 
 ### Current Watch-Outs
 
-- Latest commit review found a legacy-database migration risk: old rows in `workflow_projection`, `ticket_projection`, `worker_bootstrap_state`, `worker_session`, and `worker_delivery_grant` can keep `NULL` scope fields after upgrade because the migration adds columns but does not backfill existing rows.
 - Latest commit also continued the append-only `memory-log.md` pattern. Before archival, this file had grown to about `2300` lines, `119 KB`, and `14.9k` words.
 - There is no backend runtime path that automatically loads `doc/history/memory-log.md`; the pressure came from human or agent workflow repeatedly opening the history file as working memory.
 

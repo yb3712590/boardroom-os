@@ -5293,6 +5293,703 @@ def test_worker_admin_bindings_returns_scope_filtered_bindings(
     assert data["bindings"][0]["workspace_id"] == "ws_design"
 
 
+def test_worker_admin_sessions_returns_scope_filtered_active_sessions(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_sessions_default",
+        ticket_id="tkt_worker_admin_sessions_default",
+        node_id="node_worker_admin_sessions_default",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_sessions_blue",
+        ticket_id="tkt_worker_admin_sessions_blue",
+        node_id="node_worker_admin_sessions_blue",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    default_issue = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+            "ttl_sec": 120,
+        },
+    )
+    blue_issue = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+        },
+    )
+    assert default_issue.status_code == 200
+    assert blue_issue.status_code == 200
+
+    default_assignments = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": default_issue.json()["bootstrap_token"]},
+    )
+    blue_assignments = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": blue_issue.json()["bootstrap_token"]},
+    )
+    assert default_assignments.status_code == 200
+    assert blue_assignments.status_code == 200
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE worker_session
+            SET revoked_at = ?, revoked_via = ?, revoke_reason = ?
+            WHERE session_id = ?
+            """,
+            (
+                "2026-03-28T10:02:00+08:00",
+                "test",
+                "inactive session for filtering",
+                default_assignments.json()["data"]["session_id"],
+            ),
+        )
+
+    response = client.get(
+        "/api/v1/worker-admin/sessions",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "active_only": "true",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["sessions"][0]["worker_id"] == "emp_frontend_2"
+    assert payload["sessions"][0]["tenant_id"] == "tenant_blue"
+    assert payload["sessions"][0]["workspace_id"] == "ws_design"
+    assert payload["sessions"][0]["is_active"] is True
+
+
+def test_worker_admin_delivery_grants_supports_scope_and_ticket_filters(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_grants_default",
+        ticket_id="tkt_worker_admin_grants_default",
+        node_id="node_worker_admin_grants_default",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_grants_blue",
+        ticket_id="tkt_worker_admin_grants_blue",
+        node_id="node_worker_admin_grants_blue",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    default_issue = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+    )
+    blue_issue = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+        },
+    )
+    assert default_issue.status_code == 200
+    assert blue_issue.status_code == 200
+
+    _bootstrap_worker_execution_package(client, default_issue.json()["bootstrap_token"])
+    blue_assignments, _ = _bootstrap_worker_execution_package(client, blue_issue.json()["bootstrap_token"])
+
+    response = client.get(
+        "/api/v1/worker-admin/delivery-grants",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ticket_id": "tkt_worker_admin_grants_blue",
+            "session_id": blue_assignments["session_id"],
+            "active_only": "true",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] > 0
+    assert all(item["worker_id"] == "emp_frontend_2" for item in payload["delivery_grants"])
+    assert all(item["tenant_id"] == "tenant_blue" for item in payload["delivery_grants"])
+    assert all(item["workspace_id"] == "ws_design" for item in payload["delivery_grants"])
+    assert all(item["ticket_id"] == "tkt_worker_admin_grants_blue" for item in payload["delivery_grants"])
+    assert all(item["session_id"] == blue_assignments["session_id"] for item in payload["delivery_grants"])
+    assert all(item["is_active"] is True for item in payload["delivery_grants"])
+
+
+def test_worker_admin_auth_rejections_supports_scope_and_route_filters(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_rejections_blue",
+        ticket_id="tkt_worker_admin_rejections_blue",
+        node_id="node_worker_admin_rejections_blue",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    issue_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+        },
+    )
+    assert issue_response.status_code == 200
+
+    assignments_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": issue_response.json()["bootstrap_token"]},
+    )
+    assert assignments_response.status_code == 200
+    session_token = assignments_response.json()["data"]["session_token"]
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET workspace_id = ?
+            WHERE ticket_id = ?
+            """,
+            ("ws_other", "tkt_worker_admin_rejections_blue"),
+        )
+
+    rejected_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(session_token),
+    )
+    assert rejected_response.status_code == 403
+
+    response = client.get(
+        "/api/v1/worker-admin/auth-rejections",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "route_family": "assignments",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["auth_rejections"][0]["route_family"] == "assignments"
+    assert payload["auth_rejections"][0]["reason_code"] == "workspace_mismatch"
+    assert payload["auth_rejections"][0]["tenant_id"] == "tenant_blue"
+    assert payload["auth_rejections"][0]["workspace_id"] == "ws_design"
+
+
+def test_worker_admin_scope_summary_aggregates_workers_within_scope(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    _seed_worker(client, employee_id="emp_frontend_3")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_summary_2",
+        ticket_id="tkt_worker_admin_summary_2",
+        node_id="node_worker_admin_summary_2",
+        leased_by="emp_frontend_2",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_summary_3",
+        ticket_id="tkt_worker_admin_summary_3",
+        node_id="node_worker_admin_summary_3",
+        leased_by="emp_frontend_3",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    issue_worker_2 = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+            "issued_by": "ops@example.com",
+        },
+    )
+    issue_worker_3 = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_3",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+            "issued_by": "ops@example.com",
+        },
+    )
+    assert issue_worker_2.status_code == 200
+    assert issue_worker_3.status_code == 200
+
+    worker_2_assignments, _ = _bootstrap_worker_execution_package(client, issue_worker_2.json()["bootstrap_token"])
+    client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": issue_worker_3.json()["bootstrap_token"]},
+    )
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET workspace_id = ?
+            WHERE ticket_id = ?
+            """,
+            ("ws_other", "tkt_worker_admin_summary_2"),
+        )
+
+    rejected_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(worker_2_assignments["session_token"]),
+    )
+    assert rejected_response.status_code == 403
+
+    response = client.get(
+        "/api/v1/worker-admin/scope-summary",
+        params={
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["filters"]["tenant_id"] == "tenant_blue"
+    assert payload["filters"]["workspace_id"] == "ws_design"
+    assert payload["summary"]["binding_count"] == 2
+    assert payload["summary"]["active_bootstrap_issue_count"] == 2
+    assert payload["summary"]["active_session_count"] == 2
+    assert payload["summary"]["active_delivery_grant_count"] > 0
+    assert payload["summary"]["recent_rejection_count"] == 1
+    assert payload["summary"]["active_ticket_count"] == 1
+    assert {item["worker_id"] for item in payload["workers"]} == {"emp_frontend_2", "emp_frontend_3"}
+    worker_2 = next(item for item in payload["workers"] if item["worker_id"] == "emp_frontend_2")
+    assert worker_2["active_bootstrap_issue_count"] == 1
+    assert worker_2["active_session_count"] == 1
+    assert worker_2["active_ticket_count"] == 0
+    assert worker_2["recent_rejection_count"] == 1
+
+
+def test_worker_admin_contain_scope_dry_run_returns_targets_without_writing_state(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_contain_dry_run",
+        ticket_id="tkt_worker_admin_contain_dry_run",
+        node_id="node_worker_admin_contain_dry_run",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    issue_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+            "issued_by": "ops@example.com",
+        },
+    )
+    assert issue_response.status_code == 200
+    issued_payload = issue_response.json()
+    assignments_data, execution_package = _bootstrap_worker_execution_package(
+        client,
+        issued_payload["bootstrap_token"],
+    )
+    preview_url = execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0][
+        "content_payload"
+    ]["preview_url"]
+
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        before_issue_count = len(
+            repository.list_worker_bootstrap_issues(
+                connection,
+                worker_id="emp_frontend_2",
+                tenant_id="tenant_blue",
+                workspace_id="ws_design",
+                active_only=True,
+                at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+            )
+        )
+        before_session_count = len(
+            repository.list_worker_sessions(
+                connection,
+                worker_id="emp_frontend_2",
+                tenant_id="tenant_blue",
+                workspace_id="ws_design",
+                active_only=True,
+            )
+        )
+        before_grants = repository.list_worker_delivery_grants(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            active_only=True,
+        )
+
+    response = client.post(
+        "/api/v1/worker-admin/contain-scope",
+        json={
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "dry_run": True,
+            "revoke_bootstrap_issues": True,
+            "revoke_sessions": True,
+            "revoked_by": "ops@example.com",
+            "reason": "Tenant incident containment.",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dry_run"] is True
+    assert payload["executed"] is False
+    assert payload["filters"]["tenant_id"] == "tenant_blue"
+    assert payload["filters"]["workspace_id"] == "ws_design"
+    assert payload["requested_actions"]["revoke_bootstrap_issues"] is True
+    assert payload["requested_actions"]["revoke_sessions"] is True
+    assert payload["impact_summary"]["active_bootstrap_issue_count"] == 1
+    assert payload["impact_summary"]["active_session_count"] == 1
+    assert payload["impact_summary"]["active_delivery_grant_count"] == len(before_grants)
+    assert payload["target_ids"]["worker_ids"] == ["emp_frontend_2"]
+    assert payload["target_ids"]["bootstrap_issue_ids"] == [issued_payload["issue_id"]]
+    assert payload["target_ids"]["session_ids"] == [assignments_data["session_id"]]
+    assert len(payload["target_ids"]["delivery_grant_ids"]) == len(before_grants)
+
+    with repository.connection() as connection:
+        after_issue_count = len(
+            repository.list_worker_bootstrap_issues(
+                connection,
+                worker_id="emp_frontend_2",
+                tenant_id="tenant_blue",
+                workspace_id="ws_design",
+                active_only=True,
+                at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+            )
+        )
+        after_session_count = len(
+            repository.list_worker_sessions(
+                connection,
+                worker_id="emp_frontend_2",
+                tenant_id="tenant_blue",
+                workspace_id="ws_design",
+                active_only=True,
+            )
+        )
+        after_grants = repository.list_worker_delivery_grants(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            active_only=True,
+        )
+    assert after_issue_count == before_issue_count
+    assert after_session_count == before_session_count
+    assert len(after_grants) == len(before_grants)
+
+    bootstrap_retry = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": issued_payload["bootstrap_token"]},
+    )
+    session_retry = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(assignments_data["session_token"]),
+    )
+    preview_retry = client.get(_local_path_from_url(preview_url))
+    assert bootstrap_retry.status_code == 200
+    assert session_retry.status_code == 200
+    assert preview_retry.status_code == 200
+
+
+def test_worker_admin_contain_scope_execute_only_revokes_target_scope(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.ensure_worker_bootstrap_state(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_contain_default",
+        ticket_id="tkt_worker_admin_contain_default",
+        node_id="node_worker_admin_contain_default",
+    )
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_contain_blue",
+        ticket_id="tkt_worker_admin_contain_blue",
+        node_id="node_worker_admin_contain_blue",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    default_issue = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+            "ttl_sec": 120,
+            "issued_by": "ops@example.com",
+        },
+    )
+    blue_issue = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+            "issued_by": "ops@example.com",
+        },
+    )
+    assert default_issue.status_code == 200
+    assert blue_issue.status_code == 200
+
+    default_assignments, _ = _bootstrap_worker_execution_package(client, default_issue.json()["bootstrap_token"])
+    blue_assignments, blue_execution_package = _bootstrap_worker_execution_package(
+        client,
+        blue_issue.json()["bootstrap_token"],
+    )
+    blue_preview_url = blue_execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][
+        0
+    ]["content_payload"]["preview_url"]
+
+    with repository.connection() as connection:
+        blue_active_grants = repository.list_worker_delivery_grants(
+            connection,
+            worker_id="emp_frontend_2",
+            tenant_id="tenant_blue",
+            workspace_id="ws_design",
+            active_only=True,
+        )
+
+    response = client.post(
+        "/api/v1/worker-admin/contain-scope",
+        json={
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "dry_run": False,
+            "revoke_bootstrap_issues": True,
+            "revoke_sessions": True,
+            "revoked_by": "ops@example.com",
+            "reason": "Tenant incident containment.",
+            "expected_active_bootstrap_issue_count": 1,
+            "expected_active_session_count": 1,
+            "expected_active_delivery_grant_count": len(blue_active_grants),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dry_run"] is False
+    assert payload["executed"] is True
+    assert payload["result"]["revoked_bootstrap_issue_count"] == 1
+    assert payload["result"]["revoked_session_count"] == 1
+    assert payload["result"]["revoked_delivery_grant_count"] == len(blue_active_grants)
+    assert payload["result"]["revoked_by"] == "ops@example.com"
+    assert payload["result"]["revoke_reason"] == "Tenant incident containment."
+
+    blue_bootstrap_retry = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": blue_issue.json()["bootstrap_token"]},
+    )
+    blue_session_retry = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(blue_assignments["session_token"]),
+    )
+    blue_preview_retry = client.get(_local_path_from_url(blue_preview_url))
+    default_session_retry = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(default_assignments["session_token"]),
+    )
+
+    assert blue_bootstrap_retry.status_code == 401
+    assert blue_session_retry.status_code == 401
+    assert blue_preview_retry.status_code == 401
+    assert default_session_retry.status_code == 200
+
+
+def test_worker_admin_contain_scope_returns_conflict_when_expected_counts_are_stale(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_contain_conflict",
+        ticket_id="tkt_worker_admin_contain_conflict",
+        node_id="node_worker_admin_contain_conflict",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    issue_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+            "issued_by": "ops@example.com",
+        },
+    )
+    assert issue_response.status_code == 200
+    assignments_data, execution_package = _bootstrap_worker_execution_package(
+        client,
+        issue_response.json()["bootstrap_token"],
+    )
+    preview_url = execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0][
+        "content_payload"
+    ]["preview_url"]
+
+    response = client.post(
+        "/api/v1/worker-admin/contain-scope",
+        json={
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "dry_run": False,
+            "revoke_bootstrap_issues": True,
+            "revoke_sessions": True,
+            "revoked_by": "ops@example.com",
+            "reason": "Tenant incident containment.",
+            "expected_active_bootstrap_issue_count": 2,
+            "expected_active_session_count": 1,
+            "expected_active_delivery_grant_count": 999,
+        },
+    )
+
+    assert response.status_code == 409
+
+    bootstrap_retry = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": issue_response.json()["bootstrap_token"]},
+    )
+    session_retry = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_session_headers(assignments_data["session_token"]),
+    )
+    preview_retry = client.get(_local_path_from_url(preview_url))
+
+    assert bootstrap_retry.status_code == 200
+    assert session_retry.status_code == 200
+    assert preview_retry.status_code == 200
+
+
 def test_worker_admin_bootstrap_issues_active_only_filters_revoked_and_expired(
     client,
     set_ticket_time,
