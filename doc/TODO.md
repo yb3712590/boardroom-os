@@ -15,7 +15,7 @@
 
 - 完成 employee hire / replace / freeze 生命周期
 - 把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
-- 补齐 Maker-Checker 的更强返工治理：重复问题指纹、换人策略和更明确的 fix 票约束
+- 把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级和更明确的 fix 票约束，剩余重点是换人策略
 - 把 reference-only `Context Compiler` 推进到足够支撑本地执行闭环的版本
 - 收敛 runtime 默认路径，优先保证本地单机执行稳定，而不是继续扩远程 handoff 面
 - 明确 MVP 的最小 schema、role profile、ticket 路径，不再边做边膨胀

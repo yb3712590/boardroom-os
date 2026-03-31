@@ -5971,8 +5971,248 @@ def test_checker_changes_required_creates_fix_ticket_instead_of_board_review(cli
     assert fix_created_spec["parent_ticket_id"] == checker_ticket_id
     assert fix_created_spec["role_profile_ref"] == "ui_designer_primary"
     assert fix_created_spec["output_schema_ref"] == "ui_milestone_review"
+    maker_checker_context = fix_created_spec["maker_checker_context"]
+    assert maker_checker_context["checker_ticket_id"] == checker_ticket_id
+    assert maker_checker_context["rework_streak_count"] == 1
+    assert maker_checker_context["rework_fingerprint"]
+    assert maker_checker_context["blocking_finding_refs"] == ["finding_hero_hierarchy"]
+    assert maker_checker_context["required_fixes"] == [
+        {
+            "finding_id": "finding_hero_hierarchy",
+            "headline": "Hero hierarchy is not strong enough yet.",
+            "required_action": "Strengthen hero hierarchy before board review.",
+            "severity": "high",
+            "category": "VISUAL_HIERARCHY",
+        }
+    ]
+    assert fix_created_spec["acceptance_criteria"] == [
+        "Must satisfy approved visual direction",
+        "Must produce 2 options",
+        "Must include rationale and risks",
+        "Close checker blocking finding finding_hero_hierarchy: Strengthen hero hierarchy before board review.",
+    ]
     assert repository.list_open_approvals() == []
     assert inbox_response.json()["data"]["items"] == []
+
+
+def test_repeated_checker_changes_required_opens_incident_instead_of_creating_next_fix_ticket(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(include_review_request=True),
+    )
+    assert maker_response.status_code == 200
+
+    repository = client.app.state.repository
+    first_checker_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=first_checker_ticket_id, leased_by="emp_checker_1"),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=first_checker_ticket_id, started_by="emp_checker_1"),
+    )
+    first_checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            ticket_id=first_checker_ticket_id,
+            review_status="CHANGES_REQUIRED",
+            idempotency_key=f"ticket-result-submit:wf_seed:{first_checker_ticket_id}:changes-required-1",
+        ),
+    )
+    assert first_checker_result.status_code == 200
+
+    first_fix_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=first_fix_ticket_id, leased_by="emp_frontend_2"),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=first_fix_ticket_id, started_by="emp_frontend_2"),
+    )
+    first_fix_submit = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            ticket_id=first_fix_ticket_id,
+            include_review_request=True,
+            artifact_refs=[
+                "art://homepage/rework-option-a.png",
+                "art://homepage/rework-option-b.png",
+            ],
+            idempotency_key=f"ticket-result-submit:wf_seed:{first_fix_ticket_id}:rework-submit",
+        ),
+    )
+    assert first_fix_submit.status_code == 200
+    assert first_fix_submit.json()["status"] == "ACCEPTED"
+
+    second_checker_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    assert second_checker_ticket_id != first_checker_ticket_id
+    assert second_checker_ticket_id != first_fix_ticket_id
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=second_checker_ticket_id, leased_by="emp_checker_1"),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_checker_ticket_id, started_by="emp_checker_1"),
+    )
+    second_checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            ticket_id=second_checker_ticket_id,
+            review_status="CHANGES_REQUIRED",
+            idempotency_key=f"ticket-result-submit:wf_seed:{second_checker_ticket_id}:changes-required-2",
+        ),
+    )
+
+    current_node = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    latest_ticket = repository.get_current_ticket_projection(current_node["latest_ticket_id"])
+    incidents = repository.list_open_incidents()
+    inbox_response = client.get("/api/v1/projections/inbox")
+
+    assert second_checker_result.status_code == 200
+    assert second_checker_result.json()["status"] == "ACCEPTED"
+    assert latest_ticket is not None
+    assert latest_ticket["ticket_id"] == second_checker_ticket_id
+    assert latest_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert len(incidents) == 1
+    assert incidents[0]["incident_type"] == "MAKER_CHECKER_REWORK_ESCALATION"
+    assert incidents[0]["payload"]["rework_streak_count"] == 2
+    assert incidents[0]["payload"]["latest_checker_ticket_id"] == second_checker_ticket_id
+    assert incidents[0]["payload"]["rework_fingerprint"]
+    assert client.app.state.repository.count_events_by_type(EVENT_CIRCUIT_BREAKER_OPENED) == 1
+    assert repository.list_open_approvals() == []
+    assert inbox_response.json()["data"]["items"][0]["title"] == (
+        "Maker-checker rework escalation in node_homepage_visual"
+    )
+    assert "Repeated checker findings hit the rework threshold" in inbox_response.json()["data"]["items"][0][
+        "summary"
+    ]
+    assert inbox_response.json()["data"]["items"][0]["badges"] == [
+        "maker_checker",
+        "rework",
+        "circuit_breaker",
+    ]
+
+
+def test_different_checker_rework_fingerprint_continues_fix_chain_without_incident(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(include_review_request=True),
+    )
+
+    repository = client.app.state.repository
+    first_checker_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=first_checker_ticket_id, leased_by="emp_checker_1"),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=first_checker_ticket_id, started_by="emp_checker_1"),
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            ticket_id=first_checker_ticket_id,
+            review_status="CHANGES_REQUIRED",
+            idempotency_key=f"ticket-result-submit:wf_seed:{first_checker_ticket_id}:changes-required-1",
+        ),
+    )
+
+    first_fix_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=first_fix_ticket_id, leased_by="emp_frontend_2"),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=first_fix_ticket_id, started_by="emp_frontend_2"),
+    )
+    first_fix_submit = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            ticket_id=first_fix_ticket_id,
+            include_review_request=True,
+            artifact_refs=[
+                "art://homepage/rework-option-a.png",
+                "art://homepage/rework-option-b.png",
+            ],
+            idempotency_key=f"ticket-result-submit:wf_seed:{first_fix_ticket_id}:rework-submit",
+        ),
+    )
+    assert first_fix_submit.status_code == 200
+    assert first_fix_submit.json()["status"] == "ACCEPTED"
+
+    second_checker_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    assert second_checker_ticket_id != first_fix_ticket_id
+    different_findings = [
+        {
+            "finding_id": "finding_navigation_density",
+            "severity": "high",
+            "category": "CONTENT_DENSITY",
+            "headline": "Navigation density is still too high.",
+            "summary": "The primary navigation continues to compete with the hero.",
+            "required_action": "Reduce navigation density before board review.",
+            "blocking": True,
+        }
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(ticket_id=second_checker_ticket_id, leased_by="emp_checker_1"),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(ticket_id=second_checker_ticket_id, started_by="emp_checker_1"),
+    )
+    second_checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            ticket_id=second_checker_ticket_id,
+            review_status="CHANGES_REQUIRED",
+            findings=different_findings,
+            idempotency_key=f"ticket-result-submit:wf_seed:{second_checker_ticket_id}:changes-required-2",
+        ),
+    )
+
+    current_node = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    next_fix_ticket = repository.get_current_ticket_projection(current_node["latest_ticket_id"])
+    with repository.connection() as connection:
+        next_fix_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            current_node["latest_ticket_id"],
+        )
+
+    assert second_checker_result.status_code == 200
+    assert second_checker_result.json()["status"] == "ACCEPTED"
+    assert next_fix_ticket is not None
+    assert next_fix_ticket["ticket_id"] not in {second_checker_ticket_id, first_fix_ticket_id}
+    assert next_fix_ticket["status"] == TICKET_STATUS_PENDING
+    assert repository.list_open_incidents() == []
+    assert next_fix_created_spec["maker_checker_context"]["rework_streak_count"] == 1
+    assert next_fix_created_spec["maker_checker_context"]["blocking_finding_refs"] == [
+        "finding_navigation_density"
+    ]
 
 
 def test_review_room_route_returns_existing_projection(client):
