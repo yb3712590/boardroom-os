@@ -107,37 +107,75 @@ python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 现在也可以直接走后端控制面，而不是只能回本地 CLI：
 
 ```bash
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/bindings?worker_id=emp_frontend_2'
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/bindings?worker_id=emp_frontend_2&tenant_id=tenant_blue&workspace_id=ws_design' \
+  -H 'X-Boardroom-Operator-Id: ops@example.com' \
+  -H 'X-Boardroom-Operator-Role: platform_admin'
 
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/bootstrap-issues?worker_id=emp_frontend_2&active_only=true'
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/bootstrap-issues?worker_id=emp_frontend_2&tenant_id=tenant_blue&workspace_id=ws_design&active_only=true' \
+  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
+  -H 'X-Boardroom-Operator-Role: scope_admin' \
+  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
+  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
 
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/sessions?tenant_id=tenant_blue&workspace_id=ws_design&active_only=true'
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/sessions?tenant_id=tenant_blue&workspace_id=ws_design&active_only=true' \
+  -H 'X-Boardroom-Operator-Id: tenant-viewer@example.com' \
+  -H 'X-Boardroom-Operator-Role: scope_viewer' \
+  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
+  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
 
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/delivery-grants?tenant_id=tenant_blue&workspace_id=ws_design&ticket_id=tkt_123&active_only=true'
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/delivery-grants?tenant_id=tenant_blue&workspace_id=ws_design&ticket_id=tkt_123&active_only=true' \
+  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
+  -H 'X-Boardroom-Operator-Role: scope_admin' \
+  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
+  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
 
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/auth-rejections?tenant_id=tenant_blue&workspace_id=ws_design&route_family=assignments'
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/auth-rejections?tenant_id=tenant_blue&workspace_id=ws_design&route_family=assignments' \
+  -H 'X-Boardroom-Operator-Id: tenant-viewer@example.com' \
+  -H 'X-Boardroom-Operator-Role: scope_viewer' \
+  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
+  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
 
-curl 'http://127.0.0.1:8000/api/v1/worker-admin/scope-summary?tenant_id=tenant_blue&workspace_id=ws_design'
+curl 'http://127.0.0.1:8000/api/v1/worker-admin/scope-summary?tenant_id=tenant_blue&workspace_id=ws_design' \
+  -H 'X-Boardroom-Operator-Id: tenant-viewer@example.com' \
+  -H 'X-Boardroom-Operator-Role: scope_viewer' \
+  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
+  -H 'X-Boardroom-Operator-Workspace-Id: ws_design'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/create-binding' \
   -H 'Content-Type: application/json' \
+  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
+  -H 'X-Boardroom-Operator-Role: scope_admin' \
+  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
+  -H 'X-Boardroom-Operator-Workspace-Id: ws_design' \
   -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design"}'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/issue-bootstrap' \
   -H 'Content-Type: application/json' \
-  -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design","ttl_sec":120,"issued_by":"ops@example.com","reason":"tenant admin bootstrap"}'
+  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
+  -H 'X-Boardroom-Operator-Role: scope_admin' \
+  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
+  -H 'X-Boardroom-Operator-Workspace-Id: ws_design' \
+  -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design","ttl_sec":120,"reason":"tenant admin bootstrap"}'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/revoke-session' \
   -H 'Content-Type: application/json' \
-  -d '{"session_id":"wsess_123","revoked_by":"ops@example.com","reason":"tenant incident session revoke"}'
+  -H 'X-Boardroom-Operator-Id: ops@example.com' \
+  -H 'X-Boardroom-Operator-Role: platform_admin' \
+  -d '{"session_id":"wsess_123","reason":"tenant incident session revoke"}'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/revoke-delivery-grant' \
   -H 'Content-Type: application/json' \
-  -d '{"grant_id":"wgrant_123","revoked_by":"ops@example.com","reason":"single URL revoke"}'
+  -H 'X-Boardroom-Operator-Id: ops@example.com' \
+  -H 'X-Boardroom-Operator-Role: platform_admin' \
+  -d '{"grant_id":"wgrant_123","reason":"single URL revoke"}'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/contain-scope' \
   -H 'Content-Type: application/json' \
-  -d '{"tenant_id":"tenant_blue","workspace_id":"ws_design","dry_run":true,"revoke_bootstrap_issues":true,"revoke_sessions":true,"revoked_by":"ops@example.com","reason":"tenant incident containment"}'
+  -H 'X-Boardroom-Operator-Id: tenant-admin@example.com' \
+  -H 'X-Boardroom-Operator-Role: scope_admin' \
+  -H 'X-Boardroom-Operator-Tenant-Id: tenant_blue' \
+  -H 'X-Boardroom-Operator-Workspace-Id: ws_design' \
+  -d '{"tenant_id":"tenant_blue","workspace_id":"ws_design","dry_run":true,"revoke_bootstrap_issues":true,"revoke_sessions":true,"reason":"tenant incident containment"}'
 ```
 
 当前已实现的管理接口：
@@ -158,13 +196,20 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/contain-scope' \
 
 说明：
 
+- `/api/v1/worker-admin/*` 现在必须带操作人头：`X-Boardroom-Operator-Id`、`X-Boardroom-Operator-Role`；如果是 scoped 角色，还必须再带 `X-Boardroom-Operator-Tenant-Id` 和 `X-Boardroom-Operator-Workspace-Id`
+- 当前最小角色模型是：
+  - `platform_admin`：可全局读写
+  - `scope_admin`：只能读写自己 `tenant_id + workspace_id` 下的 worker 运维数据
+  - `scope_viewer`：只能读取自己 `tenant_id + workspace_id` 下的 worker 运维数据，不能做任何止血或签发动作
 - 这批接口复用和 CLI 完全同一套 scope 校验、TTL 上限、tenant allowlist 和 cleanup 规则
+- scoped 角色现在必须显式查询自己的 `tenant_id + workspace_id` scope，不能再只带 `worker_id` 做跨 scope 浏览
 - `tenant_id` 和 `workspace_id` 必须成对出现；多 binding worker 在 `issue-bootstrap` / `revoke-bootstrap` 上也仍然要显式带 scope
+- `issue-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`contain-scope` 响应里的 `issued_by` / `revoked_by` 现在统一来自 `X-Boardroom-Operator-Id`；请求体里如果还带这些字段，只会被当成兼容断言，和请求头不一致就直接返回 `400`
 - `sessions`、`delivery-grants`、`auth-rejections` 和 `scope-summary` 现在可以直接按 `tenant_id + workspace_id` 看整组租户 scope，而不必先知道具体 `worker_id`
 - `revoke-session` 必须二选一：要么按 `session_id` 撤一条会话，要么按 `worker_id + tenant_id + workspace_id` 撤一个明确 scope 下的会话
 - `revoke-delivery-grant` 只按 `grant_id` 撤一条具体 delivery grant，不会把同 session 的兄弟 URL 一起撤掉
 - `revoke-session` 会同步回显并落盘级联撤掉的 delivery grant 数，以及 `revoked_via` / `revoked_by` / `revoke_reason`
-- `contain-scope` 用的是“先预演、再执行”的同一接口：`dry_run=true` 时只回显当前会命中的 bootstrap issue / session / delivery grant，不写库；`dry_run=false` 时必须同时带 `revoked_by`、`reason` 和 `expected_active_*` 计数
+- `contain-scope` 用的是“先预演、再执行”的同一接口：`dry_run=true` 时只回显当前会命中的 bootstrap issue / session / delivery grant，不写库；`dry_run=false` 时必须同时带 `reason` 和 `expected_active_*` 计数
 - `contain-scope` 真执行时会先撤活跃 bootstrap issue，再撤活跃 session，并让 session 继续沿现有级联逻辑撤活跃 delivery grant；它不会自动删 binding，也不会自动 cleanup binding
 - 如果 `expected_active_bootstrap_issue_count`、`expected_active_session_count`、`expected_active_delivery_grant_count` 任一和执行瞬间的真实值不一致，接口会直接返回 `409`，避免拿着过期预演结果误伤现场
 - scope containment 的批量止血会单独写 `revoked_via = worker_admin_scope_containment`，后续排障时可以和普通单条 revoke 区分开

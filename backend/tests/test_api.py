@@ -167,6 +167,25 @@ def _worker_session_headers(session_token: str) -> dict[str, str]:
     return {"X-Boardroom-Worker-Session": session_token}
 
 
+def _worker_admin_headers(
+    *,
+    operator_id: str = "ops@example.com",
+    role: str = "platform_admin",
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, str]:
+    if (tenant_id is None) != (workspace_id is None):
+        raise AssertionError("tenant_id and workspace_id must be provided together for worker-admin headers.")
+    headers = {
+        "X-Boardroom-Operator-Id": operator_id,
+        "X-Boardroom-Operator-Role": role,
+    }
+    if tenant_id is not None and workspace_id is not None:
+        headers["X-Boardroom-Operator-Tenant-Id"] = tenant_id
+        headers["X-Boardroom-Operator-Workspace-Id"] = workspace_id
+    return headers
+
+
 def _worker_assignments_response(
     client,
     *,
@@ -5235,18 +5254,224 @@ def test_worker_runtime_projection_requires_scope_pair(client):
 
 
 def test_worker_admin_bindings_requires_scope_pair(client):
-    response = client.get("/api/v1/worker-admin/bindings?tenant_id=tenant_default")
+    response = client.get(
+        "/api/v1/worker-admin/bindings?tenant_id=tenant_default",
+        headers=_worker_admin_headers(),
+    )
 
     assert response.status_code == 400
+
+
+def test_worker_admin_requires_operator_headers(client):
+    response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+        },
+    )
+
+    assert response.status_code == 401
 
 
 def test_worker_admin_revoke_session_requires_session_id_or_complete_scope(client):
     response = client.post(
         "/api/v1/worker-admin/revoke-session",
         json={"worker_id": "emp_frontend_2"},
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 400
+
+
+def test_worker_admin_scope_viewer_reads_own_scope_only_and_cannot_write(client):
+    scope_headers = _worker_admin_headers(
+        operator_id="tenant.viewer@example.com",
+        role="scope_viewer",
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+    )
+
+    own_scope_response = client.get(
+        "/api/v1/worker-admin/scope-summary",
+        params={"tenant_id": "tenant_default", "workspace_id": "ws_default"},
+        headers=scope_headers,
+    )
+    missing_scope_response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={"worker_id": "emp_frontend_2"},
+        headers=scope_headers,
+    )
+    other_scope_response = client.get(
+        "/api/v1/worker-admin/scope-summary",
+        params={"tenant_id": "tenant_blue", "workspace_id": "ws_design"},
+        headers=scope_headers,
+    )
+    write_response = client.post(
+        "/api/v1/worker-admin/create-binding",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_default",
+            "workspace_id": "ws_default",
+        },
+        headers=scope_headers,
+    )
+
+    assert own_scope_response.status_code == 200
+    assert missing_scope_response.status_code == 403
+    assert other_scope_response.status_code == 403
+    assert write_response.status_code == 403
+
+
+def test_worker_admin_scope_admin_requires_explicit_scope_and_rejects_mismatched_issued_by(
+    client,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    scope_headers = _worker_admin_headers(
+        operator_id="tenant.admin@example.com",
+        role="scope_admin",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    missing_scope_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+        headers=scope_headers,
+    )
+    mismatched_actor_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+            "issued_by": "other@example.com",
+        },
+        headers=scope_headers,
+    )
+    success_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+            "ttl_sec": 120,
+            "reason": "tenant scope bootstrap",
+        },
+        headers=scope_headers,
+    )
+
+    assert missing_scope_response.status_code == 403
+    assert mismatched_actor_response.status_code == 400
+    assert success_response.status_code == 200
+    assert success_response.json()["issued_by"] == "tenant.admin@example.com"
+
+
+def test_worker_admin_scope_admin_cannot_revoke_foreign_session_or_grant(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_scope_permission",
+        ticket_id="tkt_worker_admin_scope_permission",
+        node_id="node_worker_admin_scope_permission",
+    )
+
+    issue_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+        headers=_worker_admin_headers(),
+    )
+    assert issue_response.status_code == 200
+    assignments_data, execution_package = _bootstrap_worker_execution_package(
+        client,
+        issue_response.json()["bootstrap_token"],
+    )
+    preview_url = execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0][
+        "content_payload"
+    ]["preview_url"]
+    preview_grant_id = _decode_worker_delivery_token_payload(
+        _query_value(preview_url, "access_token") or ""
+    )["grant_id"]
+    scope_headers = _worker_admin_headers(
+        operator_id="tenant.admin@example.com",
+        role="scope_admin",
+        tenant_id="tenant_blue",
+        workspace_id="ws_design",
+    )
+
+    revoke_session_response = client.post(
+        "/api/v1/worker-admin/revoke-session",
+        json={
+            "session_id": assignments_data["session_id"],
+            "revoked_by": "tenant.admin@example.com",
+            "reason": "cross scope revoke",
+        },
+        headers=scope_headers,
+    )
+    revoke_grant_response = client.post(
+        "/api/v1/worker-admin/revoke-delivery-grant",
+        json={
+            "grant_id": preview_grant_id,
+            "revoked_by": "tenant.admin@example.com",
+            "reason": "cross scope revoke",
+        },
+        headers=scope_headers,
+    )
+
+    assert revoke_session_response.status_code == 403
+    assert revoke_grant_response.status_code == 403
+
+
+def test_worker_admin_revoke_session_rejects_mismatched_revoked_by_header(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_admin_actor_mismatch",
+        ticket_id="tkt_worker_admin_actor_mismatch",
+        node_id="node_worker_admin_actor_mismatch",
+    )
+
+    issue_response = client.post(
+        "/api/v1/worker-admin/issue-bootstrap",
+        json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+        headers=_worker_admin_headers(),
+    )
+    assert issue_response.status_code == 200
+    assignments_data = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers={"X-Boardroom-Worker-Bootstrap": issue_response.json()["bootstrap_token"]},
+    ).json()["data"]
+
+    revoke_response = client.post(
+        "/api/v1/worker-admin/revoke-session",
+        json={
+            "session_id": assignments_data["session_id"],
+            "revoked_by": "other@example.com",
+            "reason": "actor mismatch",
+        },
+        headers=_worker_admin_headers(),
+    )
+
+    assert revoke_response.status_code == 400
 
 
 def test_worker_admin_bindings_returns_scope_filtered_bindings(
@@ -5283,6 +5508,7 @@ def test_worker_admin_bindings_returns_scope_filtered_bindings(
             "tenant_id": "tenant_blue",
             "workspace_id": "ws_design",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 200
@@ -5342,6 +5568,7 @@ def test_worker_admin_sessions_returns_scope_filtered_active_sessions(
             "workspace_id": "ws_default",
             "ttl_sec": 120,
         },
+        headers=_worker_admin_headers(),
     )
     blue_issue = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
@@ -5351,6 +5578,7 @@ def test_worker_admin_sessions_returns_scope_filtered_active_sessions(
             "workspace_id": "ws_design",
             "ttl_sec": 120,
         },
+        headers=_worker_admin_headers(),
     )
     assert default_issue.status_code == 200
     assert blue_issue.status_code == 200
@@ -5390,6 +5618,7 @@ def test_worker_admin_sessions_returns_scope_filtered_active_sessions(
             "workspace_id": "ws_design",
             "active_only": "true",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 200
@@ -5430,6 +5659,7 @@ def test_worker_admin_delivery_grants_supports_scope_and_ticket_filters(
     default_issue = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
         json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+        headers=_worker_admin_headers(),
     )
     blue_issue = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
@@ -5439,6 +5669,7 @@ def test_worker_admin_delivery_grants_supports_scope_and_ticket_filters(
             "workspace_id": "ws_design",
             "ttl_sec": 120,
         },
+        headers=_worker_admin_headers(),
     )
     assert default_issue.status_code == 200
     assert blue_issue.status_code == 200
@@ -5456,6 +5687,7 @@ def test_worker_admin_delivery_grants_supports_scope_and_ticket_filters(
             "session_id": blue_assignments["session_id"],
             "active_only": "true",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 200
@@ -5495,6 +5727,7 @@ def test_worker_admin_auth_rejections_supports_scope_and_route_filters(
             "workspace_id": "ws_design",
             "ttl_sec": 120,
         },
+        headers=_worker_admin_headers(),
     )
     assert issue_response.status_code == 200
 
@@ -5530,6 +5763,7 @@ def test_worker_admin_auth_rejections_supports_scope_and_route_filters(
             "workspace_id": "ws_design",
             "route_family": "assignments",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 200
@@ -5582,6 +5816,7 @@ def test_worker_admin_scope_summary_aggregates_workers_within_scope(
             "ttl_sec": 120,
             "issued_by": "ops@example.com",
         },
+        headers=_worker_admin_headers(),
     )
     issue_worker_3 = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
@@ -5592,6 +5827,7 @@ def test_worker_admin_scope_summary_aggregates_workers_within_scope(
             "ttl_sec": 120,
             "issued_by": "ops@example.com",
         },
+        headers=_worker_admin_headers(),
     )
     assert issue_worker_2.status_code == 200
     assert issue_worker_3.status_code == 200
@@ -5625,6 +5861,7 @@ def test_worker_admin_scope_summary_aggregates_workers_within_scope(
             "tenant_id": "tenant_blue",
             "workspace_id": "ws_design",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 200
@@ -5674,6 +5911,7 @@ def test_worker_admin_contain_scope_dry_run_returns_targets_without_writing_stat
             "ttl_sec": 120,
             "issued_by": "ops@example.com",
         },
+        headers=_worker_admin_headers(),
     )
     assert issue_response.status_code == 200
     issued_payload = issue_response.json()
@@ -5725,6 +5963,7 @@ def test_worker_admin_contain_scope_dry_run_returns_targets_without_writing_stat
             "revoked_by": "ops@example.com",
             "reason": "Tenant incident containment.",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 200
@@ -5840,6 +6079,7 @@ def test_worker_admin_contain_scope_execute_only_revokes_target_scope(
             "ttl_sec": 120,
             "issued_by": "ops@example.com",
         },
+        headers=_worker_admin_headers(),
     )
     blue_issue = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
@@ -5850,6 +6090,7 @@ def test_worker_admin_contain_scope_execute_only_revokes_target_scope(
             "ttl_sec": 120,
             "issued_by": "ops@example.com",
         },
+        headers=_worker_admin_headers(),
     )
     assert default_issue.status_code == 200
     assert blue_issue.status_code == 200
@@ -5886,6 +6127,7 @@ def test_worker_admin_contain_scope_execute_only_revokes_target_scope(
             "expected_active_session_count": 1,
             "expected_active_delivery_grant_count": len(blue_active_grants),
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 200
@@ -5947,6 +6189,7 @@ def test_worker_admin_contain_scope_returns_conflict_when_expected_counts_are_st
             "ttl_sec": 120,
             "issued_by": "ops@example.com",
         },
+        headers=_worker_admin_headers(),
     )
     assert issue_response.status_code == 200
     assignments_data, execution_package = _bootstrap_worker_execution_package(
@@ -5971,6 +6214,7 @@ def test_worker_admin_contain_scope_returns_conflict_when_expected_counts_are_st
             "expected_active_session_count": 1,
             "expected_active_delivery_grant_count": 999,
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 409
@@ -6058,6 +6302,7 @@ def test_worker_admin_bootstrap_issues_active_only_filters_revoked_and_expired(
             "workspace_id": "ws_design",
             "active_only": "true",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert response.status_code == 200
@@ -6075,6 +6320,7 @@ def test_worker_admin_create_binding_is_idempotent(client):
             "tenant_id": "tenant_blue",
             "workspace_id": "ws_design",
         },
+        headers=_worker_admin_headers(),
     )
     second_response = client.post(
         "/api/v1/worker-admin/create-binding",
@@ -6083,6 +6329,7 @@ def test_worker_admin_create_binding_is_idempotent(client):
             "tenant_id": "tenant_blue",
             "workspace_id": "ws_design",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert first_response.status_code == 200
@@ -6132,6 +6379,7 @@ def test_worker_admin_issue_bootstrap_returns_usable_token_and_enforces_explicit
     missing_scope_response = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
         json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+        headers=_worker_admin_headers(),
     )
     scoped_response = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
@@ -6143,6 +6391,7 @@ def test_worker_admin_issue_bootstrap_returns_usable_token_and_enforces_explicit
             "issued_by": "ops@example.com",
             "reason": "tenant admin bootstrap",
         },
+        headers=_worker_admin_headers(),
     )
 
     assert missing_scope_response.status_code == 400
@@ -6179,6 +6428,7 @@ def test_worker_admin_revoke_bootstrap_invalidates_issue_backed_token(
     issue_response = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
         json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+        headers=_worker_admin_headers(),
     )
     assert issue_response.status_code == 200
     issued_payload = issue_response.json()
@@ -6186,6 +6436,7 @@ def test_worker_admin_revoke_bootstrap_invalidates_issue_backed_token(
     revoke_response = client.post(
         "/api/v1/worker-admin/revoke-bootstrap",
         json={"worker_id": "emp_frontend_2"},
+        headers=_worker_admin_headers(),
     )
     assignments_response = client.get(
         "/api/v1/worker-runtime/assignments",
@@ -6218,6 +6469,7 @@ def test_worker_admin_revoke_session_by_session_id_cascades_grants_and_updates_p
     issue_response = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
         json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+        headers=_worker_admin_headers(),
     )
     assert issue_response.status_code == 200
     issued_payload = issue_response.json()
@@ -6238,6 +6490,7 @@ def test_worker_admin_revoke_session_by_session_id_cascades_grants_and_updates_p
             "revoked_by": "ops@example.com",
             "reason": "Tenant incident session revoke.",
         },
+        headers=_worker_admin_headers(),
     )
     assert revoke_response.status_code == 200
     revoke_payload = revoke_response.json()
@@ -6332,6 +6585,7 @@ def test_worker_admin_revoke_session_by_scope_only_hits_requested_scope(
             "workspace_id": "ws_default",
             "ttl_sec": 120,
         },
+        headers=_worker_admin_headers(),
     )
     blue_issue = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
@@ -6341,6 +6595,7 @@ def test_worker_admin_revoke_session_by_scope_only_hits_requested_scope(
             "workspace_id": "ws_design",
             "ttl_sec": 120,
         },
+        headers=_worker_admin_headers(),
     )
     assert default_issue.status_code == 200
     assert blue_issue.status_code == 200
@@ -6365,6 +6620,7 @@ def test_worker_admin_revoke_session_by_scope_only_hits_requested_scope(
             "revoked_by": "ops@example.com",
             "reason": "Tenant-blue scope revoke.",
         },
+        headers=_worker_admin_headers(),
     )
     assert revoke_response.status_code == 200
     revoke_payload = revoke_response.json()
@@ -6409,6 +6665,7 @@ def test_worker_admin_revoke_delivery_grant_only_revokes_target_and_exposes_audi
     issue_response = client.post(
         "/api/v1/worker-admin/issue-bootstrap",
         json={"worker_id": "emp_frontend_2", "ttl_sec": 120},
+        headers=_worker_admin_headers(),
     )
     assert issue_response.status_code == 200
     _, execution_package = _bootstrap_worker_execution_package(
@@ -6431,6 +6688,7 @@ def test_worker_admin_revoke_delivery_grant_only_revokes_target_and_exposes_audi
             "revoked_by": "ops@example.com",
             "reason": "Manual preview revoke from HTTP.",
         },
+        headers=_worker_admin_headers(),
     )
     assert revoke_response.status_code == 200
     revoke_payload = revoke_response.json()
@@ -6502,10 +6760,12 @@ def test_worker_admin_cleanup_bindings_honors_dry_run_and_deletes_only_cleanup_e
     dry_run_response = client.post(
         "/api/v1/worker-admin/cleanup-bindings",
         json={"worker_id": "emp_frontend_2", "dry_run": True},
+        headers=_worker_admin_headers(),
     )
     execute_response = client.post(
         "/api/v1/worker-admin/cleanup-bindings",
         json={"worker_id": "emp_frontend_2", "dry_run": False},
+        headers=_worker_admin_headers(),
     )
 
     assert dry_run_response.status_code == 200

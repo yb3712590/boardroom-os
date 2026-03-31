@@ -84,10 +84,13 @@
 - Extended `worker-admin` again with `GET /api/v1/worker-admin/sessions`, `delivery-grants`, `auth-rejections`, and `scope-summary`, so operators can now inspect one tenant/workspace scope directly instead of pivoting through one worker at a time.
 - Added `POST /api/v1/worker-admin/contain-scope`, which supports dry-run impact preview first and then real scope containment with `expected_active_*` count checks; the write path now stamps `revoked_via = worker_admin_scope_containment` for batch stop-the-bleeding actions.
 - Closed the earlier legacy scope-backfill risk in current code: repository initialization now backfills default `tenant_id/workspace_id` values for old projection, bootstrap, session, and delivery-grant rows, and the repository test suite covers that upgrade path.
+- Added a minimal operator boundary on `worker-admin`: every HTTP request now requires operator headers, `platform_admin` keeps global read/write, `scope_admin` is limited to one exact tenant/workspace scope, and `scope_viewer` is read-only inside one exact scope.
+- Moved HTTP-side `issued_by` / `revoked_by` truth to the operator headers. Request-body fields with those names are now only compatibility assertions; if they disagree with `X-Boardroom-Operator-Id`, the backend returns `400` instead of silently trusting the body.
 - Fresh focused verification after this change is:
-  - `backend/tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `21 passed`
-  - `backend/tests/test_worker_auth_cli.py -q` -> `15 passed`
-  - `backend/tests/test_repository.py -q` -> `4 passed`
+  - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_api.py -k "worker_admin" -q` -> `23 passed`
+  - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `26 passed`
+  - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_worker_auth_cli.py -q` -> `15 passed`
+  - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_repository.py -q` -> `4 passed`
 
 ### Current Watch-Outs
 

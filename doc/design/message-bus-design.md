@@ -475,6 +475,7 @@ Current conservative reality:
 - Worker-side `tenant_id/workspace_id` binding is now real across workflow projection, ticket projection, bootstrap state, bootstrap issue records, session state, and delivery grants; one worker may now keep multiple bootstrap bindings, while each session and delivery grant remains bound to exactly one scope.
 - New bootstrap tokens now carry `issue_id`; runtime still accepts legacy bootstrap tokens without that claim until they expire naturally, but if `issue_id` is present the backend also requires a matching non-revoked persisted `worker_bootstrap_issue`.
 - Local operator tooling now includes explicit binding lifecycle commands (`create-binding`, enriched `list-bindings`, `cleanup-bindings`), HTTP revoke controls for session and delivery grant under `worker-admin`, and a projection read model on `GET /api/v1/projections/worker-runtime` for aligned binding/session/grant/rejection inspection plus revoke-audit verification.
+- The trusted `worker-admin` HTTP surface now also enforces a minimal operator boundary: `platform_admin` keeps global read/write, while `scope_admin` and `scope_viewer` are limited to one exact `tenant_id/workspace_id` scope, and HTTP audit fields now derive from operator headers instead of free-form request-body identity.
 - Assignment and delivery validation now reject on four layers:
   - token claim route match
   - persisted bootstrap/session/grant state match
