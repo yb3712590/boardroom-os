@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.artifacts import router as artifacts_router
+from app.api.artifact_uploads import router as artifact_uploads_router
 from app.api.commands import router as commands_router
 from app.api.events import router as events_router
 from app.api.projections import router as projections_router
 from app.api.worker_admin import router as worker_admin_router
 from app.api.worker_runtime import router as worker_runtime_router
 from app.config import get_settings
-from app.core.artifact_store import ArtifactStore
+from app.core.artifact_store import build_artifact_store
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.inprocess_scheduler import build_inprocess_scheduler
 from app.db.repository import ControlPlaneRepository
@@ -19,7 +20,7 @@ from app.db.repository import ControlPlaneRepository
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    artifact_store = ArtifactStore(settings.artifact_store_root)
+    artifact_store = build_artifact_store(settings)
     repository = ControlPlaneRepository(
         db_path=settings.db_path,
         busy_timeout_ms=settings.busy_timeout_ms,
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(artifacts_router)
+    app.include_router(artifact_uploads_router)
     app.include_router(commands_router)
     app.include_router(projections_router)
     app.include_router(events_router)

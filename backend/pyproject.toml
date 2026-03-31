@@ -18,6 +18,9 @@ dev = [
   "httpx>=0.27,<1.0",
   "pytest>=8.0,<9.0",
 ]
+objectstore = [
+  "boto3>=1.34,<2.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

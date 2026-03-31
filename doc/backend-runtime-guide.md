@@ -13,6 +13,7 @@
 - 最小 incident / circuit-breaker / retry 治理链
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
+- artifact 大文件链路：控制面分段上传会话、`ticket-result-submit` 对 `upload_session_id` 的消费，以及本地默认 / 可选对象存储双后端
 - artifact cleanup 闭环：场景留存分级、物理删除记账、scheduler 自动 cleanup，以及 `dashboard` 上可直接看的 cleanup 状态
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
 - 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及带签名操作人令牌入口、独立动作审计读面的 `worker-admin` HTTP 管理面
@@ -46,6 +47,25 @@ cd backend
 source .venv/bin/activate
 BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER=true uvicorn app.main:app --reload
 ```
+
+如果你这轮要开 artifact 对象存储，再额外带上：
+
+```bash
+BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ENABLED=true
+BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ENDPOINT=http://127.0.0.1:9000
+BOARDROOM_OS_ARTIFACT_OBJECT_STORE_BUCKET=boardroom-artifacts
+BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ACCESS_KEY=minioadmin
+BOARDROOM_OS_ARTIFACT_OBJECT_STORE_SECRET_KEY=minioadmin
+```
+
+如果你是在新环境里第一次启这个能力，还需要把后端按可选依赖装上对象存储 SDK：
+
+```bash
+cd backend
+pip install -e .[objectstore]
+```
+
+如果你本地只做大文件链路验证、不想开对象存储，默认什么都不配即可；分段上传 staging 会继续落本机文件系统。
 
 启动独立 runner：
 
@@ -310,7 +330,7 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
   - `reports/diagnostics/*` -> `OPERATIONAL_EVIDENCE`
   - 其他路径 -> `PERSISTENT`
 - 旧库里 `REVIEW_EVIDENCE` / `OPERATIONAL_EVIDENCE` / `EPHEMERAL` 但没有 `expires_at` 的 artifact，会在仓库初始化时按各自默认 TTL 回填，避免历史评审材料或临时件永久滞留
-- 如果 artifact 有本地落盘文件，cleanup 会把文件删掉，并在 `artifact_index` 里写 `storage_deleted_at`
+- 如果 artifact 有本地落盘文件或远端对象，cleanup 都会尝试删掉底层存储，并在 `artifact_index` 里回写 `storage_backend`、`storage_delete_status`、`storage_delete_error` 和 `storage_deleted_at`
 - 已经写过 `storage_deleted_at` 的 artifact 不会在后续 cleanup 里被重复统计成 residual cleanup
 - `GET /api/v1/projections/dashboard` 现在会返回 `artifact_maintenance`，可以直接看：
   - 自动 cleanup 是否开启
@@ -319,12 +339,32 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
   - 四类留存语义的默认规则映射
   - cleanup 间隔
   - 当前待过期 / 待物理删除积压
+  - 当前仍删不掉、处于 `DELETE_FAILED` 的 artifact 数量
   - 历史遗留里还有多少 artifact 只能保守标成 `LEGACY_UNKNOWN`
   - 最近一次 cleanup 的时间、触发来源、操作者和删除数量
-- `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `retention_class_source`、`retention_ttl_sec`、`retention_policy_source`、`deleted_by`、`delete_reason` 和 `storage_deleted_at`
+- `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `retention_class_source`、`retention_ttl_sec`、`retention_policy_source`、`deleted_by`、`delete_reason`、`storage_backend`、`storage_delete_status` 和 `storage_deleted_at`
 - `GET /api/v1/projections/artifact-cleanup-candidates` 可以直接列出当前 cleanup 候选，并区分：
   - `EXPIRED_DUE`：已经到过期时间，还没跑到真正 cleanup
-  - `STORAGE_DELETE_PENDING`：逻辑上已删或已过期，但本地文件还没记账成 `storage_deleted_at`
+  - `STORAGE_DELETE_PENDING`：逻辑上已删或已过期，但本地文件或远端对象还没记账成 `storage_deleted_at`
+
+## 大文件上传会话
+
+这轮新增的是“控制面 multipart”，不是浏览器直传，也不是外部 worker signed URL 直传。
+
+- `POST /api/v1/artifact-uploads/sessions`
+  - 创建上传会话，返回 `session_id`
+- `PUT /api/v1/artifact-uploads/sessions/{session_id}/parts/{part_number}`
+  - 按 part number 上传二进制分片
+- `POST /api/v1/artifact-uploads/sessions/{session_id}/complete`
+  - 校验 part 连续性并合并 staging 内容，状态流转到 `COMPLETED`
+- `POST /api/v1/artifact-uploads/sessions/{session_id}/abort`
+  - 终止会话并删除 staging 文件
+
+`ticket-result-submit` 里的二进制 `written_artifacts[*]` 现在支持：
+
+- 小文件继续走 `content_base64`
+- 中大文件改走 `upload_session_id`
+- 两者不能同时提供
 
 ## 关键环境变量
 
@@ -362,6 +402,26 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
   `OPERATIONAL_EVIDENCE` artifact 没显式写 `retention_ttl_sec` 时使用的默认 TTL，默认 1209600 秒（14 天）
 - `BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC`
   `REVIEW_EVIDENCE` artifact 没显式写 `retention_ttl_sec` 时使用的默认 TTL，默认 2592000 秒（30 天）
+- `BOARDROOM_OS_ARTIFACT_UPLOAD_STAGING_ROOT`
+  分段上传 staging 目录；默认 `backend/data/artifact_uploads/`
+- `BOARDROOM_OS_ARTIFACT_UPLOAD_PART_SIZE_LIMIT_BYTES`
+  单个上传分片大小上限；默认 5 MiB
+- `BOARDROOM_OS_ARTIFACT_UPLOAD_MAX_SIZE_BYTES`
+  单次上传总大小上限；默认 100 MiB
+- `BOARDROOM_OS_ARTIFACT_UPLOAD_MAX_PART_COUNT`
+  单次上传允许的最大分片数；默认 10000
+- `BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ENABLED`
+  是否启用可选对象存储后端；默认关闭
+- `BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ENDPOINT`
+  S3 兼容对象存储 endpoint；启用对象存储时必填
+- `BOARDROOM_OS_ARTIFACT_OBJECT_STORE_BUCKET`
+  S3 兼容对象存储 bucket；启用对象存储时必填
+- `BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ACCESS_KEY`
+  S3 兼容对象存储 access key；启用对象存储时必填
+- `BOARDROOM_OS_ARTIFACT_OBJECT_STORE_SECRET_KEY`
+  S3 兼容对象存储 secret key；启用对象存储时必填
+- `BOARDROOM_OS_ARTIFACT_OBJECT_STORE_REGION`
+  可选，对象存储 region；未填时走 SDK 默认
 
 ## 测试与默认存储
 
@@ -381,5 +441,5 @@ python -m pytest tests -q
 ## 当前限制
 
 - `backend/pyproject.toml` 的 editable install 还没完全补平
-- 当前二进制上传仍走 `ticket-result-submit` 内联 `base64`
+- 当前大文件链路只补到控制面分段上传；还没有扩到 worker-runtime 上传面、浏览器直传或云厂商预签名 multipart
 - 公开互联网场景下还没有完整身份层；当前 `worker-admin` 即使加了可信代理断言，也仍只是受信控制面入口，不适合直接当公网租户自助面暴露

@@ -444,13 +444,14 @@ Large artifacts should not be stored inline in SQLite.
 
 Current minimal implementation status:
 
-- SQLite `artifact_index` stores artifact metadata, materialization status, lifecycle status, retention fields, content hash, and optional filesystem location.
-- Filesystem storage is rooted at `backend/data/artifacts/` by default and can be overridden with `BOARDROOM_OS_ARTIFACT_STORE_ROOT`.
+- SQLite `artifact_index` stores artifact metadata, materialization status, lifecycle status, retention fields, content hash, local relative path or object key, and storage delete bookkeeping.
+- Local filesystem storage is rooted at `backend/data/artifacts/` by default and can be overridden with `BOARDROOM_OS_ARTIFACT_STORE_ROOT`; the same control plane can now also switch to a S3-compatible object-store backend.
 - `JSON`, `TEXT`, `MARKDOWN`, `IMAGE`, `PDF`, and other medium-sized binary artifacts can be materialized to normalized relative paths under that root through `ticket-result-submit`.
 - Binary artifacts may still be accepted without inline body and remain `materialization_status = REGISTERED_ONLY` for compatibility.
 - The current store uses safe relative-path normalization plus temporary-file write and atomic replace semantics.
 - Artifact lifecycle now distinguishes `ACTIVE`, `DELETED`, and `EXPIRED`.
 - Runtime exposes local artifact metadata / content / preview APIs keyed by `artifact_ref`.
+- Control-plane multipart upload is now available through `artifact_upload_session` + `artifact_upload_part`, so larger binary bodies can be uploaded first and then consumed by `ticket-result-submit` through `upload_session_id`.
 
 Recommended storage split:
 
@@ -464,8 +465,8 @@ Recommended URI patterns:
 
 Current conservative reality:
 
-- `storage_relpath` currently uses normalized internal relative paths instead of external signed URLs.
-- Binary upload currently uses inline `base64` in `ticket-result-submit`; multipart upload, chunking, and object storage are still out of scope for the current MVP.
+- `storage_relpath` still uses normalized internal relative paths for the local backend, while object-store artifacts now persist a deterministic `storage_object_key`.
+- Binary upload now supports both inline `base64` and control-plane multipart upload sessions; browser direct upload, worker-runtime direct upload, and cloud pre-signed multipart remain out of scope for the current MVP.
 - UI / review surfaces still use local relative artifact API paths.
 - External worker handoff now uses per-worker bootstrap tokens plus refreshable worker sessions on `GET /api/v1/worker-runtime/assignments`; request-time legacy shared-secret fallback has been removed from `/api/v1/worker-runtime/*`, while the bootstrap and delivery signing secrets may still fall back to `BOARDROOM_OS_WORKER_SHARED_SECRET` as configuration compatibility.
 - The returned execution package, artifact access descriptors, and worker command endpoints are rewritten into absolute `/api/v1/worker-runtime/*` URLs carrying short-lived signed `access_token` query parameters scoped to one worker, one ticket, and one route family.

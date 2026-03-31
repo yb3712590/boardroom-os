@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
@@ -55,6 +56,47 @@ from app.core.constants import (
     TICKET_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_TIMED_OUT,
 )
+
+
+class _FakeObjectStoreClient:
+    def __init__(self, *, fail_delete: bool = False):
+        self.fail_delete = fail_delete
+        self.objects: dict[str, bytes] = {}
+        self.media_types: dict[str, str | None] = {}
+
+    def put_object(self, *, bucket: str, key: str, body: bytes, media_type: str | None = None) -> None:
+        self.objects[f"{bucket}:{key}"] = body
+        self.media_types[f"{bucket}:{key}"] = media_type
+
+    def get_object(self, *, bucket: str, key: str) -> bytes:
+        return self.objects[f"{bucket}:{key}"]
+
+    def delete_object(self, *, bucket: str, key: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("simulated object delete failure")
+        self.objects.pop(f"{bucket}:{key}", None)
+        self.media_types.pop(f"{bucket}:{key}", None)
+
+
+@contextmanager
+def _create_client_with_fake_object_store(monkeypatch, *, fail_delete: bool = False):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ENABLED", "1")
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_BUCKET", "boardroom-artifacts")
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ENDPOINT", "https://object.local")
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ACCESS_KEY", "local-access")
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_SECRET_KEY", "local-secret")
+    fake_client = _FakeObjectStoreClient(fail_delete=fail_delete)
+
+    import app.core.artifact_store as artifact_store_module
+
+    monkeypatch.setattr(
+        artifact_store_module,
+        "build_s3_compatible_object_store_client",
+        lambda settings: fake_client,
+    )
+    from app.main import create_app
+    with TestClient(create_app()) as client:
+        yield client, fake_client
 
 
 def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
@@ -3858,6 +3900,228 @@ def test_artifact_cleanup_does_not_recount_storage_already_cleared(client, set_t
     assert cleanup_events[1]["payload"]["expired_count"] == 0
     assert cleanup_events[1]["payload"]["storage_deleted_count"] == 0
     assert cleanup_events[1]["payload"]["already_cleared_count"] == 0
+
+
+def test_artifact_upload_session_flow_materializes_local_binary_artifact_and_consumes_session(
+    db_path,
+    set_ticket_time,
+):
+        from app.main import create_app
+
+        app = create_app()
+        with TestClient(app) as client:
+            set_ticket_time("2026-03-31T19:00:00+08:00")
+            _create_lease_and_start_ticket(client, allowed_write_set=["reports/ops/*"])
+
+        create_response = client.post(
+            "/api/v1/artifact-uploads/sessions",
+            json={
+                "filename": "runtime-bundle.zip",
+                "media_type": "application/zip",
+            },
+        )
+        session_id = create_response.json()["data"]["session_id"]
+        part_one = client.put(
+            f"/api/v1/artifact-uploads/sessions/{session_id}/parts/1",
+            content=b"abc",
+            headers={"content-type": "application/octet-stream"},
+        )
+        part_two = client.put(
+            f"/api/v1/artifact-uploads/sessions/{session_id}/parts/2",
+            content=b"defg",
+            headers={"content-type": "application/octet-stream"},
+        )
+        complete_response = client.post(f"/api/v1/artifact-uploads/sessions/{session_id}/complete")
+
+        artifact_ref = "art://reports/ops/runtime-bundle.zip"
+        submit_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                artifact_refs=[artifact_ref],
+                payload={
+                    "summary": "Uploaded runtime bundle is ready.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Uploaded binary bundle.",
+                            "artifact_refs": [artifact_ref],
+                        }
+                    ],
+                },
+                written_artifacts=[
+                    {
+                        "path": "reports/ops/runtime-bundle.zip",
+                        "artifact_ref": artifact_ref,
+                        "kind": "BINARY",
+                        "media_type": "application/zip",
+                        "upload_session_id": session_id,
+                    }
+                ],
+                idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:uploaded-bundle",
+            ),
+        )
+        metadata_response = client.get("/api/v1/artifacts/by-ref", params={"artifact_ref": artifact_ref})
+        content_response = client.get(
+            "/api/v1/artifacts/content",
+            params={"artifact_ref": artifact_ref, "disposition": "attachment"},
+        )
+
+        repository = client.app.state.repository
+        stored_artifact = repository.get_artifact_by_ref(artifact_ref)
+        upload_session = repository.get_artifact_upload_session(session_id)
+
+        assert create_response.status_code == 200
+        assert create_response.json()["data"]["status"] == "INITIATED"
+        assert part_one.status_code == 200
+        assert part_two.status_code == 200
+        assert complete_response.status_code == 200
+        assert complete_response.json()["data"]["status"] == "COMPLETED"
+        assert submit_response.status_code == 200
+        assert metadata_response.status_code == 200
+        assert content_response.status_code == 200
+        assert content_response.content == b"abcdefg"
+        assert stored_artifact is not None
+        assert stored_artifact["storage_backend"] == "LOCAL_FILE"
+        assert stored_artifact["storage_delete_status"] == "PRESENT"
+        assert stored_artifact["storage_relpath"] is not None
+        assert stored_artifact["storage_object_key"] is None
+        assert metadata_response.json()["data"]["storage_backend"] == "LOCAL_FILE"
+        assert metadata_response.json()["data"]["storage_delete_status"] == "PRESENT"
+        assert upload_session is not None
+        assert upload_session["status"] == "CONSUMED"
+        assert upload_session["consumed_by_artifact_ref"] == artifact_ref
+
+
+def test_object_store_artifact_content_route_reads_remote_body(
+    monkeypatch,
+    db_path,
+    set_ticket_time,
+):
+    with _create_client_with_fake_object_store(monkeypatch) as (client, _fake_client):
+        set_ticket_time("2026-03-31T19:10:00+08:00")
+        _create_lease_and_start_ticket(client, allowed_write_set=["reports/ops/*"])
+        artifact_ref = "art://reports/ops/object-store-bundle.zip"
+        submit_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                artifact_refs=[artifact_ref],
+                payload={
+                    "summary": "Remote object store artifact is ready.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Remote binary bundle.",
+                            "artifact_refs": [artifact_ref],
+                        }
+                    ],
+                },
+                written_artifacts=[
+                    {
+                        "path": "reports/ops/object-store-bundle.zip",
+                        "artifact_ref": artifact_ref,
+                        "kind": "BINARY",
+                        "media_type": "application/zip",
+                        "content_base64": _encode_base64(b"remote-binary"),
+                    }
+                ],
+                idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:object-store-inline",
+            ),
+        )
+        repository = client.app.state.repository
+        stored_artifact = repository.get_artifact_by_ref(artifact_ref)
+        metadata_response = client.get("/api/v1/artifacts/by-ref", params={"artifact_ref": artifact_ref})
+        content_response = client.get(
+            "/api/v1/artifacts/content",
+            params={"artifact_ref": artifact_ref, "disposition": "inline"},
+        )
+
+        assert submit_response.status_code == 200
+        assert stored_artifact is not None
+        assert stored_artifact["storage_backend"] == "OBJECT_STORE"
+        assert stored_artifact["storage_relpath"] is None
+        assert stored_artifact["storage_object_key"] is not None
+        assert stored_artifact["storage_delete_status"] == "PRESENT"
+        assert metadata_response.status_code == 200
+        assert metadata_response.json()["data"]["storage_backend"] == "OBJECT_STORE"
+        assert metadata_response.json()["data"]["storage_delete_status"] == "PRESENT"
+        assert content_response.status_code == 200
+        assert content_response.content == b"remote-binary"
+
+
+def test_object_store_cleanup_failure_surfaces_delete_failed_status_and_dashboard_counts(
+    monkeypatch,
+    db_path,
+    set_ticket_time,
+):
+    with _create_client_with_fake_object_store(monkeypatch, fail_delete=True) as (client, _fake_client):
+        set_ticket_time("2026-03-31T19:20:00+08:00")
+        _create_lease_and_start_ticket(client, allowed_write_set=["reports/ops/*"])
+        artifact_ref = "art://reports/ops/object-store-cleanup.zip"
+        submit_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                artifact_refs=[artifact_ref],
+                payload={
+                    "summary": "Remote object cleanup failure should stay visible.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Cleanup failure option.",
+                            "artifact_refs": [artifact_ref],
+                        }
+                    ],
+                },
+                written_artifacts=[
+                    {
+                        "path": "reports/ops/object-store-cleanup.zip",
+                        "artifact_ref": artifact_ref,
+                        "kind": "BINARY",
+                        "media_type": "application/zip",
+                        "content_base64": _encode_base64(b"cleanup-failure"),
+                        "retention_class": "EPHEMERAL",
+                        "retention_ttl_sec": 60,
+                    }
+                ],
+                idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:object-store-cleanup",
+            ),
+        )
+
+        set_ticket_time("2026-03-31T19:22:00+08:00")
+        cleanup_response = client.post(
+            "/api/v1/commands/artifact-cleanup",
+            json={
+                "cleaned_by": "emp_ops_1",
+                "idempotency_key": "artifact-cleanup:object-store-delete-failure",
+            },
+        )
+        repository = client.app.state.repository
+        stored_artifact = repository.get_artifact_by_ref(artifact_ref)
+        dashboard_response = client.get("/api/v1/projections/dashboard")
+        candidates_response = client.get("/api/v1/projections/artifact-cleanup-candidates")
+
+        assert submit_response.status_code == 200
+        assert cleanup_response.status_code == 200
+        assert stored_artifact is not None
+        assert stored_artifact["lifecycle_status"] == "EXPIRED"
+        assert stored_artifact["storage_backend"] == "OBJECT_STORE"
+        assert stored_artifact["storage_delete_status"] == "DELETE_FAILED"
+        assert stored_artifact["storage_deleted_at"] is None
+        assert stored_artifact["storage_delete_error"] == "simulated object delete failure"
+        assert dashboard_response.status_code == 200
+        assert dashboard_response.json()["data"]["artifact_maintenance"]["delete_failed_count"] == 1
+        projected_artifact = next(
+            item
+            for item in candidates_response.json()["data"]["artifacts"]
+            if item["artifact_ref"] == artifact_ref
+        )
+        assert projected_artifact["storage_backend"] == "OBJECT_STORE"
+        assert projected_artifact["storage_delete_status"] == "DELETE_FAILED"
 
 
 def test_ticket_result_submit_schema_error_converts_to_controlled_failure(client, set_ticket_time):

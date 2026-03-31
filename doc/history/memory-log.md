@@ -134,6 +134,15 @@
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "retention or artifact_cleanup or runtime_default_result_artifacts_use_review_evidence_retention" -q` -> `7 passed, 162 deselected`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_retention or artifact_cleanup or review_evidence_artifact_retention or retention_class_source" -q` -> `4 passed, 8 deselected`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup or runtime_default" -q` -> `1 passed, 11 deselected`
+- Extended artifact storage from local-file only into a local-default / optional object-store abstraction. `artifact_index` now also persists `storage_backend`, `storage_object_key`, `storage_delete_status`, and `storage_delete_error`, while old rows backfill conservatively during repository initialization.
+- Added control-plane multipart upload state under `artifact_upload_session` + `artifact_upload_part`, plus `POST /api/v1/artifact-uploads/sessions`, `PUT /parts/{part_number}`, `POST /complete`, and `POST /abort`, so medium and large binary artifacts can be uploaded first and then consumed through `ticket-result-submit` via `upload_session_id`.
+- Kept artifact governance on one path: `ticket-result-submit` still owns retention-class resolution, expiry calculation, artifact indexing, and audit semantics; upload sessions only prepare the binary body.
+- Extended artifact delete and cleanup from “delete local file” into “delete by storage backend and write back storage outcome”. Cleanup and ticket artifact projections now expose `storage_backend` / `storage_delete_status`, and dashboard maintenance now also shows `delete_failed_count`.
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact or retention or cleanup or object_store" -q` -> `25 passed, 147 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact" -q` -> `5 passed, 9 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup" -q` -> `1 passed, 11 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `243 passed`
 
 ### Current Watch-Outs
 

@@ -207,6 +207,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 ),
                 pending_expired_count=int(artifact_cleanup_summary["pending_expired_count"]),
                 pending_storage_cleanup_count=int(artifact_cleanup_summary["pending_storage_cleanup_count"]),
+                delete_failed_count=int(artifact_cleanup_summary["delete_failed_count"]),
                 legacy_unknown_retention_count=int(
                     artifact_cleanup_summary["legacy_unknown_retention_count"]
                 ),
@@ -451,6 +452,8 @@ def build_ticket_artifacts_projection(
                     deleted_at=metadata["deleted_at"],
                     deleted_by=metadata["deleted_by"],
                     delete_reason=metadata["delete_reason"],
+                    storage_backend=metadata["storage_backend"],
+                    storage_delete_status=metadata["storage_delete_status"],
                     storage_deleted_at=metadata["storage_deleted_at"],
                     size_bytes=metadata["size_bytes"],
                     content_hash=metadata["content_hash"],
@@ -506,6 +509,8 @@ def build_artifact_cleanup_candidates_projection(
                 retention_ttl_sec=metadata["retention_ttl_sec"],
                 retention_policy_source=metadata["retention_policy_source"],
                 expires_at=metadata["expires_at"],
+                storage_backend=metadata["storage_backend"],
+                storage_delete_status=metadata["storage_delete_status"],
                 storage_deleted_at=metadata["storage_deleted_at"],
                 cleanup_reason=cleanup_reason,
             )

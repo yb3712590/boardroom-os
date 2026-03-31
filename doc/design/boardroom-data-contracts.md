@@ -145,6 +145,7 @@ Purpose:
       "cleanup_interval_sec": 300,
       "pending_expired_count": 0,
       "pending_storage_cleanup_count": 0,
+      "delete_failed_count": 0,
       "last_run_at": "2026-03-31T18:05:00+08:00",
       "last_cleaned_by": "system:artifact-cleanup",
       "last_trigger": "auto_scheduler",
@@ -276,6 +277,8 @@ Purpose:
         "lifecycle_status": "ACTIVE",
         "deleted_by": null,
         "delete_reason": null,
+        "storage_backend": "LOCAL_FILE",
+        "storage_delete_status": "PRESENT",
         "storage_deleted_at": null,
         "content_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Foption-a.json&disposition=inline",
         "download_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Foption-a.json&disposition=attachment",
@@ -294,6 +297,8 @@ Purpose:
         "lifecycle_status": "ACTIVE",
         "deleted_by": null,
         "delete_reason": null,
+        "storage_backend": "OBJECT_STORE",
+        "storage_delete_status": "PRESENT",
         "storage_deleted_at": null,
         "content_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Fmockup.png&disposition=inline",
         "download_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fruntime%2Ftkt_ui_home_03%2Fmockup.png&disposition=attachment",
@@ -314,6 +319,7 @@ Rules:
 - `status = REGISTERED_ONLY` means the ref and metadata were accepted, but runtime has no stored body for that artifact yet
 - `materialization_status` keeps the raw storage fact, while `lifecycle_status` tells consumers whether the artifact is still consumable
 - `deleted_by` / `delete_reason` / `storage_deleted_at` let the UI or值守读面区分“逻辑上已经失效”和“底层文件也已经清掉”
+- `storage_backend` / `storage_delete_status` let the UI see whether the artifact body currently lives on local disk or object storage, and whether cleanup is pending, failed, or already done
 - `content_url` / `download_url` / `preview_url` are local backend artifact routes keyed by `artifact_ref`
 
 ### 5.1.1 Artifact Read APIs
@@ -1186,6 +1192,8 @@ Implementation rules:
 - `JSON` requires `content_json`
 - `TEXT` and `MARKDOWN` require `content_text`
 - binary artifact kinds may provide `content_base64` plus optional `media_type` to trigger real materialization
+- binary artifact kinds may also provide `upload_session_id` to consume one already-completed control-plane multipart upload session
+- `content_base64` and `upload_session_id` must not appear together on the same artifact
 - binary artifact kinds may still omit inline body and remain `REGISTERED_ONLY` for compatibility
 - each written artifact may carry `retention_class` and optional `retention_ttl_sec`
 - artifact validation and materialization happen before the ticket is marked completed; failures are converted into the controlled governance paths `SCHEMA_ERROR`, `WRITE_SET_VIOLATION`, `ARTIFACT_VALIDATION_ERROR`, or `ARTIFACT_PERSIST_ERROR`

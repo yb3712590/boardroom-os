@@ -69,6 +69,7 @@ class ArtifactMaintenanceProjection(StrictModel):
     retention_defaults: dict[str, int | None]
     pending_expired_count: int
     pending_storage_cleanup_count: int
+    delete_failed_count: int
     legacy_unknown_retention_count: int
     last_run_at: datetime | None = None
     last_cleaned_by: str | None = None
@@ -182,6 +183,8 @@ class TicketArtifactProjection(StrictModel):
     deleted_at: datetime | None = None
     deleted_by: str | None = None
     delete_reason: str | None = None
+    storage_backend: str
+    storage_delete_status: str
     storage_deleted_at: datetime | None = None
     size_bytes: int | None = None
     content_hash: str | None = None
@@ -210,6 +213,8 @@ class ArtifactCleanupCandidateProjection(StrictModel):
     retention_ttl_sec: int | None = None
     retention_policy_source: str | None = None
     expires_at: datetime | None = None
+    storage_backend: str
+    storage_delete_status: str
     storage_deleted_at: datetime | None = None
     cleanup_reason: str
 

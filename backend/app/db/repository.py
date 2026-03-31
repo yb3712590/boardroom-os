@@ -130,7 +130,10 @@ class ControlPlaneRepository:
             self._ensure_compile_manifest_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_artifact_index_shape(connection)
+            self._ensure_artifact_upload_session_shape(connection)
+            self._ensure_artifact_upload_part_shape(connection)
             self._backfill_scope_defaults(connection)
+            self._backfill_artifact_storage_defaults(connection)
             self._backfill_artifact_retention_defaults(connection)
             self._seed_employee_roster(connection)
         self._initialized = True
@@ -2465,6 +2468,10 @@ class ControlPlaneRepository:
         retention_class_source: str | None = None,
         retention_ttl_sec: int | None = None,
         retention_policy_source: str | None = None,
+        storage_backend: str = "LOCAL_FILE",
+        storage_object_key: str | None = None,
+        storage_delete_status: str | None = "PRESENT",
+        storage_delete_error: str | None = None,
         storage_deleted_at: datetime | None = None,
     ) -> None:
         connection.execute(
@@ -2486,13 +2493,17 @@ class ControlPlaneRepository:
                 retention_class_source,
                 retention_ttl_sec,
                 retention_policy_source,
+                storage_backend,
+                storage_object_key,
+                storage_delete_status,
+                storage_delete_error,
                 expires_at,
                 deleted_at,
                 deleted_by,
                 delete_reason,
                 storage_deleted_at,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 artifact_ref,
@@ -2511,6 +2522,10 @@ class ControlPlaneRepository:
                 retention_class_source,
                 retention_ttl_sec,
                 retention_policy_source,
+                storage_backend,
+                storage_object_key,
+                storage_delete_status,
+                storage_delete_error,
                 expires_at.isoformat() if expires_at is not None else None,
                 deleted_at.isoformat() if deleted_at is not None else None,
                 deleted_by,
@@ -2519,6 +2534,233 @@ class ControlPlaneRepository:
                 created_at.isoformat(),
             ),
         )
+
+    def create_artifact_upload_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        created_at: datetime,
+        created_by: str,
+        filename: str | None,
+        media_type: str | None,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO artifact_upload_session (
+                session_id,
+                status,
+                filename,
+                media_type,
+                assembled_staging_relpath,
+                size_bytes,
+                content_hash,
+                part_count,
+                created_at,
+                updated_at,
+                completed_at,
+                aborted_at,
+                consumed_at,
+                created_by,
+                consumed_by_artifact_ref
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                "INITIATED",
+                filename,
+                media_type,
+                None,
+                None,
+                None,
+                0,
+                created_at.isoformat(),
+                created_at.isoformat(),
+                None,
+                None,
+                None,
+                created_by,
+                None,
+            ),
+        )
+
+    def save_artifact_upload_part(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        part_number: int,
+        staging_relpath: str,
+        size_bytes: int,
+        content_hash: str,
+        uploaded_at: datetime,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO artifact_upload_part (
+                session_id,
+                part_number,
+                staging_relpath,
+                size_bytes,
+                content_hash,
+                uploaded_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, part_number) DO UPDATE SET
+                staging_relpath = excluded.staging_relpath,
+                size_bytes = excluded.size_bytes,
+                content_hash = excluded.content_hash,
+                uploaded_at = excluded.uploaded_at
+            """,
+            (
+                session_id,
+                part_number,
+                staging_relpath,
+                size_bytes,
+                content_hash,
+                uploaded_at.isoformat(),
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE artifact_upload_session
+            SET status = CASE
+                    WHEN status = 'INITIATED' THEN 'UPLOADING'
+                    ELSE status
+                END,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                uploaded_at.isoformat(),
+                session_id,
+            ),
+        )
+
+    def complete_artifact_upload_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        completed_at: datetime,
+        assembled_staging_relpath: str,
+        size_bytes: int,
+        content_hash: str,
+        part_count: int,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE artifact_upload_session
+            SET status = 'COMPLETED',
+                assembled_staging_relpath = ?,
+                size_bytes = ?,
+                content_hash = ?,
+                part_count = ?,
+                completed_at = ?,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                assembled_staging_relpath,
+                size_bytes,
+                content_hash,
+                part_count,
+                completed_at.isoformat(),
+                completed_at.isoformat(),
+                session_id,
+            ),
+        )
+
+    def consume_artifact_upload_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        consumed_at: datetime,
+        consumed_by_artifact_ref: str,
+    ) -> bool:
+        cursor = connection.execute(
+            """
+            UPDATE artifact_upload_session
+            SET status = 'CONSUMED',
+                consumed_at = ?,
+                updated_at = ?,
+                consumed_by_artifact_ref = ?
+            WHERE session_id = ?
+              AND status = 'COMPLETED'
+              AND (
+                    consumed_by_artifact_ref IS NULL
+                    OR TRIM(consumed_by_artifact_ref) = ''
+                  )
+            """,
+            (
+                consumed_at.isoformat(),
+                consumed_at.isoformat(),
+                consumed_by_artifact_ref,
+                session_id,
+            ),
+        )
+        return cursor.rowcount > 0
+
+    def abort_artifact_upload_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        aborted_at: datetime,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE artifact_upload_session
+            SET status = 'ABORTED',
+                aborted_at = ?,
+                updated_at = ?
+            WHERE session_id = ?
+              AND status != 'CONSUMED'
+            """,
+            (
+                aborted_at.isoformat(),
+                aborted_at.isoformat(),
+                session_id,
+            ),
+        )
+
+    def get_artifact_upload_session(
+        self,
+        session_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = "SELECT * FROM artifact_upload_session WHERE session_id = ?"
+        if connection is not None:
+            row = connection.execute(query, (session_id,)).fetchone()
+            if row is None:
+                return None
+            return self._convert_artifact_upload_session_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (session_id,)).fetchone()
+            if row is None:
+                return None
+            return self._convert_artifact_upload_session_row(row)
+
+    def list_artifact_upload_parts(
+        self,
+        session_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM artifact_upload_part
+            WHERE session_id = ?
+            ORDER BY part_number ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, (session_id,)).fetchall()
+            return [self._convert_artifact_upload_part_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, (session_id,)).fetchall()
+            return [self._convert_artifact_upload_part_row(row) for row in rows]
 
     def get_artifact_by_ref(
         self,
@@ -2575,8 +2817,19 @@ class ControlPlaneRepository:
             WHERE (lifecycle_status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?)
                OR (
                     lifecycle_status IN ('DELETED', 'EXPIRED')
-                    AND storage_relpath IS NOT NULL
-                    AND storage_deleted_at IS NULL
+                    AND (
+                        storage_delete_status IN ('PRESENT', 'DELETE_PENDING', 'DELETE_FAILED')
+                        OR (
+                            (storage_delete_status IS NULL OR TRIM(storage_delete_status) = '')
+                            AND (
+                                (
+                                    (storage_relpath IS NOT NULL AND TRIM(storage_relpath) != '')
+                                    OR (storage_object_key IS NOT NULL AND TRIM(storage_object_key) != '')
+                                )
+                                AND storage_deleted_at IS NULL
+                            )
+                        )
+                    )
                )
             ORDER BY created_at ASC, artifact_ref ASC
             """,
@@ -2598,8 +2851,19 @@ class ControlPlaneRepository:
                     (lifecycle_status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?)
                     OR (
                         lifecycle_status IN ('DELETED', 'EXPIRED')
-                        AND storage_relpath IS NOT NULL
-                        AND storage_deleted_at IS NULL
+                        AND (
+                            storage_delete_status IN ('PRESENT', 'DELETE_PENDING', 'DELETE_FAILED')
+                            OR (
+                                (storage_delete_status IS NULL OR TRIM(storage_delete_status) = '')
+                                AND (
+                                    (
+                                        (storage_relpath IS NOT NULL AND TRIM(storage_relpath) != '')
+                                        OR (storage_object_key IS NOT NULL AND TRIM(storage_object_key) != '')
+                                    )
+                                    AND storage_deleted_at IS NULL
+                                )
+                            )
+                        )
                     )
                 )"""
         ]
@@ -2631,11 +2895,49 @@ class ControlPlaneRepository:
         connection.execute(
             """
             UPDATE artifact_index
-            SET storage_deleted_at = ?
+            SET storage_deleted_at = ?,
+                storage_delete_status = 'DELETED',
+                storage_delete_error = NULL
             WHERE artifact_ref = ?
             """,
             (
                 storage_deleted_at.isoformat(),
+                artifact_ref,
+            ),
+        )
+
+    def mark_artifact_storage_delete_pending(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        artifact_ref: str,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET storage_delete_status = 'DELETE_PENDING',
+                storage_delete_error = NULL
+            WHERE artifact_ref = ?
+            """,
+            (artifact_ref,),
+        )
+
+    def mark_artifact_storage_delete_failed(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        artifact_ref: str,
+        error_message: str,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET storage_delete_status = 'DELETE_FAILED',
+                storage_delete_error = ?
+            WHERE artifact_ref = ?
+            """,
+            (
+                error_message,
                 artifact_ref,
             ),
         )
@@ -2778,8 +3080,26 @@ class ControlPlaneRepository:
                 SELECT COUNT(*) AS total
                 FROM artifact_index
                 WHERE lifecycle_status IN ('DELETED', 'EXPIRED')
-                  AND storage_relpath IS NOT NULL
-                  AND storage_deleted_at IS NULL
+                  AND (
+                        storage_delete_status IN ('PRESENT', 'DELETE_PENDING', 'DELETE_FAILED')
+                        OR (
+                            (storage_delete_status IS NULL OR TRIM(storage_delete_status) = '')
+                            AND (
+                                (
+                                    (storage_relpath IS NOT NULL AND TRIM(storage_relpath) != '')
+                                    OR (storage_object_key IS NOT NULL AND TRIM(storage_object_key) != '')
+                                )
+                                AND storage_deleted_at IS NULL
+                            )
+                        )
+                  )
+                """,
+            ).fetchone()
+            delete_failed_row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM artifact_index
+                WHERE storage_delete_status = 'DELETE_FAILED'
                 """,
             ).fetchone()
             legacy_unknown_row = connection.execute(
@@ -2806,6 +3126,7 @@ class ControlPlaneRepository:
         return {
             "pending_expired_count": int(pending_expired_row["total"]),
             "pending_storage_cleanup_count": int(pending_storage_row["total"]),
+            "delete_failed_count": int(delete_failed_row["total"]),
             "legacy_unknown_retention_count": int(legacy_unknown_row["total"]),
             "latest_cleanup_event": latest_cleanup_event,
         }
@@ -3213,6 +3534,30 @@ class ControlPlaneRepository:
             else None
         )
         converted["path"] = converted["logical_path"]
+        return converted
+
+    def _convert_artifact_upload_session_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in (
+            "created_at",
+            "updated_at",
+            "completed_at",
+            "aborted_at",
+            "consumed_at",
+        ):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["size_bytes"] = (
+            int(converted["size_bytes"]) if converted.get("size_bytes") is not None else None
+        )
+        converted["part_count"] = int(converted.get("part_count") or 0)
+        return converted
+
+    def _convert_artifact_upload_part_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["part_number"] = int(converted["part_number"])
+        converted["size_bytes"] = int(converted["size_bytes"])
+        converted["uploaded_at"] = datetime.fromisoformat(converted["uploaded_at"])
         return converted
 
     def _convert_workflow_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -4466,6 +4811,10 @@ class ControlPlaneRepository:
                 retention_class_source TEXT,
                 retention_ttl_sec INTEGER,
                 retention_policy_source TEXT,
+                storage_backend TEXT,
+                storage_object_key TEXT,
+                storage_delete_status TEXT,
+                storage_delete_error TEXT,
                 expires_at TEXT,
                 deleted_at TEXT,
                 deleted_by TEXT,
@@ -4496,6 +4845,10 @@ class ControlPlaneRepository:
             "retention_class_source": "TEXT",
             "retention_ttl_sec": "INTEGER",
             "retention_policy_source": "TEXT",
+            "storage_backend": "TEXT",
+            "storage_object_key": "TEXT",
+            "storage_delete_status": "TEXT",
+            "storage_delete_error": "TEXT",
             "expires_at": "TEXT",
             "deleted_at": "TEXT",
             "deleted_by": "TEXT",
@@ -4516,6 +4869,51 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_artifact_index_node_id ON artifact_index(node_id)"
+        )
+
+    def _ensure_artifact_upload_session_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS artifact_upload_session (
+                session_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                filename TEXT,
+                media_type TEXT,
+                assembled_staging_relpath TEXT,
+                size_bytes INTEGER,
+                content_hash TEXT,
+                part_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                aborted_at TEXT,
+                consumed_at TEXT,
+                created_by TEXT NOT NULL,
+                consumed_by_artifact_ref TEXT
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_artifact_upload_session_status ON artifact_upload_session(status)"
+        )
+
+    def _ensure_artifact_upload_part_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS artifact_upload_part (
+                session_id TEXT NOT NULL,
+                part_number INTEGER NOT NULL,
+                staging_relpath TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, part_number),
+                FOREIGN KEY(session_id) REFERENCES artifact_upload_session(session_id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_artifact_upload_part_session_id ON artifact_upload_part(session_id)"
         )
 
     def _backfill_artifact_retention_defaults(self, connection: sqlite3.Connection) -> None:
@@ -4591,6 +4989,33 @@ class ControlPlaneRepository:
                OR TRIM(retention_class_source) = ''
             """,
             (ARTIFACT_RETENTION_CLASS_SOURCE_LEGACY_COMPAT,),
+        )
+
+    def _backfill_artifact_storage_defaults(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET storage_backend = 'LOCAL_FILE'
+            WHERE storage_backend IS NULL
+               OR TRIM(storage_backend) = ''
+            """
+        )
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET storage_delete_status = CASE
+                    WHEN storage_deleted_at IS NOT NULL THEN 'DELETED'
+                    WHEN materialization_status = 'MATERIALIZED'
+                         AND (
+                                (storage_relpath IS NOT NULL AND TRIM(storage_relpath) != '')
+                                OR (storage_object_key IS NOT NULL AND TRIM(storage_object_key) != '')
+                             )
+                        THEN 'PRESENT'
+                    ELSE 'DELETED'
+                END
+            WHERE storage_delete_status IS NULL
+               OR TRIM(storage_delete_status) = ''
+            """
         )
 
     def _backfill_scope_defaults(self, connection: sqlite3.Connection) -> None:

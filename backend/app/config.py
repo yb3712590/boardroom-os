@@ -14,7 +14,14 @@ class Settings:
     db_path: Path
     developer_inspector_root: Path
     artifact_store_root: Path
+    artifact_upload_staging_root: Path
     runtime_execution_mode: RuntimeExecutionMode
+    artifact_object_store_enabled: bool
+    artifact_object_store_endpoint: str | None
+    artifact_object_store_bucket: str | None
+    artifact_object_store_access_key: str | None
+    artifact_object_store_secret_key: str | None
+    artifact_object_store_region: str | None
     worker_bootstrap_signing_secret: str | None
     worker_admin_signing_secret: str | None
     worker_shared_secret: str | None
@@ -38,6 +45,9 @@ class Settings:
     artifact_ephemeral_default_ttl_sec: int = 604800
     artifact_operational_evidence_default_ttl_sec: int = 1209600
     artifact_review_evidence_default_ttl_sec: int = 2592000
+    artifact_upload_part_size_limit_bytes: int = 5 * 1024 * 1024
+    artifact_upload_max_size_bytes: int = 100 * 1024 * 1024
+    artifact_upload_max_part_count: int = 10_000
 
 
 def _read_bool_env(name: str, default: bool = False) -> bool:
@@ -77,6 +87,21 @@ def get_settings() -> Settings:
             repo_root / "backend" / "data" / "artifacts",
         )
     )
+    artifact_upload_staging_root = Path(
+        os.environ.get(
+            "BOARDROOM_OS_ARTIFACT_UPLOAD_STAGING_ROOT",
+            repo_root / "backend" / "data" / "artifact_uploads",
+        )
+    )
+    artifact_object_store_enabled = _read_bool_env(
+        "BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ENABLED",
+        default=False,
+    )
+    artifact_object_store_endpoint = os.environ.get("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ENDPOINT")
+    artifact_object_store_bucket = os.environ.get("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_BUCKET")
+    artifact_object_store_access_key = os.environ.get("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ACCESS_KEY")
+    artifact_object_store_secret_key = os.environ.get("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_SECRET_KEY")
+    artifact_object_store_region = os.environ.get("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_REGION")
     busy_timeout_ms = int(os.environ.get("BOARDROOM_OS_BUSY_TIMEOUT_MS", "5000"))
     recent_event_limit = int(os.environ.get("BOARDROOM_OS_RECENT_EVENT_LIMIT", "10"))
     scheduler_poll_interval_sec = float(
@@ -166,11 +191,39 @@ def get_settings() -> Settings:
         raise ValueError(
             "BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC must be greater than 0."
         )
+    artifact_upload_part_size_limit_bytes = int(
+        os.environ.get("BOARDROOM_OS_ARTIFACT_UPLOAD_PART_SIZE_LIMIT_BYTES", str(5 * 1024 * 1024))
+    )
+    artifact_upload_max_size_bytes = int(
+        os.environ.get("BOARDROOM_OS_ARTIFACT_UPLOAD_MAX_SIZE_BYTES", str(100 * 1024 * 1024))
+    )
+    artifact_upload_max_part_count = int(
+        os.environ.get("BOARDROOM_OS_ARTIFACT_UPLOAD_MAX_PART_COUNT", "10000")
+    )
+    if artifact_upload_part_size_limit_bytes <= 0:
+        raise ValueError(
+            "BOARDROOM_OS_ARTIFACT_UPLOAD_PART_SIZE_LIMIT_BYTES must be greater than 0."
+        )
+    if artifact_upload_max_size_bytes <= 0:
+        raise ValueError(
+            "BOARDROOM_OS_ARTIFACT_UPLOAD_MAX_SIZE_BYTES must be greater than 0."
+        )
+    if artifact_upload_max_part_count <= 0:
+        raise ValueError(
+            "BOARDROOM_OS_ARTIFACT_UPLOAD_MAX_PART_COUNT must be greater than 0."
+        )
     return Settings(
         db_path=db_path,
         developer_inspector_root=developer_inspector_root,
         artifact_store_root=artifact_store_root,
+        artifact_upload_staging_root=artifact_upload_staging_root,
         runtime_execution_mode=runtime_execution_mode,
+        artifact_object_store_enabled=artifact_object_store_enabled,
+        artifact_object_store_endpoint=artifact_object_store_endpoint,
+        artifact_object_store_bucket=artifact_object_store_bucket,
+        artifact_object_store_access_key=artifact_object_store_access_key,
+        artifact_object_store_secret_key=artifact_object_store_secret_key,
+        artifact_object_store_region=artifact_object_store_region,
         worker_bootstrap_signing_secret=worker_bootstrap_signing_secret,
         worker_admin_signing_secret=worker_admin_signing_secret,
         worker_shared_secret=worker_shared_secret,
@@ -194,4 +247,7 @@ def get_settings() -> Settings:
         artifact_ephemeral_default_ttl_sec=artifact_ephemeral_default_ttl_sec,
         artifact_operational_evidence_default_ttl_sec=artifact_operational_evidence_default_ttl_sec,
         artifact_review_evidence_default_ttl_sec=artifact_review_evidence_default_ttl_sec,
+        artifact_upload_part_size_limit_bytes=artifact_upload_part_size_limit_bytes,
+        artifact_upload_max_size_bytes=artifact_upload_max_size_bytes,
+        artifact_upload_max_part_count=artifact_upload_max_part_count,
     )

@@ -1341,3 +1341,182 @@ def test_initialize_adds_retention_class_source_column_as_legacy_compat(db_path)
     assert artifact["retention_ttl_sec"] == 1800
     assert artifact["retention_policy_source"] == "CLASS_DEFAULT"
     assert artifact["retention_class_source"] == "LEGACY_COMPAT"
+
+
+def test_initialize_adds_artifact_storage_columns_with_local_defaults(db_path):
+    created_at = datetime.fromisoformat("2026-03-31T17:00:00+08:00")
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE artifact_index (
+            artifact_ref TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            ticket_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            logical_path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            media_type TEXT,
+            materialization_status TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL,
+            storage_relpath TEXT,
+            content_hash TEXT,
+            size_bytes INTEGER,
+            retention_class TEXT NOT NULL,
+            retention_class_source TEXT,
+            retention_ttl_sec INTEGER,
+            retention_policy_source TEXT,
+            expires_at TEXT,
+            deleted_at TEXT,
+            deleted_by TEXT,
+            delete_reason TEXT,
+            storage_deleted_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO artifact_index (
+            artifact_ref,
+            workflow_id,
+            ticket_id,
+            node_id,
+            logical_path,
+            kind,
+            media_type,
+            materialization_status,
+            lifecycle_status,
+            storage_relpath,
+            content_hash,
+            size_bytes,
+            retention_class,
+            retention_class_source,
+            retention_ttl_sec,
+            retention_policy_source,
+            expires_at,
+            deleted_at,
+            deleted_by,
+            delete_reason,
+            storage_deleted_at,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "art://legacy/storage-defaults.bin",
+            "wf_legacy",
+            "tkt_legacy",
+            "node_legacy",
+            "artifacts/legacy/storage-defaults.bin",
+            "IMAGE",
+            "application/octet-stream",
+            "MATERIALIZED",
+            "ACTIVE",
+            "artifacts/legacy/storage-defaults.bin",
+            "hash-storage-defaults",
+            128,
+            "PERSISTENT",
+            "EXPLICIT",
+            None,
+            "NO_EXPIRY",
+            None,
+            None,
+            None,
+            None,
+            None,
+            created_at.isoformat(),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    artifact = repository.get_artifact_by_ref("art://legacy/storage-defaults.bin")
+    with repository.connection() as connection:
+        artifact_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(artifact_index)").fetchall()
+        }
+
+    assert artifact is not None
+    assert "storage_backend" in artifact_columns
+    assert "storage_object_key" in artifact_columns
+    assert "storage_delete_status" in artifact_columns
+    assert "storage_delete_error" in artifact_columns
+    assert artifact["storage_backend"] == "LOCAL_FILE"
+    assert artifact["storage_object_key"] is None
+    assert artifact["storage_delete_status"] == "PRESENT"
+    assert artifact["storage_delete_error"] is None
+
+
+def test_artifact_upload_session_lifecycle_and_consume_guard(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+    created_at = datetime.fromisoformat("2026-03-31T18:00:00+08:00")
+    completed_at = datetime.fromisoformat("2026-03-31T18:05:00+08:00")
+    consumed_at = datetime.fromisoformat("2026-03-31T18:06:00+08:00")
+
+    with repository.transaction() as connection:
+        repository.create_artifact_upload_session(
+            connection,
+            session_id="upl_session_001",
+            created_at=created_at,
+            created_by="emp_frontend_2",
+            filename="bundle.zip",
+            media_type="application/zip",
+        )
+        repository.save_artifact_upload_part(
+            connection,
+            session_id="upl_session_001",
+            part_number=1,
+            staging_relpath="uploads/upl_session_001/part-0001.bin",
+            size_bytes=3,
+            content_hash="hash-part-1",
+            uploaded_at=created_at,
+        )
+        repository.save_artifact_upload_part(
+            connection,
+            session_id="upl_session_001",
+            part_number=2,
+            staging_relpath="uploads/upl_session_001/part-0002.bin",
+            size_bytes=4,
+            content_hash="hash-part-2",
+            uploaded_at=created_at,
+        )
+        repository.complete_artifact_upload_session(
+            connection,
+            session_id="upl_session_001",
+            completed_at=completed_at,
+            assembled_staging_relpath="uploads/upl_session_001/assembled.bin",
+            size_bytes=7,
+            content_hash="hash-assembled",
+            part_count=2,
+        )
+        first_consume = repository.consume_artifact_upload_session(
+            connection,
+            session_id="upl_session_001",
+            consumed_at=consumed_at,
+            consumed_by_artifact_ref="art://runtime/tkt_visual_001/bundle.zip",
+        )
+        second_consume = repository.consume_artifact_upload_session(
+            connection,
+            session_id="upl_session_001",
+            consumed_at=consumed_at,
+            consumed_by_artifact_ref="art://runtime/tkt_visual_001/bundle-copy.zip",
+        )
+
+    session = repository.get_artifact_upload_session("upl_session_001")
+    parts = repository.list_artifact_upload_parts("upl_session_001")
+
+    assert first_consume is True
+    assert second_consume is False
+    assert session is not None
+    assert session["status"] == "CONSUMED"
+    assert session["filename"] == "bundle.zip"
+    assert session["media_type"] == "application/zip"
+    assert session["size_bytes"] == 7
+    assert session["content_hash"] == "hash-assembled"
+    assert session["part_count"] == 2
+    assert session["assembled_staging_relpath"] == "uploads/upl_session_001/assembled.bin"
+    assert session["consumed_by_artifact_ref"] == "art://runtime/tkt_visual_001/bundle.zip"
+    assert [part["part_number"] for part in parts] == [1, 2]

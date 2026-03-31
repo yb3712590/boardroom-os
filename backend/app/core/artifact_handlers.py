@@ -105,13 +105,37 @@ def handle_artifact_delete(
                 reason=f"Artifact {payload.artifact_ref} is already deleted.",
             )
 
-        if resolved_artifact_store is not None and artifact.get("storage_relpath"):
-            resolved_artifact_store.delete(str(artifact["storage_relpath"]))
-            repository.mark_artifact_storage_deleted(
-                connection,
-                artifact_ref=payload.artifact_ref,
-                storage_deleted_at=received_at,
-            )
+        if resolved_artifact_store is not None and (
+            artifact.get("storage_relpath") or artifact.get("storage_object_key")
+        ):
+            try:
+                resolved_artifact_store.delete(
+                    str(artifact["storage_relpath"]) if artifact.get("storage_relpath") else None,
+                    storage_object_key=(
+                        str(artifact["storage_object_key"])
+                        if artifact.get("storage_object_key")
+                        else None
+                    ),
+                )
+                repository.mark_artifact_storage_deleted(
+                    connection,
+                    artifact_ref=payload.artifact_ref,
+                    storage_deleted_at=received_at,
+                )
+            except Exception as exc:
+                repository.mark_artifact_storage_delete_failed(
+                    connection,
+                    artifact_ref=payload.artifact_ref,
+                    error_message=str(exc),
+                )
+                return _artifact_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    status=CommandAckStatus.REJECTED,
+                    artifact_ref=payload.artifact_ref,
+                    reason=f"Artifact storage delete failed: {exc}",
+                )
 
         repository.update_artifact_lifecycle(
             connection,
@@ -178,19 +202,10 @@ def handle_artifact_cleanup(
         expired_count = 0
         storage_deleted_count = 0
         already_cleared_count = 0
+        delete_failed_count = 0
 
         for artifact in artifacts:
             lifecycle_status = resolve_artifact_lifecycle_status(artifact, at=received_at)
-            if resolved_artifact_store is not None and artifact.get("storage_relpath"):
-                resolved_artifact_store.delete(str(artifact["storage_relpath"]))
-                repository.mark_artifact_storage_deleted(
-                    connection,
-                    artifact_ref=str(artifact["artifact_ref"]),
-                    storage_deleted_at=received_at,
-                )
-                storage_deleted_count += 1
-            elif artifact.get("storage_deleted_at") is not None:
-                already_cleared_count += 1
 
             if lifecycle_status == ARTIFACT_LIFECYCLE_EXPIRED and artifact.get("lifecycle_status") == ARTIFACT_LIFECYCLE_ACTIVE:
                 expired_count += 1
@@ -222,6 +237,43 @@ def handle_artifact_cleanup(
                 )
                 if inserted is None:
                     raise RuntimeError("Artifact expiry idempotency conflict.")
+                if artifact.get("materialization_status") == "MATERIALIZED":
+                    repository.mark_artifact_storage_delete_pending(
+                        connection,
+                        artifact_ref=str(artifact["artifact_ref"]),
+                    )
+
+            if artifact.get("storage_delete_status") == "DELETED":
+                already_cleared_count += 1
+                continue
+
+            if resolved_artifact_store is not None and (
+                artifact.get("storage_relpath") or artifact.get("storage_object_key")
+            ):
+                try:
+                    resolved_artifact_store.delete(
+                        str(artifact["storage_relpath"]) if artifact.get("storage_relpath") else None,
+                        storage_object_key=(
+                            str(artifact["storage_object_key"])
+                            if artifact.get("storage_object_key")
+                            else None
+                        ),
+                    )
+                    repository.mark_artifact_storage_deleted(
+                        connection,
+                        artifact_ref=str(artifact["artifact_ref"]),
+                        storage_deleted_at=received_at,
+                    )
+                    storage_deleted_count += 1
+                except Exception as exc:
+                    repository.mark_artifact_storage_delete_failed(
+                        connection,
+                        artifact_ref=str(artifact["artifact_ref"]),
+                        error_message=str(exc),
+                    )
+                    delete_failed_count += 1
+            elif artifact.get("storage_deleted_at") is not None:
+                already_cleared_count += 1
 
         inserted = repository.insert_event(
             connection,
@@ -238,6 +290,7 @@ def handle_artifact_cleanup(
                 "expired_count": expired_count,
                 "storage_deleted_count": storage_deleted_count,
                 "already_cleared_count": already_cleared_count,
+                "delete_failed_count": delete_failed_count,
             },
             occurred_at=received_at,
         )

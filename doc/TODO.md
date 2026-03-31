@@ -34,9 +34,16 @@
   - artifact 留存分级现在支持 `PERSISTENT`、`REVIEW_EVIDENCE`、`OPERATIONAL_EVIDENCE`、`EPHEMERAL`；其中 `REVIEW_EVIDENCE` 会默认落 `BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC`，`OPERATIONAL_EVIDENCE` 会默认落 `BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC`，`EPHEMERAL` 会默认落 `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`
   - 调用方不写 `retention_class` 时，后端现在会按保守路径规则给 `reports/review/*`、`reports/ops/*`、`reports/diagnostics/*` 自动补默认留存；其他路径仍保守落到 `PERSISTENT`
   - 历史上缺 `expires_at` 的 `REVIEW_EVIDENCE` / `OPERATIONAL_EVIDENCE` / `EPHEMERAL` artifact 会在初始化时按各自默认 TTL 回填进统一过期闭环；缺少 `retention_class_source` 的老数据会保守标成 `LEGACY_COMPAT`
-  - `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `retention_class_source`、`retention_ttl_sec`、`retention_policy_source`、`deleted_by`、`delete_reason` 和 `storage_deleted_at`
-  - `GET /api/v1/projections/artifact-cleanup-candidates` 可以直接看当前等待 cleanup 的 artifact，以及它们是“已到期待处理”还是“等物理删文件”；`dashboard.artifact_maintenance` 现在也会回显四类默认留存规则
-- 继续推进更大文件的上传路径与对象存储链路
+  - `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `retention_class_source`、`retention_ttl_sec`、`retention_policy_source`、`deleted_by`、`delete_reason`、`storage_backend`、`storage_delete_status` 和 `storage_deleted_at`
+  - `GET /api/v1/projections/artifact-cleanup-candidates` 可以直接看当前等待 cleanup 的 artifact，以及它们是“已到期待处理”还是“等物理删文件”；`dashboard.artifact_maintenance` 现在也会回显四类默认留存规则和删除失败计数
+- artifact 大文件上传 / 对象存储第一批连续切片已落地：
+  - artifact store 已扩成“本地默认 + 可选 S3 兼容对象存储”双后端；`artifact_index` 现在会持久化 `storage_backend`、`storage_object_key`、`storage_delete_status` 和 `storage_delete_error`
+  - 新增 `POST /api/v1/artifact-uploads/sessions`、`PUT /api/v1/artifact-uploads/sessions/{session_id}/parts/{part_number}`、`POST /complete`、`POST /abort`，控制面现在已有分段上传会话状态机
+  - `ticket-result-submit` 里的二进制 artifact 现在支持 `upload_session_id`，可把已完成上传会话消费进现有 artifact 审计、留存和投影链，而不必继续把中大文件塞进 `content_base64`
+  - cleanup 不再只会删本地文件；对象存储后端也会走同一条删除与记账链，删除失败时会把 `DELETE_FAILED` 和错误摘要回写到索引，并直接回显到 `dashboard` 与 cleanup candidates
+- 继续推进 worker-runtime 侧上传面与更强直传链路：
+  - 现在的 multipart 仍是控制面分段上传，不是外部 worker signed URL 直传
+  - 还没有浏览器直传、云厂商预签名 multipart 或 staging 自动回收策略
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
 - 补齐更完整的 provider 路由、多 provider 控制面和恢复策略
 - 解决 `backend/pyproject.toml` 的 editable install 打包问题，让 `pip install -e .[dev]` 在新环境可用

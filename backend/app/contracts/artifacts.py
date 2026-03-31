@@ -24,6 +24,10 @@ class ArtifactMetadata(StrictModel):
     deleted_at: datetime | None = None
     deleted_by: str | None = None
     delete_reason: str | None = None
+    storage_backend: str
+    storage_object_key: str | None = None
+    storage_delete_status: str
+    storage_delete_error: str | None = None
     storage_deleted_at: datetime | None = None
     size_bytes: int | None = None
     content_hash: str | None = None
@@ -50,3 +54,40 @@ class ArtifactPreviewData(StrictModel):
 
 class ArtifactPreviewEnvelope(StrictModel):
     data: ArtifactPreviewData
+
+
+class ArtifactUploadSessionCreateRequest(StrictModel):
+    filename: str | None = None
+    media_type: str | None = None
+
+
+class ArtifactUploadSessionData(StrictModel):
+    session_id: str
+    status: str
+    filename: str | None = None
+    media_type: str | None = None
+    size_bytes: int | None = None
+    content_hash: str | None = None
+    part_count: int
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    aborted_at: datetime | None = None
+    consumed_at: datetime | None = None
+    consumed_by_artifact_ref: str | None = None
+
+
+class ArtifactUploadSessionEnvelope(StrictModel):
+    data: ArtifactUploadSessionData
+
+
+class ArtifactUploadPartData(StrictModel):
+    session_id: str
+    part_number: int
+    size_bytes: int
+    uploaded_at: datetime
+    status: str
+
+
+class ArtifactUploadPartEnvelope(StrictModel):
+    data: ArtifactUploadPartData

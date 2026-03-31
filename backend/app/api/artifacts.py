@@ -57,13 +57,20 @@ def get_artifact_content(
             status_code=410,
             detail=f"Artifact '{artifact_ref}' is no longer available ({lifecycle_status}).",
         )
-    if artifact.get("materialization_status") != ARTIFACT_STATUS_MATERIALIZED or not artifact.get("storage_relpath"):
+    if artifact.get("materialization_status") != ARTIFACT_STATUS_MATERIALIZED or (
+        not artifact.get("storage_relpath") and not artifact.get("storage_object_key")
+    ):
         raise HTTPException(
             status_code=409,
             detail=f"Artifact '{artifact_ref}' is registered but not materialized.",
         )
 
-    content = artifact_store.read_bytes(str(artifact["storage_relpath"]))
+    content = artifact_store.read_bytes(
+        str(artifact["storage_relpath"]) if artifact.get("storage_relpath") else None,
+        storage_object_key=(
+            str(artifact["storage_object_key"]) if artifact.get("storage_object_key") else None
+        ),
+    )
     filename = Path(str(artifact["logical_path"])).name
     media_type = artifact.get("media_type") or "application/octet-stream"
     headers = {"Content-Disposition": f'{disposition}; filename="{filename}"'}
@@ -85,7 +92,9 @@ def get_artifact_preview(
             status_code=410,
             detail=f"Artifact '{artifact_ref}' is no longer available ({lifecycle_status}).",
         )
-    if artifact.get("materialization_status") != ARTIFACT_STATUS_MATERIALIZED or not artifact.get("storage_relpath"):
+    if artifact.get("materialization_status") != ARTIFACT_STATUS_MATERIALIZED or (
+        not artifact.get("storage_relpath") and not artifact.get("storage_object_key")
+    ):
         raise HTTPException(
             status_code=409,
             detail=f"Artifact '{artifact_ref}' is registered but not materialized.",
@@ -106,7 +115,12 @@ def get_artifact_preview(
         "text_content": None,
     }
 
-    content = artifact_store.read_bytes(str(artifact["storage_relpath"]))
+    content = artifact_store.read_bytes(
+        str(artifact["storage_relpath"]) if artifact.get("storage_relpath") else None,
+        storage_object_key=(
+            str(artifact["storage_object_key"]) if artifact.get("storage_object_key") else None
+        ),
+    )
     if preview_kind == "JSON":
         preview_payload["json_content"] = json.loads(content.decode("utf-8"))
     elif preview_kind == "TEXT":

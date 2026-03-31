@@ -175,6 +175,7 @@ class TicketWrittenArtifact(StrictModel):
     content_json: JsonValue | None = None
     content_text: str | None = None
     content_base64: str | None = None
+    upload_session_id: str | None = None
     retention_class: ArtifactRetentionClass | None = None
     retention_ttl_sec: int | None = Field(default=None, ge=1)
 
