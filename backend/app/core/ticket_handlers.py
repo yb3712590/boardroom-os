@@ -16,6 +16,7 @@ from app.contracts.commands import (
     IncidentResolveCommand,
     SchedulerWorkerCandidate,
     SchedulerTickCommand,
+    TicketBoardReviewRequest,
     TicketCancelCommand,
     TicketCompletedCommand,
     TicketCreateCommand,
@@ -92,7 +93,13 @@ from app.core.constants import (
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.ids import new_prefixed_id
-from app.core.output_schemas import validate_output_payload
+from app.core.output_schemas import (
+    MAKER_CHECKER_VERDICT_SCHEMA_REF,
+    MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
+    UI_MILESTONE_REVIEW_SCHEMA_REF,
+    UI_MILESTONE_REVIEW_SCHEMA_VERSION,
+    validate_output_payload,
+)
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -121,6 +128,10 @@ class PreparedTicketArtifact:
     deleted_by: str | None
     delete_reason: str | None
     upload_session_id: str | None = None
+
+
+MAKER_CHECKER_REVIEW_TICKET_KIND = "MAKER_CHECKER_REVIEW"
+MAKER_REWORK_FIX_TICKET_KIND = "MAKER_REWORK_FIX"
 
 
 def _duplicate_ack(
@@ -607,6 +618,245 @@ def _build_review_pack(
     }
 
 
+def _dedupe_artifact_refs(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+def _is_maker_checker_review_request(review_request: TicketBoardReviewRequest | None) -> bool:
+    return bool(review_request is not None and review_request.review_type.value == "VISUAL_MILESTONE")
+
+
+def _ticket_kind(created_spec: dict[str, Any] | None) -> str | None:
+    if created_spec is None or created_spec.get("ticket_kind") is None:
+        return None
+    return str(created_spec["ticket_kind"])
+
+
+def _resolve_original_review_request(
+    payload: TicketCompletedCommand,
+    created_spec: dict[str, Any] | None,
+) -> TicketBoardReviewRequest | None:
+    if payload.review_request is not None:
+        return payload.review_request
+    if created_spec is None:
+        return None
+    maker_checker_context = created_spec.get("maker_checker_context") or {}
+    original_review_request = maker_checker_context.get("original_review_request")
+    if not isinstance(original_review_request, dict):
+        return None
+    return TicketBoardReviewRequest.model_validate(original_review_request)
+
+
+def _should_route_to_maker_checker(
+    *,
+    review_request: TicketBoardReviewRequest | None,
+    created_spec: dict[str, Any] | None,
+) -> bool:
+    if not _is_maker_checker_review_request(review_request):
+        return False
+    if created_spec is None:
+        return False
+    if _ticket_kind(created_spec) == MAKER_CHECKER_REVIEW_TICKET_KIND:
+        return False
+    return (
+        str(created_spec.get("output_schema_ref") or "") == UI_MILESTONE_REVIEW_SCHEMA_REF
+        and int(created_spec.get("output_schema_version") or 0) == UI_MILESTONE_REVIEW_SCHEMA_VERSION
+    )
+
+
+def _build_generated_maker_checker_summary(
+    *,
+    checker_payload: dict[str, Any],
+    checker_completed_by: str,
+    checker_created_spec: dict[str, Any] | None,
+) -> dict[str, Any]:
+    maker_checker_context = (checker_created_spec or {}).get("maker_checker_context") or {}
+    top_findings: list[dict[str, Any]] = []
+    findings = checker_payload.get("findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            top_findings.append(
+                {
+                    "finding_id": finding.get("finding_id"),
+                    "severity": finding.get("severity"),
+                    "headline": finding.get("headline"),
+                }
+            )
+    return {
+        "maker_employee_id": maker_checker_context.get("maker_completed_by"),
+        "checker_employee_id": checker_completed_by,
+        "review_status": checker_payload.get("review_status"),
+        "top_findings": top_findings,
+    }
+
+
+def _build_maker_checker_ticket_payload(
+    *,
+    workflow_id: str,
+    node_id: str,
+    source_ticket_id: str,
+    created_spec: dict[str, Any],
+    review_request: TicketBoardReviewRequest,
+    maker_completed_by: str,
+    maker_artifact_refs: list[str],
+) -> dict[str, Any]:
+    context_query_plan = dict(created_spec.get("context_query_plan") or {})
+    max_context_tokens = int(context_query_plan.get("max_context_tokens") or 0)
+    if max_context_tokens <= 0:
+        max_context_tokens = 3000
+
+    maker_ticket_spec = {
+        "role_profile_ref": created_spec.get("role_profile_ref"),
+        "constraints_ref": created_spec.get("constraints_ref"),
+        "context_query_plan": context_query_plan,
+        "acceptance_criteria": list(created_spec.get("acceptance_criteria") or []),
+        "output_schema_ref": created_spec.get("output_schema_ref"),
+        "output_schema_version": created_spec.get("output_schema_version"),
+        "allowed_tools": list(created_spec.get("allowed_tools") or []),
+        "allowed_write_set": list(created_spec.get("allowed_write_set") or []),
+        "lease_timeout_sec": created_spec.get("lease_timeout_sec"),
+        "retry_budget": created_spec.get("retry_budget"),
+        "priority": created_spec.get("priority"),
+        "timeout_sla_sec": created_spec.get("timeout_sla_sec"),
+        "deadline_at": created_spec.get("deadline_at"),
+        "tenant_id": created_spec.get("tenant_id"),
+        "workspace_id": created_spec.get("workspace_id"),
+        "escalation_policy": dict(created_spec.get("escalation_policy") or {}),
+    }
+    input_artifact_refs = maker_artifact_refs or list(created_spec.get("input_artifact_refs") or [])
+    return {
+        "ticket_id": new_prefixed_id("tkt"),
+        "workflow_id": workflow_id,
+        "node_id": node_id,
+        "parent_ticket_id": source_ticket_id,
+        "attempt_no": int(created_spec.get("attempt_no") or 1) + 1,
+        "role_profile_ref": "checker_primary",
+        "constraints_ref": str(created_spec.get("constraints_ref") or ""),
+        "input_artifact_refs": input_artifact_refs,
+        "context_query_plan": {
+            "keywords": list(context_query_plan.get("keywords") or []),
+            "semantic_queries": list(context_query_plan.get("semantic_queries") or []),
+            "max_context_tokens": max_context_tokens,
+        },
+        "acceptance_criteria": [
+            "Must return a structured maker-checker verdict for the submitted visual milestone.",
+        ],
+        "output_schema_ref": MAKER_CHECKER_VERDICT_SCHEMA_REF,
+        "output_schema_version": MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
+        "allowed_tools": ["read_artifact"],
+        "allowed_write_set": [],
+        "lease_timeout_sec": int(created_spec.get("lease_timeout_sec") or DEFAULT_LEASE_TIMEOUT_SEC),
+        "retry_budget": int(created_spec.get("retry_budget") or 0),
+        "priority": str(created_spec.get("priority") or "high"),
+        "timeout_sla_sec": int(created_spec.get("timeout_sla_sec") or 1800),
+        "deadline_at": created_spec.get("deadline_at"),
+        "tenant_id": created_spec.get("tenant_id"),
+        "workspace_id": created_spec.get("workspace_id"),
+        "escalation_policy": dict(created_spec.get("escalation_policy") or {}),
+        "ticket_kind": MAKER_CHECKER_REVIEW_TICKET_KIND,
+        "maker_checker_context": {
+            "maker_ticket_id": source_ticket_id,
+            "maker_completed_by": maker_completed_by,
+            "maker_artifact_refs": input_artifact_refs,
+            "maker_ticket_spec": maker_ticket_spec,
+            "original_review_request": review_request.model_dump(mode="json"),
+        },
+    }
+
+
+def _build_fix_ticket_payload(
+    *,
+    workflow_id: str,
+    node_id: str,
+    checker_ticket_id: str,
+    checker_created_spec: dict[str, Any],
+    checker_result_payload: dict[str, Any],
+) -> dict[str, Any]:
+    maker_checker_context = checker_created_spec.get("maker_checker_context") or {}
+    maker_ticket_spec = dict(maker_checker_context.get("maker_ticket_spec") or {})
+    context_query_plan = dict(maker_ticket_spec.get("context_query_plan") or {})
+    max_context_tokens = int(context_query_plan.get("max_context_tokens") or 0)
+    if max_context_tokens <= 0:
+        max_context_tokens = 3000
+    input_artifact_refs = _dedupe_artifact_refs(
+        list(maker_checker_context.get("maker_artifact_refs") or [])
+        + list(checker_result_payload.get("artifact_refs") or [])
+    ) or list(checker_created_spec.get("input_artifact_refs") or [])
+    return {
+        "ticket_id": new_prefixed_id("tkt"),
+        "workflow_id": workflow_id,
+        "node_id": node_id,
+        "parent_ticket_id": checker_ticket_id,
+        "attempt_no": int(checker_created_spec.get("attempt_no") or 1) + 1,
+        "role_profile_ref": str(maker_ticket_spec.get("role_profile_ref") or "ui_designer_primary"),
+        "constraints_ref": str(maker_ticket_spec.get("constraints_ref") or ""),
+        "input_artifact_refs": input_artifact_refs,
+        "context_query_plan": {
+            "keywords": list(context_query_plan.get("keywords") or []),
+            "semantic_queries": list(context_query_plan.get("semantic_queries") or []),
+            "max_context_tokens": max_context_tokens,
+        },
+        "acceptance_criteria": list(maker_ticket_spec.get("acceptance_criteria") or []),
+        "output_schema_ref": str(maker_ticket_spec.get("output_schema_ref") or UI_MILESTONE_REVIEW_SCHEMA_REF),
+        "output_schema_version": int(
+            maker_ticket_spec.get("output_schema_version") or UI_MILESTONE_REVIEW_SCHEMA_VERSION
+        ),
+        "allowed_tools": list(maker_ticket_spec.get("allowed_tools") or []),
+        "allowed_write_set": list(maker_ticket_spec.get("allowed_write_set") or []),
+        "lease_timeout_sec": int(maker_ticket_spec.get("lease_timeout_sec") or DEFAULT_LEASE_TIMEOUT_SEC),
+        "retry_budget": int(maker_ticket_spec.get("retry_budget") or 0),
+        "priority": str(maker_ticket_spec.get("priority") or "high"),
+        "timeout_sla_sec": int(maker_ticket_spec.get("timeout_sla_sec") or 1800),
+        "deadline_at": maker_ticket_spec.get("deadline_at"),
+        "tenant_id": maker_ticket_spec.get("tenant_id"),
+        "workspace_id": maker_ticket_spec.get("workspace_id"),
+        "escalation_policy": dict(maker_ticket_spec.get("escalation_policy") or {}),
+        "ticket_kind": MAKER_REWORK_FIX_TICKET_KIND,
+        "maker_checker_context": {
+            "maker_ticket_id": maker_checker_context.get("maker_ticket_id"),
+            "maker_completed_by": maker_checker_context.get("maker_completed_by"),
+            "maker_artifact_refs": input_artifact_refs,
+            "maker_ticket_spec": maker_ticket_spec,
+            "original_review_request": maker_checker_context.get("original_review_request"),
+        },
+    }
+
+
+def _insert_followup_ticket_created_event(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket_payload: dict[str, Any],
+    idempotency_key: str,
+    actor_id: str,
+) -> str:
+    created_event = repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_CREATED,
+        actor_type="system",
+        actor_id=actor_id,
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=ticket_payload,
+        occurred_at=occurred_at,
+    )
+    if created_event is None:
+        raise RuntimeError("Follow-up ticket creation idempotency conflict.")
+    return str(ticket_payload["ticket_id"])
 
 
 def _normalized_failure_detail(failure_detail: dict | None) -> dict:
@@ -3057,10 +3307,14 @@ def handle_ticket_result_submit(
                     node_id=payload.node_id,
                     completed_by=payload.submitted_by,
                     completion_summary=payload.summary,
-                    artifact_refs=payload.artifact_refs,
+                    artifact_refs=_dedupe_artifact_refs(
+                        list(payload.artifact_refs)
+                        + [artifact.artifact_ref for artifact in prepared_artifacts]
+                    ),
                     review_request=payload.review_request,
                     idempotency_key=payload.idempotency_key,
                 ),
+                result_payload=payload.payload,
                 developer_inspector_store=developer_inspector_store,
                 persisted_artifacts=persisted_inspector_artifacts,
             )
@@ -3136,6 +3390,7 @@ def _complete_ticket_locked(
     command_id: str,
     received_at: datetime,
     payload: TicketCompletedCommand,
+    result_payload: dict[str, Any] | None,
     developer_inspector_store: DeveloperInspectorStore | None,
     persisted_artifacts: list[PersistedDeveloperInspectorArtifact],
 ) -> str:
@@ -3169,6 +3424,27 @@ def _complete_ticket_locked(
             f"Ticket {payload.ticket_id} cannot be completed while status is {current_ticket['status']}."
         )
 
+    created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
+    effective_review_request = _resolve_original_review_request(payload, created_spec)
+    route_to_maker_checker = _should_route_to_maker_checker(
+        review_request=effective_review_request,
+        created_spec=created_spec,
+    )
+    checker_ticket_kind = _ticket_kind(created_spec)
+    checker_review_status = (
+        str(result_payload.get("review_status") or "")
+        if isinstance(result_payload, dict)
+        else ""
+    )
+    open_board_review_now = bool(
+        effective_review_request is not None
+        and not route_to_maker_checker
+        and not (
+            checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
+            and checker_review_status == "CHANGES_REQUIRED"
+        )
+    )
+
     event_row = repository.insert_event(
         connection,
         event_type=EVENT_TICKET_COMPLETED,
@@ -3183,7 +3459,7 @@ def _complete_ticket_locked(
             "node_id": payload.node_id,
             "completion_summary": payload.completion_summary,
             "artifact_refs": payload.artifact_refs,
-            "board_review_requested": payload.review_request is not None,
+            "board_review_requested": open_board_review_now,
         },
         occurred_at=received_at,
     )
@@ -3191,45 +3467,114 @@ def _complete_ticket_locked(
         raise RuntimeError("An identical ticket-complete command was already accepted.")
 
     causation_hint = f"ticket:{payload.ticket_id}"
-    if payload.review_request is not None:
+    if route_to_maker_checker:
+        if created_spec is None or effective_review_request is None:
+            raise RuntimeError("Maker-checker routing requires ticket create spec and review request.")
+        checker_ticket_payload = _build_maker_checker_ticket_payload(
+            workflow_id=payload.workflow_id,
+            node_id=payload.node_id,
+            source_ticket_id=payload.ticket_id,
+            created_spec=created_spec,
+            review_request=effective_review_request,
+            maker_completed_by=payload.completed_by,
+            maker_artifact_refs=_dedupe_artifact_refs(list(payload.artifact_refs)),
+        )
+        next_ticket_id = _insert_followup_ticket_created_event(
+            repository=repository,
+            connection=connection,
+            command_id=command_id,
+            occurred_at=received_at,
+            workflow_id=payload.workflow_id,
+            ticket_payload=checker_ticket_payload,
+            idempotency_key=f"{payload.idempotency_key}:maker-checker-create",
+            actor_id="maker-checker-router",
+        )
+        causation_hint = f"ticket:{next_ticket_id}"
+    elif (
+        checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
+        and checker_review_status == "CHANGES_REQUIRED"
+    ):
+        if created_spec is None or not isinstance(result_payload, dict):
+            raise RuntimeError("Checker rework routing requires created spec and checker verdict payload.")
+        fix_ticket_payload = _build_fix_ticket_payload(
+            workflow_id=payload.workflow_id,
+            node_id=payload.node_id,
+            checker_ticket_id=payload.ticket_id,
+            checker_created_spec=created_spec,
+            checker_result_payload={
+                **result_payload,
+                "artifact_refs": payload.artifact_refs,
+            },
+        )
+        next_ticket_id = _insert_followup_ticket_created_event(
+            repository=repository,
+            connection=connection,
+            command_id=command_id,
+            occurred_at=received_at,
+            workflow_id=payload.workflow_id,
+            ticket_payload=fix_ticket_payload,
+            idempotency_key=f"{payload.idempotency_key}:fix-ticket-create",
+            actor_id="maker-checker-router",
+        )
+        causation_hint = f"ticket:{next_ticket_id}"
+    elif effective_review_request is not None:
+        review_request_for_approval = effective_review_request
+        developer_inspector_source_ticket_id = payload.ticket_id
+        if checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND:
+            if created_spec is None or not isinstance(result_payload, dict):
+                raise RuntimeError("Checker approval routing requires created spec and checker verdict payload.")
+            review_request_for_approval = effective_review_request.model_copy(
+                update={
+                    "maker_checker_summary": _build_generated_maker_checker_summary(
+                        checker_payload=result_payload,
+                        checker_completed_by=payload.completed_by,
+                        checker_created_spec=created_spec,
+                    )
+                }
+            )
+            maker_checker_context = created_spec.get("maker_checker_context") or {}
+            developer_inspector_source_ticket_id = str(
+                maker_checker_context.get("maker_ticket_id") or payload.ticket_id
+            )
+
         if (
-            payload.review_request.developer_inspector_refs is not None
+            review_request_for_approval.developer_inspector_refs is not None
             and developer_inspector_store is None
         ):
             raise RuntimeError("Developer inspector store is required to export inspector artifacts.")
         if (
             developer_inspector_store is not None
-            and payload.review_request.developer_inspector_refs is not None
+            and review_request_for_approval.developer_inspector_refs is not None
         ):
             persisted_artifacts.extend(
                 export_latest_compile_artifacts_to_developer_inspector(
                     repository,
                     developer_inspector_store,
-                    payload.ticket_id,
-                    payload.review_request.developer_inspector_refs,
+                    developer_inspector_source_ticket_id,
+                    review_request_for_approval.developer_inspector_refs,
                     connection=connection,
                 )
             )
         approval = repository.create_approval_request(
             connection,
             workflow_id=payload.workflow_id,
-            approval_type=payload.review_request.review_type.value,
+            approval_type=review_request_for_approval.review_type.value,
             requested_by=payload.completed_by,
             review_pack=_build_review_pack(
-                payload=payload,
+                payload=payload.model_copy(update={"review_request": review_request_for_approval}),
                 trigger_event_id=event_row["event_id"],
                 command_target_version=int(event_row["sequence_no"]),
                 occurred_at=received_at,
             ),
-            available_actions=[action.value for action in payload.review_request.available_actions],
+            available_actions=[action.value for action in review_request_for_approval.available_actions],
             draft_defaults={
-                "selected_option_id": payload.review_request.draft_selected_option_id,
-                "comment_template": payload.review_request.comment_template,
+                "selected_option_id": review_request_for_approval.draft_selected_option_id,
+                "comment_template": review_request_for_approval.comment_template,
             },
-            inbox_title=payload.review_request.inbox_title or payload.review_request.title,
-            inbox_summary=payload.review_request.inbox_summary or payload.completion_summary,
-            badges=payload.review_request.badges,
-            priority=payload.review_request.priority.value,
+            inbox_title=review_request_for_approval.inbox_title or review_request_for_approval.title,
+            inbox_summary=review_request_for_approval.inbox_summary or payload.completion_summary,
+            badges=review_request_for_approval.badges,
+            priority=review_request_for_approval.priority.value,
             occurred_at=received_at,
             idempotency_key=f"{payload.idempotency_key}:approval-request",
         )
@@ -3274,6 +3619,7 @@ def handle_ticket_completed(
                     command_id=command_id,
                     received_at=received_at,
                     payload=payload,
+                    result_payload=None,
                     developer_inspector_store=developer_inspector_store,
                     persisted_artifacts=persisted_artifacts,
                 )

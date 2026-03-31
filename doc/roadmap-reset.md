@@ -52,6 +52,12 @@ Boardroom OS 当前阶段应当是：
 - Board 审批可以通过 `Inbox -> Review Room` 查看和裁决
 - 有一个最薄的 Web UI 能看 `dashboard / inbox / review room`
 
+当前进度补记：
+
+- `Inbox -> Review Room` 这条董事会审批链已经真实可用
+- 视觉里程碑已经具备最小 `Maker -> Checker -> Review Room` 闭环
+- 但 Maker-Checker 目前仍只覆盖 `VISUAL_MILESTONE + ui_milestone_review@1`，所以整体里程碑还不能算完全关闭
+
 ## 5. 已实现但降级为后置能力
 
 下面这些能力已经在仓库中存在，但从这份决议开始降级为“保留、不扩张、非主线”：
@@ -85,8 +91,7 @@ Boardroom OS 当前阶段应当是：
 接下来优先级最高的能力是：
 
 - employee hire / replace / freeze 生命周期
-- Maker-Checker review loop
-- Review Room 的真实审查闭环
+- 把只覆盖视觉里程碑的 Maker-Checker review loop 扩到更多关键产物
 - 能稳定支撑本地执行的 Context Compiler
 - 最薄的 React Boardroom UI
 

@@ -76,6 +76,10 @@
 
 ### 2026-03-31
 
+- Closed the shortest-path Maker-Checker gap for visual milestones: `ui_milestone_review@1` results with `VISUAL_MILESTONE` review now route through an auto-created checker ticket before any board approval opens.
+- Added `maker_checker_verdict@1` as a real structured output contract, and taught the minimal in-process runtime to execute checker tickets with a deterministic `APPROVED_WITH_NOTES` verdict.
+- Checker pass / escalate now opens the existing `Inbox -> Review Room` path with backend-generated `maker_checker_summary`; `CHANGES_REQUIRED` now creates a follow-up fix ticket instead of sending manual feedback through the board path.
+- The current limitation is explicit: this loop only covers the visual-milestone path for now, and employee lifecycle / richer checker routing are still open.
 - Added a shared worker admin service under the backend, so CLI and HTTP management no longer duplicate binding / bootstrap lifecycle rules.
 - Added `GET /api/v1/worker-admin/bindings`, `GET /api/v1/worker-admin/bootstrap-issues`, and the matching create / issue / revoke / cleanup POST routes, closing the minimal HTTP management loop for worker tenant operations.
 - Kept `worker-runtime` projections as the unified read surface and left session / delivery-grant revoke in CLI for now, rather than widening the HTTP management scope all at once.

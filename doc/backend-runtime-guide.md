@@ -11,6 +11,7 @@
 - 命令入口、投影视图和 SSE 事件流
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消和人工恢复
 - 最小 incident / circuit-breaker / retry 治理链
+- 视觉里程碑最小 Maker-Checker 闭环：maker 完成后自动生成 checker ticket，checker 通过后再进入 review room，要求返工则自动生成 fix ticket
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
 - artifact 大文件链路：控制面分段上传会话、`ticket-result-submit` 对 `upload_session_id` 的消费，以及本地默认 / 可选对象存储双后端

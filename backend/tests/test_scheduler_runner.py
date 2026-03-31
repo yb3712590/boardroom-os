@@ -182,6 +182,53 @@ def _runtime_success_result(
     )
 
 
+def _maker_checker_verdict_result(
+    *,
+    review_status: str = "APPROVED_WITH_NOTES",
+) -> RuntimeExecutionResult:
+    if review_status == "CHANGES_REQUIRED":
+        findings = [
+            {
+                "finding_id": "finding_hero_hierarchy",
+                "severity": "high",
+                "category": "VISUAL_HIERARCHY",
+                "headline": "Hero hierarchy is not strong enough yet.",
+                "summary": "The first screen still lacks a clear attention anchor.",
+                "required_action": "Strengthen hero hierarchy before board review.",
+                "blocking": True,
+            }
+        ]
+    elif review_status == "APPROVED":
+        findings = []
+    else:
+        findings = [
+            {
+                "finding_id": "finding_cta_spacing",
+                "severity": "low",
+                "category": "VISUAL_POLISH",
+                "headline": "CTA spacing can be tightened slightly.",
+                "summary": "Spacing is acceptable but should be polished downstream.",
+                "required_action": "Tighten CTA spacing during implementation.",
+                "blocking": False,
+            }
+        ]
+
+    return RuntimeExecutionResult(
+        result_status="completed",
+        completion_summary=f"Checker returned {review_status}.",
+        artifact_refs=[],
+        result_payload={
+            "summary": f"Checker returned {review_status} for the visual milestone.",
+            "review_status": review_status,
+            "findings": findings,
+        },
+        written_artifacts=[],
+        assumptions=["Runtime used the minimal checker verdict template."],
+        issues=[],
+        confidence=0.7,
+    )
+
+
 def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post(
@@ -310,6 +357,149 @@ def test_scheduler_runner_loop_respects_tick_limit_and_dispatch_budget(client, s
     assert len(acknowledgements) == 2
     assert sleep_calls == [12.5]
     assert completed_count == 2
+
+
+def test_scheduler_runner_executes_checker_ticket_and_opens_board_review_after_maker_completion(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_checker_chain",
+            ticket_id="tkt_runner_maker",
+            node_id="node_runner_maker",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_checker_chain",
+            "ticket_id": "tkt_runner_maker",
+            "node_id": "node_runner_maker",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_checker_chain:tkt_runner_maker:emp_frontend_2",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": "wf_runner_checker_chain",
+            "ticket_id": "tkt_runner_maker",
+            "node_id": "node_runner_maker",
+            "started_by": "emp_frontend_2",
+            "idempotency_key": "ticket-start:wf_runner_checker_chain:tkt_runner_maker",
+        },
+    )
+    maker_submit = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": "wf_runner_checker_chain",
+            "ticket_id": "tkt_runner_maker",
+            "node_id": "node_runner_maker",
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": "ui_milestone_review_v1",
+            "payload": {
+                "summary": "Homepage visual milestone is ready for downstream review.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Primary runtime-generated option.",
+                        "artifact_refs": ["art://runtime/maker/option-a.json"],
+                    }
+                ],
+            },
+            "artifact_refs": ["art://runtime/maker/option-a.json"],
+            "written_artifacts": [
+                {
+                    "path": "artifacts/ui/homepage/option-a.json",
+                    "artifact_ref": "art://runtime/maker/option-a.json",
+                    "kind": "JSON",
+                    "content_json": {"option_id": "option_a"},
+                }
+            ],
+            "assumptions": ["Runtime used the minimal compiled context bundle."],
+            "issues": [],
+            "confidence": 0.75,
+            "needs_escalation": False,
+            "summary": "Structured runtime result submitted.",
+            "review_request": {
+                "review_type": "VISUAL_MILESTONE",
+                "priority": "high",
+                "title": "Review homepage visual milestone",
+                "subtitle": "Two candidate hero directions are ready for board selection.",
+                "blocking_scope": "NODE_ONLY",
+                "trigger_reason": "Visual milestone hit a board-gated release checkpoint.",
+                "why_now": "Downstream homepage implementation should not proceed before direction lock.",
+                "recommended_action": "APPROVE",
+                "recommended_option_id": "option_a",
+                "recommendation_summary": "Option A has the clearest hierarchy and strongest first impression.",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "High-contrast review candidate.",
+                        "artifact_refs": ["art://runtime/maker/option-a.json"],
+                    }
+                ],
+                "evidence_summary": [],
+                "maker_checker_summary": {
+                    "maker_employee_id": "emp_frontend_2",
+                    "checker_employee_id": "emp_checker_1",
+                    "review_status": "APPROVED_WITH_NOTES",
+                    "top_findings": [
+                        {
+                            "finding_id": "finding_legacy",
+                            "severity": "medium",
+                            "headline": "Legacy summary should be replaced by checker verdict.",
+                        }
+                    ],
+                },
+                "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+                "draft_selected_option_id": "option_a",
+                "comment_template": "",
+                "inbox_title": "Review homepage visual milestone",
+                "inbox_summary": "Visual milestone is blocked for board review.",
+                "badges": ["visual", "board_gate"],
+            },
+            "failure_kind": None,
+            "failure_message": None,
+            "failure_detail": None,
+            "idempotency_key": "ticket-result-submit:wf_runner_checker_chain:tkt_runner_maker:completed",
+        },
+    )
+    repository = client.app.state.repository
+    node_before_runner = repository.get_current_node_projection(
+        "wf_runner_checker_chain",
+        "node_runner_maker",
+    )
+    assert node_before_runner is not None
+    checker_ticket_id = node_before_runner["latest_ticket_id"]
+    approvals_before_runner = repository.list_open_approvals()
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    ack = run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-checker-chain",
+        max_dispatches=10,
+    )
+
+    approvals = repository.list_open_approvals()
+    inbox_items = client.get("/api/v1/projections/inbox").json()["data"]["items"]
+
+    assert maker_submit.status_code == 200
+    assert maker_submit.json()["status"] == "ACCEPTED"
+    assert checker_ticket_id != "tkt_runner_maker"
+    assert approvals_before_runner == []
+    assert ack.status.value == "ACCEPTED"
+    assert len(approvals) == 1
+    assert inbox_items[0]["route_target"]["view"] == "review_room"
 
 
 def test_scheduler_runner_auto_runs_artifact_cleanup_once_per_interval_bucket(

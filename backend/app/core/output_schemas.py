@@ -11,6 +11,8 @@ UI_MILESTONE_REVIEW_SCHEMA_ID = (
 )
 CONSENSUS_DOCUMENT_SCHEMA_REF = "consensus_document"
 CONSENSUS_DOCUMENT_SCHEMA_VERSION = 1
+MAKER_CHECKER_VERDICT_SCHEMA_REF = "maker_checker_verdict"
+MAKER_CHECKER_VERDICT_SCHEMA_VERSION = 1
 
 OutputSchemaValidator = Callable[[dict[str, Any]], None]
 
@@ -88,6 +90,49 @@ def _consensus_document_schema_body() -> dict[str, Any]:
     }
 
 
+def _maker_checker_verdict_schema_body() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["summary", "review_status", "findings"],
+        "properties": {
+            "summary": {"type": "string"},
+            "review_status": {
+                "type": "string",
+                "enum": [
+                    "APPROVED",
+                    "APPROVED_WITH_NOTES",
+                    "CHANGES_REQUIRED",
+                    "ESCALATED",
+                ],
+            },
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "finding_id",
+                        "severity",
+                        "category",
+                        "headline",
+                        "summary",
+                        "required_action",
+                        "blocking",
+                    ],
+                    "properties": {
+                        "finding_id": {"type": "string"},
+                        "severity": {"type": "string"},
+                        "category": {"type": "string"},
+                        "headline": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "required_action": {"type": "string"},
+                        "blocking": {"type": "boolean"},
+                    },
+                },
+            },
+        },
+    }
+
+
 def _validate_ui_milestone_review_payload(payload: dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         raise ValueError("Result payload must be an object.")
@@ -154,6 +199,64 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
             raise ValueError("Each consensus followup ticket requires summary.")
 
 
+def _validate_maker_checker_verdict_payload(payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("Result payload must be an object.")
+
+    summary = payload.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("Maker-checker verdict payload.summary must be a non-empty string.")
+
+    review_status = payload.get("review_status")
+    supported_statuses = {
+        "APPROVED",
+        "APPROVED_WITH_NOTES",
+        "CHANGES_REQUIRED",
+        "ESCALATED",
+    }
+    if not isinstance(review_status, str) or review_status not in supported_statuses:
+        raise ValueError(
+            "Maker-checker verdict payload.review_status must be one of "
+            "APPROVED, APPROVED_WITH_NOTES, CHANGES_REQUIRED, ESCALATED."
+        )
+
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        raise ValueError("Maker-checker verdict payload.findings must be an array.")
+
+    has_blocking_finding = False
+    for finding in findings:
+        if not isinstance(finding, dict):
+            raise ValueError("Each maker-checker finding must be an object.")
+        finding_id = finding.get("finding_id")
+        severity = finding.get("severity")
+        category = finding.get("category")
+        headline = finding.get("headline")
+        finding_summary = finding.get("summary")
+        required_action = finding.get("required_action")
+        blocking = finding.get("blocking")
+        if not isinstance(finding_id, str) or not finding_id:
+            raise ValueError("Each maker-checker finding requires finding_id.")
+        if not isinstance(severity, str) or not severity:
+            raise ValueError("Each maker-checker finding requires severity.")
+        if not isinstance(category, str) or not category:
+            raise ValueError("Each maker-checker finding requires category.")
+        if not isinstance(headline, str) or not headline:
+            raise ValueError("Each maker-checker finding requires headline.")
+        if not isinstance(finding_summary, str) or not finding_summary:
+            raise ValueError("Each maker-checker finding requires summary.")
+        if not isinstance(required_action, str) or not required_action:
+            raise ValueError("Each maker-checker finding requires required_action.")
+        if not isinstance(blocking, bool):
+            raise ValueError("Each maker-checker finding requires boolean blocking.")
+        has_blocking_finding = has_blocking_finding or blocking
+
+    if review_status == "CHANGES_REQUIRED" and not has_blocking_finding:
+        raise ValueError(
+            "Maker-checker CHANGES_REQUIRED verdict must include at least one blocking finding."
+        )
+
+
 OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (UI_MILESTONE_REVIEW_SCHEMA_REF, UI_MILESTONE_REVIEW_SCHEMA_VERSION): {
         "body": _ui_milestone_review_schema_body,
@@ -162,6 +265,10 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (CONSENSUS_DOCUMENT_SCHEMA_REF, CONSENSUS_DOCUMENT_SCHEMA_VERSION): {
         "body": _consensus_document_schema_body,
         "validator": _validate_consensus_document_payload,
+    },
+    (MAKER_CHECKER_VERDICT_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_VERSION): {
+        "body": _maker_checker_verdict_schema_body,
+        "validator": _validate_maker_checker_verdict_payload,
     },
 }
 

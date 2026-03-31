@@ -50,7 +50,7 @@ class RuntimeExecutionOutcome:
     final_ack: CommandAckEnvelope | None
 
 
-SUPPORTED_RUNTIME_OUTPUT_SCHEMA = "ui_milestone_review"
+SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {"ui_milestone_review", "maker_checker_verdict"}
 SUPPORTED_RUNTIME_ROLE_PROFILES = {"ui_designer_primary", "checker_primary"}
 
 
@@ -182,6 +182,24 @@ def _build_runtime_success_payload(
     }
 
 
+def _build_runtime_checker_verdict_payload() -> dict[str, Any]:
+    return {
+        "summary": "Checker approved the visual milestone with one non-blocking note.",
+        "review_status": "APPROVED_WITH_NOTES",
+        "findings": [
+            {
+                "finding_id": "finding_cta_spacing",
+                "severity": "low",
+                "category": "VISUAL_POLISH",
+                "headline": "CTA spacing can be tightened slightly.",
+                "summary": "Spacing is acceptable but should be polished downstream.",
+                "required_action": "Tighten CTA spacing during implementation.",
+                "blocking": False,
+            }
+        ],
+    }
+
+
 def _schema_version_for_execution_package(execution_package: CompiledExecutionPackage) -> str:
     return schema_id(
         execution_package.execution.output_schema_ref,
@@ -208,7 +226,7 @@ def _execute_compiled_execution_package(
             },
         )
 
-    if execution_package.execution.output_schema_ref != SUPPORTED_RUNTIME_OUTPUT_SCHEMA:
+    if execution_package.execution.output_schema_ref not in SUPPORTED_RUNTIME_OUTPUT_SCHEMAS:
         return RuntimeExecutionResult(
             result_status="failed",
             failure_kind="UNSUPPORTED_RUNTIME_EXECUTION",
@@ -235,6 +253,24 @@ def _execute_compiled_execution_package(
                 "compile_request_id": execution_package.meta.compile_request_id,
                 "ticket_id": execution_package.meta.ticket_id,
             },
+        )
+
+    if execution_package.execution.output_schema_ref == "maker_checker_verdict":
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary=(
+                f"Runtime executed checker ticket {execution_package.meta.ticket_id} via "
+                f"{execution_package.meta.compiler_version}."
+            ),
+            artifact_refs=[],
+            result_payload=_build_runtime_checker_verdict_payload(),
+            written_artifacts=[],
+            assumptions=[
+                f"compiler_version={execution_package.meta.compiler_version}",
+                f"compile_request_id={execution_package.meta.compile_request_id}",
+            ],
+            issues=[],
+            confidence=0.7,
         )
 
     artifact_refs, written_artifacts = _build_runtime_default_artifacts(execution_package)
@@ -266,7 +302,7 @@ def _build_runtime_result_submit_command(
     schema_version = (
         _schema_version_for_execution_package(execution_package)
         if execution_package is not None
-        else f"{SUPPORTED_RUNTIME_OUTPUT_SCHEMA}_v1"
+        else "ui_milestone_review_v1"
     )
     written_artifacts = [
         TicketWrittenArtifact(

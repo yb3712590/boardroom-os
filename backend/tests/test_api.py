@@ -782,6 +782,72 @@ def _ticket_result_submit_payload(
     return result_payload
 
 
+def _maker_checker_result_submit_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_checker_001",
+    node_id: str = "node_homepage_visual",
+    submitted_by: str = "emp_checker_1",
+    review_status: str = "APPROVED_WITH_NOTES",
+    findings: list[dict] | None = None,
+    artifact_refs: list[str] | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
+    resolved_findings = findings
+    if resolved_findings is None:
+        if review_status == "APPROVED":
+            resolved_findings = []
+        elif review_status == "CHANGES_REQUIRED":
+            resolved_findings = [
+                {
+                    "finding_id": "finding_hero_hierarchy",
+                    "severity": "high",
+                    "category": "VISUAL_HIERARCHY",
+                    "headline": "Hero hierarchy is not strong enough yet.",
+                    "summary": "The first screen still lacks a clear primary attention anchor.",
+                    "required_action": "Strengthen hero hierarchy before board review.",
+                    "blocking": True,
+                }
+            ]
+        else:
+            resolved_findings = [
+                {
+                    "finding_id": "finding_cta_spacing",
+                    "severity": "low",
+                    "category": "VISUAL_POLISH",
+                    "headline": "CTA spacing can be tightened slightly.",
+                    "summary": "Spacing is acceptable but should be cleaned up downstream.",
+                    "required_action": "Tighten CTA spacing during implementation.",
+                    "blocking": False,
+                }
+            ]
+
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "submitted_by": submitted_by,
+        "result_status": "completed",
+        "schema_version": "maker_checker_verdict_v1",
+        "payload": {
+            "summary": f"Checker returned {review_status} for the visual milestone.",
+            "review_status": review_status,
+            "findings": resolved_findings,
+        },
+        "artifact_refs": artifact_refs or [],
+        "written_artifacts": [],
+        "assumptions": ["Checker reviewed the submitted visual milestone package."],
+        "issues": [],
+        "confidence": 0.8,
+        "needs_escalation": False,
+        "summary": "Structured checker verdict submitted.",
+        "failure_kind": None,
+        "failure_message": None,
+        "failure_detail": None,
+        "idempotency_key": idempotency_key
+        or f"ticket-result-submit:{workflow_id}:{ticket_id}:maker-checker",
+    }
+
+
 def _ticket_cancel_payload(
     workflow_id: str = "wf_seed",
     ticket_id: str = "tkt_visual_001",
@@ -1088,7 +1154,7 @@ def _seed_review_request(
         ticket = repository.get_current_ticket_projection("tkt_visual_001")
         assert ticket is not None
         compile_and_persist_execution_artifacts(repository, ticket)
-    response = client.post(
+    maker_response = client.post(
         "/api/v1/commands/ticket-complete",
         json=_ticket_complete_payload(
             workflow_id=workflow_id,
@@ -1096,10 +1162,49 @@ def _seed_review_request(
             compile_manifest_ref=compile_manifest_ref,
         ),
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "ACCEPTED"
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
 
-    approvals = client.app.state.repository.list_open_approvals()
+    repository = client.app.state.repository
+    node_projection = repository.get_current_node_projection(workflow_id, "node_homepage_visual")
+    assert node_projection is not None
+    checker_ticket_id = node_projection["latest_ticket_id"]
+    assert checker_ticket_id != "tkt_visual_001"
+    assert repository.list_open_approvals() == []
+
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    assert checker_lease_response.status_code == 200
+    assert checker_lease_response.json()["status"] == "ACCEPTED"
+
+    checker_start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    assert checker_start_response.status_code == 200
+    assert checker_start_response.json()["status"] == "ACCEPTED"
+
+    checker_result_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+        ),
+    )
+    assert checker_result_response.status_code == 200
+    assert checker_result_response.json()["status"] == "ACCEPTED"
+
+    approvals = repository.list_open_approvals()
     assert len(approvals) == 1
     return approvals[0]
 
@@ -5767,6 +5872,109 @@ def test_inbox_and_dashboard_reflect_open_approval(client):
     ]
 
 
+def test_visual_milestone_result_submit_routes_to_checker_ticket_before_board_review(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(include_review_request=True),
+    )
+
+    repository = client.app.state.repository
+    maker_ticket = repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    assert node_projection is not None
+    checker_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+    with repository.connection() as connection:
+        checker_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            node_projection["latest_ticket_id"],
+        )
+    inbox_response = client.get("/api/v1/projections/inbox")
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert maker_ticket is not None
+    assert maker_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert checker_ticket is not None
+    assert checker_ticket["ticket_id"] != "tkt_visual_001"
+    assert checker_ticket["status"] == TICKET_STATUS_PENDING
+    assert checker_created_spec is not None
+    assert checker_created_spec["parent_ticket_id"] == "tkt_visual_001"
+    assert checker_created_spec["role_profile_ref"] == "checker_primary"
+    assert checker_created_spec["output_schema_ref"] == "maker_checker_verdict"
+    assert repository.list_open_approvals() == []
+    assert inbox_response.json()["data"]["items"] == []
+    assert dashboard_response.json()["data"]["inbox_counts"]["approvals_pending"] == 0
+
+
+def test_checker_changes_required_creates_fix_ticket_instead_of_board_review(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(include_review_request=True),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    current_node = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    assert current_node is not None
+    checker_ticket_id = current_node["latest_ticket_id"]
+
+    checker_lease = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            ticket_id=checker_ticket_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    checker_start = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            ticket_id=checker_ticket_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            ticket_id=checker_ticket_id,
+            review_status="CHANGES_REQUIRED",
+            idempotency_key=f"ticket-result-submit:wf_seed:{checker_ticket_id}:changes-required",
+        ),
+    )
+
+    node_projection = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    assert node_projection is not None
+    fix_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+    with repository.connection() as connection:
+        fix_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            node_projection["latest_ticket_id"],
+        )
+    inbox_response = client.get("/api/v1/projections/inbox")
+
+    assert checker_lease.status_code == 200
+    assert checker_lease.json()["status"] == "ACCEPTED"
+    assert checker_start.status_code == 200
+    assert checker_start.json()["status"] == "ACCEPTED"
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+    assert fix_ticket is not None
+    assert fix_ticket["ticket_id"] not in {"tkt_visual_001", checker_ticket_id}
+    assert fix_ticket["status"] == TICKET_STATUS_PENDING
+    assert fix_created_spec is not None
+    assert fix_created_spec["parent_ticket_id"] == checker_ticket_id
+    assert fix_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert fix_created_spec["output_schema_ref"] == "ui_milestone_review"
+    assert repository.list_open_approvals() == []
+    assert inbox_response.json()["data"]["items"] == []
+
+
 def test_review_room_route_returns_existing_projection(client):
     approval = _seed_review_request(client)
 
@@ -5775,7 +5983,7 @@ def test_review_room_route_returns_existing_projection(client):
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["review_pack"]["meta"]["approval_id"] == approval["approval_id"]
-    assert body["review_pack"]["subject"]["source_ticket_id"] == "tkt_visual_001"
+    assert body["review_pack"]["subject"]["source_ticket_id"] != "tkt_visual_001"
     assert body["review_pack"]["trigger"]["trigger_event_id"].startswith("evt_")
     assert body["review_pack"]["decision_form"]["command_target_version"] >= 1
     assert body["available_actions"] == ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"]
@@ -5978,7 +6186,8 @@ def test_board_reject_command_resolves_open_approval(client):
     )
 
     updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    review_ticket_id = approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
+    ticket_projection = client.app.state.repository.get_current_ticket_projection(review_ticket_id)
     node_projection = client.app.state.repository.get_current_node_projection(
         "wf_reject",
         "node_homepage_visual",
@@ -6019,7 +6228,8 @@ def test_modify_constraints_command_resolves_open_approval(client):
     )
 
     updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_visual_001")
+    review_ticket_id = approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
+    ticket_projection = client.app.state.repository.get_current_ticket_projection(review_ticket_id)
     node_projection = client.app.state.repository.get_current_node_projection(
         "wf_modify",
         "node_homepage_visual",
@@ -6177,8 +6387,7 @@ def test_event_stream_returns_incremental_events_after_cursor(client):
 
 def test_ticket_complete_stream_carries_ticket_and_review_events(client):
     initial_cursor = client.get("/api/v1/projections/dashboard").json()["cursor"]
-    _create_lease_and_start_ticket(client)
-    client.post("/api/v1/commands/ticket-complete", json=_ticket_complete_payload())
+    _seed_review_request(client)
 
     with client.stream("GET", f"/api/v1/events/stream?after={initial_cursor}") as response:
         body = "".join(response.iter_text())
@@ -6325,7 +6534,7 @@ def test_invalid_project_init_returns_422_without_writing_events(client):
 def test_ticket_complete_review_request_emits_required_event(client):
     _seed_review_request(client, workflow_id="wf_event")
 
-    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_COMPLETED) == 1
+    assert client.app.state.repository.count_events_by_type(EVENT_TICKET_COMPLETED) == 2
     assert client.app.state.repository.count_events_by_type(EVENT_BOARD_REVIEW_REQUIRED) == 1
 
 

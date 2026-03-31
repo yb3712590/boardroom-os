@@ -49,3 +49,59 @@ def test_output_schema_registry_rejects_invalid_consensus_document_payload() -> 
                 "followup_tickets": [],
             },
         )
+
+
+def test_output_schema_registry_exposes_maker_checker_verdict_schema() -> None:
+    schema = get_output_schema_body("maker_checker_verdict", 1)
+
+    assert schema["type"] == "object"
+    assert "summary" in schema["required"]
+    assert "review_status" in schema["required"]
+    assert "findings" in schema["required"]
+
+
+def test_output_schema_registry_accepts_valid_maker_checker_verdict_payload() -> None:
+    validate_output_payload(
+        schema_ref="maker_checker_verdict",
+        schema_version=1,
+        submitted_schema_version="maker_checker_verdict_v1",
+        payload={
+            "summary": "Checker approved the visual milestone with one non-blocking note.",
+            "review_status": "APPROVED_WITH_NOTES",
+            "findings": [
+                {
+                    "finding_id": "finding_cta_spacing",
+                    "severity": "low",
+                    "category": "VISUAL_POLISH",
+                    "headline": "CTA spacing can be tightened slightly.",
+                    "summary": "Current CTA spacing is acceptable but leaves room for polish.",
+                    "required_action": "Tighten CTA spacing during downstream implementation.",
+                    "blocking": False,
+                }
+            ],
+        },
+    )
+
+
+def test_output_schema_registry_rejects_changes_required_without_blocking_finding() -> None:
+    with pytest.raises(ValueError, match="blocking"):
+        validate_output_payload(
+            schema_ref="maker_checker_verdict",
+            schema_version=1,
+            submitted_schema_version="maker_checker_verdict_v1",
+            payload={
+                "summary": "Checker requires changes before the board sees this milestone.",
+                "review_status": "CHANGES_REQUIRED",
+                "findings": [
+                    {
+                        "finding_id": "finding_weak_hierarchy",
+                        "severity": "high",
+                        "category": "VISUAL_HIERARCHY",
+                        "headline": "Visual hierarchy is still weak.",
+                        "summary": "The hero does not establish clear first-screen priority.",
+                        "required_action": "Strengthen the hero hierarchy before resubmitting.",
+                        "blocking": False,
+                    }
+                ],
+            },
+        )
