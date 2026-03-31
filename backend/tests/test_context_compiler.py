@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from app.contracts.commands import DeveloperInspectorRefs
@@ -77,6 +78,57 @@ def _ticket_lease_payload(
         "lease_timeout_sec": 600,
         "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}",
     }
+
+
+def _seed_artifact(
+    client,
+    *,
+    artifact_ref: str,
+    logical_path: str,
+    kind: str,
+    media_type: str,
+    content_text: str | None = None,
+    content_json: dict | None = None,
+    materialization_status: str = "MATERIALIZED",
+    lifecycle_status: str = "ACTIVE",
+) -> None:
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    storage_relpath = None
+    content_hash = None
+    size_bytes = None
+
+    if materialization_status == "MATERIALIZED":
+        if content_json is not None:
+            materialized = artifact_store.materialize_json(logical_path, content_json)
+        else:
+            materialized = artifact_store.materialize_text(logical_path, content_text or "")
+        storage_relpath = materialized.storage_relpath
+        content_hash = materialized.content_hash
+        size_bytes = materialized.size_bytes
+
+    with repository.transaction() as connection:
+        repository.save_artifact_record(
+            connection,
+            artifact_ref=artifact_ref,
+            workflow_id="wf_seed_inputs",
+            ticket_id="tkt_seed_inputs",
+            node_id="node_seed_inputs",
+            logical_path=logical_path,
+            kind=kind,
+            media_type=media_type,
+            materialization_status=materialization_status,
+            lifecycle_status=lifecycle_status,
+            storage_relpath=storage_relpath,
+            content_hash=content_hash,
+            size_bytes=size_bytes,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
 
 
 def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time):
@@ -190,6 +242,104 @@ def test_compile_execution_package_includes_indexed_artifact_access_descriptors(
     assert content_payload["size_bytes"] == materialized.size_bytes
     assert "/api/v1/artifacts/content" in content_payload["content_url"]
     assert "/api/v1/artifacts/preview" in content_payload["preview_url"]
+
+
+def test_compile_execution_package_inlines_materialized_markdown_and_json_sources(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            input_artifact_refs=[
+                "art://inputs/brief.md",
+                "art://inputs/spec.json",
+            ]
+        ),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        kind="MARKDOWN",
+        media_type="text/markdown",
+        content_text="# Brief\n\nInline me.\n",
+    )
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/spec.json",
+        logical_path="artifacts/inputs/spec.json",
+        kind="JSON",
+        media_type="application/json",
+        content_json={"goal": "Ship homepage", "constraints": ["Keep it local"]},
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_package = compile_execution_package(compile_request)
+    markdown_block = compiled_package.atomic_context_bundle.context_blocks[0]
+    json_block = compiled_package.atomic_context_bundle.context_blocks[1]
+
+    assert markdown_block.content_type == "TEXT"
+    assert markdown_block.content_payload["content_text"] == "# Brief\n\nInline me.\n"
+    assert markdown_block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/brief.md"
+
+    assert json_block.content_type == "JSON"
+    assert json_block.content_payload["content_json"] == {
+        "goal": "Ship homepage",
+        "constraints": ["Keep it local"],
+    }
+    assert json_block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/spec.json"
+
+
+def test_compile_audit_artifacts_falls_back_to_descriptor_when_source_exceeds_budget(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md"]),
+            "context_query_plan": {
+                "keywords": ["homepage"],
+                "semantic_queries": ["approved direction"],
+                "max_context_tokens": 10,
+            },
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        kind="MARKDOWN",
+        media_type="text/markdown",
+        content_text="# Brief\n\nThis should be too large for the tiny token budget.\n",
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+    source_log = compiled_artifacts.compile_manifest.source_log[0]
+
+    assert block.content_type == "SOURCE_DESCRIPTOR"
+    assert block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/brief.md"
+    assert compiled_artifacts.compile_manifest.degradation.is_degraded is True
+    assert any("token budget" in warning.lower() for warning in compiled_artifacts.compile_manifest.degradation.warnings)
+    assert source_log.status == "TRUNCATED"
+    assert "token budget" in (source_log.reason or "").lower()
+    assert compiled_artifacts.compile_manifest.final_bundle_stats.reference_block_count == 1
+    assert compiled_artifacts.compile_manifest.final_bundle_stats.hydrated_block_count == 0
 
 
 def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(client, set_ticket_time):

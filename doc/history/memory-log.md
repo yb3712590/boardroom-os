@@ -154,6 +154,8 @@
 
 - Synced `doc/roadmap-reset.md` with the new documentation baseline by adding explicit anti-drift execution constraints, so future development rounds must read the roadmap reset early, stay on one mainline direction, and stop scope growth once a side path no longer shortens the local `Board -> Review` MVP chain.
 - Added a ready-to-copy reset prompt to `doc/roadmap-reset.md`, updating the fixed reading order to include the roadmap decision itself before `doc/TODO.md` and `doc/history/memory-log.md`, and removing outdated default expansion toward `Search / Retrieval` or other post-MVP infrastructure directions.
+- Moved the Context Compiler past the earlier pure reference-only state for local execution: active materialized `TEXT / MARKDOWN / JSON` input artifacts now inline directly into the compiled execution package, while unreadable or over-budget sources fall back to descriptor form with explicit compile-manifest reasons.
+- Extended compile audit output so the manifest now records why a source stayed descriptor-only, distinguishes hydrated vs reference blocks in final bundle stats, and keeps the signed artifact URL path available even for inlined sources.
 
 ### Current Watch-Outs
 

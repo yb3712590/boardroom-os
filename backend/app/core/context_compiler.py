@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from dataclasses import dataclass
 from typing import Any
 
 from app.contracts.commands import DeveloperInspectorRefs, TicketEscalationPolicy
@@ -45,7 +46,11 @@ from app.contracts.runtime import (
     CompileRequestMeta,
     CompileRequestWorkerBinding,
 )
-from app.core.artifacts import build_artifact_access_descriptor
+from app.core.artifacts import (
+    build_artifact_access_descriptor,
+    is_artifact_readable,
+    normalize_artifact_kind,
+)
 from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import get_output_schema_body
@@ -59,13 +64,22 @@ from app.db.repository import ControlPlaneRepository
 MINIMAL_CONTEXT_COMPILER_VERSION = "context-compiler.min.v1"
 MINIMAL_CONTEXT_COMPILER_MODEL_PROFILE = "boardroom_os.runtime.min"
 REFERENCE_ONLY_WARNING = (
-    "Current MVP compiles explicit source references only; artifact bodies are not hydrated."
+    "Some explicit sources stayed as descriptors instead of being fully inlined."
 )
 REFERENCE_ONLY_REASON = (
-    "Persist explicit source as a reference descriptor because artifact hydration is not "
-    "implemented in the current MVP."
+    "Persist explicit source as a reference descriptor."
 )
 REFERENCE_ONLY_TRANSFORM = "NORMALIZE_REFERENCE_DESCRIPTOR"
+INLINE_TEXT_TRANSFORM = "HYDRATE_TEXT_BODY"
+INLINE_JSON_TRANSFORM = "HYDRATE_JSON_BODY"
+
+
+@dataclass(frozen=True)
+class _PreparedInlineSource:
+    content_type: str | None = None
+    content_text: str | None = None
+    content_json: dict[str, Any] | None = None
+    fallback_reason: str | None = None
 
 
 def _canonical_json(value: Any) -> str:
@@ -84,6 +98,84 @@ def _stable_hash(value: Any) -> str:
 
 def _estimate_tokens(value: Any) -> int:
     return max(1, (len(_canonical_json(value)) + 3) // 4)
+
+
+def _build_descriptor_payload(source: CompileRequestExplicitSource) -> dict[str, Any]:
+    content_payload = {
+        "source_ref": source.source_ref,
+        "source_kind": source.source_kind,
+        "is_mandatory": source.is_mandatory,
+    }
+    if source.artifact_access is not None:
+        artifact_access = source.artifact_access.model_dump(mode="json")
+        content_payload["artifact_access"] = artifact_access
+        content_payload.update(artifact_access)
+    return content_payload
+
+
+def _prepare_inline_source(
+    repository: ControlPlaneRepository,
+    artifact: dict[str, Any] | None,
+) -> _PreparedInlineSource:
+    if artifact is None:
+        return _PreparedInlineSource(
+            fallback_reason="Artifact is not indexed yet, so the compiler kept only its descriptor.",
+        )
+    if not is_artifact_readable(artifact):
+        lifecycle_status = str(artifact.get("lifecycle_status") or "ACTIVE")
+        if artifact.get("deleted_at") is not None:
+            lifecycle_status = "DELETED"
+        return _PreparedInlineSource(
+            fallback_reason=(
+                "Artifact is not readable for inline hydration "
+                f"(materialization={artifact.get('materialization_status')}, lifecycle={lifecycle_status})."
+            ),
+        )
+
+    artifact_store = repository.artifact_store
+    if artifact_store is None:
+        return _PreparedInlineSource(
+            fallback_reason="Artifact store is unavailable, so the compiler kept only the descriptor.",
+        )
+
+    normalized_kind = normalize_artifact_kind(str(artifact.get("kind") or ""))
+    if normalized_kind not in {"TEXT", "MARKDOWN", "JSON"}:
+        return _PreparedInlineSource(
+            fallback_reason=(
+                f"Artifact kind {normalized_kind} is not eligible for inline hydration in the current MVP."
+            ),
+        )
+
+    try:
+        body = artifact_store.read_bytes(
+            artifact.get("storage_relpath"),
+            storage_object_key=artifact.get("storage_object_key"),
+        )
+    except Exception as exc:
+        return _PreparedInlineSource(
+            fallback_reason=f"Artifact body could not be read for inline hydration: {exc}",
+        )
+
+    if normalized_kind == "JSON":
+        try:
+            return _PreparedInlineSource(
+                content_type="JSON",
+                content_json=json.loads(body.decode("utf-8")),
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return _PreparedInlineSource(
+                fallback_reason=f"Artifact JSON body could not be decoded for inline hydration: {exc}",
+            )
+
+    try:
+        return _PreparedInlineSource(
+            content_type="TEXT",
+            content_text=body.decode("utf-8"),
+        )
+    except UnicodeDecodeError as exc:
+        return _PreparedInlineSource(
+            fallback_reason=f"Artifact text body could not be decoded for inline hydration: {exc}",
+        )
 
 
 def _require_ticket_create_spec(
@@ -152,21 +244,17 @@ def _build_execution_package_meta(compile_request: CompileRequest) -> CompiledEx
 
 def _build_reference_block(
     source: CompileRequestExplicitSource,
+    *,
+    reason: str | None = None,
+    status: str = "USED",
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type="SOURCE_REF",
         selector_value=source.source_ref,
     )
-    content_payload = {
-        "source_ref": source.source_ref,
-        "source_kind": source.source_kind,
-        "is_mandatory": source.is_mandatory,
-    }
-    if source.artifact_access is not None:
-        artifact_access = source.artifact_access.model_dump(mode="json")
-        content_payload["artifact_access"] = artifact_access
-        content_payload.update(artifact_access)
+    content_payload = _build_descriptor_payload(source)
     token_estimate = _estimate_tokens(content_payload)
+    fallback_reason = reason or source.inline_fallback_reason or REFERENCE_ONLY_REASON
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
         source_ref=source.source_ref,
@@ -176,12 +264,69 @@ def _build_reference_block(
         priority_class="P1" if source.is_mandatory else "P2",
         selector=selector,
         transform_chain=[REFERENCE_ONLY_TRANSFORM],
-        content_type="JSON",
+        content_type="SOURCE_DESCRIPTOR",
         content_payload=content_payload,
         token_estimate=token_estimate,
         relevance_score=1.0 if source.is_mandatory else 0.7,
         source_hash=_stable_hash(content_payload),
-        trust_note=REFERENCE_ONLY_WARNING,
+        trust_note=fallback_reason,
+    )
+    source_log = CompileManifestSourceLogEntry(
+        source_ref=source.source_ref,
+        source_kind="ARTIFACT_REFERENCE",
+        priority_class=block.priority_class,
+        trust_level=block.trust_level,
+        selector_used=f"{selector.selector_type}:{selector.selector_value}",
+        critical=source.is_mandatory,
+        status=status,
+        tokens_before=token_estimate,
+        tokens_after=token_estimate,
+        reason=fallback_reason,
+    )
+    transform_log = CompileManifestTransformLogEntry(
+        stage="NORMALIZE_SOURCES",
+        operation_type="NORMALIZE",
+        target_ref=source.source_ref,
+        output_block_id=block.block_id,
+        reason=fallback_reason,
+    )
+    return block, source_log, transform_log
+
+
+def _build_inline_block(
+    source: CompileRequestExplicitSource,
+) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
+    selector = CompiledContextSelector(
+        selector_type="SOURCE_REF",
+        selector_value=source.source_ref,
+    )
+    content_payload = _build_descriptor_payload(source)
+    transform = INLINE_TEXT_TRANSFORM
+    content_type = "TEXT"
+    reason = "Inlined active materialized artifact body into the execution package."
+    if source.inline_content_type == "JSON":
+        content_payload["content_json"] = dict(source.inline_content_json or {})
+        content_type = "JSON"
+        transform = INLINE_JSON_TRANSFORM
+    else:
+        content_payload["content_text"] = source.inline_content_text or ""
+
+    token_estimate = _estimate_tokens(content_payload)
+    block = CompiledContextBlock(
+        block_id=new_prefixed_id("ctxblk"),
+        source_ref=source.source_ref,
+        source_kind="ARTIFACT_REFERENCE",
+        trust_level=1,
+        instruction_authority="DATA_ONLY",
+        priority_class="P1" if source.is_mandatory else "P2",
+        selector=selector,
+        transform_chain=[transform],
+        content_type=content_type,
+        content_payload=content_payload,
+        token_estimate=token_estimate,
+        relevance_score=1.0 if source.is_mandatory else 0.7,
+        source_hash=_stable_hash(content_payload),
+        trust_note=reason,
     )
     source_log = CompileManifestSourceLogEntry(
         source_ref=source.source_ref,
@@ -193,14 +338,14 @@ def _build_reference_block(
         status="USED",
         tokens_before=token_estimate,
         tokens_after=token_estimate,
-        reason=REFERENCE_ONLY_REASON,
+        reason=reason,
     )
     transform_log = CompileManifestTransformLogEntry(
-        stage="NORMALIZE_SOURCES",
-        operation_type="NORMALIZE",
+        stage="HYDRATE_SOURCES",
+        operation_type="HYDRATE",
         target_ref=source.source_ref,
         output_block_id=block.block_id,
-        reason=REFERENCE_ONLY_REASON,
+        reason=reason,
     )
     return block, source_log, transform_log
 
@@ -212,7 +357,7 @@ def _build_atomic_context_bundle(context_blocks: list[CompiledContextBlock], tok
                 block_id=block.block_id,
                 source_ref=block.source_ref,
                 source_kind="ARTIFACT",
-                content_type="SOURCE_DESCRIPTOR",
+                content_type=block.content_type,
                 content_payload=dict(block.content_payload),
             )
             for block in context_blocks
@@ -246,6 +391,28 @@ def build_compile_request(
         ticket.get("workspace_id") or created_spec.get("workspace_id") or DEFAULT_WORKSPACE_ID
     )
 
+    explicit_sources = []
+    for source_ref in list(created_spec.get("input_artifact_refs") or []):
+        artifact = repository.get_artifact_by_ref(str(source_ref), connection=connection)
+        prepared_inline_source = _prepare_inline_source(repository, artifact)
+        explicit_sources.append(
+            CompileRequestExplicitSource(
+                source_ref=str(source_ref),
+                source_kind="ARTIFACT",
+                is_mandatory=True,
+                artifact_access=CompiledArtifactAccessDescriptor.model_validate(
+                    build_artifact_access_descriptor(
+                        artifact,
+                        artifact_ref=str(source_ref),
+                    )
+                ),
+                inline_content_type=prepared_inline_source.content_type,
+                inline_content_text=prepared_inline_source.content_text,
+                inline_content_json=prepared_inline_source.content_json,
+                inline_fallback_reason=prepared_inline_source.fallback_reason,
+            )
+        )
+
     return CompileRequest(
         meta=CompileRequestMeta(
             compile_request_id=new_prefixed_id("creq"),
@@ -276,20 +443,7 @@ def build_compile_request(
             max_input_tokens=max_input_tokens,
             overflow_policy="FAIL_CLOSED",
         ),
-        explicit_sources=[
-            CompileRequestExplicitSource(
-                source_ref=str(source_ref),
-                source_kind="ARTIFACT",
-                is_mandatory=True,
-                artifact_access=CompiledArtifactAccessDescriptor.model_validate(
-                    build_artifact_access_descriptor(
-                        repository.get_artifact_by_ref(str(source_ref), connection=connection),
-                        artifact_ref=str(source_ref),
-                    )
-                ),
-            )
-            for source_ref in list(created_spec.get("input_artifact_refs") or [])
-        ],
+        explicit_sources=explicit_sources,
         execution=CompileRequestExecution(
             acceptance_criteria=list(created_spec.get("acceptance_criteria") or []),
             allowed_tools=list(created_spec.get("allowed_tools") or []),
@@ -314,10 +468,47 @@ def compile_audit_artifacts(
     compiled_role = _build_compiled_role(compile_request)
     compiled_constraints = _build_compiled_constraints(compile_request)
 
-    built_blocks = [_build_reference_block(source) for source in compile_request.explicit_sources]
-    context_blocks = [item[0] for item in built_blocks]
-    source_log = [item[1] for item in built_blocks]
-    transform_log = [item[2] for item in built_blocks]
+    context_blocks: list[CompiledContextBlock] = []
+    source_log: list[CompileManifestSourceLogEntry] = []
+    transform_log: list[CompileManifestTransformLogEntry] = []
+    warnings: list[str] = []
+    hydrated_block_count = 0
+    reference_block_count = 0
+    remaining_budget = compile_request.budget_policy.max_input_tokens
+
+    for source in compile_request.explicit_sources:
+        if source.inline_content_type is not None:
+            inline_block, inline_source_log, inline_transform_log = _build_inline_block(source)
+            if inline_block.token_estimate <= remaining_budget:
+                context_blocks.append(inline_block)
+                source_log.append(inline_source_log)
+                transform_log.append(inline_transform_log)
+                hydrated_block_count += 1
+                remaining_budget -= inline_block.token_estimate
+                continue
+
+            fallback_reason = (
+                f"Inline hydration for {source.source_ref} exceeded the token budget, so the compiler kept "
+                "the source descriptor instead."
+            )
+            warnings.append(fallback_reason)
+            reference_block, reference_source_log, reference_transform_log = _build_reference_block(
+                source,
+                reason=fallback_reason,
+                status="TRUNCATED",
+            )
+        else:
+            fallback_reason = source.inline_fallback_reason or REFERENCE_ONLY_REASON
+            warnings.append(fallback_reason)
+            reference_block, reference_source_log, reference_transform_log = _build_reference_block(
+                source,
+                reason=fallback_reason,
+            )
+
+        context_blocks.append(reference_block)
+        source_log.append(reference_source_log)
+        transform_log.append(reference_transform_log)
+        reference_block_count += 1
 
     compiled_context_bundle = CompiledContextBundle(
         meta=CompiledContextBundleMeta(
@@ -331,7 +522,7 @@ def compile_audit_artifacts(
             compiled_at=compiled_at,
             model_profile=MINIMAL_CONTEXT_COMPILER_MODEL_PROFILE,
             render_target="compiled_execution_package",
-            is_degraded=True,
+            is_degraded=reference_block_count > 0,
         ),
         system_controls=CompiledSystemControls(
             role_profile=compiled_role.model_dump(mode="json"),
@@ -432,13 +623,10 @@ def compile_audit_artifacts(
         source_log=source_log,
         transform_log=transform_log,
         degradation=CompileManifestDegradation(
-            is_degraded=True,
+            is_degraded=reference_block_count > 0,
             fail_mode=compile_request.budget_policy.overflow_policy,
             missing_critical_sources=[],
-            warnings=[
-                REFERENCE_ONLY_WARNING,
-                "Token counts are deterministic estimates, not provider tokenizer results.",
-            ],
+            warnings=warnings + ["Token counts are deterministic estimates, not provider tokenizer results."],
         ),
         cache_report=CompileManifestCacheReport(
             cache_hit=False,
@@ -448,7 +636,8 @@ def compile_audit_artifacts(
         final_bundle_stats=CompileManifestFinalBundleStats(
             context_block_count=len(context_blocks),
             trusted_block_count=len(context_blocks),
-            reference_block_count=len(context_blocks),
+            reference_block_count=reference_block_count,
+            hydrated_block_count=hydrated_block_count,
             negative_pattern_count=0,
         ),
     )

@@ -2507,6 +2507,56 @@ def test_worker_runtime_execution_package_signed_url_allows_token_only_access_an
     assert "# Brief" in artifact_content_response.text
 
 
+def test_worker_runtime_execution_package_inlines_materialized_text_input_and_keeps_signed_urls(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(content="# Brief\n\nInline package body.\n", client=client)
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id="wf_worker_runtime_inline",
+                ticket_id="tkt_worker_inline",
+                node_id="node_worker_inline",
+            ),
+            "input_artifact_refs": ["art://inputs/brief.md"],
+            "idempotency_key": "ticket-create:wf_worker_runtime_inline:tkt_worker_inline",
+        },
+    )
+    assert create_response.status_code == 200
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_worker_runtime_inline",
+            ticket_id="tkt_worker_inline",
+            node_id="node_worker_inline",
+        ),
+    )
+    assert lease_response.status_code == 200
+
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package = client.get(_local_path_from_url(execution_package_url)).json()["data"]
+    context_payload = execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0]
+
+    assert context_payload["content_type"] == "TEXT"
+    assert context_payload["content_payload"]["content_text"] == "# Brief\n\nInline package body.\n"
+    assert context_payload["content_payload"]["artifact_access"]["artifact_ref"] == "art://inputs/brief.md"
+    assert context_payload["content_payload"]["content_url"].startswith(
+        "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/content"
+    )
+    assert context_payload["content_payload"]["preview_url"].startswith(
+        "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/preview"
+    )
+
+
 def test_worker_runtime_execution_package_rejects_legacy_header_fallback(
     client,
     set_ticket_time,

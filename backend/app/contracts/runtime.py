@@ -60,6 +60,10 @@ class CompileRequestExplicitSource(StrictModel):
     source_kind: Literal["ARTIFACT"]
     is_mandatory: bool = True
     artifact_access: CompiledArtifactAccessDescriptor | None = None
+    inline_content_type: Literal["TEXT", "JSON"] | None = None
+    inline_content_text: str | None = None
+    inline_content_json: dict[str, Any] | None = None
+    inline_fallback_reason: str | None = None
 
 
 class CompileRequestExecution(StrictModel):
@@ -134,7 +138,7 @@ class CompiledContextBlock(StrictModel):
     priority_class: Literal["P1", "P2", "P3"]
     selector: CompiledContextSelector
     transform_chain: list[str] = Field(default_factory=list)
-    content_type: Literal["JSON"]
+    content_type: Literal["JSON", "TEXT", "SOURCE_DESCRIPTOR"]
     content_payload: dict[str, Any] = Field(default_factory=dict)
     token_estimate: int = Field(ge=1)
     relevance_score: float = Field(ge=0.0)
@@ -249,6 +253,7 @@ class CompileManifestFinalBundleStats(StrictModel):
     context_block_count: int = Field(ge=0)
     trusted_block_count: int = Field(ge=0)
     reference_block_count: int = Field(ge=0)
+    hydrated_block_count: int = Field(ge=0)
     negative_pattern_count: int = Field(ge=0)
 
 
@@ -296,7 +301,7 @@ class AtomicContextBlock(StrictModel):
     block_id: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
     source_kind: Literal["ARTIFACT"]
-    content_type: Literal["SOURCE_DESCRIPTOR"]
+    content_type: Literal["TEXT", "JSON", "SOURCE_DESCRIPTOR"]
     content_payload: dict[str, Any] = Field(default_factory=dict)
 
 
