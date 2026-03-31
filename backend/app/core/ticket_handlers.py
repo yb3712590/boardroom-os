@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.config import get_settings
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
@@ -31,10 +32,10 @@ from app.core.artifacts import (
     ARTIFACT_RETENTION_PERSISTENT,
     ARTIFACT_STATUS_MATERIALIZED,
     ARTIFACT_STATUS_REGISTERED_ONLY,
-    compute_artifact_expiry,
     decode_artifact_base64,
     is_binary_artifact_kind,
     normalize_retention_class,
+    resolve_artifact_retention,
     resolve_artifact_media_type,
 )
 from app.core.constants import (
@@ -107,6 +108,8 @@ class PreparedTicketArtifact:
     content_hash: str | None
     size_bytes: int | None
     retention_class: str
+    retention_ttl_sec: int | None
+    retention_policy_source: str
     expires_at: datetime | None
     deleted_at: datetime | None
     deleted_by: str | None
@@ -285,12 +288,15 @@ def _prepare_ticket_artifacts(
     validated_items = _validate_written_artifacts(written_artifacts)
     prepared: list[PreparedTicketArtifact] = []
     materialized_artifacts: list[MaterializedArtifact] = []
+    settings = get_settings()
 
     for item, logical_path, media_type, retention_class in validated_items:
         normalized_kind = item.kind.upper()
-        expires_at = compute_artifact_expiry(
+        retention = resolve_artifact_retention(
             created_at=created_at,
+            retention_class=retention_class,
             retention_ttl_sec=item.retention_ttl_sec,
+            default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
         )
         if normalized_kind == "JSON":
             if artifact_store is None:
@@ -309,7 +315,9 @@ def _prepare_ticket_artifacts(
                     content_hash=materialized.content_hash,
                     size_bytes=materialized.size_bytes,
                     retention_class=retention_class,
-                    expires_at=expires_at,
+                    retention_ttl_sec=retention.retention_ttl_sec,
+                    retention_policy_source=retention.retention_policy_source,
+                    expires_at=retention.expires_at,
                     deleted_at=None,
                     deleted_by=None,
                     delete_reason=None,
@@ -333,7 +341,9 @@ def _prepare_ticket_artifacts(
                     content_hash=materialized.content_hash,
                     size_bytes=materialized.size_bytes,
                     retention_class=retention_class,
-                    expires_at=expires_at,
+                    retention_ttl_sec=retention.retention_ttl_sec,
+                    retention_policy_source=retention.retention_policy_source,
+                    expires_at=retention.expires_at,
                     deleted_at=None,
                     deleted_by=None,
                     delete_reason=None,
@@ -362,7 +372,9 @@ def _prepare_ticket_artifacts(
                     content_hash=materialized.content_hash,
                     size_bytes=materialized.size_bytes,
                     retention_class=retention_class,
-                    expires_at=expires_at,
+                    retention_ttl_sec=retention.retention_ttl_sec,
+                    retention_policy_source=retention.retention_policy_source,
+                    expires_at=retention.expires_at,
                     deleted_at=None,
                     deleted_by=None,
                     delete_reason=None,
@@ -382,7 +394,9 @@ def _prepare_ticket_artifacts(
                 content_hash=None,
                 size_bytes=None,
                 retention_class=retention_class,
-                expires_at=expires_at,
+                retention_ttl_sec=retention.retention_ttl_sec,
+                retention_policy_source=retention.retention_policy_source,
+                expires_at=retention.expires_at,
                 deleted_at=None,
                 deleted_by=None,
                 delete_reason=None,
@@ -2895,6 +2909,8 @@ def handle_ticket_result_submit(
                     content_hash=artifact.content_hash,
                     size_bytes=artifact.size_bytes,
                     retention_class=artifact.retention_class,
+                    retention_ttl_sec=artifact.retention_ttl_sec,
+                    retention_policy_source=artifact.retention_policy_source,
                     expires_at=artifact.expires_at,
                     deleted_at=artifact.deleted_at,
                     deleted_by=artifact.deleted_by,

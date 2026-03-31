@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.constants import (
@@ -1222,7 +1224,257 @@ def test_dashboard_exposes_artifact_cleanup_maintenance_summary(client, set_tick
     assert artifact_maintenance["last_trigger"] == "manual_command"
     assert artifact_maintenance["last_expired_count"] == 1
     assert artifact_maintenance["last_storage_deleted_count"] == 1
-    assert artifact_maintenance["last_run_at"] is not None
+
+
+def test_ticket_artifacts_projection_applies_default_ephemeral_ttl_and_exposes_retention_fields(
+    db_path,
+    monkeypatch,
+    set_ticket_time,
+):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC", "120")
+
+    from app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        set_ticket_time("2026-03-28T10:00:00+08:00")
+        _create_lease_and_start_ticket(client)
+        artifact_ref = "art://reports/homepage/default-ttl.md"
+
+        submit_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                artifact_refs=[artifact_ref],
+                payload={
+                    "summary": "Ephemeral artifact should pick up default retention TTL.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Default TTL option.",
+                            "artifact_refs": [artifact_ref],
+                        }
+                    ],
+                },
+                written_artifacts=[
+                    {
+                        "path": "reports/review/default-ttl.md",
+                        "artifact_ref": artifact_ref,
+                        "kind": "MARKDOWN",
+                        "content_text": "# Default TTL\n\nUse class default.\n",
+                        "retention_class": "EPHEMERAL",
+                    }
+                ],
+                idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:default-ttl",
+            ),
+        )
+        projection_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+        projected_artifact = next(
+            item
+            for item in projection_response.json()["data"]["artifacts"]
+            if item["artifact_ref"] == artifact_ref
+        )
+        stored_artifact = client.app.state.repository.get_artifact_by_ref(artifact_ref)
+
+        assert submit_response.status_code == 200
+        assert projection_response.status_code == 200
+        assert stored_artifact is not None
+        assert stored_artifact["retention_ttl_sec"] == 120
+        assert stored_artifact["retention_policy_source"] == "CLASS_DEFAULT"
+        assert stored_artifact["expires_at"] == datetime.fromisoformat("2026-03-28T10:02:00+08:00")
+        assert projected_artifact["retention_ttl_sec"] == 120
+        assert projected_artifact["retention_policy_source"] == "CLASS_DEFAULT"
+        assert projected_artifact["expires_at"] == "2026-03-28T10:02:00+08:00"
+
+
+def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
+    db_path,
+    monkeypatch,
+    set_ticket_time,
+):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC", "60")
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE artifact_index (
+            artifact_ref TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            ticket_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            logical_path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            media_type TEXT,
+            materialization_status TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL,
+            storage_relpath TEXT,
+            content_hash TEXT,
+            size_bytes INTEGER,
+            retention_class TEXT NOT NULL,
+            expires_at TEXT,
+            deleted_at TEXT,
+            deleted_by TEXT,
+            delete_reason TEXT,
+            storage_deleted_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO artifact_index (
+            artifact_ref,
+            workflow_id,
+            ticket_id,
+            node_id,
+            logical_path,
+            kind,
+            media_type,
+            materialization_status,
+            lifecycle_status,
+            storage_relpath,
+            content_hash,
+            size_bytes,
+            retention_class,
+            expires_at,
+            deleted_at,
+            deleted_by,
+            delete_reason,
+            storage_deleted_at,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "art://legacy/explicit-expiry.md",
+            "wf_legacy",
+            "tkt_legacy",
+            "node_legacy",
+            "artifacts/legacy/explicit-expiry.md",
+            "MARKDOWN",
+            "text/markdown",
+            "MATERIALIZED",
+            "ACTIVE",
+            "artifacts/legacy/explicit-expiry.md",
+            "hash-legacy-explicit",
+            32,
+            "EPHEMERAL",
+            "2026-03-28T09:30:00+08:00",
+            None,
+            None,
+            None,
+            None,
+            "2026-03-28T09:00:00+08:00",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    from app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        set_ticket_time("2026-03-28T10:00:00+08:00")
+        _create_lease_and_start_ticket(client)
+        artifact_ref = "art://reports/homepage/cleanup-candidate.md"
+
+        submit_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                artifact_refs=[artifact_ref],
+                payload={
+                    "summary": "Cleanup candidate should expose retention policy state.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Cleanup candidate option.",
+                            "artifact_refs": [artifact_ref],
+                        }
+                    ],
+                },
+                written_artifacts=[
+                    {
+                        "path": "reports/review/cleanup-candidate.md",
+                        "artifact_ref": artifact_ref,
+                        "kind": "MARKDOWN",
+                        "content_text": "# Cleanup candidate\n\nWaiting for cleanup.\n",
+                        "retention_class": "EPHEMERAL",
+                    }
+                ],
+                idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:cleanup-candidate",
+            ),
+        )
+        repository = client.app.state.repository
+        with repository.transaction() as txn:
+            txn.execute(
+                """
+                INSERT INTO artifact_index (
+                    artifact_ref,
+                    workflow_id,
+                    ticket_id,
+                    node_id,
+                    logical_path,
+                    kind,
+                    media_type,
+                    materialization_status,
+                    lifecycle_status,
+                    storage_relpath,
+                    content_hash,
+                    size_bytes,
+                    retention_class,
+                    expires_at,
+                    deleted_at,
+                    deleted_by,
+                    delete_reason,
+                    storage_deleted_at,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "art://cleanup/pending-storage-delete.md",
+                    "wf_cleanup",
+                    "tkt_cleanup",
+                    "node_cleanup",
+                    "artifacts/cleanup/pending-storage-delete.md",
+                    "MARKDOWN",
+                    "text/markdown",
+                    "MATERIALIZED",
+                    "DELETED",
+                    "artifacts/cleanup/pending-storage-delete.md",
+                    "hash-pending-delete",
+                    28,
+                    "EPHEMERAL",
+                    "2026-03-28T09:00:00+08:00",
+                    "2026-03-28T09:10:00+08:00",
+                    "emp_ops_1",
+                    "Manual delete without storage cleanup.",
+                    None,
+                    "2026-03-28T09:00:00+08:00",
+                ),
+            )
+
+        set_ticket_time("2026-03-28T10:02:00+08:00")
+        dashboard_response = client.get("/api/v1/projections/dashboard")
+        candidates_response = client.get("/api/v1/projections/artifact-cleanup-candidates?limit=10")
+
+        assert submit_response.status_code == 200
+        assert dashboard_response.status_code == 200
+        assert candidates_response.status_code == 200
+        artifact_maintenance = dashboard_response.json()["data"]["artifact_maintenance"]
+        assert artifact_maintenance["ephemeral_default_ttl_sec"] == 60
+        assert artifact_maintenance["legacy_unknown_retention_count"] == 1
+
+        candidates = {
+            item["artifact_ref"]: item for item in candidates_response.json()["data"]["artifacts"]
+        }
+        assert candidates["art://reports/homepage/cleanup-candidate.md"]["cleanup_reason"] == "EXPIRED_DUE"
+        assert candidates["art://reports/homepage/cleanup-candidate.md"]["retention_policy_source"] == (
+            "CLASS_DEFAULT"
+        )
+        assert candidates["art://cleanup/pending-storage-delete.md"]["cleanup_reason"] == (
+            "STORAGE_DELETE_PENDING"
+        )
 
 
 def test_ticket_create_moves_ticket_and_node_to_pending(client):

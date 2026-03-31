@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -17,6 +18,19 @@ ARTIFACT_LIFECYCLE_EXPIRED = "EXPIRED"
 
 ARTIFACT_RETENTION_PERSISTENT = "PERSISTENT"
 ARTIFACT_RETENTION_EPHEMERAL = "EPHEMERAL"
+
+ARTIFACT_RETENTION_POLICY_NO_EXPIRY = "NO_EXPIRY"
+ARTIFACT_RETENTION_POLICY_EXPLICIT_TTL = "EXPLICIT_TTL"
+ARTIFACT_RETENTION_POLICY_CLASS_DEFAULT = "CLASS_DEFAULT"
+ARTIFACT_RETENTION_POLICY_BACKFILLED_CLASS_DEFAULT = "BACKFILLED_CLASS_DEFAULT"
+ARTIFACT_RETENTION_POLICY_LEGACY_UNKNOWN = "LEGACY_UNKNOWN"
+
+
+@dataclass(frozen=True)
+class ResolvedArtifactRetention:
+    expires_at: datetime | None
+    retention_ttl_sec: int | None
+    retention_policy_source: str
 
 
 def normalize_artifact_kind(kind: str) -> str:
@@ -109,6 +123,39 @@ def compute_artifact_expiry(
     return created_at + timedelta(seconds=retention_ttl_sec)
 
 
+def resolve_artifact_retention(
+    *,
+    created_at: datetime,
+    retention_class: str,
+    retention_ttl_sec: int | None,
+    default_ephemeral_ttl_sec: int,
+) -> ResolvedArtifactRetention:
+    normalized_retention_class = normalize_retention_class(retention_class)
+    if retention_ttl_sec is not None:
+        return ResolvedArtifactRetention(
+            expires_at=compute_artifact_expiry(
+                created_at=created_at,
+                retention_ttl_sec=retention_ttl_sec,
+            ),
+            retention_ttl_sec=retention_ttl_sec,
+            retention_policy_source=ARTIFACT_RETENTION_POLICY_EXPLICIT_TTL,
+        )
+    if normalized_retention_class == ARTIFACT_RETENTION_EPHEMERAL:
+        return ResolvedArtifactRetention(
+            expires_at=compute_artifact_expiry(
+                created_at=created_at,
+                retention_ttl_sec=default_ephemeral_ttl_sec,
+            ),
+            retention_ttl_sec=default_ephemeral_ttl_sec,
+            retention_policy_source=ARTIFACT_RETENTION_POLICY_CLASS_DEFAULT,
+        )
+    return ResolvedArtifactRetention(
+        expires_at=None,
+        retention_ttl_sec=None,
+        retention_policy_source=ARTIFACT_RETENTION_POLICY_NO_EXPIRY,
+    )
+
+
 def resolve_artifact_lifecycle_status(
     artifact: dict[str, Any],
     *,
@@ -158,6 +205,8 @@ def build_artifact_metadata(
         "materialization_status": artifact["materialization_status"],
         "lifecycle_status": lifecycle_status,
         "retention_class": artifact.get("retention_class") or ARTIFACT_RETENTION_PERSISTENT,
+        "retention_ttl_sec": artifact.get("retention_ttl_sec"),
+        "retention_policy_source": artifact.get("retention_policy_source"),
         "expires_at": artifact.get("expires_at"),
         "deleted_at": artifact.get("deleted_at"),
         "deleted_by": artifact.get("deleted_by"),

@@ -30,8 +30,10 @@
 - artifact 自动清理闭环已落地：
   - `artifact_index` 现在会持久化 `storage_deleted_at`，物理文件删掉后不会再被重复当成 residual cleanup 目标
   - scheduler / runner 现在会按 `BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC` 自动触发 artifact cleanup；`dashboard` 也会直接回显最近一次 cleanup 的触发来源、删除数量和当前积压
-  - `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `deleted_by`、`delete_reason` 和 `storage_deleted_at`，方便直接核对 artifact 是逻辑过期了，还是文件也已经物理删掉
-- 继续推进更细粒度 retention policy 和更大文件的上传路径
+  - `EPHEMERAL` artifact 现在默认会落 `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`，历史上缺 `expires_at` 的临时件会在初始化时回填进统一过期闭环
+  - `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `retention_ttl_sec`、`retention_policy_source`、`deleted_by`、`delete_reason` 和 `storage_deleted_at`
+  - 新增 `GET /api/v1/projections/artifact-cleanup-candidates`，可以直接看当前等待 cleanup 的 artifact，以及它们是“已到期待处理”还是“等物理删文件”
+- 继续推进更细粒度 retention class、按业务场景区分默认 TTL，以及更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
 - 补齐更完整的 provider 路由、多 provider 控制面和恢复策略
 - 解决 `backend/pyproject.toml` 的 editable install 打包问题，让 `pip install -e .[dev]` 在新环境可用

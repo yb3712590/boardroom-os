@@ -65,8 +65,10 @@ class InboxCountsProjection(StrictModel):
 class ArtifactMaintenanceProjection(StrictModel):
     auto_cleanup_enabled: bool
     cleanup_interval_sec: int
+    ephemeral_default_ttl_sec: int
     pending_expired_count: int
     pending_storage_cleanup_count: int
+    legacy_unknown_retention_count: int
     last_run_at: datetime | None = None
     last_cleaned_by: str | None = None
     last_trigger: str | None = None
@@ -172,6 +174,8 @@ class TicketArtifactProjection(StrictModel):
     materialization_status: str
     lifecycle_status: str
     retention_class: str | None = None
+    retention_ttl_sec: int | None = None
+    retention_policy_source: str | None = None
     expires_at: datetime | None = None
     deleted_at: datetime | None = None
     deleted_by: str | None = None
@@ -192,6 +196,34 @@ class TicketArtifactsProjectionData(StrictModel):
 
 class TicketArtifactsProjectionEnvelope(ProjectionEnvelopeBase):
     data: TicketArtifactsProjectionData
+
+
+class ArtifactCleanupCandidateProjection(StrictModel):
+    artifact_ref: str
+    ticket_id: str
+    path: str
+    lifecycle_status: str
+    retention_class: str | None = None
+    retention_ttl_sec: int | None = None
+    retention_policy_source: str | None = None
+    expires_at: datetime | None = None
+    storage_deleted_at: datetime | None = None
+    cleanup_reason: str
+
+
+class ArtifactCleanupCandidatesProjectionFilters(StrictModel):
+    ticket_id: str | None = None
+    retention_class: str | None = None
+    limit: int
+
+
+class ArtifactCleanupCandidatesProjectionData(StrictModel):
+    filters: ArtifactCleanupCandidatesProjectionFilters
+    artifacts: list[ArtifactCleanupCandidateProjection]
+
+
+class ArtifactCleanupCandidatesProjectionEnvelope(ProjectionEnvelopeBase):
+    data: ArtifactCleanupCandidatesProjectionData
 
 
 class IncidentProjectionItem(StrictModel):

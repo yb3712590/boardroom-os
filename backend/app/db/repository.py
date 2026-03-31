@@ -8,8 +8,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.config import get_settings
 from app.contracts.runtime import CompileManifest, CompiledContextBundle, CompiledExecutionPackage
 from app.core.artifact_store import ArtifactStore
+from app.core.artifacts import (
+    ARTIFACT_RETENTION_EPHEMERAL,
+    ARTIFACT_RETENTION_POLICY_BACKFILLED_CLASS_DEFAULT,
+    ARTIFACT_RETENTION_POLICY_LEGACY_UNKNOWN,
+    ARTIFACT_RETENTION_POLICY_NO_EXPIRY,
+)
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_CLOSED,
@@ -123,6 +130,7 @@ class ControlPlaneRepository:
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_artifact_index_shape(connection)
             self._backfill_scope_defaults(connection)
+            self._backfill_artifact_retention_defaults(connection)
             self._seed_employee_roster(connection)
         self._initialized = True
 
@@ -2441,6 +2449,8 @@ class ControlPlaneRepository:
         deleted_by: str | None,
         delete_reason: str | None,
         created_at: datetime,
+        retention_ttl_sec: int | None = None,
+        retention_policy_source: str | None = None,
         storage_deleted_at: datetime | None = None,
     ) -> None:
         connection.execute(
@@ -2459,13 +2469,15 @@ class ControlPlaneRepository:
                 content_hash,
                 size_bytes,
                 retention_class,
+                retention_ttl_sec,
+                retention_policy_source,
                 expires_at,
                 deleted_at,
                 deleted_by,
                 delete_reason,
                 storage_deleted_at,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 artifact_ref,
@@ -2481,6 +2493,8 @@ class ControlPlaneRepository:
                 content_hash,
                 size_bytes,
                 retention_class,
+                retention_ttl_sec,
+                retention_policy_source,
                 expires_at.isoformat() if expires_at is not None else None,
                 deleted_at.isoformat() if deleted_at is not None else None,
                 deleted_by,
@@ -2552,6 +2566,43 @@ class ControlPlaneRepository:
             """,
             (expires_before.isoformat(),),
         ).fetchall()
+        return [self._convert_artifact_index_row(row) for row in rows]
+
+    def list_artifact_cleanup_candidates(
+        self,
+        *,
+        at: datetime,
+        ticket_id: str | None = None,
+        retention_class: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        clauses = [
+            """(
+                    (lifecycle_status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?)
+                    OR (
+                        lifecycle_status IN ('DELETED', 'EXPIRED')
+                        AND storage_relpath IS NOT NULL
+                        AND storage_deleted_at IS NULL
+                    )
+                )"""
+        ]
+        params: list[Any] = [at.isoformat()]
+        if ticket_id is not None:
+            clauses.append("ticket_id = ?")
+            params.append(ticket_id)
+        if retention_class is not None:
+            clauses.append("retention_class = ?")
+            params.append(retention_class)
+        params.append(limit)
+        query = f"""
+            SELECT * FROM artifact_index
+            WHERE {' AND '.join(clauses)}
+            ORDER BY created_at ASC, artifact_ref ASC
+            LIMIT ?
+        """
+        with self.connection() as connection:
+            rows = connection.execute(query, params).fetchall()
         return [self._convert_artifact_index_row(row) for row in rows]
 
     def mark_artifact_storage_deleted(
@@ -2715,6 +2766,14 @@ class ControlPlaneRepository:
                   AND storage_deleted_at IS NULL
                 """,
             ).fetchone()
+            legacy_unknown_row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM artifact_index
+                WHERE retention_policy_source = ?
+                """,
+                (ARTIFACT_RETENTION_POLICY_LEGACY_UNKNOWN,),
+            ).fetchone()
             latest_cleanup_row = connection.execute(
                 """
                 SELECT * FROM events
@@ -2731,6 +2790,7 @@ class ControlPlaneRepository:
         return {
             "pending_expired_count": int(pending_expired_row["total"]),
             "pending_storage_cleanup_count": int(pending_storage_row["total"]),
+            "legacy_unknown_retention_count": int(legacy_unknown_row["total"]),
             "latest_cleanup_event": latest_cleanup_event,
         }
 
@@ -3130,6 +3190,11 @@ class ControlPlaneRepository:
                 converted[field] = datetime.fromisoformat(converted[field])
         converted["size_bytes"] = (
             int(converted["size_bytes"]) if converted.get("size_bytes") is not None else None
+        )
+        converted["retention_ttl_sec"] = (
+            int(converted["retention_ttl_sec"])
+            if converted.get("retention_ttl_sec") is not None
+            else None
         )
         converted["path"] = converted["logical_path"]
         return converted
@@ -4374,6 +4439,8 @@ class ControlPlaneRepository:
                 content_hash TEXT,
                 size_bytes INTEGER,
                 retention_class TEXT NOT NULL,
+                retention_ttl_sec INTEGER,
+                retention_policy_source TEXT,
                 expires_at TEXT,
                 deleted_at TEXT,
                 deleted_by TEXT,
@@ -4401,6 +4468,8 @@ class ControlPlaneRepository:
             "content_hash": "TEXT",
             "size_bytes": "INTEGER",
             "retention_class": "TEXT",
+            "retention_ttl_sec": "INTEGER",
+            "retention_policy_source": "TEXT",
             "expires_at": "TEXT",
             "deleted_at": "TEXT",
             "deleted_by": "TEXT",
@@ -4421,6 +4490,69 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_artifact_index_node_id ON artifact_index(node_id)"
+        )
+
+    def _backfill_artifact_retention_defaults(self, connection: sqlite3.Connection) -> None:
+        settings = get_settings()
+        default_ttl_sec = settings.artifact_ephemeral_default_ttl_sec
+        rows = connection.execute(
+            """
+            SELECT * FROM artifact_index
+            WHERE retention_class = ?
+              AND expires_at IS NULL
+              AND (
+                    retention_policy_source IS NULL
+                    OR TRIM(retention_policy_source) = ''
+                  )
+            """,
+            (ARTIFACT_RETENTION_EPHEMERAL,),
+        ).fetchall()
+        for row in rows:
+            converted = self._convert_artifact_index_row(row)
+            expires_at = converted["created_at"] + timedelta(seconds=default_ttl_sec)
+            connection.execute(
+                """
+                UPDATE artifact_index
+                SET expires_at = ?,
+                    retention_ttl_sec = ?,
+                    retention_policy_source = ?
+                WHERE artifact_ref = ?
+                  AND expires_at IS NULL
+                """,
+                (
+                    expires_at.isoformat(),
+                    default_ttl_sec,
+                    ARTIFACT_RETENTION_POLICY_BACKFILLED_CLASS_DEFAULT,
+                    converted["artifact_ref"],
+                ),
+            )
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET retention_policy_source = ?
+            WHERE expires_at IS NOT NULL
+              AND (
+                    retention_policy_source IS NULL
+                    OR TRIM(retention_policy_source) = ''
+                  )
+            """,
+            (ARTIFACT_RETENTION_POLICY_LEGACY_UNKNOWN,),
+        )
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET retention_policy_source = ?
+            WHERE expires_at IS NULL
+              AND retention_class != ?
+              AND (
+                    retention_policy_source IS NULL
+                    OR TRIM(retention_policy_source) = ''
+                  )
+            """,
+            (
+                ARTIFACT_RETENTION_POLICY_NO_EXPIRY,
+                ARTIFACT_RETENTION_EPHEMERAL,
+            ),
         )
 
     def _backfill_scope_defaults(self, connection: sqlite3.Connection) -> None:

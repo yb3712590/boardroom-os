@@ -281,15 +281,22 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
 
 当前真实行为：
 
-- `EPHEMERAL + retention_ttl_sec` 的 artifact 到期后会被 cleanup 标成 `EXPIRED`
+- `EPHEMERAL + retention_ttl_sec` 的 artifact 会按显式 TTL 到期
+- `EPHEMERAL` 如果没显式写 `retention_ttl_sec`，会自动落 `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`；默认 7 天
+- 旧库里 `EPHEMERAL` 但没有 `expires_at` 的 artifact，会在仓库初始化时按同一默认 TTL 回填，避免历史临时件永久滞留
 - 如果 artifact 有本地落盘文件，cleanup 会把文件删掉，并在 `artifact_index` 里写 `storage_deleted_at`
 - 已经写过 `storage_deleted_at` 的 artifact 不会在后续 cleanup 里被重复统计成 residual cleanup
 - `GET /api/v1/projections/dashboard` 现在会返回 `artifact_maintenance`，可以直接看：
   - 自动 cleanup 是否开启
+  - 当前默认 `EPHEMERAL` TTL
   - cleanup 间隔
   - 当前待过期 / 待物理删除积压
+  - 历史遗留里还有多少 artifact 只能保守标成 `LEGACY_UNKNOWN`
   - 最近一次 cleanup 的时间、触发来源、操作者和删除数量
-- `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `deleted_by`、`delete_reason` 和 `storage_deleted_at`
+- `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `retention_ttl_sec`、`retention_policy_source`、`deleted_by`、`delete_reason` 和 `storage_deleted_at`
+- `GET /api/v1/projections/artifact-cleanup-candidates` 可以直接列出当前 cleanup 候选，并区分：
+  - `EXPIRED_DUE`：已经到过期时间，还没跑到真正 cleanup
+  - `STORAGE_DELETE_PENDING`：逻辑上已删或已过期，但本地文件还没记账成 `storage_deleted_at`
 
 ## 关键环境变量
 
@@ -319,6 +326,8 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
   自动 artifact cleanup 的检查间隔，默认 300 秒；设成 `0` 或负数可关闭自动 cleanup
 - `BOARDROOM_OS_ARTIFACT_CLEANUP_OPERATOR_ID`
   自动 cleanup 写入事件和 artifact 审计时使用的操作人，默认 `system:artifact-cleanup`
+- `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`
+  `EPHEMERAL` artifact 没显式写 `retention_ttl_sec` 时使用的默认 TTL，默认 604800 秒（7 天）
 
 ## 测试与默认存储
 

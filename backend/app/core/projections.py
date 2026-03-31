@@ -3,6 +3,10 @@
 from app.contracts.events import EventSeverity
 from app.contracts.projections import (
     ActiveWorkflowProjection,
+    ArtifactCleanupCandidateProjection,
+    ArtifactCleanupCandidatesProjectionData,
+    ArtifactCleanupCandidatesProjectionEnvelope,
+    ArtifactCleanupCandidatesProjectionFilters,
     ArtifactMaintenanceProjection,
     DashboardProjectionData,
     DashboardProjectionEnvelope,
@@ -31,10 +35,10 @@ from app.contracts.projections import (
     ReviewRoomDeveloperInspectorProjectionEnvelope,
     ReviewRoomProjectionData,
     ReviewRoomProjectionEnvelope,
+    RouteTarget,
     TicketArtifactProjection,
     TicketArtifactsProjectionData,
     TicketArtifactsProjectionEnvelope,
-    RouteTarget,
     WorkerAuthRejectionAdminProjection,
     WorkerBindingAdminProjection,
     WorkerDeliveryGrantAdminProjection,
@@ -193,8 +197,12 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
             artifact_maintenance=ArtifactMaintenanceProjection(
                 auto_cleanup_enabled=settings.artifact_cleanup_interval_sec > 0,
                 cleanup_interval_sec=settings.artifact_cleanup_interval_sec,
+                ephemeral_default_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
                 pending_expired_count=int(artifact_cleanup_summary["pending_expired_count"]),
                 pending_storage_cleanup_count=int(artifact_cleanup_summary["pending_storage_cleanup_count"]),
+                legacy_unknown_retention_count=int(
+                    artifact_cleanup_summary["legacy_unknown_retention_count"]
+                ),
                 last_run_at=latest_cleanup_event["occurred_at"] if latest_cleanup_event else None,
                 last_cleaned_by=artifact_cleanup_payload.get("cleaned_by"),
                 last_trigger=artifact_cleanup_payload.get("trigger"),
@@ -429,6 +437,8 @@ def build_ticket_artifacts_projection(
                     materialization_status=metadata["materialization_status"],
                     lifecycle_status=metadata["lifecycle_status"],
                     retention_class=metadata["retention_class"],
+                    retention_ttl_sec=metadata["retention_ttl_sec"],
+                    retention_policy_source=metadata["retention_policy_source"],
                     expires_at=metadata["expires_at"],
                     deleted_at=metadata["deleted_at"],
                     deleted_by=metadata["deleted_by"],
@@ -444,6 +454,65 @@ def build_ticket_artifacts_projection(
                 for artifact in artifacts
                 for metadata in [build_artifact_metadata(artifact)]
             ],
+        ),
+    )
+
+
+def build_artifact_cleanup_candidates_projection(
+    repository: ControlPlaneRepository,
+    *,
+    ticket_id: str | None = None,
+    retention_class: str | None = None,
+    limit: int = 50,
+) -> ArtifactCleanupCandidatesProjectionEnvelope:
+    repository.initialize()
+    generated_at = now_local()
+    cursor, projection_version = repository.get_cursor_and_version()
+    artifacts = repository.list_artifact_cleanup_candidates(
+        at=generated_at,
+        ticket_id=ticket_id,
+        retention_class=retention_class,
+        limit=limit,
+    )
+    projected_artifacts: list[ArtifactCleanupCandidateProjection] = []
+    for artifact in artifacts:
+        metadata = build_artifact_metadata(artifact, at=generated_at)
+        cleanup_reason = "STORAGE_DELETE_PENDING"
+        if (
+            metadata["lifecycle_status"] == "EXPIRED"
+            and metadata["storage_deleted_at"] is None
+        ) or (
+            artifact.get("lifecycle_status") == "ACTIVE"
+            and metadata["expires_at"] is not None
+            and metadata["expires_at"] <= generated_at
+        ):
+            cleanup_reason = "EXPIRED_DUE"
+        projected_artifacts.append(
+            ArtifactCleanupCandidateProjection(
+                artifact_ref=metadata["artifact_ref"],
+                ticket_id=metadata["ticket_id"],
+                path=metadata["path"],
+                lifecycle_status=metadata["lifecycle_status"],
+                retention_class=metadata["retention_class"],
+                retention_ttl_sec=metadata["retention_ttl_sec"],
+                retention_policy_source=metadata["retention_policy_source"],
+                expires_at=metadata["expires_at"],
+                storage_deleted_at=metadata["storage_deleted_at"],
+                cleanup_reason=cleanup_reason,
+            )
+        )
+    return ArtifactCleanupCandidatesProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=generated_at,
+        projection_version=projection_version,
+        cursor=cursor,
+        data=ArtifactCleanupCandidatesProjectionData(
+            filters=ArtifactCleanupCandidatesProjectionFilters(
+                ticket_id=ticket_id,
+                retention_class=retention_class,
+                limit=limit,
+            ),
+            artifacts=projected_artifacts,
         ),
     )
 

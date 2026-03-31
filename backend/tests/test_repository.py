@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
 from app.db.repository import ControlPlaneRepository
@@ -926,3 +926,154 @@ def test_artifact_cleanup_candidates_ignore_storage_already_deleted_rows(db_path
         )
 
     assert [item["artifact_ref"] for item in candidates] == ["art://cleanup/pending-delete.md"]
+
+
+def test_initialize_backfills_legacy_ephemeral_artifact_retention_and_marks_existing_expiry_unknown(
+    db_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC", "604800")
+    created_at = datetime.fromisoformat("2026-03-29T09:00:00+08:00")
+    explicit_expires_at = datetime.fromisoformat("2026-03-29T10:00:00+08:00")
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE artifact_index (
+            artifact_ref TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            ticket_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            logical_path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            media_type TEXT,
+            materialization_status TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL,
+            storage_relpath TEXT,
+            content_hash TEXT,
+            size_bytes INTEGER,
+            retention_class TEXT NOT NULL,
+            expires_at TEXT,
+            deleted_at TEXT,
+            deleted_by TEXT,
+            delete_reason TEXT,
+            storage_deleted_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO artifact_index (
+            artifact_ref,
+            workflow_id,
+            ticket_id,
+            node_id,
+            logical_path,
+            kind,
+            media_type,
+            materialization_status,
+            lifecycle_status,
+            storage_relpath,
+            content_hash,
+            size_bytes,
+            retention_class,
+            expires_at,
+            deleted_at,
+            deleted_by,
+            delete_reason,
+            storage_deleted_at,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "art://legacy/ephemeral-missing-expiry.md",
+            "wf_legacy",
+            "tkt_legacy",
+            "node_legacy",
+            "artifacts/legacy/ephemeral-missing-expiry.md",
+            "MARKDOWN",
+            "text/markdown",
+            "MATERIALIZED",
+            "ACTIVE",
+            "artifacts/legacy/ephemeral-missing-expiry.md",
+            "hash-missing",
+            32,
+            "EPHEMERAL",
+            None,
+            None,
+            None,
+            None,
+            None,
+            created_at.isoformat(),
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO artifact_index (
+            artifact_ref,
+            workflow_id,
+            ticket_id,
+            node_id,
+            logical_path,
+            kind,
+            media_type,
+            materialization_status,
+            lifecycle_status,
+            storage_relpath,
+            content_hash,
+            size_bytes,
+            retention_class,
+            expires_at,
+            deleted_at,
+            deleted_by,
+            delete_reason,
+            storage_deleted_at,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "art://legacy/ephemeral-existing-expiry.md",
+            "wf_legacy",
+            "tkt_legacy",
+            "node_legacy",
+            "artifacts/legacy/ephemeral-existing-expiry.md",
+            "MARKDOWN",
+            "text/markdown",
+            "MATERIALIZED",
+            "ACTIVE",
+            "artifacts/legacy/ephemeral-existing-expiry.md",
+            "hash-explicit",
+            32,
+            "EPHEMERAL",
+            explicit_expires_at.isoformat(),
+            None,
+            None,
+            None,
+            None,
+            created_at.isoformat(),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    backfilled = repository.get_artifact_by_ref("art://legacy/ephemeral-missing-expiry.md")
+    preserved = repository.get_artifact_by_ref("art://legacy/ephemeral-existing-expiry.md")
+
+    assert backfilled is not None
+    assert preserved is not None
+    assert backfilled["expires_at"] == created_at + timedelta(seconds=604800)
+    assert backfilled["retention_ttl_sec"] == 604800
+    assert backfilled["retention_policy_source"] == "BACKFILLED_CLASS_DEFAULT"
+    assert preserved["expires_at"] == explicit_expires_at
+    assert preserved["retention_ttl_sec"] is None
+    assert preserved["retention_policy_source"] == "LEGACY_UNKNOWN"
+
+    repository.initialize()
+    backfilled_after_second_initialize = repository.get_artifact_by_ref(
+        "art://legacy/ephemeral-missing-expiry.md"
+    )
+    assert backfilled_after_second_initialize is not None
+    assert backfilled_after_second_initialize["expires_at"] == created_at + timedelta(seconds=604800)

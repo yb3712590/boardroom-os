@@ -8,6 +8,7 @@ from app.api.worker_admin_auth import (
     require_worker_admin_read_scope,
 )
 from app.contracts.projections import (
+    ArtifactCleanupCandidatesProjectionEnvelope,
     DashboardProjectionEnvelope,
     IncidentDetailProjectionEnvelope,
     InboxProjectionEnvelope,
@@ -20,6 +21,7 @@ from app.contracts.projections import (
 )
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.projections import (
+    build_artifact_cleanup_candidates_projection,
     build_dashboard_projection,
     build_incident_detail_projection,
     build_inbox_projection,
@@ -39,6 +41,25 @@ router = APIRouter(prefix="/api/v1/projections", tags=["projections"])
 def get_dashboard(request: Request) -> DashboardProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return build_dashboard_projection(repository)
+
+
+@router.get(
+    "/artifact-cleanup-candidates",
+    response_model=ArtifactCleanupCandidatesProjectionEnvelope,
+)
+def get_artifact_cleanup_candidates(
+    request: Request,
+    ticket_id: str | None = None,
+    retention_class: str | None = None,
+    limit: int = Query(default=50, ge=1),
+) -> ArtifactCleanupCandidatesProjectionEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return build_artifact_cleanup_candidates_projection(
+        repository,
+        ticket_id=ticket_id,
+        retention_class=retention_class,
+        limit=limit,
+    )
 
 
 @router.get("/inbox", response_model=InboxProjectionEnvelope)

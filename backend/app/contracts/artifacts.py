@@ -17,6 +17,8 @@ class ArtifactMetadata(StrictModel):
     materialization_status: str
     lifecycle_status: str
     retention_class: str
+    retention_ttl_sec: int | None = None
+    retention_policy_source: str | None = None
     expires_at: datetime | None = None
     deleted_at: datetime | None = None
     deleted_by: str | None = None

@@ -109,6 +109,9 @@
 - Closed the manual-only artifact cleanup gap for the current local artifact store: `artifact_index` now persists `storage_deleted_at`, cleanup no longer re-counts already-cleared files, and scheduler / runner now trigger automatic cleanup on a bounded interval.
 - Extended `GET /api/v1/projections/dashboard` with `artifact_maintenance`, so排障时可以直接看到自动 cleanup 是否开启、当前过期待清理积压、以及最近一次 cleanup 的触发来源、操作者和删除数量。
 - Extended `GET /api/v1/projections/tickets/{ticket_id}/artifacts` with `deleted_by`, `delete_reason`, and `storage_deleted_at`, so单张 ticket 的 artifact 读面现在能直接区分“逻辑过期”与“文件已物理删除”。
+- Closed the main retention-governance gap in the current artifact path: new `EPHEMERAL` artifacts now default to `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC` when callers omit `retention_ttl_sec`, and legacy `EPHEMERAL` rows without `expires_at` are backfilled conservatively during repository initialization.
+- Added persisted `retention_ttl_sec` and `retention_policy_source` on `artifact_index`, so ticket-level artifact reads now show not only whether an artifact is expired, but also whether that retention came from an explicit TTL, the class default, a legacy backfill, or an unknown older rule.
+- Added `GET /api/v1/projections/artifact-cleanup-candidates`, so值守排障时不再只看 dashboard 汇总计数，而是能直接看到当前哪些 artifact 在等过期处理、哪些只差本地文件清理记账。
 - Fresh focused verification after this change is:
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_cleanup_candidates_ignore_storage_already_deleted_rows" -q` -> `1 passed`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact_cleanup_does_not_recount_storage_already_cleared or dashboard_exposes_artifact_cleanup_maintenance_summary or ticket_artifacts_projection_exposes_cleanup_audit_fields or artifact_cleanup_expires_elapsed_artifacts_and_deletes_files" -q` -> `4 passed, 155 deselected`

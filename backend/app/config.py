@@ -34,6 +34,7 @@ class Settings:
     enable_inprocess_scheduler: bool = False
     artifact_cleanup_interval_sec: int = 300
     artifact_cleanup_operator_id: str = "system:artifact-cleanup"
+    artifact_ephemeral_default_ttl_sec: int = 604800
 
 
 def _read_bool_env(name: str, default: bool = False) -> bool:
@@ -132,6 +133,13 @@ def get_settings() -> Settings:
         "BOARDROOM_OS_ARTIFACT_CLEANUP_OPERATOR_ID",
         "system:artifact-cleanup",
     ).strip() or "system:artifact-cleanup"
+    artifact_ephemeral_default_ttl_sec = int(
+        os.environ.get("BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC", "604800")
+    )
+    if artifact_ephemeral_default_ttl_sec <= 0:
+        raise ValueError(
+            "BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC must be greater than 0."
+        )
     return Settings(
         db_path=db_path,
         developer_inspector_root=developer_inspector_root,
@@ -156,4 +164,5 @@ def get_settings() -> Settings:
         enable_inprocess_scheduler=enable_inprocess_scheduler,
         artifact_cleanup_interval_sec=artifact_cleanup_interval_sec,
         artifact_cleanup_operator_id=artifact_cleanup_operator_id,
+        artifact_ephemeral_default_ttl_sec=artifact_ephemeral_default_ttl_sec,
     )
