@@ -64,6 +64,9 @@ class CompileRequestExplicitSource(StrictModel):
     inline_content_text: str | None = None
     inline_content_json: dict[str, Any] | None = None
     inline_fallback_reason: str | None = None
+    inline_fallback_reason_code: str | None = None
+    inline_content_truncated: bool = False
+    inline_preview_strategy: str | None = None
 
 
 class CompileRequestExecution(StrictModel):
@@ -139,7 +142,9 @@ class CompiledContextBlock(StrictModel):
     selector: CompiledContextSelector
     transform_chain: list[str] = Field(default_factory=list)
     content_type: Literal["JSON", "TEXT", "SOURCE_DESCRIPTOR"]
+    content_mode: Literal["INLINE_FULL", "INLINE_PARTIAL", "REFERENCE_ONLY"]
     content_payload: dict[str, Any] = Field(default_factory=dict)
+    degradation_reason_code: str | None = None
     token_estimate: int = Field(ge=1)
     relevance_score: float = Field(ge=0.0)
     source_hash: str = Field(min_length=1)
@@ -212,11 +217,13 @@ class CompileManifestSourceLogEntry(StrictModel):
     priority_class: str | None = None
     trust_level: int | None = Field(default=None, ge=0)
     selector_used: str | None = None
+    content_mode: str | None = None
     critical: bool = False
     status: Literal["USED", "CACHE_HIT", "SUMMARIZED", "TRUNCATED", "DROPPED", "MISSING"]
     tokens_before: int | None = Field(default=None, ge=0)
     tokens_after: int | None = Field(default=None, ge=0)
     reason: str | None = None
+    reason_code: str | None = None
 
 
 class CompileManifestTransformLogEntry(StrictModel):
@@ -254,6 +261,7 @@ class CompileManifestFinalBundleStats(StrictModel):
     trusted_block_count: int = Field(ge=0)
     reference_block_count: int = Field(ge=0)
     hydrated_block_count: int = Field(ge=0)
+    partially_hydrated_block_count: int = Field(ge=0)
     negative_pattern_count: int = Field(ge=0)
 
 
@@ -302,7 +310,9 @@ class AtomicContextBlock(StrictModel):
     source_ref: str = Field(min_length=1)
     source_kind: Literal["ARTIFACT"]
     content_type: Literal["TEXT", "JSON", "SOURCE_DESCRIPTOR"]
+    content_mode: Literal["INLINE_FULL", "INLINE_PARTIAL", "REFERENCE_ONLY"]
     content_payload: dict[str, Any] = Field(default_factory=dict)
+    degradation_reason_code: str | None = None
 
 
 class AtomicContextBundle(StrictModel):

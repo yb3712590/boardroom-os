@@ -33,6 +33,7 @@ from app.contracts.projections import (
     ReviewRoomDraftDefaults,
     ReviewRoomDeveloperInspectorProjectionData,
     ReviewRoomDeveloperInspectorProjectionEnvelope,
+    ReviewRoomDeveloperInspectorCompileSummary,
     ReviewRoomProjectionData,
     ReviewRoomProjectionEnvelope,
     RouteTarget,
@@ -430,6 +431,44 @@ def build_review_room_developer_inspector_projection(
     elif ref_count > 0 or materialized_count > 0:
         availability = "partial"
 
+    compile_summary = None
+    if compile_manifest is not None:
+        source_entries = list(compile_manifest.get("source_log") or [])
+        reason_counts: dict[str, int] = {}
+        inline_full_count = 0
+        inline_partial_count = 0
+        reference_only_count = 0
+        degraded_source_count = 0
+        missing_critical_source_count = 0
+        for entry in source_entries:
+            if not isinstance(entry, dict):
+                continue
+            content_mode = str(entry.get("content_mode") or "REFERENCE_ONLY")
+            if content_mode == "INLINE_FULL":
+                inline_full_count += 1
+            elif content_mode == "INLINE_PARTIAL":
+                inline_partial_count += 1
+                degraded_source_count += 1
+            else:
+                reference_only_count += 1
+                degraded_source_count += 1
+
+            reason_code = entry.get("reason_code")
+            if isinstance(reason_code, str) and reason_code:
+                reason_counts[reason_code] = reason_counts.get(reason_code, 0) + 1
+            if entry.get("status") == "MISSING" and entry.get("critical") is True:
+                missing_critical_source_count += 1
+
+        compile_summary = ReviewRoomDeveloperInspectorCompileSummary(
+            source_count=len(source_entries),
+            inline_full_count=inline_full_count,
+            inline_partial_count=inline_partial_count,
+            reference_only_count=reference_only_count,
+            degraded_source_count=degraded_source_count,
+            missing_critical_source_count=missing_critical_source_count,
+            reason_counts=reason_counts,
+        )
+
     return ReviewRoomDeveloperInspectorProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
         generated_at=now_local(),
@@ -441,6 +480,7 @@ def build_review_room_developer_inspector_projection(
             compile_manifest_ref=compile_manifest_ref,
             compiled_context_bundle=compiled_context_bundle,
             compile_manifest=compile_manifest,
+            compile_summary=compile_summary,
             availability=availability,
         ),
     )

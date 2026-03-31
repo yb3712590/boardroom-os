@@ -156,6 +156,12 @@
 - Added a ready-to-copy reset prompt to `doc/roadmap-reset.md`, updating the fixed reading order to include the roadmap decision itself before `doc/TODO.md` and `doc/history/memory-log.md`, and removing outdated default expansion toward `Search / Retrieval` or other post-MVP infrastructure directions.
 - Moved the Context Compiler past the earlier pure reference-only state for local execution: active materialized `TEXT / MARKDOWN / JSON` input artifacts now inline directly into the compiled execution package, while unreadable or over-budget sources fall back to descriptor form with explicit compile-manifest reasons.
 - Extended compile audit output so the manifest now records why a source stayed descriptor-only, distinguishes hydrated vs reference blocks in final bundle stats, and keeps the signed artifact URL path available even for inlined sources.
+- Continued the Context Compiler along the local MVP path instead of widening governance scope: compile requests, context blocks, and manifest source logs now carry stable degradation reason codes such as `ARTIFACT_NOT_INDEXED`, `ARTIFACT_NOT_READABLE`, `UNSUPPORTED_ARTIFACT_KIND`, and `INLINE_BUDGET_EXCEEDED`.
+- Large-but-readable local `TEXT / MARKDOWN / JSON` inputs no longer collapse straight to pure descriptor form when full hydration would overflow the rough token budget. The compiler now emits deterministic head previews for text and top-level previews for JSON, while keeping artifact access URLs and marking the block as partial inline hydration.
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` now adds a compact `compile_summary`, so debugging a blocked review no longer starts with manually reading raw manifest JSON just to answer “how many sources degraded, and why?”.
+- Fresh focused verification after this change is:
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_context_compiler.py -q` -> `10 passed`
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py -k "review_room_developer_inspector" -q` -> `3 passed, 174 deselected`
 
 ### Current Watch-Outs
 

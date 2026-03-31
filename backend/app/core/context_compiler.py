@@ -72,6 +72,16 @@ REFERENCE_ONLY_REASON = (
 REFERENCE_ONLY_TRANSFORM = "NORMALIZE_REFERENCE_DESCRIPTOR"
 INLINE_TEXT_TRANSFORM = "HYDRATE_TEXT_BODY"
 INLINE_JSON_TRANSFORM = "HYDRATE_JSON_BODY"
+TRUNCATE_TEXT_TRANSFORM = "TRUNCATE_TEXT_PREVIEW"
+TRUNCATE_JSON_TRANSFORM = "TRUNCATE_JSON_PREVIEW"
+
+FALLBACK_REASON_ARTIFACT_NOT_INDEXED = "ARTIFACT_NOT_INDEXED"
+FALLBACK_REASON_ARTIFACT_NOT_READABLE = "ARTIFACT_NOT_READABLE"
+FALLBACK_REASON_UNSUPPORTED_ARTIFACT_KIND = "UNSUPPORTED_ARTIFACT_KIND"
+FALLBACK_REASON_ARTIFACT_READ_FAILED = "ARTIFACT_READ_FAILED"
+FALLBACK_REASON_ARTIFACT_JSON_DECODE_FAILED = "ARTIFACT_JSON_DECODE_FAILED"
+FALLBACK_REASON_ARTIFACT_TEXT_DECODE_FAILED = "ARTIFACT_TEXT_DECODE_FAILED"
+FALLBACK_REASON_INLINE_BUDGET_EXCEEDED = "INLINE_BUDGET_EXCEEDED"
 
 
 @dataclass(frozen=True)
@@ -79,7 +89,10 @@ class _PreparedInlineSource:
     content_type: str | None = None
     content_text: str | None = None
     content_json: dict[str, Any] | None = None
+    content_truncated: bool = False
+    preview_strategy: str | None = None
     fallback_reason: str | None = None
+    fallback_reason_code: str | None = None
 
 
 def _canonical_json(value: Any) -> str:
@@ -119,6 +132,7 @@ def _prepare_inline_source(
 ) -> _PreparedInlineSource:
     if artifact is None:
         return _PreparedInlineSource(
+            fallback_reason_code=FALLBACK_REASON_ARTIFACT_NOT_INDEXED,
             fallback_reason="Artifact is not indexed yet, so the compiler kept only its descriptor.",
         )
     if not is_artifact_readable(artifact):
@@ -126,6 +140,7 @@ def _prepare_inline_source(
         if artifact.get("deleted_at") is not None:
             lifecycle_status = "DELETED"
         return _PreparedInlineSource(
+            fallback_reason_code=FALLBACK_REASON_ARTIFACT_NOT_READABLE,
             fallback_reason=(
                 "Artifact is not readable for inline hydration "
                 f"(materialization={artifact.get('materialization_status')}, lifecycle={lifecycle_status})."
@@ -135,12 +150,14 @@ def _prepare_inline_source(
     artifact_store = repository.artifact_store
     if artifact_store is None:
         return _PreparedInlineSource(
+            fallback_reason_code=FALLBACK_REASON_ARTIFACT_READ_FAILED,
             fallback_reason="Artifact store is unavailable, so the compiler kept only the descriptor.",
         )
 
     normalized_kind = normalize_artifact_kind(str(artifact.get("kind") or ""))
     if normalized_kind not in {"TEXT", "MARKDOWN", "JSON"}:
         return _PreparedInlineSource(
+            fallback_reason_code=FALLBACK_REASON_UNSUPPORTED_ARTIFACT_KIND,
             fallback_reason=(
                 f"Artifact kind {normalized_kind} is not eligible for inline hydration in the current MVP."
             ),
@@ -153,6 +170,7 @@ def _prepare_inline_source(
         )
     except Exception as exc:
         return _PreparedInlineSource(
+            fallback_reason_code=FALLBACK_REASON_ARTIFACT_READ_FAILED,
             fallback_reason=f"Artifact body could not be read for inline hydration: {exc}",
         )
 
@@ -164,6 +182,7 @@ def _prepare_inline_source(
             )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             return _PreparedInlineSource(
+                fallback_reason_code=FALLBACK_REASON_ARTIFACT_JSON_DECODE_FAILED,
                 fallback_reason=f"Artifact JSON body could not be decoded for inline hydration: {exc}",
             )
 
@@ -174,6 +193,7 @@ def _prepare_inline_source(
         )
     except UnicodeDecodeError as exc:
         return _PreparedInlineSource(
+            fallback_reason_code=FALLBACK_REASON_ARTIFACT_TEXT_DECODE_FAILED,
             fallback_reason=f"Artifact text body could not be decoded for inline hydration: {exc}",
         )
 
@@ -246,6 +266,7 @@ def _build_reference_block(
     source: CompileRequestExplicitSource,
     *,
     reason: str | None = None,
+    reason_code: str | None = None,
     status: str = "USED",
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
@@ -265,7 +286,9 @@ def _build_reference_block(
         selector=selector,
         transform_chain=[REFERENCE_ONLY_TRANSFORM],
         content_type="SOURCE_DESCRIPTOR",
+        content_mode="REFERENCE_ONLY",
         content_payload=content_payload,
+        degradation_reason_code=reason_code or source.inline_fallback_reason_code,
         token_estimate=token_estimate,
         relevance_score=1.0 if source.is_mandatory else 0.7,
         source_hash=_stable_hash(content_payload),
@@ -277,11 +300,13 @@ def _build_reference_block(
         priority_class=block.priority_class,
         trust_level=block.trust_level,
         selector_used=f"{selector.selector_type}:{selector.selector_value}",
+        content_mode=block.content_mode,
         critical=source.is_mandatory,
         status=status,
         tokens_before=token_estimate,
         tokens_after=token_estimate,
         reason=fallback_reason,
+        reason_code=reason_code or source.inline_fallback_reason_code,
     )
     transform_log = CompileManifestTransformLogEntry(
         stage="NORMALIZE_SOURCES",
@@ -310,6 +335,9 @@ def _build_inline_block(
         transform = INLINE_JSON_TRANSFORM
     else:
         content_payload["content_text"] = source.inline_content_text or ""
+    content_payload["content_truncated"] = source.inline_content_truncated
+    if source.inline_preview_strategy is not None:
+        content_payload["content_preview_strategy"] = source.inline_preview_strategy
 
     token_estimate = _estimate_tokens(content_payload)
     block = CompiledContextBlock(
@@ -322,7 +350,9 @@ def _build_inline_block(
         selector=selector,
         transform_chain=[transform],
         content_type=content_type,
+        content_mode="INLINE_FULL",
         content_payload=content_payload,
+        degradation_reason_code=None,
         token_estimate=token_estimate,
         relevance_score=1.0 if source.is_mandatory else 0.7,
         source_hash=_stable_hash(content_payload),
@@ -334,15 +364,165 @@ def _build_inline_block(
         priority_class=block.priority_class,
         trust_level=block.trust_level,
         selector_used=f"{selector.selector_type}:{selector.selector_value}",
+        content_mode=block.content_mode,
         critical=source.is_mandatory,
         status="USED",
         tokens_before=token_estimate,
         tokens_after=token_estimate,
         reason=reason,
+        reason_code=None,
     )
     transform_log = CompileManifestTransformLogEntry(
         stage="HYDRATE_SOURCES",
         operation_type="HYDRATE",
+        target_ref=source.source_ref,
+        output_block_id=block.block_id,
+        reason=reason,
+    )
+    return block, source_log, transform_log
+
+
+def _build_json_preview_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        preview: dict[str, Any] = {
+            "_preview": {
+                "strategy": "TOP_LEVEL_PREVIEW",
+                "truncated": True,
+                "type": "object",
+                "key_count": len(value),
+                "keys": list(value.keys())[:8],
+            }
+        }
+        for key, item in list(value.items())[:4]:
+            if isinstance(item, (str, int, float, bool)) or item is None:
+                preview[key] = item
+            elif isinstance(item, list):
+                preview[key] = {
+                    "_preview_type": "list",
+                    "length": len(item),
+                    "sample": [
+                        sample if isinstance(sample, (str, int, float, bool)) or sample is None else type(sample).__name__
+                        for sample in item[:3]
+                    ],
+                }
+            elif isinstance(item, dict):
+                preview[key] = {
+                    "_preview_type": "object",
+                    "key_count": len(item),
+                    "keys": list(item.keys())[:6],
+                }
+            else:
+                preview[key] = str(item)
+        return preview
+    if isinstance(value, list):
+        return {
+            "_preview": {
+                "strategy": "TOP_LEVEL_PREVIEW",
+                "truncated": True,
+                "type": "list",
+                "length": len(value),
+            },
+            "sample": [
+                item if isinstance(item, (str, int, float, bool)) or item is None else type(item).__name__
+                for item in value[:3]
+            ],
+        }
+    return {
+        "_preview": {
+            "strategy": "TOP_LEVEL_PREVIEW",
+            "truncated": True,
+            "type": type(value).__name__,
+        },
+        "value": value if isinstance(value, (str, int, float, bool)) or value is None else str(value),
+    }
+
+
+def _build_budget_preview_source(source: CompileRequestExplicitSource) -> CompileRequestExplicitSource | None:
+    if source.inline_content_type == "TEXT":
+        content_text = str(source.inline_content_text or "")
+        excerpt = content_text[:160].rstrip()
+        if not excerpt:
+            excerpt = content_text[:160]
+        if not excerpt:
+            return None
+        return source.model_copy(
+            update={
+                "inline_content_text": excerpt,
+                "inline_content_truncated": True,
+                "inline_preview_strategy": "HEAD_EXCERPT",
+            }
+        )
+    if source.inline_content_type == "JSON":
+        return source.model_copy(
+            update={
+                "inline_content_json": _build_json_preview_payload(source.inline_content_json or {}),
+                "inline_content_truncated": True,
+                "inline_preview_strategy": "TOP_LEVEL_PREVIEW",
+            }
+        )
+    return None
+
+
+def _build_partial_inline_block(
+    source: CompileRequestExplicitSource,
+) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
+    selector = CompiledContextSelector(
+        selector_type="SOURCE_REF",
+        selector_value=source.source_ref,
+    )
+    content_payload = _build_descriptor_payload(source)
+    content_payload["content_truncated"] = True
+    preview_strategy = source.inline_preview_strategy or "HEAD_EXCERPT"
+    transform = TRUNCATE_TEXT_TRANSFORM
+    content_type = "TEXT"
+    if source.inline_content_type == "JSON":
+        content_type = "JSON"
+        transform = TRUNCATE_JSON_TRANSFORM
+        content_payload["content_json"] = dict(source.inline_content_json or {})
+    else:
+        content_payload["content_text"] = source.inline_content_text or ""
+    content_payload["content_preview_strategy"] = preview_strategy
+
+    reason = (
+        f"Inline hydration for {source.source_ref} exceeded the token budget, so the compiler kept "
+        "a deterministic preview instead of the full body."
+    )
+    token_estimate = _estimate_tokens(content_payload)
+    block = CompiledContextBlock(
+        block_id=new_prefixed_id("ctxblk"),
+        source_ref=source.source_ref,
+        source_kind="ARTIFACT_REFERENCE",
+        trust_level=1,
+        instruction_authority="DATA_ONLY",
+        priority_class="P1" if source.is_mandatory else "P2",
+        selector=selector,
+        transform_chain=[transform],
+        content_type=content_type,
+        content_mode="INLINE_PARTIAL",
+        content_payload=content_payload,
+        degradation_reason_code=FALLBACK_REASON_INLINE_BUDGET_EXCEEDED,
+        token_estimate=token_estimate,
+        relevance_score=1.0 if source.is_mandatory else 0.7,
+        source_hash=_stable_hash(content_payload),
+        trust_note=reason,
+    )
+    source_log = CompileManifestSourceLogEntry(
+        source_ref=source.source_ref,
+        source_kind="ARTIFACT_REFERENCE",
+        priority_class=block.priority_class,
+        trust_level=block.trust_level,
+        selector_used=f"{selector.selector_type}:{selector.selector_value}",
+        content_mode=block.content_mode,
+        critical=source.is_mandatory,
+        status="TRUNCATED",
+        tokens_before=token_estimate,
+        tokens_after=token_estimate,
+        reason=reason,
+        reason_code=FALLBACK_REASON_INLINE_BUDGET_EXCEEDED,
+    )
+    transform_log = CompileManifestTransformLogEntry(
+        stage="BUDGET_ENFORCEMENT",
+        operation_type="TRUNCATE",
         target_ref=source.source_ref,
         output_block_id=block.block_id,
         reason=reason,
@@ -358,7 +538,9 @@ def _build_atomic_context_bundle(context_blocks: list[CompiledContextBlock], tok
                 source_ref=block.source_ref,
                 source_kind="ARTIFACT",
                 content_type=block.content_type,
+                content_mode=block.content_mode,
                 content_payload=dict(block.content_payload),
+                degradation_reason_code=block.degradation_reason_code,
             )
             for block in context_blocks
         ],
@@ -410,6 +592,9 @@ def build_compile_request(
                 inline_content_text=prepared_inline_source.content_text,
                 inline_content_json=prepared_inline_source.content_json,
                 inline_fallback_reason=prepared_inline_source.fallback_reason,
+                inline_fallback_reason_code=prepared_inline_source.fallback_reason_code,
+                inline_content_truncated=prepared_inline_source.content_truncated,
+                inline_preview_strategy=prepared_inline_source.preview_strategy,
             )
         )
 
@@ -473,6 +658,7 @@ def compile_audit_artifacts(
     transform_log: list[CompileManifestTransformLogEntry] = []
     warnings: list[str] = []
     hydrated_block_count = 0
+    partially_hydrated_block_count = 0
     reference_block_count = 0
     remaining_budget = compile_request.budget_policy.max_input_tokens
 
@@ -487,6 +673,19 @@ def compile_audit_artifacts(
                 remaining_budget -= inline_block.token_estimate
                 continue
 
+            preview_source = _build_budget_preview_source(source)
+            if preview_source is not None:
+                partial_block, partial_source_log, partial_transform_log = _build_partial_inline_block(
+                    preview_source
+                )
+                context_blocks.append(partial_block)
+                source_log.append(partial_source_log)
+                transform_log.append(partial_transform_log)
+                warnings.append(partial_source_log.reason or "")
+                partially_hydrated_block_count += 1
+                reference_block_count += 1
+                continue
+
             fallback_reason = (
                 f"Inline hydration for {source.source_ref} exceeded the token budget, so the compiler kept "
                 "the source descriptor instead."
@@ -495,6 +694,7 @@ def compile_audit_artifacts(
             reference_block, reference_source_log, reference_transform_log = _build_reference_block(
                 source,
                 reason=fallback_reason,
+                reason_code=FALLBACK_REASON_INLINE_BUDGET_EXCEEDED,
                 status="TRUNCATED",
             )
         else:
@@ -503,6 +703,7 @@ def compile_audit_artifacts(
             reference_block, reference_source_log, reference_transform_log = _build_reference_block(
                 source,
                 reason=fallback_reason,
+                reason_code=source.inline_fallback_reason_code,
             )
 
         context_blocks.append(reference_block)
@@ -638,6 +839,7 @@ def compile_audit_artifacts(
             trusted_block_count=len(context_blocks),
             reference_block_count=reference_block_count,
             hydrated_block_count=hydrated_block_count,
+            partially_hydrated_block_count=partially_hydrated_block_count,
             negative_pattern_count=0,
         ),
     )

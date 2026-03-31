@@ -6298,6 +6298,9 @@ def test_review_room_developer_inspector_returns_materialized_payloads(client):
     assert body["compiled_context_bundle_ref"] == "ctx://homepage/visual-v1"
     assert body["compile_manifest_ref"] == "manifest://homepage/visual-v1"
     assert body["availability"] == "ready"
+    assert body["compile_summary"]["source_count"] >= 1
+    assert body["compile_summary"]["degraded_source_count"] >= 1
+    assert body["compile_summary"]["reason_counts"]["ARTIFACT_NOT_INDEXED"] >= 1
     assert body["compiled_context_bundle"]["meta"]["bundle_id"] == latest_bundle["bundle_id"]
     assert body["compile_manifest"]["compile_meta"]["compile_id"] == latest_manifest["compile_id"]
     assert store.resolve_path("ctx://homepage/visual-v1").exists()
@@ -6315,6 +6318,7 @@ def test_review_room_developer_inspector_returns_partial_when_refs_are_unmateria
     assert body["availability"] == "partial"
     assert body["compiled_context_bundle_ref"] == "ctx://homepage/visual-v1"
     assert body["compile_manifest_ref"] == "manifest://homepage/visual-v1"
+    assert body["compile_summary"] is None
     assert body["compiled_context_bundle"] is None
     assert body["compile_manifest"] is None
 

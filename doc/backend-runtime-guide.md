@@ -14,7 +14,7 @@
 - 视觉里程碑最小 Maker-Checker 闭环：maker 完成后自动生成 checker ticket，checker 通过后再进入 review room，要求返工则自动生成带 required fixes 的 fix ticket；相同 blocking finding 指纹重复达到阈值时会直接升级为 incident / breaker
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
-- Context Compiler 最小内联链：`TEXT / MARKDOWN / JSON` 且当前可读的 input artifact 会直接进 compiled execution package；二进制、未落盘、已删除或超预算材料仍保留 descriptor + URL 兜底
+- Context Compiler 最小内联链：`TEXT / MARKDOWN / JSON` 且当前可读的 input artifact 会直接进 compiled execution package；超预算的文本和 JSON 现在会退到确定性的头部预览 / 顶层预览，并在 bundle / manifest 里写明结构化降级原因；二进制、未落盘、已删除材料仍保留 descriptor + URL 兜底
 - artifact 大文件链路：控制面分段上传会话、`ticket-result-submit` 对 `upload_session_id` 的消费，以及本地默认 / 可选对象存储双后端
 - artifact cleanup 闭环：场景留存分级、物理删除记账、scheduler 自动 cleanup，以及 `dashboard` 上可直接看的 cleanup 状态
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
@@ -90,9 +90,16 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 
 当前执行包的编译边界：
 
-- 已内联：当前可读且已物化的 `TEXT / MARKDOWN / JSON` input artifact
-- 仍走 descriptor：二进制 artifact、`REGISTERED_ONLY`、已删除 / 已过期材料、读取失败材料、以及会把本次编译输入预算挤爆的正文
+- 已完整内联：当前可读且已物化、并且能放进预算内的 `TEXT / MARKDOWN / JSON` input artifact
+- 已保底预览：超预算的 `TEXT / MARKDOWN / JSON` 会保留确定性的头部摘录或顶层 JSON 预览，并标明 `INLINE_BUDGET_EXCEEDED`
+- 仍走 descriptor：二进制 artifact、`REGISTERED_ONLY`、已删除 / 已过期材料、读取失败材料，以及当前不能安全解码的正文
 - 即使已经内联，执行包里仍保留 `artifact_access / content_url / preview_url / download_url`，所以 worker 可以直接用包内正文，也可以在需要时回退到原有 artifact 读取链
+
+排障时如果走 `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector`：
+
+- 除了原始 `compiled_context_bundle` 和 `compile_manifest`，现在还会附带一层 `compile_summary`
+- 这层摘要会直接告诉你本次编译共有多少 source、多少完整内联、多少部分预览、多少纯引用，以及各类降级原因码的计数
+- 当前常见原因码包括：`ARTIFACT_NOT_INDEXED`、`ARTIFACT_NOT_READABLE`、`UNSUPPORTED_ARTIFACT_KIND`、`INLINE_BUDGET_EXCEEDED`
 
 切到外部 worker handoff 模式：
 
