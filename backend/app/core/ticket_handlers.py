@@ -108,6 +108,7 @@ class PreparedTicketArtifact:
     content_hash: str | None
     size_bytes: int | None
     retention_class: str
+    retention_class_source: str
     retention_ttl_sec: int | None
     retention_policy_source: str
     expires_at: datetime | None
@@ -242,9 +243,11 @@ def _validate_written_artifacts(
         seen_paths.add(logical_path)
 
         normalized_kind = item.kind.upper()
-        retention_class = normalize_retention_class(
+        explicit_retention_class = (
             item.retention_class.value if hasattr(item.retention_class, "value") else item.retention_class
         )
+        if explicit_retention_class is not None:
+            normalize_retention_class(explicit_retention_class)
         if normalized_kind == "JSON":
             if item.content_json is None:
                 raise ValueError("JSON artifacts require content_json.")
@@ -272,7 +275,7 @@ def _validate_written_artifacts(
                 item,
                 logical_path,
                 resolve_artifact_media_type(normalized_kind, logical_path, item.media_type),
-                retention_class,
+                explicit_retention_class,
             )
         )
 
@@ -290,13 +293,17 @@ def _prepare_ticket_artifacts(
     materialized_artifacts: list[MaterializedArtifact] = []
     settings = get_settings()
 
-    for item, logical_path, media_type, retention_class in validated_items:
+    for item, logical_path, media_type, explicit_retention_class in validated_items:
         normalized_kind = item.kind.upper()
         retention = resolve_artifact_retention(
             created_at=created_at,
-            retention_class=retention_class,
+            logical_path=logical_path,
+            retention_class=explicit_retention_class,
             retention_ttl_sec=item.retention_ttl_sec,
             default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
+            default_operational_evidence_ttl_sec=(
+                settings.artifact_operational_evidence_default_ttl_sec
+            ),
             default_review_evidence_ttl_sec=settings.artifact_review_evidence_default_ttl_sec,
         )
         if normalized_kind == "JSON":
@@ -315,7 +322,8 @@ def _prepare_ticket_artifacts(
                     storage_relpath=materialized.storage_relpath,
                     content_hash=materialized.content_hash,
                     size_bytes=materialized.size_bytes,
-                    retention_class=retention_class,
+                    retention_class=retention.retention_class,
+                    retention_class_source=retention.retention_class_source,
                     retention_ttl_sec=retention.retention_ttl_sec,
                     retention_policy_source=retention.retention_policy_source,
                     expires_at=retention.expires_at,
@@ -341,7 +349,8 @@ def _prepare_ticket_artifacts(
                     storage_relpath=materialized.storage_relpath,
                     content_hash=materialized.content_hash,
                     size_bytes=materialized.size_bytes,
-                    retention_class=retention_class,
+                    retention_class=retention.retention_class,
+                    retention_class_source=retention.retention_class_source,
                     retention_ttl_sec=retention.retention_ttl_sec,
                     retention_policy_source=retention.retention_policy_source,
                     expires_at=retention.expires_at,
@@ -372,7 +381,8 @@ def _prepare_ticket_artifacts(
                     storage_relpath=materialized.storage_relpath,
                     content_hash=materialized.content_hash,
                     size_bytes=materialized.size_bytes,
-                    retention_class=retention_class,
+                    retention_class=retention.retention_class,
+                    retention_class_source=retention.retention_class_source,
                     retention_ttl_sec=retention.retention_ttl_sec,
                     retention_policy_source=retention.retention_policy_source,
                     expires_at=retention.expires_at,
@@ -394,7 +404,8 @@ def _prepare_ticket_artifacts(
                 storage_relpath=None,
                 content_hash=None,
                 size_bytes=None,
-                retention_class=retention_class,
+                retention_class=retention.retention_class,
+                retention_class_source=retention.retention_class_source,
                 retention_ttl_sec=retention.retention_ttl_sec,
                 retention_policy_source=retention.retention_policy_source,
                 expires_at=retention.expires_at,
@@ -2910,6 +2921,7 @@ def handle_ticket_result_submit(
                     content_hash=artifact.content_hash,
                     size_bytes=artifact.size_bytes,
                     retention_class=artifact.retention_class,
+                    retention_class_source=artifact.retention_class_source,
                     retention_ttl_sec=artifact.retention_ttl_sec,
                     retention_policy_source=artifact.retention_policy_source,
                     expires_at=artifact.expires_at,

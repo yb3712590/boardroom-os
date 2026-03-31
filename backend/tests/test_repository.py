@@ -1140,9 +1140,11 @@ def test_initialize_backfills_legacy_ephemeral_artifact_retention_and_marks_exis
     assert backfilled["expires_at"] == created_at + timedelta(seconds=604800)
     assert backfilled["retention_ttl_sec"] == 604800
     assert backfilled["retention_policy_source"] == "BACKFILLED_CLASS_DEFAULT"
+    assert backfilled["retention_class_source"] == "LEGACY_COMPAT"
     assert preserved["expires_at"] == explicit_expires_at
     assert preserved["retention_ttl_sec"] is None
     assert preserved["retention_policy_source"] == "LEGACY_UNKNOWN"
+    assert preserved["retention_class_source"] == "LEGACY_COMPAT"
 
     repository.initialize()
     backfilled_after_second_initialize = repository.get_artifact_by_ref(
@@ -1243,3 +1245,99 @@ def test_initialize_backfills_legacy_review_evidence_artifact_retention(
     assert backfilled["expires_at"] == created_at + timedelta(seconds=2592000)
     assert backfilled["retention_ttl_sec"] == 2592000
     assert backfilled["retention_policy_source"] == "BACKFILLED_CLASS_DEFAULT"
+    assert backfilled["retention_class_source"] == "LEGACY_COMPAT"
+
+
+def test_initialize_adds_retention_class_source_column_as_legacy_compat(db_path):
+    created_at = datetime.fromisoformat("2026-03-29T09:00:00+08:00")
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE artifact_index (
+            artifact_ref TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            ticket_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            logical_path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            media_type TEXT,
+            materialization_status TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL,
+            storage_relpath TEXT,
+            content_hash TEXT,
+            size_bytes INTEGER,
+            retention_class TEXT NOT NULL,
+            retention_ttl_sec INTEGER,
+            retention_policy_source TEXT,
+            expires_at TEXT,
+            deleted_at TEXT,
+            deleted_by TEXT,
+            delete_reason TEXT,
+            storage_deleted_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO artifact_index (
+            artifact_ref,
+            workflow_id,
+            ticket_id,
+            node_id,
+            logical_path,
+            kind,
+            media_type,
+            materialization_status,
+            lifecycle_status,
+            storage_relpath,
+            content_hash,
+            size_bytes,
+            retention_class,
+            retention_ttl_sec,
+            retention_policy_source,
+            expires_at,
+            deleted_at,
+            deleted_by,
+            delete_reason,
+            storage_deleted_at,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "art://legacy/no-class-source.md",
+            "wf_legacy",
+            "tkt_legacy",
+            "node_legacy",
+            "reports/review/no-class-source.md",
+            "MARKDOWN",
+            "text/markdown",
+            "MATERIALIZED",
+            "ACTIVE",
+            "reports/review/no-class-source.md",
+            "hash-no-class-source",
+            64,
+            "REVIEW_EVIDENCE",
+            1800,
+            "CLASS_DEFAULT",
+            "2026-03-29T09:30:00+08:00",
+            None,
+            None,
+            None,
+            None,
+            created_at.isoformat(),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    artifact = repository.get_artifact_by_ref("art://legacy/no-class-source.md")
+
+    assert artifact is not None
+    assert artifact["retention_class"] == "REVIEW_EVIDENCE"
+    assert artifact["retention_ttl_sec"] == 1800
+    assert artifact["retention_policy_source"] == "CLASS_DEFAULT"
+    assert artifact["retention_class_source"] == "LEGACY_COMPAT"

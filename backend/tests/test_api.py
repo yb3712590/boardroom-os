@@ -773,6 +773,7 @@ def _ticket_create_payload(
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
+    allowed_write_set: list[str] | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict:
@@ -798,7 +799,7 @@ def _ticket_create_payload(
         "output_schema_ref": "ui_milestone_review",
         "output_schema_version": 1,
         "allowed_tools": ["read_artifact", "write_artifact", "image_gen"],
-        "allowed_write_set": ["artifacts/ui/homepage/*", "reports/review/*"],
+        "allowed_write_set": allowed_write_set or ["artifacts/ui/homepage/*", "reports/review/*"],
         "lease_timeout_sec": lease_timeout_sec,
         "retry_budget": retry_budget,
         "priority": "high",
@@ -934,6 +935,7 @@ def _create_and_lease_ticket(
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
+    allowed_write_set: list[str] | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> None:
@@ -954,6 +956,7 @@ def _create_and_lease_ticket(
             timeout_repeat_threshold=timeout_repeat_threshold,
             timeout_backoff_multiplier=timeout_backoff_multiplier,
             timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
+            allowed_write_set=allowed_write_set,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
         ),
@@ -992,6 +995,7 @@ def _create_lease_and_start_ticket(
     timeout_repeat_threshold: int = 2,
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
+    allowed_write_set: list[str] | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> None:
@@ -1012,6 +1016,7 @@ def _create_lease_and_start_ticket(
         timeout_repeat_threshold=timeout_repeat_threshold,
         timeout_backoff_multiplier=timeout_backoff_multiplier,
         timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
+        allowed_write_set=allowed_write_set,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
     )
@@ -1331,7 +1336,6 @@ def test_ticket_artifacts_projection_applies_default_review_evidence_ttl(
                         "artifact_ref": artifact_ref,
                         "kind": "MARKDOWN",
                         "content_text": "# Review Evidence\n\nKeep for board review window.\n",
-                        "retention_class": "REVIEW_EVIDENCE",
                     }
                 ],
                 idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:review-evidence-default-ttl",
@@ -1349,13 +1353,147 @@ def test_ticket_artifacts_projection_applies_default_review_evidence_ttl(
         assert projection_response.status_code == 200
         assert stored_artifact is not None
         assert stored_artifact["retention_class"] == "REVIEW_EVIDENCE"
+        assert stored_artifact["retention_class_source"] == "PATH_DEFAULT"
         assert stored_artifact["retention_ttl_sec"] == 1800
         assert stored_artifact["retention_policy_source"] == "CLASS_DEFAULT"
         assert stored_artifact["expires_at"] == datetime.fromisoformat("2026-03-28T10:30:00+08:00")
         assert projected_artifact["retention_class"] == "REVIEW_EVIDENCE"
+        assert projected_artifact["retention_class_source"] == "PATH_DEFAULT"
         assert projected_artifact["retention_ttl_sec"] == 1800
         assert projected_artifact["retention_policy_source"] == "CLASS_DEFAULT"
         assert projected_artifact["expires_at"] == "2026-03-28T10:30:00+08:00"
+
+
+def test_ticket_artifacts_projection_applies_default_operational_evidence_ttl_for_ops_reports(
+    db_path,
+    monkeypatch,
+    set_ticket_time,
+):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC", "600")
+
+    from app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        set_ticket_time("2026-03-28T10:00:00+08:00")
+        _create_lease_and_start_ticket(
+            client,
+            allowed_write_set=["artifacts/ui/homepage/*", "reports/review/*", "reports/ops/*"],
+        )
+        artifact_ref = "art://reports/ops/runtime-diagnostic.md"
+
+        submit_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                artifact_refs=[artifact_ref],
+                payload={
+                    "summary": "Operational evidence should pick up path default retention.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Operational evidence option.",
+                            "artifact_refs": [artifact_ref],
+                        }
+                    ],
+                },
+                written_artifacts=[
+                    {
+                        "path": "reports/ops/runtime-diagnostic.md",
+                        "artifact_ref": artifact_ref,
+                        "kind": "MARKDOWN",
+                        "content_text": "# Runtime Diagnostic\n\nKeep for incident follow-up.\n",
+                    }
+                ],
+                idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:operational-evidence-default-ttl",
+            ),
+        )
+        projection_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+        projected_artifact = next(
+            item
+            for item in projection_response.json()["data"]["artifacts"]
+            if item["artifact_ref"] == artifact_ref
+        )
+        stored_artifact = client.app.state.repository.get_artifact_by_ref(artifact_ref)
+
+        assert submit_response.status_code == 200
+        assert projection_response.status_code == 200
+        assert stored_artifact is not None
+        assert stored_artifact["retention_class"] == "OPERATIONAL_EVIDENCE"
+        assert stored_artifact["retention_class_source"] == "PATH_DEFAULT"
+        assert stored_artifact["retention_ttl_sec"] == 600
+        assert stored_artifact["retention_policy_source"] == "CLASS_DEFAULT"
+        assert stored_artifact["expires_at"] == datetime.fromisoformat("2026-03-28T10:10:00+08:00")
+        assert projected_artifact["retention_class"] == "OPERATIONAL_EVIDENCE"
+        assert projected_artifact["retention_class_source"] == "PATH_DEFAULT"
+        assert projected_artifact["retention_ttl_sec"] == 600
+        assert projected_artifact["retention_policy_source"] == "CLASS_DEFAULT"
+        assert projected_artifact["expires_at"] == "2026-03-28T10:10:00+08:00"
+
+
+def test_explicit_retention_class_overrides_path_default(
+    db_path,
+    monkeypatch,
+    set_ticket_time,
+):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC", "600")
+
+    from app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        set_ticket_time("2026-03-28T10:00:00+08:00")
+        _create_lease_and_start_ticket(client)
+        artifact_ref = "art://reports/review/persistent-runbook.md"
+
+        submit_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                artifact_refs=[artifact_ref],
+                payload={
+                    "summary": "Explicit retention class should override path default.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Persistent runbook option.",
+                            "artifact_refs": [artifact_ref],
+                        }
+                    ],
+                },
+                written_artifacts=[
+                    {
+                        "path": "reports/review/persistent-runbook.md",
+                        "artifact_ref": artifact_ref,
+                        "kind": "MARKDOWN",
+                        "content_text": "# Persistent Runbook\n\nKeep long term.\n",
+                        "retention_class": "PERSISTENT",
+                    }
+                ],
+                idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:explicit-retention-class-override",
+            ),
+        )
+        projection_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+        projected_artifact = next(
+            item
+            for item in projection_response.json()["data"]["artifacts"]
+            if item["artifact_ref"] == artifact_ref
+        )
+        stored_artifact = client.app.state.repository.get_artifact_by_ref(artifact_ref)
+
+        assert submit_response.status_code == 200
+        assert projection_response.status_code == 200
+        assert stored_artifact is not None
+        assert stored_artifact["retention_class"] == "PERSISTENT"
+        assert stored_artifact["retention_class_source"] == "EXPLICIT"
+        assert stored_artifact["retention_ttl_sec"] is None
+        assert stored_artifact["retention_policy_source"] == "NO_EXPIRY"
+        assert projected_artifact["retention_class"] == "PERSISTENT"
+        assert projected_artifact["retention_class_source"] == "EXPLICIT"
+        assert projected_artifact["retention_ttl_sec"] is None
+        assert projected_artifact["retention_policy_source"] == "NO_EXPIRY"
 
 
 def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
@@ -1365,6 +1503,7 @@ def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
 ):
     monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC", "60")
     monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC", "1800")
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC", "600")
     connection = sqlite3.connect(db_path)
     connection.execute(
         """
@@ -1470,7 +1609,6 @@ def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
                         "artifact_ref": artifact_ref,
                         "kind": "MARKDOWN",
                         "content_text": "# Cleanup candidate\n\nWaiting for cleanup.\n",
-                        "retention_class": "EPHEMERAL",
                     }
                 ],
                 idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:cleanup-candidate",
@@ -1525,7 +1663,7 @@ def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
                 ),
             )
 
-        set_ticket_time("2026-03-28T10:02:00+08:00")
+        set_ticket_time("2026-03-28T10:31:00+08:00")
         dashboard_response = client.get("/api/v1/projections/dashboard")
         candidates_response = client.get("/api/v1/projections/artifact-cleanup-candidates?limit=10")
 
@@ -1537,6 +1675,7 @@ def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
         assert artifact_maintenance["retention_defaults"] == {
             "PERSISTENT": None,
             "REVIEW_EVIDENCE": 1800,
+            "OPERATIONAL_EVIDENCE": 600,
             "EPHEMERAL": 60,
         }
         assert artifact_maintenance["legacy_unknown_retention_count"] == 1
@@ -1545,6 +1684,12 @@ def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
             item["artifact_ref"]: item for item in candidates_response.json()["data"]["artifacts"]
         }
         assert candidates["art://reports/homepage/cleanup-candidate.md"]["cleanup_reason"] == "EXPIRED_DUE"
+        assert candidates["art://reports/homepage/cleanup-candidate.md"]["retention_class"] == (
+            "REVIEW_EVIDENCE"
+        )
+        assert candidates["art://reports/homepage/cleanup-candidate.md"]["retention_class_source"] == (
+            "PATH_DEFAULT"
+        )
         assert candidates["art://reports/homepage/cleanup-candidate.md"]["retention_policy_source"] == (
             "CLASS_DEFAULT"
         )

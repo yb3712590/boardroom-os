@@ -126,6 +126,14 @@
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "retention or artifact_cleanup or runtime_default_result_artifacts_use_review_evidence_retention" -q` -> `6 passed, 157 deselected`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_retention or artifact_cleanup or review_evidence_artifact_retention" -q` -> `3 passed, 7 deselected`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup or dispatches_using_persisted_roster" -q` -> `2 passed, 10 deselected`
+- Continued artifact retention governance into conservative scenario defaults: when callers omit `retention_class`, backend now derives it from path with `reports/review/* -> REVIEW_EVIDENCE`, `reports/ops/* -> OPERATIONAL_EVIDENCE`, `reports/diagnostics/* -> OPERATIONAL_EVIDENCE`, and all other paths staying `PERSISTENT`.
+- Added `OPERATIONAL_EVIDENCE` as a first built-in class for ops and diagnostic materials, with `BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC` defaulting to 14 days.
+- Persisted `retention_class_source` on `artifact_index` and surfaced it through ticket artifact and cleanup-candidate projections, so operators can now distinguish explicit retention from path-derived defaults and `LEGACY_COMPAT` backfill state directly from one read surface.
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "review_evidence_default_ttl or operational_evidence or explicit_retention_class_overrides_path_default or dashboard_and_cleanup_candidates_expose_retention_policy_state" -q` -> `3 passed, 166 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "retention or artifact_cleanup or runtime_default_result_artifacts_use_review_evidence_retention" -q` -> `7 passed, 162 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_retention or artifact_cleanup or review_evidence_artifact_retention or retention_class_source" -q` -> `4 passed, 8 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup or runtime_default" -q` -> `1 passed, 11 deselected`
 
 ### Current Watch-Outs
 

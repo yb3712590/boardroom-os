@@ -18,7 +18,12 @@ ARTIFACT_LIFECYCLE_EXPIRED = "EXPIRED"
 
 ARTIFACT_RETENTION_PERSISTENT = "PERSISTENT"
 ARTIFACT_RETENTION_REVIEW_EVIDENCE = "REVIEW_EVIDENCE"
+ARTIFACT_RETENTION_OPERATIONAL_EVIDENCE = "OPERATIONAL_EVIDENCE"
 ARTIFACT_RETENTION_EPHEMERAL = "EPHEMERAL"
+
+ARTIFACT_RETENTION_CLASS_SOURCE_EXPLICIT = "EXPLICIT"
+ARTIFACT_RETENTION_CLASS_SOURCE_PATH_DEFAULT = "PATH_DEFAULT"
+ARTIFACT_RETENTION_CLASS_SOURCE_LEGACY_COMPAT = "LEGACY_COMPAT"
 
 ARTIFACT_RETENTION_POLICY_NO_EXPIRY = "NO_EXPIRY"
 ARTIFACT_RETENTION_POLICY_EXPLICIT_TTL = "EXPLICIT_TTL"
@@ -29,6 +34,8 @@ ARTIFACT_RETENTION_POLICY_LEGACY_UNKNOWN = "LEGACY_UNKNOWN"
 
 @dataclass(frozen=True)
 class ResolvedArtifactRetention:
+    retention_class: str
+    retention_class_source: str
     expires_at: datetime | None
     retention_ttl_sec: int | None
     retention_policy_source: str
@@ -43,10 +50,12 @@ def normalize_retention_class(retention_class: str | None) -> str:
     if normalized not in {
         ARTIFACT_RETENTION_PERSISTENT,
         ARTIFACT_RETENTION_REVIEW_EVIDENCE,
+        ARTIFACT_RETENTION_OPERATIONAL_EVIDENCE,
         ARTIFACT_RETENTION_EPHEMERAL,
     }:
         raise ValueError(
-            "Artifact retention_class must be PERSISTENT, REVIEW_EVIDENCE, or EPHEMERAL."
+            "Artifact retention_class must be PERSISTENT, REVIEW_EVIDENCE, "
+            "OPERATIONAL_EVIDENCE, or EPHEMERAL."
         )
     return normalized
 
@@ -54,11 +63,13 @@ def normalize_retention_class(retention_class: str | None) -> str:
 def build_artifact_retention_defaults(
     *,
     default_ephemeral_ttl_sec: int,
+    default_operational_evidence_ttl_sec: int,
     default_review_evidence_ttl_sec: int,
 ) -> dict[str, int | None]:
     return {
         ARTIFACT_RETENTION_PERSISTENT: None,
         ARTIFACT_RETENTION_REVIEW_EVIDENCE: default_review_evidence_ttl_sec,
+        ARTIFACT_RETENTION_OPERATIONAL_EVIDENCE: default_operational_evidence_ttl_sec,
         ARTIFACT_RETENTION_EPHEMERAL: default_ephemeral_ttl_sec,
     }
 
@@ -143,14 +154,21 @@ def compute_artifact_expiry(
 def resolve_artifact_retention(
     *,
     created_at: datetime,
-    retention_class: str,
+    logical_path: str,
+    retention_class: str | None,
     retention_ttl_sec: int | None,
     default_ephemeral_ttl_sec: int,
+    default_operational_evidence_ttl_sec: int,
     default_review_evidence_ttl_sec: int,
 ) -> ResolvedArtifactRetention:
-    normalized_retention_class = normalize_retention_class(retention_class)
+    normalized_retention_class, retention_class_source = resolve_retention_class(
+        logical_path=logical_path,
+        retention_class=retention_class,
+    )
     if retention_ttl_sec is not None:
         return ResolvedArtifactRetention(
+            retention_class=normalized_retention_class,
+            retention_class_source=retention_class_source,
             expires_at=compute_artifact_expiry(
                 created_at=created_at,
                 retention_ttl_sec=retention_ttl_sec,
@@ -160,11 +178,14 @@ def resolve_artifact_retention(
         )
     retention_defaults = build_artifact_retention_defaults(
         default_ephemeral_ttl_sec=default_ephemeral_ttl_sec,
+        default_operational_evidence_ttl_sec=default_operational_evidence_ttl_sec,
         default_review_evidence_ttl_sec=default_review_evidence_ttl_sec,
     )
     default_ttl_sec = retention_defaults[normalized_retention_class]
     if default_ttl_sec is not None:
         return ResolvedArtifactRetention(
+            retention_class=normalized_retention_class,
+            retention_class_source=retention_class_source,
             expires_at=compute_artifact_expiry(
                 created_at=created_at,
                 retention_ttl_sec=default_ttl_sec,
@@ -173,9 +194,41 @@ def resolve_artifact_retention(
             retention_policy_source=ARTIFACT_RETENTION_POLICY_CLASS_DEFAULT,
         )
     return ResolvedArtifactRetention(
+        retention_class=normalized_retention_class,
+        retention_class_source=retention_class_source,
         expires_at=None,
         retention_ttl_sec=None,
         retention_policy_source=ARTIFACT_RETENTION_POLICY_NO_EXPIRY,
+    )
+
+
+def resolve_retention_class(
+    *,
+    logical_path: str,
+    retention_class: str | None,
+) -> tuple[str, str]:
+    if retention_class is not None:
+        return (
+            normalize_retention_class(retention_class),
+            ARTIFACT_RETENTION_CLASS_SOURCE_EXPLICIT,
+        )
+
+    normalized_path = logical_path.replace("\\", "/").lstrip("/")
+    if normalized_path.startswith("reports/review/"):
+        return (
+            ARTIFACT_RETENTION_REVIEW_EVIDENCE,
+            ARTIFACT_RETENTION_CLASS_SOURCE_PATH_DEFAULT,
+        )
+    if normalized_path.startswith("reports/ops/") or normalized_path.startswith(
+        "reports/diagnostics/"
+    ):
+        return (
+            ARTIFACT_RETENTION_OPERATIONAL_EVIDENCE,
+            ARTIFACT_RETENTION_CLASS_SOURCE_PATH_DEFAULT,
+        )
+    return (
+        ARTIFACT_RETENTION_PERSISTENT,
+        ARTIFACT_RETENTION_CLASS_SOURCE_PATH_DEFAULT,
     )
 
 
@@ -228,6 +281,7 @@ def build_artifact_metadata(
         "materialization_status": artifact["materialization_status"],
         "lifecycle_status": lifecycle_status,
         "retention_class": artifact.get("retention_class") or ARTIFACT_RETENTION_PERSISTENT,
+        "retention_class_source": artifact.get("retention_class_source"),
         "retention_ttl_sec": artifact.get("retention_ttl_sec"),
         "retention_policy_source": artifact.get("retention_policy_source"),
         "expires_at": artifact.get("expires_at"),

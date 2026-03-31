@@ -200,6 +200,9 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 ephemeral_default_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
                 retention_defaults=build_artifact_retention_defaults(
                     default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
+                    default_operational_evidence_ttl_sec=(
+                        settings.artifact_operational_evidence_default_ttl_sec
+                    ),
                     default_review_evidence_ttl_sec=settings.artifact_review_evidence_default_ttl_sec,
                 ),
                 pending_expired_count=int(artifact_cleanup_summary["pending_expired_count"]),
@@ -441,6 +444,7 @@ def build_ticket_artifacts_projection(
                     materialization_status=metadata["materialization_status"],
                     lifecycle_status=metadata["lifecycle_status"],
                     retention_class=metadata["retention_class"],
+                    retention_class_source=metadata["retention_class_source"],
                     retention_ttl_sec=metadata["retention_ttl_sec"],
                     retention_policy_source=metadata["retention_policy_source"],
                     expires_at=metadata["expires_at"],
@@ -498,6 +502,7 @@ def build_artifact_cleanup_candidates_projection(
                 path=metadata["path"],
                 lifecycle_status=metadata["lifecycle_status"],
                 retention_class=metadata["retention_class"],
+                retention_class_source=metadata["retention_class_source"],
                 retention_ttl_sec=metadata["retention_ttl_sec"],
                 retention_policy_source=metadata["retention_policy_source"],
                 expires_at=metadata["expires_at"],

@@ -36,6 +36,7 @@ class Settings:
     artifact_cleanup_interval_sec: int = 300
     artifact_cleanup_operator_id: str = "system:artifact-cleanup"
     artifact_ephemeral_default_ttl_sec: int = 604800
+    artifact_operational_evidence_default_ttl_sec: int = 1209600
     artifact_review_evidence_default_ttl_sec: int = 2592000
 
 
@@ -151,6 +152,13 @@ def get_settings() -> Settings:
         raise ValueError(
             "BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC must be greater than 0."
         )
+    artifact_operational_evidence_default_ttl_sec = int(
+        os.environ.get("BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC", "1209600")
+    )
+    if artifact_operational_evidence_default_ttl_sec <= 0:
+        raise ValueError(
+            "BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC must be greater than 0."
+        )
     artifact_review_evidence_default_ttl_sec = int(
         os.environ.get("BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC", "2592000")
     )
@@ -184,5 +192,6 @@ def get_settings() -> Settings:
         artifact_cleanup_interval_sec=artifact_cleanup_interval_sec,
         artifact_cleanup_operator_id=artifact_cleanup_operator_id,
         artifact_ephemeral_default_ttl_sec=artifact_ephemeral_default_ttl_sec,
+        artifact_operational_evidence_default_ttl_sec=artifact_operational_evidence_default_ttl_sec,
         artifact_review_evidence_default_ttl_sec=artifact_review_evidence_default_ttl_sec,
     )

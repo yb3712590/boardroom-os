@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.contracts.runtime import CompileManifest, CompiledContextBundle, CompiledExecutionPackage
 from app.core.artifact_store import ArtifactStore
 from app.core.artifacts import (
+    ARTIFACT_RETENTION_CLASS_SOURCE_LEGACY_COMPAT,
     ARTIFACT_RETENTION_POLICY_BACKFILLED_CLASS_DEFAULT,
     ARTIFACT_RETENTION_POLICY_LEGACY_UNKNOWN,
     ARTIFACT_RETENTION_POLICY_NO_EXPIRY,
@@ -2461,6 +2462,7 @@ class ControlPlaneRepository:
         deleted_by: str | None,
         delete_reason: str | None,
         created_at: datetime,
+        retention_class_source: str | None = None,
         retention_ttl_sec: int | None = None,
         retention_policy_source: str | None = None,
         storage_deleted_at: datetime | None = None,
@@ -2481,6 +2483,7 @@ class ControlPlaneRepository:
                 content_hash,
                 size_bytes,
                 retention_class,
+                retention_class_source,
                 retention_ttl_sec,
                 retention_policy_source,
                 expires_at,
@@ -2489,7 +2492,7 @@ class ControlPlaneRepository:
                 delete_reason,
                 storage_deleted_at,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 artifact_ref,
@@ -2505,6 +2508,7 @@ class ControlPlaneRepository:
                 content_hash,
                 size_bytes,
                 retention_class,
+                retention_class_source,
                 retention_ttl_sec,
                 retention_policy_source,
                 expires_at.isoformat() if expires_at is not None else None,
@@ -4459,6 +4463,7 @@ class ControlPlaneRepository:
                 content_hash TEXT,
                 size_bytes INTEGER,
                 retention_class TEXT NOT NULL,
+                retention_class_source TEXT,
                 retention_ttl_sec INTEGER,
                 retention_policy_source TEXT,
                 expires_at TEXT,
@@ -4488,6 +4493,7 @@ class ControlPlaneRepository:
             "content_hash": "TEXT",
             "size_bytes": "INTEGER",
             "retention_class": "TEXT",
+            "retention_class_source": "TEXT",
             "retention_ttl_sec": "INTEGER",
             "retention_policy_source": "TEXT",
             "expires_at": "TEXT",
@@ -4516,6 +4522,9 @@ class ControlPlaneRepository:
         settings = get_settings()
         retention_defaults = build_artifact_retention_defaults(
             default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
+            default_operational_evidence_ttl_sec=(
+                settings.artifact_operational_evidence_default_ttl_sec
+            ),
             default_review_evidence_ttl_sec=settings.artifact_review_evidence_default_ttl_sec,
         )
         rows = connection.execute(
@@ -4573,6 +4582,15 @@ class ControlPlaneRepository:
                   )
             """,
             (ARTIFACT_RETENTION_POLICY_NO_EXPIRY,),
+        )
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET retention_class_source = ?
+            WHERE retention_class_source IS NULL
+               OR TRIM(retention_class_source) = ''
+            """,
+            (ARTIFACT_RETENTION_CLASS_SOURCE_LEGACY_COMPAT,),
         )
 
     def _backfill_scope_defaults(self, connection: sqlite3.Connection) -> None:

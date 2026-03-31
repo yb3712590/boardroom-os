@@ -64,6 +64,7 @@ class TicketResultStatus(StrEnum):
 class ArtifactRetentionClass(StrEnum):
     PERSISTENT = "PERSISTENT"
     REVIEW_EVIDENCE = "REVIEW_EVIDENCE"
+    OPERATIONAL_EVIDENCE = "OPERATIONAL_EVIDENCE"
     EPHEMERAL = "EPHEMERAL"
 
 
@@ -174,7 +175,7 @@ class TicketWrittenArtifact(StrictModel):
     content_json: JsonValue | None = None
     content_text: str | None = None
     content_base64: str | None = None
-    retention_class: ArtifactRetentionClass = ArtifactRetentionClass.PERSISTENT
+    retention_class: ArtifactRetentionClass | None = None
     retention_ttl_sec: int | None = Field(default=None, ge=1)
 
 
