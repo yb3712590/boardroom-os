@@ -68,6 +68,7 @@ from app.core.constants import (
     FAILURE_KIND_PROVIDER_RATE_LIMITED,
     FAILURE_KIND_UPSTREAM_UNAVAILABLE,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
+    INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_STATUS_CLOSED,
     INCIDENT_STATUS_OPEN,
     INCIDENT_STATUS_RECOVERING,
@@ -699,6 +700,98 @@ def _build_generated_maker_checker_summary(
     }
 
 
+def _extract_blocking_checker_findings(checker_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    blocking_findings: list[dict[str, Any]] = []
+    findings = checker_payload.get("findings")
+    if not isinstance(findings, list):
+        return blocking_findings
+
+    for finding in findings:
+        if not isinstance(finding, dict) or not finding.get("blocking"):
+            continue
+        finding_id = str(finding.get("finding_id") or "").strip()
+        if not finding_id:
+            continue
+        blocking_findings.append(
+            {
+                "finding_id": finding_id,
+                "headline": str(finding.get("headline") or "").strip(),
+                "required_action": str(finding.get("required_action") or "").strip(),
+                "severity": str(finding.get("severity") or "").strip(),
+                "category": str(finding.get("category") or "").strip(),
+            }
+        )
+    return blocking_findings
+
+
+def _build_rework_fingerprint(blocking_findings: list[dict[str, Any]]) -> str:
+    canonical_findings = [
+        {
+            "category": finding["category"],
+            "headline": finding["headline"],
+            "required_action": finding["required_action"],
+        }
+        for finding in blocking_findings
+    ]
+    canonical_findings.sort(
+        key=lambda item: (
+            item["category"],
+            item["headline"],
+            item["required_action"],
+        )
+    )
+    digest = hashlib.sha256(
+        json.dumps(
+            canonical_findings,
+            sort_keys=True,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"mkrw:{digest}"
+
+
+def _calculate_maker_checker_rework_streak(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    checker_created_spec: dict[str, Any],
+    rework_fingerprint: str,
+) -> int:
+    parent_ticket_id = checker_created_spec.get("parent_ticket_id")
+    if not parent_ticket_id:
+        return 1
+
+    parent_created_spec = repository.get_latest_ticket_created_payload(connection, parent_ticket_id)
+    if parent_created_spec is None or _ticket_kind(parent_created_spec) != MAKER_REWORK_FIX_TICKET_KIND:
+        return 1
+
+    parent_context = parent_created_spec.get("maker_checker_context") or {}
+    if parent_context.get("rework_fingerprint") != rework_fingerprint:
+        return 1
+    return max(1, int(parent_context.get("rework_streak_count") or 0) + 1)
+
+
+def _should_escalate_maker_checker_rework(
+    *,
+    created_spec: dict[str, Any],
+    rework_streak_count: int,
+) -> bool:
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    return (
+        escalation_policy.get("on_repeat_failure") == "escalate_ceo"
+        and rework_streak_count >= _resolve_repeat_failure_threshold(created_spec)
+    )
+
+
+def _resolve_maker_checker_rework_incident_fingerprint(
+    workflow_id: str,
+    node_id: str,
+    rework_fingerprint: str,
+) -> str:
+    return f"{workflow_id}:{node_id}:maker-checker-rework:{rework_fingerprint}"
+
+
 def _build_maker_checker_ticket_payload(
     *,
     workflow_id: str,
@@ -780,6 +873,9 @@ def _build_fix_ticket_payload(
     checker_ticket_id: str,
     checker_created_spec: dict[str, Any],
     checker_result_payload: dict[str, Any],
+    blocking_findings: list[dict[str, Any]],
+    rework_fingerprint: str,
+    rework_streak_count: int,
 ) -> dict[str, Any]:
     maker_checker_context = checker_created_spec.get("maker_checker_context") or {}
     maker_ticket_spec = dict(maker_checker_context.get("maker_ticket_spec") or {})
@@ -791,6 +887,26 @@ def _build_fix_ticket_payload(
         list(maker_checker_context.get("maker_artifact_refs") or [])
         + list(checker_result_payload.get("artifact_refs") or [])
     ) or list(checker_created_spec.get("input_artifact_refs") or [])
+    required_fixes = [
+        {
+            "finding_id": finding["finding_id"],
+            "headline": finding["headline"],
+            "required_action": finding["required_action"],
+            "severity": finding["severity"],
+            "category": finding["category"],
+        }
+        for finding in blocking_findings
+    ]
+    acceptance_criteria = list(maker_ticket_spec.get("acceptance_criteria") or [])
+    acceptance_criteria.extend(
+        [
+            (
+                f"Close checker blocking finding {finding['finding_id']}: "
+                f"{finding['required_action']}"
+            )
+            for finding in required_fixes
+        ]
+    )
     return {
         "ticket_id": new_prefixed_id("tkt"),
         "workflow_id": workflow_id,
@@ -805,7 +921,7 @@ def _build_fix_ticket_payload(
             "semantic_queries": list(context_query_plan.get("semantic_queries") or []),
             "max_context_tokens": max_context_tokens,
         },
-        "acceptance_criteria": list(maker_ticket_spec.get("acceptance_criteria") or []),
+        "acceptance_criteria": acceptance_criteria,
         "output_schema_ref": str(maker_ticket_spec.get("output_schema_ref") or UI_MILESTONE_REVIEW_SCHEMA_REF),
         "output_schema_version": int(
             maker_ticket_spec.get("output_schema_version") or UI_MILESTONE_REVIEW_SCHEMA_VERSION
@@ -827,8 +943,88 @@ def _build_fix_ticket_payload(
             "maker_artifact_refs": input_artifact_refs,
             "maker_ticket_spec": maker_ticket_spec,
             "original_review_request": maker_checker_context.get("original_review_request"),
+            "checker_ticket_id": checker_ticket_id,
+            "blocking_finding_refs": [finding["finding_id"] for finding in required_fixes],
+            "required_fixes": required_fixes,
+            "rework_fingerprint": rework_fingerprint,
+            "rework_streak_count": rework_streak_count,
         },
     }
+
+
+def _open_maker_checker_rework_incident(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    rework_fingerprint: str,
+    rework_streak_count: int,
+    blocking_findings: list[dict[str, Any]],
+    idempotency_key_base: str,
+) -> str:
+    existing_incident = repository.get_open_incident_for_node(workflow_id, node_id, connection=connection)
+    if existing_incident is not None:
+        return str(existing_incident["incident_id"])
+
+    incident_id = new_prefixed_id("inc")
+    incident_payload = {
+        "incident_id": incident_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "incident_type": INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
+        "status": INCIDENT_STATUS_OPEN,
+        "severity": "high",
+        "fingerprint": _resolve_maker_checker_rework_incident_fingerprint(
+            workflow_id,
+            node_id,
+            rework_fingerprint,
+        ),
+        "rework_fingerprint": rework_fingerprint,
+        "rework_streak_count": rework_streak_count,
+        "latest_checker_ticket_id": ticket_id,
+        "latest_blocking_findings": blocking_findings,
+    }
+    incident_event = repository.insert_event(
+        connection,
+        event_type=EVENT_INCIDENT_OPENED,
+        actor_type="system",
+        actor_id="maker-checker-router",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:incident-opened:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=incident_payload,
+        occurred_at=occurred_at,
+    )
+    if incident_event is None:
+        raise RuntimeError("Maker-checker rework incident opening idempotency conflict.")
+
+    breaker_event = repository.insert_event(
+        connection,
+        event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+        actor_type="system",
+        actor_id="maker-checker-router",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "incident_id": incident_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+            "fingerprint": incident_payload["fingerprint"],
+        },
+        occurred_at=occurred_at,
+    )
+    if breaker_event is None:
+        raise RuntimeError("Maker-checker rework circuit breaker opening idempotency conflict.")
+
+    return incident_id
 
 
 def _insert_followup_ticket_created_event(
@@ -3496,27 +3692,57 @@ def _complete_ticket_locked(
     ):
         if created_spec is None or not isinstance(result_payload, dict):
             raise RuntimeError("Checker rework routing requires created spec and checker verdict payload.")
-        fix_ticket_payload = _build_fix_ticket_payload(
-            workflow_id=payload.workflow_id,
-            node_id=payload.node_id,
-            checker_ticket_id=payload.ticket_id,
+        blocking_findings = _extract_blocking_checker_findings(result_payload)
+        rework_fingerprint = _build_rework_fingerprint(blocking_findings)
+        rework_streak_count = _calculate_maker_checker_rework_streak(
+            repository,
+            connection,
             checker_created_spec=created_spec,
-            checker_result_payload={
-                **result_payload,
-                "artifact_refs": payload.artifact_refs,
-            },
+            rework_fingerprint=rework_fingerprint,
         )
-        next_ticket_id = _insert_followup_ticket_created_event(
-            repository=repository,
-            connection=connection,
-            command_id=command_id,
-            occurred_at=received_at,
-            workflow_id=payload.workflow_id,
-            ticket_payload=fix_ticket_payload,
-            idempotency_key=f"{payload.idempotency_key}:fix-ticket-create",
-            actor_id="maker-checker-router",
-        )
-        causation_hint = f"ticket:{next_ticket_id}"
+        if _should_escalate_maker_checker_rework(
+            created_spec=created_spec,
+            rework_streak_count=rework_streak_count,
+        ):
+            incident_id = _open_maker_checker_rework_incident(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                rework_fingerprint=rework_fingerprint,
+                rework_streak_count=rework_streak_count,
+                blocking_findings=blocking_findings,
+                idempotency_key_base=f"{payload.idempotency_key}:maker-checker-rework",
+            )
+            causation_hint = f"incident:{incident_id}"
+        else:
+            fix_ticket_payload = _build_fix_ticket_payload(
+                workflow_id=payload.workflow_id,
+                node_id=payload.node_id,
+                checker_ticket_id=payload.ticket_id,
+                checker_created_spec=created_spec,
+                checker_result_payload={
+                    **result_payload,
+                    "artifact_refs": payload.artifact_refs,
+                },
+                blocking_findings=blocking_findings,
+                rework_fingerprint=rework_fingerprint,
+                rework_streak_count=rework_streak_count,
+            )
+            next_ticket_id = _insert_followup_ticket_created_event(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=payload.workflow_id,
+                ticket_payload=fix_ticket_payload,
+                idempotency_key=f"{payload.idempotency_key}:fix-ticket-create",
+                actor_id="maker-checker-router",
+            )
+            causation_hint = f"ticket:{next_ticket_id}"
     elif effective_review_request is not None:
         review_request_for_approval = effective_review_request
         developer_inspector_source_ticket_id = payload.ticket_id

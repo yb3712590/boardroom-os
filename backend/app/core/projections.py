@@ -54,6 +54,7 @@ from app.config import get_settings
 from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
+    INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     SCHEMA_VERSION,
@@ -300,6 +301,34 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
                         incident_id=incident["incident_id"],
                     ),
                     badges=["repeat_failure", "circuit_breaker"],
+                )
+            )
+            continue
+        if incident.get("incident_type") == INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION:
+            node_id = incident.get("node_id") or "unknown-node"
+            rework_streak_count = int(
+                (incident.get("payload") or {}).get("rework_streak_count") or 0
+            )
+            items.append(
+                InboxItemProjection(
+                    inbox_item_id=f"inbox_{incident['incident_id']}",
+                    workflow_id=incident["workflow_id"],
+                    item_type="INCIDENT_ESCALATION",
+                    priority=str(incident.get("severity") or "high"),
+                    status=incident["status"],
+                    created_at=incident["opened_at"],
+                    sla_due_at=None,
+                    title=f"Maker-checker rework escalation in {node_id}",
+                    summary=(
+                        f"Repeated checker findings hit the rework threshold ({rework_streak_count}) "
+                        "and opened a circuit breaker."
+                    ),
+                    source_ref=incident["incident_id"],
+                    route_target=RouteTarget(
+                        view="incident_detail",
+                        incident_id=incident["incident_id"],
+                    ),
+                    badges=["maker_checker", "rework", "circuit_breaker"],
                 )
             )
             continue
