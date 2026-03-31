@@ -150,6 +150,11 @@
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup" -q` -> `1 passed, 11 deselected`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `243 passed`
 
+### 2026-04-01
+
+- Synced `doc/roadmap-reset.md` with the new documentation baseline by adding explicit anti-drift execution constraints, so future development rounds must read the roadmap reset early, stay on one mainline direction, and stop scope growth once a side path no longer shortens the local `Board -> Review` MVP chain.
+- Added a ready-to-copy reset prompt to `doc/roadmap-reset.md`, updating the fixed reading order to include the roadmap decision itself before `doc/TODO.md` and `doc/history/memory-log.md`, and removing outdated default expansion toward `Search / Retrieval` or other post-MVP infrastructure directions.
+
 ### Current Watch-Outs
 
 - Latest commit also continued the append-only `memory-log.md` pattern. Before archival, this file had grown to about `2300` lines, `119 KB`, and `14.9k` words.
