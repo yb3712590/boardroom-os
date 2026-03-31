@@ -21,6 +21,7 @@ class ArtifactMetadata(StrictModel):
     deleted_at: datetime | None = None
     deleted_by: str | None = None
     delete_reason: str | None = None
+    storage_deleted_at: datetime | None = None
     size_bytes: int | None = None
     content_hash: str | None = None
     created_at: datetime

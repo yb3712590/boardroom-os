@@ -32,6 +32,8 @@ class Settings:
     scheduler_poll_interval_sec: float = 5.0
     scheduler_max_dispatches: int = 10
     enable_inprocess_scheduler: bool = False
+    artifact_cleanup_interval_sec: int = 300
+    artifact_cleanup_operator_id: str = "system:artifact-cleanup"
 
 
 def _read_bool_env(name: str, default: bool = False) -> bool:
@@ -123,6 +125,13 @@ def get_settings() -> Settings:
         "BOARDROOM_OS_ENABLE_INPROCESS_SCHEDULER",
         default=False,
     )
+    artifact_cleanup_interval_sec = int(
+        os.environ.get("BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC", "300")
+    )
+    artifact_cleanup_operator_id = os.environ.get(
+        "BOARDROOM_OS_ARTIFACT_CLEANUP_OPERATOR_ID",
+        "system:artifact-cleanup",
+    ).strip() or "system:artifact-cleanup"
     return Settings(
         db_path=db_path,
         developer_inspector_root=developer_inspector_root,
@@ -145,4 +154,6 @@ def get_settings() -> Settings:
         scheduler_poll_interval_sec=scheduler_poll_interval_sec,
         scheduler_max_dispatches=scheduler_max_dispatches,
         enable_inprocess_scheduler=enable_inprocess_scheduler,
+        artifact_cleanup_interval_sec=artifact_cleanup_interval_sec,
+        artifact_cleanup_operator_id=artifact_cleanup_operator_id,
     )

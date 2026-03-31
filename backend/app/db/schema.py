@@ -224,6 +224,7 @@ CREATE TABLE IF NOT EXISTS artifact_index (
     deleted_at TEXT,
     deleted_by TEXT,
     delete_reason TEXT,
+    storage_deleted_at TEXT,
     created_at TEXT NOT NULL
 );
 

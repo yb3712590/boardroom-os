@@ -3,6 +3,7 @@
 from app.contracts.events import EventSeverity
 from app.contracts.projections import (
     ActiveWorkflowProjection,
+    ArtifactMaintenanceProjection,
     DashboardProjectionData,
     DashboardProjectionEnvelope,
     EventStreamPreviewItem,
@@ -45,6 +46,7 @@ from app.contracts.projections import (
     WorkforceSummaryProjection,
     WorkspaceSummary,
 )
+from app.config import get_settings
 from app.core.artifacts import build_artifact_metadata
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
@@ -110,6 +112,7 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
 
 def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardProjectionEnvelope:
     repository.initialize()
+    generated_at = now_local()
     active_workflow = repository.get_active_workflow()
     cursor, projection_version = repository.get_cursor_and_version()
     pending_approvals = repository.count_open_approvals()
@@ -119,6 +122,10 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
     active_tickets = repository.count_active_tickets()
     blocked_nodes = repository.count_blocked_nodes()
     blocked_node_ids = repository.list_blocked_node_ids()
+    artifact_cleanup_summary = repository.get_artifact_cleanup_summary(at=generated_at)
+    latest_cleanup_event = artifact_cleanup_summary["latest_cleanup_event"]
+    artifact_cleanup_payload = latest_cleanup_event.get("payload", {}) if latest_cleanup_event else {}
+    settings = get_settings()
 
     if active_workflow is None:
         active_workflow_projection = None
@@ -151,7 +158,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
 
     return DashboardProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
-        generated_at=now_local(),
+        generated_at=generated_at,
         projection_version=projection_version,
         cursor=cursor,
         data=DashboardProjectionData(
@@ -183,6 +190,19 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 provider_alerts=open_provider_incidents,
             ),
             workforce_summary=_build_workforce_summary(repository),
+            artifact_maintenance=ArtifactMaintenanceProjection(
+                auto_cleanup_enabled=settings.artifact_cleanup_interval_sec > 0,
+                cleanup_interval_sec=settings.artifact_cleanup_interval_sec,
+                pending_expired_count=int(artifact_cleanup_summary["pending_expired_count"]),
+                pending_storage_cleanup_count=int(artifact_cleanup_summary["pending_storage_cleanup_count"]),
+                last_run_at=latest_cleanup_event["occurred_at"] if latest_cleanup_event else None,
+                last_cleaned_by=artifact_cleanup_payload.get("cleaned_by"),
+                last_trigger=artifact_cleanup_payload.get("trigger"),
+                last_expired_count=int(artifact_cleanup_payload.get("expired_count") or 0),
+                last_storage_deleted_count=int(
+                    artifact_cleanup_payload.get("storage_deleted_count") or 0
+                ),
+            ),
             event_stream_preview=preview_events,
         ),
     )
@@ -411,6 +431,9 @@ def build_ticket_artifacts_projection(
                     retention_class=metadata["retention_class"],
                     expires_at=metadata["expires_at"],
                     deleted_at=metadata["deleted_at"],
+                    deleted_by=metadata["deleted_by"],
+                    delete_reason=metadata["delete_reason"],
+                    storage_deleted_at=metadata["storage_deleted_at"],
                     size_bytes=metadata["size_bytes"],
                     content_hash=metadata["content_hash"],
                     content_url=metadata["content_url"],

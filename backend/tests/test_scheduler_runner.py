@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib
+from datetime import datetime
 
 import app.core.runtime as runtime_module
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
@@ -80,7 +81,44 @@ def _seed_worker(repository, *, employee_id: str, provider_id: str) -> None:
                 "2026-03-28T10:00:00+08:00",
                 1,
             ),
+        )
+
+
+def _seed_ephemeral_artifact_for_cleanup(
+    client,
+    *,
+    artifact_ref: str,
+    created_at: datetime,
+    expires_at: datetime,
+) -> None:
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    materialized = artifact_store.materialize_text(
+        "artifacts/runtime/cleanup/ephemeral.txt",
+        "ephemeral cleanup payload\n",
     )
+    with repository.transaction() as connection:
+        repository.save_artifact_record(
+            connection,
+            artifact_ref=artifact_ref,
+            workflow_id="wf_runner_cleanup",
+            ticket_id="tkt_runner_cleanup",
+            node_id="node_runner_cleanup",
+            logical_path="artifacts/runtime/cleanup/ephemeral.txt",
+            kind="TEXT",
+            media_type="text/plain",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_relpath=materialized.storage_relpath,
+            content_hash=materialized.content_hash,
+            size_bytes=materialized.size_bytes,
+            retention_class="EPHEMERAL",
+            expires_at=expires_at,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=created_at,
+        )
 
 
 def _runtime_success_result(
@@ -272,6 +310,57 @@ def test_scheduler_runner_loop_respects_tick_limit_and_dispatch_budget(client, s
     assert len(acknowledgements) == 2
     assert sleep_calls == [12.5]
     assert completed_count == 2
+
+
+def test_scheduler_runner_auto_runs_artifact_cleanup_once_per_interval_bucket(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC", "300")
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_CLEANUP_OPERATOR_ID", "system:artifact-cleanup")
+    artifact_ref = "art://runtime/cleanup/auto-ephemeral.txt"
+
+    _seed_ephemeral_artifact_for_cleanup(
+        client,
+        artifact_ref=artifact_ref,
+        created_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        expires_at=datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+    )
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    first_ack = run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:artifact-cleanup-first",
+        max_dispatches=10,
+    )
+    first_record = client.app.state.repository.get_artifact_by_ref(artifact_ref)
+    first_cleanup_events = [
+        event
+        for event in client.app.state.repository.list_events_for_testing()
+        if event["event_type"] == "ARTIFACT_CLEANUP_COMPLETED"
+    ]
+
+    second_ack = run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:artifact-cleanup-second",
+        max_dispatches=10,
+    )
+    second_cleanup_events = [
+        event
+        for event in client.app.state.repository.list_events_for_testing()
+        if event["event_type"] == "ARTIFACT_CLEANUP_COMPLETED"
+    ]
+
+    assert first_ack.status.value == "ACCEPTED"
+    assert second_ack.status.value == "ACCEPTED"
+    assert first_record is not None
+    assert first_record["lifecycle_status"] == "EXPIRED"
+    assert first_record["deleted_by"] == "system:artifact-cleanup"
+    assert first_record["storage_deleted_at"] is not None
+    assert len(first_cleanup_events) == 1
+    assert first_cleanup_events[0]["payload"]["cleaned_by"] == "system:artifact-cleanup"
+    assert len(second_cleanup_events) == 1
 
 
 def test_scheduler_runner_marks_started_then_failed_for_unsupported_compiled_execution(client, set_ticket_time):
