@@ -33,6 +33,12 @@ uvicorn app.main:app --reload
 BOARDROOM_OS_WORKER_ADMIN_SIGNING_SECRET=operator-signing-secret
 ```
 
+如果你希望这层入口只能经过受信反向代理，再额外配置：
+
+```bash
+BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS=corp-edge-a,corp-edge-b
+```
+
 启用 FastAPI 进程内 scheduler：
 
 ```bash
@@ -117,7 +123,7 @@ python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 
 ## Worker admin HTTP 管理面
 
-现在也可以直接走后端控制面，而不是只能回本地 CLI。和上一轮不同的是，`worker-admin` 不再单独信裸请求头，必须先拿到短时效签名令牌，再用它调用接口。新的操作人令牌还会持久化 `token_id`，所以值守同学现在不只会“签一张短票”，还可以列出活动令牌、按 `token_id` 撤销，并从拒绝读面里确认它是否已经失效。
+现在也可以直接走后端控制面，而不是只能回本地 CLI。和上一轮不同的是，`worker-admin` 不再单独信裸请求头，必须先拿到短时效签名令牌，再用它调用接口。新的操作人令牌还会持久化 `token_id`，所以值守同学现在不只会“签一张短票”，还可以列出活动令牌、按 `token_id` 撤销，并从拒绝读面里确认它是否已经失效。对于挂在反向代理后的部署，现在还可以额外开启可信代理断言，把入口进一步收口到预期代理。
 
 当前默认约束是：
 
@@ -125,6 +131,7 @@ python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 - 显式传入的 `--ttl-sec` 不能超过 `BOARDROOM_OS_WORKER_ADMIN_MAX_TTL_SEC`，默认 3600 秒
 - 令牌里的 `issued_at` / `expires_at` 必须带时区；后端只接受带时区的签名 claim，避免把无时区时间误当成可信身份
 - 新签发令牌现在会带 `token_id`，并持久化到 `worker_admin_token_issue`；后端在 `worker-admin` / `worker-admin-audit` / `worker-admin-auth-rejections` 入口上会对这类新令牌做“验签 + 验状态”
+- 如果配置了 `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS`，上述三个入口还必须带 `X-Boardroom-Trusted-Proxy-Id`，并且值必须命中白名单
 
 先在本地签发一个平台管理员令牌：
 
@@ -156,20 +163,24 @@ python -m app.worker_admin_auth_cli issue-token \
 OPERATOR_TOKEN='<把 issue-token 输出里的 operator_token 粘进来>'
 
 curl 'http://127.0.0.1:8000/api/v1/worker-admin/bindings?worker_id=emp_frontend_2&tenant_id=tenant_blue&workspace_id=ws_design' \
-  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}"
+  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
+  -H 'X-Boardroom-Trusted-Proxy-Id: corp-edge-a'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/issue-bootstrap' \
   -H 'Content-Type: application/json' \
   -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
+  -H 'X-Boardroom-Trusted-Proxy-Id: corp-edge-a' \
   -d '{"worker_id":"emp_frontend_2","tenant_id":"tenant_blue","workspace_id":"ws_design","ttl_sec":120,"reason":"tenant admin bootstrap"}'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/contain-scope' \
   -H 'Content-Type: application/json' \
   -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
+  -H 'X-Boardroom-Trusted-Proxy-Id: corp-edge-a' \
   -d '{"tenant_id":"tenant_blue","workspace_id":"ws_design","dry_run":true,"revoke_bootstrap_issues":true,"revoke_sessions":true,"reason":"tenant incident containment"}'
 
 curl 'http://127.0.0.1:8000/api/v1/projections/worker-admin-audit?tenant_id=tenant_blue&workspace_id=ws_design&limit=20' \
-  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}"
+  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
+  -H 'X-Boardroom-Trusted-Proxy-Id: corp-edge-a'
 ```
 
 查看当前还活着的操作人令牌：
@@ -195,15 +206,18 @@ python -m app.worker_admin_auth_cli revoke-token \
 
 ```bash
 curl 'http://127.0.0.1:8000/api/v1/worker-admin/operator-tokens?tenant_id=tenant_blue&workspace_id=ws_design&active_only=true' \
-  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}"
+  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
+  -H 'X-Boardroom-Trusted-Proxy-Id: corp-edge-a'
 
 curl -X POST 'http://127.0.0.1:8000/api/v1/worker-admin/revoke-operator-token' \
   -H 'Content-Type: application/json' \
   -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
+  -H 'X-Boardroom-Trusted-Proxy-Id: corp-edge-a' \
   -d '{"token_id":"<token_id>","reason":"tenant admin offboarded"}'
 
 curl 'http://127.0.0.1:8000/api/v1/projections/worker-admin-auth-rejections?tenant_id=tenant_blue&workspace_id=ws_design&limit=20' \
-  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}"
+  -H "X-Boardroom-Operator-Token: ${OPERATOR_TOKEN}" \
+  -H 'X-Boardroom-Trusted-Proxy-Id: corp-edge-a'
 ```
 
 当前已实现的管理接口：
@@ -232,6 +246,7 @@ curl 'http://127.0.0.1:8000/api/v1/projections/worker-admin-auth-rejections?tena
 说明：
 
 - `/api/v1/worker-admin/*`、`GET /api/v1/projections/worker-admin-audit` 和 `GET /api/v1/projections/worker-admin-auth-rejections` 现在都必须带 `X-Boardroom-Operator-Token`
+- 一旦配置了 `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS`，上述入口还必须带 `X-Boardroom-Trusted-Proxy-Id`，缺失会返回 `403 missing_trusted_proxy_assertion`，不在白名单会返回 `403 untrusted_proxy_assertion`
 - 旧的 `X-Boardroom-Operator-Id`、`X-Boardroom-Operator-Role`、`X-Boardroom-Operator-Tenant-Id`、`X-Boardroom-Operator-Workspace-Id` 现在只剩兼容断言作用；如果带了且和令牌 claim 不一致，接口会直接返回 `400`
 - 当前最小角色模型是：
   - `platform_admin`：可全局读写
@@ -244,7 +259,8 @@ curl 'http://127.0.0.1:8000/api/v1/projections/worker-admin-auth-rejections?tena
 - `issue-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`contain-scope` 响应里的 `issued_by` / `revoked_by` 现在统一来自签名令牌里的操作人；请求体里如果还带这些字段，只会被当成兼容断言
 - `sessions`、`delivery-grants`、`auth-rejections` 和 `scope-summary` 现在可以直接按 `tenant_id + workspace_id` 看整组租户 scope，而不必先知道具体 `worker_id`
 - `worker-admin-audit` 会独立记录 `create-binding`、`issue-bootstrap`、`revoke-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`cleanup-bindings`、`contain-scope` 这些动作，并保留 dry-run / 真执行差异
-- `worker-admin-auth-rejections` 会记录缺票、坏票、过期、已撤销、兼容断言不一致和 scope 越权这些拒绝，值守同学现在可以直接确认某张票是不是还在撞入口
+- `worker-admin-audit` 里的每条动作现在还会回显 `trusted_proxy_id` 和 `source_ip`，值守同学可以直接确认这次操作是从哪条受信入口打进来的
+- `worker-admin-auth-rejections` 会记录缺票、坏票、过期、已撤销、兼容断言不一致、可信代理断言缺失 / 不可信和 scope 越权这些拒绝；summary 里也会直接回显当前是否强制可信代理以及白名单内容
 - `revoke-session` 必须二选一：要么按 `session_id` 撤一条会话，要么按 `worker_id + tenant_id + workspace_id` 撤一个明确 scope 下的会话
 - `revoke-delivery-grant` 只按 `grant_id` 撤一条具体 delivery grant，不会把同 session 的兄弟 URL 一起撤掉
 - `revoke-session` 会同步回显并落盘级联撤掉的 delivery grant 数，以及 `revoked_via` / `revoked_by` / `revoke_reason`
@@ -315,6 +331,8 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
   可选，逗号分隔；一旦设置，只允许对名单内租户通过 CLI 或 `worker-admin` HTTP 签发 bootstrap
 - `BOARDROOM_OS_WORKER_ADMIN_SIGNING_SECRET`
   `worker-admin` 操作人令牌的签名密钥；未设置时，`worker-admin`、`worker-admin-audit` 和 `worker-admin-auth-rejections` 入口会 fail-closed，直接拒绝请求
+- `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS`
+  可选，逗号分隔；一旦设置，`worker-admin`、`worker-admin-audit` 和 `worker-admin-auth-rejections` 都必须带 `X-Boardroom-Trusted-Proxy-Id`，并且值必须命中白名单
 - `BOARDROOM_OS_WORKER_ADMIN_DEFAULT_TTL_SEC`
   `worker-admin` 操作人令牌 CLI 在没显式传 `--ttl-sec` 时使用的默认 TTL，默认 900 秒
 - `BOARDROOM_OS_WORKER_ADMIN_MAX_TTL_SEC`
@@ -355,4 +373,4 @@ python -m pytest tests -q
 
 - `backend/pyproject.toml` 的 editable install 还没完全补平
 - 当前二进制上传仍走 `ticket-result-submit` 内联 `base64`
-- 公开互联网场景下还没有完整身份层，当前 `worker-admin` 也只是受信控制面入口，不适合直接当公网租户自助面暴露
+- 公开互联网场景下还没有完整身份层；当前 `worker-admin` 即使加了可信代理断言，也仍只是受信控制面入口，不适合直接当公网租户自助面暴露

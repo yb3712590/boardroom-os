@@ -366,6 +366,8 @@ class WorkerAdminAuditProjectionItem(StrictModel):
     operator_id: str
     operator_role: str
     auth_source: str
+    trusted_proxy_id: str | None = None
+    source_ip: str | None = None
     tenant_id: str | None = None
     workspace_id: str | None = None
     worker_id: str | None = None
@@ -399,6 +401,8 @@ class WorkerAdminAuthRejectionProjectionFilters(StrictModel):
 
 class WorkerAdminAuthRejectionProjectionSummary(StrictModel):
     count: int
+    trusted_proxy_enforced: bool
+    trusted_proxy_ids: list[str]
 
 
 class WorkerAdminAuthRejectionProjectionItem(StrictModel):
@@ -408,6 +412,8 @@ class WorkerAdminAuthRejectionProjectionItem(StrictModel):
     operator_id: str | None = None
     operator_role: str | None = None
     token_id: str | None = None
+    trusted_proxy_id: str | None = None
+    source_ip: str | None = None
     tenant_id: str | None = None
     workspace_id: str | None = None
 

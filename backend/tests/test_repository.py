@@ -675,6 +675,8 @@ def test_worker_admin_action_log_round_trips_filters_and_details(db_path):
             tenant_id="tenant_blue",
             workspace_id="ws_design",
             worker_id="emp_frontend_2",
+            trusted_proxy_id="proxy-a",
+            source_ip="10.0.0.1",
             details={
                 "reason": "tenant scoped bootstrap",
                 "issued": True,
@@ -692,6 +694,8 @@ def test_worker_admin_action_log_round_trips_filters_and_details(db_path):
             tenant_id="tenant_blue",
             workspace_id="ws_design",
             worker_id="emp_frontend_2",
+            trusted_proxy_id="proxy-a",
+            source_ip="10.0.0.1",
             details={
                 "executed": False,
                 "candidate_count": 1,
@@ -712,11 +716,15 @@ def test_worker_admin_action_log_round_trips_filters_and_details(db_path):
     assert issue_action["operator_role"] == "platform_admin"
     assert issue_action["auth_source"] == "signed_token"
     assert issue_action["action_type"] == "issue_bootstrap"
+    assert issue_action["trusted_proxy_id"] == "proxy-a"
+    assert issue_action["source_ip"] == "10.0.0.1"
     assert issue_action["details"]["reason"] == "tenant scoped bootstrap"
     assert cleanup_action["dry_run"] is True
     assert cleanup_action["details"]["executed"] is False
     assert len(listed) == 1
     assert listed[0]["action_id"] == issue_action["action_id"]
+    assert listed[0]["trusted_proxy_id"] == "proxy-a"
+    assert listed[0]["source_ip"] == "10.0.0.1"
     assert listed[0]["details"]["succeeded"] is True
 
 
@@ -794,6 +802,8 @@ def test_worker_admin_auth_rejection_log_round_trips_filters(db_path):
             token_id=None,
             tenant_id=None,
             workspace_id=None,
+            trusted_proxy_id=None,
+            source_ip="10.0.0.2",
         )
         repository.append_worker_admin_auth_rejection_log(
             connection,
@@ -805,6 +815,8 @@ def test_worker_admin_auth_rejection_log_round_trips_filters(db_path):
             token_id="wop_scope",
             tenant_id="tenant_blue",
             workspace_id="ws_design",
+            trusted_proxy_id="proxy-a",
+            source_ip="10.0.0.3",
         )
 
     listed = repository.list_worker_admin_auth_rejection_logs(
@@ -819,6 +831,67 @@ def test_worker_admin_auth_rejection_log_round_trips_filters(db_path):
     assert listed[0]["operator_id"] == "tenant.admin@example.com"
     assert listed[0]["operator_role"] == "scope_admin"
     assert listed[0]["token_id"] == "wop_scope"
+    assert listed[0]["trusted_proxy_id"] == "proxy-a"
+    assert listed[0]["source_ip"] == "10.0.0.3"
+
+
+def test_initialize_backfills_worker_admin_log_columns_for_legacy_tables(db_path):
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE worker_admin_auth_rejection_log (
+            rejection_id TEXT PRIMARY KEY,
+            occurred_at TEXT NOT NULL,
+            route_path TEXT NOT NULL,
+            reason_code TEXT NOT NULL,
+            operator_id TEXT,
+            operator_role TEXT,
+            token_id TEXT,
+            tenant_id TEXT,
+            workspace_id TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE worker_admin_action_log (
+            action_id TEXT PRIMARY KEY,
+            occurred_at TEXT NOT NULL,
+            operator_id TEXT NOT NULL,
+            operator_role TEXT NOT NULL,
+            auth_source TEXT NOT NULL,
+            tenant_id TEXT,
+            workspace_id TEXT,
+            worker_id TEXT,
+            session_id TEXT,
+            grant_id TEXT,
+            issue_id TEXT,
+            action_type TEXT NOT NULL,
+            dry_run INTEGER NOT NULL DEFAULT 0,
+            details_json TEXT NOT NULL
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    connection = sqlite3.connect(db_path)
+    rejection_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(worker_admin_auth_rejection_log)").fetchall()
+    }
+    action_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(worker_admin_action_log)").fetchall()
+    }
+    connection.close()
+
+    assert "trusted_proxy_id" in rejection_columns
+    assert "source_ip" in rejection_columns
+    assert "trusted_proxy_id" in action_columns
+    assert "source_ip" in action_columns
 
 
 def test_artifact_cleanup_candidates_ignore_storage_already_deleted_rows(db_path):

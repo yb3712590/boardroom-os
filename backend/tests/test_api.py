@@ -210,6 +210,7 @@ def _worker_admin_headers(
     asserted_role: str | None = None,
     asserted_tenant_id: str | None = None,
     asserted_workspace_id: str | None = None,
+    trusted_proxy_id: str | None = None,
 ) -> dict[str, str]:
     from app.core.worker_admin_tokens import issue_worker_admin_token
 
@@ -223,6 +224,8 @@ def _worker_admin_headers(
         ttl_sec=ttl_sec,
     )
     headers = {"X-Boardroom-Operator-Token": token}
+    if trusted_proxy_id is not None:
+        headers["X-Boardroom-Trusted-Proxy-Id"] = trusted_proxy_id
     if include_assertion_headers:
         headers.update(
             _legacy_worker_admin_headers(
@@ -299,6 +302,7 @@ def _persisted_worker_admin_headers(
     asserted_role: str | None = None,
     asserted_tenant_id: str | None = None,
     asserted_workspace_id: str | None = None,
+    trusted_proxy_id: str | None = None,
 ) -> tuple[dict[str, str], dict]:
     token, token_issue = _issue_persisted_worker_admin_token(
         client,
@@ -311,6 +315,8 @@ def _persisted_worker_admin_headers(
         signing_secret=signing_secret,
     )
     headers = {"X-Boardroom-Operator-Token": token}
+    if trusted_proxy_id is not None:
+        headers["X-Boardroom-Trusted-Proxy-Id"] = trusted_proxy_id
     if include_assertion_headers:
         headers.update(
             _legacy_worker_admin_headers(
@@ -7548,6 +7554,101 @@ def test_worker_admin_audit_projection_lists_logged_actions_with_dry_run_and_sco
     assert payload["actions"][1]["operator_role"] == "platform_admin"
     assert payload["actions"][1]["auth_source"] == "signed_token"
     assert payload["actions"][1]["details"]["succeeded"] is True
+
+
+def test_worker_admin_trusted_proxy_is_optional_by_default(client):
+    response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={"tenant_id": "tenant_default", "workspace_id": "ws_default"},
+        headers=_worker_admin_headers(),
+    )
+
+    assert response.status_code == 200
+
+
+def test_worker_admin_trusted_proxy_missing_assertion_is_rejected_and_visible(client, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS", "proxy-a,proxy-b")
+
+    rejected_response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={"tenant_id": "tenant_default", "workspace_id": "ws_default"},
+        headers=_worker_admin_headers(),
+    )
+    projection_without_proxy = client.get(
+        "/api/v1/projections/worker-admin-auth-rejections",
+        params={"route_path": "/api/v1/worker-admin/bindings", "limit": 10},
+        headers=_worker_admin_headers(),
+    )
+    projection_with_proxy = client.get(
+        "/api/v1/projections/worker-admin-auth-rejections",
+        params={"route_path": "/api/v1/worker-admin/bindings", "limit": 10},
+        headers=_worker_admin_headers(trusted_proxy_id="proxy-a"),
+    )
+
+    assert rejected_response.status_code == 403
+    assert rejected_response.json()["detail"] == "Worker-admin trusted proxy assertion is required."
+    assert projection_without_proxy.status_code == 403
+    assert projection_with_proxy.status_code == 200
+    payload = projection_with_proxy.json()["data"]
+    assert payload["summary"]["trusted_proxy_enforced"] is True
+    assert payload["summary"]["trusted_proxy_ids"] == ["proxy-a", "proxy-b"]
+    assert payload["rejections"][0]["reason_code"] == "missing_trusted_proxy_assertion"
+    assert payload["rejections"][0]["trusted_proxy_id"] is None
+    assert payload["rejections"][0]["source_ip"] == "testclient"
+
+
+def test_worker_admin_trusted_proxy_rejects_untrusted_proxy_and_accepts_allowed_proxy(client, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS", "proxy-a,proxy-b")
+
+    rejected_response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={"tenant_id": "tenant_default", "workspace_id": "ws_default"},
+        headers=_worker_admin_headers(trusted_proxy_id="proxy-x"),
+    )
+    accepted_response = client.get(
+        "/api/v1/worker-admin/bindings",
+        params={"tenant_id": "tenant_default", "workspace_id": "ws_default"},
+        headers=_worker_admin_headers(trusted_proxy_id="proxy-a"),
+    )
+    projection_response = client.get(
+        "/api/v1/projections/worker-admin-auth-rejections",
+        params={"route_path": "/api/v1/worker-admin/bindings", "limit": 10},
+        headers=_worker_admin_headers(trusted_proxy_id="proxy-a"),
+    )
+
+    assert rejected_response.status_code == 403
+    assert rejected_response.json()["detail"] == "Worker-admin trusted proxy assertion is not allowed."
+    assert accepted_response.status_code == 200
+    assert projection_response.status_code == 200
+    payload = projection_response.json()["data"]
+    assert payload["rejections"][0]["reason_code"] == "untrusted_proxy_assertion"
+    assert payload["rejections"][0]["trusted_proxy_id"] == "proxy-x"
+    assert payload["rejections"][0]["source_ip"] == "testclient"
+
+
+def test_worker_admin_audit_projection_exposes_trusted_proxy_context(client, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS", "proxy-a")
+
+    create_response = client.post(
+        "/api/v1/worker-admin/create-binding",
+        json={
+            "worker_id": "emp_frontend_2",
+            "tenant_id": "tenant_blue",
+            "workspace_id": "ws_design",
+        },
+        headers=_worker_admin_headers(trusted_proxy_id="proxy-a"),
+    )
+    audit_response = client.get(
+        "/api/v1/projections/worker-admin-audit",
+        params={"tenant_id": "tenant_blue", "workspace_id": "ws_design", "limit": 10},
+        headers=_worker_admin_headers(trusted_proxy_id="proxy-a"),
+    )
+
+    assert create_response.status_code == 200
+    assert audit_response.status_code == 200
+    payload = audit_response.json()["data"]
+    assert payload["actions"][0]["trusted_proxy_id"] == "proxy-a"
+    assert payload["actions"][0]["source_ip"] == "testclient"
 
 
 def test_worker_admin_audit_projection_scope_viewer_reads_only_own_scope(client):

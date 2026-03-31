@@ -26,7 +26,8 @@
   - 新增 `python -m app.worker_admin_auth_cli list-tokens`、`revoke-token`，以及 `GET /api/v1/worker-admin/operator-tokens`、`POST /api/v1/worker-admin/revoke-operator-token`，值守同学现在可以直接看和撤操作人令牌，不必只等 TTL 自然过期
   - 新增 `worker_admin_auth_rejection_log` 和 `GET /api/v1/projections/worker-admin-auth-rejections`，现在可以直接确认撤销后的令牌是否还在撞入口、后端是否已经拒绝
 - 继续推进更强多租户远端隔离：
-  - 在现有签名令牌入口之外，继续收紧公开互联网场景下的安全边界，例如反向代理断言、更强的外网暴露策略、独立租户管理面，以及完整身份层
+  - 可信代理断言已落地：配置 `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS` 后，`worker-admin`、`worker-admin-audit` 和 `worker-admin-auth-rejections` 都会要求 `X-Boardroom-Trusted-Proxy-Id`
+  - 仍未完成的缺口是更完整的公网暴露策略、独立租户管理面和完整身份层
 - artifact 自动清理闭环已落地：
   - `artifact_index` 现在会持久化 `storage_deleted_at`，物理文件删掉后不会再被重复当成 residual cleanup 目标
   - scheduler / runner 现在会按 `BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC` 自动触发 artifact cleanup；`dashboard` 也会直接回显最近一次 cleanup 的触发来源、删除数量和当前积压

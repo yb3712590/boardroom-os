@@ -761,6 +761,8 @@ def build_worker_admin_audit_projection(
                     operator_id=str(action["operator_id"]),
                     operator_role=str(action["operator_role"]),
                     auth_source=str(action["auth_source"]),
+                    trusted_proxy_id=action.get("trusted_proxy_id"),
+                    source_ip=action.get("source_ip"),
                     tenant_id=action.get("tenant_id"),
                     workspace_id=action.get("workspace_id"),
                     worker_id=action.get("worker_id"),
@@ -791,6 +793,7 @@ def build_worker_admin_auth_rejection_projection(
     repository.initialize()
     generated_at = now_local()
     cursor, projection_version = repository.get_cursor_and_version()
+    trusted_proxy_ids = list(get_settings().worker_admin_trusted_proxy_ids)
     rejections = repository.list_worker_admin_auth_rejection_logs(
         tenant_id=tenant_id,
         workspace_id=workspace_id,
@@ -806,7 +809,11 @@ def build_worker_admin_auth_rejection_projection(
         projection_version=projection_version,
         cursor=cursor,
         data=WorkerAdminAuthRejectionProjectionData(
-            summary=WorkerAdminAuthRejectionProjectionSummary(count=len(rejections)),
+            summary=WorkerAdminAuthRejectionProjectionSummary(
+                count=len(rejections),
+                trusted_proxy_enforced=bool(trusted_proxy_ids),
+                trusted_proxy_ids=trusted_proxy_ids,
+            ),
             filters=WorkerAdminAuthRejectionProjectionFilters(
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
@@ -824,6 +831,8 @@ def build_worker_admin_auth_rejection_projection(
                     operator_id=rejection.get("operator_id"),
                     operator_role=rejection.get("operator_role"),
                     token_id=rejection.get("token_id"),
+                    trusted_proxy_id=rejection.get("trusted_proxy_id"),
+                    source_ip=rejection.get("source_ip"),
                     tenant_id=rejection.get("tenant_id"),
                     workspace_id=rejection.get("workspace_id"),
                 )

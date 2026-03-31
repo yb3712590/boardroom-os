@@ -26,6 +26,7 @@ class Settings:
     worker_bootstrap_max_ttl_sec: int
     worker_admin_default_ttl_sec: int
     worker_admin_max_ttl_sec: int
+    worker_admin_trusted_proxy_ids: tuple[str, ...]
     worker_bootstrap_allowed_tenant_ids: tuple[str, ...]
     busy_timeout_ms: int = 5000
     recent_event_limit: int = 10
@@ -114,6 +115,15 @@ def get_settings() -> Settings:
     worker_admin_max_ttl_sec = int(
         os.environ.get("BOARDROOM_OS_WORKER_ADMIN_MAX_TTL_SEC", "3600")
     )
+    raw_worker_admin_trusted_proxy_ids = os.environ.get("BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS")
+    if raw_worker_admin_trusted_proxy_ids:
+        worker_admin_trusted_proxy_ids = tuple(
+            proxy_id
+            for proxy_id in (item.strip() for item in raw_worker_admin_trusted_proxy_ids.split(","))
+            if proxy_id
+        )
+    else:
+        worker_admin_trusted_proxy_ids = ()
     raw_allowed_tenants = os.environ.get("BOARDROOM_OS_WORKER_BOOTSTRAP_ALLOWED_TENANT_IDS")
     if raw_allowed_tenants:
         worker_bootstrap_allowed_tenant_ids = tuple(
@@ -164,6 +174,7 @@ def get_settings() -> Settings:
         worker_bootstrap_max_ttl_sec=worker_bootstrap_max_ttl_sec,
         worker_admin_default_ttl_sec=worker_admin_default_ttl_sec,
         worker_admin_max_ttl_sec=worker_admin_max_ttl_sec,
+        worker_admin_trusted_proxy_ids=worker_admin_trusted_proxy_ids,
         worker_bootstrap_allowed_tenant_ids=worker_bootstrap_allowed_tenant_ids,
         busy_timeout_ms=busy_timeout_ms,
         recent_event_limit=recent_event_limit,

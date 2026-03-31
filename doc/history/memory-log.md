@@ -102,10 +102,13 @@
 - Closed the remaining `worker-admin` operator-token governance gap inside the trusted control plane: `issue-token` now persists `worker_admin_token_issue`, new operator tokens carry a durable `token_id`, and backend validation for new tokens now checks persisted issue state instead of trusting signature + TTL alone.
 - Added operator-token management surfaces on both paths: `python -m app.worker_admin_auth_cli list-tokens` / `revoke-token`, plus `GET /api/v1/worker-admin/operator-tokens` and `POST /api/v1/worker-admin/revoke-operator-token`, with the same platform-vs-scope role boundaries on listing and revoke.
 - Added a dedicated `worker_admin_auth_rejection_log` and `GET /api/v1/projections/worker-admin-auth-rejections`, so post-revoke verification no longer depends on manual `401` spot checks; operators can now see missing-token, bad-signature, expired, revoked, assertion-mismatch, and scope-denied failures directly.
+- Closed the next public-entry gap inside that trusted control plane: when `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS` is configured, `worker-admin`, `worker-admin-audit`, and `worker-admin-auth-rejections` now all require `X-Boardroom-Trusted-Proxy-Id` before token validation, so the control plane can be pinned behind one expected reverse proxy hop instead of trusting any direct caller with a valid token.
+- Extended both worker-admin logs with ingress context: `worker_admin_action_log` and `worker_admin_auth_rejection_log` now persist `trusted_proxy_id` and `source_ip`, and the two projection surfaces expose those fields directly for operator-side debugging.
 - Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "trusted_proxy or worker_admin_audit_projection_exposes_trusted_proxy_context" backend/tests/test_repository.py -k "trusted_proxy or worker_admin_action_log_round_trips_filters_and_details or worker_admin_auth_rejection_log_round_trips_filters or legacy_tables" -q` -> `7 passed`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_worker_admin_auth_cli.py -q` -> `4 passed`
-  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -q` -> `7 passed`
-  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "worker_admin" -q` -> `33 passed, 123 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -q` -> `11 passed`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "worker_admin" -q` -> `37 passed, 130 deselected`
 - Closed the manual-only artifact cleanup gap for the current local artifact store: `artifact_index` now persists `storage_deleted_at`, cleanup no longer re-counts already-cleared files, and scheduler / runner now trigger automatic cleanup on a bounded interval.
 - Extended `GET /api/v1/projections/dashboard` with `artifact_maintenance`, so排障时可以直接看到自动 cleanup 是否开启、当前过期待清理积压、以及最近一次 cleanup 的触发来源、操作者和删除数量。
 - Extended `GET /api/v1/projections/tickets/{ticket_id}/artifacts` with `deleted_by`, `delete_reason`, and `storage_deleted_at`, so单张 ticket 的 artifact 读面现在能直接区分“逻辑过期”与“文件已物理删除”。

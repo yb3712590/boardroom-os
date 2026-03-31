@@ -21,6 +21,8 @@ class WorkerAdminOperatorContext:
     token_id: str | None = None
     tenant_id: str | None = None
     workspace_id: str | None = None
+    trusted_proxy_id: str | None = None
+    source_ip: str | None = None
     auth_source: str = "signed_token"
     auth_rejection_logger: Callable[..., None] | None = None
 
@@ -70,6 +72,14 @@ def _resolve_worker_admin_signing_secret() -> str:
     return signing_secret
 
 
+def _resolve_request_source_ip(request: Request) -> str | None:
+    client = request.client
+    if client is None:
+        return None
+    normalized = (client.host or "").strip()
+    return normalized or None
+
+
 def _append_worker_admin_auth_rejection_log(
     request: Request,
     *,
@@ -79,6 +89,8 @@ def _append_worker_admin_auth_rejection_log(
     token_id: str | None,
     tenant_id: str | None,
     workspace_id: str | None,
+    trusted_proxy_id: str | None = None,
+    source_ip: str | None = None,
 ) -> None:
     repository = getattr(request.app.state, "repository", None)
     if repository is None:
@@ -94,6 +106,8 @@ def _append_worker_admin_auth_rejection_log(
             token_id=token_id,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
         )
 
 
@@ -109,6 +123,8 @@ def _assert_worker_admin_header_match(
     token_id: str | None,
     tenant_id: str | None,
     workspace_id: str | None,
+    trusted_proxy_id: str | None = None,
+    source_ip: str | None = None,
 ) -> None:
     normalized = _normalize_optional_header(asserted_value)
     if normalized is None:
@@ -122,6 +138,8 @@ def _assert_worker_admin_header_match(
             token_id=token_id,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
         )
         raise HTTPException(
             status_code=400,
@@ -129,8 +147,54 @@ def _assert_worker_admin_header_match(
         )
 
 
+def _require_worker_admin_trusted_proxy(
+    request: Request,
+    *,
+    x_boardroom_trusted_proxy_id: str | None,
+) -> tuple[str | None, str | None]:
+    trusted_proxy_id = _normalize_optional_header(x_boardroom_trusted_proxy_id)
+    source_ip = _resolve_request_source_ip(request)
+    trusted_proxy_ids = get_settings().worker_admin_trusted_proxy_ids
+    if not trusted_proxy_ids:
+        return trusted_proxy_id, source_ip
+    if trusted_proxy_id is None:
+        _append_worker_admin_auth_rejection_log(
+            request,
+            reason_code="missing_trusted_proxy_assertion",
+            operator_id=None,
+            operator_role=None,
+            token_id=None,
+            tenant_id=None,
+            workspace_id=None,
+            trusted_proxy_id=None,
+            source_ip=source_ip,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Worker-admin trusted proxy assertion is required.",
+        )
+    if trusted_proxy_id not in trusted_proxy_ids:
+        _append_worker_admin_auth_rejection_log(
+            request,
+            reason_code="untrusted_proxy_assertion",
+            operator_id=None,
+            operator_role=None,
+            token_id=None,
+            tenant_id=None,
+            workspace_id=None,
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Worker-admin trusted proxy assertion is not allowed.",
+        )
+    return trusted_proxy_id, source_ip
+
+
 def get_worker_admin_operator_context(
     request: Request,
+    x_boardroom_trusted_proxy_id: str | None = Header(default=None, alias="X-Boardroom-Trusted-Proxy-Id"),
     x_boardroom_operator_token: str | None = Header(default=None, alias="X-Boardroom-Operator-Token"),
     x_boardroom_operator_id: str | None = Header(default=None, alias="X-Boardroom-Operator-Id"),
     x_boardroom_operator_role: str | None = Header(default=None, alias="X-Boardroom-Operator-Role"),
@@ -143,6 +207,10 @@ def get_worker_admin_operator_context(
         alias="X-Boardroom-Operator-Workspace-Id",
     ),
 ) -> WorkerAdminOperatorContext:
+    trusted_proxy_id, source_ip = _require_worker_admin_trusted_proxy(
+        request,
+        x_boardroom_trusted_proxy_id=x_boardroom_trusted_proxy_id,
+    )
     if _normalize_optional_header(x_boardroom_operator_token) is None:
         _append_worker_admin_auth_rejection_log(
             request,
@@ -152,6 +220,8 @@ def get_worker_admin_operator_context(
             token_id=None,
             tenant_id=None,
             workspace_id=None,
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
         )
     operator_token = _normalize_required_header(
         x_boardroom_operator_token,
@@ -174,6 +244,8 @@ def get_worker_admin_operator_context(
             token_id=exc.token_id,
             tenant_id=exc.tenant_id,
             workspace_id=exc.workspace_id,
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
         )
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
@@ -188,6 +260,8 @@ def get_worker_admin_operator_context(
             token_id=claims.token_id,
             tenant_id=claims.tenant_id,
             workspace_id=claims.workspace_id,
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
         )
         raise HTTPException(
             status_code=400,
@@ -205,6 +279,8 @@ def get_worker_admin_operator_context(
         token_id=claims.token_id,
         tenant_id=claims.tenant_id,
         workspace_id=claims.workspace_id,
+        trusted_proxy_id=trusted_proxy_id,
+        source_ip=source_ip,
     )
     _assert_worker_admin_header_match(
         request=request,
@@ -217,6 +293,8 @@ def get_worker_admin_operator_context(
         token_id=claims.token_id,
         tenant_id=claims.tenant_id,
         workspace_id=claims.workspace_id,
+        trusted_proxy_id=trusted_proxy_id,
+        source_ip=source_ip,
     )
     if asserted_tenant_id is not None or asserted_workspace_id is not None:
         _assert_worker_admin_header_match(
@@ -230,6 +308,8 @@ def get_worker_admin_operator_context(
             token_id=claims.token_id,
             tenant_id=claims.tenant_id,
             workspace_id=claims.workspace_id,
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
         )
         _assert_worker_admin_header_match(
             request=request,
@@ -242,6 +322,8 @@ def get_worker_admin_operator_context(
             token_id=claims.token_id,
             tenant_id=claims.tenant_id,
             workspace_id=claims.workspace_id,
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
         )
 
     return WorkerAdminOperatorContext(
@@ -250,6 +332,8 @@ def get_worker_admin_operator_context(
         token_id=claims.token_id,
         tenant_id=claims.tenant_id,
         workspace_id=claims.workspace_id,
+        trusted_proxy_id=trusted_proxy_id,
+        source_ip=source_ip,
         auth_source="signed_token",
         auth_rejection_logger=lambda **kwargs: _append_worker_admin_auth_rejection_log(
             request,
@@ -259,6 +343,8 @@ def get_worker_admin_operator_context(
             token_id=claims.token_id,
             tenant_id=kwargs.get("tenant_id", claims.tenant_id),
             workspace_id=kwargs.get("workspace_id", claims.workspace_id),
+            trusted_proxy_id=trusted_proxy_id,
+            source_ip=source_ip,
         ),
     )
 

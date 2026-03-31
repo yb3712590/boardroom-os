@@ -1852,6 +1852,8 @@ class ControlPlaneRepository:
         token_id: str | None,
         tenant_id: str | None,
         workspace_id: str | None,
+        trusted_proxy_id: str | None = None,
+        source_ip: str | None = None,
     ) -> dict[str, Any]:
         rejection_id = new_prefixed_id("warej")
         connection.execute(
@@ -1865,8 +1867,10 @@ class ControlPlaneRepository:
                 operator_role,
                 token_id,
                 tenant_id,
-                workspace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                workspace_id,
+                trusted_proxy_id,
+                source_ip
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 rejection_id,
@@ -1878,6 +1882,8 @@ class ControlPlaneRepository:
                 token_id,
                 tenant_id,
                 workspace_id,
+                trusted_proxy_id,
+                source_ip,
             ),
         )
         row = connection.execute(
@@ -1953,6 +1959,8 @@ class ControlPlaneRepository:
         session_id: str | None = None,
         grant_id: str | None = None,
         issue_id: str | None = None,
+        trusted_proxy_id: str | None = None,
+        source_ip: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         action_id = new_prefixed_id("wact")
@@ -1970,10 +1978,12 @@ class ControlPlaneRepository:
                 session_id,
                 grant_id,
                 issue_id,
+                trusted_proxy_id,
+                source_ip,
                 action_type,
                 dry_run,
                 details_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 action_id,
@@ -1987,6 +1997,8 @@ class ControlPlaneRepository:
                 session_id,
                 grant_id,
                 issue_id,
+                trusted_proxy_id,
+                source_ip,
                 action_type,
                 1 if dry_run else 0,
                 json.dumps(details or {}, sort_keys=True),
@@ -4154,7 +4166,9 @@ class ControlPlaneRepository:
                 operator_role TEXT,
                 token_id TEXT,
                 tenant_id TEXT,
-                workspace_id TEXT
+                workspace_id TEXT,
+                trusted_proxy_id TEXT,
+                source_ip TEXT
             )
             """
         )
@@ -4172,6 +4186,8 @@ class ControlPlaneRepository:
             "token_id": "TEXT",
             "tenant_id": "TEXT",
             "workspace_id": "TEXT",
+            "trusted_proxy_id": "TEXT",
+            "source_ip": "TEXT",
         }
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
@@ -4209,6 +4225,8 @@ class ControlPlaneRepository:
                 session_id TEXT,
                 grant_id TEXT,
                 issue_id TEXT,
+                trusted_proxy_id TEXT,
+                source_ip TEXT,
                 action_type TEXT NOT NULL,
                 dry_run INTEGER NOT NULL DEFAULT 0,
                 details_json TEXT NOT NULL
@@ -4231,6 +4249,8 @@ class ControlPlaneRepository:
             "session_id": "TEXT",
             "grant_id": "TEXT",
             "issue_id": "TEXT",
+            "trusted_proxy_id": "TEXT",
+            "source_ip": "TEXT",
             "action_type": "TEXT",
             "dry_run": "INTEGER NOT NULL DEFAULT 0",
             "details_json": "TEXT NOT NULL DEFAULT '{}'",

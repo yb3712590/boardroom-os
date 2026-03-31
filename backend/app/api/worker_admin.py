@@ -108,6 +108,8 @@ def _append_worker_admin_action_log(
             operator_id=operator.operator_id,
             operator_role=operator.role,
             auth_source=operator.auth_source,
+            trusted_proxy_id=operator.trusted_proxy_id,
+            source_ip=operator.source_ip,
             action_type=action_type,
             dry_run=dry_run,
             tenant_id=tenant_id,

@@ -1273,6 +1273,7 @@ Behavior rules:
   - `POST /api/v1/worker-admin/contain-scope`
 - `python -m app.worker_admin_auth_cli issue-token --operator-id ... --role ... [--tenant-id ... --workspace-id ...] [--ttl-sec ...]` now mints the signed operator token used by the HTTP surface, with a configurable default TTL and max TTL guardrail
 - every `worker-admin` HTTP request now requires `X-Boardroom-Operator-Token`
+- when `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS` is configured, every `worker-admin` HTTP request and both worker-admin projection endpoints also require `X-Boardroom-Trusted-Proxy-Id`, and the asserted proxy id must match that allowlist
 - the legacy compatibility headers are no longer identity truth:
   - `X-Boardroom-Operator-Id`
   - `X-Boardroom-Operator-Role`
@@ -1282,12 +1283,13 @@ Behavior rules:
   - `platform_admin`: global read/write
   - `scope_admin`: read/write only inside one exact `tenant_id + workspace_id` scope
   - `scope_viewer`: read-only inside one exact `tenant_id + workspace_id` scope
-- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, conservative cleanup eligibility, and revoke audit writing, but now also enforce the signed operator-token boundary above
+- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, conservative cleanup eligibility, and revoke audit writing, but now also enforce the signed operator-token boundary plus optional trusted-proxy assertion above
 - `worker-admin` is still a trusted control-plane surface, not a finished public tenant self-service or identity layer
 - scoped HTTP operators must always query or write against an explicit `tenant_id + workspace_id`; they may not use worker-only filters to sweep across scopes
 - if a worker already has multiple bootstrap bindings, `issue-bootstrap`, `rotate-bootstrap`, and `revoke-bootstrap` require both `--tenant-id` and `--workspace-id`; single-binding workers may still omit them and reuse the only binding
 - the HTTP compatibility fields `issued_by` and `revoked_by` no longer define operator identity; backend writes them from the signed token's `operator_id`, and if the request body still supplies one of those fields it must match the signed identity exactly or the request is rejected with `400`
-- `GET /api/v1/projections/worker-admin-audit` now returns an independent audit read model for `create-binding`, `issue-bootstrap`, `revoke-bootstrap`, `revoke-session`, `revoke-delivery-grant`, `cleanup-bindings`, and `contain-scope`, including dry-run actions and operator/scope filters
+- `GET /api/v1/projections/worker-admin-audit` now returns an independent audit read model for `create-binding`, `issue-bootstrap`, `revoke-bootstrap`, `revoke-session`, `revoke-delivery-grant`, `cleanup-bindings`, and `contain-scope`, including dry-run actions, operator/scope filters, and the ingress context fields `trusted_proxy_id` / `source_ip`
+- `GET /api/v1/projections/worker-admin-auth-rejections` now returns not only rejection rows, but also summary-level `trusted_proxy_enforced` / `trusted_proxy_ids` so operators can confirm whether the trusted-proxy gate is actually enabled before reading the row list
 - bootstrap-token calls create a fresh worker session
 - session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`
 - assignment polling only returns tickets from the current session scope; if the backend encounters a ticket owned by that worker under a scope with no matching bootstrap binding, it still rejects and audits the mismatch instead of silently hiding it
