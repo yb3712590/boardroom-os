@@ -17,7 +17,7 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 - 已有 FastAPI + SQLite 的后端控制面
 - 已跑通 ticket 生命周期、结构化结果提交、审批和 incident 治理
 - 已有 artifact 持久化、投影读面、事件流和审计基础
-- artifact 生命周期现在已经补到“可过期 + 默认留存 TTL + 历史临时件回填 + 调度自动清理 + dashboard / cleanup 候选读面可见状态”
+- artifact 生命周期现在已经补到“可过期 + 按场景默认留存 TTL + 历史临时件 / 评审证据回填 + 调度自动清理 + dashboard / cleanup 候选读面可见状态”
 - 已跑通外部 worker handoff，包括 bootstrap、session、signed delivery 和多租户 scope 约束
 - 已补到多租户 worker 的租户级运维闭环，包括 binding 生命周期、统一观察面、`worker-admin` 下的 bootstrap / session / delivery grant 管理、按租户读面、带 dry-run / 计数保护的 scope 止血入口，以及带持久化 `token_id`、活动令牌列表 / 撤销和独立鉴权拒绝读面的受信签名操作人令牌入口
 
@@ -27,14 +27,14 @@ Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计
 
 - 治理与审批：ticket 生命周期、Board 审批、incident / circuit-breaker / retry 治理已经串起来
 - 运行时交付：支持结构化结果入口、artifact 持久化、外部 worker handoff 和最小调度闭环
-- artifact 运维：`EPHEMERAL` 产物现在默认会带留存 TTL，历史上没写 TTL 的临时件也会被回填进 cleanup 闭环；`dashboard` 和 cleanup 候选读面可直接看到最近一次 cleanup、当前积压，以及每个 artifact 的留存来源
+- artifact 运维：artifact 现在支持 `PERSISTENT`、`REVIEW_EVIDENCE`、`EPHEMERAL` 三类留存语义；`REVIEW_EVIDENCE` 和 `EPHEMERAL` 会按各自默认 TTL 进入 cleanup 闭环，历史上缺失过期信息的评审证据 / 临时件也会被保守回填；`dashboard` 和 cleanup 候选读面可直接看到最近一次 cleanup、当前积压、各类默认留存规则，以及每个 artifact 的留存来源
 - 审计与可追溯：事件流、projection、SQLite WAL、compile 相关产物都已真实落盘
 - 运维与排障：已有 `dashboard`、`inbox`、`review room`、`worker-runtime` 等读面，也有可直接按租户查看 session / grant / rejection、做 scope-summary、看独立 `worker-admin` 动作审计与操作人鉴权拒绝读面，以及带 dry-run / `409` 保护、可直接列出 / 撤销活动操作人令牌的 `worker-admin` HTTP 入口和本地运维 CLI
 
 ## 开发主线
 
 - 当前最顺手的主线仍然是 `Runtime / Backend`
-- 最近一批完成的是“多租户 worker 运维面 -> 租户级读面 + 安全批量止血入口 + 受信入口边界 + 独立操作审计读面”，以及紧接着补上的“artifact 自动清理闭环 -> 物理删除记账 + 调度自动 cleanup + 默认留存 TTL / 历史回填 / dashboard 与 cleanup 候选读面”
+- 最近一批完成的是“多租户 worker 运维面 -> 租户级读面 + 安全批量止血入口 + 受信入口边界 + 独立操作审计读面”，以及紧接着补上的“artifact 自动清理闭环 -> 物理删除记账 + 调度自动 cleanup + 场景留存分级 / 历史回填 / dashboard 与 cleanup 候选读面”
 - 还在后面的主要方向包括：更强公网安全边界、artifact 自动清理与大文件链路、完整 Context Compiler、Search / Retrieval、React UI
 
 更细的进行中事项看 [doc/TODO.md](doc/TODO.md)。
@@ -71,7 +71,7 @@ python -m pytest tests -q
 ## 当前已知现实
 
 - `backend/` 的 editable install 还没完全补平，新环境下 `pip install -e .[dev]` 仍可能出问题
-- 大文件上传还没有 multipart / 分片 / 对象存储链路，当前更适合中等体量文件；artifact 留存治理仍基于现有本地 artifact store，没有扩到大文件链路
+- 大文件上传还没有 multipart / 分片 / 对象存储链路，当前更适合中等体量文件；artifact 留存治理已支持 `REVIEW_EVIDENCE` / `EPHEMERAL` 默认 TTL，但仍基于现有本地 artifact store，没有扩到大文件链路
 - `worker-admin` 现在已经要求短时效签名操作人令牌，不再单独信裸请求头；新签发令牌会持久化 `token_id`，可列出、可撤销、撤销后会立即失效并写鉴权拒绝日志；默认 TTL 为 15 分钟、最大 TTL 为 1 小时，但公开互联网场景下还没有完整身份层、反向代理断言或租户自助面
 
 ## 项目原则

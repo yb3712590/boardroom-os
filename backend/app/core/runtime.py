@@ -135,6 +135,7 @@ def _build_runtime_default_artifacts(
             "path": _resolve_runtime_write_path(write_pattern, "option-a.json"),
             "artifact_ref": artifact_refs[0],
             "kind": "JSON",
+            "retention_class": "REVIEW_EVIDENCE",
             "content_json": {
                 "option_id": "option_a",
                 "headline": "Primary runtime-generated structured review artifact.",
@@ -144,6 +145,7 @@ def _build_runtime_default_artifacts(
             "path": _resolve_runtime_write_path(write_pattern, "option-b.json"),
             "artifact_ref": artifact_refs[1],
             "kind": "JSON",
+            "retention_class": "REVIEW_EVIDENCE",
             "content_json": {
                 "option_id": "option_b",
                 "headline": "Fallback runtime-generated structured review artifact.",
@@ -271,8 +273,12 @@ def _build_runtime_result_submit_command(
             path=str(item["path"]),
             artifact_ref=str(item["artifact_ref"]),
             kind=str(item["kind"]),
+            media_type=item.get("media_type"),
             content_json=item.get("content_json"),
             content_text=item.get("content_text"),
+            content_base64=item.get("content_base64"),
+            retention_class=str(item.get("retention_class") or "PERSISTENT"),
+            retention_ttl_sec=item.get("retention_ttl_sec"),
         )
         for item in execution_result.written_artifacts
     ]

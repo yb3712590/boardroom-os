@@ -51,7 +51,7 @@ from app.contracts.projections import (
     WorkspaceSummary,
 )
 from app.config import get_settings
-from app.core.artifacts import build_artifact_metadata
+from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
@@ -198,6 +198,10 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 auto_cleanup_enabled=settings.artifact_cleanup_interval_sec > 0,
                 cleanup_interval_sec=settings.artifact_cleanup_interval_sec,
                 ephemeral_default_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
+                retention_defaults=build_artifact_retention_defaults(
+                    default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
+                    default_review_evidence_ttl_sec=settings.artifact_review_evidence_default_ttl_sec,
+                ),
                 pending_expired_count=int(artifact_cleanup_summary["pending_expired_count"]),
                 pending_storage_cleanup_count=int(artifact_cleanup_summary["pending_storage_cleanup_count"]),
                 legacy_unknown_retention_count=int(

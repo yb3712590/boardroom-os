@@ -66,6 +66,7 @@ class ArtifactMaintenanceProjection(StrictModel):
     auto_cleanup_enabled: bool
     cleanup_interval_sec: int
     ephemeral_default_ttl_sec: int
+    retention_defaults: dict[str, int | None]
     pending_expired_count: int
     pending_storage_cleanup_count: int
     legacy_unknown_retention_count: int

@@ -1077,3 +1077,96 @@ def test_initialize_backfills_legacy_ephemeral_artifact_retention_and_marks_exis
     )
     assert backfilled_after_second_initialize is not None
     assert backfilled_after_second_initialize["expires_at"] == created_at + timedelta(seconds=604800)
+
+
+def test_initialize_backfills_legacy_review_evidence_artifact_retention(
+    db_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC", "2592000")
+    created_at = datetime.fromisoformat("2026-03-29T09:00:00+08:00")
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE artifact_index (
+            artifact_ref TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            ticket_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            logical_path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            media_type TEXT,
+            materialization_status TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL,
+            storage_relpath TEXT,
+            content_hash TEXT,
+            size_bytes INTEGER,
+            retention_class TEXT NOT NULL,
+            expires_at TEXT,
+            deleted_at TEXT,
+            deleted_by TEXT,
+            delete_reason TEXT,
+            storage_deleted_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO artifact_index (
+            artifact_ref,
+            workflow_id,
+            ticket_id,
+            node_id,
+            logical_path,
+            kind,
+            media_type,
+            materialization_status,
+            lifecycle_status,
+            storage_relpath,
+            content_hash,
+            size_bytes,
+            retention_class,
+            expires_at,
+            deleted_at,
+            deleted_by,
+            delete_reason,
+            storage_deleted_at,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "art://legacy/review-evidence-missing-expiry.md",
+            "wf_legacy",
+            "tkt_legacy",
+            "node_legacy",
+            "artifacts/legacy/review-evidence-missing-expiry.md",
+            "MARKDOWN",
+            "text/markdown",
+            "MATERIALIZED",
+            "ACTIVE",
+            "artifacts/legacy/review-evidence-missing-expiry.md",
+            "hash-review-evidence",
+            64,
+            "REVIEW_EVIDENCE",
+            None,
+            None,
+            None,
+            None,
+            None,
+            created_at.isoformat(),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    backfilled = repository.get_artifact_by_ref("art://legacy/review-evidence-missing-expiry.md")
+
+    assert backfilled is not None
+    assert backfilled["retention_class"] == "REVIEW_EVIDENCE"
+    assert backfilled["expires_at"] == created_at + timedelta(seconds=2592000)
+    assert backfilled["retention_ttl_sec"] == 2592000
+    assert backfilled["retention_policy_source"] == "BACKFILLED_CLASS_DEFAULT"

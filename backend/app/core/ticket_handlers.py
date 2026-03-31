@@ -297,6 +297,7 @@ def _prepare_ticket_artifacts(
             retention_class=retention_class,
             retention_ttl_sec=item.retention_ttl_sec,
             default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
+            default_review_evidence_ttl_sec=settings.artifact_review_evidence_default_ttl_sec,
         )
         if normalized_kind == "JSON":
             if artifact_store is None:

@@ -13,7 +13,7 @@
 - 最小 incident / circuit-breaker / retry 治理链
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
-- artifact cleanup 闭环：物理删除记账、scheduler 自动 cleanup，以及 `dashboard` 上可直接看的 cleanup 状态
+- artifact cleanup 闭环：场景留存分级、物理删除记账、scheduler 自动 cleanup，以及 `dashboard` 上可直接看的 cleanup 状态
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
 - 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及带签名操作人令牌入口、独立动作审计读面的 `worker-admin` HTTP 管理面
 
@@ -281,14 +281,19 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
 
 当前真实行为：
 
+- `PERSISTENT` artifact 默认不过期
+- `REVIEW_EVIDENCE + retention_ttl_sec` 的 artifact 会按显式 TTL 到期
+- `REVIEW_EVIDENCE` 如果没显式写 `retention_ttl_sec`，会自动落 `BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC`；默认 30 天
 - `EPHEMERAL + retention_ttl_sec` 的 artifact 会按显式 TTL 到期
 - `EPHEMERAL` 如果没显式写 `retention_ttl_sec`，会自动落 `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`；默认 7 天
-- 旧库里 `EPHEMERAL` 但没有 `expires_at` 的 artifact，会在仓库初始化时按同一默认 TTL 回填，避免历史临时件永久滞留
+- 旧库里 `REVIEW_EVIDENCE` / `EPHEMERAL` 但没有 `expires_at` 的 artifact，会在仓库初始化时按各自默认 TTL 回填，避免历史评审材料或临时件永久滞留
 - 如果 artifact 有本地落盘文件，cleanup 会把文件删掉，并在 `artifact_index` 里写 `storage_deleted_at`
 - 已经写过 `storage_deleted_at` 的 artifact 不会在后续 cleanup 里被重复统计成 residual cleanup
 - `GET /api/v1/projections/dashboard` 现在会返回 `artifact_maintenance`，可以直接看：
   - 自动 cleanup 是否开启
   - 当前默认 `EPHEMERAL` TTL
+  - 当前默认 `REVIEW_EVIDENCE` TTL
+  - 三类留存语义的默认规则映射
   - cleanup 间隔
   - 当前待过期 / 待物理删除积压
   - 历史遗留里还有多少 artifact 只能保守标成 `LEGACY_UNKNOWN`
@@ -328,6 +333,8 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
   自动 cleanup 写入事件和 artifact 审计时使用的操作人，默认 `system:artifact-cleanup`
 - `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`
   `EPHEMERAL` artifact 没显式写 `retention_ttl_sec` 时使用的默认 TTL，默认 604800 秒（7 天）
+- `BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC`
+  `REVIEW_EVIDENCE` artifact 没显式写 `retention_ttl_sec` 时使用的默认 TTL，默认 2592000 秒（30 天）
 
 ## 测试与默认存储
 

@@ -49,7 +49,7 @@
 
 - There is still no dedicated tenant-management control plane, OAuth or mTLS layer, or broader public-internet hardening.
 - Multipart or large-file upload and object-storage delivery are still missing.
-- Richer artifact retention classes and the larger-file upload path still need follow-through beyond the current local-store auto cleanup loop.
+- Broader scenario-specific artifact retention classes and the larger-file upload path still need follow-through beyond the current local-store auto cleanup loop.
 - Provider routing, richer output schema coverage, and fuller Context Compiler retrieval and caching are still incomplete.
 
 ## Recent Memory
@@ -116,6 +116,13 @@
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_cleanup_candidates_ignore_storage_already_deleted_rows" -q` -> `1 passed`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact_cleanup_does_not_recount_storage_already_cleared or dashboard_exposes_artifact_cleanup_maintenance_summary or ticket_artifacts_projection_exposes_cleanup_audit_fields or artifact_cleanup_expires_elapsed_artifacts_and_deletes_files" -q` -> `4 passed, 155 deselected`
   - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "auto_runs_artifact_cleanup_once_per_interval_bucket" -q` -> `1 passed, 11 deselected`
+- Extended artifact retention from rough long-lived vs temporary handling into a first scenario-based split: `PERSISTENT` still stays non-expiring by default, `REVIEW_EVIDENCE` now defaults to `BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC`, and `EPHEMERAL` keeps `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`.
+- Runtime-generated default review option artifacts now explicitly land as `REVIEW_EVIDENCE`, so the minimal in-process runtime no longer leaves Board-facing review materials looking like generic persistent blobs.
+- Repository initialization now also backfills legacy `REVIEW_EVIDENCE` rows without `expires_at`, and `GET /api/v1/projections/dashboard` now exposes a `retention_defaults` map alongside the existing cleanup summary.
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "retention or artifact_cleanup or runtime_default_result_artifacts_use_review_evidence_retention" -q` -> `6 passed, 157 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_retention or artifact_cleanup or review_evidence_artifact_retention" -q` -> `3 passed, 7 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup or dispatches_using_persisted_roster" -q` -> `2 passed, 10 deselected`
 
 ### Current Watch-Outs
 

@@ -12,10 +12,10 @@ from app.config import get_settings
 from app.contracts.runtime import CompileManifest, CompiledContextBundle, CompiledExecutionPackage
 from app.core.artifact_store import ArtifactStore
 from app.core.artifacts import (
-    ARTIFACT_RETENTION_EPHEMERAL,
     ARTIFACT_RETENTION_POLICY_BACKFILLED_CLASS_DEFAULT,
     ARTIFACT_RETENTION_POLICY_LEGACY_UNKNOWN,
     ARTIFACT_RETENTION_POLICY_NO_EXPIRY,
+    build_artifact_retention_defaults,
 )
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
@@ -4494,21 +4494,25 @@ class ControlPlaneRepository:
 
     def _backfill_artifact_retention_defaults(self, connection: sqlite3.Connection) -> None:
         settings = get_settings()
-        default_ttl_sec = settings.artifact_ephemeral_default_ttl_sec
+        retention_defaults = build_artifact_retention_defaults(
+            default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
+            default_review_evidence_ttl_sec=settings.artifact_review_evidence_default_ttl_sec,
+        )
         rows = connection.execute(
             """
             SELECT * FROM artifact_index
-            WHERE retention_class = ?
-              AND expires_at IS NULL
+            WHERE expires_at IS NULL
               AND (
                     retention_policy_source IS NULL
                     OR TRIM(retention_policy_source) = ''
                   )
-            """,
-            (ARTIFACT_RETENTION_EPHEMERAL,),
+            """
         ).fetchall()
         for row in rows:
             converted = self._convert_artifact_index_row(row)
+            default_ttl_sec = retention_defaults.get(str(converted["retention_class"]))
+            if default_ttl_sec is None:
+                continue
             expires_at = converted["created_at"] + timedelta(seconds=default_ttl_sec)
             connection.execute(
                 """
@@ -4543,16 +4547,12 @@ class ControlPlaneRepository:
             UPDATE artifact_index
             SET retention_policy_source = ?
             WHERE expires_at IS NULL
-              AND retention_class != ?
               AND (
                     retention_policy_source IS NULL
                     OR TRIM(retention_policy_source) = ''
                   )
             """,
-            (
-                ARTIFACT_RETENTION_POLICY_NO_EXPIRY,
-                ARTIFACT_RETENTION_EPHEMERAL,
-            ),
+            (ARTIFACT_RETENTION_POLICY_NO_EXPIRY,),
         )
 
     def _backfill_scope_defaults(self, connection: sqlite3.Connection) -> None:

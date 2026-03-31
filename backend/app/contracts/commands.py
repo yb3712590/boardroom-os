@@ -63,6 +63,7 @@ class TicketResultStatus(StrEnum):
 
 class ArtifactRetentionClass(StrEnum):
     PERSISTENT = "PERSISTENT"
+    REVIEW_EVIDENCE = "REVIEW_EVIDENCE"
     EPHEMERAL = "EPHEMERAL"
 
 

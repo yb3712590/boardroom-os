@@ -17,6 +17,7 @@ ARTIFACT_LIFECYCLE_DELETED = "DELETED"
 ARTIFACT_LIFECYCLE_EXPIRED = "EXPIRED"
 
 ARTIFACT_RETENTION_PERSISTENT = "PERSISTENT"
+ARTIFACT_RETENTION_REVIEW_EVIDENCE = "REVIEW_EVIDENCE"
 ARTIFACT_RETENTION_EPHEMERAL = "EPHEMERAL"
 
 ARTIFACT_RETENTION_POLICY_NO_EXPIRY = "NO_EXPIRY"
@@ -39,11 +40,27 @@ def normalize_artifact_kind(kind: str) -> str:
 
 def normalize_retention_class(retention_class: str | None) -> str:
     normalized = (retention_class or ARTIFACT_RETENTION_PERSISTENT).upper().strip()
-    if normalized not in {ARTIFACT_RETENTION_PERSISTENT, ARTIFACT_RETENTION_EPHEMERAL}:
+    if normalized not in {
+        ARTIFACT_RETENTION_PERSISTENT,
+        ARTIFACT_RETENTION_REVIEW_EVIDENCE,
+        ARTIFACT_RETENTION_EPHEMERAL,
+    }:
         raise ValueError(
-            "Artifact retention_class must be PERSISTENT or EPHEMERAL."
+            "Artifact retention_class must be PERSISTENT, REVIEW_EVIDENCE, or EPHEMERAL."
         )
     return normalized
+
+
+def build_artifact_retention_defaults(
+    *,
+    default_ephemeral_ttl_sec: int,
+    default_review_evidence_ttl_sec: int,
+) -> dict[str, int | None]:
+    return {
+        ARTIFACT_RETENTION_PERSISTENT: None,
+        ARTIFACT_RETENTION_REVIEW_EVIDENCE: default_review_evidence_ttl_sec,
+        ARTIFACT_RETENTION_EPHEMERAL: default_ephemeral_ttl_sec,
+    }
 
 
 def is_binary_artifact_kind(kind: str) -> bool:
@@ -129,6 +146,7 @@ def resolve_artifact_retention(
     retention_class: str,
     retention_ttl_sec: int | None,
     default_ephemeral_ttl_sec: int,
+    default_review_evidence_ttl_sec: int,
 ) -> ResolvedArtifactRetention:
     normalized_retention_class = normalize_retention_class(retention_class)
     if retention_ttl_sec is not None:
@@ -140,13 +158,18 @@ def resolve_artifact_retention(
             retention_ttl_sec=retention_ttl_sec,
             retention_policy_source=ARTIFACT_RETENTION_POLICY_EXPLICIT_TTL,
         )
-    if normalized_retention_class == ARTIFACT_RETENTION_EPHEMERAL:
+    retention_defaults = build_artifact_retention_defaults(
+        default_ephemeral_ttl_sec=default_ephemeral_ttl_sec,
+        default_review_evidence_ttl_sec=default_review_evidence_ttl_sec,
+    )
+    default_ttl_sec = retention_defaults[normalized_retention_class]
+    if default_ttl_sec is not None:
         return ResolvedArtifactRetention(
             expires_at=compute_artifact_expiry(
                 created_at=created_at,
-                retention_ttl_sec=default_ephemeral_ttl_sec,
+                retention_ttl_sec=default_ttl_sec,
             ),
-            retention_ttl_sec=default_ephemeral_ttl_sec,
+            retention_ttl_sec=default_ttl_sec,
             retention_policy_source=ARTIFACT_RETENTION_POLICY_CLASS_DEFAULT,
         )
     return ResolvedArtifactRetention(

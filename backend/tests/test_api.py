@@ -1288,12 +1288,77 @@ def test_ticket_artifacts_projection_applies_default_ephemeral_ttl_and_exposes_r
         assert projected_artifact["expires_at"] == "2026-03-28T10:02:00+08:00"
 
 
+def test_ticket_artifacts_projection_applies_default_review_evidence_ttl(
+    db_path,
+    monkeypatch,
+    set_ticket_time,
+):
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC", "1800")
+
+    from app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        set_ticket_time("2026-03-28T10:00:00+08:00")
+        _create_lease_and_start_ticket(client)
+        artifact_ref = "art://reports/homepage/review-evidence.md"
+
+        submit_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                artifact_refs=[artifact_ref],
+                payload={
+                    "summary": "Review evidence artifact should pick up review-evidence default TTL.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Review evidence option.",
+                            "artifact_refs": [artifact_ref],
+                        }
+                    ],
+                },
+                written_artifacts=[
+                    {
+                        "path": "reports/review/review-evidence.md",
+                        "artifact_ref": artifact_ref,
+                        "kind": "MARKDOWN",
+                        "content_text": "# Review Evidence\n\nKeep for board review window.\n",
+                        "retention_class": "REVIEW_EVIDENCE",
+                    }
+                ],
+                idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:review-evidence-default-ttl",
+            ),
+        )
+        projection_response = client.get("/api/v1/projections/tickets/tkt_visual_001/artifacts")
+        projected_artifact = next(
+            item
+            for item in projection_response.json()["data"]["artifacts"]
+            if item["artifact_ref"] == artifact_ref
+        )
+        stored_artifact = client.app.state.repository.get_artifact_by_ref(artifact_ref)
+
+        assert submit_response.status_code == 200
+        assert projection_response.status_code == 200
+        assert stored_artifact is not None
+        assert stored_artifact["retention_class"] == "REVIEW_EVIDENCE"
+        assert stored_artifact["retention_ttl_sec"] == 1800
+        assert stored_artifact["retention_policy_source"] == "CLASS_DEFAULT"
+        assert stored_artifact["expires_at"] == datetime.fromisoformat("2026-03-28T10:30:00+08:00")
+        assert projected_artifact["retention_class"] == "REVIEW_EVIDENCE"
+        assert projected_artifact["retention_ttl_sec"] == 1800
+        assert projected_artifact["retention_policy_source"] == "CLASS_DEFAULT"
+        assert projected_artifact["expires_at"] == "2026-03-28T10:30:00+08:00"
+
+
 def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
     db_path,
     monkeypatch,
     set_ticket_time,
 ):
     monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC", "60")
+    monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC", "1800")
     connection = sqlite3.connect(db_path)
     connection.execute(
         """
@@ -1463,6 +1528,11 @@ def test_dashboard_and_cleanup_candidates_expose_retention_policy_state(
         assert candidates_response.status_code == 200
         artifact_maintenance = dashboard_response.json()["data"]["artifact_maintenance"]
         assert artifact_maintenance["ephemeral_default_ttl_sec"] == 60
+        assert artifact_maintenance["retention_defaults"] == {
+            "PERSISTENT": None,
+            "REVIEW_EVIDENCE": 1800,
+            "EPHEMERAL": 60,
+        }
         assert artifact_maintenance["legacy_unknown_retention_count"] == 1
 
         candidates = {
@@ -3136,6 +3206,31 @@ def test_ticket_result_submit_materializes_json_artifacts_and_exposes_ticket_art
     assert projected_by_ref["art://homepage/option-a.json"]["content_url"]
     assert projected_by_ref["art://homepage/option-a.json"]["download_url"]
     assert projected_by_ref["art://homepage/option-a.json"]["preview_url"]
+
+
+def test_runtime_default_result_artifacts_use_review_evidence_retention(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+
+    from app.scheduler_runner import run_scheduler_once
+
+    response = run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:runtime-default-retention",
+        max_dispatches=1,
+    )
+
+    repository = client.app.state.repository
+    indexed_artifacts = repository.list_ticket_artifacts("tkt_visual_001")
+    indexed_by_ref = {item["artifact_ref"]: item for item in indexed_artifacts}
+
+    assert response.status.value == "ACCEPTED"
+    assert indexed_by_ref["art://runtime/tkt_visual_001/option-a.json"]["retention_class"] == (
+        "REVIEW_EVIDENCE"
+    )
+    assert indexed_by_ref["art://runtime/tkt_visual_001/option-b.json"]["retention_class"] == (
+        "REVIEW_EVIDENCE"
+    )
 
 
 def test_ticket_result_submit_materializes_markdown_artifacts(client, set_ticket_time):
