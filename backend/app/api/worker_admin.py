@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from app.api.worker_admin_auth import (
+    WorkerAdminOperatorContext,
+    get_worker_admin_operator_context,
+    require_worker_admin_read_scope,
+    require_worker_admin_write_scope,
+    require_worker_admin_write_target_scope,
+    resolve_worker_admin_actor,
+)
 
 from app.contracts.worker_admin import (
     WorkerAdminContainScopeRequest,
@@ -61,10 +70,16 @@ def get_worker_admin_bindings(
     worker_id: str | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminBindingsResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
         resolve_scope_args(tenant_id, workspace_id)
+        require_worker_admin_read_scope(
+            operator,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
         bindings = list_binding_admin_views(
             repository,
             worker_id=worker_id,
@@ -83,10 +98,16 @@ def get_worker_admin_bootstrap_issues(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
     active_only: bool = False,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminBootstrapIssuesResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
         resolve_scope_args(tenant_id, workspace_id)
+        require_worker_admin_read_scope(
+            operator,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
         bootstrap_issues = list_bootstrap_issues(
             repository,
             worker_id=worker_id,
@@ -109,9 +130,16 @@ def get_worker_admin_sessions(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
     active_only: bool = False,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminSessionsResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        resolve_scope_args(tenant_id, workspace_id)
+        require_worker_admin_read_scope(
+            operator,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
         sessions = list_sessions(
             repository,
             worker_id=worker_id,
@@ -133,9 +161,16 @@ def get_worker_admin_delivery_grants(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
     active_only: bool = False,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminDeliveryGrantsResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        resolve_scope_args(tenant_id, workspace_id)
+        require_worker_admin_read_scope(
+            operator,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
         delivery_grants = list_delivery_grants(
             repository,
             worker_id=worker_id,
@@ -160,9 +195,16 @@ def get_worker_admin_auth_rejections(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
     route_family: str | None = None,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminAuthRejectionsResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        resolve_scope_args(tenant_id, workspace_id)
+        require_worker_admin_read_scope(
+            operator,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
         auth_rejections = list_auth_rejections(
             repository,
             worker_id=worker_id,
@@ -184,9 +226,15 @@ def get_worker_admin_scope_summary(
     tenant_id: str,
     workspace_id: str,
     worker_id: str | None = None,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminScopeSummaryResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        require_worker_admin_read_scope(
+            operator,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
         summary = build_scope_summary(
             repository,
             worker_id=worker_id,
@@ -202,9 +250,21 @@ def get_worker_admin_scope_summary(
 def post_worker_admin_contain_scope(
     request: Request,
     payload: WorkerAdminContainScopeRequest,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminContainScopeResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        require_worker_admin_write_scope(
+            operator,
+            tenant_id=payload.tenant_id,
+            workspace_id=payload.workspace_id,
+            explicit_scope_required_for_scoped=True,
+        )
+        revoked_by = resolve_worker_admin_actor(
+            operator,
+            asserted_actor=payload.revoked_by,
+            field_name="revoked_by",
+        )
         result = contain_scope(
             repository,
             tenant_id=payload.tenant_id,
@@ -213,7 +273,7 @@ def post_worker_admin_contain_scope(
             dry_run=payload.dry_run,
             revoke_bootstrap_issues=payload.revoke_bootstrap_issues,
             revoke_sessions=payload.revoke_sessions,
-            revoked_by=payload.revoked_by,
+            revoked_by=revoked_by,
             reason=payload.reason,
             expected_active_bootstrap_issue_count=payload.expected_active_bootstrap_issue_count,
             expected_active_session_count=payload.expected_active_session_count,
@@ -230,9 +290,16 @@ def post_worker_admin_contain_scope(
 def post_worker_admin_create_binding(
     request: Request,
     payload: WorkerAdminCreateBindingRequest,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminCreateBindingResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        require_worker_admin_write_scope(
+            operator,
+            tenant_id=payload.tenant_id,
+            workspace_id=payload.workspace_id,
+            explicit_scope_required_for_scoped=True,
+        )
         binding = create_binding(
             repository,
             worker_id=payload.worker_id,
@@ -248,16 +315,28 @@ def post_worker_admin_create_binding(
 def post_worker_admin_issue_bootstrap(
     request: Request,
     payload: WorkerAdminIssueBootstrapRequest,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminIssueBootstrapResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        require_worker_admin_write_scope(
+            operator,
+            tenant_id=payload.tenant_id,
+            workspace_id=payload.workspace_id,
+            explicit_scope_required_for_scoped=True,
+        )
+        issued_by = resolve_worker_admin_actor(
+            operator,
+            asserted_actor=payload.issued_by,
+            field_name="issued_by",
+        )
         issued = issue_bootstrap(
             repository,
             worker_id=payload.worker_id,
             ttl_sec=payload.ttl_sec,
             tenant_id=payload.tenant_id,
             workspace_id=payload.workspace_id,
-            issued_by=payload.issued_by,
+            issued_by=issued_by,
             reason=payload.reason,
             issued_via=WORKER_ADMIN_API_VIA,
         )
@@ -270,9 +349,16 @@ def post_worker_admin_issue_bootstrap(
 def post_worker_admin_revoke_bootstrap(
     request: Request,
     payload: WorkerAdminRevokeBootstrapRequest,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminRevokeBootstrapResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        require_worker_admin_write_scope(
+            operator,
+            tenant_id=payload.tenant_id,
+            workspace_id=payload.workspace_id,
+            explicit_scope_required_for_scoped=True,
+        )
         revoked = revoke_bootstrap(
             repository,
             worker_id=payload.worker_id,
@@ -288,16 +374,43 @@ def post_worker_admin_revoke_bootstrap(
 def post_worker_admin_revoke_session(
     request: Request,
     payload: WorkerAdminRevokeSessionRequest,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminRevokeSessionResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        if payload.session_id is not None:
+            session = repository.get_worker_session(payload.session_id)
+            if session is not None:
+                require_worker_admin_write_target_scope(
+                    operator,
+                    tenant_id=str(session["tenant_id"]),
+                    workspace_id=str(session["workspace_id"]),
+                )
+            else:
+                require_worker_admin_write_scope(
+                    operator,
+                    tenant_id=None,
+                    workspace_id=None,
+                )
+        else:
+            require_worker_admin_write_scope(
+                operator,
+                tenant_id=payload.tenant_id,
+                workspace_id=payload.workspace_id,
+                explicit_scope_required_for_scoped=True,
+            )
+        revoked_by = resolve_worker_admin_actor(
+            operator,
+            asserted_actor=payload.revoked_by,
+            field_name="revoked_by",
+        )
         revoked = revoke_session(
             repository,
             session_id=payload.session_id,
             worker_id=payload.worker_id,
             tenant_id=payload.tenant_id,
             workspace_id=payload.workspace_id,
-            revoked_by=payload.revoked_by,
+            revoked_by=revoked_by,
             reason=payload.reason,
             revoked_via=WORKER_ADMIN_API_VIA,
         )
@@ -310,13 +423,32 @@ def post_worker_admin_revoke_session(
 def post_worker_admin_revoke_delivery_grant(
     request: Request,
     payload: WorkerAdminRevokeDeliveryGrantRequest,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminRevokeDeliveryGrantResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        grant = repository.get_worker_delivery_grant(payload.grant_id)
+        if grant is not None:
+            require_worker_admin_write_target_scope(
+                operator,
+                tenant_id=str(grant["tenant_id"]),
+                workspace_id=str(grant["workspace_id"]),
+            )
+        else:
+            require_worker_admin_write_scope(
+                operator,
+                tenant_id=None,
+                workspace_id=None,
+            )
+        revoked_by = resolve_worker_admin_actor(
+            operator,
+            asserted_actor=payload.revoked_by,
+            field_name="revoked_by",
+        )
         revoked = revoke_delivery_grant(
             repository,
             grant_id=payload.grant_id,
-            revoked_by=payload.revoked_by,
+            revoked_by=revoked_by,
             reason=payload.reason,
             revoked_via=WORKER_ADMIN_API_VIA,
         )
@@ -329,9 +461,16 @@ def post_worker_admin_revoke_delivery_grant(
 def post_worker_admin_cleanup_bindings(
     request: Request,
     payload: WorkerAdminCleanupBindingsRequest,
+    operator: WorkerAdminOperatorContext = Depends(get_worker_admin_operator_context),
 ) -> WorkerAdminCleanupBindingsResponse:
     repository: ControlPlaneRepository = request.app.state.repository
     try:
+        require_worker_admin_write_scope(
+            operator,
+            tenant_id=payload.tenant_id,
+            workspace_id=payload.workspace_id,
+            explicit_scope_required_for_scoped=True,
+        )
         cleaned = cleanup_bindings(
             repository,
             worker_id=payload.worker_id,

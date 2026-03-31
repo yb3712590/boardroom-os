@@ -13,8 +13,11 @@
   - 新增 `GET /api/v1/worker-admin/sessions`、`delivery-grants`、`auth-rejections`、`scope-summary`，值守同学现在可以直接按 `tenant_id + workspace_id` 看租户下的 worker 运行态，而不必先猜 `worker_id`
   - 新增 `POST /api/v1/worker-admin/contain-scope`，支持先 dry-run 预演 impact，再带 `expected_*` 计数保护做真正止血；现场变了会返回 `409`
   - scope containment 会写入独立的 `revoked_via = worker_admin_scope_containment`，方便事后区分“单条撤销”和“批量止血”
+- 多租户 worker 运维面第四批连续切片已落地：
+  - `worker-admin` HTTP 入口现在必须携带操作人头，最小角色模型为 `platform_admin`、`scope_admin`、`scope_viewer`
+  - `scope_admin` / `scope_viewer` 只能显式查看自己的 `tenant_id + workspace_id` scope，不能再用不带 scope 的查询横向扫读
+  - `issue-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`contain-scope` 等 HTTP 写接口现在把 `issued_by` / `revoked_by` 统一收口到请求头里的操作人；请求体若带不一致值会直接返回 `400`
 - 继续推进更强多租户远端隔离：
-  - 在当前受信 `worker-admin` 上补最小权限边界钩子和操作人上下文，先把“谁能看、谁能止血、谁只能看自己 scope”这层边界收紧
   - 收紧公开互联网场景下的安全边界，例如独立租户管理面、更强的外网暴露策略，以及完整身份层
 - 把当前命令驱动的 artifact delete / cleanup 推进到自动后台清理、更细粒度 retention policy 和更大文件的上传路径
 - 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`

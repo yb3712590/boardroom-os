@@ -1247,9 +1247,19 @@ Behavior rules:
   - `POST /api/v1/worker-admin/revoke-session`
   - `POST /api/v1/worker-admin/revoke-delivery-grant`
   - `POST /api/v1/worker-admin/cleanup-bindings`
-- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, conservative cleanup eligibility, and revoke audit writing
+- every `worker-admin` HTTP request now requires operator headers:
+  - `X-Boardroom-Operator-Id`
+  - `X-Boardroom-Operator-Role`
+  - `X-Boardroom-Operator-Tenant-Id` plus `X-Boardroom-Operator-Workspace-Id` for scoped roles
+- current `worker-admin` role model is intentionally minimal:
+  - `platform_admin`: global read/write
+  - `scope_admin`: read/write only inside one exact `tenant_id + workspace_id` scope
+  - `scope_viewer`: read-only inside one exact `tenant_id + workspace_id` scope
+- the `worker-admin` HTTP routes intentionally mirror the existing CLI rules for scope pairing, multi-binding explicit scope selection, bootstrap TTL / allowlist governance, conservative cleanup eligibility, and revoke audit writing, but now also enforce the operator role/scope boundary above
 - `worker-admin` is still a trusted control-plane surface, not a finished public tenant self-service or identity layer
+- scoped HTTP operators must always query or write against an explicit `tenant_id + workspace_id`; they may not use worker-only filters to sweep across scopes
 - if a worker already has multiple bootstrap bindings, `issue-bootstrap`, `rotate-bootstrap`, and `revoke-bootstrap` require both `--tenant-id` and `--workspace-id`; single-binding workers may still omit them and reuse the only binding
+- the HTTP compatibility fields `issued_by` and `revoked_by` no longer define operator identity; backend writes them from `X-Boardroom-Operator-Id`, and if the request body still supplies one of those fields it must match the header exactly or the request is rejected with `400`
 - bootstrap-token calls create a fresh worker session
 - session-token calls refresh the existing session TTL and return a new `session_token` for the same `session_id`
 - assignment polling only returns tickets from the current session scope; if the backend encounters a ticket owned by that worker under a scope with no matching bootstrap binding, it still rejects and audits the mismatch instead of silently hiding it
