@@ -1,44 +1,59 @@
 # Boardroom OS
 
-> Event-sourced agent governance for autonomous software delivery.
+> 一个本地优先、事件溯源、用无状态 Agent Team 推进交付的控制面原型。
 
-Boardroom OS 想做的不是“多 Agent 群聊外壳”，而是一个可审计、可治理、可审批的 Agent 交付控制面：用户扮演董事会，只给目标、约束和验收标准；系统持续拆解、委派、推进；关键节点通过明确的审批门和事件记录留痕。
+## 项目现在要解决什么
 
-## 这是什么
+Boardroom OS 的目标不是先做一套复杂的远程基础设施，而是先做一个能在本地跑通的 Agent Delivery OS：
 
-- 一个围绕 `Board -> CEO -> Worker -> Gate` 这条链路设计的 Agent Operating System
-- 一个把“持续推进”“结构化交付”“治理可追溯”放在聊天体验之前的项目
-- 一个以后端控制面为先、再逐步补齐前端和更完整产品面的仓库
+- 用户像董事会，只给目标、约束和验收标准
+- 系统按 `Board -> CEO -> Worker -> Review` 的链路拆解和推进工作
+- 执行器保持无状态，真实状态落在事件流和投影里
+- 关键节点通过 `Inbox -> Review Room` 进入人工审查
+- 最后再在运行框架外套一层轻量 Web 可视化壳
 
-## 当前进度
+路线纠偏决议见 [doc/roadmap-reset.md](doc/roadmap-reset.md)。
 
-这个仓库已经不是纯设计稿，而是“设计文档 + 可运行后端切片”：
+## 当前主线
 
-- 已有 FastAPI + SQLite 的后端控制面
-- 已跑通 ticket 生命周期、结构化结果提交、审批和 incident 治理
-- 已有 artifact 持久化、投影读面、事件流和审计基础
-- artifact 生命周期现在已经补到“可过期 + 按场景默认留存 TTL + 历史临时件 / 评审证据回填 + 调度自动清理 + dashboard / cleanup 候选读面可见状态 + 本地默认 / 可选对象存储双后端 + 远端删除状态回写”
-- 已跑通外部 worker handoff，包括 bootstrap、session、signed delivery 和多租户 scope 约束
-- 已补到多租户 worker 的租户级运维闭环，包括 binding 生命周期、统一观察面、`worker-admin` 下的 bootstrap / session / delivery grant 管理、按租户读面、带 dry-run / 计数保护的 scope 止血入口，以及带持久化 `token_id`、活动令牌列表 / 撤销、可选可信代理断言和独立鉴权拒绝读面的受信签名操作人令牌入口
+从现在开始，项目主线按下面的顺序推进：
 
-当前状态更接近“最小可运行控制面原型”，还不是完整产品。
+1. 跑通本地单机闭环：事件流、Ticket 生命周期、基础 runtime、投影读面
+2. 补齐无状态 Agent Team 治理能力：employee 生命周期、Maker-Checker、Review 闭环
+3. 把 Context Compiler 从最小原型推进到足够支撑本地执行的稳定编译链
+4. 实现最薄的 React Boardroom UI，只做治理控制壳，不承载工作流真相
 
-## 当前已实现的 Feature
+## 仓库里已经有什么
 
-- 治理与审批：ticket 生命周期、Board 审批、incident / circuit-breaker / retry 治理已经串起来
-- 运行时交付：支持结构化结果入口、artifact 持久化、外部 worker handoff 和最小调度闭环
-- artifact 运维：artifact 现在支持 `PERSISTENT`、`REVIEW_EVIDENCE`、`OPERATIONAL_EVIDENCE`、`EPHEMERAL` 四类留存语义；调用方不写 `retention_class` 时，后端会按保守路径规则为 `reports/review/*`、`reports/ops/*`、`reports/diagnostics/*` 自动套默认留存，其他路径仍默认 `PERSISTENT`；`dashboard` 和 cleanup 候选读面可直接看到最近一次 cleanup、当前积压、各类默认留存规则，以及每个 artifact 的留存来源
-- 大文件链路：新增控制面分段上传会话 `POST /api/v1/artifact-uploads/sessions`、`PUT /api/v1/artifact-uploads/sessions/{session_id}/parts/{part_number}`、`POST /complete`、`POST /abort`；中大文件现在可以先上传，再在 `ticket-result-submit` 里通过 `upload_session_id` 进入同一条 artifact 审计与留存链
-- 审计与可追溯：事件流、projection、SQLite WAL、compile 相关产物都已真实落盘
-- 运维与排障：已有 `dashboard`、`inbox`、`review room`、`worker-runtime` 等读面，也有可直接按租户查看 session / grant / rejection、做 scope-summary、看独立 `worker-admin` 动作审计与操作人鉴权拒绝读面，以及带 dry-run / `409` 保护、可直接列出 / 撤销活动操作人令牌、按可信代理来源排障的 `worker-admin` HTTP 入口和本地运维 CLI
+当前仓库已经有一个可运行的后端切片：
 
-## 开发主线
+- FastAPI + SQLite 的控制面原型
+- 事件流、projection、ticket 生命周期、approval / incident / breaker 等基础治理骨架
+- `dashboard`、`inbox`、`review room`、`worker-runtime` 等读面
+- 最小可运行的 runtime 与 `ticket-result-submit` 闭环
+- artifact 持久化、索引和清理链路的基础能力
 
-- 当前最顺手的主线仍然是 `Runtime / Backend`
-- 最近一批完成的是“多租户 worker 运维面 -> 租户级读面 + 安全批量止血入口 + 受信入口边界 + 独立操作审计读面”，以及继续往前推的“artifact 自动清理闭环 -> 本地默认 / 可选对象存储双后端 + 分段上传会话 + `ticket-result-submit` 消费上传会话 + 远端删除状态回写 + dashboard / cleanup 候选读面可观测”
-- 还在后面的主要方向包括：更强公网安全边界、worker-runtime 侧上传面与更强直传链路、完整 Context Compiler、Search / Retrieval、React UI
+这些能力足以支撑继续收敛到“本地单机 Agent Delivery OS MVP”。
 
-更细的进行中事项看 [doc/TODO.md](doc/TODO.md)。
+## 已有但降级为后置能力的部分
+
+仓库里已经落了一批更重的基础设施能力，包括：
+
+- 多租户 worker scope 与 `worker-admin` 运维控制面
+- 操作人令牌、可信代理断言、独立鉴权拒绝读面
+- multipart artifact upload 与可选对象存储后端
+- 更偏远程 worker handoff 的交付链路
+
+这些实现不会被立刻删除，但它们不再代表当前阶段的主线，也不应继续吞掉主要开发预算。除非某项工作直接服务本地 MVP，否则默认后置。
+
+## 当前最重要的未完成项
+
+- 完成 employee hire / replace / freeze 生命周期
+- 落地 Maker-Checker review loop，而不只是停留在设计层
+- 把 Context Compiler 从 reference-only 原型推进到可稳定服务本地执行闭环
+- 实现最薄的 React Boardroom UI，把 `dashboard / inbox / review room` 接起来
+
+更具体的执行项见 [doc/TODO.md](doc/TODO.md)。
 
 ## 快速开始
 
@@ -58,22 +73,21 @@ source .venv/bin/activate
 python -m pytest tests -q
 ```
 
-如果你要看更详细的运行方式、外部 worker 模式、运维命令和环境变量，请直接看 [doc/backend-runtime-guide.md](doc/backend-runtime-guide.md)。
-
 ## 文档入口
 
-- [doc/README.md](doc/README.md)：文档总索引
-- [doc/TODO.md](doc/TODO.md)：当前路线和未完成事项
-- [doc/backend-runtime-guide.md](doc/backend-runtime-guide.md)：后端运行、外部 worker handoff 和运维说明
-- [doc/feature-spec.md](doc/feature-spec.md)：产品边界和治理规则总表
+- [doc/roadmap-reset.md](doc/roadmap-reset.md)：路线纠偏决议与当前阶段边界
+- [doc/TODO.md](doc/TODO.md)：当前主线待办
+- [doc/backend-runtime-guide.md](doc/backend-runtime-guide.md)：后端运行方式与现有 runtime / worker 面说明
+- [doc/feature-spec.md](doc/feature-spec.md)：产品边界与治理原则
 - [doc/design/message-bus-design.md](doc/design/message-bus-design.md)：后端主线设计
-- [doc/history/memory-log.md](doc/history/memory-log.md)：近期进展和长期记忆
+- [doc/design/boardroom-ui-design.md](doc/design/boardroom-ui-design.md)：Boardroom UI 产品边界
+- [doc/history/memory-log.md](doc/history/memory-log.md)：近几轮进展与长期记忆
 
-## 当前已知现实
+## 当前约束
 
-- `backend/` 的 editable install 还没完全补平，新环境下 `pip install -e .[dev]` 仍可能出问题
-- 大文件上传现在已经有控制面分段上传会话，artifact 存储也扩成“本地默认 + 可选 S3 兼容对象存储”；但这轮还没有扩到 worker-runtime 上传面、浏览器直传或云厂商预签名直传，默认 staging 仍落在本机文件系统
-- `worker-admin` 现在已经要求短时效签名操作人令牌，不再单独信裸请求头；新签发令牌会持久化 `token_id`，可列出、可撤销、撤销后会立即失效并写鉴权拒绝日志；还可以选择开启 `X-Boardroom-Trusted-Proxy-Id` 可信代理断言，把入口收口到受信反向代理；默认 TTL 为 15 分钟、最大 TTL 为 1 小时，但公开互联网场景下仍没有完整身份层、外网暴露策略或租户自助面
+- 这是一个本地优先、自托管优先的原型，不是公网多租户 SaaS
+- 当前最需要的是把主链路做短、做稳、做可视化，而不是继续扩远程运维面
+- 能服务本地单机 MVP 的复杂度可以接受；不能直接服务 MVP 的复杂度默认延后
 
 ## 项目原则
 
@@ -81,5 +95,4 @@ python -m pytest tests -q
 - 审计比想象重要
 - 幂等比炫技重要
 - 结构化协作比自由群聊可靠
-
-最终目标不是做一个“很会聊天的 Agent 项目”，而是做一个真正可推进、可治理、可交付的 Agent Operating System。
+- 本地可跑通，比过早远程化更重要

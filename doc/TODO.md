@@ -1,69 +1,65 @@
 # TODO
 
-这份 TODO 由根 `README`、设计文档和最近仍有效的 `memory-log` 归纳而来，只保留当前还没完成、且没有明显过期的事项。
+这份 TODO 只保留当前主线待办。已经实现但被降级为后置能力的基础设施，不再作为近期开发重点。
 
-## Runtime / Backend
+## 当前阶段目标
 
-- 多租户 worker 运维面第二批连续切片已落地：
-  - CLI 与后端现在共用同一套 worker admin 服务，不再各自复制 binding / bootstrap 规则
-  - 新增 `GET /api/v1/worker-admin/bindings` 与 `GET /api/v1/worker-admin/bootstrap-issues`，可以直接按 worker / scope 看 binding 和 bootstrap issue
-  - 新增 `POST /api/v1/worker-admin/create-binding`、`issue-bootstrap`、`revoke-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`cleanup-bindings`，把常见事故处置动作拉进同一控制面
-  - `GET /api/v1/projections/worker-runtime` 继续负责统一观察 binding、session、delivery grant 和拒绝日志，并回显更清楚的撤销审计字段
-- 多租户 worker 运维面第三批连续切片已落地：
-  - 新增 `GET /api/v1/worker-admin/sessions`、`delivery-grants`、`auth-rejections`、`scope-summary`，值守同学现在可以直接按 `tenant_id + workspace_id` 看租户下的 worker 运行态，而不必先猜 `worker_id`
-  - 新增 `POST /api/v1/worker-admin/contain-scope`，支持先 dry-run 预演 impact，再带 `expected_*` 计数保护做真正止血；现场变了会返回 `409`
-  - scope containment 会写入独立的 `revoked_via = worker_admin_scope_containment`，方便事后区分“单条撤销”和“批量止血”
-- 多租户 worker 运维面第四批连续切片已落地：
-  - `worker-admin` HTTP 入口现在必须携带操作人上下文，最小角色模型为 `platform_admin`、`scope_admin`、`scope_viewer`
-  - `scope_admin` / `scope_viewer` 只能显式查看自己的 `tenant_id + workspace_id` scope，不能再用不带 scope 的查询横向扫读
-  - `issue-bootstrap`、`revoke-session`、`revoke-delivery-grant`、`contain-scope` 等 HTTP 写接口现在把 `issued_by` / `revoked_by` 统一收口到受信操作人身份；请求体若带不一致值会直接返回 `400`
-- 多租户 worker 运维面第五批连续切片已落地：
-  - `worker-admin` 不再单独信 `X-Boardroom-Operator-*` 裸头，所有入口现在都必须携带 `X-Boardroom-Operator-Token`；旧头只剩兼容断言作用，不再代表身份
-  - 新增 `python -m app.worker_admin_auth_cli issue-token`，平台值守和租户管理员现在可以先签发短时效操作人令牌，再调用 `worker-admin`；默认 TTL 15 分钟，最大 TTL 1 小时
-  - 新增 `worker_admin_action_log` 和 `GET /api/v1/projections/worker-admin-audit`，值守同学现在不只看 session / grant 被谁撤了，还能直接按 scope 看谁做过 `create-binding`、`issue-bootstrap`、`contain-scope`、`cleanup-bindings` 等动作，以及是不是 dry-run
-- 多租户 worker 运维面第六批连续切片已落地：
-  - `issue-token` 现在会持久化 `worker_admin_token_issue`，新签发令牌带 `token_id`；后端对新令牌不再只验签，还会校验这张票是否存在、是否未撤销、是否仍在有效期内
-  - 新增 `python -m app.worker_admin_auth_cli list-tokens`、`revoke-token`，以及 `GET /api/v1/worker-admin/operator-tokens`、`POST /api/v1/worker-admin/revoke-operator-token`，值守同学现在可以直接看和撤操作人令牌，不必只等 TTL 自然过期
-  - 新增 `worker_admin_auth_rejection_log` 和 `GET /api/v1/projections/worker-admin-auth-rejections`，现在可以直接确认撤销后的令牌是否还在撞入口、后端是否已经拒绝
-- 继续推进更强多租户远端隔离：
-  - 可信代理断言已落地：配置 `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS` 后，`worker-admin`、`worker-admin-audit` 和 `worker-admin-auth-rejections` 都会要求 `X-Boardroom-Trusted-Proxy-Id`
-  - 仍未完成的缺口是更完整的公网暴露策略、独立租户管理面和完整身份层
-- artifact 自动清理闭环已落地：
-  - `artifact_index` 现在会持久化 `storage_deleted_at`，物理文件删掉后不会再被重复当成 residual cleanup 目标
-  - scheduler / runner 现在会按 `BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC` 自动触发 artifact cleanup；`dashboard` 也会直接回显最近一次 cleanup 的触发来源、删除数量和当前积压
-  - artifact 留存分级现在支持 `PERSISTENT`、`REVIEW_EVIDENCE`、`OPERATIONAL_EVIDENCE`、`EPHEMERAL`；其中 `REVIEW_EVIDENCE` 会默认落 `BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC`，`OPERATIONAL_EVIDENCE` 会默认落 `BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC`，`EPHEMERAL` 会默认落 `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`
-  - 调用方不写 `retention_class` 时，后端现在会按保守路径规则给 `reports/review/*`、`reports/ops/*`、`reports/diagnostics/*` 自动补默认留存；其他路径仍保守落到 `PERSISTENT`
-  - 历史上缺 `expires_at` 的 `REVIEW_EVIDENCE` / `OPERATIONAL_EVIDENCE` / `EPHEMERAL` artifact 会在初始化时按各自默认 TTL 回填进统一过期闭环；缺少 `retention_class_source` 的老数据会保守标成 `LEGACY_COMPAT`
-  - `GET /api/v1/projections/tickets/{ticket_id}/artifacts` 现在会回显 `retention_class_source`、`retention_ttl_sec`、`retention_policy_source`、`deleted_by`、`delete_reason`、`storage_backend`、`storage_delete_status` 和 `storage_deleted_at`
-  - `GET /api/v1/projections/artifact-cleanup-candidates` 可以直接看当前等待 cleanup 的 artifact，以及它们是“已到期待处理”还是“等物理删文件”；`dashboard.artifact_maintenance` 现在也会回显四类默认留存规则和删除失败计数
-- artifact 大文件上传 / 对象存储第一批连续切片已落地：
-  - artifact store 已扩成“本地默认 + 可选 S3 兼容对象存储”双后端；`artifact_index` 现在会持久化 `storage_backend`、`storage_object_key`、`storage_delete_status` 和 `storage_delete_error`
-  - 新增 `POST /api/v1/artifact-uploads/sessions`、`PUT /api/v1/artifact-uploads/sessions/{session_id}/parts/{part_number}`、`POST /complete`、`POST /abort`，控制面现在已有分段上传会话状态机
-  - `ticket-result-submit` 里的二进制 artifact 现在支持 `upload_session_id`，可把已完成上传会话消费进现有 artifact 审计、留存和投影链，而不必继续把中大文件塞进 `content_base64`
-  - cleanup 不再只会删本地文件；对象存储后端也会走同一条删除与记账链，删除失败时会把 `DELETE_FAILED` 和错误摘要回写到索引，并直接回显到 `dashboard` 与 cleanup candidates
-- 继续推进 worker-runtime 侧上传面与更强直传链路：
-  - 现在的 multipart 仍是控制面分段上传，不是外部 worker signed URL 直传
-  - 还没有浏览器直传、云厂商预签名 multipart 或 staging 自动回收策略
-- 扩展 output schema registry，不再只真实覆盖 `ui_milestone_review@1` 和 `consensus_document@1`
-- 补齐更完整的 provider 路由、多 provider 控制面和恢复策略
-- 解决 `backend/pyproject.toml` 的 editable install 打包问题，让 `pip install -e .[dev]` 在新环境可用
+把项目收敛成一个本地单机可运行的 Agent Delivery OS MVP：
 
-## Workflow Governance
+- 事件溯源状态总线是真相源
+- Ticket 驱动无状态执行器推进工作
+- Maker-Checker 和 Review 闭环真实可用
+- 最后以最薄的 React Web 壳呈现 `dashboard / inbox / review room`
+
+## P0：必须先完成的主链路
 
 - 完成 employee hire / replace / freeze 生命周期
 - 落地 Maker-Checker review loop，而不只是停留在设计层
-- 把 Review Room 从“已持久化审批包投影”扩展到更完整的证据拼装
-- 把 reference-only Context Compiler 推进到带 artifact hydration、检索和缓存复用的完整编译链
-- 增加 richer retry policy 和超出最小闭环的自动恢复能力
+- 把 `Review Room` 从“能读投影”推进到“能承接真实审查闭环”
+- 把 reference-only `Context Compiler` 推进到足够支撑本地执行闭环的版本
+- 收敛 runtime 默认路径，优先保证本地单机执行稳定，而不是继续扩远程 handoff 面
+- 明确 MVP 的最小 schema、role profile、ticket 路径，不再边做边膨胀
 
-## Search / Retrieval
-
-- 增加 FTS 检索
-- 增加向量检索能力
-
-## Frontend / Product
+## P1：套上最薄 Web 壳
 
 - 实现 React Boardroom UI
+- 先接通最核心的三块界面：
+  - `dashboard`
+  - `inbox`
+  - `review room`
+- 保持 projection-first；前端不拥有工作流真相
+- 让董事会 / 操作人可以直接看当前状态、待审项、关键事件和最近结果
+
+## P2：在 MVP 之后补齐
+
 - MVP 后补上 Meeting Room 专用界面
-- MVP 后补上高级 dependency graph explorer
+- MVP 后补上 dependency graph explorer
 - MVP 后补上历史分析、多 workspace 管理和更深入的员工画像浏览
+- 再评估是否需要更丰富的 Search / Retrieval
+- 再评估是否需要更完整的 provider routing / recovery
+
+## 已实现但暂停扩张
+
+下面这些能力保留现状，但默认不继续扩张，除非它们直接服务当前 MVP：
+
+- 多租户 worker 运维面与 `worker-admin` HTTP 控制面
+- 操作人令牌、可信代理断言、独立 auth rejection 读面
+- multipart artifact upload
+- 本地默认 + 可选对象存储双后端
+- 更强的远程 worker handoff 与公网暴露边界
+
+## 明确后置的能力
+
+在本地 MVP 闭环完成前，不主动推进下面这些方向：
+
+- 新的 `worker-admin` 读写接口
+- 更细的多租户 scope 治理与租户级运维工具
+- 面向公网的身份层、外网暴露策略、零信任边界
+- 浏览器直传、云厂商预签名直传、远程对象存储交付链路增强
+- 为远程多节点部署设计的新控制面复杂度
+
+## 执行约束
+
+- 新工作如果不能直接缩短本地 MVP 路径，就默认延后
+- 文档、任务拆分和代码审查都应以“本地无状态 agent team + web 壳”作为判断基准
+- 对已有基础设施代码优先采取“冻结、收口、少动”的策略，而不是继续加面
