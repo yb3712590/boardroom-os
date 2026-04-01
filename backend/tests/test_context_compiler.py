@@ -751,6 +751,223 @@ def test_compile_audit_artifacts_builds_partial_json_preview_when_source_exceeds
     assert source_log.reason_code == "INLINE_BUDGET_EXCEEDED"
 
 
+def test_compile_audit_artifacts_builds_markdown_fragment_when_budget_fits_section_excerpt(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md"]),
+                "context_query_plan": {
+                    "keywords": ["acceptance", "output", "review"],
+                    "semantic_queries": ["contract risk"],
+                    "max_context_tokens": 500,
+                },
+            "acceptance_criteria": ["Must keep acceptance contract and review risk explicit."],
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        kind="MARKDOWN",
+        media_type="text/markdown",
+        content_text=(
+            "# Intro\n\n"
+            + ("This introduction is intentionally verbose and non-actionable. " * 20)
+            + "\n\n## Acceptance Contract\n\n"
+            "This section defines the output contract, review path, and risk reminders.\n\n"
+            "## Delivery Notes\n\nShip the homepage option with explicit review evidence.\n"
+        ),
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+    source_log = compiled_artifacts.compile_manifest.source_log[0]
+
+    assert block.content_type == "TEXT"
+    assert block.content_mode == "INLINE_FRAGMENT"
+    assert block.selector.selector_type == "MARKDOWN_SECTION"
+    assert "Acceptance Contract" in block.selector.selector_value
+    assert block.content_payload["content_fragment_strategy"] == "MARKDOWN_SECTION_MATCH"
+    assert block.content_payload["selected_sections"] == ["Acceptance Contract", "Delivery Notes"]
+    assert "## Acceptance Contract" in block.content_payload["content_text"]
+    assert source_log.status == "SUMMARIZED"
+    assert source_log.selector_used.startswith("MARKDOWN_SECTION:")
+
+
+def test_compile_audit_artifacts_builds_text_fragment_windows_when_budget_fits_keyword_windows(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(input_artifact_refs=["art://inputs/notes.txt"]),
+                "context_query_plan": {
+                    "keywords": ["review", "risk", "brand"],
+                    "semantic_queries": ["output contract"],
+                    "max_context_tokens": 500,
+                },
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/notes.txt",
+        logical_path="artifacts/inputs/notes.txt",
+        kind="TEXT",
+        media_type="text/plain",
+        content_text=(
+            ("General project background that does not help execution. " * 24)
+            + "\nREVIEW WINDOW: Keep the homepage brand direction aligned with the approved review path.\n"
+            + ("Neutral filler. " * 12)
+            + "\nRISK WINDOW: Preserve the output contract and do not hide blocking review risk.\n"
+        ),
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+    source_log = compiled_artifacts.compile_manifest.source_log[0]
+
+    assert block.content_type == "TEXT"
+    assert block.content_mode == "INLINE_FRAGMENT"
+    assert block.selector.selector_type == "TEXT_WINDOW"
+    assert block.content_payload["content_fragment_strategy"] == "TEXT_KEYWORD_WINDOWS"
+    assert len(block.content_payload["selected_windows"]) >= 2
+    assert "REVIEW WINDOW" in block.content_payload["content_text"]
+    assert "RISK WINDOW" in block.content_payload["content_text"]
+    assert source_log.status == "SUMMARIZED"
+    assert source_log.selector_used.startswith("TEXT_WINDOW:")
+
+
+def test_compile_audit_artifacts_builds_json_fragment_paths_when_budget_fits_relevant_subtrees(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(input_artifact_refs=["art://inputs/spec.json"]),
+                "context_query_plan": {
+                    "keywords": ["hero", "contract", "risk"],
+                    "semantic_queries": ["review output"],
+                    "max_context_tokens": 500,
+                },
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/spec.json",
+        logical_path="artifacts/inputs/spec.json",
+        kind="JSON",
+        media_type="application/json",
+        content_json={
+            "intro": "Background " * 80,
+            "sections": {
+                "hero": {
+                    "headline": "Boardroom OS",
+                    "summary": "Keep the hero aligned with the approved review direction.",
+                },
+                "secondary": {
+                    "headline": "Archive",
+                    "summary": "Secondary supporting panel.",
+                },
+            },
+            "output_contract": {
+                "schema": "ui_milestone_review",
+                "must_include": ["options", "risks", "rationale"],
+            },
+            "risk_summary": {
+                "headline": "Do not hide approval risk.",
+                "level": "medium",
+            },
+        },
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+    source_log = compiled_artifacts.compile_manifest.source_log[0]
+
+    assert block.content_type == "JSON"
+    assert block.content_mode == "INLINE_FRAGMENT"
+    assert block.selector.selector_type == "JSON_PATH"
+    assert block.content_payload["content_fragment_strategy"] == "JSON_PATH_MATCH"
+    assert block.content_payload["selected_json_paths"] == [
+        "$.output_contract",
+        "$.risk_summary",
+        "$.sections.hero",
+    ]
+    assert block.content_payload["content_json"]["output_contract"]["schema"] == "ui_milestone_review"
+    assert block.content_payload["content_json"]["sections"]["hero"]["headline"] == "Boardroom OS"
+    assert source_log.status == "SUMMARIZED"
+    assert source_log.selector_used.startswith("JSON_PATH:")
+
+
+def test_compile_audit_artifacts_falls_back_to_partial_preview_when_fragment_still_exceeds_budget(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md"]),
+            "context_query_plan": {
+                "keywords": ["acceptance", "output", "review"],
+                "semantic_queries": ["contract risk"],
+                "max_context_tokens": 30,
+            },
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        kind="MARKDOWN",
+        media_type="text/markdown",
+        content_text=(
+            "# Intro\n\n"
+            + ("This introduction is intentionally verbose and non-actionable. " * 20)
+            + "\n\n## Acceptance Contract\n\n"
+            "This section defines the output contract, review path, and risk reminders.\n"
+        ),
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+
+    assert block.content_mode == "INLINE_PARTIAL"
+    assert block.degradation_reason_code == "INLINE_BUDGET_EXCEEDED"
+
+
 def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())

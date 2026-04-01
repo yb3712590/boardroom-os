@@ -437,6 +437,7 @@ def build_review_room_developer_inspector_projection(
         reason_counts: dict[str, int] = {}
         retrieval_channel_counts: dict[str, int] = {}
         inline_full_count = 0
+        inline_fragment_count = 0
         inline_partial_count = 0
         reference_only_count = 0
         degraded_source_count = 0
@@ -449,6 +450,9 @@ def build_review_room_developer_inspector_projection(
             content_mode = str(entry.get("content_mode") or "REFERENCE_ONLY")
             if content_mode == "INLINE_FULL":
                 inline_full_count += 1
+            elif content_mode == "INLINE_FRAGMENT":
+                inline_fragment_count += 1
+                degraded_source_count += 1
             elif content_mode == "INLINE_PARTIAL":
                 inline_partial_count += 1
                 degraded_source_count += 1
@@ -477,6 +481,7 @@ def build_review_room_developer_inspector_projection(
         compile_summary = ReviewRoomDeveloperInspectorCompileSummary(
             source_count=len(source_entries),
             inline_full_count=inline_full_count,
+            inline_fragment_count=inline_fragment_count,
             inline_partial_count=inline_partial_count,
             reference_only_count=reference_only_count,
             degraded_source_count=degraded_source_count,

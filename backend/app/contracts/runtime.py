@@ -92,6 +92,12 @@ class CompileRequestExplicitSource(StrictModel):
     inline_fallback_reason_code: str | None = None
     inline_content_truncated: bool = False
     inline_preview_strategy: str | None = None
+    fragment_selector_type: Literal["MARKDOWN_SECTION", "TEXT_WINDOW", "JSON_PATH"] | None = None
+    fragment_selector_value: str | None = None
+    fragment_content_type: Literal["TEXT", "JSON"] | None = None
+    fragment_content_text: str | None = None
+    fragment_content_json: dict[str, Any] | None = None
+    fragment_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class CompileRequestExecution(StrictModel):
@@ -169,7 +175,7 @@ class CompiledContextBlock(StrictModel):
     selector: CompiledContextSelector
     transform_chain: list[str] = Field(default_factory=list)
     content_type: Literal["JSON", "TEXT", "SOURCE_DESCRIPTOR"]
-    content_mode: Literal["INLINE_FULL", "INLINE_PARTIAL", "REFERENCE_ONLY"]
+    content_mode: Literal["INLINE_FULL", "INLINE_FRAGMENT", "INLINE_PARTIAL", "REFERENCE_ONLY"]
     content_payload: dict[str, Any] = Field(default_factory=dict)
     degradation_reason_code: str | None = None
     token_estimate: int = Field(ge=1)
@@ -288,6 +294,7 @@ class CompileManifestFinalBundleStats(StrictModel):
     trusted_block_count: int = Field(ge=0)
     reference_block_count: int = Field(ge=0)
     hydrated_block_count: int = Field(ge=0)
+    fragment_block_count: int = Field(ge=0)
     partially_hydrated_block_count: int = Field(ge=0)
     negative_pattern_count: int = Field(ge=0)
     retrieved_block_count: int = Field(default=0, ge=0)
@@ -338,8 +345,9 @@ class AtomicContextBlock(StrictModel):
     block_id: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
     source_kind: Literal["ARTIFACT", "RETRIEVAL"]
+    selector: CompiledContextSelector
     content_type: Literal["TEXT", "JSON", "SOURCE_DESCRIPTOR"]
-    content_mode: Literal["INLINE_FULL", "INLINE_PARTIAL", "REFERENCE_ONLY"]
+    content_mode: Literal["INLINE_FULL", "INLINE_FRAGMENT", "INLINE_PARTIAL", "REFERENCE_ONLY"]
     content_payload: dict[str, Any] = Field(default_factory=dict)
     degradation_reason_code: str | None = None
 

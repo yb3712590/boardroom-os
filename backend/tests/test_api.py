@@ -2775,6 +2775,71 @@ def test_worker_runtime_execution_package_keeps_binary_artifact_kind_and_preview
     )
 
 
+def test_worker_runtime_execution_package_exposes_fragment_selector_and_metadata(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(
+        client=client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        content=(
+            "# Intro\n\n"
+            + ("This introduction is intentionally verbose and non-actionable. " * 20)
+            + "\n\n## Acceptance Contract\n\n"
+            "This section defines the output contract, review path, and risk reminders.\n\n"
+            "## Delivery Notes\n\nShip the homepage option with explicit review evidence.\n"
+        ),
+    )
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id="wf_worker_runtime_fragment",
+                ticket_id="tkt_worker_fragment",
+                node_id="node_worker_fragment",
+            ),
+            "input_artifact_refs": ["art://inputs/brief.md"],
+            "context_query_plan": {
+                "keywords": ["acceptance", "output", "review"],
+                "semantic_queries": ["contract risk"],
+                "max_context_tokens": 500,
+            },
+            "idempotency_key": "ticket-create:wf_worker_runtime_fragment:tkt_worker_fragment",
+        },
+    )
+    assert create_response.status_code == 200
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_worker_runtime_fragment",
+            ticket_id="tkt_worker_fragment",
+            node_id="node_worker_fragment",
+        ),
+    )
+    assert lease_response.status_code == 200
+
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package = client.get(_local_path_from_url(execution_package_url)).json()["data"]
+    context_payload = execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0]
+
+    assert context_payload["content_mode"] == "INLINE_FRAGMENT"
+    assert context_payload["selector"]["selector_type"] == "MARKDOWN_SECTION"
+    assert "Acceptance Contract" in context_payload["selector"]["selector_value"]
+    assert context_payload["content_payload"]["content_fragment_strategy"] == "MARKDOWN_SECTION_MATCH"
+    assert context_payload["content_payload"]["selected_sections"] == [
+        "Acceptance Contract",
+        "Delivery Notes",
+    ]
+
+
 def test_worker_runtime_execution_package_rejects_legacy_header_fallback(
     client,
     set_ticket_time,
@@ -6551,6 +6616,31 @@ def test_review_room_developer_inspector_compile_summary_counts_media_reference_
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["compile_summary"]["reason_counts"]["MEDIA_REFERENCE_ONLY"] >= 1
+
+
+def test_review_room_developer_inspector_compile_summary_counts_inline_fragments(client):
+    _seed_input_artifact(
+        client=client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        content=(
+            "# Intro\n\n"
+            + ("This introduction is intentionally verbose and non-actionable. " * 320)
+            + "\n\n## Acceptance Contract\n\n"
+            "This section defines the homepage visual output contract, review path, and brand risk reminders.\n\n"
+            "## Delivery Notes\n\nShip the homepage visual option with explicit brand review evidence.\n"
+        ),
+    )
+    approval = _seed_review_request(client, materialize_real_compile=True)
+
+    response = client.get(
+        f"/api/v1/projections/review-room/{approval['review_pack_id']}/developer-inspector"
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["compile_summary"]["inline_fragment_count"] >= 1
+
 
 def test_review_room_developer_inspector_returns_partial_when_refs_are_unmaterialized(client):
     approval = _seed_review_request(client)

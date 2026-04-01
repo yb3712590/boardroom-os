@@ -159,6 +159,7 @@ class ReviewRoomProjectionEnvelope(ProjectionEnvelopeBase):
 class ReviewRoomDeveloperInspectorCompileSummary(StrictModel):
     source_count: int
     inline_full_count: int
+    inline_fragment_count: int
     inline_partial_count: int
     reference_only_count: int
     degraded_source_count: int

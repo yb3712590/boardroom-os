@@ -165,6 +165,9 @@
 - Continued the Context Compiler along the same local-execution path instead of widening into provider routing: `IMAGE / PDF` inputs now stay in compiled execution packages as structured media references with explicit `kind` and `preview_kind=INLINE_MEDIA`, while other binary inputs stay as structured download references with `preview_kind=DOWNLOAD_ONLY`.
 - Replaced the earlier catch-all binary fallback in current compiler behavior with more honest degradation codes: review/debug surfaces now distinguish `MEDIA_REFERENCE_ONLY` from `BINARY_REFERENCE_ONLY` instead of reporting both as one vague `UNSUPPORTED_ARTIFACT_KIND`.
 - Worker-facing execution packages keep those new `artifact_access.kind / preview_kind` hints after signed URL rewriting, so downstream workers no longer need to guess whether an input should be previewed inline or handled as a download-only attachment.
+- Continued the Context Compiler on the same mainline by adding deterministic fragment compilation for oversized `TEXT / MARKDOWN / JSON` inputs: the compiler now prefers `MARKDOWN_SECTION`, `TEXT_WINDOW`, and `JSON_PATH` slices before falling back to the older partial-preview path.
+- Worker-facing atomic context blocks now carry the same selector metadata as the compiled bundle, so runtime packages and Review Room debugging no longer disagree about which fragment the worker actually received.
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` compile summaries now count `inline_fragment_count`, making it visible when a run was neither full-inline nor plain preview-only.
 - Fresh focused verification after this change is:
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_context_compiler.py -q` -> `10 passed`
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py -k "review_room_developer_inspector" -q` -> `3 passed, 174 deselected`

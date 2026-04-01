@@ -91,6 +91,17 @@ FALLBACK_REASON_RETRIEVAL_DROPPED_FOR_BUDGET = "RETRIEVAL_DROPPED_FOR_BUDGET"
 RETRIEVAL_MATCH_REASON_REVIEW = "RETRIEVAL_REVIEW_MATCH"
 RETRIEVAL_MATCH_REASON_INCIDENT = "RETRIEVAL_INCIDENT_MATCH"
 RETRIEVAL_MATCH_REASON_ARTIFACT = "RETRIEVAL_ARTIFACT_MATCH"
+FRAGMENT_MARKDOWN_STRATEGY = "MARKDOWN_SECTION_MATCH"
+FRAGMENT_TEXT_STRATEGY = "TEXT_KEYWORD_WINDOWS"
+FRAGMENT_JSON_STRATEGY = "JSON_PATH_MATCH"
+_TEXT_WINDOW_RADIUS = 36
+_TEXT_HEAD_WINDOW_CHARS = 40
+_MAX_FRAGMENT_TEXT_WINDOWS = 2
+_MAX_FRAGMENT_MARKDOWN_SECTIONS = 2
+_MAX_FRAGMENT_JSON_PATHS = 3
+_MAX_FRAGMENT_JSON_DEPTH = 3
+_MARKDOWN_FRAGMENT_EXCERPT_CHARS = 96
+_GOVERNANCE_FRAGMENT_TERMS = ("acceptance", "constraint", "output", "review", "risk")
 
 _RETRIEVAL_REASON_BY_CHANNEL = {
     "review_summaries": RETRIEVAL_MATCH_REASON_REVIEW,
@@ -481,6 +492,293 @@ def _build_json_preview_payload(value: Any) -> dict[str, Any]:
     }
 
 
+def _terms_match_text(value: str, terms: list[str]) -> bool:
+    lower_value = value.lower()
+    return any(term in lower_value for term in terms)
+
+
+def _build_fragment_terms(
+    retrieval_plan: CompileRequestRetrievalPlan,
+    acceptance_criteria: list[str],
+) -> list[str]:
+    return sorted(
+        set(retrieval_plan.normalized_terms).union(
+            _normalize_retrieval_terms(*acceptance_criteria)
+        )
+        - {"must", "keep", "with", "from", "into", "that", "this", "then", "than", "when", "where", "while", "have", "has", "had", "were", "will", "and"}
+    )
+
+
+def _split_markdown_sections(content_text: str) -> list[tuple[str, str]]:
+    sections: list[tuple[str, str]] = []
+    current_title = "Document Start"
+    current_lines: list[str] = []
+
+    for line in content_text.splitlines():
+        heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if heading is not None:
+            if current_lines:
+                sections.append((current_title, "\n".join(current_lines).strip()))
+            current_title = heading.group(2).strip()
+            current_lines = [line]
+            continue
+        current_lines.append(line)
+
+    if current_lines:
+        sections.append((current_title, "\n".join(current_lines).strip()))
+    return [(title, raw) for title, raw in sections if raw]
+
+
+def _build_markdown_fragment_source(
+    source: CompileRequestExplicitSource,
+    fragment_terms: list[str],
+) -> CompileRequestExplicitSource | None:
+    content_text = str(source.inline_content_text or "")
+    if not content_text.strip():
+        return None
+
+    sections = _split_markdown_sections(content_text)
+    if not sections:
+        return None
+
+    selected_titles: list[str] = []
+    selected_raw_sections: list[str] = []
+    for title, raw in sections:
+        lower_raw = raw.lower()
+        matched = _terms_match_text(raw, fragment_terms)
+        governance_matched = any(term in lower_raw for term in _GOVERNANCE_FRAGMENT_TERMS)
+        if matched or governance_matched:
+            selected_titles.append(title)
+            selected_raw_sections.append(raw)
+        if len(selected_titles) >= _MAX_FRAGMENT_MARKDOWN_SECTIONS:
+            break
+
+    if len(selected_titles) < _MAX_FRAGMENT_MARKDOWN_SECTIONS:
+        first_title, first_raw = sections[0]
+        if first_title not in selected_titles:
+            selected_titles.append(first_title)
+            selected_raw_sections.append(first_raw)
+
+    if not selected_titles:
+        return None
+
+    selected_titles = selected_titles[:_MAX_FRAGMENT_MARKDOWN_SECTIONS]
+    selected_raw_sections = selected_raw_sections[:_MAX_FRAGMENT_MARKDOWN_SECTIONS]
+    selector_value = "|".join(selected_titles)
+    fragment_parts: list[str] = []
+    for raw in selected_raw_sections:
+        raw_lines = raw.splitlines()
+        heading_line = raw_lines[0].strip() if raw_lines else ""
+        body_excerpt = " ".join(line.strip() for line in raw_lines[1:] if line.strip())[
+            :_MARKDOWN_FRAGMENT_EXCERPT_CHARS
+        ].strip()
+        if body_excerpt:
+            fragment_parts.append(f"{heading_line}\n\n{body_excerpt}")
+        else:
+            fragment_parts.append(heading_line)
+    fragment_text = "\n\n".join(part for part in fragment_parts if part).strip()
+    if not fragment_text:
+        return None
+
+    return source.model_copy(
+        update={
+            "fragment_selector_type": "MARKDOWN_SECTION",
+            "fragment_selector_value": selector_value,
+            "fragment_content_type": "TEXT",
+            "fragment_content_text": fragment_text,
+            "fragment_content_json": None,
+            "fragment_metadata": {
+                "content_fragment_strategy": FRAGMENT_MARKDOWN_STRATEGY,
+                "selected_sections": selected_titles,
+                "omitted_section_count": max(0, len(sections) - len(selected_titles)),
+            },
+        }
+    )
+
+
+def _merge_text_windows(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not windows:
+        return []
+    ordered = sorted(windows)
+    merged: list[tuple[int, int]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end + 8:
+            merged[-1] = (last_start, max(last_end, end))
+            continue
+        merged.append((start, end))
+    return merged
+
+
+def _build_text_fragment_source(
+    source: CompileRequestExplicitSource,
+    fragment_terms: list[str],
+) -> CompileRequestExplicitSource | None:
+    content_text = str(source.inline_content_text or "")
+    if not content_text.strip():
+        return None
+
+    lower_text = content_text.lower()
+    match_windows: list[tuple[int, int]] = []
+    for term in fragment_terms:
+        term_index = lower_text.find(term)
+        if term_index < 0:
+            continue
+        start = max(0, term_index - _TEXT_WINDOW_RADIUS)
+        end = min(len(content_text), term_index + len(term) + _TEXT_WINDOW_RADIUS)
+        match_windows.append((start, end))
+        if len(match_windows) >= _MAX_FRAGMENT_TEXT_WINDOWS:
+            break
+
+    if not match_windows:
+        return None
+
+    windows = [(0, min(len(content_text), _TEXT_HEAD_WINDOW_CHARS))]
+    windows.extend(match_windows)
+    merged_windows = _merge_text_windows(windows)
+    fragment_text = "\n...\n".join(
+        content_text[start:end].strip() for start, end in merged_windows if content_text[start:end].strip()
+    ).strip()
+    if not fragment_text:
+        return None
+
+    return source.model_copy(
+        update={
+            "fragment_selector_type": "TEXT_WINDOW",
+            "fragment_selector_value": ";".join(f"{start}:{end}" for start, end in merged_windows),
+            "fragment_content_type": "TEXT",
+            "fragment_content_text": fragment_text,
+            "fragment_content_json": None,
+            "fragment_metadata": {
+                "content_fragment_strategy": FRAGMENT_TEXT_STRATEGY,
+                "selected_windows": [
+                    {"start": start, "end": end} for start, end in merged_windows
+                ],
+                "omitted_window_count": max(0, len(match_windows) - _MAX_FRAGMENT_TEXT_WINDOWS),
+            },
+        }
+    )
+
+
+def _json_node_matches(key: str, value: Any, fragment_terms: list[str]) -> bool:
+    if _terms_match_text(key, fragment_terms):
+        return True
+    if isinstance(value, str):
+        return _terms_match_text(value, fragment_terms)
+    if isinstance(value, dict):
+        for child_value in value.values():
+            if isinstance(child_value, str) and _terms_match_text(child_value, fragment_terms):
+                return True
+    if isinstance(value, list):
+        for item in value[:4]:
+            if isinstance(item, str) and _terms_match_text(item, fragment_terms):
+                return True
+    return False
+
+
+def _collect_json_fragment_paths(
+    value: Any,
+    *,
+    path: str,
+    fragment_terms: list[str],
+    depth: int,
+) -> list[str]:
+    if depth > _MAX_FRAGMENT_JSON_DEPTH or not isinstance(value, dict):
+        return []
+
+    paths: list[str] = []
+    for key, child in value.items():
+        child_path = f"{path}.{key}" if path != "$" else f"$.{key}"
+        if _json_node_matches(str(key), child, fragment_terms):
+            paths.append(child_path)
+            continue
+        if isinstance(child, dict):
+            paths.extend(
+                _collect_json_fragment_paths(
+                    child,
+                    path=child_path,
+                    fragment_terms=fragment_terms,
+                    depth=depth + 1,
+                )
+            )
+    return paths
+
+
+def _lookup_json_path(value: dict[str, Any], path: str) -> Any:
+    current: Any = value
+    for part in path.removeprefix("$.").split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _assign_json_fragment_path(target: dict[str, Any], path: str, value: Any) -> None:
+    parts = path.removeprefix("$.").split(".")
+    current = target
+    for part in parts[:-1]:
+        next_value = current.get(part)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            current[part] = next_value
+        current = next_value
+    current[parts[-1]] = value
+
+
+def _build_json_fragment_source(
+    source: CompileRequestExplicitSource,
+    fragment_terms: list[str],
+) -> CompileRequestExplicitSource | None:
+    content_json = source.inline_content_json or {}
+    if not isinstance(content_json, dict):
+        return None
+
+    candidate_paths = sorted(set(_collect_json_fragment_paths(content_json, path="$", fragment_terms=fragment_terms, depth=1)))
+    if not candidate_paths:
+        return None
+
+    selected_paths = candidate_paths[:_MAX_FRAGMENT_JSON_PATHS]
+    fragment_json: dict[str, Any] = {}
+    for path in selected_paths:
+        path_value = _lookup_json_path(content_json, path)
+        if path_value is None:
+            continue
+        _assign_json_fragment_path(fragment_json, path, path_value)
+    if not fragment_json:
+        return None
+
+    return source.model_copy(
+        update={
+            "fragment_selector_type": "JSON_PATH",
+            "fragment_selector_value": "|".join(selected_paths),
+            "fragment_content_type": "JSON",
+            "fragment_content_text": None,
+            "fragment_content_json": fragment_json,
+            "fragment_metadata": {
+                "content_fragment_strategy": FRAGMENT_JSON_STRATEGY,
+                "selected_json_paths": selected_paths,
+                "omitted_path_count": max(0, len(candidate_paths) - len(selected_paths)),
+            },
+        }
+    )
+
+
+def _build_fragment_candidate(
+    source: CompileRequestExplicitSource,
+    *,
+    fragment_terms: list[str],
+) -> CompileRequestExplicitSource:
+    if source.inline_content_type is None or not fragment_terms:
+        return source
+
+    artifact_kind = str((source.artifact_access.kind if source.artifact_access is not None else "") or "")
+    if source.inline_content_type == "JSON":
+        return _build_json_fragment_source(source, fragment_terms) or source
+    if artifact_kind == "MARKDOWN":
+        return _build_markdown_fragment_source(source, fragment_terms) or source
+    return _build_text_fragment_source(source, fragment_terms) or source
+
+
 def _build_budget_preview_source(source: CompileRequestExplicitSource) -> CompileRequestExplicitSource | None:
     if source.inline_content_type == "TEXT":
         content_text = str(source.inline_content_text or "")
@@ -505,6 +803,70 @@ def _build_budget_preview_source(source: CompileRequestExplicitSource) -> Compil
             }
         )
     return None
+
+
+def _build_fragment_block(
+    source: CompileRequestExplicitSource,
+) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
+    selector = CompiledContextSelector(
+        selector_type=str(source.fragment_selector_type or "SOURCE_REF"),
+        selector_value=str(source.fragment_selector_value or source.source_ref),
+    )
+    content_payload = _build_descriptor_payload(source)
+    content_payload.update(source.fragment_metadata)
+    if source.fragment_content_type == "JSON":
+        content_type = "JSON"
+        content_payload["content_json"] = dict(source.fragment_content_json or {})
+    else:
+        content_type = "TEXT"
+        content_payload["content_text"] = source.fragment_content_text or ""
+    content_payload["content_truncated"] = True
+
+    reason = (
+        f"Inline hydration for {source.source_ref} exceeded the full-body budget, so the compiler kept "
+        "deterministic relevant fragments instead of only the head preview."
+    )
+    token_estimate = _estimate_tokens(content_payload)
+    block = CompiledContextBlock(
+        block_id=new_prefixed_id("ctxblk"),
+        source_ref=source.source_ref,
+        source_kind="ARTIFACT_REFERENCE",
+        trust_level=1,
+        instruction_authority="DATA_ONLY",
+        priority_class="P1" if source.is_mandatory else "P2",
+        selector=selector,
+        transform_chain=["SUMMARIZE"],
+        content_type=content_type,
+        content_mode="INLINE_FRAGMENT",
+        content_payload=content_payload,
+        degradation_reason_code=None,
+        token_estimate=token_estimate,
+        relevance_score=1.0 if source.is_mandatory else 0.7,
+        source_hash=_stable_hash(content_payload),
+        trust_note=reason,
+    )
+    source_log = CompileManifestSourceLogEntry(
+        source_ref=source.source_ref,
+        source_kind="ARTIFACT_REFERENCE",
+        priority_class=block.priority_class,
+        trust_level=block.trust_level,
+        selector_used=f"{selector.selector_type}:{selector.selector_value}",
+        content_mode=block.content_mode,
+        critical=source.is_mandatory,
+        status="SUMMARIZED",
+        tokens_before=token_estimate,
+        tokens_after=token_estimate,
+        reason=reason,
+        reason_code=None,
+    )
+    transform_log = CompileManifestTransformLogEntry(
+        stage="BUDGET_ENFORCEMENT",
+        operation_type="SUMMARIZE",
+        target_ref=source.source_ref,
+        output_block_id=block.block_id,
+        reason=reason,
+    )
+    return block, source_log, transform_log
 
 
 def _build_partial_inline_block(
@@ -581,6 +943,7 @@ def _build_atomic_context_bundle(context_blocks: list[CompiledContextBlock], tok
                 block_id=block.block_id,
                 source_ref=block.source_ref,
                 source_kind="ARTIFACT" if block.source_kind == "ARTIFACT_REFERENCE" else "RETRIEVAL",
+                selector=block.selector,
                 content_type=block.content_type,
                 content_mode=block.content_mode,
                 content_payload=dict(block.content_payload),
@@ -737,13 +1100,16 @@ def build_compile_request(
         workflow_id=ticket["workflow_id"],
         context_query_plan=context_query_plan,
     )
+    fragment_terms = _build_fragment_terms(
+        retrieval_plan,
+        list(created_spec.get("acceptance_criteria") or []),
+    )
 
     explicit_sources = []
     for source_ref in list(created_spec.get("input_artifact_refs") or []):
         artifact = repository.get_artifact_by_ref(str(source_ref), connection=connection)
         prepared_inline_source = _prepare_inline_source(repository, artifact)
-        explicit_sources.append(
-            CompileRequestExplicitSource(
+        explicit_source = CompileRequestExplicitSource(
                 source_ref=str(source_ref),
                 source_kind="ARTIFACT",
                 is_mandatory=True,
@@ -760,6 +1126,11 @@ def build_compile_request(
                 inline_fallback_reason_code=prepared_inline_source.fallback_reason_code,
                 inline_content_truncated=prepared_inline_source.content_truncated,
                 inline_preview_strategy=prepared_inline_source.preview_strategy,
+            )
+        explicit_sources.append(
+            _build_fragment_candidate(
+                explicit_source,
+                fragment_terms=fragment_terms,
             )
         )
 
@@ -825,6 +1196,7 @@ def compile_audit_artifacts(
     transform_log: list[CompileManifestTransformLogEntry] = []
     warnings: list[str] = []
     hydrated_block_count = 0
+    fragment_block_count = 0
     partially_hydrated_block_count = 0
     reference_block_count = 0
     retrieved_block_count = 0
@@ -841,6 +1213,16 @@ def compile_audit_artifacts(
                 hydrated_block_count += 1
                 remaining_budget -= inline_block.token_estimate
                 continue
+
+            if source.fragment_content_type is not None:
+                fragment_block, fragment_source_log, fragment_transform_log = _build_fragment_block(source)
+                if fragment_block.token_estimate <= remaining_budget:
+                    context_blocks.append(fragment_block)
+                    source_log.append(fragment_source_log)
+                    transform_log.append(fragment_transform_log)
+                    fragment_block_count += 1
+                    remaining_budget -= fragment_block.token_estimate
+                    continue
 
             preview_source = _build_budget_preview_source(source)
             if preview_source is not None:
@@ -940,7 +1322,11 @@ def compile_audit_artifacts(
             compiled_at=compiled_at,
             model_profile=MINIMAL_CONTEXT_COMPILER_MODEL_PROFILE,
             render_target="compiled_execution_package",
-            is_degraded=reference_block_count > 0,
+            is_degraded=(
+                reference_block_count > 0
+                or fragment_block_count > 0
+                or partially_hydrated_block_count > 0
+            ),
         ),
         system_controls=CompiledSystemControls(
             role_profile=compiled_role.model_dump(mode="json"),
@@ -1041,7 +1427,11 @@ def compile_audit_artifacts(
         source_log=source_log,
         transform_log=transform_log,
         degradation=CompileManifestDegradation(
-            is_degraded=reference_block_count > 0,
+            is_degraded=(
+                reference_block_count > 0
+                or fragment_block_count > 0
+                or partially_hydrated_block_count > 0
+            ),
             fail_mode=compile_request.budget_policy.overflow_policy,
             missing_critical_sources=[],
             warnings=warnings + ["Token counts are deterministic estimates, not provider tokenizer results."],
@@ -1056,6 +1446,7 @@ def compile_audit_artifacts(
             trusted_block_count=len(context_blocks),
             reference_block_count=reference_block_count,
             hydrated_block_count=hydrated_block_count,
+            fragment_block_count=fragment_block_count,
             partially_hydrated_block_count=partially_hydrated_block_count,
             negative_pattern_count=0,
             retrieved_block_count=retrieved_block_count,

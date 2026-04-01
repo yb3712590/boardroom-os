@@ -14,7 +14,7 @@
 - 视觉里程碑最小 Maker-Checker 闭环：maker 完成后自动生成 checker ticket，checker 通过后再进入 review room，要求返工则自动生成带 required fixes 的 fix ticket；相同 blocking finding 指纹重复达到阈值时会直接升级为 incident / breaker
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
-- Context Compiler 最小内联链：`TEXT / MARKDOWN / JSON` 且当前可读的 input artifact 会直接进 compiled execution package；超预算的文本和 JSON 现在会退到确定性的头部预览 / 顶层预览，并在 bundle / manifest 里写明结构化降级原因；图片 / PDF 会作为结构化媒体引用保留；其他二进制、未落盘、已删除材料仍保留 descriptor + URL 兜底
+- Context Compiler 最小内联链：`TEXT / MARKDOWN / JSON` 且当前可读的 input artifact 会直接进 compiled execution package；超预算的文本和 JSON 现在会先退到确定性的相关片段编译，片段仍放不下时再退到头部预览 / 顶层预览，并在 bundle / manifest 里写明结构化降级原因和 selector；图片 / PDF 会作为结构化媒体引用保留；其他二进制、未落盘、已删除材料仍保留 descriptor + URL 兜底
 - artifact 大文件链路：控制面分段上传会话、`ticket-result-submit` 对 `upload_session_id` 的消费，以及本地默认 / 可选对象存储双后端
 - artifact cleanup 闭环：场景留存分级、物理删除记账、scheduler 自动 cleanup，以及 `dashboard` 上可直接看的 cleanup 状态
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
@@ -91,7 +91,8 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 当前执行包的编译边界：
 
 - 已完整内联：当前可读且已物化、并且能放进预算内的 `TEXT / MARKDOWN / JSON` input artifact
-- 已保底预览：超预算的 `TEXT / MARKDOWN / JSON` 会保留确定性的头部摘录或顶层 JSON 预览，并标明 `INLINE_BUDGET_EXCEEDED`
+- 已片段编译：超预算但还能压进预算的 `TEXT / MARKDOWN / JSON` 会优先保留确定性的相关片段，当前文本会走 `MARKDOWN_SECTION` / `TEXT_WINDOW`，JSON 会走 `JSON_PATH`
+- 已保底预览：片段仍放不下预算时，`TEXT / MARKDOWN / JSON` 会退到确定性的头部摘录或顶层 JSON 预览，并标明 `INLINE_BUDGET_EXCEEDED`
 - 已结构化引用：`IMAGE / PDF` 不内联原始二进制正文，但会在 `artifact_access` 里显式带上 `kind`、`preview_kind=INLINE_MEDIA` 和 worker 可直接消费的 URL
 - 仍走结构化下载引用：其他二进制 artifact 不内联原始正文，但会在 `artifact_access` 里显式带上 `kind`、`preview_kind=DOWNLOAD_ONLY` 和 worker 可直接消费的 URL
 - 仍走 descriptor：`REGISTERED_ONLY`、已删除 / 已过期材料、读取失败材料，以及当前不能安全解码的正文
@@ -100,7 +101,7 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 排障时如果走 `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector`：
 
 - 除了原始 `compiled_context_bundle` 和 `compile_manifest`，现在还会附带一层 `compile_summary`
-- 这层摘要会直接告诉你本次编译共有多少 source、多少完整内联、多少部分预览、多少纯引用，以及各类降级原因码的计数
+- 这层摘要会直接告诉你本次编译共有多少 source、多少完整内联、多少片段内联、多少部分预览、多少纯引用，以及各类降级原因码的计数
 - 当前常见原因码包括：`ARTIFACT_NOT_INDEXED`、`ARTIFACT_NOT_READABLE`、`MEDIA_REFERENCE_ONLY`、`BINARY_REFERENCE_ONLY`、`INLINE_BUDGET_EXCEEDED`
 
 切到外部 worker handoff 模式：
