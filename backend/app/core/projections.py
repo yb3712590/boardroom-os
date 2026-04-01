@@ -62,9 +62,11 @@ from app.config import get_settings
 from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
+    CIRCUIT_BREAKER_STATE_OPEN,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
+    INCIDENT_TYPE_STAFFING_CONTAINMENT,
     SCHEMA_VERSION,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
@@ -83,14 +85,20 @@ def _is_worker_delivery_grant_active(grant: dict[str, object], *, at) -> bool:
 
 
 def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSummaryProjection:
-    employees = repository.list_employee_projections(states=["ACTIVE"], board_approved_only=True)
-    busy_tickets = repository.list_ticket_projections_by_statuses_readonly(["LEASED", "EXECUTING"])
+    employees = repository.list_employee_projections(board_approved_only=True)
+    busy_tickets = repository.list_ticket_projections_by_statuses_readonly(
+        ["LEASED", "EXECUTING", "CANCEL_REQUESTED"]
+    )
     now = now_local()
 
     busy_workers: set[str] = set()
+    contained_workers: set[str] = set()
     for ticket in busy_tickets:
         owner = ticket.get("lease_owner")
         if owner is None:
+            continue
+        if ticket["status"] == "CANCEL_REQUESTED":
+            contained_workers.add(owner)
             continue
         if ticket["status"] == "EXECUTING":
             busy_workers.add(owner)
@@ -104,6 +112,11 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
     active_checkers = 0
     for employee in employees:
         role_type = employee.get("role_type")
+        state = str(employee.get("state") or "UNKNOWN")
+        if employee["employee_id"] in contained_workers:
+            continue
+        if state != "ACTIVE":
+            continue
         is_busy = employee["employee_id"] in busy_workers
         if role_type == "checker":
             if is_busy:
@@ -120,6 +133,7 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
         overloaded_workers=0,
         active_checkers=active_checkers,
         workers_in_rework_loop=0,
+        workers_in_staffing_containment=len(contained_workers),
     )
 
 
@@ -127,7 +141,10 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
     repository.initialize()
     cursor, projection_version = repository.get_cursor_and_version()
     employees = repository.list_employee_projections()
-    busy_tickets = repository.list_ticket_projections_by_statuses_readonly(["LEASED", "EXECUTING"])
+    summary = _build_workforce_summary(repository)
+    busy_tickets = repository.list_ticket_projections_by_statuses_readonly(
+        ["LEASED", "EXECUTING", "CANCEL_REQUESTED"]
+    )
     now = now_local()
 
     active_ticket_by_worker: dict[str, dict[str, Any]] = {}
@@ -156,7 +173,9 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
         employee_id = str(employee["employee_id"])
         ticket = active_ticket_by_worker.get(employee_id)
         state = str(employee.get("state") or "UNKNOWN")
-        if state != "ACTIVE":
+        if ticket is not None and ticket["status"] == "CANCEL_REQUESTED":
+            activity_state = "FUSED"
+        elif state != "ACTIVE":
             activity_state = "OFFLINE"
         elif ticket is None:
             activity_state = "IDLE"
@@ -198,7 +217,7 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
         generated_at=now_local(),
         projection_version=projection_version,
         cursor=cursor,
-        data=WorkforceProjectionData(role_lanes=role_lanes),
+        data=WorkforceProjectionData(summary=summary, role_lanes=role_lanes),
     )
 
 
@@ -208,12 +227,23 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
     active_workflow = repository.get_active_workflow()
     cursor, projection_version = repository.get_cursor_and_version()
     pending_approvals = repository.count_open_approvals()
-    open_incidents = repository.count_open_incidents()
+    open_incident_rows = repository.list_open_incidents()
+    open_incidents = len(open_incident_rows)
     open_circuit_breakers = repository.count_open_circuit_breakers()
     open_provider_incidents = repository.count_open_provider_incidents()
     active_tickets = repository.count_active_tickets()
-    blocked_nodes = repository.count_blocked_nodes()
-    blocked_node_ids = repository.list_blocked_node_ids()
+    blocked_node_ids = sorted(
+        {
+            *repository.list_blocked_node_ids(),
+            *[
+                str(incident["node_id"])
+                for incident in open_incident_rows
+                if incident.get("node_id") is not None
+                and incident.get("circuit_breaker_state") == CIRCUIT_BREAKER_STATE_OPEN
+            ],
+        }
+    )
+    blocked_nodes = len(blocked_node_ids)
     artifact_cleanup_summary = repository.get_artifact_cleanup_summary(at=generated_at)
     latest_cleanup_event = artifact_cleanup_summary["latest_cleanup_event"]
     artifact_cleanup_payload = latest_cleanup_event.get("payload", {}) if latest_cleanup_event else {}
@@ -420,6 +450,33 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
                         incident_id=incident["incident_id"],
                     ),
                     badges=["maker_checker", "rework", "circuit_breaker"],
+                )
+            )
+            continue
+        if incident.get("incident_type") == INCIDENT_TYPE_STAFFING_CONTAINMENT:
+            node_id = str(incident.get("node_id") or "unknown-node")
+            employee_id = str((incident.get("payload") or {}).get("employee_id") or "unknown-worker")
+            action_kind = str((incident.get("payload") or {}).get("action_kind") or "EMPLOYEE_CHANGE")
+            items.append(
+                InboxItemProjection(
+                    inbox_item_id=f"inbox_{incident['incident_id']}",
+                    workflow_id=incident["workflow_id"],
+                    item_type="INCIDENT_ESCALATION",
+                    priority=str(incident.get("severity") or "high"),
+                    status=incident["status"],
+                    created_at=incident["opened_at"],
+                    sla_due_at=None,
+                    title=f"Staffing containment on {node_id}",
+                    summary=(
+                        f"Ticket ownership on {node_id} was contained after {employee_id} "
+                        f"hit {action_kind.lower()}."
+                    ),
+                    source_ref=incident["incident_id"],
+                    route_target=RouteTarget(
+                        view="incident_detail",
+                        incident_id=incident["incident_id"],
+                    ),
+                    badges=["staffing_containment", "circuit_breaker"],
                 )
             )
             continue

@@ -7071,6 +7071,106 @@ def test_board_approve_employee_replace_request_marks_old_employee_replaced(clie
     assert replacement_employee["state"] == "ACTIVE"
 
 
+def test_employee_freeze_requeues_leased_ticket_and_excludes_frozen_employee(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Freeze leased ticket containment"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    _create_and_lease_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_frozen_leased",
+        node_id="node_frozen_leased",
+    )
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id),
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_frozen_leased")
+    with repository.connection() as connection:
+        updated_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            "tkt_frozen_leased",
+        )
+
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == TICKET_STATUS_PENDING
+    assert ticket_projection["lease_owner"] is None
+    assert updated_created_spec is not None
+    assert updated_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+
+
+def test_board_approve_employee_replace_request_requeues_leased_ticket_from_replaced_employee(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Replace leased maker"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    _create_and_lease_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_replaced_leased",
+        node_id="node_replaced_leased",
+    )
+    client.post(
+        "/api/v1/commands/employee-replace-request",
+        json=_employee_replace_request_payload(
+            workflow_id,
+            replacement_employee_id="emp_frontend_backup_replace",
+        ),
+    )
+
+    repository = client.app.state.repository
+    approval = repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Replace the leased maker with backup coverage.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:replace-leased",
+        },
+    )
+
+    replaced_employee = repository.get_employee_projection("emp_frontend_2")
+    replacement_employee = repository.get_employee_projection("emp_frontend_backup_replace")
+    ticket_projection = repository.get_current_ticket_projection("tkt_replaced_leased")
+    with repository.connection() as connection:
+        updated_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            "tkt_replaced_leased",
+        )
+
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+    assert replaced_employee is not None
+    assert replaced_employee["state"] == "REPLACED"
+    assert replacement_employee is not None
+    assert replacement_employee["state"] == "ACTIVE"
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == TICKET_STATUS_PENDING
+    assert ticket_projection["lease_owner"] is None
+    assert updated_created_spec is not None
+    assert updated_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+
+
 def test_employee_freeze_blocks_manual_lease_and_worker_runtime_bootstrap(
     client,
     set_ticket_time,
@@ -7130,6 +7230,72 @@ def test_employee_freeze_blocks_manual_lease_and_worker_runtime_bootstrap(
     assert "not active" in lease_response.json()["reason"].lower()
     assert runtime_response.status_code == 403
     assert "not active" in runtime_response.json()["detail"].lower()
+
+
+def test_employee_freeze_containment_opens_staffing_incident_for_executing_ticket(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Freeze executing ticket containment"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_frozen_executing",
+        node_id="node_frozen_executing",
+    )
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id),
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_frozen_executing")
+    node_projection = repository.get_current_node_projection(workflow_id, "node_frozen_executing")
+    open_incidents = repository.list_open_incidents()
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    inbox_response = client.get("/api/v1/projections/inbox")
+    workforce_response = client.get("/api/v1/projections/workforce")
+    frontend_lane = next(
+        lane
+        for lane in workforce_response.json()["data"]["role_lanes"]
+        if lane["role_type"] == "frontend_engineer"
+    )
+    contained_worker = next(
+        worker for worker in frontend_lane["workers"] if worker["employee_id"] == "emp_frontend_2"
+    )
+
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == TICKET_STATUS_CANCEL_REQUESTED
+    assert ticket_projection["lease_owner"] == "emp_frontend_2"
+    assert node_projection is not None
+    assert node_projection["status"] == NODE_STATUS_CANCEL_REQUESTED
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["incident_type"] == "STAFFING_CONTAINMENT"
+    assert open_incidents[0]["ticket_id"] == "tkt_frozen_executing"
+    assert open_incidents[0]["payload"]["employee_id"] == "emp_frontend_2"
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json()["data"]["ops_strip"]["open_incidents"] == 1
+    assert dashboard_response.json()["data"]["ops_strip"]["open_circuit_breakers"] == 1
+    assert dashboard_response.json()["data"]["inbox_counts"]["incidents_pending"] == 1
+    assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == [
+        "node_frozen_executing"
+    ]
+    inbox_items = [
+        item for item in inbox_response.json()["data"]["items"] if item["source_ref"] == open_incidents[0]["incident_id"]
+    ]
+    assert len(inbox_items) == 1
+    assert inbox_items[0]["item_type"] == "INCIDENT_ESCALATION"
+    assert "staffing containment" in inbox_items[0]["title"].lower()
+    assert "staffing_containment" in inbox_items[0]["badges"]
+    assert contained_worker["activity_state"] == "FUSED"
+    assert contained_worker["current_ticket_id"] == "tkt_frozen_executing"
+    assert workforce_response.json()["data"]["summary"]["workers_in_staffing_containment"] == 1
 
 
 def test_employee_restore_reactivates_frozen_employee_and_workforce_projection(client):

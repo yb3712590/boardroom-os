@@ -17,8 +17,9 @@
   - `employee-hire-request / employee-replace-request` 现在会走 `CORE_HIRE_APPROVAL -> Inbox -> Review Room -> board approve`
   - `employee-freeze` 会立即阻止 scheduler dispatch、手动 `ticket-lease / ticket-start` 和 `worker-runtime` bootstrap
   - `employee-restore` 会把 `FROZEN` 员工直接恢复回 `ACTIVE`，重新放开 scheduler dispatch、手动 `ticket-lease` 和 `worker-runtime` bootstrap
+  - 冻结或替换员工时，已 lease 未开工票现在会自动回收到 `PENDING` 并把原员工写进 `excluded_employee_ids`；执行中票会进入 `staffing containment` 围堵，并通过 incident / circuit breaker 暴露到 `Inbox / Dashboard / Workforce`
   - 默认 roster 现在由 employee 事件 bootstrap，再由 reducer 重建，不再把 `employee_projection` 当成静态真相源
-  - 当前剩余缺口：更多票型上的 staffing policy，以及更丰富的换人策略
+  - 当前剩余缺口：restore / incident resolve 还不会自动恢复已围堵或已回收的旧票，更多票型上的 staffing policy 也还没补齐
 - 把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
 - 把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级、更明确的 fix 票约束，以及返工票默认排除原 maker 的最小换人链，剩余重点是把这套 staffing policy 推广到更多关键产物
 - 把 `Context Compiler` 从“文本类 artifact 可内联”的当前版本继续推进，补完二进制 / 大文件 / 检索增强下的编译与降级策略

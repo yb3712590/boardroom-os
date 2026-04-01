@@ -157,7 +157,8 @@ Purpose:
       "idle_workers": 2,
       "overloaded_workers": 1,
       "active_checkers": 1,
-      "workers_in_rework_loop": 1
+      "workers_in_rework_loop": 1,
+      "workers_in_staffing_containment": 1
     },
     "event_stream_preview": [
       {
@@ -232,6 +233,26 @@ Purpose:
           "runtime_timeout",
           "circuit_breaker"
         ]
+      },
+      {
+        "inbox_item_id": "inbox_003",
+        "workflow_id": "wf_001",
+        "item_type": "INCIDENT_ESCALATION",
+        "priority": "high",
+        "status": "OPEN",
+        "created_at": "2026-03-28T01:55:00+08:00",
+        "sla_due_at": null,
+        "title": "Staffing containment on node_homepage_impl",
+        "summary": "Ticket ownership on node_homepage_impl was contained after emp_frontend_2 hit employee_frozen.",
+        "source_ref": "inc_094",
+        "route_target": {
+          "view": "incident_detail",
+          "incident_id": "inc_094"
+        },
+        "badges": [
+          "staffing_containment",
+          "circuit_breaker"
+        ]
       }
     ]
   }
@@ -246,6 +267,11 @@ Recommended `item_type` enum:
 - `PROVIDER_INCIDENT`
 - `MEETING_ESCALATION`
 - `CORE_HIRE_APPROVAL`
+
+Current MVP note:
+
+- staffing containment still uses `item_type = INCIDENT_ESCALATION`
+- operators distinguish it through `incident_type = STAFFING_CONTAINMENT` in incident detail plus inbox badges `staffing_containment` and `circuit_breaker`
 
 ## 5.1 Ticket Artifacts Projection
 
@@ -397,6 +423,15 @@ For repeated ordinary failures, the same endpoint may expose:
 - `payload.latest_failure_kind`
 - `payload.latest_failure_fingerprint`
 
+For employee change containment, the same endpoint may expose:
+
+- `incident_type = STAFFING_CONTAINMENT`
+- `payload.employee_id`
+- `payload.action_kind` such as `EMPLOYEE_FROZEN` or `EMPLOYEE_REPLACED`
+- `payload.reason`
+- `payload.replacement_employee_id` when the trigger was a replacement approval
+- `payload.contained_at`
+
 It still does not expose a broader automated recovery workflow.
 
 ## 5.3 Incident Resolve Command
@@ -452,6 +487,14 @@ Purpose:
   "projection_version": 1842,
   "cursor": "evt_0001842",
   "data": {
+    "summary": {
+      "active_workers": 1,
+      "idle_workers": 1,
+      "overloaded_workers": 0,
+      "active_checkers": 1,
+      "workers_in_rework_loop": 0,
+      "workers_in_staffing_containment": 1
+    },
     "role_lanes": [
       {
         "role_type": "frontend_engineer",
@@ -538,6 +581,8 @@ UI rule:
 
 - when `is_fallback_active=true`, the model badge should be visually marked as degraded
 - UI should show both `preferred_model_id` and `actual_model_id` when they differ
+- `FUSED` means the worker still owns a live ticket, but that ticket has already moved into `CANCEL_REQUESTED` under staffing containment and should be treated as waiting for operator follow-up rather than normal execution
+- `employment_state` and `activity_state` must be read separately: a worker can appear as `FUSED` while their employment state has already become `FROZEN` or `REPLACED`
 
 ## 7. Review Room Projection
 

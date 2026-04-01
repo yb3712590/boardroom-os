@@ -1409,6 +1409,65 @@ def test_scheduler_skips_frozen_employee_when_dispatching(client):
     assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"
 
 
+def test_scheduler_reassigns_requeued_ticket_after_freeze(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, "Freeze leased reassignment")
+    _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_requeued_after_freeze",
+            node_id="node_runner_requeued_after_freeze",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": "tkt_runner_requeued_after_freeze",
+            "node_id": "node_runner_requeued_after_freeze",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:freeze-requeued:emp_frontend_2",
+        },
+    )
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json={
+            "workflow_id": workflow_id,
+            "employee_id": "emp_frontend_2",
+            "frozen_by": "ops@example.com",
+            "reason": "Reassign current leased ticket after freeze.",
+            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_2:requeued",
+        },
+    )
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-requeued-after-freeze",
+        max_dispatches=10,
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_requeued_after_freeze")
+    leased_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_requeued_after_freeze"
+    ]
+
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == "COMPLETED"
+    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"
+
+
 def test_scheduler_dispatches_restored_employee_again(client):
     workflow_id = _project_init(client, "Restored worker routing")
     _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")

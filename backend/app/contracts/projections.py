@@ -87,6 +87,7 @@ class WorkforceSummaryProjection(StrictModel):
     overloaded_workers: int
     active_checkers: int
     workers_in_rework_loop: int
+    workers_in_staffing_containment: int = 0
 
 
 class WorkforceWorkerProjection(StrictModel):
@@ -108,6 +109,7 @@ class WorkforceRoleLaneProjection(StrictModel):
 
 
 class WorkforceProjectionData(StrictModel):
+    summary: WorkforceSummaryProjection
     role_lanes: list[WorkforceRoleLaneProjection]
 
 

@@ -23,6 +23,7 @@ from app.core.constants import (
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
 )
 from app.core.ids import new_prefixed_id
+from app.core.staffing_containment import contain_employee_active_tickets
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -151,6 +152,7 @@ def _apply_employee_change_approval(
         return str(employee_change["employee_id"])
 
     if change_kind == "EMPLOYEE_REPLACE":
+        replaced_employee_id = str(employee_change["employee_id"])
         replacement_employee_id = str(employee_change["replacement_employee_id"])
         repository.insert_event(
             connection,
@@ -184,10 +186,21 @@ def _apply_employee_change_approval(
             causation_id=command_id,
             correlation_id=approval["workflow_id"],
             payload={
-                "employee_id": employee_change["employee_id"],
+                "employee_id": replaced_employee_id,
                 "replacement_employee_id": replacement_employee_id,
             },
             occurred_at=occurred_at,
+        )
+        contain_employee_active_tickets(
+            repository,
+            connection,
+            employee_id=replaced_employee_id,
+            action_kind=EVENT_EMPLOYEE_REPLACED,
+            reason="Board-approved employee replacement removed the original assignee from active duty.",
+            occurred_at=occurred_at,
+            command_id=command_id,
+            idempotency_key_base=idempotency_key,
+            replacement_employee_id=replacement_employee_id,
         )
         return replacement_employee_id
 
