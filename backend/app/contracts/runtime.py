@@ -68,7 +68,9 @@ class CompileRequestRetrievedSummary(StrictModel):
 class CompiledArtifactAccessDescriptor(StrictModel):
     artifact_ref: str = Field(min_length=1)
     logical_path: str | None = None
+    kind: str | None = None
     media_type: str | None = None
+    preview_kind: Literal["TEXT", "JSON", "INLINE_MEDIA", "DOWNLOAD_ONLY"] | None = None
     materialization_status: str = Field(min_length=1)
     lifecycle_status: str = Field(min_length=1)
     size_bytes: int | None = Field(default=None, ge=0)

@@ -555,6 +555,9 @@ def _seed_input_artifact(
     artifact_ref: str = "art://inputs/brief.md",
     logical_path: str = "artifacts/inputs/brief.md",
     content: str = "# Brief\n\nMaterialized input.\n",
+    content_bytes: bytes | None = None,
+    kind: str = "MARKDOWN",
+    media_type: str = "text/markdown",
     materialization_status: str = "MATERIALIZED",
     lifecycle_status: str = "ACTIVE",
     deleted_at: str | None = None,
@@ -568,7 +571,10 @@ def _seed_input_artifact(
     size_bytes = None
 
     if materialization_status == "MATERIALIZED":
-        materialized = artifact_store.materialize_text(logical_path, content)
+        if content_bytes is not None:
+            materialized = artifact_store.materialize_bytes(logical_path, content_bytes)
+        else:
+            materialized = artifact_store.materialize_text(logical_path, content)
         storage_relpath = materialized.storage_relpath
         content_hash = materialized.content_hash
         size_bytes = materialized.size_bytes
@@ -581,8 +587,8 @@ def _seed_input_artifact(
             ticket_id="tkt_seed_inputs",
             node_id="node_seed_inputs",
             logical_path=logical_path,
-            kind="MARKDOWN",
-            media_type="text/markdown",
+            kind=kind,
+            media_type=media_type,
             materialization_status=materialization_status,
             lifecycle_status=lifecycle_status,
             storage_relpath=storage_relpath,
@@ -2701,6 +2707,66 @@ def test_worker_runtime_execution_package_inlines_materialized_text_input_and_ke
     assert context_payload["content_type"] == "TEXT"
     assert context_payload["content_payload"]["content_text"] == "# Brief\n\nInline package body.\n"
     assert context_payload["content_payload"]["artifact_access"]["artifact_ref"] == "art://inputs/brief.md"
+    assert context_payload["content_payload"]["content_url"].startswith(
+        "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/content"
+    )
+    assert context_payload["content_payload"]["preview_url"].startswith(
+        "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/preview"
+    )
+
+
+def test_worker_runtime_execution_package_keeps_binary_artifact_kind_and_preview_kind(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(
+        client=client,
+        artifact_ref="art://inputs/mock.png",
+        logical_path="artifacts/inputs/mock.png",
+        content_bytes=b"\x89PNG\r\n\x1a\nmock-image",
+        kind="IMAGE",
+        media_type="image/png",
+    )
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id="wf_worker_runtime_binary",
+                ticket_id="tkt_worker_binary",
+                node_id="node_worker_binary",
+            ),
+            "input_artifact_refs": ["art://inputs/mock.png"],
+            "idempotency_key": "ticket-create:wf_worker_runtime_binary:tkt_worker_binary",
+        },
+    )
+    assert create_response.status_code == 200
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_worker_runtime_binary",
+            ticket_id="tkt_worker_binary",
+            node_id="node_worker_binary",
+        ),
+    )
+    assert lease_response.status_code == 200
+
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package = client.get(_local_path_from_url(execution_package_url)).json()["data"]
+    context_payload = execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"][0]
+    artifact_access = context_payload["content_payload"]["artifact_access"]
+
+    assert context_payload["content_type"] == "SOURCE_DESCRIPTOR"
+    assert context_payload["content_mode"] == "REFERENCE_ONLY"
+    assert context_payload["degradation_reason_code"] == "MEDIA_REFERENCE_ONLY"
+    assert artifact_access["kind"] == "IMAGE"
+    assert artifact_access["preview_kind"] == "INLINE_MEDIA"
     assert context_payload["content_payload"]["content_url"].startswith(
         "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/content"
     )
@@ -6465,6 +6531,26 @@ def test_review_room_developer_inspector_returns_materialized_payloads(client):
     assert body["compile_manifest"]["compile_meta"]["compile_id"] == latest_manifest["compile_id"]
     assert store.resolve_path("ctx://homepage/visual-v1").exists()
     assert store.resolve_path("manifest://homepage/visual-v1").exists()
+
+
+def test_review_room_developer_inspector_compile_summary_counts_media_reference_only(client):
+    _seed_input_artifact(
+        client=client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/mock.png",
+        content_bytes=b"\x89PNG\r\n\x1a\nmock-image",
+        kind="IMAGE",
+        media_type="image/png",
+    )
+    approval = _seed_review_request(client, materialize_real_compile=True)
+
+    response = client.get(
+        f"/api/v1/projections/review-room/{approval['review_pack_id']}/developer-inspector"
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["compile_summary"]["reason_counts"]["MEDIA_REFERENCE_ONLY"] >= 1
 
 def test_review_room_developer_inspector_returns_partial_when_refs_are_unmaterialized(client):
     approval = _seed_review_request(client)

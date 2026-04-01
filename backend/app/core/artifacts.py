@@ -269,6 +269,10 @@ def build_artifact_metadata(
 ) -> dict[str, Any]:
     lifecycle_status = resolve_artifact_lifecycle_status(artifact, at=at)
     urls = build_artifact_urls(str(artifact["artifact_ref"]))
+    preview_kind = classify_artifact_preview_kind(
+        kind=str(artifact["kind"]),
+        media_type=artifact.get("media_type"),
+    )
     return {
         "artifact_ref": artifact["artifact_ref"],
         "workflow_id": artifact["workflow_id"],
@@ -277,6 +281,7 @@ def build_artifact_metadata(
         "path": artifact["logical_path"],
         "kind": artifact["kind"],
         "media_type": artifact.get("media_type"),
+        "preview_kind": preview_kind,
         "status": artifact["materialization_status"],
         "materialization_status": artifact["materialization_status"],
         "lifecycle_status": lifecycle_status,
@@ -307,7 +312,9 @@ def build_unindexed_artifact_access_descriptor(artifact_ref: str) -> dict[str, A
     return {
         "artifact_ref": artifact_ref,
         "logical_path": None,
+        "kind": None,
         "media_type": None,
+        "preview_kind": None,
         "materialization_status": ARTIFACT_STATUS_REGISTERED_ONLY,
         "lifecycle_status": ARTIFACT_LIFECYCLE_ACTIVE,
         "size_bytes": None,
@@ -331,7 +338,9 @@ def build_artifact_access_descriptor(
     return {
         "artifact_ref": metadata["artifact_ref"],
         "logical_path": metadata["path"],
+        "kind": metadata["kind"],
         "media_type": metadata["media_type"],
+        "preview_kind": metadata["preview_kind"],
         "materialization_status": metadata["materialization_status"],
         "lifecycle_status": metadata["lifecycle_status"],
         "size_bytes": metadata["size_bytes"],

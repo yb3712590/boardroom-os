@@ -13,6 +13,7 @@ class ArtifactMetadata(StrictModel):
     path: str
     kind: str
     media_type: str | None = None
+    preview_kind: str | None = None
     status: str
     materialization_status: str
     lifecycle_status: str

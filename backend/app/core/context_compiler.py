@@ -84,6 +84,8 @@ FALLBACK_REASON_UNSUPPORTED_ARTIFACT_KIND = "UNSUPPORTED_ARTIFACT_KIND"
 FALLBACK_REASON_ARTIFACT_READ_FAILED = "ARTIFACT_READ_FAILED"
 FALLBACK_REASON_ARTIFACT_JSON_DECODE_FAILED = "ARTIFACT_JSON_DECODE_FAILED"
 FALLBACK_REASON_ARTIFACT_TEXT_DECODE_FAILED = "ARTIFACT_TEXT_DECODE_FAILED"
+FALLBACK_REASON_MEDIA_REFERENCE_ONLY = "MEDIA_REFERENCE_ONLY"
+FALLBACK_REASON_BINARY_REFERENCE_ONLY = "BINARY_REFERENCE_ONLY"
 FALLBACK_REASON_INLINE_BUDGET_EXCEEDED = "INLINE_BUDGET_EXCEEDED"
 FALLBACK_REASON_RETRIEVAL_DROPPED_FOR_BUDGET = "RETRIEVAL_DROPPED_FOR_BUDGET"
 RETRIEVAL_MATCH_REASON_REVIEW = "RETRIEVAL_REVIEW_MATCH"
@@ -177,7 +179,27 @@ def _prepare_inline_source(
         )
 
     normalized_kind = normalize_artifact_kind(str(artifact.get("kind") or ""))
+    preview_kind = build_artifact_access_descriptor(
+        artifact,
+        artifact_ref=str(artifact.get("artifact_ref") or ""),
+    ).get("preview_kind")
     if normalized_kind not in {"TEXT", "MARKDOWN", "JSON"}:
+        if preview_kind == "INLINE_MEDIA":
+            return _PreparedInlineSource(
+                fallback_reason_code=FALLBACK_REASON_MEDIA_REFERENCE_ONLY,
+                fallback_reason=(
+                    f"Artifact kind {normalized_kind} is preserved as a structured media reference "
+                    "for the current MVP instead of inlining its raw binary body."
+                ),
+            )
+        if preview_kind == "DOWNLOAD_ONLY":
+            return _PreparedInlineSource(
+                fallback_reason_code=FALLBACK_REASON_BINARY_REFERENCE_ONLY,
+                fallback_reason=(
+                    f"Artifact kind {normalized_kind} is preserved as a structured binary reference "
+                    "for the current MVP instead of inlining its raw binary body."
+                ),
+            )
         return _PreparedInlineSource(
             fallback_reason_code=FALLBACK_REASON_UNSUPPORTED_ARTIFACT_KIND,
             fallback_reason=(

@@ -89,6 +89,7 @@ def _seed_artifact(
     media_type: str,
     content_text: str | None = None,
     content_json: dict | None = None,
+    content_bytes: bytes | None = None,
     materialization_status: str = "MATERIALIZED",
     lifecycle_status: str = "ACTIVE",
     deleted_at: str | None = None,
@@ -107,6 +108,8 @@ def _seed_artifact(
     if materialization_status == "MATERIALIZED":
         if content_json is not None:
             materialized = artifact_store.materialize_json(logical_path, content_json)
+        elif content_bytes is not None:
+            materialized = artifact_store.materialize_bytes(logical_path, content_bytes)
         else:
             materialized = artifact_store.materialize_text(logical_path, content_text or "")
         storage_relpath = materialized.storage_relpath
@@ -497,6 +500,114 @@ def test_compile_execution_package_inlines_materialized_markdown_and_json_source
         "constraints": ["Keep it local"],
     }
     assert json_block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/spec.json"
+
+
+def test_compile_execution_package_marks_image_artifact_as_media_reference_only(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(input_artifact_refs=["art://inputs/mock.png"]),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/mock.png",
+        logical_path="artifacts/inputs/mock.png",
+        kind="IMAGE",
+        media_type="image/png",
+        content_bytes=b"\x89PNG\r\n\x1a\nmock-image",
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+    source_log = compiled_artifacts.compile_manifest.source_log[0]
+
+    assert block.content_type == "SOURCE_DESCRIPTOR"
+    assert block.content_mode == "REFERENCE_ONLY"
+    assert block.degradation_reason_code == "MEDIA_REFERENCE_ONLY"
+    assert block.content_payload["artifact_access"]["kind"] == "IMAGE"
+    assert block.content_payload["artifact_access"]["preview_kind"] == "INLINE_MEDIA"
+    assert source_log.reason_code == "MEDIA_REFERENCE_ONLY"
+
+
+def test_compile_execution_package_marks_pdf_artifact_as_media_reference_only(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(input_artifact_refs=["art://inputs/spec.pdf"]),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/spec.pdf",
+        logical_path="artifacts/inputs/spec.pdf",
+        kind="PDF",
+        media_type="application/pdf",
+        content_bytes=b"%PDF-1.7 mock pdf",
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+    source_log = compiled_artifacts.compile_manifest.source_log[0]
+
+    assert block.content_type == "SOURCE_DESCRIPTOR"
+    assert block.content_mode == "REFERENCE_ONLY"
+    assert block.degradation_reason_code == "MEDIA_REFERENCE_ONLY"
+    assert block.content_payload["artifact_access"]["kind"] == "PDF"
+    assert block.content_payload["artifact_access"]["preview_kind"] == "INLINE_MEDIA"
+    assert source_log.reason_code == "MEDIA_REFERENCE_ONLY"
+
+
+def test_compile_execution_package_marks_zip_artifact_as_binary_reference_only(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(input_artifact_refs=["art://inputs/archive.zip"]),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/archive.zip",
+        logical_path="artifacts/inputs/archive.zip",
+        kind="BINARY",
+        media_type="application/zip",
+        content_bytes=b"PK\x03\x04mock-zip",
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+    source_log = compiled_artifacts.compile_manifest.source_log[0]
+
+    assert block.content_type == "SOURCE_DESCRIPTOR"
+    assert block.content_mode == "REFERENCE_ONLY"
+    assert block.degradation_reason_code == "BINARY_REFERENCE_ONLY"
+    assert block.content_payload["artifact_access"]["kind"] == "BINARY"
+    assert block.content_payload["artifact_access"]["preview_kind"] == "DOWNLOAD_ONLY"
+    assert source_log.reason_code == "BINARY_REFERENCE_ONLY"
 
 
 def test_compile_audit_artifacts_falls_back_to_descriptor_when_source_exceeds_budget(
