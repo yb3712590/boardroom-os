@@ -279,6 +279,14 @@ class EmployeeFreezeCommand(StrictModel):
     idempotency_key: str = Field(min_length=1)
 
 
+class EmployeeRestoreCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    employee_id: str = Field(min_length=1)
+    restored_by: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
 class TicketReviewOption(StrictModel):
     option_id: str = Field(min_length=1)
     label: str = Field(min_length=1)

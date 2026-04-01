@@ -8,10 +8,13 @@ from app.contracts.commands import (
     EmployeeFreezeCommand,
     EmployeeHireRequestCommand,
     EmployeeReplaceRequestCommand,
+    EmployeeRestoreCommand,
 )
 from app.core.constants import (
     EMPLOYEE_STATE_ACTIVE,
+    EMPLOYEE_STATE_FROZEN,
     EVENT_EMPLOYEE_FROZEN,
+    EVENT_EMPLOYEE_RESTORED,
 )
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
@@ -345,6 +348,77 @@ def handle_employee_freeze(
             event_type=EVENT_EMPLOYEE_FROZEN,
             actor_type="operator",
             actor_id=payload.frozen_by,
+            workflow_id=payload.workflow_id,
+            idempotency_key=payload.idempotency_key,
+            causation_id=command_id,
+            correlation_id=payload.workflow_id,
+            payload={
+                "employee_id": payload.employee_id,
+                "reason": payload.reason,
+            },
+            occurred_at=received_at,
+        )
+        if event_row is None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                causation_hint=f"employee:{payload.employee_id}",
+            )
+
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"employee:{payload.employee_id}",
+    )
+
+
+def handle_employee_restore(
+    repository: ControlPlaneRepository,
+    payload: EmployeeRestoreCommand,
+) -> CommandAckEnvelope:
+    repository.initialize()
+
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                causation_hint=f"employee:{payload.employee_id}",
+            )
+
+        employee = repository.get_employee_projection(payload.employee_id, connection=connection)
+        if employee is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=f"Employee {payload.employee_id} does not exist.",
+                causation_hint=f"employee:{payload.employee_id}",
+            )
+        if str(employee.get("state") or "") != EMPLOYEE_STATE_FROZEN:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=f"Employee {payload.employee_id} is not frozen.",
+                causation_hint=f"employee:{payload.employee_id}",
+            )
+
+        event_row = repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_RESTORED,
+            actor_type="operator",
+            actor_id=payload.restored_by,
             workflow_id=payload.workflow_id,
             idempotency_key=payload.idempotency_key,
             causation_id=command_id,

@@ -1407,3 +1407,80 @@ def test_scheduler_skips_frozen_employee_when_dispatching(client):
     assert ticket_projection is not None
     assert ticket_projection["status"] == "COMPLETED"
     assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"
+
+
+def test_scheduler_dispatches_restored_employee_again(client):
+    workflow_id = _project_init(client, "Restored worker routing")
+    _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json={
+            "workflow_id": workflow_id,
+            "employee_id": "emp_frontend_2",
+            "frozen_by": "ops@example.com",
+            "reason": "Pause dispatch before restore test.",
+            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_2:restore-cycle",
+        },
+    )
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_restore_before",
+            node_id="node_runner_restore_before",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    repository = client.app.state.repository
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-restore-before",
+        max_dispatches=10,
+    )
+    before_restore_lease = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_restore_before"
+    ][-1]
+
+    restore_response = client.post(
+        "/api/v1/commands/employee-restore",
+        json={
+            "workflow_id": workflow_id,
+            "employee_id": "emp_frontend_2",
+            "restored_by": "ops@example.com",
+            "reason": "Return worker after review.",
+            "idempotency_key": f"employee-restore:{workflow_id}:emp_frontend_2",
+        },
+    )
+    assert restore_response.status_code == 200
+    assert restore_response.json()["status"] == "ACCEPTED"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_restore_after",
+            node_id="node_runner_restore_after",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-restore-after",
+        max_dispatches=10,
+    )
+    after_restore_lease = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_restore_after"
+    ][-1]
+
+    assert before_restore_lease["payload"]["leased_by"] == "emp_frontend_backup"
+    assert after_restore_lease["payload"]["leased_by"] == "emp_frontend_2"

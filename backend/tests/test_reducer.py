@@ -12,6 +12,7 @@ from app.core.constants import (
     EVENT_EMPLOYEE_FROZEN,
     EVENT_EMPLOYEE_HIRED,
     EVENT_EMPLOYEE_REPLACED,
+    EVENT_EMPLOYEE_RESTORED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
@@ -122,7 +123,7 @@ def test_repository_projection_matches_reducer_replay(client):
     assert max(item["version"] for item in replayed) == active_workflow["version"]
 
 
-def test_reducer_rebuilds_employee_projection_through_hire_replace_and_freeze():
+def test_reducer_rebuilds_employee_projection_through_hire_replace_freeze_and_restore():
     hired_event = {
         "sequence_no": 1,
         "event_type": EVENT_EMPLOYEE_HIRED,
@@ -166,13 +167,25 @@ def test_reducer_rebuilds_employee_projection_through_hire_replace_and_freeze():
             }
         ),
     }
+    restored_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_EMPLOYEE_RESTORED,
+        "workflow_id": "wf_staffing",
+        "occurred_at": datetime.fromisoformat("2026-04-01T10:15:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "employee_id": "emp_frontend_backup",
+                "reason": "Return worker after pause.",
+            }
+        ),
+    }
 
-    projections = rebuild_employee_projections([hired_event, replaced_event, frozen_event])
+    projections = rebuild_employee_projections([hired_event, replaced_event, frozen_event, restored_event])
     by_id = {projection["employee_id"]: projection for projection in projections}
 
     assert by_id["emp_frontend_2"]["state"] == "REPLACED"
     assert by_id["emp_frontend_2"]["board_approved"] is False
-    assert by_id["emp_frontend_backup"]["state"] == "FROZEN"
+    assert by_id["emp_frontend_backup"]["state"] == "ACTIVE"
     assert by_id["emp_frontend_backup"]["role_profile_refs"] == ["ui_designer_primary"]
     assert by_id["emp_frontend_backup"]["provider_id"] == "prov_openai_compat"
 

@@ -27,6 +27,7 @@ from app.core.constants import (
     EVENT_EMPLOYEE_FROZEN,
     EVENT_EMPLOYEE_HIRED,
     EVENT_EMPLOYEE_REPLACED,
+    EVENT_EMPLOYEE_RESTORED,
     EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
@@ -233,6 +234,29 @@ def rebuild_employee_projections(events: Iterable[dict]) -> list[dict]:
             projections[employee_id] = {
                 **previous_projection,
                 "state": EMPLOYEE_STATE_FROZEN,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_EMPLOYEE_RESTORED:
+            employee_id = payload["employee_id"]
+            previous_projection = projections.get(
+                employee_id,
+                {
+                    "employee_id": employee_id,
+                    "role_type": str(payload.get("role_type") or "unknown"),
+                    "skill_profile_json": {},
+                    "personality_profile_json": {},
+                    "aesthetic_profile_json": {},
+                    "board_approved": False,
+                    "provider_id": None,
+                    "role_profile_refs": [],
+                },
+            )
+            projections[employee_id] = {
+                **previous_projection,
+                "state": EMPLOYEE_STATE_ACTIVE,
                 "updated_at": occurred_at,
                 "version": version,
             }
