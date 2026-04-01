@@ -29,16 +29,19 @@
   - 当前仍缺：更强的预算压缩矩阵、更多 schema / role profile 的真实执行覆盖，以及向量/联网之外是否还需要更丰富的本地检索策略；`provider routing / recovery`、浏览器直传和云预签名 multipart 继续后置到 MVP 之后再评估
 - 收敛 runtime 默认路径，优先保证本地单机执行稳定，而不是继续扩远程 handoff 面
 - 明确 MVP 的最小 schema、role profile、ticket 路径，不再边做边膨胀
-- 直接推进主线：把 `project-init -> 首个 review` 的真实自动推进补齐
-  - 当前 UI 已经能直接发起 workflow，但 `project-init` 仍只创建 workflow，不会自动拆票或自动产出待审 review
-  - 这已经成为当前本地 `Board -> Review` 路径里最明显的一段真实缺口
+- 已完成直接推进主线：`project-init -> 首个 review` 现在已经打通
+  - `project-init` 现在会先生成 board brief artifact，再自动创建首张 `consensus_document@1` 范围票，并在同一条后端链上同步跑完 `maker -> checker -> Inbox -> Review Room`
+  - 如果本地没有 eligible worker，或途中出现 incident，这条入口会停在真实 pending / incident 状态，不会伪造首个 review 已经完成
+- 直接推进主线：把首个 scope review 的通过结果继续接成后续执行票
+  - 当前 board approve 仍只会关闭 review，本地主链还不会按 `consensus_document.followup_tickets` 自动继续生成下一段 build ticket
+  - 这已经成为当前本地 `Board -> Review -> Build` 路径里最明显的新缺口
 
 ## P1：套上最薄 Web 壳
 
 - 已完成直接推进主线：独立 React Boardroom UI 已落地在 `frontend/`
   - 当前已经接通 `dashboard / inbox / review room`
   - 首页采用 `workflow river` 主舞台，并以 `Board Gate` 高亮待审状态
-  - 无 active workflow 时会显示最小 `project-init` 表单
+  - 无 active workflow 时会显示最小 `project-init` 表单，并明确提示它会把 workflow 推进到首个 review
   - `approve / reject / modify constraints` 动作提交后会立即重新拉取，并用 SSE 做失效刷新
 - 直接推进主线：继续补齐 UI 的剩余 MVP 读面
   - `provider / model` 设置页

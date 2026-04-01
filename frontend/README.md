@@ -5,7 +5,7 @@
 ## 当前已落地
 
 - 首页会并行拉取 `dashboard` 和 `inbox`
-- 没有 active workflow 时，会显示最小 `project-init` 表单
+- 没有 active workflow 时，会显示最小 `project-init` 表单，并明确提示它会把 workflow 推进到首个 scope review
 - 主舞台是 `Workflow River`，使用 `dashboard.pipeline_summary.phases` 的固定五段摘要：`Intake / Plan / Build / Check / Review`
 - `Inbox` 里的 review 项可以直接打开 `Review Room`
 - 可以直接提交 `board approve / reject / modify constraints`
@@ -15,7 +15,7 @@
 
 - 前端只是最薄治理壳，不复刻后端工作流引擎
 - `events/stream` 只做刷新提示，不作为浏览器里的第二真相源
-- `project-init` 目前仍只创建 workflow；是否很快出现待审项，仍取决于后端现有链路有没有生成 review pack
+- `project-init` 现在会同步尝试推进到首个 scope review；如果没有 eligible worker，或途中出现 incident，前端只展示后端停下来的真实状态
 - 本轮没有做 provider/model 设置页、incident 详情页、workforce 深入视图和 dependency inspector
 
 ## 本地运行

@@ -247,6 +247,19 @@
   - `cd frontend && npm run build` -> `built in 154ms`
   - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py -k "dashboard or review_room or inbox" -q` -> `24 passed, 180 deselected`
 
+### 2026-04-02
+
+- 把当前主线上最短的入口缺口补上了：`project-init` 现在不再只写 `WORKFLOW_CREATED`，而是会先落一份 board brief artifact，再自动创建首张 `consensus_document@1` 范围票，同步复用现有 scheduler + runtime 跑完 `maker -> checker -> Inbox -> Review Room`，把本地默认路径直接推到首个 `MEETING_ESCALATION` review。
+- 保持了边界收口：这轮没有新开前端工作流引擎，也没有把自动推进做成常驻后台控制面；入口只做一个有上限的同步推进器，命中 open approval、open incident、无状态推进或最大步数就停。
+- runtime 现在能从票规格里的 `auto_review_request` 模板自动生成真实 review 请求，把真实 artifact refs、运行摘要和 developer inspector refs 带进治理链，而不是继续依赖测试里手写的 review payload。
+- 为了让首张范围票真的能执行，这轮还补了最小 board brief artifact；如果本地没有 eligible worker，或途中出现 incident，系统会停在真实 pending / incident 状态，不会伪造“已经到首审”。
+- React 壳的 `project-init` 文案也同步成了真实语义：空态明确说它会把 workflow 推到首个 review，提交态会显示正在推进，而不是还沿用“只 launch workflow”的旧说法。
+- Fresh verification after this change is:
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `320 passed`
+  - `cd frontend && npm run test:run` -> `1 passed, 7 tests passed`
+  - `cd frontend && npm run lint` -> `exit 0`
+  - `cd frontend && npm run build` -> `built in 673ms`
+
 ### Current Watch-Outs
 
 - Latest commit also continued the append-only `memory-log.md` pattern. Before archival, this file had grown to about `2300` lines, `119 KB`, and `14.9k` words.

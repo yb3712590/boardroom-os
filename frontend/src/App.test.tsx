@@ -308,13 +308,42 @@ function installBoardroomMock(options?: {
     }
     if (method === 'POST' && url.endsWith('/api/v1/commands/project-init')) {
       state.dashboard = dashboardData({
+        pipeline_summary: {
+          phases: [
+            phase('Intake', 'COMPLETED', { completed: 1 }),
+            phase('Plan', 'PENDING'),
+            phase('Build', 'COMPLETED', { completed: 1 }),
+            phase('Check', 'PENDING'),
+            phase('Review', 'BLOCKED_FOR_BOARD', { blocked_for_board: 1 }),
+          ],
+          critical_path_node_ids: ['node_scope_decision'],
+          blocked_node_ids: ['node_scope_decision'],
+        },
         inbox_counts: {
-          approvals_pending: 0,
+          approvals_pending: 1,
           incidents_pending: 0,
           budget_alerts: 0,
           provider_alerts: 0,
         },
       })
+      state.inbox = inboxData([
+        {
+          inbox_item_id: 'inbox_apr_scope_001',
+          workflow_id: 'wf_001',
+          item_type: 'BOARD_APPROVAL',
+          priority: 'high',
+          status: 'OPEN',
+          created_at: '2026-04-01T23:12:00+08:00',
+          title: 'Review scope decision consensus',
+          summary: 'A consensus document is ready for board review.',
+          source_ref: 'apr_scope_001',
+          route_target: {
+            view: 'review_room',
+            review_pack_id: 'brp_001',
+          },
+          badges: ['meeting', 'board_gate', 'scope'],
+        },
+      ])
       return jsonResponse({
         command_id: 'cmd_project_init',
         idempotency_key: 'project-init:mock',
@@ -411,8 +440,49 @@ describe('Boardroom UI', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: /start local workflow/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /launch workflow/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /launch workflow to first review/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /launch to first review/i })).toBeInTheDocument()
+  })
+
+  it('launches project init and refreshes into the first review state', async () => {
+    const { fetchMock } = installBoardroomMock({
+      dashboard: dashboardData({
+        active_workflow: null,
+        ops_strip: {
+          ...dashboardData().ops_strip,
+          budget_total: 0,
+          budget_used: 0,
+          budget_remaining: 0,
+          active_tickets: 0,
+          blocked_nodes: 0,
+        },
+        pipeline_summary: {
+          phases: [
+            phase('Intake', 'PENDING'),
+            phase('Plan', 'PENDING'),
+            phase('Build', 'PENDING'),
+            phase('Check', 'PENDING'),
+            phase('Review', 'PENDING'),
+          ],
+          critical_path_node_ids: [],
+          blocked_node_ids: [],
+        },
+      }),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /launch to first review/i }))
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/commands/project-init',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    )
+    expect((await screen.findAllByText(/board gate armed/i)).length).toBeGreaterThan(0)
+    expect(screen.getByText(/review scope decision consensus/i)).toBeInTheDocument()
   })
 
   it('lights board gate and lists the inbox approval when board review is pending', async () => {

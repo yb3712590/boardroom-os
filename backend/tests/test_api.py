@@ -1668,6 +1668,76 @@ def test_project_init_defaults_tenant_and_workspace_in_workflow_projection(clien
     assert workflow["workspace_id"] == "ws_default"
 
 
+def test_project_init_auto_advances_to_scope_review(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+
+    response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    repository = client.app.state.repository
+    approvals = repository.list_open_approvals()
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert len(approvals) == 1
+    assert approvals[0]["workflow_id"] == workflow_id
+    assert approvals[0]["approval_type"] == "MEETING_ESCALATION"
+
+    review_room_response = client.get(f"/api/v1/projections/review-room/{approvals[0]['review_pack_id']}")
+    review_pack = review_room_response.json()["data"]["review_pack"]
+
+    assert review_room_response.status_code == 200
+    assert review_pack["meta"]["review_type"] == "MEETING_ESCALATION"
+    assert review_pack["subject"]["title"] == "Review scope decision consensus"
+    assert review_pack["maker_checker_summary"]["review_status"] == "APPROVED_WITH_NOTES"
+
+
+def test_duplicate_project_init_does_not_duplicate_first_scope_review(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+
+    first = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+    duplicate = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+
+    workflow_id = first.json()["causation_hint"].split(":", 1)[1]
+    repository = client.app.state.repository
+    approvals = [approval for approval in repository.list_open_approvals() if approval["workflow_id"] == workflow_id]
+    created_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["workflow_id"] == workflow_id and event["event_type"] == EVENT_TICKET_CREATED
+    ]
+
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "DUPLICATE"
+    assert duplicate.json()["causation_hint"] == f"workflow:{workflow_id}"
+    assert len(approvals) == 1
+    assert len(created_events) == 2
+
+
+def test_project_init_stops_auto_advance_when_no_worker_is_available(client, monkeypatch, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setattr(
+        client.app.state.repository,
+        "list_scheduler_worker_candidates",
+        lambda connection=None: [],
+    )
+
+    response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+    approvals = [approval for approval in repository.list_open_approvals() if approval["workflow_id"] == workflow_id]
+    incidents = [incident for incident in repository.list_open_incidents() if incident["workflow_id"] == workflow_id]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == "PENDING"
+    assert approvals == []
+    assert incidents == []
+
+
 def test_ticket_create_persists_explicit_tenant_and_workspace_and_matches_workflow(client):
     workflow_response = client.post(
         "/api/v1/commands/project-init",
@@ -1711,7 +1781,7 @@ def test_dashboard_returns_latest_active_workflow(client):
     assert isinstance(data["pipeline_summary"]["phases"], list)
 
 
-def test_dashboard_pipeline_summary_shows_intake_stage_for_initialized_workflow(client):
+def test_dashboard_pipeline_summary_shows_review_stage_after_project_init_auto_advance(client):
     client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A", budget_cap=500000))
 
     response = client.get("/api/v1/projections/dashboard")
@@ -1720,12 +1790,12 @@ def test_dashboard_pipeline_summary_shows_intake_stage_for_initialized_workflow(
     phases = response.json()["data"]["pipeline_summary"]["phases"]
     assert [phase["label"] for phase in phases] == ["Intake", "Plan", "Build", "Check", "Review"]
     intake_phase = phases[0]
-    assert intake_phase["status"] == "EXECUTING"
-    assert intake_phase["node_counts"]["executing"] == 1
+    assert intake_phase["status"] == "COMPLETED"
+    assert intake_phase["node_counts"]["completed"] == 1
     assert phases[1]["status"] == "PENDING"
-    assert phases[2]["status"] == "PENDING"
+    assert phases[2]["status"] == "COMPLETED"
     assert phases[3]["status"] == "PENDING"
-    assert phases[4]["status"] == "PENDING"
+    assert phases[4]["status"] == "BLOCKED_FOR_BOARD"
 
 
 def test_dashboard_pipeline_summary_shows_build_stage_for_executing_ticket(client):
@@ -1743,9 +1813,7 @@ def test_dashboard_pipeline_summary_shows_build_stage_for_executing_ticket(clien
 
 
 def test_dashboard_pipeline_summary_shows_review_stage_for_open_board_approval(client):
-    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
-    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
-    _seed_review_request(client, workflow_id=workflow_id)
+    client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
 
     response = client.get("/api/v1/projections/dashboard")
 
@@ -7498,7 +7566,11 @@ def test_employee_hire_request_opens_core_hire_approval_in_inbox_and_review_room
     inbox_response = client.get("/api/v1/projections/inbox")
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    items = inbox_response.json()["data"]["items"]
+    items = [
+        item
+        for item in inbox_response.json()["data"]["items"]
+        if item["item_type"] == "CORE_HIRE_APPROVAL"
+    ]
     assert len(items) == 1
     assert items[0]["item_type"] == "CORE_HIRE_APPROVAL"
     assert items[0]["route_target"]["view"] == "review_room"
@@ -7810,7 +7882,8 @@ def test_employee_freeze_containment_opens_staffing_incident_for_executing_ticke
     assert dashboard_response.json()["data"]["ops_strip"]["open_circuit_breakers"] == 1
     assert dashboard_response.json()["data"]["inbox_counts"]["incidents_pending"] == 1
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == [
-        "node_frozen_executing"
+        "node_frozen_executing",
+        "node_scope_decision",
     ]
     inbox_items = [
         item for item in inbox_response.json()["data"]["items"] if item["source_ref"] == open_incidents[0]["incident_id"]

@@ -64,10 +64,10 @@ function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) {
     <section className="project-init-panel" aria-labelledby="project-init-title">
       <div className="project-init-copy">
         <p className="eyebrow">Workflow Init</p>
-        <h1 id="project-init-title">Start local workflow</h1>
+        <h1 id="project-init-title">Launch workflow to first review</h1>
         <p>
-          The backend already owns workflow truth. This entry just opens the next local workflow and lets the
-          governance shell attach to it.
+          The backend still owns workflow truth. This entry now opens the next workflow, drafts the first scope
+          decision, and pushes it through to the first board review.
         </p>
       </div>
       <form
@@ -107,7 +107,7 @@ function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) {
           />
         </label>
         <button type="submit" className="primary-button" disabled={submitting || goal.trim().length === 0}>
-          {submitting ? 'Launching…' : 'Launch workflow'}
+          {submitting ? 'Advancing to first review…' : 'Launch to first review'}
         </button>
       </form>
     </section>

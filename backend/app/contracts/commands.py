@@ -120,6 +120,7 @@ class TicketCreateCommand(StrictModel):
     tenant_id: str | None = Field(default=None, min_length=1)
     workspace_id: str | None = Field(default=None, min_length=1)
     excluded_employee_ids: list[str] = Field(default_factory=list)
+    auto_review_request: TicketBoardReviewRequest | None = None
     escalation_policy: TicketEscalationPolicy
     idempotency_key: str = Field(min_length=1)
 

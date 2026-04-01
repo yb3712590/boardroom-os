@@ -10,6 +10,8 @@ from app.config import get_settings
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
+    DeveloperInspectorRefs,
+    TicketBoardReviewRequest,
     TicketResultStatus,
     TicketResultSubmitCommand,
     TicketWrittenArtifact,
@@ -20,6 +22,7 @@ from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     compile_and_persist_execution_artifacts,
 )
+from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.output_schemas import schema_id, validate_output_payload
 from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF
 from app.core.provider_openai_compat import (
@@ -80,6 +83,14 @@ def _build_start_idempotency_key(ticket: dict[str, Any]) -> str:
 
 def _build_result_submit_idempotency_key(ticket: dict[str, Any], result_status: str) -> str:
     return f"runtime-result-submit:{ticket['workflow_id']}:{ticket['ticket_id']}:{result_status}"
+
+
+def _build_runtime_developer_inspector_refs(ticket_id: str) -> DeveloperInspectorRefs:
+    return DeveloperInspectorRefs(
+        compiled_context_bundle_ref=f"ctx://compile/{ticket_id}",
+        compile_manifest_ref=f"manifest://compile/{ticket_id}",
+        rendered_execution_payload_ref=f"render://compile/{ticket_id}",
+    )
 
 
 def _resolve_ticket_provider_id(
@@ -261,6 +272,63 @@ def _build_runtime_checker_verdict_payload() -> dict[str, Any]:
             }
         ],
     }
+
+
+def _build_runtime_review_request(
+    *,
+    ticket: dict[str, Any],
+    execution_result: RuntimeExecutionResult,
+    created_spec: dict[str, Any] | None,
+) -> TicketBoardReviewRequest | None:
+    if execution_result.result_status != "completed" or created_spec is None:
+        return None
+
+    template_payload = created_spec.get("auto_review_request")
+    if not isinstance(template_payload, dict):
+        return None
+
+    review_request = TicketBoardReviewRequest.model_validate(template_payload)
+    artifact_refs = list(execution_result.artifact_refs)
+    result_payload = execution_result.result_payload if isinstance(execution_result.result_payload, dict) else {}
+    review_summary = str(
+        result_payload.get("consensus_summary")
+        or result_payload.get("summary")
+        or execution_result.completion_summary
+        or review_request.recommendation_summary
+    )
+
+    updated_options = []
+    for index, option in enumerate(review_request.options):
+        updated_options.append(
+            option.model_copy(
+                update={
+                    "artifact_refs": artifact_refs if index == 0 and artifact_refs else list(option.artifact_refs),
+                    "summary": review_summary if index == 0 and review_summary else option.summary,
+                }
+            )
+        )
+
+    updated_evidence = []
+    for index, evidence in enumerate(review_request.evidence_summary):
+        updated_evidence.append(
+            evidence.model_copy(
+                update={
+                    "source_ref": artifact_refs[0] if index == 0 and artifact_refs else evidence.source_ref,
+                    "summary": review_summary if index == 0 and review_summary else evidence.summary,
+                }
+            )
+        )
+
+    return review_request.model_copy(
+        update={
+            "options": updated_options,
+            "evidence_summary": updated_evidence,
+            "recommendation_summary": review_summary,
+            "inbox_summary": execution_result.completion_summary or review_request.inbox_summary,
+            "developer_inspector_refs": review_request.developer_inspector_refs
+            or _build_runtime_developer_inspector_refs(str(ticket["ticket_id"])),
+        }
+    )
 
 
 def _schema_version_for_execution_package(execution_package: CompiledExecutionPackage) -> str:
@@ -498,6 +566,7 @@ def _build_runtime_result_submit_command(
     submitted_by: str,
     execution_package: CompiledExecutionPackage | None,
     execution_result: RuntimeExecutionResult,
+    created_spec: dict[str, Any] | None,
 ) -> TicketResultSubmitCommand:
     schema_version = (
         _schema_version_for_execution_package(execution_package)
@@ -539,7 +608,11 @@ def _build_runtime_result_submit_command(
         summary=execution_result.completion_summary
         or execution_result.failure_message
         or "Runtime submitted a structured result.",
-        review_request=None,
+        review_request=_build_runtime_review_request(
+            ticket=ticket,
+            execution_result=execution_result,
+            created_spec=created_spec,
+        ),
         failure_kind=execution_result.failure_kind,
         failure_message=execution_result.failure_message,
         failure_detail=execution_result.failure_detail,
@@ -551,6 +624,7 @@ def run_leased_ticket_runtime(
     repository: ControlPlaneRepository,
 ) -> list[RuntimeExecutionOutcome]:
     outcomes: list[RuntimeExecutionOutcome] = []
+    developer_inspector_store = DeveloperInspectorStore(get_settings().developer_inspector_root)
 
     for ticket in _list_runtime_startable_leased_tickets(repository):
         if _is_provider_paused_for_ticket(repository, ticket):
@@ -581,6 +655,8 @@ def run_leased_ticket_runtime(
         try:
             compiled_artifacts = _build_compiled_execution_artifacts(repository, ticket)
             execution_package = compiled_artifacts.compiled_execution_package
+            with repository.connection() as connection:
+                created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             execution_result = _execute_runtime_with_provider_if_configured(
                 repository,
                 ticket,
@@ -602,7 +678,9 @@ def run_leased_ticket_runtime(
                             "compiler_version": MINIMAL_CONTEXT_COMPILER_VERSION,
                         },
                     ),
+                    created_spec=None,
                 ),
+                developer_inspector_store,
             )
             outcomes.append(
                 RuntimeExecutionOutcome(
@@ -621,7 +699,9 @@ def run_leased_ticket_runtime(
                 submitted_by=lease_owner,
                 execution_package=execution_package,
                 execution_result=execution_result,
+                created_spec=created_spec,
             ),
+            developer_inspector_store,
         )
 
         outcomes.append(
