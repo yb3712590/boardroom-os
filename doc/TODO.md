@@ -33,11 +33,12 @@
   - `project-init` 现在会先生成 board brief artifact，再自动创建首张 `consensus_document@1` 范围票，并在同一条后端链上同步跑完 `maker -> checker -> Inbox -> Review Room`
   - 如果本地没有 eligible worker，或途中出现 incident，这条入口会停在真实 pending / incident 状态，不会伪造首个 review 已经完成
 - 已完成直接推进主线：把首个 scope review 的通过结果继续接成后续执行票
-  - `board-approve` 现在会从已批准的 `consensus_document` artifact 读取第一张 follow-up，原子创建真实执行票，并继续同步推进到下一个治理停点
-  - 当前先只收口单主链：只消费第一张 follow-up，支持 `frontend_engineer -> ui_designer_primary` 这条映射；如果 artifact 缺失、不是合法 JSON、owner role 不支持或 follow-up `ticket_id` 冲突，审批会 fail-closed，保持 review 继续待决
-- 直接推进主线：继续把 scope review 通过后的剩余 follow-up 收口成真实票，而不只消费第一张
-  - 当前 `consensus_document.followup_tickets` 里其余项仍停留在文档里，没有进入事件流和投影
-  - 当前下游票型也先收口到现有可运行的视觉里程碑链，更多 build / check 票型还没补上
+  - `board-approve` 现在会从已批准的 `consensus_document` artifact 读取全部“当前支持范围内”的 follow-up，先整组校验，再原子创建真实执行票，并继续同步推进到下一个治理停点
+  - 当前这段续跑仍保持主线收口：只支持 `frontend_engineer -> ui_designer_primary` 这条映射；如果 artifact 缺失、不是合法 JSON、任一 follow-up 的 `owner_role` 不支持、payload 内 `ticket_id` 重复或与现有投影冲突，审批会 fail-closed，保持 review 继续待决
+  - 多张 follow-up 现在也会按 ticket 隔离写入范围，避免兄弟票共用 `artifacts/ui/homepage/*` 和 `reports/review/*` 造成互相覆盖
+- 直接推进主线：继续把已批准 scope 的 follow-up 从“都能落成真实视觉票”推进到“有更丰富的下游票型”
+  - 当前下游票型仍先收口到现有可运行的视觉里程碑链；更多 build / check 票型还没补上
+  - 当前 runtime 默认会生成两张受支持的视觉 follow-up，scope approval auto-advance 会每步只派一张，撞到第一个真实 review 停点就停，剩余兄弟票保留待执行
 
 ## P1：套上最薄 Web 壳
 

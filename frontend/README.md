@@ -15,7 +15,7 @@
 
 - 前端只是最薄治理壳，不复刻后端工作流引擎
 - `events/stream` 只做刷新提示，不作为浏览器里的第二真相源
-- `project-init` 现在会同步尝试推进到首个 scope review；如果没有 eligible worker，或途中出现 incident，前端只展示后端停下来的真实状态
+- `project-init` 现在会同步尝试推进到首个 scope review；scope review 被批准后，后端会继续把当前支持范围内的 follow-up 真正落票并推进到下一个治理停点；如果没有 eligible worker，或途中出现 incident，前端只展示后端停下来的真实状态
 - 本轮没有做 provider/model 设置页、incident 详情页、workforce 深入视图和 dependency inspector
 
 ## 本地运行

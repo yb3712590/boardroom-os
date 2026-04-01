@@ -3,7 +3,6 @@
 import json
 from typing import Any
 
-from app.config import get_settings
 from app.contracts.commands import (
     BoardApproveCommand,
     BoardRejectCommand,
@@ -298,6 +297,13 @@ def _build_scope_followup_review_request(summary: str) -> dict[str, Any]:
     }
 
 
+def _build_scope_followup_allowed_write_set(ticket_id: str) -> list[str]:
+    return [
+        f"artifacts/ui/scope-followups/{ticket_id}/*",
+        f"reports/review/{ticket_id}/*",
+    ]
+
+
 def _load_scope_consensus_payload(
     repository: ControlPlaneRepository,
     connection,
@@ -343,17 +349,17 @@ def _load_scope_consensus_payload(
     return artifact_ref, payload
 
 
-def _build_scope_followup_ticket_payload(
+def _build_scope_followup_ticket_payloads(
     repository: ControlPlaneRepository,
     connection,
     *,
     approval: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
     review_pack = approval["payload"].get("review_pack") or {}
     subject = review_pack.get("subject") or {}
     source_ticket_id = str(subject.get("source_ticket_id") or "").strip()
     if not source_ticket_id:
-        return None
+        return []
 
     created_spec = repository.get_latest_ticket_created_payload(connection, source_ticket_id)
     if created_spec is None:
@@ -370,28 +376,13 @@ def _build_scope_followup_ticket_payload(
         created_spec = maker_created_spec
         source_ticket_id = maker_ticket_id
     if str(created_spec.get("output_schema_ref") or "") != CONSENSUS_DOCUMENT_SCHEMA_REF:
-        return None
+        return []
 
     consensus_artifact_ref, consensus_payload = _load_scope_consensus_payload(
         repository,
         connection,
         approval=approval,
     )
-    followup = dict((consensus_payload.get("followup_tickets") or [])[0])
-    followup_ticket_id = str(followup.get("ticket_id") or "").strip()
-    owner_role = str(followup.get("owner_role") or "").strip()
-    followup_summary = str(followup.get("summary") or "").strip()
-
-    role_profile_ref = FOLLOWUP_OWNER_ROLE_TO_PROFILE.get(owner_role)
-    if role_profile_ref is None:
-        raise ValueError(f"Unsupported approved follow-up owner_role '{owner_role}'.")
-    if repository.get_current_ticket_projection(followup_ticket_id, connection=connection) is not None:
-        raise ValueError(f"Follow-up ticket {followup_ticket_id} already exists in projection state.")
-
-    node_id = f"node_followup_{followup_ticket_id.removeprefix('tkt_')}"
-    if repository.get_current_node_projection(approval["workflow_id"], node_id, connection=connection) is not None:
-        raise ValueError(f"Follow-up node {node_id} already exists in projection state.")
-
     workflow = repository.get_workflow_projection(approval["workflow_id"], connection=connection)
     tenant_id = (
         str(workflow.get("tenant_id") or DEFAULT_TENANT_ID)
@@ -406,46 +397,78 @@ def _build_scope_followup_ticket_payload(
     input_artifact_refs = _dedupe_artifact_refs(
         [consensus_artifact_ref] + list(created_spec.get("input_artifact_refs") or [])
     )
-    ticket_command = TicketCreateCommand(
-        ticket_id=followup_ticket_id,
-        workflow_id=approval["workflow_id"],
-        node_id=node_id,
-        parent_ticket_id=source_ticket_id,
-        attempt_no=1,
-        role_profile_ref=role_profile_ref,
-        constraints_ref="approved_scope_followup_visual",
-        input_artifact_refs=input_artifact_refs,
-        context_query_plan={
-            "keywords": ["approved scope", "visual", "implementation"],
-            "semantic_queries": [followup_summary],
-            "max_context_tokens": 3000,
-        },
-        acceptance_criteria=[
-            "Must implement the approved scope follow-up summary.",
-            "Must stay inside the locked scope from the approved consensus document.",
-            "Must produce a visual milestone review package.",
-        ],
-        output_schema_ref="ui_milestone_review",
-        output_schema_version=1,
-        allowed_tools=["read_artifact", "write_artifact", "image_gen"],
-        allowed_write_set=["artifacts/ui/homepage/*", "reports/review/*"],
-        retry_budget=1,
-        priority="high",
-        timeout_sla_sec=1800,
-        deadline_at=created_spec.get("deadline_at"),
-        tenant_id=tenant_id,
-        workspace_id=workspace_id,
-        auto_review_request=_build_scope_followup_review_request(followup_summary),
-        escalation_policy={
-            "on_timeout": "retry",
-            "on_schema_error": "retry",
-            "on_repeat_failure": "escalate_ceo",
-        },
-        idempotency_key=(
-            f"board-approved-scope-followup:{approval['approval_id']}:{followup_ticket_id}"
-        ),
-    )
-    return ticket_command.model_dump(mode="json")
+    followup_items = list(consensus_payload.get("followup_tickets") or [])
+    seen_ticket_ids: set[str] = set()
+    seen_node_ids: set[str] = set()
+    ticket_payloads: list[dict[str, Any]] = []
+
+    for raw_followup in followup_items:
+        followup = dict(raw_followup)
+        followup_ticket_id = str(followup.get("ticket_id") or "").strip()
+        owner_role = str(followup.get("owner_role") or "").strip()
+        followup_summary = str(followup.get("summary") or "").strip()
+
+        if followup_ticket_id in seen_ticket_ids:
+            raise ValueError(
+                f"Approved consensus contains duplicate follow-up ticket_id '{followup_ticket_id}'."
+            )
+        seen_ticket_ids.add(followup_ticket_id)
+
+        role_profile_ref = FOLLOWUP_OWNER_ROLE_TO_PROFILE.get(owner_role)
+        if role_profile_ref is None:
+            raise ValueError(f"Unsupported approved follow-up owner_role '{owner_role}'.")
+        if repository.get_current_ticket_projection(followup_ticket_id, connection=connection) is not None:
+            raise ValueError(f"Follow-up ticket {followup_ticket_id} already exists in projection state.")
+
+        node_id = f"node_followup_{followup_ticket_id.removeprefix('tkt_')}"
+        if node_id in seen_node_ids:
+            raise ValueError(f"Approved consensus contains duplicate follow-up node_id '{node_id}'.")
+        seen_node_ids.add(node_id)
+        if repository.get_current_node_projection(approval["workflow_id"], node_id, connection=connection) is not None:
+            raise ValueError(f"Follow-up node {node_id} already exists in projection state.")
+
+        ticket_command = TicketCreateCommand(
+            ticket_id=followup_ticket_id,
+            workflow_id=approval["workflow_id"],
+            node_id=node_id,
+            parent_ticket_id=source_ticket_id,
+            attempt_no=1,
+            role_profile_ref=role_profile_ref,
+            constraints_ref="approved_scope_followup_visual",
+            input_artifact_refs=input_artifact_refs,
+            context_query_plan={
+                "keywords": ["approved scope", "visual", "implementation"],
+                "semantic_queries": [followup_summary],
+                "max_context_tokens": 3000,
+            },
+            acceptance_criteria=[
+                f"Must implement this approved scope follow-up: {followup_summary}",
+                "Must stay inside the locked scope from the approved consensus document.",
+                "Must produce a visual milestone review package.",
+            ],
+            output_schema_ref="ui_milestone_review",
+            output_schema_version=1,
+            allowed_tools=["read_artifact", "write_artifact", "image_gen"],
+            allowed_write_set=_build_scope_followup_allowed_write_set(followup_ticket_id),
+            retry_budget=1,
+            priority="high",
+            timeout_sla_sec=1800,
+            deadline_at=created_spec.get("deadline_at"),
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            auto_review_request=_build_scope_followup_review_request(followup_summary),
+            escalation_policy={
+                "on_timeout": "retry",
+                "on_schema_error": "retry",
+                "on_repeat_failure": "escalate_ceo",
+            },
+            idempotency_key=(
+                f"board-approved-scope-followup:{approval['approval_id']}:{followup_ticket_id}"
+            ),
+        )
+        ticket_payloads.append(ticket_command.model_dump(mode="json"))
+
+    return ticket_payloads
 
 
 def _insert_scope_followup_ticket_created_event(
@@ -481,7 +504,6 @@ def _auto_advance_scope_followup_to_next_stop(
     workflow_id: str,
     idempotency_key: str,
 ) -> None:
-    settings = get_settings()
     for step_index in range(SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS):
         if _workflow_has_open_approval(repository, workflow_id) or _workflow_has_open_incident(
             repository,
@@ -493,7 +515,7 @@ def _auto_advance_scope_followup_to_next_stop(
         run_scheduler_tick(
             repository,
             idempotency_key=f"{idempotency_key}:scope-followup-auto-advance:{step_index}:scheduler",
-            max_dispatches=settings.scheduler_max_dispatches,
+            max_dispatches=1,
         )
         run_leased_ticket_runtime(repository)
         _, version_after = repository.get_cursor_and_version()
@@ -513,7 +535,7 @@ def handle_board_approve(
 ) -> CommandAckEnvelope:
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
-    created_followup_ticket_id: str | None = None
+    created_followup_ticket_ids: list[str] = []
     with repository.transaction() as connection:
         existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
         if existing_event is not None:
@@ -552,7 +574,7 @@ def handle_board_approve(
 
         subject = approval["payload"].get("review_pack", {}).get("subject", {})
         try:
-            followup_ticket_payload = _build_scope_followup_ticket_payload(
+            followup_ticket_payloads = _build_scope_followup_ticket_payloads(
                 repository,
                 connection,
                 approval=approval,
@@ -616,19 +638,21 @@ def handle_board_approve(
                 "board_comment": payload.board_comment,
             },
         )
-        if followup_ticket_payload is not None:
-            created_followup_ticket_id = _insert_scope_followup_ticket_created_event(
-                repository,
-                connection,
-                command_id=command_id,
-                occurred_at=received_at,
-                workflow_id=approval["workflow_id"],
-                idempotency_key=f"{payload.idempotency_key}:scope-followup-create",
-                ticket_payload=followup_ticket_payload,
+        for index, followup_ticket_payload in enumerate(followup_ticket_payloads):
+            created_followup_ticket_ids.append(
+                _insert_scope_followup_ticket_created_event(
+                    repository,
+                    connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=approval["workflow_id"],
+                    idempotency_key=f"{payload.idempotency_key}:scope-followup-create:{index}",
+                    ticket_payload=followup_ticket_payload,
+                )
             )
         repository.refresh_projections(connection)
 
-    if created_followup_ticket_id is not None:
+    if created_followup_ticket_ids:
         _auto_advance_scope_followup_to_next_stop(
             repository,
             workflow_id=approval["workflow_id"],
@@ -645,8 +669,8 @@ def handle_board_approve(
             f"employee:{employee_causation_hint}"
             if employee_causation_hint is not None
             else (
-                f"ticket:{created_followup_ticket_id}"
-                if created_followup_ticket_id is not None
+                f"ticket:{created_followup_ticket_ids[0]}"
+                if created_followup_ticket_ids
                 else f"approval:{payload.approval_id}"
             )
         ),

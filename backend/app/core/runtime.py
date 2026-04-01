@@ -212,8 +212,9 @@ def _build_runtime_success_payload(
 ) -> dict[str, Any]:
     if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
         owner_role = execution_package.compiled_role.employee_role_type
+        ticket_id = execution_package.meta.ticket_id
         return {
-            "topic": f"Consensus for ticket {execution_package.meta.ticket_id}",
+            "topic": f"Consensus for ticket {ticket_id}",
             "participants": [execution_package.compiled_role.role_profile_ref, "checker_primary"],
             "input_artifact_refs": [
                 block.source_ref
@@ -225,9 +226,14 @@ def _build_runtime_success_payload(
             "open_questions": ["Whether non-critical polish should move after board approval."],
             "followup_tickets": [
                 {
-                    "ticket_id": f"{execution_package.meta.ticket_id}_followup",
+                    "ticket_id": f"{ticket_id}_followup_foundation",
                     "owner_role": owner_role,
-                    "summary": "Implement the agreed consensus without widening scope.",
+                    "summary": "Build the approved homepage foundation without widening scope.",
+                },
+                {
+                    "ticket_id": f"{ticket_id}_followup_polish",
+                    "owner_role": owner_role,
+                    "summary": "Polish the approved homepage details without widening scope.",
                 }
             ],
         }

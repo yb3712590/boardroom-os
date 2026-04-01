@@ -939,6 +939,7 @@ def _consensus_document_payload(
     *,
     topic: str = "Boardroom OS scope convergence",
     followup_ticket_id: str = "tkt_followup_scope_lock",
+    followup_tickets: list[dict] | None = None,
 ) -> dict:
     return {
         "topic": topic,
@@ -947,7 +948,8 @@ def _consensus_document_payload(
         "consensus_summary": "Team aligned on the smallest scope that still unblocks board review.",
         "rejected_options": ["Expand to remote handoff this round"],
         "open_questions": ["Whether analytics polish should move after MVP"],
-        "followup_tickets": [
+        "followup_tickets": followup_tickets
+        or [
             {
                 "ticket_id": followup_ticket_id,
                 "owner_role": "frontend_engineer",
@@ -1794,6 +1796,148 @@ def test_board_approve_scope_review_creates_pending_followup_when_no_eligible_wo
     assert followup_ticket is not None
     assert followup_ticket["status"] == TICKET_STATUS_PENDING
     assert open_approvals == []
+
+
+def test_board_approve_scope_review_creates_all_supported_followups_and_isolates_write_sets(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = _scope_followup_payload(client, approval)
+    payload["followup_tickets"] = [
+        {
+            "ticket_id": "tkt_followup_scope_foundation",
+            "owner_role": "frontend_engineer",
+            "summary": "Build the approved homepage foundation under the locked scope.",
+        },
+        {
+            "ticket_id": "tkt_followup_scope_polish",
+            "owner_role": "frontend_engineer",
+            "summary": "Polish the approved homepage details without widening the scope.",
+        },
+    ]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="all-followups")
+
+    repository = client.app.state.repository
+    first_ticket = repository.get_current_ticket_projection("tkt_followup_scope_foundation")
+    second_ticket = repository.get_current_ticket_projection("tkt_followup_scope_polish")
+    current_scope_approval = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    open_approvals = repository.list_open_approvals()
+    with repository.connection() as connection:
+        first_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            "tkt_followup_scope_foundation",
+        )
+        second_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            "tkt_followup_scope_polish",
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert current_scope_approval["status"] == APPROVAL_STATUS_APPROVED
+    assert first_ticket is not None
+    assert second_ticket is not None
+    assert first_created_spec is not None
+    assert second_created_spec is not None
+    assert first_created_spec["workflow_id"] == workflow_id
+    assert second_created_spec["workflow_id"] == workflow_id
+    assert first_created_spec["allowed_write_set"] == [
+        "artifacts/ui/scope-followups/tkt_followup_scope_foundation/*",
+        "reports/review/tkt_followup_scope_foundation/*",
+    ]
+    assert second_created_spec["allowed_write_set"] == [
+        "artifacts/ui/scope-followups/tkt_followup_scope_polish/*",
+        "reports/review/tkt_followup_scope_polish/*",
+    ]
+    assert first_created_spec["acceptance_criteria"][0].endswith(
+        "Build the approved homepage foundation under the locked scope."
+    )
+    assert second_created_spec["acceptance_criteria"][0].endswith(
+        "Polish the approved homepage details without widening the scope."
+    )
+    assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
+    assert first_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert second_ticket["status"] == TICKET_STATUS_PENDING
+
+
+def test_board_approve_scope_review_rejects_when_any_followup_owner_role_is_unsupported(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = _scope_followup_payload(client, approval)
+    payload["followup_tickets"] = [
+        {
+            "ticket_id": "tkt_followup_scope_valid",
+            "owner_role": "frontend_engineer",
+            "summary": "Implement the approved scope without expanding governance.",
+        },
+        {
+            "ticket_id": "tkt_followup_scope_invalid",
+            "owner_role": "backend_engineer",
+            "summary": "This follow-up should be rejected for the current MVP lane.",
+        },
+    ]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="mixed-role")
+
+    repository = client.app.state.repository
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "owner_role" in response.json()["reason"]
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert repository.get_current_ticket_projection("tkt_followup_scope_valid") is None
+    assert repository.get_current_ticket_projection("tkt_followup_scope_invalid") is None
+
+
+def test_board_approve_scope_review_rejects_when_followup_ticket_ids_repeat_within_payload(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = _scope_followup_payload(client, approval)
+    payload["followup_tickets"] = [
+        {
+            "ticket_id": "tkt_followup_scope_duplicate",
+            "owner_role": "frontend_engineer",
+            "summary": "First follow-up uses the duplicate ticket id.",
+        },
+        {
+            "ticket_id": "tkt_followup_scope_duplicate",
+            "owner_role": "frontend_engineer",
+            "summary": "Second follow-up repeats the same ticket id.",
+        },
+    ]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="duplicate-inside-payload")
+
+    repository = client.app.state.repository
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "duplicate" in response.json()["reason"].lower()
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert repository.get_current_ticket_projection("tkt_followup_scope_duplicate") is None
 
 
 def test_duplicate_project_init_does_not_duplicate_first_scope_review(client, set_ticket_time):

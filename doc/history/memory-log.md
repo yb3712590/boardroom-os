@@ -267,6 +267,14 @@
   - `cd frontend && npm run test:run` -> `1 passed, 7 tests passed`
   - `cd frontend && npm run lint` -> `exit 0`
   - `cd frontend && npm run build` -> `built in 673ms`
+- 把 scope review 通过后的剩余 follow-up 也收进了真实事件流：`board-approve` 现在会读取已批准 `consensus_document` 里全部“当前支持范围内”的 follow-up，先整组校验，再原子创建真实执行票，而不是只消费第一张。
+- 这条续跑仍然保持 fail-closed 和主线收口：当前只支持 `frontend_engineer -> ui_designer_primary`；如果任一 follow-up 的 artifact、JSON、`owner_role`、重复 `ticket_id` 或现有投影冲突不合法，整次 `board-approve` 都会被拒绝，review 继续保持待决。
+- 多张同级 follow-up 现在会按 ticket 隔离写入范围，分别写到各自的 `artifacts/ui/scope-followups/<ticket_id>/` 和 `reports/review/<ticket_id>/` 下，避免兄弟票互相覆盖。
+- deterministic runtime 生成的默认 `consensus_document` 现在会直接带两张受支持的视觉 follow-up；scope approval 的同步 auto-advance 也收紧成“每步只派一张票”，因此默认本地路径会在第一张真实 visual review 打开时停下，剩余兄弟票保持 `PENDING`，不再把 scope 通过后的后续工作继续留在文档里。
+- Fresh verification after this change is:
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py -k "scope_review or followup" -q` -> `11 passed, 205 deselected`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_scheduler_runner.py -k "consensus_document or followup" -q` -> `3 passed, 22 deselected`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `330 passed`
 
 ### Current Watch-Outs
 

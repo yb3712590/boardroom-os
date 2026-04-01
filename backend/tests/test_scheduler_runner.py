@@ -1027,6 +1027,51 @@ def test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime
     assert artifact_response.json()["data"]["artifacts"][0]["path"] == "reports/meeting/consensus-document.json"
 
 
+def test_scheduler_runner_auto_advances_multiple_scope_followups_to_next_visual_stop(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, goal="Scope follow-up fanout")
+    repository = client.app.state.repository
+    approval = repository.list_open_approvals()[0]
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact = repository.get_artifact_by_ref(consensus_artifact_ref)
+
+    assert artifact is not None
+    assert artifact["storage_relpath"] is not None
+
+    artifact_path = client.app.state.artifact_store.root / artifact["storage_relpath"]
+    consensus_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    followup_ticket_ids = [item["ticket_id"] for item in consensus_payload["followup_tickets"]]
+
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": approval["payload"]["review_pack"]["options"][0]["option_id"],
+            "board_comment": "Approve the locked scope and continue.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:multi-followup",
+        },
+    )
+
+    followup_tickets = [
+        repository.get_current_ticket_projection(ticket_id) for ticket_id in followup_ticket_ids
+    ]
+    open_approvals = repository.list_open_approvals()
+
+    assert len(consensus_payload["followup_tickets"]) == 2
+    assert len(set(followup_ticket_ids)) == 2
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+    assert all(ticket is not None for ticket in followup_tickets)
+    assert any(ticket["status"] == "COMPLETED" for ticket in followup_tickets if ticket is not None)
+    assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
+
+
 def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
