@@ -7,6 +7,7 @@ from typing import Literal
 
 
 RuntimeExecutionMode = Literal["INPROCESS", "EXTERNAL"]
+ProviderOpenAICompatReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class Settings:
     provider_openai_compat_api_key: str | None
     provider_openai_compat_model: str | None
     provider_openai_compat_timeout_sec: float
+    provider_openai_compat_reasoning_effort: ProviderOpenAICompatReasoningEffort | None
     worker_bootstrap_signing_secret: str | None
     worker_admin_signing_secret: str | None
     worker_shared_secret: str | None
@@ -115,6 +117,18 @@ def get_settings() -> Settings:
     provider_openai_compat_model = os.environ.get("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL")
     if provider_openai_compat_model is not None:
         provider_openai_compat_model = provider_openai_compat_model.strip() or None
+    provider_openai_compat_reasoning_effort = os.environ.get(
+        "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT"
+    )
+    if provider_openai_compat_reasoning_effort is not None:
+        provider_openai_compat_reasoning_effort = (
+            provider_openai_compat_reasoning_effort.strip().lower() or None
+        )
+    if provider_openai_compat_reasoning_effort not in {None, "low", "medium", "high", "xhigh"}:
+        raise ValueError(
+            "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT must be one of: "
+            "low, medium, high, xhigh."
+        )
     provider_openai_compat_timeout_sec = float(
         os.environ.get("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC", "30")
     )
@@ -246,6 +260,7 @@ def get_settings() -> Settings:
         provider_openai_compat_api_key=provider_openai_compat_api_key,
         provider_openai_compat_model=provider_openai_compat_model,
         provider_openai_compat_timeout_sec=provider_openai_compat_timeout_sec,
+        provider_openai_compat_reasoning_effort=provider_openai_compat_reasoning_effort,
         worker_bootstrap_signing_secret=worker_bootstrap_signing_secret,
         worker_admin_signing_secret=worker_admin_signing_secret,
         worker_shared_secret=worker_shared_secret,

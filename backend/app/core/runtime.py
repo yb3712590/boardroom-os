@@ -270,6 +270,7 @@ def _build_openai_compat_provider_config() -> OpenAICompatProviderConfig:
         api_key=str(settings.provider_openai_compat_api_key or ""),
         model=str(settings.provider_openai_compat_model or ""),
         timeout_sec=float(settings.provider_openai_compat_timeout_sec),
+        reasoning_effort=settings.provider_openai_compat_reasoning_effort,
     )
 
 

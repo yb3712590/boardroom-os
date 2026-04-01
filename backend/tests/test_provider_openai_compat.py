@@ -70,6 +70,46 @@ def _config() -> OpenAICompatProviderConfig:
     )
 
 
+def test_invoke_openai_compat_response_includes_reasoning_effort_when_configured() -> None:
+    config = OpenAICompatProviderConfig(
+        base_url="https://api-vip.codex-for.me/v1",
+        api_key="test-key",
+        model="gpt-5.3-codex",
+        timeout_sec=30.0,
+        reasoning_effort="xhigh",
+    )
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        assert body["reasoning"] == {"effort": "xhigh"}
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_reasoning",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": '{"summary":"Provider completed.","recommended_option_id":"option_a","options":[]}',
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    result = invoke_openai_compat_response(
+        config,
+        _rendered_payload(),
+        transport=httpx.MockTransport(_handler),
+    )
+
+    assert result.response_id == "resp_reasoning"
+
+
 def test_invoke_openai_compat_response_returns_text_from_responses_message_payload() -> None:
     def _handler(request: httpx.Request) -> httpx.Response:
         assert request.url == httpx.URL("https://api-vip.codex-for.me/v1/responses")

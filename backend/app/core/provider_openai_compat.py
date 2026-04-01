@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 
 from app.contracts.runtime import RenderedExecutionPayload
+
+
+ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 
 
 @dataclass(frozen=True)
@@ -14,6 +18,7 @@ class OpenAICompatProviderConfig:
     api_key: str
     model: str
     timeout_sec: float
+    reasoning_effort: ReasoningEffort | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +140,11 @@ def invoke_openai_compat_response(
                 json={
                     "model": config.model,
                     "input": _build_responses_input(rendered_payload),
+                    **(
+                        {"reasoning": {"effort": config.reasoning_effort}}
+                        if config.reasoning_effort is not None
+                        else {}
+                    ),
                 },
             )
     except httpx.TimeoutException as exc:

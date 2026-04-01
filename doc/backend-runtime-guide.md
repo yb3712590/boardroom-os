@@ -93,6 +93,7 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 
 - 只在 `provider_id == prov_openai_compat` 且 `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL / API_KEY / MODEL` 三个配置都存在时启用
 - `base_url` 可以直接带 `/v1`，运行时会调用 `POST {base_url}/responses`
+- 如果配置了 `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT`，运行时会把它透传成 `reasoning.effort`；当前支持 `low / medium / high / xhigh`
 - 请求输入直接来自编译后的 `rendered_execution_payload.messages`；后端不会依赖 provider 端 JSON schema 强约束，而是拿回文本后在本地做 JSON 解析和现有 output schema 校验
 - 当前只把这条真实 provider 路径收口到 `ui_milestone_review` 和 `maker_checker_verdict` 两条主链 schema
 - 失败映射固定为：`429 -> PROVIDER_RATE_LIMITED`、超时 / 连接失败 / `5xx -> UPSTREAM_UNAVAILABLE`、`401/403 -> PROVIDER_AUTH_FAILED`、其他 `4xx` / 空响应 / 非 JSON / 结构不匹配 -> `PROVIDER_BAD_RESPONSE`
@@ -404,6 +405,8 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
   `prov_openai_compat` 路径使用的 bearer token
 - `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL`
   `prov_openai_compat` 路径请求里带出的模型名
+- `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT`
+  可选；透传到 `responses` 请求体里的 `reasoning.effort`，支持 `low / medium / high / xhigh`
 - `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC`
   真实 provider 调用超时时间，默认 `30` 秒；必须大于 `0`
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET`
