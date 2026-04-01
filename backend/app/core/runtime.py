@@ -154,6 +154,7 @@ def _resolve_runtime_write_path(allowed_write_pattern: str, filename: str) -> st
 
 def _build_runtime_default_artifacts(
     execution_package: CompiledExecutionPackage,
+    result_payload: dict[str, Any],
 ) -> tuple[list[str], list[dict[str, Any]]]:
     ticket_id = execution_package.meta.ticket_id
     if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
@@ -168,10 +169,7 @@ def _build_runtime_default_artifacts(
                 "artifact_ref": artifact_ref,
                 "kind": "JSON",
                 "retention_class": "REVIEW_EVIDENCE",
-                "content_json": {
-                    "document_kind": "consensus_document",
-                    "headline": "Primary runtime-generated consensus document.",
-                },
+                "content_json": result_payload,
             }
         ]
 
@@ -213,6 +211,7 @@ def _build_runtime_success_payload(
     artifact_refs: list[str],
 ) -> dict[str, Any]:
     if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
+        owner_role = execution_package.compiled_role.employee_role_type
         return {
             "topic": f"Consensus for ticket {execution_package.meta.ticket_id}",
             "participants": [execution_package.compiled_role.role_profile_ref, "checker_primary"],
@@ -227,7 +226,7 @@ def _build_runtime_success_payload(
             "followup_tickets": [
                 {
                     "ticket_id": f"{execution_package.meta.ticket_id}_followup",
-                    "owner_role": execution_package.compiled_role.role_profile_ref,
+                    "owner_role": owner_role,
                     "summary": "Implement the agreed consensus without widening scope.",
                 }
             ],
@@ -541,7 +540,15 @@ def _execute_compiled_execution_package(
             confidence=0.7,
         )
 
-    artifact_refs, written_artifacts = _build_runtime_default_artifacts(execution_package)
+    if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
+        result_payload = _build_runtime_success_payload(execution_package, [])
+        artifact_refs, written_artifacts = _build_runtime_default_artifacts(
+            execution_package,
+            result_payload,
+        )
+    else:
+        artifact_refs, written_artifacts = _build_runtime_default_artifacts(execution_package, {})
+        result_payload = _build_runtime_success_payload(execution_package, artifact_refs)
     return RuntimeExecutionResult(
         result_status="completed",
         completion_summary=(
@@ -549,7 +556,7 @@ def _execute_compiled_execution_package(
             f"{execution_package.meta.compiler_version}."
         ),
         artifact_refs=artifact_refs,
-        result_payload=_build_runtime_success_payload(execution_package, artifact_refs),
+        result_payload=result_payload,
         written_artifacts=written_artifacts,
         assumptions=[
             f"compiler_version={execution_package.meta.compiler_version}",

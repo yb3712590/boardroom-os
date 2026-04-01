@@ -254,8 +254,16 @@
 - runtime 现在能从票规格里的 `auto_review_request` 模板自动生成真实 review 请求，把真实 artifact refs、运行摘要和 developer inspector refs 带进治理链，而不是继续依赖测试里手写的 review payload。
 - 为了让首张范围票真的能执行，这轮还补了最小 board brief artifact；如果本地没有 eligible worker，或途中出现 incident，系统会停在真实 pending / incident 状态，不会伪造“已经到首审”。
 - React 壳的 `project-init` 文案也同步成了真实语义：空态明确说它会把 workflow 推到首个 review，提交态会显示正在推进，而不是还沿用“只 launch workflow”的旧说法。
+- 把 scope 审批后的下一段主链也接上了：`board-approve` 现在会从已批准的 `consensus_document` artifact 里读取第一张 follow-up，原子创建真实执行票，并继续同步推进到下一个真实停点，而不再只是把首审关掉。
+- 保持了 fail-closed：如果 approved consensus artifact 缺失、不是合法 JSON、第一张 follow-up 的 `owner_role` 这轮不支持，或 `ticket_id` 和现有票冲突，`board-approve` 会直接拒绝，review 保持打开，不制造“董事会已批准但主链没接上”的假完成。
+- 当前这段续跑仍刻意收口：只消费第一张 follow-up，且只支持 `frontend_engineer -> ui_designer_primary`，并把下游票型收口到现有可运行的视觉里程碑 `ui_milestone_review@1` 链，而不是顺势扩成通用 fan-out / 依赖图。
+- runtime 生成的 `consensus_document` artifact 现在会落完整 payload，而不是只落一层摘要壳；后续治理命令可以直接把这个 artifact 当成被批准范围的真实输入源。
 - Fresh verification after this change is:
-  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `320 passed`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py::test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visual_review tests/test_api.py::test_board_approve_scope_review_creates_pending_followup_when_no_eligible_worker tests/test_api.py::test_board_approve_scope_review_rejects_unsupported_followup_owner_role tests/test_api.py::test_board_approve_scope_review_rejects_when_consensus_artifact_is_missing tests/test_api.py::test_board_approve_scope_review_rejects_when_consensus_artifact_is_not_json tests/test_api.py::test_board_approve_scope_review_rejects_when_followup_ticket_id_already_exists -q` -> `6 passed`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py -k "project_init_auto_advances_to_scope_review or board_approve_command_resolves_open_approval or board_reject_command_resolves_open_approval or modify_constraints_command_resolves_open_approval or scope_review" -q` -> `11 passed, 202 deselected`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_scheduler_runner.py::test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime -q` -> `1 passed`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_output_schemas.py -q` -> `6 passed`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `326 passed`
   - `cd frontend && npm run test:run` -> `1 passed, 7 tests passed`
   - `cd frontend && npm run lint` -> `exit 0`
   - `cd frontend && npm run build` -> `built in 673ms`

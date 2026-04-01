@@ -1,31 +1,50 @@
 ﻿from __future__ import annotations
 
+import json
 from typing import Any
 
+from app.config import get_settings
 from app.contracts.commands import (
     BoardApproveCommand,
     BoardRejectCommand,
     CommandAckEnvelope,
     CommandAckStatus,
     ModifyConstraintsCommand,
+    TicketCreateCommand,
 )
 from app.core.constants import (
     APPROVAL_STATUS_APPROVED,
     APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
     APPROVAL_STATUS_OPEN,
     APPROVAL_STATUS_REJECTED,
+    DEFAULT_TENANT_ID,
+    DEFAULT_WORKSPACE_ID,
     EMPLOYEE_STATE_ACTIVE,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_EMPLOYEE_HIRED,
     EVENT_EMPLOYEE_REPLACED,
+    EVENT_TICKET_CREATED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
 )
 from app.core.ids import new_prefixed_id
+from app.core.output_schemas import (
+    CONSENSUS_DOCUMENT_SCHEMA_REF,
+    CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    schema_id,
+    validate_output_payload,
+)
+from app.core.runtime import run_leased_ticket_runtime
 from app.core.staffing_containment import contain_employee_active_tickets
+from app.core.ticket_handlers import run_scheduler_tick
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
+
+SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS = 6
+FOLLOWUP_OWNER_ROLE_TO_PROFILE = {
+    "frontend_engineer": "ui_designer_primary",
+}
 
 
 def _rejected_ack(
@@ -207,12 +226,294 @@ def _apply_employee_change_approval(
     return None
 
 
+def _workflow_has_open_approval(
+    repository: ControlPlaneRepository,
+    workflow_id: str,
+) -> bool:
+    return any(approval["workflow_id"] == workflow_id for approval in repository.list_open_approvals())
+
+
+def _workflow_has_open_incident(
+    repository: ControlPlaneRepository,
+    workflow_id: str,
+) -> bool:
+    return any(incident["workflow_id"] == workflow_id for incident in repository.list_open_incidents())
+
+
+def _dedupe_artifact_refs(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+def _build_scope_followup_review_request(summary: str) -> dict[str, Any]:
+    clean_summary = summary.strip() or "Approved scope follow-up implementation is ready for review."
+    return {
+        "review_type": "VISUAL_MILESTONE",
+        "priority": "high",
+        "title": "Review approved scope implementation",
+        "subtitle": "The first visual execution pass under the locked scope is ready.",
+        "blocking_scope": "NODE_ONLY",
+        "trigger_reason": "Board-approved scope follow-up reached a visual milestone review checkpoint.",
+        "why_now": "Implementation should stay aligned with the approved scope before more build work piles on.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "option_a",
+        "recommendation_summary": clean_summary,
+        "options": [
+            {
+                "option_id": "option_a",
+                "label": "Approved scope implementation",
+                "summary": clean_summary,
+                "artifact_refs": [],
+                "pros": ["Keeps implementation aligned with the approved scope lock."],
+                "cons": ["Non-critical stretch ideas remain deferred."],
+                "risks": ["Visual polish may still need a follow-up rework pass."],
+            }
+        ],
+        "evidence_summary": [],
+        "risk_summary": {
+            "user_risk": "LOW",
+            "engineering_risk": "MEDIUM",
+            "schedule_risk": "LOW",
+            "budget_risk": "LOW",
+        },
+        "budget_impact": {
+            "tokens_spent_so_far": 0,
+            "tokens_if_approved_estimate_range": {"min_tokens": 100, "max_tokens": 250},
+            "tokens_if_rework_estimate_range": {"min_tokens": 350, "max_tokens": 700},
+            "estimate_confidence": "medium",
+            "budget_risk": "LOW",
+        },
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "option_a",
+        "comment_template": "",
+        "inbox_title": "Review approved scope implementation",
+        "inbox_summary": "A visual implementation pass is ready under the approved scope.",
+        "badges": ["visual", "board_gate", "scope_followup"],
+    }
+
+
+def _load_scope_consensus_payload(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    review_pack = approval["payload"].get("review_pack") or {}
+    evidence_summary = review_pack.get("evidence_summary") or []
+    artifact_ref = str((evidence_summary[0] or {}).get("source_ref") or "").strip() if evidence_summary else ""
+    if not artifact_ref:
+        raise ValueError("Scope review is missing the approved consensus artifact reference.")
+
+    artifact = repository.get_artifact_by_ref(artifact_ref, connection=connection)
+    if artifact is None:
+        raise ValueError("Approved consensus artifact record is missing.")
+    if repository.artifact_store is None:
+        raise ValueError("Artifact store is required to read the approved consensus artifact.")
+
+    try:
+        body = repository.artifact_store.read_bytes(
+            artifact.get("storage_relpath"),
+            storage_object_key=artifact.get("storage_object_key"),
+        )
+    except Exception as exc:  # pragma: no cover - exact backend failure varies
+        raise ValueError("Approved consensus artifact could not be read.") from exc
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Approved consensus artifact is not valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Approved consensus artifact JSON root must be an object.")
+
+    validate_output_payload(
+        schema_ref=CONSENSUS_DOCUMENT_SCHEMA_REF,
+        schema_version=CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+        submitted_schema_version=schema_id(
+            CONSENSUS_DOCUMENT_SCHEMA_REF,
+            CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+        ),
+        payload=payload,
+    )
+    return artifact_ref, payload
+
+
+def _build_scope_followup_ticket_payload(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+) -> dict[str, Any] | None:
+    review_pack = approval["payload"].get("review_pack") or {}
+    subject = review_pack.get("subject") or {}
+    source_ticket_id = str(subject.get("source_ticket_id") or "").strip()
+    if not source_ticket_id:
+        return None
+
+    created_spec = repository.get_latest_ticket_created_payload(connection, source_ticket_id)
+    if created_spec is None:
+        raise ValueError("Approved scope ticket spec could not be loaded.")
+    maker_checker_context = created_spec.get("maker_checker_context") or {}
+    maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
+    if (
+        str(created_spec.get("output_schema_ref") or "") != CONSENSUS_DOCUMENT_SCHEMA_REF
+        and maker_ticket_id
+    ):
+        maker_created_spec = repository.get_latest_ticket_created_payload(connection, maker_ticket_id)
+        if maker_created_spec is None:
+            raise ValueError("Approved scope maker ticket spec could not be loaded.")
+        created_spec = maker_created_spec
+        source_ticket_id = maker_ticket_id
+    if str(created_spec.get("output_schema_ref") or "") != CONSENSUS_DOCUMENT_SCHEMA_REF:
+        return None
+
+    consensus_artifact_ref, consensus_payload = _load_scope_consensus_payload(
+        repository,
+        connection,
+        approval=approval,
+    )
+    followup = dict((consensus_payload.get("followup_tickets") or [])[0])
+    followup_ticket_id = str(followup.get("ticket_id") or "").strip()
+    owner_role = str(followup.get("owner_role") or "").strip()
+    followup_summary = str(followup.get("summary") or "").strip()
+
+    role_profile_ref = FOLLOWUP_OWNER_ROLE_TO_PROFILE.get(owner_role)
+    if role_profile_ref is None:
+        raise ValueError(f"Unsupported approved follow-up owner_role '{owner_role}'.")
+    if repository.get_current_ticket_projection(followup_ticket_id, connection=connection) is not None:
+        raise ValueError(f"Follow-up ticket {followup_ticket_id} already exists in projection state.")
+
+    node_id = f"node_followup_{followup_ticket_id.removeprefix('tkt_')}"
+    if repository.get_current_node_projection(approval["workflow_id"], node_id, connection=connection) is not None:
+        raise ValueError(f"Follow-up node {node_id} already exists in projection state.")
+
+    workflow = repository.get_workflow_projection(approval["workflow_id"], connection=connection)
+    tenant_id = (
+        str(workflow.get("tenant_id") or DEFAULT_TENANT_ID)
+        if workflow is not None
+        else DEFAULT_TENANT_ID
+    )
+    workspace_id = (
+        str(workflow.get("workspace_id") or DEFAULT_WORKSPACE_ID)
+        if workflow is not None
+        else DEFAULT_WORKSPACE_ID
+    )
+    input_artifact_refs = _dedupe_artifact_refs(
+        [consensus_artifact_ref] + list(created_spec.get("input_artifact_refs") or [])
+    )
+    ticket_command = TicketCreateCommand(
+        ticket_id=followup_ticket_id,
+        workflow_id=approval["workflow_id"],
+        node_id=node_id,
+        parent_ticket_id=source_ticket_id,
+        attempt_no=1,
+        role_profile_ref=role_profile_ref,
+        constraints_ref="approved_scope_followup_visual",
+        input_artifact_refs=input_artifact_refs,
+        context_query_plan={
+            "keywords": ["approved scope", "visual", "implementation"],
+            "semantic_queries": [followup_summary],
+            "max_context_tokens": 3000,
+        },
+        acceptance_criteria=[
+            "Must implement the approved scope follow-up summary.",
+            "Must stay inside the locked scope from the approved consensus document.",
+            "Must produce a visual milestone review package.",
+        ],
+        output_schema_ref="ui_milestone_review",
+        output_schema_version=1,
+        allowed_tools=["read_artifact", "write_artifact", "image_gen"],
+        allowed_write_set=["artifacts/ui/homepage/*", "reports/review/*"],
+        retry_budget=1,
+        priority="high",
+        timeout_sla_sec=1800,
+        deadline_at=created_spec.get("deadline_at"),
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        auto_review_request=_build_scope_followup_review_request(followup_summary),
+        escalation_policy={
+            "on_timeout": "retry",
+            "on_schema_error": "retry",
+            "on_repeat_failure": "escalate_ceo",
+        },
+        idempotency_key=(
+            f"board-approved-scope-followup:{approval['approval_id']}:{followup_ticket_id}"
+        ),
+    )
+    return ticket_command.model_dump(mode="json")
+
+
+def _insert_scope_followup_ticket_created_event(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    command_id: str,
+    occurred_at,
+    workflow_id: str,
+    idempotency_key: str,
+    ticket_payload: dict[str, Any],
+) -> str:
+    event_row = repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_CREATED,
+        actor_type="system",
+        actor_id="board-followup-router",
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=ticket_payload,
+        occurred_at=occurred_at,
+    )
+    if event_row is None:
+        raise RuntimeError("Scope follow-up ticket creation idempotency conflict.")
+    return str(ticket_payload["ticket_id"])
+
+
+def _auto_advance_scope_followup_to_next_stop(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    idempotency_key: str,
+) -> None:
+    settings = get_settings()
+    for step_index in range(SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS):
+        if _workflow_has_open_approval(repository, workflow_id) or _workflow_has_open_incident(
+            repository,
+            workflow_id,
+        ):
+            return
+
+        _, version_before = repository.get_cursor_and_version()
+        run_scheduler_tick(
+            repository,
+            idempotency_key=f"{idempotency_key}:scope-followup-auto-advance:{step_index}:scheduler",
+            max_dispatches=settings.scheduler_max_dispatches,
+        )
+        run_leased_ticket_runtime(repository)
+        _, version_after = repository.get_cursor_and_version()
+
+        if _workflow_has_open_approval(repository, workflow_id) or _workflow_has_open_incident(
+            repository,
+            workflow_id,
+        ):
+            return
+        if version_after == version_before:
+            return
+
+
 def handle_board_approve(
     repository: ControlPlaneRepository,
     payload: BoardApproveCommand,
 ) -> CommandAckEnvelope:
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
+    created_followup_ticket_id: str | None = None
     with repository.transaction() as connection:
         existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
         if existing_event is not None:
@@ -250,6 +551,20 @@ def handle_board_approve(
             )
 
         subject = approval["payload"].get("review_pack", {}).get("subject", {})
+        try:
+            followup_ticket_payload = _build_scope_followup_ticket_payload(
+                repository,
+                connection,
+                approval=approval,
+            )
+        except ValueError as exc:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=str(exc),
+                causation_hint=f"approval:{payload.approval_id}",
+            )
 
         event_row = repository.insert_event(
             connection,
@@ -301,7 +616,24 @@ def handle_board_approve(
                 "board_comment": payload.board_comment,
             },
         )
+        if followup_ticket_payload is not None:
+            created_followup_ticket_id = _insert_scope_followup_ticket_created_event(
+                repository,
+                connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=approval["workflow_id"],
+                idempotency_key=f"{payload.idempotency_key}:scope-followup-create",
+                ticket_payload=followup_ticket_payload,
+            )
         repository.refresh_projections(connection)
+
+    if created_followup_ticket_id is not None:
+        _auto_advance_scope_followup_to_next_stop(
+            repository,
+            workflow_id=approval["workflow_id"],
+            idempotency_key=payload.idempotency_key,
+        )
 
     return CommandAckEnvelope(
         command_id=command_id,
@@ -312,7 +644,11 @@ def handle_board_approve(
         causation_hint=(
             f"employee:{employee_causation_hint}"
             if employee_causation_hint is not None
-            else f"approval:{payload.approval_id}"
+            else (
+                f"ticket:{created_followup_ticket_id}"
+                if created_followup_ticket_id is not None
+                else f"approval:{payload.approval_id}"
+            )
         ),
     )
 

@@ -1462,6 +1462,50 @@ def _seed_review_request(
     return approvals[0]
 
 
+def _project_init_to_scope_approval(client) -> tuple[str, dict]:
+    response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    approvals = client.app.state.repository.list_open_approvals()
+
+    assert len(approvals) == 1
+    assert approvals[0]["workflow_id"] == workflow_id
+    assert approvals[0]["approval_type"] == "MEETING_ESCALATION"
+    return workflow_id, approvals[0]
+
+
+def _approve_open_review(client, approval: dict, *, idempotency_suffix: str = "1"):
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    return client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Proceed with the approved scope.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:{idempotency_suffix}",
+        },
+    )
+
+
+def _artifact_storage_path(client, artifact_ref: str):
+    artifact = client.app.state.repository.get_artifact_by_ref(artifact_ref)
+    assert artifact is not None
+    assert artifact["storage_relpath"] is not None
+    return client.app.state.artifact_store.root / artifact["storage_relpath"]
+
+
+def _scope_followup_payload(client, approval: dict) -> dict:
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    return json.loads(artifact_path.read_text(encoding="utf-8"))
+
+
 def _seed_cross_workflow_compile_history(client) -> None:
     repository = client.app.state.repository
     artifact_store = client.app.state.artifact_store
@@ -1690,6 +1734,66 @@ def test_project_init_auto_advances_to_scope_review(client, set_ticket_time):
     assert review_pack["meta"]["review_type"] == "MEETING_ESCALATION"
     assert review_pack["subject"]["title"] == "Review scope decision consensus"
     assert review_pack["maker_checker_summary"]["review_status"] == "APPROVED_WITH_NOTES"
+
+
+def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visual_review(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id, approval = _project_init_to_scope_approval(client)
+    followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
+
+    response = _approve_open_review(client, approval)
+
+    repository = client.app.state.repository
+    open_approvals = repository.list_open_approvals()
+    current_scope_approval = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+    with repository.connection() as connection:
+        followup_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            followup_ticket_id,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert current_scope_approval["status"] == APPROVAL_STATUS_APPROVED
+    assert followup_ticket is not None
+    assert followup_created_spec is not None
+    assert followup_created_spec["workflow_id"] == workflow_id
+    assert followup_created_spec["output_schema_ref"] == "ui_milestone_review"
+    assert followup_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert any(ref.endswith("/board-brief.md") for ref in followup_created_spec["input_artifact_refs"])
+    assert any("consensus-document.json" in ref for ref in followup_created_spec["input_artifact_refs"])
+    assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
+
+
+def test_board_approve_scope_review_creates_pending_followup_when_no_eligible_worker(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id, approval = _project_init_to_scope_approval(client)
+    followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id, employee_id="emp_frontend_2"),
+    )
+    response = _approve_open_review(client, approval, idempotency_suffix="pending")
+
+    repository = client.app.state.repository
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+    open_approvals = repository.list_open_approvals()
+
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert open_approvals == []
 
 
 def test_duplicate_project_init_does_not_duplicate_first_scope_review(client, set_ticket_time):
@@ -8332,6 +8436,92 @@ def test_board_approve_command_resolves_open_approval(client):
     assert dashboard_response.json()["data"]["ops_strip"]["active_tickets"] == 0
     assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 0
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == []
+
+
+def test_board_approve_scope_review_rejects_unsupported_followup_owner_role(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _, approval = _project_init_to_scope_approval(client)
+    followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    payload["followup_tickets"][0]["owner_role"] = "backend_engineer"
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="unsupported-role")
+
+    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    followup_ticket = client.app.state.repository.get_current_ticket_projection(followup_ticket_id)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "owner_role" in response.json()["reason"]
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert followup_ticket is None
+
+
+def test_board_approve_scope_review_rejects_when_consensus_artifact_is_missing(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    artifact_path.unlink()
+
+    response = _approve_open_review(client, approval, idempotency_suffix="missing-artifact")
+
+    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "consensus" in response.json()["reason"].lower()
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+
+
+def test_board_approve_scope_review_rejects_when_consensus_artifact_is_not_json(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    artifact_path.write_text("{not-valid-json", encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="invalid-artifact")
+
+    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "json" in response.json()["reason"].lower()
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+
+
+def test_board_approve_scope_review_rejects_when_followup_ticket_id_already_exists(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    payload["followup_tickets"][0]["ticket_id"] = approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="duplicate-followup")
+
+    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    existing_ticket = client.app.state.repository.get_current_ticket_projection(
+        approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
+    )
+    scope_node = client.app.state.repository.get_current_node_projection(workflow_id, "node_scope_decision")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "already exists" in response.json()["reason"]
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert existing_ticket is not None
+    assert scope_node is not None
+    assert scope_node["status"] == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW
 
 
 def test_board_reject_command_resolves_open_approval(client):

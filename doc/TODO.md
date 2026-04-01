@@ -32,9 +32,12 @@
 - 已完成直接推进主线：`project-init -> 首个 review` 现在已经打通
   - `project-init` 现在会先生成 board brief artifact，再自动创建首张 `consensus_document@1` 范围票，并在同一条后端链上同步跑完 `maker -> checker -> Inbox -> Review Room`
   - 如果本地没有 eligible worker，或途中出现 incident，这条入口会停在真实 pending / incident 状态，不会伪造首个 review 已经完成
-- 直接推进主线：把首个 scope review 的通过结果继续接成后续执行票
-  - 当前 board approve 仍只会关闭 review，本地主链还不会按 `consensus_document.followup_tickets` 自动继续生成下一段 build ticket
-  - 这已经成为当前本地 `Board -> Review -> Build` 路径里最明显的新缺口
+- 已完成直接推进主线：把首个 scope review 的通过结果继续接成后续执行票
+  - `board-approve` 现在会从已批准的 `consensus_document` artifact 读取第一张 follow-up，原子创建真实执行票，并继续同步推进到下一个治理停点
+  - 当前先只收口单主链：只消费第一张 follow-up，支持 `frontend_engineer -> ui_designer_primary` 这条映射；如果 artifact 缺失、不是合法 JSON、owner role 不支持或 follow-up `ticket_id` 冲突，审批会 fail-closed，保持 review 继续待决
+- 直接推进主线：继续把 scope review 通过后的剩余 follow-up 收口成真实票，而不只消费第一张
+  - 当前 `consensus_document.followup_tickets` 里其余项仍停留在文档里，没有进入事件流和投影
+  - 当前下游票型也先收口到现有可运行的视觉里程碑链，更多 build / check 票型还没补上
 
 ## P1：套上最薄 Web 壳
 
