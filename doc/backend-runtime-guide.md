@@ -12,6 +12,8 @@
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消和人工恢复
 - 最小 incident / circuit-breaker / retry 治理链
 - 视觉里程碑最小 Maker-Checker 闭环：maker 完成后自动生成 checker ticket，checker 通过后再进入 review room，要求返工则自动生成带 required fixes 的 fix ticket；相同 blocking finding 指纹重复达到阈值时会直接升级为 incident / breaker
+- 员工治理最小闭环：默认 roster 现在由 employee 事件 bootstrap，`employee-hire-request / employee-replace-request` 会走 `CORE_HIRE_APPROVAL -> Inbox -> Review Room -> board approve`，`employee-freeze` 会立即阻止新 dispatch / lease / start / worker-runtime bootstrap
+- 最小 workforce 读面：`GET /api/v1/projections/workforce` 会按角色泳道返回当前员工状态、活动态、当前 ticket/node 和 provider 绑定
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
 - Context Compiler 最小内联链：`TEXT / MARKDOWN / JSON` 且当前可读的 input artifact 会直接进 compiled execution package；超预算的文本和 JSON 现在会先退到确定性的相关片段编译，片段仍放不下时再退到头部预览 / 顶层预览，并在 bundle / manifest 里写明结构化降级原因和 selector；图片 / PDF 会作为结构化媒体引用保留；其他二进制、未落盘、已删除材料仍保留 descriptor + URL 兜底
@@ -116,6 +118,19 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 - 这层摘要会直接告诉你本次编译共有多少 source、多少完整内联、多少片段内联、多少部分预览、多少纯引用，以及各类降级原因码的计数
 - 现在还会单独汇总媒体引用数量、下载型附件数量、各片段策略计数、各预览策略计数，以及 `preview_kind` 计数；排障时不再需要手翻 context blocks 才知道 worker 看到的是正文、预览还是下载引用
 - 当前常见原因码包括：`ARTIFACT_NOT_INDEXED`、`ARTIFACT_NOT_READABLE`、`MEDIA_REFERENCE_ONLY`、`BINARY_REFERENCE_ONLY`、`INLINE_BUDGET_EXCEEDED`
+
+## 员工治理命令
+
+当前与员工生命周期直接相关的最小命令面是：
+
+- `POST /api/v1/commands/employee-hire-request`
+  - 为一个新员工发起 `CORE_HIRE_APPROVAL`，进入现有 `Inbox -> Review Room`
+- `POST /api/v1/commands/employee-replace-request`
+  - 为已有员工发起换人审批；board approve 后会写入“replacement hire + old employee replaced”两条事件
+- `POST /api/v1/commands/employee-freeze`
+  - 立即把员工从新 dispatch / lease / start / worker-runtime bootstrap 入口上摘掉，不等待 board gate
+- `GET /api/v1/projections/workforce`
+  - 按角色泳道返回当前 active / frozen / replaced 员工，以及他们当前是否在执行 ticket
 
 切到外部 worker handoff 模式：
 

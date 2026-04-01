@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+from typing import Any
+
 from app.contracts.events import EventSeverity
 from app.contracts.projections import (
     ActiveWorkflowProjection,
@@ -48,7 +50,11 @@ from app.contracts.projections import (
     WorkerRuntimeProjectionFilters,
     WorkerRuntimeProjectionSummary,
     WorkerSessionAdminProjection,
+    WorkforceProjectionData,
+    WorkforceProjectionEnvelope,
+    WorkforceRoleLaneProjection,
     WorkforceSummaryProjection,
+    WorkforceWorkerProjection,
     WorkspaceSummary,
 )
 from app.contracts.runtime import RenderedExecutionPayloadSummary
@@ -114,6 +120,85 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
         overloaded_workers=0,
         active_checkers=active_checkers,
         workers_in_rework_loop=0,
+    )
+
+
+def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceProjectionEnvelope:
+    repository.initialize()
+    cursor, projection_version = repository.get_cursor_and_version()
+    employees = repository.list_employee_projections()
+    busy_tickets = repository.list_ticket_projections_by_statuses_readonly(["LEASED", "EXECUTING"])
+    now = now_local()
+
+    active_ticket_by_worker: dict[str, dict[str, Any]] = {}
+    for ticket in busy_tickets:
+        owner = ticket.get("lease_owner")
+        if owner is None:
+            continue
+        if ticket["status"] == "LEASED":
+            lease_expires_at = ticket.get("lease_expires_at")
+            if lease_expires_at is None or lease_expires_at <= now:
+                continue
+        active_ticket_by_worker[str(owner)] = ticket
+
+    lanes: dict[str, dict[str, Any]] = {}
+    for employee in employees:
+        role_type = str(employee.get("role_type") or "unknown")
+        lane = lanes.setdefault(
+            role_type,
+            {
+                "role_type": role_type,
+                "active_count": 0,
+                "idle_count": 0,
+                "workers": [],
+            },
+        )
+        employee_id = str(employee["employee_id"])
+        ticket = active_ticket_by_worker.get(employee_id)
+        state = str(employee.get("state") or "UNKNOWN")
+        if state != "ACTIVE":
+            activity_state = "OFFLINE"
+        elif ticket is None:
+            activity_state = "IDLE"
+            lane["idle_count"] += 1
+        elif role_type == "checker":
+            activity_state = "REVIEWING"
+            lane["active_count"] += 1
+        else:
+            activity_state = "EXECUTING"
+            lane["active_count"] += 1
+
+        lane["workers"].append(
+            WorkforceWorkerProjection(
+                employee_id=employee_id,
+                role_type=role_type,
+                employment_state=state,
+                activity_state=activity_state,
+                current_ticket_id=str(ticket.get("ticket_id")) if ticket is not None else None,
+                current_node_id=str(ticket.get("node_id")) if ticket is not None else None,
+                provider_id=employee.get("provider_id"),
+                last_update_at=employee.get("updated_at"),
+            )
+        )
+
+    role_lanes = []
+    for role_type in sorted(lanes):
+        lane = lanes[role_type]
+        role_lanes.append(
+            WorkforceRoleLaneProjection(
+                role_type=lane["role_type"],
+                active_count=lane["active_count"],
+                idle_count=lane["idle_count"],
+                workers=sorted(lane["workers"], key=lambda worker: worker.employee_id),
+            )
+        )
+
+    return WorkforceProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=now_local(),
+        projection_version=projection_version,
+        cursor=cursor,
+        data=WorkforceProjectionData(role_lanes=role_lanes),
     )
 
 
@@ -237,7 +322,11 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
             InboxItemProjection(
                 inbox_item_id=f"inbox_{approval['approval_id']}",
                 workflow_id=approval["workflow_id"],
-                item_type="BOARD_APPROVAL",
+                item_type=(
+                    "CORE_HIRE_APPROVAL"
+                    if approval["approval_type"] == "CORE_HIRE_APPROVAL"
+                    else "BOARD_APPROVAL"
+                ),
                 priority=payload.get("priority", "medium"),
                 status=approval["status"],
                 created_at=approval["created_at"],

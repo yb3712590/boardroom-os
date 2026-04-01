@@ -22,6 +22,7 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_EMPLOYEE_HIRED,
     EVENT_ARTIFACT_CLEANUP_COMPLETED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_OPENED,
@@ -108,6 +109,67 @@ def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
     }
 
 
+def _employee_hire_request_payload(
+    workflow_id: str,
+    *,
+    employee_id: str = "emp_frontend_backup",
+    role_type: str = "frontend_engineer",
+    role_profile_refs: list[str] | None = None,
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "employee_id": employee_id,
+        "role_type": role_type,
+        "role_profile_refs": role_profile_refs or ["ui_designer_primary"],
+        "skill_profile": {"primary_domain": "frontend"},
+        "personality_profile": {"style": "maker"},
+        "aesthetic_profile": {"preference": "minimal"},
+        "provider_id": "prov_openai_compat",
+        "request_summary": "Hire a backup frontend maker for rework rotation.",
+        "idempotency_key": f"employee-hire-request:{workflow_id}:{employee_id}",
+    }
+
+
+def _employee_replace_request_payload(
+    workflow_id: str,
+    *,
+    replaced_employee_id: str = "emp_frontend_2",
+    replacement_employee_id: str = "emp_frontend_backup",
+    replacement_role_type: str = "frontend_engineer",
+    replacement_role_profile_refs: list[str] | None = None,
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "replaced_employee_id": replaced_employee_id,
+        "replacement_employee_id": replacement_employee_id,
+        "replacement_role_type": replacement_role_type,
+        "replacement_role_profile_refs": replacement_role_profile_refs or ["ui_designer_primary"],
+        "replacement_skill_profile": {"primary_domain": "frontend"},
+        "replacement_personality_profile": {"style": "maker"},
+        "replacement_aesthetic_profile": {"preference": "minimal"},
+        "replacement_provider_id": "prov_openai_compat",
+        "request_summary": "Replace the current maker with a backup frontend worker.",
+        "idempotency_key": (
+            f"employee-replace-request:{workflow_id}:{replaced_employee_id}:{replacement_employee_id}"
+        ),
+    }
+
+
+def _employee_freeze_payload(
+    workflow_id: str,
+    *,
+    employee_id: str = "emp_frontend_2",
+    frozen_by: str = "ops@example.com",
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "employee_id": employee_id,
+        "frozen_by": frozen_by,
+        "reason": "Pause this worker from taking new tickets.",
+        "idempotency_key": f"employee-freeze:{workflow_id}:{employee_id}",
+    }
+
+
 def _encode_base64(content: bytes) -> str:
     return base64.b64encode(content).decode("ascii")
 
@@ -122,36 +184,29 @@ def _seed_worker(
 ) -> None:
     repository = client.app.state.repository
     with repository.transaction() as connection:
-        connection.execute(
-            """
-            INSERT OR REPLACE INTO employee_projection (
-                employee_id,
-                role_type,
-                skill_profile_json,
-                personality_profile_json,
-                aesthetic_profile_json,
-                state,
-                board_approved,
-                provider_id,
-                role_profile_refs_json,
-                updated_at,
-                version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                employee_id,
-                role_type,
-                "{}",
-                "{}",
-                "{}",
-                "ACTIVE",
-                1,
-                provider_id,
-                json.dumps(role_profile_refs or ["ui_designer_primary"], sort_keys=True),
-                "2026-03-28T10:00:00+08:00",
-                1,
-            ),
+        repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_HIRED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=None,
+            idempotency_key=f"test-seed-employee:{employee_id}",
+            causation_id=None,
+            correlation_id=None,
+            payload={
+                "employee_id": employee_id,
+                "role_type": role_type,
+                "skill_profile": {},
+                "personality_profile": {},
+                "aesthetic_profile": {},
+                "state": "ACTIVE",
+                "board_approved": True,
+                "provider_id": provider_id,
+                "role_profile_refs": list(role_profile_refs or ["ui_designer_primary"]),
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
         )
+        repository.refresh_projections(connection)
 
 
 def _worker_headers(
@@ -1489,6 +1544,20 @@ def test_dashboard_workforce_summary_reflects_seeded_roster_and_busy_worker(clie
     assert active_summary["active_workers"] == 1
     assert active_summary["idle_workers"] == 0
     assert active_summary["active_checkers"] == 0
+
+
+def test_workforce_projection_returns_seeded_role_lanes(client):
+    response = client.get("/api/v1/projections/workforce")
+
+    assert response.status_code == 200
+    role_lanes = {lane["role_type"]: lane for lane in response.json()["data"]["role_lanes"]}
+    assert role_lanes["frontend_engineer"]["active_count"] == 0
+    assert role_lanes["frontend_engineer"]["idle_count"] == 1
+    assert role_lanes["frontend_engineer"]["workers"][0]["employee_id"] == "emp_frontend_2"
+    assert role_lanes["frontend_engineer"]["workers"][0]["employment_state"] == "ACTIVE"
+    assert role_lanes["frontend_engineer"]["workers"][0]["provider_id"] == "prov_openai_compat"
+    assert role_lanes["checker"]["workers"][0]["employee_id"] == "emp_checker_1"
+    assert role_lanes["checker"]["workers"][0]["employment_state"] == "ACTIVE"
 
 
 def test_dashboard_exposes_artifact_cleanup_maintenance_summary(client, set_ticket_time):
@@ -6348,6 +6417,7 @@ def test_checker_changes_required_creates_fix_ticket_instead_of_board_review(cli
     assert fix_created_spec["parent_ticket_id"] == checker_ticket_id
     assert fix_created_spec["role_profile_ref"] == "ui_designer_primary"
     assert fix_created_spec["output_schema_ref"] == "ui_milestone_review"
+    assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
     maker_checker_context = fix_created_spec["maker_checker_context"]
     assert maker_checker_context["checker_ticket_id"] == checker_ticket_id
     assert maker_checker_context["rework_streak_count"] == 1
@@ -6873,6 +6943,178 @@ def test_missing_review_room_returns_404(client):
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
+
+
+def test_employee_hire_request_opens_core_hire_approval_in_inbox_and_review_room(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(workflow_id),
+    )
+
+    inbox_response = client.get("/api/v1/projections/inbox")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    items = inbox_response.json()["data"]["items"]
+    assert len(items) == 1
+    assert items[0]["item_type"] == "CORE_HIRE_APPROVAL"
+    assert items[0]["route_target"]["view"] == "review_room"
+
+    review_pack_id = items[0]["route_target"]["review_pack_id"]
+    review_room_response = client.get(f"/api/v1/projections/review-room/{review_pack_id}")
+
+    assert review_room_response.status_code == 200
+    review_pack = review_room_response.json()["data"]["review_pack"]
+    assert review_pack["meta"]["review_type"] == "CORE_HIRE_APPROVAL"
+    assert review_pack["subject"]["change_kind"] == "EMPLOYEE_HIRE"
+    assert review_pack["subject"]["employee_id"] == "emp_frontend_backup"
+
+
+def test_board_approve_core_hire_request_adds_employee_to_workforce_projection(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(workflow_id),
+    )
+
+    repository = client.app.state.repository
+    approval = repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve this backup hire.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:hire",
+        },
+    )
+
+    workforce_response = client.get("/api/v1/projections/workforce")
+    hired_employee = repository.get_employee_projection("emp_frontend_backup")
+
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+    assert hired_employee is not None
+    assert hired_employee["state"] == "ACTIVE"
+    assert hired_employee["board_approved"] is True
+    frontend_lane = next(
+        lane
+        for lane in workforce_response.json()["data"]["role_lanes"]
+        if lane["role_type"] == "frontend_engineer"
+    )
+    assert [worker["employee_id"] for worker in frontend_lane["workers"]] == [
+        "emp_frontend_2",
+        "emp_frontend_backup",
+    ]
+
+
+def test_board_approve_employee_replace_request_marks_old_employee_replaced(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Replace maker"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    client.post(
+        "/api/v1/commands/employee-replace-request",
+        json=_employee_replace_request_payload(
+            workflow_id,
+            replacement_employee_id="emp_frontend_backup_replace",
+        ),
+    )
+
+    repository = client.app.state.repository
+    approval = repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Replace the current maker with backup coverage.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:replace",
+        },
+    )
+
+    replaced_employee = repository.get_employee_projection("emp_frontend_2")
+    replacement_employee = repository.get_employee_projection("emp_frontend_backup_replace")
+
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+    assert replaced_employee is not None
+    assert replaced_employee["state"] == "REPLACED"
+    assert replacement_employee is not None
+    assert replacement_employee["state"] == "ACTIVE"
+
+
+def test_employee_freeze_blocks_manual_lease_and_worker_runtime_bootstrap(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Freeze maker"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    _create_and_lease_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_frozen_runtime",
+        node_id="node_frozen_runtime",
+    )
+    active_runtime_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(),
+    )
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id),
+    )
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_frozen_worker",
+            node_id="node_frozen_worker",
+        ),
+    )
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_frozen_worker",
+            node_id="node_frozen_worker",
+            leased_by="emp_frontend_2",
+        ),
+    )
+    runtime_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(issued_at="2026-03-28T10:06:00+08:00"),
+    )
+
+    assert active_runtime_response.status_code == 200
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "REJECTED"
+    assert "not active" in lease_response.json()["reason"].lower()
+    assert runtime_response.status_code == 403
+    assert "not active" in runtime_response.json()["detail"].lower()
 
 
 def test_board_approve_command_resolves_open_approval(client):

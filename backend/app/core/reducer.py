@@ -12,6 +12,9 @@ from app.core.constants import (
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_BOARD_GATE_STATE,
+    EMPLOYEE_STATE_ACTIVE,
+    EMPLOYEE_STATE_FROZEN,
+    EMPLOYEE_STATE_REPLACED,
     DEFAULT_TENANT_ID,
     DEFAULT_WORKFLOW_STAGE,
     DEFAULT_WORKFLOW_STATUS,
@@ -21,6 +24,9 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REQUIRED,
     EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_EMPLOYEE_FROZEN,
+    EVENT_EMPLOYEE_HIRED,
+    EVENT_EMPLOYEE_REPLACED,
     EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
@@ -158,6 +164,80 @@ def rebuild_workflow_projections(events: Iterable[dict]) -> list[dict]:
         }
 
     return list(projections.values())
+
+
+def rebuild_employee_projections(events: Iterable[dict]) -> list[dict]:
+    projections: dict[str, dict] = {}
+
+    for event in events:
+        payload = _event_payload(event)
+        event_type = event["event_type"]
+        occurred_at = event["occurred_at"].isoformat()
+        version = event["sequence_no"]
+
+        if event_type == EVENT_EMPLOYEE_HIRED:
+            employee_id = payload["employee_id"]
+            projections[employee_id] = {
+                "employee_id": employee_id,
+                "role_type": str(payload.get("role_type") or "unknown"),
+                "skill_profile_json": dict(payload.get("skill_profile") or {}),
+                "personality_profile_json": dict(payload.get("personality_profile") or {}),
+                "aesthetic_profile_json": dict(payload.get("aesthetic_profile") or {}),
+                "state": str(payload.get("state") or EMPLOYEE_STATE_ACTIVE),
+                "board_approved": bool(payload.get("board_approved")),
+                "provider_id": payload.get("provider_id"),
+                "role_profile_refs": list(payload.get("role_profile_refs") or []),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_EMPLOYEE_REPLACED:
+            employee_id = payload["employee_id"]
+            previous_projection = projections.get(
+                employee_id,
+                {
+                    "employee_id": employee_id,
+                    "role_type": str(payload.get("role_type") or "unknown"),
+                    "skill_profile_json": {},
+                    "personality_profile_json": {},
+                    "aesthetic_profile_json": {},
+                    "provider_id": None,
+                    "role_profile_refs": [],
+                },
+            )
+            projections[employee_id] = {
+                **previous_projection,
+                "state": EMPLOYEE_STATE_REPLACED,
+                "board_approved": False,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_EMPLOYEE_FROZEN:
+            employee_id = payload["employee_id"]
+            previous_projection = projections.get(
+                employee_id,
+                {
+                    "employee_id": employee_id,
+                    "role_type": str(payload.get("role_type") or "unknown"),
+                    "skill_profile_json": {},
+                    "personality_profile_json": {},
+                    "aesthetic_profile_json": {},
+                    "board_approved": False,
+                    "provider_id": None,
+                    "role_profile_refs": [],
+                },
+            )
+            projections[employee_id] = {
+                **previous_projection,
+                "state": EMPLOYEE_STATE_FROZEN,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+
+    return [projections[employee_id] for employee_id in sorted(projections)]
 
 
 def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:

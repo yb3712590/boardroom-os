@@ -18,6 +18,7 @@ from app.contracts.projections import (
     TicketArtifactsProjectionEnvelope,
     WorkerAdminAuditProjectionEnvelope,
     WorkerRuntimeProjectionEnvelope,
+    WorkforceProjectionEnvelope,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.projections import (
@@ -31,6 +32,7 @@ from app.core.projections import (
     build_review_room_projection,
     build_ticket_artifacts_projection,
     build_worker_runtime_projection,
+    build_workforce_projection,
 )
 from app.db.repository import ControlPlaneRepository
 
@@ -66,6 +68,12 @@ def get_artifact_cleanup_candidates(
 def get_inbox(request: Request) -> InboxProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return build_inbox_projection(repository)
+
+
+@router.get("/workforce", response_model=WorkforceProjectionEnvelope)
+def get_workforce(request: Request) -> WorkforceProjectionEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return build_workforce_projection(repository)
 
 
 @router.get("/worker-runtime", response_model=WorkerRuntimeProjectionEnvelope)

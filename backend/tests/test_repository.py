@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 
-from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
+from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID, EVENT_EMPLOYEE_HIRED
 from app.db.repository import ControlPlaneRepository
 
 
@@ -1520,3 +1520,78 @@ def test_artifact_upload_session_lifecycle_and_consume_guard(db_path):
     assert session["assembled_staging_relpath"] == "uploads/upl_session_001/assembled.bin"
     assert session["consumed_by_artifact_ref"] == "art://runtime/tkt_visual_001/bundle.zip"
     assert [part["part_number"] for part in parts] == [1, 2]
+
+
+def test_initialize_backfills_legacy_employee_rows_into_employee_events(db_path):
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE employee_projection (
+            employee_id TEXT PRIMARY KEY,
+            role_type TEXT NOT NULL,
+            skill_profile_json TEXT,
+            personality_profile_json TEXT,
+            aesthetic_profile_json TEXT,
+            state TEXT NOT NULL,
+            board_approved INTEGER NOT NULL,
+            provider_id TEXT,
+            role_profile_refs_json TEXT,
+            updated_at TEXT NOT NULL,
+            version INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO employee_projection (
+            employee_id,
+            role_type,
+            skill_profile_json,
+            personality_profile_json,
+            aesthetic_profile_json,
+            state,
+            board_approved,
+            provider_id,
+            role_profile_refs_json,
+            updated_at,
+            version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "emp_legacy_frontend",
+            "frontend_engineer",
+            '{"primary_domain":"frontend"}',
+            '{"style":"maker"}',
+            '{"preference":"minimal"}',
+            "ACTIVE",
+            1,
+            "prov_openai_compat",
+            '["ui_designer_primary"]',
+            "2026-04-01T10:00:00+08:00",
+            4,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    employees = repository.list_employee_projections()
+
+    assert repository.count_events_by_type(EVENT_EMPLOYEE_HIRED) == 1
+    assert employees == [
+        {
+            "employee_id": "emp_legacy_frontend",
+            "role_type": "frontend_engineer",
+            "skill_profile_json": {"primary_domain": "frontend"},
+            "personality_profile_json": {"style": "maker"},
+            "aesthetic_profile_json": {"preference": "minimal"},
+            "state": "ACTIVE",
+            "board_approved": True,
+            "provider_id": "prov_openai_compat",
+            "role_profile_refs": ["ui_designer_primary"],
+            "updated_at": datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
+            "version": 1,
+        }
+    ]

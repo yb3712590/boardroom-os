@@ -203,6 +203,17 @@
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact" -q` -> `22 passed, 162 deselected`
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `288 passed`
 - No compatible live provider credentials were present in the environment during this round, so the new provider path is code-complete and mock/full-suite verified, but not yet stamped with a real remote smoke run.
+- Moved employee governance onto the local MVP mainline instead of leaving roster state as startup-only static rows: default employees now bootstrap into `EMPLOYEE_HIRED` events on initialize, `employee_projection` is rebuilt from events, and legacy employee rows are conservatively backfilled into hire events instead of being treated as silent truth.
+- Added the first real staffing-governance command chain: `POST /api/v1/commands/employee-hire-request` and `employee-replace-request` now open `CORE_HIRE_APPROVAL` items in `Inbox -> Review Room`, and board approval writes the resulting `EMPLOYEE_HIRED` / `EMPLOYEE_REPLACED` events back into the same event log.
+- Added `POST /api/v1/commands/employee-freeze` as the minimal immediate stop-the-bleeding control: frozen employees no longer pass manual `ticket-lease`, manual `ticket-start`, scheduler dispatch, or `worker-runtime` bootstrap entry.
+- Added `GET /api/v1/projections/workforce`, so local operators can now see role lanes, employee employment state, current activity state, current ticket/node, and provider binding without manually inspecting `employee_projection`.
+- Tightened Maker-Checker staffing governance on the same chain: fix tickets created after checker `CHANGES_REQUIRED` now carry `excluded_employee_ids` that automatically exclude the original maker, and scheduler dispatch respects that exclusion instead of naively handing the rework back to the same worker.
+- Refreshed test helpers and older scheduler expectations to match the new event-sourced roster truth: deleting an `employee_projection` row is now treated as projection damage that gets rebuilt from events, not as durable loss of the worker itself.
+- Fresh verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k employee -q` -> `1 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "workforce or core_hire or employee_freeze or checker_changes_required" -q` -> `7 passed, 182 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -q` -> `20 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `298 passed`
 
 ### Current Watch-Outs
 

@@ -8,6 +8,9 @@ from app.contracts.commands import (
     BoardApproveCommand,
     BoardRejectCommand,
     CommandAckEnvelope,
+    EmployeeFreezeCommand,
+    EmployeeHireRequestCommand,
+    EmployeeReplaceRequestCommand,
     IncidentResolveCommand,
     ModifyConstraintsCommand,
     ProjectInitCommand,
@@ -30,6 +33,11 @@ from app.core.approval_handlers import (
 )
 from app.core.artifact_store import ArtifactStore
 from app.core.command_handlers import handle_project_init
+from app.core.employee_handlers import (
+    handle_employee_freeze,
+    handle_employee_hire_request,
+    handle_employee_replace_request,
+)
 from app.core.ticket_handlers import (
     handle_incident_resolve,
     handle_ticket_cancel,
@@ -51,6 +59,27 @@ router = APIRouter(prefix="/api/v1/commands", tags=["commands"])
 def project_init(request: Request, payload: ProjectInitCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_project_init(repository, payload)
+
+
+@router.post("/employee-hire-request", response_model=CommandAckEnvelope)
+def employee_hire_request(request: Request, payload: EmployeeHireRequestCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_employee_hire_request(repository, payload)
+
+
+@router.post("/employee-replace-request", response_model=CommandAckEnvelope)
+def employee_replace_request(
+    request: Request,
+    payload: EmployeeReplaceRequestCommand,
+) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_employee_replace_request(repository, payload)
+
+
+@router.post("/employee-freeze", response_model=CommandAckEnvelope)
+def employee_freeze(request: Request, payload: EmployeeFreezeCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_employee_freeze(repository, payload)
 
 
 @router.post("/ticket-create", response_model=CommandAckEnvelope)

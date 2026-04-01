@@ -14,8 +14,11 @@ from app.core.constants import (
     APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
     APPROVAL_STATUS_OPEN,
     APPROVAL_STATUS_REJECTED,
+    EMPLOYEE_STATE_ACTIVE,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
+    EVENT_EMPLOYEE_HIRED,
+    EVENT_EMPLOYEE_REPLACED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
 )
@@ -106,6 +109,91 @@ def _validate_blocked_projection(
     return None
 
 
+def _apply_employee_change_approval(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+    command_id: str,
+    occurred_at,
+    idempotency_key: str,
+) -> str | None:
+    if approval["approval_type"] != "CORE_HIRE_APPROVAL":
+        return None
+
+    review_pack = approval["payload"].get("review_pack") or {}
+    employee_change = review_pack.get("employee_change") or {}
+    change_kind = str(employee_change.get("change_kind") or "")
+
+    if change_kind == "EMPLOYEE_HIRE":
+        repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_HIRED,
+            actor_type="board",
+            actor_id="board",
+            workflow_id=approval["workflow_id"],
+            idempotency_key=f"{idempotency_key}:employee-hired",
+            causation_id=command_id,
+            correlation_id=approval["workflow_id"],
+            payload={
+                "employee_id": employee_change["employee_id"],
+                "role_type": employee_change["role_type"],
+                "skill_profile": dict(employee_change.get("skill_profile") or {}),
+                "personality_profile": dict(employee_change.get("personality_profile") or {}),
+                "aesthetic_profile": dict(employee_change.get("aesthetic_profile") or {}),
+                "state": EMPLOYEE_STATE_ACTIVE,
+                "board_approved": True,
+                "provider_id": employee_change.get("provider_id"),
+                "role_profile_refs": list(employee_change.get("role_profile_refs") or []),
+            },
+            occurred_at=occurred_at,
+        )
+        return str(employee_change["employee_id"])
+
+    if change_kind == "EMPLOYEE_REPLACE":
+        replacement_employee_id = str(employee_change["replacement_employee_id"])
+        repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_HIRED,
+            actor_type="board",
+            actor_id="board",
+            workflow_id=approval["workflow_id"],
+            idempotency_key=f"{idempotency_key}:employee-replacement-hired",
+            causation_id=command_id,
+            correlation_id=approval["workflow_id"],
+            payload={
+                "employee_id": replacement_employee_id,
+                "role_type": employee_change["replacement_role_type"],
+                "skill_profile": dict(employee_change.get("replacement_skill_profile") or {}),
+                "personality_profile": dict(employee_change.get("replacement_personality_profile") or {}),
+                "aesthetic_profile": dict(employee_change.get("replacement_aesthetic_profile") or {}),
+                "state": EMPLOYEE_STATE_ACTIVE,
+                "board_approved": True,
+                "provider_id": employee_change.get("replacement_provider_id"),
+                "role_profile_refs": list(employee_change.get("replacement_role_profile_refs") or []),
+            },
+            occurred_at=occurred_at,
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_REPLACED,
+            actor_type="board",
+            actor_id="board",
+            workflow_id=approval["workflow_id"],
+            idempotency_key=f"{idempotency_key}:employee-replaced",
+            causation_id=command_id,
+            correlation_id=approval["workflow_id"],
+            payload={
+                "employee_id": employee_change["employee_id"],
+                "replacement_employee_id": replacement_employee_id,
+            },
+            occurred_at=occurred_at,
+        )
+        return replacement_employee_id
+
+    return None
+
+
 def handle_board_approve(
     repository: ControlPlaneRepository,
     payload: BoardApproveCommand,
@@ -177,6 +265,15 @@ def handle_board_approve(
                 approval_id=payload.approval_id,
             )
 
+        employee_causation_hint = _apply_employee_change_approval(
+            repository,
+            connection,
+            approval=approval,
+            command_id=command_id,
+            occurred_at=received_at,
+            idempotency_key=payload.idempotency_key,
+        )
+
         repository.resolve_approval(
             connection,
             approval_id=payload.approval_id,
@@ -199,7 +296,11 @@ def handle_board_approve(
         status=CommandAckStatus.ACCEPTED,
         received_at=received_at,
         reason=None,
-        causation_hint=f"approval:{payload.approval_id}",
+        causation_hint=(
+            f"employee:{employee_causation_hint}"
+            if employee_causation_hint is not None
+            else f"approval:{payload.approval_id}"
+        ),
     )
 
 

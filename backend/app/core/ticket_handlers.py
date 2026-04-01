@@ -50,6 +50,7 @@ from app.core.constants import (
     DEFAULT_TIMEOUT_BACKOFF_CAP_MULTIPLIER,
     DEFAULT_TIMEOUT_BACKOFF_MULTIPLIER,
     DEFAULT_TIMEOUT_REPEAT_THRESHOLD,
+    EMPLOYEE_STATE_ACTIVE,
     EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_CLOSED,
@@ -630,6 +631,20 @@ def _dedupe_artifact_refs(values: list[str]) -> list[str]:
     return deduped
 
 
+def _dedupe_string_values(values: list[str | None]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        normalized = str(value)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
 def _is_maker_checker_review_request(review_request: TicketBoardReviewRequest | None) -> bool:
     return bool(review_request is not None and review_request.review_type.value == "VISUAL_MILESTONE")
 
@@ -823,6 +838,7 @@ def _build_maker_checker_ticket_payload(
         "deadline_at": created_spec.get("deadline_at"),
         "tenant_id": created_spec.get("tenant_id"),
         "workspace_id": created_spec.get("workspace_id"),
+        "excluded_employee_ids": list(created_spec.get("excluded_employee_ids") or []),
         "escalation_policy": dict(created_spec.get("escalation_policy") or {}),
     }
     input_artifact_refs = maker_artifact_refs or list(created_spec.get("input_artifact_refs") or [])
@@ -907,6 +923,10 @@ def _build_fix_ticket_payload(
             for finding in required_fixes
         ]
     )
+    excluded_employee_ids = _dedupe_string_values(
+        list(maker_ticket_spec.get("excluded_employee_ids") or [])
+        + [maker_checker_context.get("maker_completed_by")]
+    )
     return {
         "ticket_id": new_prefixed_id("tkt"),
         "workflow_id": workflow_id,
@@ -935,6 +955,7 @@ def _build_fix_ticket_payload(
         "deadline_at": maker_ticket_spec.get("deadline_at"),
         "tenant_id": maker_ticket_spec.get("tenant_id"),
         "workspace_id": maker_ticket_spec.get("workspace_id"),
+        "excluded_employee_ids": excluded_employee_ids,
         "escalation_policy": dict(maker_ticket_spec.get("escalation_policy") or {}),
         "ticket_kind": MAKER_REWORK_FIX_TICKET_KIND,
         "maker_checker_context": {
@@ -1160,6 +1181,16 @@ def _resolve_provider_id_for_ticket(
     if employee is None or not employee.get("provider_id"):
         return None
     return str(employee["provider_id"])
+
+
+def _employee_is_active(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    employee_id: str,
+) -> bool:
+    employee = repository.get_employee_projection(employee_id, connection=connection)
+    return bool(employee is not None and str(employee.get("state") or "") == EMPLOYEE_STATE_ACTIVE)
 
 
 def _is_provider_pause_failure(failure_kind: str) -> bool:
@@ -2135,12 +2166,18 @@ def run_scheduler_tick(
             if not target_role_profile:
                 continue
             lease_timeout_sec = _resolve_ticket_lease_timeout_sec(created_spec)
+            excluded_employee_ids = {
+                str(employee_id)
+                for employee_id in (created_spec.get("excluded_employee_ids") or [])
+                if employee_id
+            }
 
             selected_worker_id = next(
                 (
                     worker_id
                     for worker_id in worker_candidates
                     if worker_id not in busy_workers
+                    and worker_id not in excluded_employee_ids
                     and target_role_profile in worker_by_id[worker_id]
                     and not _is_provider_paused(
                         repository,
@@ -2743,6 +2780,19 @@ def handle_ticket_lease(
                     ),
                 )
 
+        if not _employee_is_active(
+            repository,
+            connection,
+            employee_id=payload.leased_by,
+        ):
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=f"Worker {payload.leased_by} is not active.",
+            )
+
         provider_id = _resolve_provider_id_for_ticket(
             repository,
             connection,
@@ -2890,6 +2940,19 @@ def handle_ticket_start(
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
                 reason=f"Ticket {payload.ticket_id} lease is missing or expired.",
+            )
+
+        if lease_owner is None or not _employee_is_active(
+            repository,
+            connection,
+            employee_id=str(lease_owner),
+        ):
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=f"Worker {lease_owner} is not active.",
             )
 
         provider_id = _resolve_provider_id_for_ticket(

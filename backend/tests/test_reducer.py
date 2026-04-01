@@ -9,6 +9,9 @@ from app.core.constants import (
     BLOCKING_REASON_MODIFY_CONSTRAINTS,
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
+    EVENT_EMPLOYEE_FROZEN,
+    EVENT_EMPLOYEE_HIRED,
+    EVENT_EMPLOYEE_REPLACED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
@@ -48,6 +51,7 @@ from app.core.constants import (
     TICKET_STATUS_TIMED_OUT,
 )
 from app.core.reducer import (
+    rebuild_employee_projections,
     rebuild_incident_projections,
     rebuild_node_projections,
     rebuild_ticket_projections,
@@ -116,6 +120,61 @@ def test_repository_projection_matches_reducer_replay(client):
 
     assert any(item["workflow_id"] == active_workflow["workflow_id"] for item in replayed)
     assert max(item["version"] for item in replayed) == active_workflow["version"]
+
+
+def test_reducer_rebuilds_employee_projection_through_hire_replace_and_freeze():
+    hired_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_EMPLOYEE_HIRED,
+        "workflow_id": "wf_staffing",
+        "occurred_at": datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "employee_id": "emp_frontend_backup",
+                "role_type": "frontend_engineer",
+                "skill_profile": {"primary_domain": "frontend"},
+                "personality_profile": {"style": "maker"},
+                "aesthetic_profile": {"preference": "minimal"},
+                "state": "ACTIVE",
+                "board_approved": True,
+                "provider_id": "prov_openai_compat",
+                "role_profile_refs": ["ui_designer_primary"],
+            }
+        ),
+    }
+    replaced_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_EMPLOYEE_REPLACED,
+        "workflow_id": "wf_staffing",
+        "occurred_at": datetime.fromisoformat("2026-04-01T10:05:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "employee_id": "emp_frontend_2",
+                "replacement_employee_id": "emp_frontend_backup",
+            }
+        ),
+    }
+    frozen_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_EMPLOYEE_FROZEN,
+        "workflow_id": "wf_staffing",
+        "occurred_at": datetime.fromisoformat("2026-04-01T10:10:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "employee_id": "emp_frontend_backup",
+                "reason": "Pause new work after repeated rework.",
+            }
+        ),
+    }
+
+    projections = rebuild_employee_projections([hired_event, replaced_event, frozen_event])
+    by_id = {projection["employee_id"]: projection for projection in projections}
+
+    assert by_id["emp_frontend_2"]["state"] == "REPLACED"
+    assert by_id["emp_frontend_2"]["board_approved"] is False
+    assert by_id["emp_frontend_backup"]["state"] == "FROZEN"
+    assert by_id["emp_frontend_backup"]["role_profile_refs"] == ["ui_designer_primary"]
+    assert by_id["emp_frontend_backup"]["provider_id"] == "prov_openai_compat"
 
 
 def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_executing_completed():

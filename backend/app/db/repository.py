@@ -26,6 +26,9 @@ from app.core.constants import (
     CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_TENANT_ID,
     DEFAULT_WORKSPACE_ID,
+    EVENT_EMPLOYEE_HIRED,
+    EVENT_EMPLOYEE_FROZEN,
+    EVENT_EMPLOYEE_REPLACED,
     EVENT_ARTIFACT_CLEANUP_COMPLETED,
     EVENT_ARTIFACT_DELETED,
     EVENT_ARTIFACT_EXPIRED,
@@ -60,6 +63,7 @@ from app.core.constants import (
 )
 from app.core.ids import new_prefixed_id
 from app.core.reducer import (
+    rebuild_employee_projections,
     rebuild_incident_projections,
     rebuild_node_projections,
     rebuild_ticket_projections,
@@ -137,7 +141,12 @@ class ControlPlaneRepository:
             self._backfill_scope_defaults(connection)
             self._backfill_artifact_storage_defaults(connection)
             self._backfill_artifact_retention_defaults(connection)
-            self._seed_employee_roster(connection)
+            self._bootstrap_employee_events(connection)
+            employee_events = self.list_all_events(connection)
+            self.replace_employee_projections(
+                connection,
+                rebuild_employee_projections(employee_events),
+            )
         self._initialized = True
 
     @contextmanager
@@ -377,6 +386,44 @@ class ControlPlaneRepository:
                 ),
             )
 
+    def replace_employee_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM employee_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO employee_projection (
+                    employee_id,
+                    role_type,
+                    skill_profile_json,
+                    personality_profile_json,
+                    aesthetic_profile_json,
+                    state,
+                    board_approved,
+                    provider_id,
+                    role_profile_refs_json,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["employee_id"],
+                    projection["role_type"],
+                    json.dumps(projection.get("skill_profile_json") or {}, sort_keys=True),
+                    json.dumps(projection.get("personality_profile_json") or {}, sort_keys=True),
+                    json.dumps(projection.get("aesthetic_profile_json") or {}, sort_keys=True),
+                    projection["state"],
+                    1 if projection.get("board_approved") else 0,
+                    projection.get("provider_id"),
+                    json.dumps(projection.get("role_profile_refs") or [], sort_keys=True),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
     def replace_incident_projections(
         self,
         connection: sqlite3.Connection,
@@ -428,6 +475,7 @@ class ControlPlaneRepository:
         self.replace_workflow_projections(connection, rebuild_workflow_projections(events))
         self.replace_ticket_projections(connection, rebuild_ticket_projections(events))
         self.replace_node_projections(connection, rebuild_node_projections(events))
+        self.replace_employee_projections(connection, rebuild_employee_projections(events))
         self.replace_incident_projections(connection, rebuild_incident_projections(events))
 
     def get_active_workflow(self) -> dict[str, Any] | None:
@@ -3851,6 +3899,7 @@ class ControlPlaneRepository:
             converted[field] = json.loads(raw_value) if raw_value else {}
         raw_role_profiles = converted.get("role_profile_refs_json")
         converted["role_profile_refs"] = json.loads(raw_role_profiles) if raw_role_profiles else []
+        converted.pop("role_profile_refs_json", None)
         converted["provider_id"] = converted.get("provider_id")
         converted["board_approved"] = bool(converted.get("board_approved"))
         converted["version"] = int(converted.get("version") or 0)
@@ -4039,6 +4088,12 @@ class ControlPlaneRepository:
             EVENT_BOARD_REVIEW_REJECTED,
         }:
             return "approval"
+        if event_type in {
+            EVENT_EMPLOYEE_HIRED,
+            EVENT_EMPLOYEE_REPLACED,
+            EVENT_EMPLOYEE_FROZEN,
+        }:
+            return "workflow"
         return "workflow"
 
     def _event_severity(self, event_type: str) -> str:
@@ -4059,6 +4114,9 @@ class ControlPlaneRepository:
             EVENT_INCIDENT_RECOVERY_STARTED,
             EVENT_INCIDENT_CLOSED,
             EVENT_CIRCUIT_BREAKER_CLOSED,
+            EVENT_EMPLOYEE_HIRED,
+            EVENT_EMPLOYEE_REPLACED,
+            EVENT_EMPLOYEE_FROZEN,
         }:
             return "info"
         if event_type in {
@@ -4138,6 +4196,14 @@ class ControlPlaneRepository:
             return "BOARD_REVIEW_APPROVED by board"
         if event["event_type"] == EVENT_BOARD_REVIEW_REJECTED:
             return "BOARD_REVIEW_REJECTED by board"
+        if event["event_type"] == EVENT_EMPLOYEE_HIRED:
+            return f"EMPLOYEE_HIRED for {event.get('payload', {}).get('employee_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_EMPLOYEE_REPLACED:
+            return (
+                f"EMPLOYEE_REPLACED for {event.get('payload', {}).get('employee_id') or event['workflow_id']}"
+            )
+        if event["event_type"] == EVENT_EMPLOYEE_FROZEN:
+            return f"EMPLOYEE_FROZEN for {event.get('payload', {}).get('employee_id') or event['workflow_id']}"
         return event["event_type"]
 
     def _event_ui_hint(self, event_type: str) -> dict[str, Any]:
@@ -4273,6 +4339,17 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Board review rejected.",
+            }
+        if event_type in {
+            EVENT_EMPLOYEE_HIRED,
+            EVENT_EMPLOYEE_REPLACED,
+            EVENT_EMPLOYEE_FROZEN,
+        }:
+            return {
+                "invalidate": ["dashboard", "inbox", "workforce"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Workforce roster updated.",
             }
         return {
             "invalidate": ["dashboard", "inbox"],
@@ -5486,44 +5563,76 @@ class ControlPlaneRepository:
             (DEFAULT_WORKSPACE_ID,),
         )
 
-    def _seed_employee_roster(self, connection: sqlite3.Connection) -> None:
-        existing_count = connection.execute(
-            "SELECT COUNT(*) AS total FROM employee_projection"
+    def _bootstrap_employee_events(self, connection: sqlite3.Connection) -> None:
+        existing_employee_events = connection.execute(
+            "SELECT COUNT(*) AS total FROM events WHERE event_type = ?",
+            (EVENT_EMPLOYEE_HIRED,),
         ).fetchone()
-        if existing_count is not None and int(existing_count["total"]) > 0:
+        if existing_employee_events is not None and int(existing_employee_events["total"]) > 0:
             return
 
-        seeded_at = now_local().isoformat()
-        for employee in DEFAULT_EMPLOYEE_ROSTER:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO employee_projection (
-                    employee_id,
-                    role_type,
-                    skill_profile_json,
-                    personality_profile_json,
-                    aesthetic_profile_json,
-                    state,
-                    board_approved,
-                    provider_id,
-                    role_profile_refs_json,
-                    updated_at,
-                    version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    employee["employee_id"],
-                    employee["role_type"],
-                    json.dumps(employee["skill_profile_json"], sort_keys=True),
-                    json.dumps(employee["personality_profile_json"], sort_keys=True),
-                    json.dumps(employee["aesthetic_profile_json"], sort_keys=True),
-                    employee["state"],
-                    1 if employee["board_approved"] else 0,
-                    employee.get("provider_id"),
-                    json.dumps(employee["role_profile_refs_json"], sort_keys=True),
-                    seeded_at,
-                    1,
-                ),
+        legacy_rows = connection.execute(
+            "SELECT * FROM employee_projection ORDER BY employee_id ASC"
+        ).fetchall()
+        bootstrap_employees: list[dict[str, Any]] = []
+        if legacy_rows:
+            for row in legacy_rows:
+                employee = self._convert_employee_projection_row(row)
+                bootstrap_employees.append(
+                    {
+                        "employee_id": employee["employee_id"],
+                        "role_type": employee["role_type"],
+                        "skill_profile": dict(employee.get("skill_profile_json") or {}),
+                        "personality_profile": dict(employee.get("personality_profile_json") or {}),
+                        "aesthetic_profile": dict(employee.get("aesthetic_profile_json") or {}),
+                        "state": employee["state"],
+                        "board_approved": bool(employee.get("board_approved")),
+                        "provider_id": employee.get("provider_id"),
+                        "role_profile_refs": list(employee.get("role_profile_refs") or []),
+                        "occurred_at": employee.get("updated_at") or now_local(),
+                    }
+                )
+        else:
+            seeded_at = now_local()
+            for employee in DEFAULT_EMPLOYEE_ROSTER:
+                bootstrap_employees.append(
+                    {
+                        "employee_id": employee["employee_id"],
+                        "role_type": employee["role_type"],
+                        "skill_profile": dict(employee["skill_profile_json"]),
+                        "personality_profile": dict(employee["personality_profile_json"]),
+                        "aesthetic_profile": dict(employee["aesthetic_profile_json"]),
+                        "state": employee["state"],
+                        "board_approved": bool(employee["board_approved"]),
+                        "provider_id": employee.get("provider_id"),
+                        "role_profile_refs": list(employee["role_profile_refs_json"]),
+                        "occurred_at": seeded_at,
+                    }
+                )
+
+        for employee in bootstrap_employees:
+            self.insert_event(
+                connection,
+                event_type=EVENT_EMPLOYEE_HIRED,
+                actor_type="system",
+                actor_id="system",
+                workflow_id=None,
+                idempotency_key=f"employee-bootstrap:{employee['employee_id']}",
+                causation_id=None,
+                correlation_id=None,
+                payload={
+                    "employee_id": employee["employee_id"],
+                    "role_type": employee["role_type"],
+                    "skill_profile": employee["skill_profile"],
+                    "personality_profile": employee["personality_profile"],
+                    "aesthetic_profile": employee["aesthetic_profile"],
+                    "state": employee["state"],
+                    "board_approved": employee["board_approved"],
+                    "provider_id": employee.get("provider_id"),
+                    "role_profile_refs": employee["role_profile_refs"],
+                    "bootstrap_source": "legacy_projection_backfill" if legacy_rows else "default_roster_seed",
+                },
+                occurred_at=employee["occurred_at"],
             )
 
     def _list_employee_projections(

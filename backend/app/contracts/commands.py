@@ -118,6 +118,7 @@ class TicketCreateCommand(StrictModel):
     deadline_at: datetime | None = None
     tenant_id: str | None = Field(default=None, min_length=1)
     workspace_id: str | None = Field(default=None, min_length=1)
+    excluded_employee_ids: list[str] = Field(default_factory=list)
     escalation_policy: TicketEscalationPolicy
     idempotency_key: str = Field(min_length=1)
 
@@ -240,6 +241,41 @@ class ArtifactDeleteCommand(StrictModel):
 
 class ArtifactCleanupCommand(StrictModel):
     cleaned_by: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class EmployeeHireRequestCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    employee_id: str = Field(min_length=1)
+    role_type: str = Field(min_length=1)
+    role_profile_refs: list[str] = Field(min_length=1)
+    skill_profile: dict = Field(default_factory=dict)
+    personality_profile: dict = Field(default_factory=dict)
+    aesthetic_profile: dict = Field(default_factory=dict)
+    provider_id: str | None = Field(default=None, min_length=1)
+    request_summary: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class EmployeeReplaceRequestCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    replaced_employee_id: str = Field(min_length=1)
+    replacement_employee_id: str = Field(min_length=1)
+    replacement_role_type: str = Field(min_length=1)
+    replacement_role_profile_refs: list[str] = Field(min_length=1)
+    replacement_skill_profile: dict = Field(default_factory=dict)
+    replacement_personality_profile: dict = Field(default_factory=dict)
+    replacement_aesthetic_profile: dict = Field(default_factory=dict)
+    replacement_provider_id: str | None = Field(default=None, min_length=1)
+    request_summary: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class EmployeeFreezeCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    employee_id: str = Field(min_length=1)
+    frozen_by: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
 
 

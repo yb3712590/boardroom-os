@@ -21,6 +21,7 @@ def _ticket_create_payload(
     role_profile_ref: str,
     output_schema_ref: str = "ui_milestone_review",
     input_artifact_refs: list[str] | None = None,
+    excluded_employee_ids: list[str] | None = None,
 ) -> dict:
     return {
         "ticket_id": ticket_id,
@@ -45,6 +46,7 @@ def _ticket_create_payload(
         "priority": "high",
         "timeout_sla_sec": 1800,
         "deadline_at": "2026-03-28T18:00:00+08:00",
+        "excluded_employee_ids": excluded_employee_ids or [],
         "escalation_policy": {
             "on_timeout": "retry",
             "on_schema_error": "retry",
@@ -54,38 +56,89 @@ def _ticket_create_payload(
     }
 
 
+def _project_init(client, goal: str = "Scheduler staffing") -> str:
+    response = client.post(
+        "/api/v1/commands/project-init",
+        json={
+            "north_star_goal": goal,
+            "hard_constraints": ["Keep governance explicit."],
+            "budget_cap": 500000,
+            "deadline_at": None,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    return response.json()["causation_hint"].split(":", 1)[1]
+
+
+def _approve_hire_worker(
+    client,
+    *,
+    workflow_id: str,
+    employee_id: str,
+    provider_id: str = "prov_openai_compat",
+) -> None:
+    hire_response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json={
+            "workflow_id": workflow_id,
+            "employee_id": employee_id,
+            "role_type": "frontend_engineer",
+            "role_profile_refs": ["ui_designer_primary"],
+            "skill_profile": {"primary_domain": "frontend"},
+            "personality_profile": {"style": "maker"},
+            "aesthetic_profile": {"preference": "minimal"},
+            "provider_id": provider_id,
+            "request_summary": "Hire backup worker for scheduler coverage.",
+            "idempotency_key": f"employee-hire-request:{workflow_id}:{employee_id}",
+        },
+    )
+    assert hire_response.status_code == 200
+    assert hire_response.json()["status"] == "ACCEPTED"
+
+    approval = client.app.state.repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve backup staffing.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:staffing",
+        },
+    )
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+
+
 def _seed_worker(repository, *, employee_id: str, provider_id: str) -> None:
     with repository.transaction() as connection:
-        connection.execute(
-            """
-            INSERT OR REPLACE INTO employee_projection (
-                employee_id,
-                role_type,
-                skill_profile_json,
-                personality_profile_json,
-                aesthetic_profile_json,
-                state,
-                board_approved,
-                provider_id,
-                role_profile_refs_json,
-                updated_at,
-                version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                employee_id,
-                "frontend_engineer",
-                "{}",
-                "{}",
-                "{}",
-                "ACTIVE",
-                1,
-                provider_id,
-                json.dumps(["ui_designer_primary"], sort_keys=True),
-                "2026-03-28T10:00:00+08:00",
-                1,
-            ),
+        repository.insert_event(
+            connection,
+            event_type="EMPLOYEE_HIRED",
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=None,
+            idempotency_key=f"test-seed-employee:{employee_id}",
+            causation_id=None,
+            correlation_id=None,
+            payload={
+                "employee_id": employee_id,
+                "role_type": "frontend_engineer",
+                "skill_profile": {},
+                "personality_profile": {},
+                "aesthetic_profile": {},
+                "state": "ACTIVE",
+                "board_approved": True,
+                "provider_id": provider_id,
+                "role_profile_refs": ["ui_designer_primary"],
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
         )
+        repository.refresh_projections(connection)
 
 
 def _seed_ephemeral_artifact_for_cleanup(
@@ -319,7 +372,7 @@ def test_scheduler_runner_once_external_mode_leaves_ticket_leased(client, set_ti
     assert latest_bundle is None
     assert latest_manifest is None
     assert latest_execution_package is None
-    assert [event["event_type"] for event in events] == ["TICKET_CREATED", "TICKET_LEASED"]
+    assert [event["event_type"] for event in events][-2:] == ["TICKET_CREATED", "TICKET_LEASED"]
 
 
 def test_scheduler_runner_loop_respects_tick_limit_and_dispatch_budget(client, set_ticket_time):
@@ -646,7 +699,7 @@ def test_scheduler_runner_fails_closed_when_ticket_create_spec_disappears(client
     assert failed_events[-1]["payload"]["failure_detail"]["compiler_version"] == "context-compiler.min.v1"
 
 
-def test_scheduler_runner_fails_closed_when_worker_projection_disappears(client, set_ticket_time):
+def test_scheduler_runner_rebuilds_employee_projection_when_projection_row_disappears(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post(
         "/api/v1/commands/ticket-create",
@@ -683,14 +736,15 @@ def test_scheduler_runner_fails_closed_when_worker_projection_disappears(client,
     )
 
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_missing_worker")
+    rebuilt_employee = repository.get_employee_projection("emp_frontend_2")
     failed_events = [
         event for event in repository.list_events_for_testing() if event["event_type"] == "TICKET_FAILED"
     ]
 
-    assert ticket_projection["status"] == "FAILED"
-    assert failed_events[-1]["payload"]["failure_kind"] == "RUNTIME_INPUT_ERROR"
-    assert "missing from employee_projection" in failed_events[-1]["payload"]["failure_message"]
-    assert failed_events[-1]["payload"]["failure_detail"]["compiler_version"] == "context-compiler.min.v1"
+    assert ticket_projection["status"] == "COMPLETED"
+    assert rebuilt_employee is not None
+    assert rebuilt_employee["state"] == "ACTIVE"
+    assert failed_events == []
 
 
 def test_scheduler_runner_fails_closed_when_mandatory_source_descriptor_exceeds_budget(
@@ -1267,3 +1321,89 @@ def test_scheduler_runner_routes_success_results_through_write_set_validation(
     assert failed_events[-1]["payload"]["failure_detail"]["violating_paths"] == [
         "artifacts/forbidden/option-a.png"
     ]
+
+
+def test_scheduler_skips_excluded_employee_ids_and_leases_backup_worker(client):
+    workflow_id = _project_init(client, "Excluded worker routing")
+    _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_excluded",
+            node_id="node_runner_excluded",
+            role_profile_ref="ui_designer_primary",
+            excluded_employee_ids=["emp_frontend_2"],
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-excluded-worker",
+        max_dispatches=10,
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_excluded")
+    leased_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_excluded"
+    ]
+
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == "COMPLETED"
+    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"
+
+
+def test_scheduler_skips_frozen_employee_when_dispatching(client):
+    workflow_id = _project_init(client, "Frozen worker routing")
+    _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json={
+            "workflow_id": workflow_id,
+            "employee_id": "emp_frontend_2",
+            "frozen_by": "ops@example.com",
+            "reason": "Pause new dispatch while reviewing performance.",
+            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_2",
+        },
+    )
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_frozen",
+            node_id="node_runner_frozen",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-frozen-worker",
+        max_dispatches=10,
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_frozen")
+    leased_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_frozen"
+    ]
+
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == "COMPLETED"
+    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"

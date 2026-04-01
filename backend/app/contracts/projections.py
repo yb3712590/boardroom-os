@@ -89,6 +89,32 @@ class WorkforceSummaryProjection(StrictModel):
     workers_in_rework_loop: int
 
 
+class WorkforceWorkerProjection(StrictModel):
+    employee_id: str
+    role_type: str
+    employment_state: str
+    activity_state: str
+    current_ticket_id: str | None = None
+    current_node_id: str | None = None
+    provider_id: str | None = None
+    last_update_at: datetime | None = None
+
+
+class WorkforceRoleLaneProjection(StrictModel):
+    role_type: str
+    active_count: int
+    idle_count: int
+    workers: list[WorkforceWorkerProjection]
+
+
+class WorkforceProjectionData(StrictModel):
+    role_lanes: list[WorkforceRoleLaneProjection]
+
+
+class WorkforceProjectionEnvelope(ProjectionEnvelopeBase):
+    data: WorkforceProjectionData
+
+
 class EventStreamPreviewItem(StrictModel):
     event_id: str
     occurred_at: datetime
