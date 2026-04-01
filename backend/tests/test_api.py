@@ -612,6 +612,7 @@ def _ticket_complete_payload(
     include_review_request: bool = True,
     compiled_context_bundle_ref: str = "ctx://homepage/visual-v1",
     compile_manifest_ref: str = "manifest://homepage/visual-v1",
+    rendered_execution_payload_ref: str | None = None,
 ) -> dict:
     payload = {
         "workflow_id": workflow_id,
@@ -691,6 +692,11 @@ def _ticket_complete_payload(
             "developer_inspector_refs": {
                 "compiled_context_bundle_ref": compiled_context_bundle_ref,
                 "compile_manifest_ref": compile_manifest_ref,
+                **(
+                    {"rendered_execution_payload_ref": rendered_execution_payload_ref}
+                    if rendered_execution_payload_ref is not None
+                    else {}
+                ),
             },
             "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
             "draft_selected_option_id": "option_a",
@@ -1153,6 +1159,7 @@ def _seed_review_request(
     materialize_real_compile: bool = False,
     compiled_context_bundle_ref: str = "ctx://homepage/visual-v1",
     compile_manifest_ref: str = "manifest://homepage/visual-v1",
+    rendered_execution_payload_ref: str | None = None,
 ) -> dict:
     _create_lease_and_start_ticket(client, workflow_id=workflow_id)
     if materialize_real_compile:
@@ -1166,6 +1173,7 @@ def _seed_review_request(
             workflow_id=workflow_id,
             compiled_context_bundle_ref=compiled_context_bundle_ref,
             compile_manifest_ref=compile_manifest_ref,
+            rendered_execution_payload_ref=rendered_execution_payload_ref,
         ),
     )
     assert maker_response.status_code == 200
@@ -2838,6 +2846,40 @@ def test_worker_runtime_execution_package_exposes_fragment_selector_and_metadata
         "Acceptance Contract",
         "Delivery Notes",
     ]
+
+
+def test_worker_runtime_execution_package_exposes_rendered_execution_payload(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_input_artifact(content="# Brief\n\nRendered payload body.\n", client=client)
+    _create_and_lease_ticket(
+        client,
+        workflow_id="wf_worker_runtime_rendered",
+        ticket_id="tkt_worker_rendered",
+        node_id="node_worker_rendered",
+    )
+
+    assignments_data = _worker_assignments_data(client)
+    execution_package_url = assignments_data["assignments"][0]["execution_package_url"]
+    execution_package = client.get(_local_path_from_url(execution_package_url)).json()["data"]
+    rendered_payload = execution_package["rendered_execution_payload"]
+
+    assert rendered_payload == execution_package["compiled_execution_package"]["rendered_execution_payload"]
+    assert rendered_payload["meta"]["render_target"] == "json_messages_v1"
+    assert rendered_payload["messages"][0]["channel"] == "SYSTEM_CONTROLS"
+    assert rendered_payload["messages"][1]["channel"] == "TASK_DEFINITION"
+    assert rendered_payload["messages"][-1]["channel"] == "OUTPUT_CONTRACT_REMINDER"
+    assert rendered_payload["summary"]["control_message_count"] == 3
+    assert rendered_payload["summary"]["data_message_count"] == len(
+        execution_package["compiled_execution_package"]["atomic_context_bundle"]["context_blocks"]
+    )
 
 
 def test_worker_runtime_execution_package_rejects_legacy_header_fallback(
@@ -6606,6 +6648,31 @@ def test_review_room_developer_inspector_returns_materialized_payloads(client):
     assert store.resolve_path("manifest://homepage/visual-v1").exists()
 
 
+def test_review_room_developer_inspector_returns_rendered_execution_payload_and_summary(client):
+    _seed_cross_workflow_compile_history(client)
+    approval = _seed_review_request(
+        client,
+        materialize_real_compile=True,
+        rendered_execution_payload_ref="render://homepage/visual-v1",
+    )
+
+    response = client.get(
+        f"/api/v1/projections/review-room/{approval['review_pack_id']}/developer-inspector"
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["availability"] == "ready"
+    assert body["rendered_execution_payload_ref"] == "render://homepage/visual-v1"
+    assert body["rendered_execution_payload"]["meta"]["render_target"] == "json_messages_v1"
+    assert body["render_summary"]["control_message_count"] == 3
+    assert body["render_summary"]["data_message_count"] == len(
+        body["compiled_context_bundle"]["context_blocks"]
+    )
+    assert body["rendered_execution_payload"]["summary"] == body["render_summary"]
+    assert body["rendered_execution_payload"]["messages"][-1]["channel"] == "OUTPUT_CONTRACT_REMINDER"
+
+
 def test_review_room_developer_inspector_compile_summary_counts_media_reference_only(client):
     _seed_input_artifact(
         client=client,
@@ -6662,9 +6729,12 @@ def test_review_room_developer_inspector_returns_partial_when_refs_are_unmateria
     assert body["availability"] == "partial"
     assert body["compiled_context_bundle_ref"] == "ctx://homepage/visual-v1"
     assert body["compile_manifest_ref"] == "manifest://homepage/visual-v1"
+    assert body["rendered_execution_payload_ref"] is None
     assert body["compile_summary"] is None
+    assert body["render_summary"] is None
     assert body["compiled_context_bundle"] is None
     assert body["compile_manifest"] is None
+    assert body["rendered_execution_payload"] is None
 
 
 def test_review_room_developer_inspector_returns_404_for_missing_review_pack(client):

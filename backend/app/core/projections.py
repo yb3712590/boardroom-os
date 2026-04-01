@@ -51,6 +51,7 @@ from app.contracts.projections import (
     WorkforceSummaryProjection,
     WorkspaceSummary,
 )
+from app.contracts.runtime import RenderedExecutionPayloadSummary
 from app.config import get_settings
 from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
 from app.core.constants import (
@@ -408,6 +409,7 @@ def build_review_room_developer_inspector_projection(
     refs = review_pack.get("developer_inspector_refs") or {}
     compiled_context_bundle_ref = refs.get("compiled_context_bundle_ref")
     compile_manifest_ref = refs.get("compile_manifest_ref")
+    rendered_execution_payload_ref = refs.get("rendered_execution_payload_ref")
     compiled_context_bundle = (
         developer_inspector_store.read_json(compiled_context_bundle_ref)
         if compiled_context_bundle_ref is not None
@@ -418,20 +420,36 @@ def build_review_room_developer_inspector_projection(
         if compile_manifest_ref is not None
         else None
     )
+    rendered_execution_payload = (
+        developer_inspector_store.read_json(rendered_execution_payload_ref)
+        if rendered_execution_payload_ref is not None
+        else None
+    )
 
     ref_count = sum(
-        ref is not None for ref in (compiled_context_bundle_ref, compile_manifest_ref)
+        ref is not None
+        for ref in (
+            compiled_context_bundle_ref,
+            compile_manifest_ref,
+            rendered_execution_payload_ref,
+        )
     )
     materialized_count = sum(
-        payload is not None for payload in (compiled_context_bundle, compile_manifest)
+        payload is not None
+        for payload in (
+            compiled_context_bundle,
+            compile_manifest,
+            rendered_execution_payload,
+        )
     )
     availability = "missing"
-    if ref_count == 2 and materialized_count == 2:
+    if ref_count > 0 and ref_count == materialized_count:
         availability = "ready"
     elif ref_count > 0 or materialized_count > 0:
         availability = "partial"
 
     compile_summary = None
+    render_summary = None
     if compile_manifest is not None:
         source_entries = list(compile_manifest.get("source_log") or [])
         budget_plan = dict(compile_manifest.get("budget_plan") or {})
@@ -512,6 +530,10 @@ def build_review_room_developer_inspector_projection(
             truncated_tokens=truncated_tokens,
             dropped_explicit_source_count=dropped_explicit_source_count,
         )
+    if rendered_execution_payload is not None:
+        summary_payload = rendered_execution_payload.get("summary") or {}
+        if summary_payload:
+            render_summary = RenderedExecutionPayloadSummary.model_validate(summary_payload)
 
     return ReviewRoomDeveloperInspectorProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
@@ -522,9 +544,12 @@ def build_review_room_developer_inspector_projection(
             review_pack_id=review_pack_id,
             compiled_context_bundle_ref=compiled_context_bundle_ref,
             compile_manifest_ref=compile_manifest_ref,
+            rendered_execution_payload_ref=rendered_execution_payload_ref,
             compiled_context_bundle=compiled_context_bundle,
             compile_manifest=compile_manifest,
+            rendered_execution_payload=rendered_execution_payload,
             compile_summary=compile_summary,
+            render_summary=render_summary,
             availability=availability,
         ),
     )

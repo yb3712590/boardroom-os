@@ -1083,6 +1083,161 @@ def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(cli
     assert manifest.budget_actual.final_bundle_tokens > 0
     assert compiled_package.meta.compile_request_id == compile_request.meta.compile_request_id
     assert compiled_package.atomic_context_bundle.context_blocks[0].block_id == bundle.context_blocks[0].block_id
+    assert compiled_package.rendered_execution_payload.meta.render_target == "json_messages_v1"
+
+
+def test_compile_audit_artifacts_builds_rendered_execution_payload_with_stable_channel_order(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    compiled_package = compiled_artifacts.compiled_execution_package
+    rendered_payload = compiled_package.rendered_execution_payload
+
+    assert rendered_payload.meta.render_target == "json_messages_v1"
+    assert [message.channel for message in rendered_payload.messages[:2]] == [
+        "SYSTEM_CONTROLS",
+        "TASK_DEFINITION",
+    ]
+    assert [message.channel for message in rendered_payload.messages[2:-1]] == [
+        "CONTEXT_BLOCK"
+        for _ in compiled_package.atomic_context_bundle.context_blocks
+    ]
+    assert rendered_payload.messages[-1].channel == "OUTPUT_CONTRACT_REMINDER"
+    assert rendered_payload.messages[0].role == "system"
+    assert rendered_payload.messages[1].role == "user"
+    assert rendered_payload.summary.control_message_count == 3
+    assert rendered_payload.summary.data_message_count == len(
+        compiled_package.atomic_context_bundle.context_blocks
+    )
+
+    context_messages = [
+        message for message in rendered_payload.messages if message.channel == "CONTEXT_BLOCK"
+    ]
+    assert [message.block_id for message in context_messages] == [
+        block.block_id for block in compiled_package.atomic_context_bundle.context_blocks
+    ]
+    assert [message.source_ref for message in context_messages] == [
+        block.source_ref for block in compiled_package.atomic_context_bundle.context_blocks
+    ]
+
+
+def test_compile_audit_artifacts_render_summary_counts_degraded_and_reference_messages(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+                **_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md", "art://inputs/mock.png"]),
+                "context_query_plan": {
+                    "keywords": ["acceptance", "output", "review"],
+                    "semantic_queries": ["contract risk"],
+                    "max_context_tokens": 1000,
+                },
+            },
+        )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        kind="MARKDOWN",
+        media_type="text/markdown",
+        content_text=(
+            "# Intro\n\n"
+            + ("This introduction is intentionally verbose and non-actionable. " * 20)
+            + "\n\n## Acceptance Contract\n\n"
+            "This section defines the output contract, review path, and risk reminders.\n\n"
+            "## Delivery Notes\n\nShip the homepage option with explicit review evidence.\n"
+        ),
+    )
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/mock.png",
+        logical_path="artifacts/inputs/mock.png",
+        kind="IMAGE",
+        media_type="image/png",
+        content_bytes=b"\x89PNG\r\n\x1a\nmock-image",
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    rendered_summary = compile_audit_artifacts(compile_request).compiled_execution_package.rendered_execution_payload.summary
+
+    assert rendered_summary.data_message_count == 2
+    assert rendered_summary.degraded_data_message_count == 2
+    assert rendered_summary.reference_message_count == 1
+    assert rendered_summary.retrieval_message_count == 0
+
+
+def test_compile_audit_artifacts_render_output_contract_reminder_tracks_schema_ref(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                ticket_id="tkt_checker_compile_001",
+                node_id="node_checker_compile_001",
+                input_artifact_refs=["art://inputs/checker-brief.md"],
+            ),
+            "role_profile_ref": "checker_primary",
+            "output_schema_ref": "maker_checker_verdict",
+            "idempotency_key": "ticket-create:wf_compile:tkt_checker_compile_001",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            **_ticket_lease_payload(
+                ticket_id="tkt_checker_compile_001",
+                node_id="node_checker_compile_001",
+            ),
+            "leased_by": "emp_checker_1",
+            "idempotency_key": "ticket-lease:wf_compile:tkt_checker_compile_001",
+        },
+    )
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/checker-brief.md",
+        logical_path="artifacts/inputs/checker-brief.md",
+        kind="MARKDOWN",
+        media_type="text/markdown",
+        content_text="# Checker Brief\n\nReturn a structured verdict.\n",
+    )
+
+    repository = client.app.state.repository
+    checker_ticket = repository.get_current_ticket_projection("tkt_checker_compile_001")
+    checker_rendered_payload = compile_audit_artifacts(
+        build_compile_request(repository, checker_ticket)
+    ).compiled_execution_package.rendered_execution_payload
+
+    default_ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    if default_ticket is None:
+        client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+        client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+        default_ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    default_rendered_payload = compile_audit_artifacts(
+        build_compile_request(repository, default_ticket)
+    ).compiled_execution_package.rendered_execution_payload
+
+    assert (
+        checker_rendered_payload.messages[-1].content_payload["output_schema_ref"]
+        == "maker_checker_verdict"
+    )
+    assert (
+        default_rendered_payload.messages[-1].content_payload["output_schema_ref"]
+        == "ui_milestone_review"
+    )
 
 
 def test_compile_execution_package_adds_cross_workflow_retrieval_summary_cards(client, set_ticket_time):
@@ -1253,6 +1408,9 @@ def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(clie
     )
     assert latest_execution_package["payload"]["meta"]["ticket_id"] == "tkt_compile_001"
     assert latest_execution_package["payload"]["execution"]["output_schema_ref"] == "ui_milestone_review"
+    assert latest_execution_package["payload"]["rendered_execution_payload"]["meta"]["render_target"] == (
+        "json_messages_v1"
+    )
     assert repository.get_compiled_execution_package(latest_execution_package["compile_request_id"]) is not None
 
 
@@ -1276,15 +1434,19 @@ def test_export_latest_compile_artifacts_to_developer_inspector_writes_real_pers
         DeveloperInspectorRefs(
             compiled_context_bundle_ref="ctx://compile/tkt_compile_001",
             compile_manifest_ref="manifest://compile/tkt_compile_001",
+            rendered_execution_payload_ref="render://compile/tkt_compile_001",
         ),
     )
 
     bundle_payload = developer_inspector_store.read_json("ctx://compile/tkt_compile_001")
     manifest_payload = developer_inspector_store.read_json("manifest://compile/tkt_compile_001")
+    rendered_payload = developer_inspector_store.read_json("render://compile/tkt_compile_001")
 
-    assert len(persisted) == 2
+    assert len(persisted) == 3
     assert bundle_payload is not None
     assert manifest_payload is not None
+    assert rendered_payload is not None
     assert bundle_payload["meta"]["bundle_id"] == compiled_artifacts.compiled_context_bundle.meta.bundle_id
     assert manifest_payload["compile_meta"]["compile_id"] == compiled_artifacts.compile_manifest.compile_meta.compile_id
     assert manifest_payload["compile_meta"]["bundle_id"] == bundle_payload["meta"]["bundle_id"]
+    assert rendered_payload["meta"]["bundle_id"] == bundle_payload["meta"]["bundle_id"]

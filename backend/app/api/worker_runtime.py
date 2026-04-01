@@ -166,6 +166,7 @@ def get_worker_execution_package(
             compile_request_id=latest_execution_package["compile_request_id"],
             output_schema_body=build_output_schema_body_for_execution_package(package_payload),
             compiled_execution_package=package_payload,
+            rendered_execution_payload=package_payload.get("rendered_execution_payload") or {},
             command_endpoints=command_endpoints,
             delivery_expires_at=payload_delivery_expires_at or command_delivery_expires_at,
         )

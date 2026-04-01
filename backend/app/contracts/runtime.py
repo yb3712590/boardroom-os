@@ -358,6 +358,48 @@ class AtomicContextBundle(StrictModel):
     token_budget: int = Field(ge=1)
 
 
+class RenderedExecutionPayloadMeta(StrictModel):
+    bundle_id: str = Field(min_length=1)
+    compile_id: str = Field(min_length=1)
+    compile_request_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    compiler_version: str = Field(min_length=1)
+    model_profile: str = Field(min_length=1)
+    render_target: Literal["json_messages_v1"]
+    rendered_at: datetime
+
+
+class RenderedExecutionMessage(StrictModel):
+    role: Literal["system", "user"]
+    channel: Literal[
+        "SYSTEM_CONTROLS",
+        "TASK_DEFINITION",
+        "CONTEXT_BLOCK",
+        "OUTPUT_CONTRACT_REMINDER",
+    ]
+    content_type: Literal["TEXT", "JSON", "SOURCE_DESCRIPTOR"]
+    content_payload: dict[str, Any] = Field(default_factory=dict)
+    block_id: str | None = None
+    source_ref: str | None = None
+
+
+class RenderedExecutionPayloadSummary(StrictModel):
+    total_message_count: int = Field(ge=0)
+    control_message_count: int = Field(ge=0)
+    data_message_count: int = Field(ge=0)
+    retrieval_message_count: int = Field(ge=0)
+    degraded_data_message_count: int = Field(ge=0)
+    reference_message_count: int = Field(ge=0)
+
+
+class RenderedExecutionPayload(StrictModel):
+    meta: RenderedExecutionPayloadMeta
+    messages: list[RenderedExecutionMessage] = Field(default_factory=list)
+    summary: RenderedExecutionPayloadSummary
+
+
 class CompiledExecution(StrictModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
@@ -377,6 +419,7 @@ class CompiledExecutionPackage(StrictModel):
     compiled_role: CompiledRole
     compiled_constraints: CompiledConstraints
     atomic_context_bundle: AtomicContextBundle
+    rendered_execution_payload: RenderedExecutionPayload
     execution: CompiledExecution
     governance: CompiledGovernance
 

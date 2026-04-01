@@ -11,6 +11,7 @@ from app.contracts.commands import (
     TicketWrittenArtifact,
 )
 from app.contracts.common import StrictModel
+from app.contracts.runtime import RenderedExecutionPayload
 
 
 class WorkerAssignmentItem(StrictModel):
@@ -56,6 +57,7 @@ class WorkerExecutionPackageData(StrictModel):
     compile_request_id: str = Field(min_length=1)
     output_schema_body: dict[str, Any] = Field(default_factory=dict)
     compiled_execution_package: dict[str, Any] = Field(default_factory=dict)
+    rendered_execution_payload: RenderedExecutionPayload
     command_endpoints: WorkerCommandEndpoints
     delivery_expires_at: datetime
 

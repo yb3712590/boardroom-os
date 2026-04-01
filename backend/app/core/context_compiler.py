@@ -48,6 +48,10 @@ from app.contracts.runtime import (
     CompileRequestRetrievedSummary,
     CompileRequestRetrievalPlan,
     CompileRequestWorkerBinding,
+    RenderedExecutionMessage,
+    RenderedExecutionPayload,
+    RenderedExecutionPayloadMeta,
+    RenderedExecutionPayloadSummary,
 )
 from app.core.artifacts import (
     build_artifact_access_descriptor,
@@ -66,6 +70,7 @@ from app.db.repository import ControlPlaneRepository
 
 MINIMAL_CONTEXT_COMPILER_VERSION = "context-compiler.min.v1"
 MINIMAL_CONTEXT_COMPILER_MODEL_PROFILE = "boardroom_os.runtime.min"
+MINIMAL_CONTEXT_COMPILER_RENDER_TARGET = "json_messages_v1"
 REFERENCE_ONLY_WARNING = (
     "Some explicit sources stayed as descriptors instead of being fully inlined."
 )
@@ -1132,6 +1137,89 @@ def _build_atomic_context_bundle(context_blocks: list[CompiledContextBlock], tok
     )
 
 
+def _build_rendered_execution_payload(
+    *,
+    compiled_context_bundle: CompiledContextBundle,
+    compile_manifest: CompileManifest,
+) -> RenderedExecutionPayload:
+    messages: list[RenderedExecutionMessage] = [
+        RenderedExecutionMessage(
+            role="system",
+            channel="SYSTEM_CONTROLS",
+            content_type="JSON",
+            content_payload=compiled_context_bundle.system_controls.model_dump(mode="json"),
+        ),
+        RenderedExecutionMessage(
+            role="user",
+            channel="TASK_DEFINITION",
+            content_type="JSON",
+            content_payload=compiled_context_bundle.task_definition.model_dump(mode="json"),
+        ),
+    ]
+    retrieval_message_count = 0
+    degraded_data_message_count = 0
+    reference_message_count = 0
+    for block in compiled_context_bundle.context_blocks:
+        if block.source_kind == "RETRIEVAL_SUMMARY":
+            retrieval_message_count += 1
+        if block.content_mode != "INLINE_FULL":
+            degraded_data_message_count += 1
+        if block.content_mode == "REFERENCE_ONLY":
+            reference_message_count += 1
+        messages.append(
+            RenderedExecutionMessage(
+                role="user",
+                channel="CONTEXT_BLOCK",
+                content_type=block.content_type,
+                block_id=block.block_id,
+                source_ref=block.source_ref,
+                content_payload={
+                    "source_kind": block.source_kind,
+                    "priority_class": block.priority_class,
+                    "content_mode": block.content_mode,
+                    "selector": block.selector.model_dump(mode="json"),
+                    "degradation_reason_code": block.degradation_reason_code,
+                    **block.content_payload,
+                },
+            )
+        )
+    messages.append(
+        RenderedExecutionMessage(
+            role="system",
+            channel="OUTPUT_CONTRACT_REMINDER",
+            content_type="JSON",
+            content_payload={
+                "output_schema_ref": compiled_context_bundle.system_controls.output_contract.schema_ref,
+                "output_schema_version": compiled_context_bundle.system_controls.output_contract.schema_version,
+                "output_schema_body": compiled_context_bundle.system_controls.output_contract.schema_body,
+            },
+        )
+    )
+    return RenderedExecutionPayload(
+        meta=RenderedExecutionPayloadMeta(
+            bundle_id=compiled_context_bundle.meta.bundle_id,
+            compile_id=compile_manifest.compile_meta.compile_id,
+            compile_request_id=compiled_context_bundle.meta.compile_request_id,
+            ticket_id=compiled_context_bundle.meta.ticket_id,
+            workflow_id=compiled_context_bundle.meta.workflow_id,
+            node_id=compiled_context_bundle.meta.node_id,
+            compiler_version=compiled_context_bundle.meta.compiler_version,
+            model_profile=compiled_context_bundle.meta.model_profile,
+            render_target=MINIMAL_CONTEXT_COMPILER_RENDER_TARGET,
+            rendered_at=compile_manifest.compile_meta.compiled_at,
+        ),
+        messages=messages,
+        summary=RenderedExecutionPayloadSummary(
+            total_message_count=len(messages),
+            control_message_count=3,
+            data_message_count=len(compiled_context_bundle.context_blocks),
+            retrieval_message_count=retrieval_message_count,
+            degraded_data_message_count=degraded_data_message_count,
+            reference_message_count=reference_message_count,
+        ),
+    )
+
+
 def _build_retrieval_plan(
     *,
     tenant_id: str,
@@ -1486,7 +1574,7 @@ def compile_audit_artifacts(
             compiler_version=MINIMAL_CONTEXT_COMPILER_VERSION,
             compiled_at=compiled_at,
             model_profile=MINIMAL_CONTEXT_COMPILER_MODEL_PROFILE,
-            render_target="compiled_execution_package",
+            render_target=MINIMAL_CONTEXT_COMPILER_RENDER_TARGET,
             is_degraded=is_degraded,
         ),
         system_controls=CompiledSystemControls(
@@ -1617,6 +1705,11 @@ def compile_audit_artifacts(
         ),
     )
 
+    rendered_execution_payload = _build_rendered_execution_payload(
+        compiled_context_bundle=compiled_context_bundle,
+        compile_manifest=compile_manifest,
+    )
+
     compiled_execution_package = CompiledExecutionPackage(
         meta=_build_execution_package_meta(compile_request),
         compiled_role=compiled_role,
@@ -1625,6 +1718,7 @@ def compile_audit_artifacts(
             context_blocks,
             compile_request.budget_policy.max_input_tokens,
         ),
+        rendered_execution_payload=rendered_execution_payload,
         execution=CompiledExecution(
             acceptance_criteria=compile_request.execution.acceptance_criteria,
             allowed_tools=compile_request.execution.allowed_tools,
@@ -1650,6 +1744,7 @@ def compile_audit_artifacts(
 def _validate_matching_compiled_audit_artifacts(
     bundle_row: dict[str, Any],
     manifest_row: dict[str, Any],
+    execution_package_row: dict[str, Any] | None = None,
 ) -> None:
     bundle_payload = bundle_row["payload"]
     manifest_payload = manifest_row["payload"]
@@ -1673,6 +1768,20 @@ def _validate_matching_compiled_audit_artifacts(
         raise RuntimeError("Compile manifest payload does not match the persisted compile request id.")
     if manifest_payload["compile_meta"]["ticket_id"] != ticket_id:
         raise RuntimeError("Compile manifest payload does not match the persisted ticket id.")
+    if execution_package_row is None:
+        return
+    execution_payload = execution_package_row["payload"]
+    if str(execution_package_row["compile_request_id"]) != compile_request_id:
+        raise RuntimeError("Latest compiled execution package uses a different compile request than the latest bundle.")
+    if str(execution_package_row["ticket_id"]) != ticket_id:
+        raise RuntimeError("Latest compiled execution package belongs to a different ticket than the latest bundle.")
+    if execution_payload["meta"]["compile_request_id"] != compile_request_id:
+        raise RuntimeError("Compiled execution package payload does not match its persisted compile request id.")
+    rendered_meta = execution_payload.get("rendered_execution_payload", {}).get("meta") or {}
+    if rendered_meta.get("bundle_id") != bundle_id:
+        raise RuntimeError("Rendered execution payload does not match the persisted bundle id.")
+    if rendered_meta.get("compile_id") != manifest_payload["compile_meta"]["compile_id"]:
+        raise RuntimeError("Rendered execution payload does not match the persisted compile manifest id.")
 
 
 def export_latest_compile_artifacts_to_developer_inspector(
@@ -1690,6 +1799,10 @@ def export_latest_compile_artifacts_to_developer_inspector(
         ticket_id,
         connection=connection,
     )
+    latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket(
+        ticket_id,
+        connection=connection,
+    )
 
     if (
         refs.compiled_context_bundle_ref is not None
@@ -1697,7 +1810,11 @@ def export_latest_compile_artifacts_to_developer_inspector(
         and latest_bundle is not None
         and latest_manifest is not None
     ):
-        _validate_matching_compiled_audit_artifacts(latest_bundle, latest_manifest)
+        _validate_matching_compiled_audit_artifacts(
+            latest_bundle,
+            latest_manifest,
+            latest_execution_package,
+        )
 
     persisted: list[PersistedDeveloperInspectorArtifact] = []
     if refs.compiled_context_bundle_ref is not None and latest_bundle is not None:
@@ -1712,6 +1829,13 @@ def export_latest_compile_artifacts_to_developer_inspector(
             developer_inspector_store.write_json(
                 refs.compile_manifest_ref,
                 latest_manifest["payload"],
+            )
+        )
+    if refs.rendered_execution_payload_ref is not None and latest_execution_package is not None:
+        persisted.append(
+            developer_inspector_store.write_json(
+                refs.rendered_execution_payload_ref,
+                latest_execution_package["payload"]["rendered_execution_payload"],
             )
         )
     return persisted

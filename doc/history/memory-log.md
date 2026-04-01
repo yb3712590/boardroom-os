@@ -183,6 +183,13 @@
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_context_compiler.py -q` -> `13 passed`
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py -k "review_room_developer_inspector or worker_runtime_execution_package" -q` -> `6 passed, 171 deselected`
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_worker_auth_cli.py -q` -> `15 passed`
+- Continued the Context Compiler on the same mainline by adding a first real render layer on top of the existing bundle truth: each compile now also emits a deterministic `json_messages_v1` rendered execution payload instead of leaving downstream workers and operators to reconstruct final input order from raw context blocks.
+- Kept the boundary conservative: `atomic_context_bundle` remains the source of truth, while the new rendered payload is a pure derived view with fixed channel order `SYSTEM_CONTROLS -> TASK_DEFINITION -> CONTEXT_BLOCK -> OUTPUT_CONTRACT_REMINDER`.
+- Extended worker delivery and Review Room inspection together, so `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package` and `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` now surface the same rendered payload plus compact render-summary counts.
+- Extended developer-inspector refs with `render://`, and developer-inspector availability now treats bundle / manifest / rendered payload as one consistent set instead of marking a fully materialized three-artifact export as only partial.
+- Fresh focused verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_context_compiler.py -q` -> `25 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "worker_runtime_execution_package or review_room_developer_inspector" -q` -> `12 passed, 171 deselected`
 
 ### Current Watch-Outs
 

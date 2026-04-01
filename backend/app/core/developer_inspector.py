@@ -21,9 +21,10 @@ def parse_developer_inspector_ref(ref: str) -> ParsedDeveloperInspectorRef:
     artifact_kind = {
         "ctx": "compiled_context_bundle",
         "manifest": "compile_manifest",
+        "render": "rendered_execution_payload",
     }.get(scheme)
     if artifact_kind is None:
-        raise ValueError("Developer inspector ref must use ctx:// or manifest://.")
+        raise ValueError("Developer inspector ref must use ctx://, manifest://, or render://.")
     if not relative_key:
         raise ValueError("Developer inspector ref path cannot be empty.")
 

@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.contracts.common import ProjectionEnvelopeBase, StrictModel
+from app.contracts.runtime import RenderedExecutionPayloadSummary
 from app.contracts.events import EventSeverity
 
 
@@ -179,9 +180,12 @@ class ReviewRoomDeveloperInspectorProjectionData(StrictModel):
     review_pack_id: str
     compiled_context_bundle_ref: str | None = None
     compile_manifest_ref: str | None = None
+    rendered_execution_payload_ref: str | None = None
     compiled_context_bundle: dict | None = None
     compile_manifest: dict | None = None
+    rendered_execution_payload: dict | None = None
     compile_summary: ReviewRoomDeveloperInspectorCompileSummary | None = None
+    render_summary: RenderedExecutionPayloadSummary | None = None
     availability: str
 
 

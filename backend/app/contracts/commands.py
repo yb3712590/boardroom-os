@@ -266,6 +266,7 @@ class TicketReviewEvidence(StrictModel):
 class DeveloperInspectorRefs(StrictModel):
     compiled_context_bundle_ref: str | None = None
     compile_manifest_ref: str | None = None
+    rendered_execution_payload_ref: str | None = None
     incident_ref: str | None = None
     meeting_consensus_ref: str | None = None
 
@@ -279,6 +280,10 @@ class DeveloperInspectorRefs(StrictModel):
             parsed = parse_developer_inspector_ref(self.compile_manifest_ref)
             if parsed.scheme != "manifest":
                 raise ValueError("compile_manifest_ref must use manifest://.")
+        if self.rendered_execution_payload_ref is not None:
+            parsed = parse_developer_inspector_ref(self.rendered_execution_payload_ref)
+            if parsed.scheme != "render":
+                raise ValueError("rendered_execution_payload_ref must use render://.")
         return self
 
 
