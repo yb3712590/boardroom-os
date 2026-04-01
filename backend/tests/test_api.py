@@ -6592,6 +6592,14 @@ def test_review_room_developer_inspector_returns_materialized_payloads(client):
         "review_summaries": 1,
     }
     assert body["compile_summary"]["dropped_retrieval_count"] == 0
+    assert body["compile_summary"]["total_budget_tokens"] == 3000
+    assert 0 < body["compile_summary"]["used_budget_tokens"] <= body["compile_summary"]["total_budget_tokens"]
+    assert (
+        body["compile_summary"]["remaining_budget_tokens"]
+        == body["compile_summary"]["total_budget_tokens"] - body["compile_summary"]["used_budget_tokens"]
+    )
+    assert body["compile_summary"]["truncated_tokens"] >= 0
+    assert body["compile_summary"]["dropped_explicit_source_count"] == 0
     assert body["compiled_context_bundle"]["meta"]["bundle_id"] == latest_bundle["bundle_id"]
     assert body["compile_manifest"]["compile_meta"]["compile_id"] == latest_manifest["compile_id"]
     assert store.resolve_path("ctx://homepage/visual-v1").exists()

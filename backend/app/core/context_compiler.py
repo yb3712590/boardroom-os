@@ -121,6 +121,14 @@ class _PreparedInlineSource:
     fallback_reason_code: str | None = None
 
 
+@dataclass(frozen=True)
+class _CompiledSourceDecision:
+    block: CompiledContextBlock | None
+    source_log: CompileManifestSourceLogEntry
+    transform_log: CompileManifestTransformLogEntry
+    warning: str | None = None
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(
         value,
@@ -159,6 +167,10 @@ def _build_descriptor_payload(source: CompileRequestExplicitSource) -> dict[str,
         content_payload["artifact_access"] = artifact_access
         content_payload.update(artifact_access)
     return content_payload
+
+
+def _estimate_reference_only_tokens(source: CompileRequestExplicitSource) -> int:
+    return _estimate_tokens(_build_descriptor_payload(source))
 
 
 def _prepare_inline_source(
@@ -323,6 +335,7 @@ def _build_reference_block(
     reason: str | None = None,
     reason_code: str | None = None,
     status: str = "USED",
+    tokens_before: int | None = None,
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type="SOURCE_REF",
@@ -330,6 +343,7 @@ def _build_reference_block(
     )
     content_payload = _build_descriptor_payload(source)
     token_estimate = _estimate_tokens(content_payload)
+    source_tokens_before = max(tokens_before or token_estimate, token_estimate)
     fallback_reason = reason or source.inline_fallback_reason or REFERENCE_ONLY_REASON
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
@@ -358,7 +372,7 @@ def _build_reference_block(
         content_mode=block.content_mode,
         critical=source.is_mandatory,
         status=status,
-        tokens_before=token_estimate,
+        tokens_before=source_tokens_before,
         tokens_after=token_estimate,
         reason=fallback_reason,
         reason_code=reason_code or source.inline_fallback_reason_code,
@@ -807,6 +821,8 @@ def _build_budget_preview_source(source: CompileRequestExplicitSource) -> Compil
 
 def _build_fragment_block(
     source: CompileRequestExplicitSource,
+    *,
+    tokens_before: int | None = None,
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type=str(source.fragment_selector_type or "SOURCE_REF"),
@@ -827,6 +843,7 @@ def _build_fragment_block(
         "deterministic relevant fragments instead of only the head preview."
     )
     token_estimate = _estimate_tokens(content_payload)
+    source_tokens_before = max(tokens_before or token_estimate, token_estimate)
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
         source_ref=source.source_ref,
@@ -854,10 +871,10 @@ def _build_fragment_block(
         content_mode=block.content_mode,
         critical=source.is_mandatory,
         status="SUMMARIZED",
-        tokens_before=token_estimate,
+        tokens_before=source_tokens_before,
         tokens_after=token_estimate,
         reason=reason,
-        reason_code=None,
+        reason_code=FALLBACK_REASON_INLINE_BUDGET_EXCEEDED,
     )
     transform_log = CompileManifestTransformLogEntry(
         stage="BUDGET_ENFORCEMENT",
@@ -871,6 +888,8 @@ def _build_fragment_block(
 
 def _build_partial_inline_block(
     source: CompileRequestExplicitSource,
+    *,
+    tokens_before: int | None = None,
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type="SOURCE_REF",
@@ -894,6 +913,7 @@ def _build_partial_inline_block(
         "a deterministic preview instead of the full body."
     )
     token_estimate = _estimate_tokens(content_payload)
+    source_tokens_before = max(tokens_before or token_estimate, token_estimate)
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
         source_ref=source.source_ref,
@@ -921,7 +941,7 @@ def _build_partial_inline_block(
         content_mode=block.content_mode,
         critical=source.is_mandatory,
         status="TRUNCATED",
-        tokens_before=token_estimate,
+        tokens_before=source_tokens_before,
         tokens_after=token_estimate,
         reason=reason,
         reason_code=FALLBACK_REASON_INLINE_BUDGET_EXCEEDED,
@@ -934,6 +954,163 @@ def _build_partial_inline_block(
         reason=reason,
     )
     return block, source_log, transform_log
+
+
+def _build_dropped_explicit_source_logs(
+    source: CompileRequestExplicitSource,
+    *,
+    reason: str,
+    reason_code: str | None,
+    tokens_before: int,
+) -> tuple[CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
+    selector = CompiledContextSelector(
+        selector_type="SOURCE_REF",
+        selector_value=source.source_ref,
+    )
+    source_log = CompileManifestSourceLogEntry(
+        source_ref=source.source_ref,
+        source_kind="ARTIFACT_REFERENCE",
+        priority_class="P1" if source.is_mandatory else "P2",
+        trust_level=1,
+        selector_used=f"{selector.selector_type}:{selector.selector_value}",
+        content_mode=None,
+        critical=source.is_mandatory,
+        status="DROPPED",
+        tokens_before=max(tokens_before, 0),
+        tokens_after=0,
+        reason=reason,
+        reason_code=reason_code,
+    )
+    transform_log = CompileManifestTransformLogEntry(
+        stage="BUDGET_ENFORCEMENT",
+        operation_type="DROP",
+        target_ref=source.source_ref,
+        output_block_id=None,
+        reason=reason,
+    )
+    return source_log, transform_log
+
+
+def _raise_mandatory_source_budget_error(
+    source: CompileRequestExplicitSource,
+    *,
+    remaining_budget: int,
+) -> None:
+    raise ValueError(
+        "Mandatory explicit source "
+        f"{source.source_ref} cannot fit within the remaining token budget "
+        f"({remaining_budget}) even as a reference descriptor."
+    )
+
+
+def _select_explicit_source_for_budget(
+    source: CompileRequestExplicitSource,
+    *,
+    remaining_budget: int,
+) -> _CompiledSourceDecision:
+    inline_tokens_before: int | None = None
+    if source.inline_content_type is not None:
+        inline_block, inline_source_log, inline_transform_log = _build_inline_block(source)
+        inline_tokens_before = inline_block.token_estimate
+        if inline_block.token_estimate <= remaining_budget:
+            return _CompiledSourceDecision(
+                block=inline_block,
+                source_log=inline_source_log,
+                transform_log=inline_transform_log,
+            )
+
+        if source.fragment_content_type is not None:
+            fragment_block, fragment_source_log, fragment_transform_log = _build_fragment_block(
+                source,
+                tokens_before=inline_tokens_before,
+            )
+            if fragment_block.token_estimate <= remaining_budget:
+                return _CompiledSourceDecision(
+                    block=fragment_block,
+                    source_log=fragment_source_log,
+                    transform_log=fragment_transform_log,
+                    warning=fragment_source_log.reason,
+                )
+
+        preview_source = _build_budget_preview_source(source)
+        if preview_source is not None:
+            partial_block, partial_source_log, partial_transform_log = _build_partial_inline_block(
+                preview_source,
+                tokens_before=inline_tokens_before,
+            )
+            if partial_block.token_estimate <= remaining_budget:
+                return _CompiledSourceDecision(
+                    block=partial_block,
+                    source_log=partial_source_log,
+                    transform_log=partial_transform_log,
+                    warning=partial_source_log.reason,
+                )
+
+        fallback_reason = (
+            f"Inline hydration for {source.source_ref} exceeded the token budget, so the compiler kept "
+            "the source descriptor instead."
+        )
+        reference_block, reference_source_log, reference_transform_log = _build_reference_block(
+            source,
+            reason=fallback_reason,
+            reason_code=FALLBACK_REASON_INLINE_BUDGET_EXCEEDED,
+            status="TRUNCATED",
+            tokens_before=inline_tokens_before,
+        )
+        if reference_block.token_estimate <= remaining_budget:
+            return _CompiledSourceDecision(
+                block=reference_block,
+                source_log=reference_source_log,
+                transform_log=reference_transform_log,
+                warning=reference_source_log.reason,
+            )
+
+        if source.is_mandatory:
+            _raise_mandatory_source_budget_error(source, remaining_budget=remaining_budget)
+
+        dropped_source_log, dropped_transform_log = _build_dropped_explicit_source_logs(
+            source,
+            reason=fallback_reason,
+            reason_code=FALLBACK_REASON_INLINE_BUDGET_EXCEEDED,
+            tokens_before=max(inline_tokens_before or 0, reference_block.token_estimate),
+        )
+        return _CompiledSourceDecision(
+            block=None,
+            source_log=dropped_source_log,
+            transform_log=dropped_transform_log,
+            warning=dropped_source_log.reason,
+        )
+
+    fallback_reason = source.inline_fallback_reason or REFERENCE_ONLY_REASON
+    reference_block, reference_source_log, reference_transform_log = _build_reference_block(
+        source,
+        reason=fallback_reason,
+        reason_code=source.inline_fallback_reason_code,
+        status="USED",
+    )
+    if reference_block.token_estimate <= remaining_budget:
+        return _CompiledSourceDecision(
+            block=reference_block,
+            source_log=reference_source_log,
+            transform_log=reference_transform_log,
+            warning=reference_source_log.reason,
+        )
+
+    if source.is_mandatory:
+        _raise_mandatory_source_budget_error(source, remaining_budget=remaining_budget)
+
+    dropped_source_log, dropped_transform_log = _build_dropped_explicit_source_logs(
+        source,
+        reason=fallback_reason,
+        reason_code=source.inline_fallback_reason_code,
+        tokens_before=reference_block.token_estimate,
+    )
+    return _CompiledSourceDecision(
+        block=None,
+        source_log=dropped_source_log,
+        transform_log=dropped_transform_log,
+        warning=dropped_source_log.reason,
+    )
 
 
 def _build_atomic_context_bundle(context_blocks: list[CompiledContextBlock], token_budget: int) -> AtomicContextBundle:
@@ -1201,70 +1378,50 @@ def compile_audit_artifacts(
     reference_block_count = 0
     retrieved_block_count = 0
     dropped_retrieval_count = 0
+    dropped_explicit_source_count = 0
     remaining_budget = compile_request.budget_policy.max_input_tokens
+    planned_retrieval_budget = (
+        min(
+            compile_request.budget_policy.max_input_tokens // 4,
+            800,
+        )
+        if compile_request.retrieved_summaries
+        else 0
+    )
+    minimum_descriptor_tokens = [
+        _estimate_reference_only_tokens(source) if source.is_mandatory else 0
+        for source in compile_request.explicit_sources
+    ]
 
-    for source in compile_request.explicit_sources:
-        if source.inline_content_type is not None:
-            inline_block, inline_source_log, inline_transform_log = _build_inline_block(source)
-            if inline_block.token_estimate <= remaining_budget:
-                context_blocks.append(inline_block)
-                source_log.append(inline_source_log)
-                transform_log.append(inline_transform_log)
-                hydrated_block_count += 1
-                remaining_budget -= inline_block.token_estimate
-                continue
+    for index, source in enumerate(compile_request.explicit_sources):
+        reserved_for_remaining_sources = sum(minimum_descriptor_tokens[index + 1 :])
+        available_budget_for_source = max(remaining_budget - reserved_for_remaining_sources, 0)
+        decision = _select_explicit_source_for_budget(
+            source,
+            remaining_budget=available_budget_for_source,
+        )
+        source_log.append(decision.source_log)
+        transform_log.append(decision.transform_log)
+        if decision.warning:
+            warnings.append(decision.warning)
+        if decision.block is None:
+            dropped_explicit_source_count += 1
+            continue
 
-            if source.fragment_content_type is not None:
-                fragment_block, fragment_source_log, fragment_transform_log = _build_fragment_block(source)
-                if fragment_block.token_estimate <= remaining_budget:
-                    context_blocks.append(fragment_block)
-                    source_log.append(fragment_source_log)
-                    transform_log.append(fragment_transform_log)
-                    fragment_block_count += 1
-                    remaining_budget -= fragment_block.token_estimate
-                    continue
-
-            preview_source = _build_budget_preview_source(source)
-            if preview_source is not None:
-                partial_block, partial_source_log, partial_transform_log = _build_partial_inline_block(
-                    preview_source
-                )
-                context_blocks.append(partial_block)
-                source_log.append(partial_source_log)
-                transform_log.append(partial_transform_log)
-                warnings.append(partial_source_log.reason or "")
-                partially_hydrated_block_count += 1
-                reference_block_count += 1
-                continue
-
-            fallback_reason = (
-                f"Inline hydration for {source.source_ref} exceeded the token budget, so the compiler kept "
-                "the source descriptor instead."
-            )
-            warnings.append(fallback_reason)
-            reference_block, reference_source_log, reference_transform_log = _build_reference_block(
-                source,
-                reason=fallback_reason,
-                reason_code=FALLBACK_REASON_INLINE_BUDGET_EXCEEDED,
-                status="TRUNCATED",
-            )
+        context_blocks.append(decision.block)
+        remaining_budget -= decision.block.token_estimate
+        if decision.block.content_mode == "INLINE_FULL":
+            hydrated_block_count += 1
+        elif decision.block.content_mode == "INLINE_FRAGMENT":
+            fragment_block_count += 1
+        elif decision.block.content_mode == "INLINE_PARTIAL":
+            partially_hydrated_block_count += 1
+            reference_block_count += 1
         else:
-            fallback_reason = source.inline_fallback_reason or REFERENCE_ONLY_REASON
-            warnings.append(fallback_reason)
-            reference_block, reference_source_log, reference_transform_log = _build_reference_block(
-                source,
-                reason=fallback_reason,
-                reason_code=source.inline_fallback_reason_code,
-            )
-
-        context_blocks.append(reference_block)
-        source_log.append(reference_source_log)
-        transform_log.append(reference_transform_log)
-        reference_block_count += 1
+            reference_block_count += 1
 
     retrieval_budget = min(
-        compile_request.budget_policy.max_input_tokens // 4,
-        800,
+        planned_retrieval_budget,
         remaining_budget,
     )
     retrieval_remaining_budget = max(0, retrieval_budget)
@@ -1310,6 +1467,14 @@ def compile_audit_artifacts(
         warnings.append(f"Dropped retrieval summary for {summary.source_ref} because retrieval budget was exhausted.")
         dropped_retrieval_count += 1
 
+    is_degraded = (
+        reference_block_count > 0
+        or fragment_block_count > 0
+        or partially_hydrated_block_count > 0
+        or dropped_retrieval_count > 0
+        or dropped_explicit_source_count > 0
+    )
+
     compiled_context_bundle = CompiledContextBundle(
         meta=CompiledContextBundleMeta(
             bundle_id=bundle_id,
@@ -1322,11 +1487,7 @@ def compile_audit_artifacts(
             compiled_at=compiled_at,
             model_profile=MINIMAL_CONTEXT_COMPILER_MODEL_PROFILE,
             render_target="compiled_execution_package",
-            is_degraded=(
-                reference_block_count > 0
-                or fragment_block_count > 0
-                or partially_hydrated_block_count > 0
-            ),
+            is_degraded=is_degraded,
         ),
         system_controls=CompiledSystemControls(
             role_profile=compiled_role.model_dump(mode="json"),
@@ -1370,6 +1531,11 @@ def compile_audit_artifacts(
     used_p2 = sum(block.token_estimate for block in context_blocks if block.priority_class == "P2")
     used_p3 = sum(block.token_estimate for block in context_blocks if block.priority_class == "P3")
     final_bundle_tokens = sum(block.token_estimate for block in context_blocks)
+    truncated_tokens = sum(
+        max(int(entry.tokens_before or 0) - int(entry.tokens_after or 0), 0)
+        for entry in source_log
+        if entry.status in {"SUMMARIZED", "TRUNCATED", "DROPPED"}
+    )
 
     compile_manifest = CompileManifest(
         compile_meta=CompileManifestMeta(
@@ -1410,8 +1576,8 @@ def compile_audit_artifacts(
         budget_plan=CompileManifestBudgetPlan(
             total_budget_tokens=compile_request.budget_policy.max_input_tokens,
             reserved_p0=0,
-            reserved_p1=compile_request.budget_policy.max_input_tokens,
-            reserved_p2=0,
+            reserved_p1=max(compile_request.budget_policy.max_input_tokens - planned_retrieval_budget, 0),
+            reserved_p2=planned_retrieval_budget,
             reserved_p3=0,
             soft_limit_tokens=compile_request.budget_policy.max_input_tokens,
             hard_limit_tokens=compile_request.budget_policy.max_input_tokens,
@@ -1422,16 +1588,12 @@ def compile_audit_artifacts(
             used_p2=used_p2,
             used_p3=used_p3,
             final_bundle_tokens=final_bundle_tokens,
-            truncated_tokens=0,
+            truncated_tokens=truncated_tokens,
         ),
         source_log=source_log,
         transform_log=transform_log,
         degradation=CompileManifestDegradation(
-            is_degraded=(
-                reference_block_count > 0
-                or fragment_block_count > 0
-                or partially_hydrated_block_count > 0
-            ),
+            is_degraded=is_degraded,
             fail_mode=compile_request.budget_policy.overflow_policy,
             missing_critical_sources=[],
             warnings=warnings + ["Token counts are deterministic estimates, not provider tokenizer results."],
@@ -1451,6 +1613,7 @@ def compile_audit_artifacts(
             negative_pattern_count=0,
             retrieved_block_count=retrieved_block_count,
             dropped_retrieval_count=dropped_retrieval_count,
+            dropped_explicit_source_count=dropped_explicit_source_count,
         ),
     )
 

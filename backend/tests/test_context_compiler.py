@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+import pytest
+
 from app.contracts.commands import DeveloperInspectorRefs
 
 from app.core.context_compiler import (
@@ -622,7 +624,116 @@ def test_compile_audit_artifacts_falls_back_to_descriptor_when_source_exceeds_bu
             "context_query_plan": {
                 "keywords": ["homepage"],
                 "semantic_queries": ["approved direction"],
-                "max_context_tokens": 10,
+                "max_context_tokens": 350,
+            },
+            "acceptance_criteria": ["Must preserve structured result integrity."],
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        kind="TEXT",
+        media_type="text/plain",
+        content_text="Neutral source content without keyword matches. " * 40,
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
+    source_log = compiled_artifacts.compile_manifest.source_log[0]
+
+    assert block.content_type == "SOURCE_DESCRIPTOR"
+    assert block.content_mode == "REFERENCE_ONLY"
+    assert block.degradation_reason_code == "INLINE_BUDGET_EXCEEDED"
+    assert block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/brief.md"
+    assert "content_text" not in block.content_payload
+    assert compiled_artifacts.compile_manifest.degradation.is_degraded is True
+    assert any("token budget" in warning.lower() for warning in compiled_artifacts.compile_manifest.degradation.warnings)
+    assert source_log.status == "TRUNCATED"
+    assert source_log.reason_code == "INLINE_BUDGET_EXCEEDED"
+    assert "token budget" in (source_log.reason or "").lower()
+    assert compiled_artifacts.compile_manifest.budget_actual.final_bundle_tokens <= 350
+    assert compiled_artifacts.compile_manifest.budget_actual.truncated_tokens > 0
+    assert compiled_artifacts.compile_manifest.final_bundle_stats.reference_block_count == 1
+    assert compiled_artifacts.compile_manifest.final_bundle_stats.hydrated_block_count == 0
+    assert compiled_artifacts.compile_manifest.final_bundle_stats.partially_hydrated_block_count == 0
+
+
+def test_compile_audit_artifacts_keeps_multiple_large_sources_within_budget_when_partial_previews_would_overflow(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                input_artifact_refs=["art://inputs/brief.md", "art://inputs/brand-guide.md"]
+            ),
+            "context_query_plan": {
+                "keywords": ["homepage"],
+                "semantic_queries": ["approved direction"],
+                "max_context_tokens": 700,
+            },
+            "acceptance_criteria": ["Must preserve structured result integrity."],
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    filler = "Neutral source content without keyword matches. " * 40
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        kind="TEXT",
+        media_type="text/plain",
+        content_text=filler,
+    )
+    _seed_artifact(
+        client,
+        artifact_ref="art://inputs/brand-guide.md",
+        logical_path="artifacts/inputs/brand-guide.md",
+        kind="TEXT",
+        media_type="text/plain",
+        content_text=filler,
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    compiled_artifacts = compile_audit_artifacts(compile_request)
+    blocks = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks
+    manifest = compiled_artifacts.compile_manifest
+
+    assert [block.content_mode for block in blocks] == ["REFERENCE_ONLY", "REFERENCE_ONLY"]
+    assert manifest.budget_plan.total_budget_tokens == 700
+    assert manifest.budget_actual.final_bundle_tokens <= 700
+    assert manifest.budget_actual.used_p1 == manifest.budget_actual.final_bundle_tokens
+    assert manifest.budget_actual.truncated_tokens > 0
+    assert manifest.final_bundle_stats.reference_block_count == 2
+    assert [entry.status for entry in manifest.source_log[:2]] == ["TRUNCATED", "TRUNCATED"]
+
+
+def test_compile_audit_artifacts_fails_closed_when_mandatory_source_descriptor_exceeds_budget(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md"]),
+            "context_query_plan": {
+                "keywords": ["homepage"],
+                "semantic_queries": ["approved direction"],
+                "max_context_tokens": 1,
             },
         },
     )
@@ -634,31 +745,15 @@ def test_compile_audit_artifacts_falls_back_to_descriptor_when_source_exceeds_bu
         logical_path="artifacts/inputs/brief.md",
         kind="MARKDOWN",
         media_type="text/markdown",
-        content_text="# Brief\n\nThis should be too large for the tiny token budget.\n",
+        content_text="# Brief\n\nThis source cannot fit even as a descriptor under the tiny budget.\n",
     )
 
     repository = client.app.state.repository
     ticket = repository.get_current_ticket_projection("tkt_compile_001")
     compile_request = build_compile_request(repository, ticket)
 
-    compiled_artifacts = compile_audit_artifacts(compile_request)
-    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
-    source_log = compiled_artifacts.compile_manifest.source_log[0]
-
-    assert block.content_type == "TEXT"
-    assert block.content_mode == "INLINE_PARTIAL"
-    assert block.degradation_reason_code == "INLINE_BUDGET_EXCEEDED"
-    assert block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/brief.md"
-    assert block.content_payload["content_truncated"] is True
-    assert "# Brief" in block.content_payload["content_text"]
-    assert compiled_artifacts.compile_manifest.degradation.is_degraded is True
-    assert any("token budget" in warning.lower() for warning in compiled_artifacts.compile_manifest.degradation.warnings)
-    assert source_log.status == "TRUNCATED"
-    assert source_log.reason_code == "INLINE_BUDGET_EXCEEDED"
-    assert "token budget" in (source_log.reason or "").lower()
-    assert compiled_artifacts.compile_manifest.final_bundle_stats.reference_block_count == 1
-    assert compiled_artifacts.compile_manifest.final_bundle_stats.hydrated_block_count == 0
-    assert compiled_artifacts.compile_manifest.final_bundle_stats.partially_hydrated_block_count == 1
+    with pytest.raises(ValueError, match="art://inputs/brief.md"):
+        compile_audit_artifacts(compile_request)
 
 
 def test_compile_request_records_structured_reason_for_deleted_artifact(client, set_ticket_time):
@@ -695,7 +790,7 @@ def test_compile_request_records_structured_reason_for_deleted_artifact(client, 
     assert source_log.reason_code == "ARTIFACT_NOT_READABLE"
 
 
-def test_compile_audit_artifacts_builds_partial_json_preview_when_source_exceeds_budget(
+def test_compile_audit_artifacts_builds_partial_text_preview_when_source_exceeds_budget(
     client,
     set_ticket_time,
 ):
@@ -703,34 +798,24 @@ def test_compile_audit_artifacts_builds_partial_json_preview_when_source_exceeds
     client.post(
         "/api/v1/commands/ticket-create",
         json={
-            **_ticket_create_payload(input_artifact_refs=["art://inputs/spec.json"]),
+            **_ticket_create_payload(input_artifact_refs=["art://inputs/notes.txt"]),
             "context_query_plan": {
                 "keywords": ["homepage"],
                 "semantic_queries": ["approved direction"],
-                "max_context_tokens": 45,
+                "max_context_tokens": 400,
             },
+            "acceptance_criteria": ["Must preserve structured result integrity."],
         },
     )
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     _seed_artifact(
         client,
-        artifact_ref="art://inputs/spec.json",
-        logical_path="artifacts/inputs/spec.json",
-        kind="JSON",
-        media_type="application/json",
-        content_json={
-            "goal": "Ship homepage",
-            "constraints": [
-                "Keep it local",
-                "Keep governance explicit",
-                "Prefer the shortest review loop",
-            ],
-            "sections": {
-                "hero": {"headline": "Boardroom OS", "cta": "Review now"},
-                "proof": {"items": ["events", "tickets", "review room"]},
-            },
-        },
+        artifact_ref="art://inputs/notes.txt",
+        logical_path="artifacts/inputs/notes.txt",
+        kind="TEXT",
+        media_type="text/plain",
+        content_text="Neutral source content without keyword matches. " * 40,
     )
 
     repository = client.app.state.repository
@@ -741,14 +826,16 @@ def test_compile_audit_artifacts_builds_partial_json_preview_when_source_exceeds
     block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
     source_log = compiled_artifacts.compile_manifest.source_log[0]
 
-    assert block.content_type == "JSON"
+    assert block.content_type == "TEXT"
     assert block.content_mode == "INLINE_PARTIAL"
     assert block.degradation_reason_code == "INLINE_BUDGET_EXCEEDED"
     assert block.content_payload["content_truncated"] is True
-    assert block.content_payload["content_json"]["goal"] == "Ship homepage"
-    assert block.content_payload["content_json"]["_preview"]["strategy"] == "TOP_LEVEL_PREVIEW"
+    assert "Neutral source content" in block.content_payload["content_text"]
+    assert block.content_payload["content_preview_strategy"] == "HEAD_EXCERPT"
     assert source_log.status == "TRUNCATED"
     assert source_log.reason_code == "INLINE_BUDGET_EXCEEDED"
+    assert compiled_artifacts.compile_manifest.budget_actual.final_bundle_tokens <= 400
+    assert compiled_artifacts.compile_manifest.budget_actual.truncated_tokens > 0
 
 
 def test_compile_audit_artifacts_builds_markdown_fragment_when_budget_fits_section_excerpt(
@@ -925,7 +1012,7 @@ def test_compile_audit_artifacts_builds_json_fragment_paths_when_budget_fits_rel
     assert source_log.selector_used.startswith("JSON_PATH:")
 
 
-def test_compile_audit_artifacts_falls_back_to_partial_preview_when_fragment_still_exceeds_budget(
+def test_compile_audit_artifacts_fails_closed_when_fragment_and_descriptor_still_exceed_budget(
     client,
     set_ticket_time,
 ):
@@ -961,11 +1048,8 @@ def test_compile_audit_artifacts_falls_back_to_partial_preview_when_fragment_sti
     ticket = repository.get_current_ticket_projection("tkt_compile_001")
     compile_request = build_compile_request(repository, ticket)
 
-    compiled_artifacts = compile_audit_artifacts(compile_request)
-    block = compiled_artifacts.compiled_execution_package.atomic_context_bundle.context_blocks[0]
-
-    assert block.content_mode == "INLINE_PARTIAL"
-    assert block.degradation_reason_code == "INLINE_BUDGET_EXCEEDED"
+    with pytest.raises(ValueError, match="art://inputs/brief.md"):
+        compile_audit_artifacts(compile_request)
 
 
 def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(client, set_ticket_time):

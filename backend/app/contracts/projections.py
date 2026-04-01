@@ -168,6 +168,11 @@ class ReviewRoomDeveloperInspectorCompileSummary(StrictModel):
     retrieved_source_count: int = 0
     retrieval_channel_counts: dict[str, int] = Field(default_factory=dict)
     dropped_retrieval_count: int = 0
+    total_budget_tokens: int = 0
+    used_budget_tokens: int = 0
+    remaining_budget_tokens: int = 0
+    truncated_tokens: int = 0
+    dropped_explicit_source_count: int = 0
 
 
 class ReviewRoomDeveloperInspectorProjectionData(StrictModel):

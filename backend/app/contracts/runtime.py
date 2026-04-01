@@ -299,6 +299,7 @@ class CompileManifestFinalBundleStats(StrictModel):
     negative_pattern_count: int = Field(ge=0)
     retrieved_block_count: int = Field(default=0, ge=0)
     dropped_retrieval_count: int = Field(default=0, ge=0)
+    dropped_explicit_source_count: int = Field(default=0, ge=0)
 
 
 class CompileManifest(StrictModel):

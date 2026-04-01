@@ -168,6 +168,15 @@
 - Continued the Context Compiler on the same mainline by adding deterministic fragment compilation for oversized `TEXT / MARKDOWN / JSON` inputs: the compiler now prefers `MARKDOWN_SECTION`, `TEXT_WINDOW`, and `JSON_PATH` slices before falling back to the older partial-preview path.
 - Worker-facing atomic context blocks now carry the same selector metadata as the compiled bundle, so runtime packages and Review Room debugging no longer disagree about which fragment the worker actually received.
 - `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` compile summaries now count `inline_fragment_count`, making it visible when a run was neither full-inline nor plain preview-only.
+- Closed the current Context Compiler budget-truth gap on the local MVP path: explicit inputs now reserve the minimum descriptor budget required by later mandatory sources, so earlier large sources can no longer consume the whole ticket budget and leave later mandatory inputs with no legal compile form.
+- Tightened the fallback chain itself into a real strict gate: the compiler now only keeps `INLINE_PARTIAL` or `REFERENCE_ONLY` blocks if they individually fit the remaining budget, and if a mandatory source cannot fit even as a descriptor the compile now fails closed instead of emitting an over-budget execution package.
+- Compile manifests now write real budget accounting instead of placeholder totals: `budget_plan` reserves retrieval space only when retrieval is present, `budget_actual.truncated_tokens` now reflects actual tokens removed by fragment/preview/descriptor fallback and dropped retrieval, and final bundle stats now record `dropped_explicit_source_count` alongside retrieval drops.
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` now surfaces compile-budget pressure directly with `total_budget_tokens`, `used_budget_tokens`, `remaining_budget_tokens`, `truncated_tokens`, and `dropped_explicit_source_count`, so operators can see whether a run barely fit without opening raw manifest JSON.
+- Fresh focused verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_context_compiler.py -q` -> `22 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "review_room_developer_inspector or worker_runtime_execution_package" -q` -> `10 passed, 171 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "mandatory_source_descriptor_exceeds_budget" -q` -> `1 passed, 13 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "runtime" -q` -> `1 passed, 13 deselected`
 - Fresh focused verification after this change is:
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_context_compiler.py -q` -> `10 passed`
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py -k "review_room_developer_inspector" -q` -> `3 passed, 174 deselected`

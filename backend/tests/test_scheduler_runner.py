@@ -689,6 +689,67 @@ def test_scheduler_runner_fails_closed_when_worker_projection_disappears(client,
     assert failed_events[-1]["payload"]["failure_detail"]["compiler_version"] == "context-compiler.min.v1"
 
 
+def test_scheduler_runner_fails_closed_when_mandatory_source_descriptor_exceeds_budget(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    create_payload = _ticket_create_payload(
+        workflow_id="wf_runner_tiny_budget",
+        ticket_id="tkt_runner_tiny_budget",
+        node_id="node_runner_tiny_budget",
+        role_profile_ref="ui_designer_primary",
+        input_artifact_refs=["art://inputs/too-tight.md"],
+    )
+    create_payload["context_query_plan"]["max_context_tokens"] = 1
+    client.post("/api/v1/commands/ticket-create", json=create_payload)
+
+    repository = client.app.state.repository
+    artifact_store = client.app.state.artifact_store
+    materialized = artifact_store.materialize_text(
+        "artifacts/inputs/too-tight.md",
+        "# Tiny Budget\n\nThis mandatory source cannot fit even as a descriptor.\n",
+    )
+    with repository.transaction() as connection:
+        repository.save_artifact_record(
+            connection,
+            artifact_ref="art://inputs/too-tight.md",
+            workflow_id="wf_runner_tiny_budget",
+            ticket_id="tkt_runner_tiny_budget",
+            node_id="node_runner_tiny_budget",
+            logical_path="artifacts/inputs/too-tight.md",
+            kind="MARKDOWN",
+            media_type="text/markdown",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_relpath=materialized.storage_relpath,
+            content_hash=materialized.content_hash,
+            size_bytes=materialized.size_bytes,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-tiny-budget",
+        max_dispatches=10,
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_tiny_budget")
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == "TICKET_FAILED"
+    ]
+
+    assert ticket_projection["status"] == "FAILED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "RUNTIME_INPUT_ERROR"
+    assert "art://inputs/too-tight.md" in failed_events[-1]["payload"]["failure_message"]
+    assert failed_events[-1]["payload"]["failure_detail"]["compiler_version"] == "context-compiler.min.v1"
+
+
 def test_scheduler_runner_execution_events_are_visible_in_stream(client, set_ticket_time):
     initial_cursor = client.get("/api/v1/projections/dashboard").json()["cursor"]
     set_ticket_time("2026-03-28T10:00:00+08:00")

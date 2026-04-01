@@ -434,6 +434,9 @@ def build_review_room_developer_inspector_projection(
     compile_summary = None
     if compile_manifest is not None:
         source_entries = list(compile_manifest.get("source_log") or [])
+        budget_plan = dict(compile_manifest.get("budget_plan") or {})
+        budget_actual = dict(compile_manifest.get("budget_actual") or {})
+        final_bundle_stats = dict(compile_manifest.get("final_bundle_stats") or {})
         reason_counts: dict[str, int] = {}
         retrieval_channel_counts: dict[str, int] = {}
         inline_full_count = 0
@@ -444,6 +447,7 @@ def build_review_room_developer_inspector_projection(
         missing_critical_source_count = 0
         retrieved_source_count = 0
         dropped_retrieval_count = 0
+        dropped_explicit_source_count = 0
         for entry in source_entries:
             if not isinstance(entry, dict):
                 continue
@@ -475,8 +479,20 @@ def build_review_room_developer_inspector_projection(
                 retrieval_channel_counts[channel] = retrieval_channel_counts.get(channel, 0) + 1
             if reason_code == "RETRIEVAL_DROPPED_FOR_BUDGET":
                 dropped_retrieval_count += 1
+            if (
+                source_kind == "ARTIFACT_REFERENCE"
+                and entry.get("status") == "DROPPED"
+            ):
+                dropped_explicit_source_count += 1
             if entry.get("status") == "MISSING" and entry.get("critical") is True:
                 missing_critical_source_count += 1
+
+        total_budget_tokens = int(budget_plan.get("total_budget_tokens") or 0)
+        used_budget_tokens = int(budget_actual.get("final_bundle_tokens") or 0)
+        remaining_budget_tokens = max(total_budget_tokens - used_budget_tokens, 0)
+        truncated_tokens = int(budget_actual.get("truncated_tokens") or 0)
+        if int(final_bundle_stats.get("dropped_explicit_source_count") or 0) > dropped_explicit_source_count:
+            dropped_explicit_source_count = int(final_bundle_stats.get("dropped_explicit_source_count") or 0)
 
         compile_summary = ReviewRoomDeveloperInspectorCompileSummary(
             source_count=len(source_entries),
@@ -490,6 +506,11 @@ def build_review_room_developer_inspector_projection(
             retrieved_source_count=retrieved_source_count,
             retrieval_channel_counts=retrieval_channel_counts,
             dropped_retrieval_count=dropped_retrieval_count,
+            total_budget_tokens=total_budget_tokens,
+            used_budget_tokens=used_budget_tokens,
+            remaining_budget_tokens=remaining_budget_tokens,
+            truncated_tokens=truncated_tokens,
+            dropped_explicit_source_count=dropped_explicit_source_count,
         )
 
     return ReviewRoomDeveloperInspectorProjectionEnvelope(
