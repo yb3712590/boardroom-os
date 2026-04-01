@@ -29,23 +29,25 @@
   - 当前仍缺：更强的预算压缩矩阵、更多 schema / role profile 的真实执行覆盖，以及向量/联网之外是否还需要更丰富的本地检索策略；`provider routing / recovery`、浏览器直传和云预签名 multipart 继续后置到 MVP 之后再评估
 - 收敛 runtime 默认路径，优先保证本地单机执行稳定，而不是继续扩远程 handoff 面
 - 明确 MVP 的最小 schema、role profile、ticket 路径，不再边做边膨胀
+- 直接推进主线：把 `project-init -> 首个 review` 的真实自动推进补齐
+  - 当前 UI 已经能直接发起 workflow，但 `project-init` 仍只创建 workflow，不会自动拆票或自动产出待审 review
+  - 这已经成为当前本地 `Board -> Review` 路径里最明显的一段真实缺口
 
 ## P1：套上最薄 Web 壳
 
-- 实现 React Boardroom UI
-- 前端开发前先对齐当前视觉基线：
-  - `doc/design/boardroom-ui-visual-concept.md`
-  - `doc/design/boardroom-ui-visual-spec.md`
-- 先接通最核心的三块界面：
-  - `dashboard`
-  - `inbox`
-  - `review room`
-- 保持 projection-first；前端不拥有工作流真相
-- 首页默认采用 `workflow river` 主舞台：
-  - `ticket` 以光点 / 发光 capsule 沿轨道流转
-  - 进入董事会审批时切到独立 `Board Gate` 金色提醒语义
-  - 不回退到文字密集的 dashboard 卡片拼盘
-- 让董事会 / 操作人可以直接看当前状态、待审项、关键事件和最近结果
+- 已完成直接推进主线：独立 React Boardroom UI 已落地在 `frontend/`
+  - 当前已经接通 `dashboard / inbox / review room`
+  - 首页采用 `workflow river` 主舞台，并以 `Board Gate` 高亮待审状态
+  - 无 active workflow 时会显示最小 `project-init` 表单
+  - `approve / reject / modify constraints` 动作提交后会立即重新拉取，并用 SSE 做失效刷新
+- 直接推进主线：继续补齐 UI 的剩余 MVP 读面
+  - `provider / model` 设置页
+  - `incident` 详情页
+  - `workforce` 深入视图
+  - dependency inspector
+- 为主线解堵：继续保持 projection-first，前端不拥有工作流真相
+  - 当前首页河道只消费 `dashboard.pipeline_summary.phases` 的固定五段高层摘要，不新造前端工作流引擎
+  - `events/stream` 只用于失效通知，不作为浏览器里的第二真相源
 
 ## P2：在 MVP 之后补齐
 

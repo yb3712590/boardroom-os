@@ -18,6 +18,7 @@ from app.contracts.projections import (
     IncidentProjectionItem,
     InboxCountsProjection,
     InboxItemProjection,
+    NodeCountsProjection,
     WorkerAdminAuditProjectionData,
     WorkerAdminAuditProjectionEnvelope,
     WorkerAdminAuditProjectionFilters,
@@ -31,6 +32,7 @@ from app.contracts.projections import (
     InboxProjectionData,
     InboxProjectionEnvelope,
     OpsStripProjection,
+    PhaseSummaryProjection,
     PipelineSummaryProjection,
     ReviewRoomDraftDefaults,
     ReviewRoomDeveloperInspectorProjectionData,
@@ -67,6 +69,12 @@ from app.core.constants import (
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
+    NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    NODE_STATUS_CANCEL_REQUESTED,
+    NODE_STATUS_COMPLETED,
+    NODE_STATUS_EXECUTING,
+    NODE_STATUS_PENDING,
+    NODE_STATUS_REWORK_REQUIRED,
     SCHEMA_VERSION,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
@@ -134,6 +142,154 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
         active_checkers=active_checkers,
         workers_in_rework_loop=0,
         workers_in_staffing_containment=len(contained_workers),
+    )
+
+
+def _empty_phase_counts() -> dict[str, int]:
+    return {
+        "pending": 0,
+        "executing": 0,
+        "under_review": 0,
+        "blocked_for_board": 0,
+        "fused": 0,
+        "completed": 0,
+    }
+
+
+def _derive_phase_status(counts: dict[str, int]) -> str:
+    if counts["fused"] > 0:
+        return "FUSED"
+    if counts["blocked_for_board"] > 0:
+        return "BLOCKED_FOR_BOARD"
+    if counts["executing"] > 0:
+        return "EXECUTING"
+    if counts["under_review"] > 0:
+        return "UNDER_REVIEW"
+    if counts["pending"] > 0:
+        return "PENDING"
+    if counts["completed"] > 0:
+        return "COMPLETED"
+    return "PENDING"
+
+
+def _build_pipeline_summary(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str | None,
+    pending_approvals: int,
+) -> PipelineSummaryProjection:
+    phase_specs = [
+        ("phase_intake", "Intake"),
+        ("phase_plan", "Plan"),
+        ("phase_build", "Build"),
+        ("phase_check", "Check"),
+        ("phase_review", "Review"),
+    ]
+    phase_counts = {phase_id: _empty_phase_counts() for phase_id, _ in phase_specs}
+    critical_path_node_ids: list[str] = []
+    blocked_node_ids: list[str] = []
+
+    if workflow_id is None:
+        phases = [
+            PhaseSummaryProjection(
+                phase_id=phase_id,
+                label=label,
+                status="PENDING",
+                node_counts=NodeCountsProjection(**phase_counts[phase_id]),
+            )
+            for phase_id, label in phase_specs
+        ]
+        return PipelineSummaryProjection(
+            phases=phases,
+            critical_path_node_ids=critical_path_node_ids,
+            blocked_node_ids=blocked_node_ids,
+        )
+
+    with repository.connection() as connection:
+        node_rows = connection.execute(
+            """
+            SELECT node_id, status
+            FROM node_projection
+            WHERE workflow_id = ?
+            ORDER BY updated_at ASC, node_id ASC
+            """,
+            (workflow_id,),
+        ).fetchall()
+        incident_rows = connection.execute(
+            """
+            SELECT node_id
+            FROM incident_projection
+            WHERE workflow_id = ? AND status = ? AND circuit_breaker_state = ?
+            ORDER BY opened_at ASC, incident_id ASC
+            """,
+            (workflow_id, "OPEN", CIRCUIT_BREAKER_STATE_OPEN),
+        ).fetchall()
+
+    open_breaker_nodes = {str(row["node_id"]) for row in incident_rows if row["node_id"] is not None}
+    if not node_rows:
+        phase_counts["phase_intake"]["executing"] = 1
+    else:
+        phase_counts["phase_intake"]["completed"] = 1
+
+    seen_node_ids: set[str] = set()
+    for row in node_rows:
+        node_id = str(row["node_id"])
+        node_status = str(row["status"])
+        seen_node_ids.add(node_id)
+        if node_status in {
+            NODE_STATUS_EXECUTING,
+            NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+            NODE_STATUS_REWORK_REQUIRED,
+        }:
+            critical_path_node_ids.append(node_id)
+        if node_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+            blocked_node_ids.append(node_id)
+
+        if node_status == NODE_STATUS_PENDING:
+            phase_counts["phase_plan"]["pending"] += 1
+            continue
+        if node_status == NODE_STATUS_EXECUTING:
+            if node_id in open_breaker_nodes:
+                phase_counts["phase_build"]["fused"] += 1
+            else:
+                phase_counts["phase_build"]["executing"] += 1
+            continue
+        if node_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+            phase_counts["phase_build"]["completed"] += 1
+            phase_counts["phase_review"]["blocked_for_board"] += 1
+            continue
+        if node_status == NODE_STATUS_REWORK_REQUIRED:
+            if node_id in open_breaker_nodes:
+                phase_counts["phase_build"]["fused"] += 1
+            else:
+                phase_counts["phase_check"]["under_review"] += 1
+            continue
+        if node_status == NODE_STATUS_COMPLETED:
+            phase_counts["phase_build"]["completed"] += 1
+            continue
+        if node_status == NODE_STATUS_CANCEL_REQUESTED:
+            phase_counts["phase_build"]["fused"] += 1
+
+    for node_id in sorted(open_breaker_nodes - seen_node_ids):
+        critical_path_node_ids.append(node_id)
+        phase_counts["phase_build"]["fused"] += 1
+
+    if pending_approvals > phase_counts["phase_review"]["blocked_for_board"]:
+        phase_counts["phase_review"]["blocked_for_board"] = pending_approvals
+
+    phases = [
+        PhaseSummaryProjection(
+            phase_id=phase_id,
+            label=label,
+            status=_derive_phase_status(phase_counts[phase_id]),
+            node_counts=NodeCountsProjection(**phase_counts[phase_id]),
+        )
+        for phase_id, label in phase_specs
+    ]
+    return PipelineSummaryProjection(
+        phases=phases,
+        critical_path_node_ids=sorted(set(critical_path_node_ids)),
+        blocked_node_ids=sorted(set(blocked_node_ids)),
     )
 
 
@@ -253,6 +409,11 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
         active_workflow_projection = None
         budget_total = 0
         budget_used = 0
+        pipeline_summary = _build_pipeline_summary(
+            repository,
+            workflow_id=None,
+            pending_approvals=pending_approvals,
+        )
     else:
         active_workflow_projection = ActiveWorkflowProjection(
             workflow_id=active_workflow["workflow_id"],
@@ -265,6 +426,11 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
         )
         budget_total = active_workflow["budget_total"]
         budget_used = active_workflow["budget_used"]
+        pipeline_summary = _build_pipeline_summary(
+            repository,
+            workflow_id=active_workflow["workflow_id"],
+            pending_approvals=pending_approvals,
+        )
 
     preview_events = [
         EventStreamPreviewItem(
@@ -301,8 +467,8 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 provider_health_summary="DEGRADED" if open_provider_incidents > 0 else "UNKNOWN",
             ),
             pipeline_summary=PipelineSummaryProjection(
-                phases=[],
-                critical_path_node_ids=[],
+                phases=pipeline_summary.phases,
+                critical_path_node_ids=pipeline_summary.critical_path_node_ids,
                 blocked_node_ids=blocked_node_ids,
             ),
             inbox_counts=InboxCountsProjection(

@@ -1711,6 +1711,110 @@ def test_dashboard_returns_latest_active_workflow(client):
     assert isinstance(data["pipeline_summary"]["phases"], list)
 
 
+def test_dashboard_pipeline_summary_shows_intake_stage_for_initialized_workflow(client):
+    client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A", budget_cap=500000))
+
+    response = client.get("/api/v1/projections/dashboard")
+
+    assert response.status_code == 200
+    phases = response.json()["data"]["pipeline_summary"]["phases"]
+    assert [phase["label"] for phase in phases] == ["Intake", "Plan", "Build", "Check", "Review"]
+    intake_phase = phases[0]
+    assert intake_phase["status"] == "EXECUTING"
+    assert intake_phase["node_counts"]["executing"] == 1
+    assert phases[1]["status"] == "PENDING"
+    assert phases[2]["status"] == "PENDING"
+    assert phases[3]["status"] == "PENDING"
+    assert phases[4]["status"] == "PENDING"
+
+
+def test_dashboard_pipeline_summary_shows_build_stage_for_executing_ticket(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    _create_lease_and_start_ticket(client, workflow_id=workflow_id)
+
+    response = client.get("/api/v1/projections/dashboard")
+
+    assert response.status_code == 200
+    phases = response.json()["data"]["pipeline_summary"]["phases"]
+    build_phase = next(phase for phase in phases if phase["label"] == "Build")
+    assert build_phase["status"] == "EXECUTING"
+    assert build_phase["node_counts"]["executing"] == 1
+
+
+def test_dashboard_pipeline_summary_shows_review_stage_for_open_board_approval(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    _seed_review_request(client, workflow_id=workflow_id)
+
+    response = client.get("/api/v1/projections/dashboard")
+
+    assert response.status_code == 200
+    phases = response.json()["data"]["pipeline_summary"]["phases"]
+    review_phase = next(phase for phase in phases if phase["label"] == "Review")
+    assert review_phase["status"] == "BLOCKED_FOR_BOARD"
+    assert review_phase["node_counts"]["blocked_for_board"] == 1
+
+
+def test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_breaker(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_incident_001",
+        node_id="node_incident_build",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key="test-incident-opened:node_incident_build",
+            causation_id="cmd_test_incident",
+            correlation_id=workflow_id,
+                payload={
+                    "incident_id": "inc_test_build_fused",
+                    "node_id": "node_incident_build",
+                    "ticket_id": "tkt_incident_001",
+                    "incident_type": "REPEATED_FAILURE_ESCALATION",
+                    "status": "OPEN",
+                    "severity": "high",
+                    "fingerprint": "runtime-timeout:node_incident_build",
+                },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:03:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key="test-circuit-breaker-opened:node_incident_build",
+            causation_id="cmd_test_incident",
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_test_build_fused",
+                "node_id": "node_incident_build",
+                "ticket_id": "tkt_incident_001",
+                "circuit_breaker_state": "OPEN",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:03:01+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    response = client.get("/api/v1/projections/dashboard")
+
+    assert response.status_code == 200
+    phases = response.json()["data"]["pipeline_summary"]["phases"]
+    build_phase = next(phase for phase in phases if phase["label"] == "Build")
+    assert build_phase["status"] == "FUSED"
+    assert build_phase["node_counts"]["fused"] == 1
+
+
 def test_dashboard_workforce_summary_reflects_seeded_roster_and_busy_worker(client, set_ticket_time):
     initial_response = client.get("/api/v1/projections/dashboard")
 

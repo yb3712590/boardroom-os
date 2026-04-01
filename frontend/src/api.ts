@@ -1,0 +1,310 @@
+export type ProjectionEnvelope<T> = {
+  schema_version: string
+  generated_at: string
+  projection_version: number
+  cursor: string | null
+  data: T
+}
+
+export type WorkflowSummary = {
+  workflow_id: string
+  title: string
+  north_star_goal: string
+  status: string
+  current_stage: string
+  started_at: string
+  deadline_at: string | null
+}
+
+export type NodeCounts = {
+  pending: number
+  executing: number
+  under_review: number
+  blocked_for_board: number
+  fused: number
+  completed: number
+}
+
+export type PhaseSummary = {
+  phase_id: string
+  label: string
+  status: string
+  node_counts: NodeCounts
+}
+
+export type DashboardData = {
+  workspace: {
+    workspace_id: string
+    workspace_name: string
+  }
+  active_workflow: WorkflowSummary | null
+  ops_strip: {
+    budget_total: number
+    budget_used: number
+    budget_remaining: number
+    token_burn_rate_5m: number
+    active_tickets: number
+    blocked_nodes: number
+    open_incidents: number
+    open_circuit_breakers: number
+    provider_health_summary: string
+  }
+  pipeline_summary: {
+    phases: PhaseSummary[]
+    critical_path_node_ids: string[]
+    blocked_node_ids: string[]
+  }
+  inbox_counts: {
+    approvals_pending: number
+    incidents_pending: number
+    budget_alerts: number
+    provider_alerts: number
+  }
+  artifact_maintenance: {
+    auto_cleanup_enabled: boolean
+    cleanup_interval_sec: number
+    pending_expired_count: number
+    pending_storage_cleanup_count: number
+    delete_failed_count: number
+  }
+  workforce_summary: {
+    active_workers: number
+    idle_workers: number
+    overloaded_workers: number
+    active_checkers: number
+    workers_in_rework_loop: number
+    workers_in_staffing_containment: number
+  }
+  event_stream_preview: Array<{
+    event_id: string
+    occurred_at: string
+    category: string
+    severity: string
+    message: string
+    related_ref?: string | null
+  }>
+}
+
+export type InboxItem = {
+  inbox_item_id: string
+  workflow_id: string
+  item_type: string
+  priority: string
+  status: string
+  created_at: string
+  sla_due_at?: string | null
+  title: string
+  summary: string
+  source_ref: string
+  route_target: {
+    view: string
+    review_pack_id?: string | null
+    incident_id?: string | null
+  }
+  badges: string[]
+}
+
+export type InboxData = {
+  items: InboxItem[]
+}
+
+export type ReviewOption = {
+  option_id: string
+  label: string
+  summary: string
+  artifact_refs?: string[]
+}
+
+export type ReviewPack = {
+  meta: {
+    approval_id: string
+    review_pack_id: string
+    review_pack_version: number
+    workflow_id: string
+    review_type: string
+    created_at: string
+    priority: string
+  }
+  subject: {
+    title: string
+    subtitle?: string | null
+    source_node_id?: string | null
+    source_ticket_id?: string | null
+    blocking_scope?: string | null
+    change_kind?: string | null
+    employee_id?: string | null
+  }
+  trigger: {
+    trigger_event_id: string
+    trigger_reason: string
+    why_now: string
+  }
+  recommendation: {
+    recommended_action: string
+    recommended_option_id?: string | null
+    summary: string
+  }
+  options: ReviewOption[]
+  evidence_summary?: Array<{
+    evidence_id: string
+    label: string
+    summary: string
+  }>
+  delta_summary?: string | null
+  maker_checker_summary?: {
+    review_status?: string
+    summary?: string
+    checker_employee_id?: string
+  } | null
+  risk_summary?: string[] | null
+  budget_impact?: {
+    budget_delta_tokens?: number
+    summary?: string
+  } | null
+  decision_form: {
+    allowed_actions: string[]
+    command_target_version: number
+    requires_comment_on_reject: boolean
+    requires_constraint_patch_on_modify: boolean
+  }
+  developer_inspector_refs?: {
+    compiled_context_bundle_ref?: string
+    compile_manifest_ref?: string
+    rendered_execution_payload_ref?: string
+  } | null
+}
+
+export type ReviewRoomData = {
+  review_pack: ReviewPack | null
+  available_actions: string[]
+  draft_defaults: {
+    selected_option_id?: string | null
+    comment_template: string
+  }
+}
+
+export type DeveloperInspectorData = {
+  review_pack_id: string
+  compile_summary?: {
+    source_count: number
+    inline_full_count: number
+    degraded_source_count: number
+    total_budget_tokens: number
+    used_budget_tokens: number
+    remaining_budget_tokens: number
+  } | null
+  render_summary?: {
+    control_message_count: number
+    data_message_count: number
+  } | null
+  availability: string
+}
+
+export type CommandAck = {
+  command_id: string
+  idempotency_key: string
+  status: string
+  received_at: string
+  reason?: string | null
+  causation_hint?: string | null
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  })
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(detail || `Request failed: ${response.status}`)
+  }
+  return response.json() as Promise<T>
+}
+
+export async function getDashboard(): Promise<DashboardData> {
+  const payload = await requestJson<ProjectionEnvelope<DashboardData>>('/api/v1/projections/dashboard')
+  return payload.data
+}
+
+export async function getInbox(): Promise<InboxData> {
+  const payload = await requestJson<ProjectionEnvelope<InboxData>>('/api/v1/projections/inbox')
+  return payload.data
+}
+
+export async function getReviewRoom(reviewPackId: string): Promise<ReviewRoomData> {
+  const payload = await requestJson<ProjectionEnvelope<ReviewRoomData>>(
+    `/api/v1/projections/review-room/${reviewPackId}`,
+  )
+  return payload.data
+}
+
+export async function getDeveloperInspector(reviewPackId: string): Promise<DeveloperInspectorData> {
+  const payload = await requestJson<ProjectionEnvelope<DeveloperInspectorData>>(
+    `/api/v1/projections/review-room/${reviewPackId}/developer-inspector`,
+  )
+  return payload.data
+}
+
+export async function projectInit(payload: {
+  north_star_goal: string
+  hard_constraints: string[]
+  budget_cap: number
+  deadline_at: string | null
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/project-init', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function boardApprove(payload: {
+  review_pack_id: string
+  review_pack_version: number
+  command_target_version: number
+  approval_id: string
+  selected_option_id: string
+  board_comment: string
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/board-approve', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function boardReject(payload: {
+  review_pack_id: string
+  review_pack_version: number
+  command_target_version: number
+  approval_id: string
+  board_comment: string
+  rejection_reasons: string[]
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/board-reject', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function modifyConstraints(payload: {
+  review_pack_id: string
+  review_pack_version: number
+  command_target_version: number
+  approval_id: string
+  constraint_patch: {
+    add_rules: string[]
+    remove_rules: string[]
+    replace_rules: string[]
+  }
+  board_comment: string
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/modify-constraints', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}

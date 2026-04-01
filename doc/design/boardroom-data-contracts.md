@@ -63,6 +63,8 @@ Purpose:
 - populate the main control screen in one round trip
 - avoid excessive chatty frontend bootstrapping
 - expose artifact cleanup health in the same snapshot, so值守时不用先翻命令或事件流才能知道 cleanup 有没有跑
+- `pipeline_summary.phases` 在当前本地 MVP 中使用固定五段高层治理摘要：`Intake / Plan / Build / Check / Review`
+- 这层摘要是当前 workflow、node、approval、incident 真相上的确定性汇总，服务首页 `workflow river`，不是完整 DAG 或 event replay
 
 ```json
 {
@@ -98,8 +100,8 @@ Purpose:
     "pipeline_summary": {
       "phases": [
         {
-          "phase_id": "phase_discovery",
-          "label": "Discovery",
+          "phase_id": "phase_intake",
+          "label": "Intake",
           "status": "COMPLETED",
           "node_counts": {
             "pending": 0,
@@ -107,20 +109,59 @@ Purpose:
             "under_review": 0,
             "blocked_for_board": 0,
             "fused": 0,
-            "completed": 4
+            "completed": 1
           }
         },
         {
-          "phase_id": "phase_ui",
-          "label": "UI",
-          "status": "EXECUTING",
+          "phase_id": "phase_plan",
+          "label": "Plan",
+          "status": "PENDING",
           "node_counts": {
             "pending": 2,
+            "executing": 0,
+            "under_review": 0,
+            "blocked_for_board": 0,
+            "fused": 0,
+            "completed": 0
+          }
+        },
+        {
+          "phase_id": "phase_build",
+          "label": "Build",
+          "status": "EXECUTING",
+          "node_counts": {
+            "pending": 0,
             "executing": 3,
-            "under_review": 1,
-            "blocked_for_board": 1,
+            "under_review": 0,
+            "blocked_for_board": 0,
             "fused": 0,
             "completed": 2
+          }
+        },
+        {
+          "phase_id": "phase_check",
+          "label": "Check",
+          "status": "UNDER_REVIEW",
+          "node_counts": {
+            "pending": 0,
+            "executing": 0,
+            "under_review": 1,
+            "blocked_for_board": 0,
+            "fused": 0,
+            "completed": 0
+          }
+        },
+        {
+          "phase_id": "phase_review",
+          "label": "Review",
+          "status": "BLOCKED_FOR_BOARD",
+          "node_counts": {
+            "pending": 0,
+            "executing": 0,
+            "under_review": 0,
+            "blocked_for_board": 1,
+            "fused": 0,
+            "completed": 0
           }
         }
       ],
@@ -173,6 +214,10 @@ Purpose:
   }
 }
 ```
+
+Note:
+
+- `Board Gate` 当前不额外定义一套前端专用命令真相；首页提醒直接由 `inbox_counts.approvals_pending` 和 `pipeline_summary.phases.phase_review` 的状态派生。
 
 ## 5. Inbox Projection
 

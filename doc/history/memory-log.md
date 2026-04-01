@@ -235,6 +235,18 @@
 - Fresh focused verification after this change is:
   - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py::test_meeting_escalation_consensus_result_submit_routes_to_checker_ticket_before_board_review tests/test_api.py::test_meeting_escalation_checker_approved_opens_review_pack_with_maker_checker_summary tests/test_api.py::test_meeting_escalation_checker_changes_required_creates_consensus_fix_ticket_and_excludes_original_maker tests/test_api.py::test_employee_restore_recovers_frozen_requeued_ticket_and_clears_only_temporary_exclusion tests/test_api.py::test_incident_resolve_can_restore_and_retry_staffing_containment_with_preserved_maker_checker_context tests/test_scheduler_runner.py::test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime tests/test_scheduler_runner.py::test_scheduler_redispatches_restored_requeued_ticket_to_original_employee -q` -> `7 passed`
 
+### 2026-04-01
+
+- 把第一版真实可用的 React Boardroom UI 壳推进到了本地 MVP 主线上：仓库现在有独立的 `frontend/`，本地启动后能在同一界面里看到 `Dashboard -> Inbox -> Review Room`，而不用继续靠命令行和 JSON 读面操作。
+- 保持了前端边界收口：前端只消费现有 `dashboard / inbox / review-room` 投影并提交 `project-init / board-approve / board-reject / modify-constraints` 命令；SSE 只做失效通知，不作为浏览器里的第二真相源。
+- 补齐了首页河道必须要有的最小后端真相：`dashboard.pipeline_summary.phases` 现在返回固定五段的高层治理摘要 `Intake / Plan / Build / Check / Review`，由 workflow、node、approval 和 open incident 的现状确定性汇总，而不是再新开一套前端专用 API 或假装在浏览器里回放完整 DAG。
+- 当前边界也明确写进文档了：UI 里的 `project-init` 现在只负责创建 workflow，不会自动拆票或自动产出首个 review；如果要把 `Board -> Review` 从零启动彻底再缩短，下一段主线应回到这条后端自动推进链。
+- Fresh focused verification after this change is:
+  - `cd frontend && npm run lint` -> `exit 0`
+  - `cd frontend && npm run test:run` -> `1 passed, 6 tests passed`
+  - `cd frontend && npm run build` -> `built in 154ms`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py -k "dashboard or review_room or inbox" -q` -> `24 passed, 180 deselected`
+
 ### Current Watch-Outs
 
 - Latest commit also continued the append-only `memory-log.md` pattern. Before archival, this file had grown to about `2300` lines, `119 KB`, and `14.9k` words.
