@@ -790,6 +790,7 @@ def _ticket_result_submit_payload(
     artifact_refs: list[str] | None = None,
     written_artifacts: list[dict] | None = None,
     idempotency_key: str | None = None,
+    review_request: dict | None = None,
 ) -> dict:
     resolved_artifact_refs = artifact_refs or [
         "art://homepage/option-a.png",
@@ -855,13 +856,151 @@ def _ticket_result_submit_payload(
         result_payload["failure_message"] = "Structured runtime result reported failure."
         result_payload["failure_detail"] = {"step": "render", "exit_code": 1}
     if include_review_request:
-        result_payload["review_request"] = _ticket_complete_payload(
+        result_payload["review_request"] = review_request or _ticket_complete_payload(
             workflow_id=workflow_id,
             ticket_id=ticket_id,
             node_id=node_id,
             include_review_request=True,
         )["review_request"]
     return result_payload
+
+
+def _meeting_escalation_review_request(
+    *,
+    compiled_context_bundle_ref: str | None = None,
+    compile_manifest_ref: str | None = None,
+    rendered_execution_payload_ref: str | None = None,
+) -> dict:
+    developer_inspector_refs: dict[str, str] = {}
+    if compiled_context_bundle_ref is not None:
+        developer_inspector_refs["compiled_context_bundle_ref"] = compiled_context_bundle_ref
+    if compile_manifest_ref is not None:
+        developer_inspector_refs["compile_manifest_ref"] = compile_manifest_ref
+    if rendered_execution_payload_ref is not None:
+        developer_inspector_refs["rendered_execution_payload_ref"] = rendered_execution_payload_ref
+
+    payload = {
+        "review_type": "MEETING_ESCALATION",
+        "priority": "high",
+        "title": "Review scope decision consensus",
+        "subtitle": "Meeting output is ready for board lock-in.",
+        "blocking_scope": "WORKFLOW",
+        "trigger_reason": "Cross-role scope decision needs explicit board confirmation.",
+        "why_now": "Implementation and staffing should not continue before this decision is locked.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "consensus_scope_lock",
+        "recommendation_summary": "The meeting converged on the narrowest scope that still ships the workflow.",
+        "options": [
+            {
+                "option_id": "consensus_scope_lock",
+                "label": "Lock consensus scope",
+                "summary": "Proceed with the converged scope and follow-up tickets.",
+                "artifact_refs": ["art://meeting/consensus-document.json"],
+                "pros": ["Keeps delivery scope stable"],
+                "cons": ["Defers non-critical stretch ideas"],
+                "risks": ["Some polish moves slip to later rounds"],
+            }
+        ],
+        "evidence_summary": [
+            {
+                "evidence_id": "ev_meeting_consensus",
+                "source_type": "CONSENSUS_DOCUMENT",
+                "headline": "Meeting converged on one scope",
+                "summary": "Participants aligned on one scope and attached concrete follow-up tickets.",
+                "source_ref": "art://meeting/consensus-document.json",
+            }
+        ],
+        "risk_summary": {
+            "user_risk": "LOW",
+            "engineering_risk": "MEDIUM",
+            "schedule_risk": "LOW",
+            "budget_risk": "LOW",
+        },
+        "budget_impact": {
+            "tokens_spent_so_far": 900,
+            "tokens_if_approved_estimate_range": {"min_tokens": 100, "max_tokens": 250},
+            "tokens_if_rework_estimate_range": {"min_tokens": 350, "max_tokens": 700},
+            "estimate_confidence": "medium",
+            "budget_risk": "LOW",
+        },
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "consensus_scope_lock",
+        "comment_template": "",
+        "inbox_title": "Review scope decision consensus",
+        "inbox_summary": "A consensus document is ready for board review.",
+        "badges": ["meeting", "board_gate", "scope"],
+    }
+    if developer_inspector_refs:
+        payload["developer_inspector_refs"] = developer_inspector_refs
+    return payload
+
+
+def _consensus_document_payload(
+    *,
+    topic: str = "Boardroom OS scope convergence",
+    followup_ticket_id: str = "tkt_followup_scope_lock",
+) -> dict:
+    return {
+        "topic": topic,
+        "participants": ["emp_frontend_2", "emp_checker_1"],
+        "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
+        "consensus_summary": "Team aligned on the smallest scope that still unblocks board review.",
+        "rejected_options": ["Expand to remote handoff this round"],
+        "open_questions": ["Whether analytics polish should move after MVP"],
+        "followup_tickets": [
+            {
+                "ticket_id": followup_ticket_id,
+                "owner_role": "frontend_engineer",
+                "summary": "Implement the approved scope without expanding the governance surface.",
+            }
+        ],
+    }
+
+
+def _consensus_document_result_submit_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_scope_001",
+    node_id: str = "node_scope_decision",
+    submitted_by: str = "emp_frontend_2",
+    include_review_request: bool = False,
+    review_request: dict | None = None,
+    payload: dict | None = None,
+    artifact_refs: list[str] | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "submitted_by": submitted_by,
+        "result_status": "completed",
+        "schema_version": "consensus_document_v1",
+        "payload": payload or _consensus_document_payload(),
+        "artifact_refs": artifact_refs or ["art://meeting/consensus-document.json"],
+        "written_artifacts": [
+            {
+                "path": "reports/meeting/consensus-document.json",
+                "artifact_ref": (artifact_refs or ["art://meeting/consensus-document.json"])[0],
+                "kind": "JSON",
+                "content_json": payload or _consensus_document_payload(),
+            }
+        ],
+        "assumptions": ["Consensus already reflects the final facilitator summary."],
+        "issues": [],
+        "confidence": 0.84,
+        "needs_escalation": False,
+        "summary": "Structured consensus document submitted.",
+        "failure_kind": None,
+        "failure_message": None,
+        "failure_detail": None,
+        "idempotency_key": idempotency_key
+        or f"ticket-result-submit:{workflow_id}:{ticket_id}:consensus",
+        **(
+            {"review_request": review_request or _meeting_escalation_review_request()}
+            if include_review_request
+            else {}
+        ),
+    }
 
 
 def _maker_checker_result_submit_payload(
@@ -964,6 +1103,12 @@ def _ticket_create_payload(
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
     allowed_write_set: list[str] | None = None,
+    input_artifact_refs: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    output_schema_ref: str = "ui_milestone_review",
+    output_schema_version: int = 1,
+    allowed_tools: list[str] | None = None,
+    context_query_plan: dict | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict:
@@ -975,20 +1120,20 @@ def _ticket_create_payload(
         "attempt_no": attempt_no,
         "role_profile_ref": role_profile_ref,
         "constraints_ref": "global_constraints_v3",
-        "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
-        "context_query_plan": {
+        "input_artifact_refs": input_artifact_refs or ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
+        "context_query_plan": context_query_plan or {
             "keywords": ["homepage", "brand", "visual"],
             "semantic_queries": ["approved visual direction"],
             "max_context_tokens": 3000,
         },
-        "acceptance_criteria": [
+        "acceptance_criteria": acceptance_criteria or [
             "Must satisfy approved visual direction",
             "Must produce 2 options",
             "Must include rationale and risks",
         ],
-        "output_schema_ref": "ui_milestone_review",
-        "output_schema_version": 1,
-        "allowed_tools": ["read_artifact", "write_artifact", "image_gen"],
+        "output_schema_ref": output_schema_ref,
+        "output_schema_version": output_schema_version,
+        "allowed_tools": allowed_tools or ["read_artifact", "write_artifact", "image_gen"],
         "allowed_write_set": allowed_write_set or ["artifacts/ui/homepage/*", "reports/review/*"],
         "lease_timeout_sec": lease_timeout_sec,
         "retry_budget": retry_budget,
@@ -1126,6 +1271,12 @@ def _create_and_lease_ticket(
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
     allowed_write_set: list[str] | None = None,
+    input_artifact_refs: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    output_schema_ref: str = "ui_milestone_review",
+    output_schema_version: int = 1,
+    allowed_tools: list[str] | None = None,
+    context_query_plan: dict | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> None:
@@ -1147,6 +1298,12 @@ def _create_and_lease_ticket(
             timeout_backoff_multiplier=timeout_backoff_multiplier,
             timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
             allowed_write_set=allowed_write_set,
+            input_artifact_refs=input_artifact_refs,
+            acceptance_criteria=acceptance_criteria,
+            output_schema_ref=output_schema_ref,
+            output_schema_version=output_schema_version,
+            allowed_tools=allowed_tools,
+            context_query_plan=context_query_plan,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
         ),
@@ -1186,6 +1343,12 @@ def _create_lease_and_start_ticket(
     timeout_backoff_multiplier: float = 1.5,
     timeout_backoff_cap_multiplier: float = 2.0,
     allowed_write_set: list[str] | None = None,
+    input_artifact_refs: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    output_schema_ref: str = "ui_milestone_review",
+    output_schema_version: int = 1,
+    allowed_tools: list[str] | None = None,
+    context_query_plan: dict | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> None:
@@ -1207,6 +1370,12 @@ def _create_lease_and_start_ticket(
         timeout_backoff_multiplier=timeout_backoff_multiplier,
         timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
         allowed_write_set=allowed_write_set,
+        input_artifact_refs=input_artifact_refs,
+        acceptance_criteria=acceptance_criteria,
+        output_schema_ref=output_schema_ref,
+        output_schema_version=output_schema_version,
+        allowed_tools=allowed_tools,
+        context_query_plan=context_query_plan,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
     )
@@ -6371,6 +6540,259 @@ def test_visual_milestone_result_submit_routes_to_checker_ticket_before_board_re
     assert dashboard_response.json()["data"]["inbox_counts"]["approvals_pending"] == 0
 
 
+def test_meeting_escalation_consensus_result_submit_routes_to_checker_ticket_before_board_review(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_scope_meeting",
+        ticket_id="tkt_scope_meeting_001",
+        node_id="node_scope_meeting",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=[
+            "Must produce a consensus document",
+            "Must include follow-up tickets",
+            "Must summarize rejected options",
+        ],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id="wf_scope_meeting",
+            ticket_id="tkt_scope_meeting_001",
+            node_id="node_scope_meeting",
+            include_review_request=True,
+            review_request=_meeting_escalation_review_request(),
+        ),
+    )
+
+    repository = client.app.state.repository
+    maker_ticket = repository.get_current_ticket_projection("tkt_scope_meeting_001")
+    node_projection = repository.get_current_node_projection("wf_scope_meeting", "node_scope_meeting")
+    assert node_projection is not None
+    checker_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+    with repository.connection() as connection:
+        checker_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            node_projection["latest_ticket_id"],
+        )
+    inbox_response = client.get("/api/v1/projections/inbox")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert maker_ticket is not None
+    assert maker_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert checker_ticket is not None
+    assert checker_ticket["ticket_id"] != "tkt_scope_meeting_001"
+    assert checker_ticket["status"] == TICKET_STATUS_PENDING
+    assert checker_created_spec is not None
+    assert checker_created_spec["parent_ticket_id"] == "tkt_scope_meeting_001"
+    assert checker_created_spec["role_profile_ref"] == "checker_primary"
+    assert checker_created_spec["output_schema_ref"] == "maker_checker_verdict"
+    assert repository.list_open_approvals() == []
+    assert inbox_response.json()["data"]["items"] == []
+
+
+def test_meeting_escalation_checker_approved_opens_review_pack_with_maker_checker_summary(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_scope_review",
+        ticket_id="tkt_scope_review_001",
+        node_id="node_scope_review",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id="wf_scope_review",
+            ticket_id="tkt_scope_review_001",
+            node_id="node_scope_review",
+            include_review_request=True,
+            review_request=_meeting_escalation_review_request(),
+        ),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection("wf_scope_review", "node_scope_review")[
+        "latest_ticket_id"
+    ]
+    checker_lease = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_scope_review",
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_review",
+            leased_by="emp_checker_1",
+        ),
+    )
+    checker_start = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_scope_review",
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_review",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_scope_review",
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_review",
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=f"ticket-result-submit:wf_scope_review:{checker_ticket_id}:approved",
+        ),
+    )
+
+    approvals = repository.list_open_approvals()
+    assert checker_lease.status_code == 200
+    assert checker_start.status_code == 200
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+    assert len(approvals) == 1
+    assert approvals[0]["approval_type"] == "MEETING_ESCALATION"
+    assert approvals[0]["payload"]["review_pack"]["meta"]["review_type"] == "MEETING_ESCALATION"
+    assert approvals[0]["payload"]["review_pack"]["maker_checker_summary"]["review_status"] == (
+        "APPROVED_WITH_NOTES"
+    )
+    assert approvals[0]["payload"]["review_pack"]["maker_checker_summary"]["checker_employee_id"] == (
+        "emp_checker_1"
+    )
+
+
+def test_meeting_escalation_checker_changes_required_creates_consensus_fix_ticket_and_excludes_original_maker(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_scope_rework",
+        ticket_id="tkt_scope_rework_001",
+        node_id="node_scope_rework",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id="wf_scope_rework",
+            ticket_id="tkt_scope_rework_001",
+            node_id="node_scope_rework",
+            include_review_request=True,
+            review_request=_meeting_escalation_review_request(),
+        ),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection("wf_scope_rework", "node_scope_rework")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_scope_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_rework",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_scope_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_rework",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_scope_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_rework",
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_scope_unbounded",
+                    "severity": "high",
+                    "category": "SCOPE_DISCIPLINE",
+                    "headline": "Consensus still includes non-MVP scope.",
+                    "summary": "Document keeps remote handoff inside the current round.",
+                    "required_action": "Remove non-MVP scope before board review.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:wf_scope_rework:{checker_ticket_id}:changes-required",
+        ),
+    )
+
+    node_projection = repository.get_current_node_projection("wf_scope_rework", "node_scope_rework")
+    assert node_projection is not None
+    fix_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+    with repository.connection() as connection:
+        fix_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            node_projection["latest_ticket_id"],
+        )
+
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+    assert fix_ticket is not None
+    assert fix_ticket["ticket_id"] not in {"tkt_scope_rework_001", checker_ticket_id}
+    assert fix_ticket["status"] == TICKET_STATUS_PENDING
+    assert fix_created_spec is not None
+    assert fix_created_spec["parent_ticket_id"] == checker_ticket_id
+    assert fix_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert fix_created_spec["output_schema_ref"] == "consensus_document"
+    assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+    assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
+        "MEETING_ESCALATION"
+    )
+    assert fix_created_spec["maker_checker_context"]["blocking_finding_refs"] == [
+        "finding_scope_unbounded"
+    ]
+    assert "Remove non-MVP scope before board review." in fix_created_spec["acceptance_criteria"][-1]
+
+
 def test_checker_changes_required_creates_fix_ticket_instead_of_board_review(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client)
@@ -7333,6 +7755,78 @@ def test_employee_restore_reactivates_frozen_employee_and_workforce_projection(c
     assert restored_worker["activity_state"] == "IDLE"
 
 
+def test_employee_restore_recovers_frozen_requeued_ticket_and_clears_only_temporary_exclusion(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Restore requeued ticket"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    _create_and_lease_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_restore_requeued",
+        node_id="node_restore_requeued",
+        allowed_write_set=["artifacts/ui/homepage/*"],
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="test-setup",
+            workflow_id=workflow_id,
+            idempotency_key="test-setup:restore-requeued:baseline-exclusion",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                **repository.get_latest_ticket_created_payload(connection, "tkt_restore_requeued"),
+                "excluded_employee_ids": ["emp_frontend_backup"],
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:30+08:00"),
+        )
+        repository.refresh_projections(connection)
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_restore_requeued",
+            node_id="node_restore_requeued",
+            leased_by="emp_frontend_2",
+        ),
+    )
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id),
+    )
+    restore_response = client.post(
+        "/api/v1/commands/employee-restore",
+        json=_employee_restore_payload(workflow_id),
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_restore_requeued")
+    with repository.connection() as connection:
+        updated_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            "tkt_restore_requeued",
+        )
+
+    assert freeze_response.status_code == 200
+    assert restore_response.status_code == 200
+    assert restore_response.json()["status"] == "ACCEPTED"
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == TICKET_STATUS_PENDING
+    assert ticket_projection["lease_owner"] is None
+    assert updated_created_spec is not None
+    assert updated_created_spec["excluded_employee_ids"] == ["emp_frontend_backup"]
+
+
 def test_employee_restore_rejects_missing_active_and_replaced_employees(client):
     workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Restore guardrails"))
     workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
@@ -7446,6 +7940,184 @@ def test_employee_restore_reenables_manual_lease_and_worker_runtime_bootstrap(
     assert lease_response.status_code == 200
     assert lease_response.json()["status"] == "ACCEPTED"
     assert active_runtime_response.status_code == 200
+
+
+def test_incident_resolve_can_restore_and_retry_staffing_containment_with_preserved_maker_checker_context(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Recover staffing-contained meeting fix ticket"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    hire_response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_frontend_backup_staffing",
+        ),
+    )
+    assert hire_response.status_code == 200
+    approval = client.app.state.repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve backup staffing for staffing recovery.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:staffing-recovery",
+        },
+    )
+    assert approve_response.status_code == 200
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scope_staffing_001",
+        node_id="node_scope_staffing",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_scope_staffing_001",
+            node_id="node_scope_staffing",
+            include_review_request=True,
+            review_request=_meeting_escalation_review_request(),
+        ),
+    )
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_staffing")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_staffing",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_staffing",
+            started_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_staffing",
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_scope_unbounded",
+                    "severity": "high",
+                    "category": "SCOPE_DISCIPLINE",
+                    "headline": "Consensus still includes non-MVP scope.",
+                    "summary": "Document keeps remote handoff inside the current round.",
+                    "required_action": "Remove non-MVP scope before board review.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:changes-required",
+        ),
+    )
+
+    fix_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_staffing")["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=fix_ticket_id,
+            node_id="node_scope_staffing",
+            leased_by="emp_frontend_backup_staffing",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=fix_ticket_id,
+            node_id="node_scope_staffing",
+            started_by="emp_frontend_backup_staffing",
+        ),
+    )
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json={
+            **_employee_freeze_payload(
+                workflow_id,
+                employee_id="emp_frontend_backup_staffing",
+            ),
+            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_backup_staffing",
+        },
+    )
+    assert freeze_response.status_code == 200
+
+    incident = repository.list_open_incidents()[0]
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident["incident_id"],
+            idempotency_key=f"incident-resolve:{incident['incident_id']}:staffing",
+            followup_action="RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT",
+        ),
+    )
+
+    current_node = repository.get_current_node_projection(workflow_id, "node_scope_staffing")
+    assert current_node is not None
+    followup_ticket = repository.get_current_ticket_projection(current_node["latest_ticket_id"])
+    with repository.connection() as connection:
+        followup_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            current_node["latest_ticket_id"],
+        )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident['incident_id']}")
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert followup_ticket is not None
+    assert followup_ticket["ticket_id"] != fix_ticket_id
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_created_spec is not None
+    assert followup_created_spec["output_schema_ref"] == "consensus_document"
+    assert followup_created_spec["maker_checker_context"]["checker_ticket_id"] == checker_ticket_id
+    assert followup_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
+        "MEETING_ESCALATION"
+    )
+    assert followup_created_spec["ticket_kind"] == "MAKER_REWORK_FIX"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT"
+    )
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == (
+        followup_ticket["ticket_id"]
+    )
 
 
 def test_board_approve_command_resolves_open_approval(client):

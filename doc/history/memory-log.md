@@ -228,6 +228,12 @@
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "workforce or core_hire or employee_freeze or checker_changes_required" -q` -> `7 passed, 182 deselected`
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -q` -> `20 passed`
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `298 passed`
+- Continued Workflow Governance on the current mainline instead of opening a new UI lane: maker-checker is no longer limited to `VISUAL_MILESTONE + ui_milestone_review@1`; `MEETING_ESCALATION + consensus_document@1` now also routes through checker first, then into the existing `Inbox -> Review Room` board gate.
+- Kept the new path local-MVP sized: deterministic runtime now also knows how to emit a schema-valid `consensus_document@1`, so meeting/scope decision tickets can run end-to-end without introducing a new worker role system or remote dependency.
+- Closed the next staffing-recovery gap on the same chain: `employee-restore` now automatically reopens freeze-requeued pending tickets by removing only the temporary exclusion added by that freeze, instead of leaving operators to recreate those tickets manually.
+- Added explicit staffing-containment incident recovery: `incident-resolve` now accepts `RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT`, closes the contained execution attempt honestly, and creates the next pending ticket while preserving the original `ticket_kind`, maker-checker context, inputs, acceptance criteria, and existing exclusion rules.
+- Fresh focused verification after this change is:
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py::test_meeting_escalation_consensus_result_submit_routes_to_checker_ticket_before_board_review tests/test_api.py::test_meeting_escalation_checker_approved_opens_review_pack_with_maker_checker_summary tests/test_api.py::test_meeting_escalation_checker_changes_required_creates_consensus_fix_ticket_and_excludes_original_maker tests/test_api.py::test_employee_restore_recovers_frozen_requeued_ticket_and_clears_only_temporary_exclusion tests/test_api.py::test_incident_resolve_can_restore_and_retry_staffing_containment_with_preserved_maker_checker_context tests/test_scheduler_runner.py::test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime tests/test_scheduler_runner.py::test_scheduler_redispatches_restored_requeued_ticket_to_original_employee -q` -> `7 passed`
 
 ### Current Watch-Outs
 

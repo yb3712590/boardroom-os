@@ -21,6 +21,7 @@ from app.core.context_compiler import (
     compile_and_persist_execution_artifacts,
 )
 from app.core.output_schemas import schema_id, validate_output_payload
+from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF
 from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
     OpenAICompatProviderBadResponseError,
@@ -60,7 +61,11 @@ class RuntimeExecutionOutcome:
     final_ack: CommandAckEnvelope | None
 
 
-SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {"ui_milestone_review", "maker_checker_verdict"}
+SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
+    "ui_milestone_review",
+    "maker_checker_verdict",
+    CONSENSUS_DOCUMENT_SCHEMA_REF,
+}
 SUPPORTED_RUNTIME_ROLE_PROFILES = {"ui_designer_primary", "checker_primary"}
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
 
@@ -140,6 +145,25 @@ def _build_runtime_default_artifacts(
     execution_package: CompiledExecutionPackage,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     ticket_id = execution_package.meta.ticket_id
+    if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
+        artifact_ref = f"art://runtime/{ticket_id}/consensus-document.json"
+        allowed_write_set = list(execution_package.execution.allowed_write_set)
+        if not allowed_write_set:
+            return [artifact_ref], []
+        write_pattern = allowed_write_set[0]
+        return [artifact_ref], [
+            {
+                "path": _resolve_runtime_write_path(write_pattern, "consensus-document.json"),
+                "artifact_ref": artifact_ref,
+                "kind": "JSON",
+                "retention_class": "REVIEW_EVIDENCE",
+                "content_json": {
+                    "document_kind": "consensus_document",
+                    "headline": "Primary runtime-generated consensus document.",
+                },
+            }
+        ]
+
     artifact_refs = [
         f"art://runtime/{ticket_id}/option-a.json",
         f"art://runtime/{ticket_id}/option-b.json",
@@ -177,6 +201,27 @@ def _build_runtime_success_payload(
     execution_package: CompiledExecutionPackage,
     artifact_refs: list[str],
 ) -> dict[str, Any]:
+    if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
+        return {
+            "topic": f"Consensus for ticket {execution_package.meta.ticket_id}",
+            "participants": [execution_package.compiled_role.role_profile_ref, "checker_primary"],
+            "input_artifact_refs": [
+                block.source_ref
+                for block in execution_package.atomic_context_bundle.context_blocks
+                if block.source_kind == "ARTIFACT"
+            ],
+            "consensus_summary": "Runtime converged on the narrowest scope that keeps delivery moving.",
+            "rejected_options": ["Expand beyond the current MVP boundary in this round."],
+            "open_questions": ["Whether non-critical polish should move after board approval."],
+            "followup_tickets": [
+                {
+                    "ticket_id": f"{execution_package.meta.ticket_id}_followup",
+                    "owner_role": execution_package.compiled_role.role_profile_ref,
+                    "summary": "Implement the agreed consensus without widening scope.",
+                }
+            ],
+        }
+
     return {
         "summary": (
             f"Runtime prepared a minimal {execution_package.execution.output_schema_ref} review package "
@@ -202,16 +247,16 @@ def _build_runtime_success_payload(
 
 def _build_runtime_checker_verdict_payload() -> dict[str, Any]:
     return {
-        "summary": "Checker approved the visual milestone with one non-blocking note.",
+        "summary": "Checker approved the submitted deliverable with one non-blocking note.",
         "review_status": "APPROVED_WITH_NOTES",
         "findings": [
             {
                 "finding_id": "finding_cta_spacing",
                 "severity": "low",
                 "category": "VISUAL_POLISH",
-                "headline": "CTA spacing can be tightened slightly.",
-                "summary": "Spacing is acceptable but should be polished downstream.",
-                "required_action": "Tighten CTA spacing during implementation.",
+                "headline": "One follow-up polish item remains.",
+                "summary": "The deliverable is acceptable, but one polish task should be tracked downstream.",
+                "required_action": "Carry the noted polish item into downstream implementation.",
                 "blocking": False,
             }
         ],

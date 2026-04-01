@@ -70,6 +70,7 @@ from app.core.constants import (
     FAILURE_KIND_UPSTREAM_UNAVAILABLE,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
+    INCIDENT_TYPE_STAFFING_CONTAINMENT,
     INCIDENT_STATUS_CLOSED,
     INCIDENT_STATUS_OPEN,
     INCIDENT_STATUS_RECOVERING,
@@ -96,6 +97,8 @@ from app.core.context_compiler import export_latest_compile_artifacts_to_develop
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
+    CONSENSUS_DOCUMENT_SCHEMA_REF,
+    CONSENSUS_DOCUMENT_SCHEMA_VERSION,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
@@ -134,6 +137,14 @@ class PreparedTicketArtifact:
 
 MAKER_CHECKER_REVIEW_TICKET_KIND = "MAKER_CHECKER_REVIEW"
 MAKER_REWORK_FIX_TICKET_KIND = "MAKER_REWORK_FIX"
+MAKER_CHECKER_SUPPORTED_TARGETS = {
+    ("VISUAL_MILESTONE", UI_MILESTONE_REVIEW_SCHEMA_REF, UI_MILESTONE_REVIEW_SCHEMA_VERSION),
+    (
+        "MEETING_ESCALATION",
+        CONSENSUS_DOCUMENT_SCHEMA_REF,
+        CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    ),
+}
 
 
 def _duplicate_ack(
@@ -645,8 +656,34 @@ def _dedupe_string_values(values: list[str | None]) -> list[str]:
     return deduped
 
 
-def _is_maker_checker_review_request(review_request: TicketBoardReviewRequest | None) -> bool:
-    return bool(review_request is not None and review_request.review_type.value == "VISUAL_MILESTONE")
+def _maker_checker_support_key(
+    review_request: TicketBoardReviewRequest | None,
+    created_spec: dict[str, Any] | None,
+) -> tuple[str, str, int] | None:
+    if review_request is None or created_spec is None:
+        return None
+    return (
+        review_request.review_type.value,
+        str(created_spec.get("output_schema_ref") or ""),
+        int(created_spec.get("output_schema_version") or 0),
+    )
+
+
+def _supports_maker_checker(
+    review_request: TicketBoardReviewRequest | None,
+    created_spec: dict[str, Any] | None,
+) -> bool:
+    return _maker_checker_support_key(review_request, created_spec) in MAKER_CHECKER_SUPPORTED_TARGETS
+
+
+def _maker_checker_subject_label(review_request: TicketBoardReviewRequest | None) -> str:
+    if review_request is None:
+        return "submitted deliverable"
+    if review_request.review_type.value == "VISUAL_MILESTONE":
+        return "submitted visual milestone"
+    if review_request.review_type.value == "MEETING_ESCALATION":
+        return "submitted consensus document"
+    return "submitted deliverable"
 
 
 def _ticket_kind(created_spec: dict[str, Any] | None) -> str | None:
@@ -675,16 +712,13 @@ def _should_route_to_maker_checker(
     review_request: TicketBoardReviewRequest | None,
     created_spec: dict[str, Any] | None,
 ) -> bool:
-    if not _is_maker_checker_review_request(review_request):
+    if not _supports_maker_checker(review_request, created_spec):
         return False
     if created_spec is None:
         return False
     if _ticket_kind(created_spec) == MAKER_CHECKER_REVIEW_TICKET_KIND:
         return False
-    return (
-        str(created_spec.get("output_schema_ref") or "") == UI_MILESTONE_REVIEW_SCHEMA_REF
-        and int(created_spec.get("output_schema_version") or 0) == UI_MILESTONE_REVIEW_SCHEMA_VERSION
-    )
+    return True
 
 
 def _build_generated_maker_checker_summary(
@@ -857,7 +891,10 @@ def _build_maker_checker_ticket_payload(
             "max_context_tokens": max_context_tokens,
         },
         "acceptance_criteria": [
-            "Must return a structured maker-checker verdict for the submitted visual milestone.",
+            (
+                "Must return a structured maker-checker verdict for the "
+                f"{_maker_checker_subject_label(review_request)}."
+            ),
         ],
         "output_schema_ref": MAKER_CHECKER_VERDICT_SCHEMA_REF,
         "output_schema_version": MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
@@ -1525,6 +1562,101 @@ def _validate_restore_and_retry_provider_followup(
         )
 
     return current_ticket, created_spec
+
+
+def _validate_restore_and_retry_staffing_followup(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    incident: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    incident_ticket_id = incident.get("ticket_id")
+    if incident_ticket_id is None:
+        raise ValueError(f"Incident {incident['incident_id']} is missing its source ticket.")
+
+    created_spec = repository.get_latest_ticket_created_payload(connection, incident_ticket_id)
+    if created_spec is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "created spec is missing."
+        )
+
+    current_ticket = repository.get_current_ticket_projection(incident_ticket_id, connection=connection)
+    if current_ticket is None:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "projection is missing."
+        )
+    if current_ticket["status"] not in {TICKET_STATUS_CANCEL_REQUESTED, TICKET_STATUS_CANCELLED}:
+        raise ValueError(
+            f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
+            "is not contained in a recoverable cancellation state."
+        )
+
+    return current_ticket, created_spec
+
+
+def _schedule_staffing_recovery_followup(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    source_ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+    idempotency_key_base: str,
+) -> str:
+    source_ticket_id = str(source_ticket["ticket_id"])
+    node_id = str(source_ticket["node_id"])
+    if source_ticket["status"] == TICKET_STATUS_CANCEL_REQUESTED:
+        cancelled_event = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CANCELLED,
+            actor_type="operator",
+            actor_id="incident-recovery",
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:staffing-cancelled:{source_ticket_id}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": source_ticket_id,
+                "node_id": node_id,
+                "cancelled_by": "incident-recovery",
+                "reason": "Staffing containment recovery superseded the contained execution attempt.",
+            },
+            occurred_at=occurred_at,
+        )
+        if cancelled_event is None:
+            raise RuntimeError("Staffing containment cancellation idempotency conflict.")
+
+    next_ticket_id = new_prefixed_id("tkt")
+    next_ticket_payload = {
+        **created_spec,
+        "ticket_id": next_ticket_id,
+        "parent_ticket_id": source_ticket_id,
+        "attempt_no": int(created_spec.get("attempt_no") or 1) + 1,
+        "idempotency_key": f"staffing-recovery-create:{workflow_id}:{next_ticket_id}",
+    }
+    next_ticket_payload["staffing_recovery"] = {
+        "recovered_from_ticket_id": source_ticket_id,
+        "recovered_at": occurred_at.isoformat(),
+    }
+    created_event = repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_CREATED,
+        actor_type="operator",
+        actor_id="incident-recovery",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:staffing-recovery-create:{next_ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=next_ticket_payload,
+        occurred_at=occurred_at,
+    )
+    if created_event is None:
+        raise RuntimeError("Staffing containment follow-up ticket creation idempotency conflict.")
+    return next_ticket_id
 
 
 def _schedule_retry(
@@ -2364,6 +2496,34 @@ def handle_incident_resolve(
                     incident_id=payload.incident_id,
                     reason=str(exc),
                 )
+        elif (
+            payload.followup_action
+            == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT
+        ):
+            if incident["incident_type"] != INCIDENT_TYPE_STAFFING_CONTAINMENT:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=(
+                        f"Incident {payload.incident_id} does not support staffing containment recovery."
+                    ),
+                )
+            try:
+                retry_ticket, retry_created_spec = _validate_restore_and_retry_staffing_followup(
+                    repository=repository,
+                    connection=connection,
+                    incident=incident,
+                )
+            except ValueError as exc:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=str(exc),
+                )
 
         resolution_payload = {
             "incident_id": payload.incident_id,
@@ -2404,32 +2564,48 @@ def handle_incident_resolve(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE,
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT,
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE,
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT,
         }:
             assert retry_ticket is not None
             assert retry_created_spec is not None
-            retry_source_event_type = (
-                EVENT_TICKET_TIMED_OUT
-                if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
-                else EVENT_TICKET_FAILED
-            )
-            followup_ticket_id = _schedule_retry(
-                repository=repository,
-                connection=connection,
-                command_id=command_id,
-                occurred_at=received_at,
-                workflow_id=workflow_id,
-                failed_ticket_id=str(incident["ticket_id"]),
-                node_id=str(incident["node_id"]),
-                created_spec=retry_created_spec,
-                failure_payload={
-                    "failure_fingerprint": (
-                        (incident.get("payload") or {}).get("latest_failure_fingerprint")
-                        or incident.get("fingerprint")
-                    ),
-                },
-                retry_source_event_type=retry_source_event_type,
-                idempotency_key_base=f"{payload.idempotency_key}:followup-timeout",
-            )
+            if (
+                payload.followup_action
+                == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT
+            ):
+                followup_ticket_id = _schedule_staffing_recovery_followup(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=workflow_id,
+                    source_ticket=retry_ticket,
+                    created_spec=retry_created_spec,
+                    idempotency_key_base=f"{payload.idempotency_key}:followup-staffing",
+                )
+            else:
+                retry_source_event_type = (
+                    EVENT_TICKET_TIMED_OUT
+                    if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
+                    else EVENT_TICKET_FAILED
+                )
+                followup_ticket_id = _schedule_retry(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=workflow_id,
+                    failed_ticket_id=str(incident["ticket_id"]),
+                    node_id=str(incident["node_id"]),
+                    created_spec=retry_created_spec,
+                    failure_payload={
+                        "failure_fingerprint": (
+                            (incident.get("payload") or {}).get("latest_failure_fingerprint")
+                            or incident.get("fingerprint")
+                        ),
+                    },
+                    retry_source_event_type=retry_source_event_type,
+                    idempotency_key_base=f"{payload.idempotency_key}:followup-timeout",
+                )
             resolution_payload["followup_ticket_id"] = followup_ticket_id
 
         incident_recovery_event = repository.insert_event(

@@ -17,7 +17,10 @@ from app.core.constants import (
     EVENT_EMPLOYEE_RESTORED,
 )
 from app.core.ids import new_prefixed_id
-from app.core.staffing_containment import contain_employee_active_tickets
+from app.core.staffing_containment import (
+    contain_employee_active_tickets,
+    restore_employee_requeued_tickets,
+)
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -448,6 +451,14 @@ def handle_employee_restore(
                 causation_hint=f"employee:{payload.employee_id}",
             )
 
+        restore_employee_requeued_tickets(
+            repository,
+            connection,
+            employee_id=payload.employee_id,
+            occurred_at=received_at,
+            command_id=command_id,
+            idempotency_key_base=payload.idempotency_key,
+        )
         repository.refresh_projections(connection)
 
     return CommandAckEnvelope(

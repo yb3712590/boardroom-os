@@ -22,6 +22,10 @@ def _ticket_create_payload(
     output_schema_ref: str = "ui_milestone_review",
     input_artifact_refs: list[str] | None = None,
     excluded_employee_ids: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    allowed_write_set: list[str] | None = None,
+    allowed_tools: list[str] | None = None,
+    context_query_plan: dict | None = None,
 ) -> dict:
     return {
         "ticket_id": ticket_id,
@@ -32,16 +36,16 @@ def _ticket_create_payload(
         "role_profile_ref": role_profile_ref,
         "constraints_ref": "global_constraints_v3",
         "input_artifact_refs": input_artifact_refs or ["art://inputs/brief.md"],
-        "context_query_plan": {
+        "context_query_plan": context_query_plan or {
             "keywords": ["homepage"],
             "semantic_queries": ["approved direction"],
             "max_context_tokens": 3000,
         },
-        "acceptance_criteria": ["Must produce a structured result"],
+        "acceptance_criteria": acceptance_criteria or ["Must produce a structured result"],
         "output_schema_ref": output_schema_ref,
         "output_schema_version": 1,
-        "allowed_tools": ["read_artifact"],
-        "allowed_write_set": ["artifacts/ui/homepage/*"],
+        "allowed_tools": allowed_tools or ["read_artifact"],
+        "allowed_write_set": allowed_write_set or ["artifacts/ui/homepage/*"],
         "retry_budget": 1,
         "priority": "high",
         "timeout_sla_sec": 1800,
@@ -978,6 +982,51 @@ def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_
     assert ticket_projection["status"] == "COMPLETED"
 
 
+def test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_consensus",
+            ticket_id="tkt_runner_consensus",
+            node_id="node_runner_consensus",
+            role_profile_ref="ui_designer_primary",
+            output_schema_ref="consensus_document",
+            input_artifact_refs=["art://inputs/brief.md", "art://inputs/meeting-notes.md"],
+            acceptance_criteria=[
+                "Must produce a consensus document",
+                "Must include follow-up tickets",
+            ],
+            allowed_write_set=["reports/meeting/*"],
+            allowed_tools=["read_artifact", "write_artifact"],
+            context_query_plan={
+                "keywords": ["scope", "meeting", "decision"],
+                "semantic_queries": ["current scope tradeoffs"],
+                "max_context_tokens": 3000,
+            },
+        ),
+    )
+
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-consensus-runtime",
+        max_dispatches=10,
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_consensus")
+    artifact_response = client.get("/api/v1/projections/tickets/tkt_runner_consensus/artifacts")
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == "TICKET_FAILED"
+    ]
+
+    assert ticket_projection["status"] == "COMPLETED"
+    assert failed_events == []
+    assert artifact_response.status_code == 200
+    assert len(artifact_response.json()["data"]["artifacts"]) == 1
+    assert artifact_response.json()["data"]["artifacts"][0]["path"] == "reports/meeting/consensus-document.json"
+
+
 def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
@@ -1543,3 +1592,77 @@ def test_scheduler_dispatches_restored_employee_again(client):
 
     assert before_restore_lease["payload"]["leased_by"] == "emp_frontend_backup"
     assert after_restore_lease["payload"]["leased_by"] == "emp_frontend_2"
+
+
+def test_scheduler_redispatches_restored_requeued_ticket_to_original_employee(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, "Restored requeued ticket dispatch")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_restored_requeued",
+            node_id="node_runner_restored_requeued",
+            role_profile_ref="ui_designer_primary",
+            excluded_employee_ids=["emp_frontend_backup"],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": "tkt_runner_restored_requeued",
+            "node_id": "node_runner_restored_requeued",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:restored-requeued:emp_frontend_2",
+        },
+    )
+    client.post(
+        "/api/v1/commands/employee-freeze",
+        json={
+            "workflow_id": workflow_id,
+            "employee_id": "emp_frontend_2",
+            "frozen_by": "ops@example.com",
+            "reason": "Pause worker before restore test.",
+            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_2:restored-requeued",
+        },
+    )
+    restore_response = client.post(
+        "/api/v1/commands/employee-restore",
+        json={
+            "workflow_id": workflow_id,
+            "employee_id": "emp_frontend_2",
+            "restored_by": "ops@example.com",
+            "reason": "Worker is back on duty.",
+            "idempotency_key": f"employee-restore:{workflow_id}:emp_frontend_2:restored-requeued",
+        },
+    )
+
+    assert restore_response.status_code == 200
+    assert restore_response.json()["status"] == "ACCEPTED"
+
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-restored-requeued",
+        max_dispatches=10,
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_restored_requeued")
+    with repository.connection() as connection:
+        latest_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            "tkt_runner_restored_requeued",
+        )
+    leased_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_restored_requeued"
+    ]
+
+    assert ticket_projection["status"] == "COMPLETED"
+    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_2"
+    assert latest_created_spec["excluded_employee_ids"] == ["emp_frontend_backup"]

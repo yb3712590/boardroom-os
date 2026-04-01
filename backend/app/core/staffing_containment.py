@@ -4,6 +4,7 @@ from typing import Any
 
 from app.core.constants import (
     CIRCUIT_BREAKER_STATE_OPEN,
+    EVENT_EMPLOYEE_FROZEN,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_OPENED,
     EVENT_TICKET_CANCEL_REQUESTED,
@@ -13,6 +14,7 @@ from app.core.constants import (
     TICKET_STATUS_CANCEL_REQUESTED,
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
+    TICKET_STATUS_PENDING,
 )
 from app.core.ids import new_prefixed_id
 from app.db.repository import ControlPlaneRepository
@@ -44,6 +46,17 @@ def _build_staffing_containment_context(
         "reason": reason,
         "replacement_employee_id": replacement_employee_id,
         "contained_at": occurred_at.isoformat(),
+    }
+
+
+def _build_staffing_recovery_context(
+    *,
+    employee_id: str,
+    occurred_at,
+) -> dict[str, Any]:
+    return {
+        "employee_id": employee_id,
+        "restored_at": occurred_at.isoformat(),
     }
 
 
@@ -223,4 +236,60 @@ def contain_employee_active_tickets(
             reason=reason,
             replacement_employee_id=replacement_employee_id,
             idempotency_key_base=idempotency_key_base,
+        )
+
+
+def restore_employee_requeued_tickets(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    employee_id: str,
+    occurred_at,
+    command_id: str,
+    idempotency_key_base: str,
+) -> None:
+    pending_tickets = repository.list_ticket_projections_by_statuses(
+        connection,
+        [TICKET_STATUS_PENDING],
+    )
+    for ticket in pending_tickets:
+        created_spec = repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"]))
+        if created_spec is None:
+            continue
+        containment = created_spec.get("staffing_containment") or {}
+        if not isinstance(containment, dict):
+            continue
+        if str(containment.get("employee_id") or "") != employee_id:
+            continue
+        if str(containment.get("action_kind") or "") != EVENT_EMPLOYEE_FROZEN:
+            continue
+
+        previous_excluded_employee_ids = _dedupe_string_values(
+            list(created_spec.get("excluded_employee_ids") or [])
+        )
+        if employee_id not in previous_excluded_employee_ids:
+            continue
+
+        updated_payload = dict(created_spec)
+        updated_payload["excluded_employee_ids"] = [
+            excluded_employee_id
+            for excluded_employee_id in previous_excluded_employee_ids
+            if excluded_employee_id != employee_id
+        ]
+        updated_payload["staffing_recovery"] = _build_staffing_recovery_context(
+            employee_id=employee_id,
+            occurred_at=occurred_at,
+        )
+
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="staffing-router",
+            workflow_id=str(ticket["workflow_id"]),
+            idempotency_key=f"{idempotency_key_base}:restore-requeue:{ticket['ticket_id']}",
+            causation_id=command_id,
+            correlation_id=str(ticket["workflow_id"]),
+            payload=updated_payload,
+            occurred_at=occurred_at,
         )

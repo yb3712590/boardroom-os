@@ -18,10 +18,12 @@
   - `employee-freeze` 会立即阻止 scheduler dispatch、手动 `ticket-lease / ticket-start` 和 `worker-runtime` bootstrap
   - `employee-restore` 会把 `FROZEN` 员工直接恢复回 `ACTIVE`，重新放开 scheduler dispatch、手动 `ticket-lease` 和 `worker-runtime` bootstrap
   - 冻结或替换员工时，已 lease 未开工票现在会自动回收到 `PENDING` 并把原员工写进 `excluded_employee_ids`；执行中票会进入 `staffing containment` 围堵，并通过 incident / circuit breaker 暴露到 `Inbox / Dashboard / Workforce`
+  - `employee-restore` 现在会自动恢复因 freeze 被回收的旧票，只移除这次冻结临时加上的排除名单；`incident-resolve` 也新增了 `RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT`，可以把被 staffing containment 打断的执行票重新拉回待执行链
   - 默认 roster 现在由 employee 事件 bootstrap，再由 reducer 重建，不再把 `employee_projection` 当成静态真相源
-  - 当前剩余缺口：restore / incident resolve 还不会自动恢复已围堵或已回收的旧票，更多票型上的 staffing policy 也还没补齐
-- 把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
-- 把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级、更明确的 fix 票约束，以及返工票默认排除原 maker 的最小换人链，剩余重点是把这套 staffing policy 推广到更多关键产物
+  - 当前剩余缺口：更多票型上的 staffing policy 也还没补齐，replace / freeze 之外的恢复策略仍需要继续收口
+- 直接推进主线：把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
+  - 当前已新增第二条真实链路：`MEETING_ESCALATION + consensus_document@1` 现在也会先走 maker-checker，再进 `Inbox -> Review Room`
+- 直接推进主线：把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级、更明确的 fix 票约束，以及返工票默认排除原 maker 的最小换人链，剩余重点是把这套 staffing policy 推广到更多关键产物
 - 把 `Context Compiler` 从“文本类 artifact 可内联”的当前版本继续推进，补完二进制 / 大文件 / 检索增强下的编译与降级策略
   - 当前已完成：`TEXT / MARKDOWN / JSON` 可完整内联；超预算文本 / JSON 会先退到确定性片段编译，片段仍放不下时再退到确定性预览；图片 / PDF 会作为结构化媒体引用进入执行包；其他二进制会作为结构化下载引用进入执行包；context block 和 worker execution package 现在都会显式带出 `display_hint`，不用再靠字段名猜是正文、预览还是下载；bundle / manifest / developer inspector 已暴露结构化降级原因、selector、片段/预览策略和媒体/下载型附件计数；编译时还能拉入同 workspace、跨 workflow 的本地 `review / incident / artifact` 历史摘要卡片；显式输入现在会为后续 mandatory source 预留最小 descriptor 预算，最终 bundle 不再允许悄悄超出 `max_context_tokens`；如果连 mandatory 输入 descriptor 都塞不进去，编译会按 `FAIL_CLOSED` 直接失败；编译产物现在还会稳定派生最小 `json_messages_v1` 渲染结果，并同步进入 worker execution package 与 `Review Room` developer inspector；in-process runtime 也已经接通最小真实 `prov_openai_compat` provider 路径，配置兼容 `responses` 站点后可直接跑真实调用
   - 当前仍缺：更强的预算压缩矩阵、更多 schema / role profile 的真实执行覆盖，以及向量/联网之外是否还需要更丰富的本地检索策略；`provider routing / recovery`、浏览器直传和云预签名 multipart 继续后置到 MVP 之后再评估
