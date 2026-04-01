@@ -12,7 +12,7 @@
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消和人工恢复
 - 最小 incident / circuit-breaker / retry 治理链
 - 视觉里程碑最小 Maker-Checker 闭环：maker 完成后自动生成 checker ticket，checker 通过后再进入 review room，要求返工则自动生成带 required fixes 的 fix ticket；相同 blocking finding 指纹重复达到阈值时会直接升级为 incident / breaker
-- 员工治理最小闭环：默认 roster 现在由 employee 事件 bootstrap，`employee-hire-request / employee-replace-request` 会走 `CORE_HIRE_APPROVAL -> Inbox -> Review Room -> board approve`，`employee-freeze` 会立即阻止新 dispatch / lease / start / worker-runtime bootstrap
+- 员工治理最小闭环：默认 roster 现在由 employee 事件 bootstrap，`employee-hire-request / employee-replace-request` 会走 `CORE_HIRE_APPROVAL -> Inbox -> Review Room -> board approve`，`employee-freeze` 会立即阻止新 dispatch / lease / start / worker-runtime bootstrap，`employee-restore` 会把 `FROZEN` 员工直接恢复回 `ACTIVE`
 - 最小 workforce 读面：`GET /api/v1/projections/workforce` 会按角色泳道返回当前员工状态、活动态、当前 ticket/node 和 provider 绑定
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
@@ -129,6 +129,8 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
   - 为已有员工发起换人审批；board approve 后会写入“replacement hire + old employee replaced”两条事件
 - `POST /api/v1/commands/employee-freeze`
   - 立即把员工从新 dispatch / lease / start / worker-runtime bootstrap 入口上摘掉，不等待 board gate
+- `POST /api/v1/commands/employee-restore`
+  - 立即把已经 `FROZEN` 的员工恢复回 `ACTIVE`，重新放开 scheduler dispatch、手动 `ticket-lease` 和 `worker-runtime` bootstrap；这也是即时治理命令，不走 `Inbox -> Review Room`
 - `GET /api/v1/projections/workforce`
   - 按角色泳道返回当前 active / frozen / replaced 员工，以及他们当前是否在执行 ticket
 

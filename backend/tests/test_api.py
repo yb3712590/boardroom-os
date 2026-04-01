@@ -170,6 +170,21 @@ def _employee_freeze_payload(
     }
 
 
+def _employee_restore_payload(
+    workflow_id: str,
+    *,
+    employee_id: str = "emp_frontend_2",
+    restored_by: str = "ops@example.com",
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "employee_id": employee_id,
+        "restored_by": restored_by,
+        "reason": "Return this worker to active duty.",
+        "idempotency_key": f"employee-restore:{workflow_id}:{employee_id}",
+    }
+
+
 def _encode_base64(content: bytes) -> str:
     return base64.b64encode(content).decode("ascii")
 
@@ -7115,6 +7130,156 @@ def test_employee_freeze_blocks_manual_lease_and_worker_runtime_bootstrap(
     assert "not active" in lease_response.json()["reason"].lower()
     assert runtime_response.status_code == 403
     assert "not active" in runtime_response.json()["detail"].lower()
+
+
+def test_employee_restore_reactivates_frozen_employee_and_workforce_projection(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Restore maker"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id),
+    )
+    restore_response = client.post(
+        "/api/v1/commands/employee-restore",
+        json=_employee_restore_payload(workflow_id),
+    )
+
+    repository = client.app.state.repository
+    restored_employee = repository.get_employee_projection("emp_frontend_2")
+    workforce_response = client.get("/api/v1/projections/workforce")
+    frontend_lane = next(
+        lane
+        for lane in workforce_response.json()["data"]["role_lanes"]
+        if lane["role_type"] == "frontend_engineer"
+    )
+    restored_worker = next(
+        worker for worker in frontend_lane["workers"] if worker["employee_id"] == "emp_frontend_2"
+    )
+
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+    assert restore_response.status_code == 200
+    assert restore_response.json()["status"] == "ACCEPTED"
+    assert restored_employee is not None
+    assert restored_employee["state"] == "ACTIVE"
+    assert restored_worker["employment_state"] == "ACTIVE"
+    assert restored_worker["activity_state"] == "IDLE"
+
+
+def test_employee_restore_rejects_missing_active_and_replaced_employees(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Restore guardrails"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    missing_response = client.post(
+        "/api/v1/commands/employee-restore",
+        json=_employee_restore_payload(workflow_id, employee_id="emp_missing"),
+    )
+    active_response = client.post(
+        "/api/v1/commands/employee-restore",
+        json=_employee_restore_payload(workflow_id),
+    )
+
+    client.post(
+        "/api/v1/commands/employee-replace-request",
+        json=_employee_replace_request_payload(
+            workflow_id,
+            replacement_employee_id="emp_frontend_backup_restore_guard",
+        ),
+    )
+    repository = client.app.state.repository
+    approval = repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve replacement before restore guard test.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:restore-guard",
+        },
+    )
+    replaced_response = client.post(
+        "/api/v1/commands/employee-restore",
+        json=_employee_restore_payload(workflow_id, employee_id="emp_frontend_2"),
+    )
+
+    assert missing_response.status_code == 200
+    assert missing_response.json()["status"] == "REJECTED"
+    assert "does not exist" in missing_response.json()["reason"].lower()
+    assert active_response.status_code == 200
+    assert active_response.json()["status"] == "REJECTED"
+    assert "not frozen" in active_response.json()["reason"].lower()
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+    assert replaced_response.status_code == 200
+    assert replaced_response.json()["status"] == "REJECTED"
+    assert "not frozen" in replaced_response.json()["reason"].lower()
+
+
+def test_employee_restore_reenables_manual_lease_and_worker_runtime_bootstrap(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_SESSION_TTL_SEC", "600")
+    monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Restore runtime access"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id),
+    )
+    blocked_runtime_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(),
+    )
+    restore_response = client.post(
+        "/api/v1/commands/employee-restore",
+        json=_employee_restore_payload(workflow_id),
+    )
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_restored_worker",
+            node_id="node_restored_worker",
+        ),
+    )
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_restored_worker",
+            node_id="node_restored_worker",
+            leased_by="emp_frontend_2",
+        ),
+    )
+    active_runtime_response = client.get(
+        "/api/v1/worker-runtime/assignments",
+        headers=_worker_bootstrap_headers(issued_at="2026-03-28T10:06:00+08:00"),
+    )
+
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+    assert blocked_runtime_response.status_code == 403
+    assert "not active" in blocked_runtime_response.json()["detail"].lower()
+    assert restore_response.status_code == 200
+    assert restore_response.json()["status"] == "ACCEPTED"
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+    assert active_runtime_response.status_code == 200
 
 
 def test_board_approve_command_resolves_open_approval(client):
