@@ -1,0 +1,432 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgFade" x1="240" y1="80" x2="1360" y2="920" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17191C"/>
+      <stop offset="0.55" stop-color="#111214"/>
+      <stop offset="1" stop-color="#0D0E10"/>
+    </linearGradient>
+    <radialGradient id="centerGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(802 326) rotate(90) scale(520 840)">
+      <stop stop-color="#26303B" stop-opacity="0.36"/>
+      <stop offset="1" stop-color="#0F1012" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="headerGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(320 42) rotate(0) scale(300 80)">
+      <stop stop-color="#2A3441" stop-opacity="0.48"/>
+      <stop offset="1" stop-color="#2A3441" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="panelFill" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#111317" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#0E1013" stop-opacity="0.72"/>
+    </linearGradient>
+    <linearGradient id="subPanelFill" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#13161A" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#0E1013" stop-opacity="0.45"/>
+    </linearGradient>
+    <linearGradient id="glassBody" x1="0" y1="-2" x2="0" y2="34" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A7B6C6" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#647180" stop-opacity="0.05"/>
+    </linearGradient>
+    <radialGradient id="neutralHead" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(-4 -8) rotate(45) scale(24)">
+      <stop stop-color="#D7E0E8" stop-opacity="0.2"/>
+      <stop offset="0.45" stop-color="#5C6772" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#2A3138"/>
+    </radialGradient>
+    <pattern id="minorGrid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" stroke="#20242A" stroke-width="1"/>
+    </pattern>
+    <pattern id="majorGrid" width="160" height="160" patternUnits="userSpaceOnUse">
+      <path d="M 160 0 L 0 0 0 160" stroke="#30353D" stroke-width="1.2"/>
+    </pattern>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="panelShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
+    <filter id="tokenGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="8" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .mono { font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, "Courier New", monospace; }
+      .label { fill: #7A828D; font-size: 12px; letter-spacing: 2.2px; }
+      .label-sm { fill: #6E7681; font-size: 10.5px; letter-spacing: 1.6px; }
+      .h1 { fill: #EEF2F7; font-size: 22px; font-weight: 600; letter-spacing: 1px; }
+      .h2 { fill: #EDF2F7; font-size: 16px; font-weight: 600; letter-spacing: 0.4px; }
+      .h3 { fill: #E0E6ED; font-size: 13px; font-weight: 600; letter-spacing: 0.5px; }
+      .body { fill: #A7B0BC; font-size: 13px; }
+      .body-sm { fill: #8D97A3; font-size: 11.5px; }
+      .body-xs { fill: #7F8792; font-size: 10px; }
+      .metric { fill: #EEF2F6; font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
+      .stroke-muted { stroke: #2C3139; }
+      .stroke-soft { stroke: #252A31; }
+      .muted-fill { fill: #111318; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="980" fill="#0D0E10"/>
+  <rect width="1600" height="980" fill="url(#bgFade)"/>
+  <rect width="1600" height="980" fill="url(#minorGrid)" opacity="0.65"/>
+  <rect width="1600" height="980" fill="url(#majorGrid)" opacity="0.55"/>
+  <rect width="1600" height="980" fill="url(#centerGlow)"/>
+
+  <g filter="url(#panelShadow)">
+    <rect x="28" y="24" width="1544" height="58" rx="18" fill="#0C0E12" fill-opacity="0.9" stroke="#2A2F37"/>
+    <rect x="28" y="24" width="560" height="58" rx="18" fill="url(#headerGlow)"/>
+  </g>
+
+  <text x="52" y="47" class="mono label">BOARDROOM // CONTROL PLANE</text>
+  <text x="52" y="67" class="mono body-sm">concept a  /  projection-first dashboard  /  semantic agent tokens</text>
+
+  <g transform="translate(774 35)">
+    <text x="0" y="12" class="mono label-sm">OPS STRIP</text>
+    <g transform="translate(0 20)">
+      <rect x="0" y="0" width="118" height="19" rx="9.5" fill="#14181D" stroke="#2A3037"/>
+      <text x="12" y="13" class="mono body-xs">BUDGET 42%</text>
+      <rect x="78" y="8" width="28" height="3" rx="1.5" fill="#2A3139"/>
+      <rect x="78" y="8" width="12" height="3" rx="1.5" fill="#56C48B"/>
+    </g>
+    <g transform="translate(132 20)">
+      <rect x="0" y="0" width="118" height="19" rx="9.5" fill="#14181D" stroke="#2A3037"/>
+      <text x="12" y="13" class="mono body-xs">TICKETS 17</text>
+      <circle cx="99" cy="9.5" r="3" fill="#56C48B"/>
+    </g>
+    <g transform="translate(264 20)">
+      <rect x="0" y="0" width="118" height="19" rx="9.5" fill="#14181D" stroke="#2A3037"/>
+      <text x="12" y="13" class="mono body-xs">BLOCKED 02</text>
+      <circle cx="99" cy="9.5" r="3" fill="#D0A85C"/>
+    </g>
+    <g transform="translate(396 20)">
+      <rect x="0" y="0" width="132" height="19" rx="9.5" fill="#14181D" stroke="#2A3037"/>
+      <text x="12" y="13" class="mono body-xs">PROVIDER NOMINAL</text>
+      <circle cx="113" cy="9.5" r="3" fill="#4F8DD9"/>
+    </g>
+  </g>
+
+  <g filter="url(#panelShadow)">
+    <rect x="28" y="98" width="1544" height="854" rx="28" fill="url(#panelFill)" stroke="#2A3038"/>
+  </g>
+  <line x1="344" y1="120" x2="344" y2="930" stroke="#2A3038"/>
+  <line x1="1116" y1="120" x2="1116" y2="930" stroke="#2A3038"/>
+
+  <rect x="46" y="118" width="280" height="812" rx="20" fill="#0F1115" fill-opacity="0.3"/>
+  <rect x="362" y="118" width="736" height="812" rx="20" fill="#0F1115" fill-opacity="0.22"/>
+  <rect x="1134" y="118" width="420" height="812" rx="20" fill="#0F1115" fill-opacity="0.28"/>
+
+  <text x="64" y="151" class="mono label">INBOX / ALERTS</text>
+  <text x="64" y="176" class="mono h2">Board actions stay rare and consequential.</text>
+  <text x="64" y="197" class="mono body-sm">Approval is isolated here, not spread across the whole UI.</text>
+
+  <g transform="translate(62 228)">
+    <rect x="0" y="0" width="246" height="92" rx="18" fill="url(#subPanelFill)" stroke="#4C4125"/>
+    <rect x="0" y="0" width="4" height="92" rx="2" fill="#C89D47"/>
+    <text x="16" y="22" class="mono label-sm" fill="#D8B064">BOARD REVIEW REQUIRED</text>
+    <text x="16" y="46" class="mono h3">visual shell / review pack / attempt 01</text>
+    <text x="16" y="66" class="mono body-sm">delta preview ready. board token appears only inside review flow.</text>
+    <rect x="16" y="74" width="92" height="8" rx="4" fill="#2D2416"/>
+    <rect x="16" y="74" width="54" height="8" rx="4" fill="#C89D47"/>
+    <text x="202" y="79" class="mono body-xs" fill="#D8B064">NOW</text>
+  </g>
+
+  <g transform="translate(62 336)">
+    <rect x="0" y="0" width="246" height="82" rx="18" fill="url(#subPanelFill)" stroke="#3C2027"/>
+    <rect x="0" y="0" width="4" height="82" rx="2" fill="#C74857"/>
+    <text x="16" y="22" class="mono label-sm" fill="#E37684">INCIDENT ESCALATION</text>
+    <text x="16" y="44" class="mono h3">provider timeout / circuit breaker / retry storm</text>
+    <text x="16" y="64" class="mono body-sm">crimson is reserved for true fault states, not checker role.</text>
+  </g>
+
+  <g transform="translate(62 434)">
+    <rect x="0" y="0" width="246" height="74" rx="18" fill="url(#subPanelFill)" stroke="#29453B"/>
+    <rect x="0" y="0" width="4" height="74" rx="2" fill="#52B883"/>
+    <text x="16" y="22" class="mono label-sm" fill="#7AE0AC">EXECUTION</text>
+    <text x="16" y="44" class="mono h3">staffing restore semantics / integration slice</text>
+    <text x="16" y="62" class="mono body-sm">owned by engineering with active checker handoff.</text>
+  </g>
+
+  <g transform="translate(62 524)">
+    <rect x="0" y="0" width="246" height="74" rx="18" fill="url(#subPanelFill)" stroke="#37404A"/>
+    <rect x="0" y="0" width="4" height="74" rx="2" fill="#6F7A87"/>
+    <text x="16" y="22" class="mono label-sm" fill="#AAB4C2">GENERALIST</text>
+    <text x="16" y="44" class="mono h3">review notes compiled / docs synced / backlog triage</text>
+    <text x="16" y="62" class="mono body-sm">support work stays visible without stealing the stage.</text>
+  </g>
+
+  <g transform="translate(62 620)">
+    <text x="0" y="14" class="mono label-sm">ROLE SWATCHES</text>
+    <g transform="translate(0 26)">
+      <rect x="0" y="0" width="246" height="150" rx="18" fill="#101318" fill-opacity="0.64" stroke="#28303A"/>
+      <g transform="translate(18 18)">
+        <rect x="0" y="0" width="14" height="8" rx="4" fill="#C89D47"/>
+        <text x="24" y="8" class="mono body-sm">board / review only</text>
+      </g>
+      <g transform="translate(18 46)">
+        <rect x="0" y="0" width="14" height="8" rx="4" fill="#274B74"/>
+        <text x="24" y="8" class="mono body-sm">ceo / routing core</text>
+      </g>
+      <g transform="translate(18 74)">
+        <rect x="0" y="0" width="14" height="8" rx="4" fill="#46B880"/>
+        <text x="24" y="8" class="mono body-sm">engineering / build and architecture</text>
+      </g>
+      <g transform="translate(18 102)">
+        <rect x="0" y="0" width="14" height="8" rx="4" fill="#C866C8"/>
+        <text x="24" y="8" class="mono body-sm">visual / design checkpoints</text>
+      </g>
+      <g transform="translate(18 130)">
+        <rect x="0" y="0" width="14" height="8" rx="4" fill="#8492A0"/>
+        <text x="24" y="8" class="mono body-sm">generalist / docs and ops</text>
+      </g>
+      <g transform="translate(158 130)">
+        <rect x="0" y="0" width="14" height="8" rx="4" fill="#C67A43"/>
+        <text x="24" y="8" class="mono body-sm">checker / adversarial review</text>
+      </g>
+    </g>
+  </g>
+
+  <text x="382" y="151" class="mono label">PIPELINE / WORKFLOW SNAPSHOT</text>
+  <text x="382" y="176" class="mono h2">The main stage is the governed workflow, not the mascot system.</text>
+  <text x="382" y="197" class="mono body-sm">Tickets, review gates, and runtime health dominate the composition.</text>
+
+  <g transform="translate(382 224)">
+    <rect x="0" y="0" width="690" height="398" rx="22" fill="#0F1217" fill-opacity="0.45" stroke="#28303A"/>
+    <g transform="translate(20 20)">
+      <g transform="translate(0 0)">
+        <rect x="0" y="0" width="124" height="40" rx="12" fill="#13171C" stroke="#303743"/>
+        <text x="18" y="16" class="mono label-sm">INTAKE</text>
+        <text x="18" y="30" class="mono body-xs">goal / constraints / budget</text>
+      </g>
+      <g transform="translate(136 0)">
+        <rect x="0" y="0" width="124" height="40" rx="12" fill="#13171C" stroke="#303743"/>
+        <text x="18" y="16" class="mono label-sm">ARCH</text>
+        <text x="18" y="30" class="mono body-xs">shape / contracts / risks</text>
+      </g>
+      <g transform="translate(272 0)">
+        <rect x="0" y="0" width="124" height="40" rx="12" fill="#152019" stroke="#325240"/>
+        <text x="18" y="16" class="mono label-sm" fill="#71D9A3">BUILD</text>
+        <text x="18" y="30" class="mono body-xs">active maker execution</text>
+      </g>
+      <g transform="translate(408 0)">
+        <rect x="0" y="0" width="124" height="40" rx="12" fill="#1B1814" stroke="#5B3B2B"/>
+        <text x="18" y="16" class="mono label-sm" fill="#DA9A67">CHECK</text>
+        <text x="18" y="30" class="mono body-xs">adversarial internal review</text>
+      </g>
+      <g transform="translate(544 0)">
+        <rect x="0" y="0" width="124" height="40" rx="12" fill="#1A1711" stroke="#5B4B27"/>
+        <text x="18" y="16" class="mono label-sm" fill="#E0B869">REVIEW</text>
+        <text x="18" y="30" class="mono body-xs">board decision surface</text>
+      </g>
+
+      <line x1="62" y1="60" x2="62" y2="324" stroke="#2D323A"/>
+      <line x1="198" y1="60" x2="198" y2="324" stroke="#2D323A"/>
+      <line x1="334" y1="60" x2="334" y2="324" stroke="#2D323A"/>
+      <line x1="470" y1="60" x2="470" y2="324" stroke="#2D323A"/>
+      <line x1="606" y1="60" x2="606" y2="324" stroke="#2D323A"/>
+
+      <g transform="translate(14 74)">
+        <rect x="0" y="0" width="96" height="38" rx="12" fill="#161A20" stroke="#303742"/>
+        <text x="12" y="16" class="mono label-sm">workflow init</text>
+        <text x="12" y="29" class="mono body-xs">done / ceo</text>
+      </g>
+      <g transform="translate(150 120)">
+        <rect x="0" y="0" width="96" height="44" rx="12" fill="#161A20" stroke="#303742"/>
+        <text x="12" y="18" class="mono label-sm">data contract</text>
+        <text x="12" y="32" class="mono body-xs">done / generalist</text>
+      </g>
+      <g transform="translate(286 106)">
+        <rect x="0" y="0" width="96" height="54" rx="12" fill="#18251C" stroke="#3A6649"/>
+        <rect x="10" y="39" width="66" height="4" rx="2" fill="#244431"/>
+        <rect x="10" y="39" width="43" height="4" rx="2" fill="#52B883"/>
+        <text x="12" y="18" class="mono label-sm" fill="#74E0A6">runtime slice</text>
+        <text x="12" y="32" class="mono body-xs">working / eng</text>
+      </g>
+      <g transform="translate(422 178)">
+        <rect x="0" y="0" width="96" height="54" rx="12" fill="#211912" stroke="#6B462E"/>
+        <text x="12" y="18" class="mono label-sm" fill="#E0A06E">maker-checker</text>
+        <text x="12" y="32" class="mono body-xs">pending / checker</text>
+        <text x="12" y="45" class="mono body-xs">evidence required</text>
+      </g>
+      <g transform="translate(558 128)">
+        <rect x="0" y="0" width="96" height="62" rx="12" fill="#221C12" stroke="#6D5A28"/>
+        <text x="12" y="18" class="mono label-sm" fill="#E4C16E">visual review</text>
+        <text x="12" y="32" class="mono body-xs">blocked / board</text>
+        <text x="12" y="46" class="mono body-xs">pack open</text>
+        <circle cx="78" cy="16" r="4" fill="#C89D47" filter="url(#softGlow)"/>
+      </g>
+
+      <path d="M110 92 C138 92 142 92 150 120" stroke="#434952" stroke-width="1.5"/>
+      <path d="M246 142 C272 142 282 142 286 132" stroke="#3F6450" stroke-width="1.5"/>
+      <path d="M382 132 C407 132 412 158 422 194" stroke="#A4714F" stroke-width="1.5"/>
+      <path d="M518 204 C541 204 549 176 558 160" stroke="#B18F4A" stroke-width="1.5"/>
+
+      <g transform="translate(12 248)">
+        <rect x="0" y="0" width="644" height="74" rx="16" fill="#10141A" stroke="#28303A"/>
+        <text x="16" y="21" class="mono label-sm">SELECTED NODE</text>
+        <text x="16" y="42" class="mono h3">boardroom shell / review-ready visual checkpoint</text>
+        <text x="16" y="61" class="mono body-sm">owner path: ceo -&gt; visual worker -&gt; checker -&gt; board gate</text>
+        <rect x="492" y="16" width="136" height="24" rx="12" fill="#18140D" stroke="#5A4B27"/>
+        <text x="508" y="31" class="mono body-xs" fill="#E0B869">waiting for board action</text>
+      </g>
+    </g>
+  </g>
+
+  <g filter="url(#panelShadow)">
+    <rect x="812" y="204" width="274" height="430" rx="24" fill="#121419" stroke="#5A4B27"/>
+    <rect x="812" y="204" width="274" height="430" rx="24" fill="none" stroke="#C89D47" stroke-opacity="0.28" filter="url(#softGlow)"/>
+  </g>
+  <text x="834" y="236" class="mono label-sm" fill="#DDB66A">REVIEW ROOM</text>
+  <text x="834" y="263" class="mono h3">Board token appears only here.</text>
+  <g transform="translate(996 225)" filter="url(#tokenGlow)">
+    <circle cx="20" cy="22" r="14" fill="url(#neutralHead)" stroke="#8C7A4D" stroke-opacity="0.45"/>
+    <path d="M6 40 L34 40 L24 62 L16 62 Z" fill="url(#glassBody)" stroke="#B59452" stroke-opacity="0.32"/>
+    <rect x="4" y="8" width="32" height="7" rx="3.5" fill="#C89D47"/>
+    <path d="M10 3 L30 3 L25 11 L15 11 Z" fill="#8E6A2A"/>
+    <circle cx="20" cy="22" r="22" fill="#C89D47" fill-opacity="0.07"/>
+  </g>
+  <g transform="translate(834 288)">
+    <rect x="0" y="0" width="230" height="116" rx="18" fill="#0E1014" stroke="#2D323A"/>
+    <rect x="14" y="14" width="202" height="88" rx="12" fill="#141821"/>
+    <rect x="28" y="26" width="126" height="8" rx="4" fill="#3C4250"/>
+    <rect x="28" y="42" width="166" height="8" rx="4" fill="#303742"/>
+    <rect x="28" y="58" width="144" height="8" rx="4" fill="#C866C8" fill-opacity="0.58"/>
+    <rect x="28" y="74" width="110" height="8" rx="4" fill="#4A5260"/>
+    <text x="0" y="134" class="mono body-sm">preview strip + evidence summary instead of raw compiled_role by default.</text>
+  </g>
+  <g transform="translate(834 456)">
+    <text x="0" y="14" class="mono label-sm">DECISION PACK</text>
+    <text x="0" y="39" class="mono body-sm">why triggered</text>
+    <text x="102" y="39" class="mono body-sm">visual milestone reached</text>
+    <text x="0" y="63" class="mono body-sm">checker result</text>
+    <text x="102" y="63" class="mono body-sm">approved with notes</text>
+    <text x="0" y="87" class="mono body-sm">budget impact</text>
+    <text x="102" y="87" class="mono body-sm">+3.4% if design rework opens</text>
+    <rect x="0" y="112" width="106" height="34" rx="17" fill="#18140D" stroke="#675425"/>
+    <rect x="118" y="112" width="106" height="34" rx="17" fill="#14171C" stroke="#2F353E"/>
+    <text x="22" y="133" class="mono body-sm" fill="#E0B869">approve</text>
+    <text x="138" y="133" class="mono body-sm">request changes</text>
+  </g>
+
+  <text x="1154" y="151" class="mono label">WORKFORCE / EVENT PULSE</text>
+  <text x="1154" y="176" class="mono h2">Agent tokens add semantic memory without taking over the product.</text>
+  <text x="1154" y="197" class="mono body-sm">Workforce is a secondary surface. The cluster lives here, not in the page center.</text>
+
+  <g transform="translate(1154 224)">
+    <rect x="0" y="0" width="380" height="282" rx="22" fill="#101318" fill-opacity="0.54" stroke="#28303A"/>
+    <text x="18" y="22" class="mono label-sm">ROUTING CORE</text>
+    <circle cx="188" cy="150" r="84" fill="none" stroke="#2B3037" stroke-dasharray="4 7"/>
+    <circle cx="188" cy="150" r="44" fill="#141820" stroke="#2B3340"/>
+
+    <path d="M188 150 L120 102" stroke="#46B880" stroke-opacity="0.65" stroke-width="1.5" filter="url(#softGlow)"/>
+    <path d="M188 150 L254 96" stroke="#C866C8" stroke-opacity="0.65" stroke-width="1.5" filter="url(#softGlow)"/>
+    <path d="M188 150 L276 176" stroke="#C67A43" stroke-opacity="0.65" stroke-width="1.5" filter="url(#softGlow)"/>
+    <path d="M188 150 L118 214" stroke="#8492A0" stroke-opacity="0.45" stroke-width="1.5"/>
+    <path d="M188 150 L198 50" stroke="#46B880" stroke-opacity="0.22" stroke-width="1.5"/>
+
+    <g transform="translate(168 121)" filter="url(#tokenGlow)">
+      <circle cx="20" cy="22" r="16" fill="url(#neutralHead)" stroke="#5D7DA4" stroke-opacity="0.45"/>
+      <path d="M4 42 L36 42 L25 66 L15 66 Z" fill="url(#glassBody)" stroke="#6F87A6" stroke-opacity="0.28"/>
+      <rect x="3" y="8" width="34" height="7" rx="3.5" fill="#274B74"/>
+      <path d="M9 3 L31 3 L26 11 L14 11 Z" fill="#17314E"/>
+      <circle cx="20" cy="22" r="24" fill="#274B74" fill-opacity="0.08"/>
+    </g>
+
+    <g transform="translate(100 70)">
+      <ellipse cx="20" cy="66" rx="24" ry="8" fill="#46B880" fill-opacity="0.14"/>
+      <circle cx="20" cy="22" r="14" fill="url(#neutralHead)" stroke="#4EA36F" stroke-opacity="0.4"/>
+      <path d="M6 40 L34 40 L24 60 L16 60 Z" fill="url(#glassBody)" stroke="#61B784" stroke-opacity="0.25"/>
+      <rect x="4" y="8" width="32" height="6" rx="3" fill="#46B880"/>
+      <path d="M10 3 L30 3 L25 10 L15 10 Z" fill="#287552"/>
+      <text x="50" y="20" class="mono body-xs">eng_worker_02</text>
+      <text x="50" y="34" class="mono body-xs" fill="#7FE0AF">working / runtime</text>
+    </g>
+
+    <g transform="translate(234 64)">
+      <ellipse cx="20" cy="66" rx="24" ry="8" fill="#C866C8" fill-opacity="0.14"/>
+      <circle cx="20" cy="22" r="14" fill="url(#neutralHead)" stroke="#9D5FA4" stroke-opacity="0.42"/>
+      <path d="M6 40 L34 40 L24 60 L16 60 Z" fill="url(#glassBody)" stroke="#B86BB6" stroke-opacity="0.25"/>
+      <rect x="4" y="8" width="32" height="6" rx="3" fill="#C866C8"/>
+      <path d="M10 3 L30 3 L25 10 L15 10 Z" fill="#7A347A"/>
+      <text x="50" y="20" class="mono body-xs">visual_worker_01</text>
+      <text x="50" y="34" class="mono body-xs" fill="#E7A2E7">review prep</text>
+    </g>
+
+    <g transform="translate(256 144)">
+      <ellipse cx="20" cy="66" rx="24" ry="8" fill="#C67A43" fill-opacity="0.14"/>
+      <circle cx="20" cy="22" r="14" fill="url(#neutralHead)" stroke="#A66F4A" stroke-opacity="0.42"/>
+      <path d="M6 40 L34 40 L24 60 L16 60 Z" fill="url(#glassBody)" stroke="#BE8356" stroke-opacity="0.25"/>
+      <rect x="4" y="8" width="32" height="6" rx="3" fill="#C67A43"/>
+      <path d="M10 3 L30 3 L25 10 L15 10 Z" fill="#7A4823"/>
+      <text x="-6" y="86" class="mono body-xs">checker_03</text>
+    </g>
+
+    <g transform="translate(98 184)">
+      <ellipse cx="20" cy="66" rx="24" ry="8" fill="#8492A0" fill-opacity="0.12"/>
+      <circle cx="20" cy="22" r="14" fill="url(#neutralHead)" stroke="#8291A0" stroke-opacity="0.36"/>
+      <path d="M6 40 L34 40 L24 60 L16 60 Z" fill="url(#glassBody)" stroke="#8A97A4" stroke-opacity="0.22"/>
+      <rect x="4" y="8" width="32" height="6" rx="3" fill="#8492A0"/>
+      <path d="M10 3 L30 3 L25 10 L15 10 Z" fill="#5C6670"/>
+      <text x="-12" y="86" class="mono body-xs">generalist_05</text>
+    </g>
+
+    <text x="18" y="246" class="mono body-sm">thin silk lines show active leases from the routing core.</text>
+    <text x="18" y="264" class="mono body-sm">tokens remain abstract and operational, not cute mascots.</text>
+  </g>
+
+  <g transform="translate(1154 530)">
+    <rect x="0" y="0" width="380" height="356" rx="22" fill="#101318" fill-opacity="0.54" stroke="#28303A"/>
+    <text x="18" y="24" class="mono label-sm">EVENT PULSE</text>
+    <path d="M18 52 H362" stroke="#28303A"/>
+
+    <g transform="translate(18 70)">
+      <rect x="0" y="0" width="344" height="42" rx="12" fill="#12171D" stroke="#29303A"/>
+      <circle cx="16" cy="21" r="4" fill="#46B880"/>
+      <text x="30" y="17" class="mono body-xs">14:08:43</text>
+      <text x="30" y="31" class="mono body-sm">ticket leased / ceo -&gt; eng_worker_02 / runtime slice</text>
+      <rect x="278" y="14" width="52" height="14" rx="7" fill="#142219" stroke="#325240"/>
+      <text x="292" y="24" class="mono body-xs" fill="#7FE0AF">build</text>
+    </g>
+
+    <g transform="translate(18 122)">
+      <rect x="0" y="0" width="344" height="42" rx="12" fill="#12171D" stroke="#29303A"/>
+      <circle cx="16" cy="21" r="4" fill="#C866C8"/>
+      <text x="30" y="17" class="mono body-xs">14:09:02</text>
+      <text x="30" y="31" class="mono body-sm">review pack compiled / visual_shell_v1 / delta attached</text>
+      <rect x="268" y="14" width="62" height="14" rx="7" fill="#211724" stroke="#6A416C"/>
+      <text x="282" y="24" class="mono body-xs" fill="#E8A9E8">visual</text>
+    </g>
+
+    <g transform="translate(18 174)">
+      <rect x="0" y="0" width="344" height="42" rx="12" fill="#16130F" stroke="#5A4B27"/>
+      <circle cx="16" cy="21" r="4" fill="#C89D47" filter="url(#softGlow)"/>
+      <text x="30" y="17" class="mono body-xs">14:09:11</text>
+      <text x="30" y="31" class="mono body-sm">board review required / visual checkpoint / pack opened</text>
+      <rect x="268" y="14" width="62" height="14" rx="7" fill="#18140D" stroke="#675425"/>
+      <text x="283" y="24" class="mono body-xs" fill="#E0B869">board</text>
+    </g>
+
+    <g transform="translate(18 226)">
+      <rect x="0" y="0" width="344" height="52" rx="12" fill="#1A1013" stroke="#58252F"/>
+      <circle cx="16" cy="26" r="4" fill="#C74857" filter="url(#softGlow)"/>
+      <text x="30" y="19" class="mono body-xs">14:09:28</text>
+      <text x="30" y="34" class="mono body-sm">circuit breaker opened / provider timeout / debug takeover reserved</text>
+      <text x="30" y="47" class="mono body-xs" fill="#D98692">incident mode should become a separate crimson full-screen state.</text>
+    </g>
+
+    <g transform="translate(18 304)">
+      <text x="0" y="12" class="mono label-sm">SIGNAL TRACE</text>
+      <path d="M0 48 C24 24 40 24 58 40 S98 72 116 46 S154 10 172 28 S212 92 230 56 S270 18 288 34 S324 60 344 20" stroke="#39404A" stroke-width="2" fill="none"/>
+      <path d="M0 48 C24 24 40 24 58 40 S98 72 116 46 S154 10 172 28 S212 92 230 56 S270 18 288 34 S324 60 344 20" stroke="#46B880" stroke-width="1.1" fill="none" stroke-dasharray="3 7" opacity="0.72"/>
+      <path d="M230 56 S270 18 288 34 S324 60 344 20" stroke="#C74857" stroke-width="1.4" fill="none" opacity="0.85"/>
+    </g>
+  </g>
+
+  <g transform="translate(54 888)">
+    <rect x="0" y="0" width="1500" height="40" rx="14" fill="#101318" fill-opacity="0.72" stroke="#29303A"/>
+    <text x="18" y="25" class="mono body-sm">concept notes: control plane first, review room as dedicated overlay, abstract tokenized agents, checker moved off crimson so incident mode keeps exclusive alarm authority.</text>
+  </g>
+</svg>

@@ -33,11 +33,18 @@
 ## P1：套上最薄 Web 壳
 
 - 实现 React Boardroom UI
+- 前端开发前先对齐当前视觉基线：
+  - `doc/design/boardroom-ui-visual-concept.md`
+  - `doc/design/boardroom-ui-visual-spec.md`
 - 先接通最核心的三块界面：
   - `dashboard`
   - `inbox`
   - `review room`
 - 保持 projection-first；前端不拥有工作流真相
+- 首页默认采用 `workflow river` 主舞台：
+  - `ticket` 以光点 / 发光 capsule 沿轨道流转
+  - 进入董事会审批时切到独立 `Board Gate` 金色提醒语义
+  - 不回退到文字密集的 dashboard 卡片拼盘
 - 让董事会 / 操作人可以直接看当前状态、待审项、关键事件和最近结果
 
 ## P2：在 MVP 之后补齐

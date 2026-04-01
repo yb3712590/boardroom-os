@@ -15,6 +15,8 @@
 - [design/context-compiler-design.md](design/context-compiler-design.md)：CompileRequest、预算策略、压缩与审计产物
 - [design/meeting-room-protocol.md](design/meeting-room-protocol.md)：受控多角色协作协议
 - [design/boardroom-ui-design.md](design/boardroom-ui-design.md)：Boardroom UI 的信息架构与产品边界
+- [design/boardroom-ui-visual-concept.md](design/boardroom-ui-visual-concept.md)：当前确认的首页视觉方向与设计稿
+- [design/boardroom-ui-visual-spec.md](design/boardroom-ui-visual-spec.md)：前端实现时应参照的详细视觉规范
 - [design/boardroom-data-contracts.md](design/boardroom-data-contracts.md)：Dashboard、Inbox、Review Room 和命令契约
 
 ## 历史记录

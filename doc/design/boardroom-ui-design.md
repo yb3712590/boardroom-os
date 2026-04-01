@@ -5,6 +5,21 @@
 - Date: 2026-03-28
 - Scope: lightweight web control plane and human approval console for the Agent Team framework
 
+## Companion Visual Docs
+
+The product boundary and information architecture in this document should now be read together with:
+
+- `boardroom-ui-visual-concept.md`
+- `boardroom-ui-visual-spec.md`
+
+These companion docs lock the current first-screen visual direction:
+
+- seamless dark-glass shell
+- low-saturation pale-blue controls
+- workflow river as the default homepage stage
+- ticket flow rendered as light particles rather than card tiles
+- champagne-gold Board Gate reminder semantics
+
 ## 1. Positioning
 
 `Boardroom UI` is not a chat app, not an office animation product, and not a generic project management system.
@@ -43,11 +58,12 @@ The UI should focus on:
 ## 3. Core Design Principles
 
 1. Projection-first, not prompt-first.
-2. High density, not decorative animation.
+2. High signal density, not text-heavy dashboard clutter.
 3. Human intervention should be rare, clear, and consequential.
 4. Runtime truth stays in backend projections and event log.
 5. Frontend may own local view state, but never workflow truth.
 6. The control plane should stay lightweight enough to clone and run as a base project.
+7. The default first viewport should read primarily through geometry, color, and motion, not long text blocks.
 
 ## 4. Startup Flow
 
@@ -149,6 +165,8 @@ Lower section:
 - event ticker
 - filterable by workflow, severity, category, actor, or node
 - collapsed summaries for noisy repeated events
+
+For the compact homepage variant, these surfaces may collapse into a secondary inspector or supporting panel so the workflow view remains the dominant first-screen read.
 
 ### 5.4 Overlay: Review Room
 
@@ -440,7 +458,8 @@ The correct end-state is not a cute office simulator and not a bloated admin bac
 
 It should feel like:
 
-- a hacker-style governance console
+- a premium near-future governance console
+- a dark-glass workflow surface
 - a workflow observability surface
 - a human override panel for a mostly autonomous company
 
