@@ -36,9 +36,10 @@
   - `board-approve` 现在会从已批准的 `consensus_document` artifact 读取全部“当前支持范围内”的 follow-up，先整组校验，再原子创建真实执行票，并继续同步推进到下一个治理停点
   - 当前这段续跑仍保持主线收口：只支持 `frontend_engineer -> ui_designer_primary` 这条映射；如果 artifact 缺失、不是合法 JSON、任一 follow-up 的 `owner_role` 不支持、payload 内 `ticket_id` 重复或与现有投影冲突，审批会 fail-closed，保持 review 继续待决
   - 多张 follow-up 现在也会按 ticket 隔离写入范围，避免兄弟票共用 `artifacts/ui/homepage/*` 和 `reports/review/*` 造成互相覆盖
+  - 同一条“推进到下一个真实停点”的规则现在也会复用到后续 `board-approve`：第一张 visual review 被批准后，如果同 workflow 里还有不被 approval / incident 卡住的待执行票，后端会继续自动消费，而不是把剩余票留在 `PENDING` 等人工再触发
 - 直接推进主线：继续把已批准 scope 的 follow-up 从“都能落成真实视觉票”推进到“有更丰富的下游票型”
   - 当前下游票型仍先收口到现有可运行的视觉里程碑链；更多 build / check 票型还没补上
-  - 当前 runtime 默认会生成两张受支持的视觉 follow-up，scope approval auto-advance 会每步只派一张，撞到第一个真实 review 停点就停，剩余兄弟票保留待执行
+  - 当前 runtime 默认会生成两张受支持的视觉 follow-up；scope approval 和后续 board approve 的 auto-advance 都会每步只派一张，撞到每个真实 review 停点就停，因此默认本地路径已经能从一张 visual review 继续顺着消费到下一张真实 review；更后面的缺口不再是“兄弟票没人继续跑”，而是下游票型还只收口在现有视觉链
 
 ## P1：套上最薄 Web 壳
 

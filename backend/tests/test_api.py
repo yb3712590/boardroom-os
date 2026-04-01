@@ -1867,6 +1867,117 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
     assert second_ticket["status"] == TICKET_STATUS_PENDING
 
 
+def test_board_approve_visual_review_auto_advances_next_pending_followup_to_next_review(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = _scope_followup_payload(client, approval)
+    payload["followup_tickets"] = [
+        {
+            "ticket_id": "tkt_followup_scope_foundation",
+            "owner_role": "frontend_engineer",
+            "summary": "Build the approved homepage foundation under the locked scope.",
+        },
+        {
+            "ticket_id": "tkt_followup_scope_polish",
+            "owner_role": "frontend_engineer",
+            "summary": "Polish the approved homepage details without widening the scope.",
+        },
+    ]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    approve_scope_response = _approve_open_review(client, approval, idempotency_suffix="approve-visual-chain")
+
+    repository = client.app.state.repository
+    first_visual_approval = next(
+        item for item in repository.list_open_approvals() if item["workflow_id"] == approval["workflow_id"]
+    )
+
+    approve_first_visual_response = _approve_open_review(
+        client,
+        first_visual_approval,
+        idempotency_suffix="approve-foundation-visual",
+    )
+
+    open_approvals = [
+        item for item in repository.list_open_approvals() if item["workflow_id"] == approval["workflow_id"]
+    ]
+    second_ticket = repository.get_current_ticket_projection("tkt_followup_scope_polish")
+
+    assert approve_scope_response.status_code == 200
+    assert approve_scope_response.json()["status"] == "ACCEPTED"
+    assert approve_first_visual_response.status_code == 200
+    assert approve_first_visual_response.json()["status"] == "ACCEPTED"
+    assert second_ticket is not None
+    assert second_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert len(open_approvals) == 1
+    assert open_approvals[0]["approval_type"] == "VISUAL_MILESTONE"
+    assert open_approvals[0]["approval_id"] != first_visual_approval["approval_id"]
+
+
+def test_board_approve_visual_review_keeps_next_followup_pending_when_no_eligible_worker(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = _scope_followup_payload(client, approval)
+    payload["followup_tickets"] = [
+        {
+            "ticket_id": "tkt_followup_scope_foundation",
+            "owner_role": "frontend_engineer",
+            "summary": "Build the approved homepage foundation under the locked scope.",
+        },
+        {
+            "ticket_id": "tkt_followup_scope_polish",
+            "owner_role": "frontend_engineer",
+            "summary": "Polish the approved homepage details without widening the scope.",
+        },
+    ]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    approve_scope_response = _approve_open_review(client, approval, idempotency_suffix="approve-visual-pending")
+
+    repository = client.app.state.repository
+    first_visual_approval = next(
+        item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id
+    )
+
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id, employee_id="emp_frontend_2"),
+    )
+    approve_first_visual_response = _approve_open_review(
+        client,
+        first_visual_approval,
+        idempotency_suffix="approve-foundation-visual-pending",
+    )
+
+    open_approvals = [item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id]
+    second_ticket = repository.get_current_ticket_projection("tkt_followup_scope_polish")
+
+    assert approve_scope_response.status_code == 200
+    assert approve_scope_response.json()["status"] == "ACCEPTED"
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+    assert approve_first_visual_response.status_code == 200
+    assert approve_first_visual_response.json()["status"] == "ACCEPTED"
+    assert second_ticket is not None
+    assert second_ticket["status"] == TICKET_STATUS_PENDING
+    assert all(
+        item["payload"]["review_pack"]["subject"]["source_ticket_id"] != "tkt_followup_scope_polish"
+        for item in open_approvals
+    )
+
+
 def test_board_approve_scope_review_rejects_when_any_followup_owner_role_is_unsupported(
     client,
     set_ticket_time,

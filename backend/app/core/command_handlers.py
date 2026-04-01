@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 
-from app.config import get_settings
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
@@ -19,9 +18,9 @@ from app.core.constants import (
     SYSTEM_INITIALIZED_KEY,
 )
 from app.core.ids import new_prefixed_id
-from app.core.runtime import run_leased_ticket_runtime
-from app.core.ticket_handlers import handle_ticket_create, run_scheduler_tick
+from app.core.ticket_handlers import handle_ticket_create
 from app.core.time import now_local
+from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.db.repository import ControlPlaneRepository
 
 PROJECT_INIT_SCOPE_NODE_ID = "node_scope_decision"
@@ -227,50 +226,18 @@ def _create_project_init_scope_ticket(
     )
     if create_ack.status not in {CommandAckStatus.ACCEPTED, CommandAckStatus.DUPLICATE}:
         raise RuntimeError(f"Project-init scope ticket was not accepted: {create_ack.reason}")
-
-
-def _workflow_has_open_approval(
-    repository: ControlPlaneRepository,
-    workflow_id: str,
-) -> bool:
-    return any(approval["workflow_id"] == workflow_id for approval in repository.list_open_approvals())
-
-
-def _workflow_has_open_incident(
-    repository: ControlPlaneRepository,
-    workflow_id: str,
-) -> bool:
-    return any(incident["workflow_id"] == workflow_id for incident in repository.list_open_incidents())
-
-
 def _auto_advance_project_init_to_first_review(
     repository: ControlPlaneRepository,
     *,
     workflow_id: str,
     command_key: str,
 ) -> None:
-    settings = get_settings()
-    for step_index in range(PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS):
-        if _workflow_has_open_approval(repository, workflow_id) or _workflow_has_open_incident(
-            repository, workflow_id
-        ):
-            return
-
-        _, version_before = repository.get_cursor_and_version()
-        run_scheduler_tick(
-            repository,
-            idempotency_key=f"{command_key}:auto-advance:{step_index}:scheduler",
-            max_dispatches=settings.scheduler_max_dispatches,
-        )
-        run_leased_ticket_runtime(repository)
-        _, version_after = repository.get_cursor_and_version()
-
-        if _workflow_has_open_approval(repository, workflow_id) or _workflow_has_open_incident(
-            repository, workflow_id
-        ):
-            return
-        if version_after == version_before:
-            return
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix=f"{command_key}:auto-advance",
+        max_steps=PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS,
+    )
 
 
 def handle_project_init(

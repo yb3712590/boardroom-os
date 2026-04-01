@@ -34,10 +34,9 @@ from app.core.output_schemas import (
     schema_id,
     validate_output_payload,
 )
-from app.core.runtime import run_leased_ticket_runtime
 from app.core.staffing_containment import contain_employee_active_tickets
-from app.core.ticket_handlers import run_scheduler_tick
 from app.core.time import now_local
+from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.db.repository import ControlPlaneRepository
 
 SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS = 6
@@ -223,22 +222,6 @@ def _apply_employee_change_approval(
         return replacement_employee_id
 
     return None
-
-
-def _workflow_has_open_approval(
-    repository: ControlPlaneRepository,
-    workflow_id: str,
-) -> bool:
-    return any(approval["workflow_id"] == workflow_id for approval in repository.list_open_approvals())
-
-
-def _workflow_has_open_incident(
-    repository: ControlPlaneRepository,
-    workflow_id: str,
-) -> bool:
-    return any(incident["workflow_id"] == workflow_id for incident in repository.list_open_incidents())
-
-
 def _dedupe_artifact_refs(values: list[str]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
@@ -496,39 +479,6 @@ def _insert_scope_followup_ticket_created_event(
     if event_row is None:
         raise RuntimeError("Scope follow-up ticket creation idempotency conflict.")
     return str(ticket_payload["ticket_id"])
-
-
-def _auto_advance_scope_followup_to_next_stop(
-    repository: ControlPlaneRepository,
-    *,
-    workflow_id: str,
-    idempotency_key: str,
-) -> None:
-    for step_index in range(SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS):
-        if _workflow_has_open_approval(repository, workflow_id) or _workflow_has_open_incident(
-            repository,
-            workflow_id,
-        ):
-            return
-
-        _, version_before = repository.get_cursor_and_version()
-        run_scheduler_tick(
-            repository,
-            idempotency_key=f"{idempotency_key}:scope-followup-auto-advance:{step_index}:scheduler",
-            max_dispatches=1,
-        )
-        run_leased_ticket_runtime(repository)
-        _, version_after = repository.get_cursor_and_version()
-
-        if _workflow_has_open_approval(repository, workflow_id) or _workflow_has_open_incident(
-            repository,
-            workflow_id,
-        ):
-            return
-        if version_after == version_before:
-            return
-
-
 def handle_board_approve(
     repository: ControlPlaneRepository,
     payload: BoardApproveCommand,
@@ -652,12 +602,13 @@ def handle_board_approve(
             )
         repository.refresh_projections(connection)
 
-    if created_followup_ticket_ids:
-        _auto_advance_scope_followup_to_next_stop(
-            repository,
-            workflow_id=approval["workflow_id"],
-            idempotency_key=payload.idempotency_key,
-        )
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=approval["workflow_id"],
+        idempotency_key_prefix=f"{payload.idempotency_key}:workflow-auto-advance",
+        max_steps=SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS,
+        max_dispatches=1,
+    )
 
     return CommandAckEnvelope(
         command_id=command_id,

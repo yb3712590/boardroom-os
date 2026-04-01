@@ -271,10 +271,16 @@
 - 这条续跑仍然保持 fail-closed 和主线收口：当前只支持 `frontend_engineer -> ui_designer_primary`；如果任一 follow-up 的 artifact、JSON、`owner_role`、重复 `ticket_id` 或现有投影冲突不合法，整次 `board-approve` 都会被拒绝，review 继续保持待决。
 - 多张同级 follow-up 现在会按 ticket 隔离写入范围，分别写到各自的 `artifacts/ui/scope-followups/<ticket_id>/` 和 `reports/review/<ticket_id>/` 下，避免兄弟票互相覆盖。
 - deterministic runtime 生成的默认 `consensus_document` 现在会直接带两张受支持的视觉 follow-up；scope approval 的同步 auto-advance 也收紧成“每步只派一张票”，因此默认本地路径会在第一张真实 visual review 打开时停下，剩余兄弟票保持 `PENDING`，不再把 scope 通过后的后续工作继续留在文档里。
+- 把“推进到下一个真实停点”的规则从 scope approval 扩到了后续 `board-approve`：现在不只是 scope review 通过会继续落票，第一张 visual review 被批准后，只要同 workflow 里还有没有依赖阻塞、也没有 open approval / incident 卡住的待执行票，后端也会继续自动消费到下一张真实 review、incident 或无可派单停点。
+- 这轮把自动推进逻辑收成了共享 helper，但保留了主线节奏差异：`project-init` 继续沿用现有批量派单上限，`board-approve` 仍保持每步只派一张票，避免 scope approval 一次越过原本该停下来的治理点。
 - Fresh verification after this change is:
   - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py -k "scope_review or followup" -q` -> `11 passed, 205 deselected`
   - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_scheduler_runner.py -k "consensus_document or followup" -q` -> `3 passed, 22 deselected`
   - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `330 passed`
+- Fresh verification after this change is:
+  - `cd backend && . .venv/bin/activate && python -m pytest tests/test_api.py::test_board_approve_visual_review_auto_advances_next_pending_followup_to_next_review tests/test_api.py::test_board_approve_visual_review_keeps_next_followup_pending_when_no_eligible_worker tests/test_api.py::test_board_approve_scope_review_creates_all_supported_followups_and_isolates_write_sets -q` -> `3 passed`
+  - `cd backend && . .venv/bin/activate && python -m pytest tests/test_api.py -k "project_init_auto_advances_to_scope_review or scope_review or board_approve_command_resolves_open_approval or board_reject_command_resolves_open_approval or modify_constraints_command_resolves_open_approval" -q` -> `14 passed, 204 deselected`
+  - `cd backend && . .venv/bin/activate && python -m pytest tests/test_scheduler_runner.py -k "consensus_document or followup" -q` -> `3 passed, 22 deselected`
 
 ### Current Watch-Outs
 
