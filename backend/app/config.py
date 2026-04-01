@@ -22,6 +22,10 @@ class Settings:
     artifact_object_store_access_key: str | None
     artifact_object_store_secret_key: str | None
     artifact_object_store_region: str | None
+    provider_openai_compat_base_url: str | None
+    provider_openai_compat_api_key: str | None
+    provider_openai_compat_model: str | None
+    provider_openai_compat_timeout_sec: float
     worker_bootstrap_signing_secret: str | None
     worker_admin_signing_secret: str | None
     worker_shared_secret: str | None
@@ -102,6 +106,20 @@ def get_settings() -> Settings:
     artifact_object_store_access_key = os.environ.get("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_ACCESS_KEY")
     artifact_object_store_secret_key = os.environ.get("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_SECRET_KEY")
     artifact_object_store_region = os.environ.get("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_REGION")
+    provider_openai_compat_base_url = os.environ.get("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL")
+    if provider_openai_compat_base_url is not None:
+        provider_openai_compat_base_url = provider_openai_compat_base_url.strip().rstrip("/") or None
+    provider_openai_compat_api_key = os.environ.get("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY")
+    if provider_openai_compat_api_key is not None:
+        provider_openai_compat_api_key = provider_openai_compat_api_key.strip() or None
+    provider_openai_compat_model = os.environ.get("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL")
+    if provider_openai_compat_model is not None:
+        provider_openai_compat_model = provider_openai_compat_model.strip() or None
+    provider_openai_compat_timeout_sec = float(
+        os.environ.get("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC", "30")
+    )
+    if provider_openai_compat_timeout_sec <= 0:
+        raise ValueError("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC must be greater than 0.")
     busy_timeout_ms = int(os.environ.get("BOARDROOM_OS_BUSY_TIMEOUT_MS", "5000"))
     recent_event_limit = int(os.environ.get("BOARDROOM_OS_RECENT_EVENT_LIMIT", "10"))
     scheduler_poll_interval_sec = float(
@@ -224,6 +242,10 @@ def get_settings() -> Settings:
         artifact_object_store_access_key=artifact_object_store_access_key,
         artifact_object_store_secret_key=artifact_object_store_secret_key,
         artifact_object_store_region=artifact_object_store_region,
+        provider_openai_compat_base_url=provider_openai_compat_base_url,
+        provider_openai_compat_api_key=provider_openai_compat_api_key,
+        provider_openai_compat_model=provider_openai_compat_model,
+        provider_openai_compat_timeout_sec=provider_openai_compat_timeout_sec,
         worker_bootstrap_signing_secret=worker_bootstrap_signing_secret,
         worker_admin_signing_secret=worker_admin_signing_secret,
         worker_shared_secret=worker_shared_secret,

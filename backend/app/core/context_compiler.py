@@ -170,8 +170,20 @@ def _build_descriptor_payload(source: CompileRequestExplicitSource) -> dict[str,
     if source.artifact_access is not None:
         artifact_access = source.artifact_access.model_dump(mode="json")
         content_payload["artifact_access"] = artifact_access
-        content_payload.update(artifact_access)
+        if artifact_ref := artifact_access.get("artifact_ref"):
+            content_payload["artifact_ref"] = artifact_ref
+        if preview_kind := artifact_access.get("preview_kind"):
+            content_payload["preview_kind"] = preview_kind
+        if display_hint := artifact_access.get("display_hint"):
+            content_payload["display_hint"] = display_hint
     return content_payload
+
+
+def _set_inline_display_hint(content_payload: dict[str, Any]) -> None:
+    content_payload["display_hint"] = "INLINE_BODY"
+    artifact_access = content_payload.get("artifact_access")
+    if isinstance(artifact_access, dict):
+        artifact_access["display_hint"] = "INLINE_BODY"
 
 
 def _estimate_reference_only_tokens(source: CompileRequestExplicitSource) -> int:
@@ -412,6 +424,7 @@ def _build_inline_block(
     content_payload["content_truncated"] = source.inline_content_truncated
     if source.inline_preview_strategy is not None:
         content_payload["content_preview_strategy"] = source.inline_preview_strategy
+    _set_inline_display_hint(content_payload)
 
     token_estimate = _estimate_tokens(content_payload)
     block = CompiledContextBlock(
@@ -842,6 +855,7 @@ def _build_fragment_block(
         content_type = "TEXT"
         content_payload["content_text"] = source.fragment_content_text or ""
     content_payload["content_truncated"] = True
+    _set_inline_display_hint(content_payload)
 
     reason = (
         f"Inline hydration for {source.source_ref} exceeded the full-body budget, so the compiler kept "
@@ -912,6 +926,7 @@ def _build_partial_inline_block(
     else:
         content_payload["content_text"] = source.inline_content_text or ""
     content_payload["content_preview_strategy"] = preview_strategy
+    _set_inline_display_hint(content_payload)
 
     reason = (
         f"Inline hydration for {source.source_ref} exceeded the token budget, so the compiler kept "

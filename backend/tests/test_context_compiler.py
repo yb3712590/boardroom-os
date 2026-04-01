@@ -439,16 +439,17 @@ def test_compile_execution_package_includes_indexed_artifact_access_descriptors(
     compile_request = build_compile_request(repository, ticket)
     compiled_package = compile_execution_package(compile_request)
     content_payload = compiled_package.atomic_context_bundle.context_blocks[0].content_payload
+    artifact_access = content_payload["artifact_access"]
 
     assert content_payload["artifact_ref"] == artifact_ref
-    assert content_payload["logical_path"] == "artifacts/inputs/brief.md"
-    assert content_payload["media_type"] == "text/markdown"
-    assert content_payload["materialization_status"] == "MATERIALIZED"
-    assert content_payload["lifecycle_status"] == "ACTIVE"
-    assert content_payload["content_hash"] == materialized.content_hash
-    assert content_payload["size_bytes"] == materialized.size_bytes
-    assert "/api/v1/artifacts/content" in content_payload["content_url"]
-    assert "/api/v1/artifacts/preview" in content_payload["preview_url"]
+    assert artifact_access["logical_path"] == "artifacts/inputs/brief.md"
+    assert artifact_access["media_type"] == "text/markdown"
+    assert artifact_access["materialization_status"] == "MATERIALIZED"
+    assert artifact_access["lifecycle_status"] == "ACTIVE"
+    assert artifact_access["content_hash"] == materialized.content_hash
+    assert artifact_access["size_bytes"] == materialized.size_bytes
+    assert "/api/v1/artifacts/content" in artifact_access["content_url"]
+    assert "/api/v1/artifacts/preview" in artifact_access["preview_url"]
 
 
 def test_compile_execution_package_inlines_materialized_markdown_and_json_sources(
@@ -493,15 +494,19 @@ def test_compile_execution_package_inlines_materialized_markdown_and_json_source
     json_block = compiled_package.atomic_context_bundle.context_blocks[1]
 
     assert markdown_block.content_type == "TEXT"
+    assert markdown_block.content_payload["display_hint"] == "INLINE_BODY"
     assert markdown_block.content_payload["content_text"] == "# Brief\n\nInline me.\n"
     assert markdown_block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/brief.md"
+    assert markdown_block.content_payload["artifact_access"]["display_hint"] == "INLINE_BODY"
 
     assert json_block.content_type == "JSON"
+    assert json_block.content_payload["display_hint"] == "INLINE_BODY"
     assert json_block.content_payload["content_json"] == {
         "goal": "Ship homepage",
         "constraints": ["Keep it local"],
     }
     assert json_block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/spec.json"
+    assert json_block.content_payload["artifact_access"]["display_hint"] == "INLINE_BODY"
 
 
 def test_compile_execution_package_marks_image_artifact_as_media_reference_only(
@@ -535,8 +540,10 @@ def test_compile_execution_package_marks_image_artifact_as_media_reference_only(
     assert block.content_type == "SOURCE_DESCRIPTOR"
     assert block.content_mode == "REFERENCE_ONLY"
     assert block.degradation_reason_code == "MEDIA_REFERENCE_ONLY"
+    assert block.content_payload["display_hint"] == "OPEN_PREVIEW_URL"
     assert block.content_payload["artifact_access"]["kind"] == "IMAGE"
     assert block.content_payload["artifact_access"]["preview_kind"] == "INLINE_MEDIA"
+    assert block.content_payload["artifact_access"]["display_hint"] == "OPEN_PREVIEW_URL"
     assert source_log.reason_code == "MEDIA_REFERENCE_ONLY"
 
 
@@ -571,8 +578,10 @@ def test_compile_execution_package_marks_pdf_artifact_as_media_reference_only(
     assert block.content_type == "SOURCE_DESCRIPTOR"
     assert block.content_mode == "REFERENCE_ONLY"
     assert block.degradation_reason_code == "MEDIA_REFERENCE_ONLY"
+    assert block.content_payload["display_hint"] == "OPEN_PREVIEW_URL"
     assert block.content_payload["artifact_access"]["kind"] == "PDF"
     assert block.content_payload["artifact_access"]["preview_kind"] == "INLINE_MEDIA"
+    assert block.content_payload["artifact_access"]["display_hint"] == "OPEN_PREVIEW_URL"
     assert source_log.reason_code == "MEDIA_REFERENCE_ONLY"
 
 
@@ -607,8 +616,10 @@ def test_compile_execution_package_marks_zip_artifact_as_binary_reference_only(
     assert block.content_type == "SOURCE_DESCRIPTOR"
     assert block.content_mode == "REFERENCE_ONLY"
     assert block.degradation_reason_code == "BINARY_REFERENCE_ONLY"
+    assert block.content_payload["display_hint"] == "DOWNLOAD_ATTACHMENT"
     assert block.content_payload["artifact_access"]["kind"] == "BINARY"
     assert block.content_payload["artifact_access"]["preview_kind"] == "DOWNLOAD_ONLY"
+    assert block.content_payload["artifact_access"]["display_hint"] == "DOWNLOAD_ATTACHMENT"
     assert source_log.reason_code == "BINARY_REFERENCE_ONLY"
 
 
@@ -620,14 +631,14 @@ def test_compile_audit_artifacts_falls_back_to_descriptor_when_source_exceeds_bu
     client.post(
         "/api/v1/commands/ticket-create",
         json={
-            **_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md"]),
-            "context_query_plan": {
-                "keywords": ["homepage"],
-                "semantic_queries": ["approved direction"],
-                "max_context_tokens": 350,
+                **_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md"]),
+                "context_query_plan": {
+                    "keywords": ["homepage"],
+                    "semantic_queries": ["approved direction"],
+                    "max_context_tokens": 250,
+                },
+                "acceptance_criteria": ["Must preserve structured result integrity."],
             },
-            "acceptance_criteria": ["Must preserve structured result integrity."],
-        },
     )
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
@@ -651,14 +662,16 @@ def test_compile_audit_artifacts_falls_back_to_descriptor_when_source_exceeds_bu
     assert block.content_type == "SOURCE_DESCRIPTOR"
     assert block.content_mode == "REFERENCE_ONLY"
     assert block.degradation_reason_code == "INLINE_BUDGET_EXCEEDED"
+    assert block.content_payload["display_hint"] == "OPEN_CONTENT_URL"
     assert block.content_payload["artifact_access"]["artifact_ref"] == "art://inputs/brief.md"
+    assert block.content_payload["artifact_access"]["display_hint"] == "OPEN_CONTENT_URL"
     assert "content_text" not in block.content_payload
     assert compiled_artifacts.compile_manifest.degradation.is_degraded is True
     assert any("token budget" in warning.lower() for warning in compiled_artifacts.compile_manifest.degradation.warnings)
     assert source_log.status == "TRUNCATED"
     assert source_log.reason_code == "INLINE_BUDGET_EXCEEDED"
     assert "token budget" in (source_log.reason or "").lower()
-    assert compiled_artifacts.compile_manifest.budget_actual.final_bundle_tokens <= 350
+    assert compiled_artifacts.compile_manifest.budget_actual.final_bundle_tokens <= 250
     assert compiled_artifacts.compile_manifest.budget_actual.truncated_tokens > 0
     assert compiled_artifacts.compile_manifest.final_bundle_stats.reference_block_count == 1
     assert compiled_artifacts.compile_manifest.final_bundle_stats.hydrated_block_count == 0
@@ -679,7 +692,7 @@ def test_compile_audit_artifacts_keeps_multiple_large_sources_within_budget_when
             "context_query_plan": {
                 "keywords": ["homepage"],
                 "semantic_queries": ["approved direction"],
-                "max_context_tokens": 700,
+                "max_context_tokens": 470,
             },
             "acceptance_criteria": ["Must preserve structured result integrity."],
         },
@@ -713,8 +726,8 @@ def test_compile_audit_artifacts_keeps_multiple_large_sources_within_budget_when
     manifest = compiled_artifacts.compile_manifest
 
     assert [block.content_mode for block in blocks] == ["REFERENCE_ONLY", "REFERENCE_ONLY"]
-    assert manifest.budget_plan.total_budget_tokens == 700
-    assert manifest.budget_actual.final_bundle_tokens <= 700
+    assert manifest.budget_plan.total_budget_tokens == 470
+    assert manifest.budget_actual.final_bundle_tokens <= 470
     assert manifest.budget_actual.used_p1 == manifest.budget_actual.final_bundle_tokens
     assert manifest.budget_actual.truncated_tokens > 0
     assert manifest.final_bundle_stats.reference_block_count == 2
@@ -1139,7 +1152,7 @@ def test_compile_audit_artifacts_render_summary_counts_degraded_and_reference_me
                 "context_query_plan": {
                     "keywords": ["acceptance", "output", "review"],
                     "semantic_queries": ["contract risk"],
-                    "max_context_tokens": 1000,
+                    "max_context_tokens": 700,
                 },
             },
         )

@@ -15,6 +15,7 @@
 - review room 与 board approve / reject / modify constraints
 - artifact store / artifact index / ticket artifacts projection
 - Context Compiler 最小内联链：`TEXT / MARKDOWN / JSON` 且当前可读的 input artifact 会直接进 compiled execution package；超预算的文本和 JSON 现在会先退到确定性的相关片段编译，片段仍放不下时再退到头部预览 / 顶层预览，并在 bundle / manifest 里写明结构化降级原因和 selector；图片 / PDF 会作为结构化媒体引用保留；其他二进制、未落盘、已删除材料仍保留 descriptor + URL 兜底
+- 最小真实 provider 适配层：当 in-process runtime 遇到 `provider_id=prov_openai_compat`，并且本地配置了兼容 OpenAI `responses` 的 `base_url / api_key / model` 后，会直接打 `POST {base_url}/responses`；未配置时继续走本地 deterministic runtime
 - artifact 大文件链路：控制面分段上传会话、`ticket-result-submit` 对 `upload_session_id` 的消费，以及本地默认 / 可选对象存储双后端
 - artifact cleanup 闭环：场景留存分级、物理删除记账、scheduler 自动 cleanup，以及 `dashboard` 上可直接看的 cleanup 状态
 - 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
@@ -88,20 +89,31 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` 是默认值，runner / in-process scheduler 会在 `LEASED` 后直接执行当前最小 runtime
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 时，runner / in-process scheduler 只负责 dispatch / lease，不再自动 `start / execute / result-submit`
 
+兼容 OpenAI provider 的真实调用规则：
+
+- 只在 `provider_id == prov_openai_compat` 且 `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL / API_KEY / MODEL` 三个配置都存在时启用
+- `base_url` 可以直接带 `/v1`，运行时会调用 `POST {base_url}/responses`
+- 请求输入直接来自编译后的 `rendered_execution_payload.messages`；后端不会依赖 provider 端 JSON schema 强约束，而是拿回文本后在本地做 JSON 解析和现有 output schema 校验
+- 当前只把这条真实 provider 路径收口到 `ui_milestone_review` 和 `maker_checker_verdict` 两条主链 schema
+- 失败映射固定为：`429 -> PROVIDER_RATE_LIMITED`、超时 / 连接失败 / `5xx -> UPSTREAM_UNAVAILABLE`、`401/403 -> PROVIDER_AUTH_FAILED`、其他 `4xx` / 空响应 / 非 JSON / 结构不匹配 -> `PROVIDER_BAD_RESPONSE`
+- 只有 `PROVIDER_RATE_LIMITED` 和 `UPSTREAM_UNAVAILABLE` 会进入既有 provider incident / breaker 暂停链；鉴权失败和坏响应只让当前 ticket 失败，不自动扩大成 provider pause
+
 当前执行包的编译边界：
 
 - 已完整内联：当前可读且已物化、并且能放进预算内的 `TEXT / MARKDOWN / JSON` input artifact
 - 已片段编译：超预算但还能压进预算的 `TEXT / MARKDOWN / JSON` 会优先保留确定性的相关片段，当前文本会走 `MARKDOWN_SECTION` / `TEXT_WINDOW`，JSON 会走 `JSON_PATH`
 - 已保底预览：片段仍放不下预算时，`TEXT / MARKDOWN / JSON` 会退到确定性的头部摘录或顶层 JSON 预览，并标明 `INLINE_BUDGET_EXCEEDED`
-- 已结构化引用：`IMAGE / PDF` 不内联原始二进制正文，但会在 `artifact_access` 里显式带上 `kind`、`preview_kind=INLINE_MEDIA` 和 worker 可直接消费的 URL
-- 仍走结构化下载引用：其他二进制 artifact 不内联原始正文，但会在 `artifact_access` 里显式带上 `kind`、`preview_kind=DOWNLOAD_ONLY` 和 worker 可直接消费的 URL
+- 已结构化引用：`IMAGE / PDF` 不内联原始二进制正文，但会在 `artifact_access` 里显式带上 `kind`、`preview_kind=INLINE_MEDIA`、`display_hint=OPEN_PREVIEW_URL` 和 worker 可直接消费的 URL
+- 仍走结构化下载引用：其他二进制 artifact 不内联原始正文，但会在 `artifact_access` 里显式带上 `kind`、`preview_kind=DOWNLOAD_ONLY`、`display_hint=DOWNLOAD_ATTACHMENT` 和 worker 可直接消费的 URL
 - 仍走 descriptor：`REGISTERED_ONLY`、已删除 / 已过期材料、读取失败材料，以及当前不能安全解码的正文
-- 即使已经内联，执行包里仍保留 `artifact_access / content_url / preview_url / download_url`，所以 worker 可以直接用包内正文，也可以在需要时回退到原有 artifact 读取链
+- 即使已经内联，执行包里仍保留 `artifact_access`，并把 `display_hint` 同步到 context block 顶层；文本类正文会显式标成 `INLINE_BODY`，所以 worker 不需要靠字段名猜“这是正文、预览还是下载”
+- worker execution package 在 signed URL 重写之后，仍会保留 `artifact_access.kind / preview_kind / display_hint` 这些展示语义；不会因为 URL 被改写就退回成一条模糊附件
 
 排障时如果走 `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector`：
 
 - 除了原始 `compiled_context_bundle` 和 `compile_manifest`，现在还会附带一层 `compile_summary`
 - 这层摘要会直接告诉你本次编译共有多少 source、多少完整内联、多少片段内联、多少部分预览、多少纯引用，以及各类降级原因码的计数
+- 现在还会单独汇总媒体引用数量、下载型附件数量、各片段策略计数、各预览策略计数，以及 `preview_kind` 计数；排障时不再需要手翻 context blocks 才知道 worker 看到的是正文、预览还是下载引用
 - 当前常见原因码包括：`ARTIFACT_NOT_INDEXED`、`ARTIFACT_NOT_READABLE`、`MEDIA_REFERENCE_ONLY`、`BINARY_REFERENCE_ONLY`、`INLINE_BUDGET_EXCEEDED`
 
 切到外部 worker handoff 模式：
@@ -386,6 +398,14 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
 
 ## 关键环境变量
 
+- `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL`
+  兼容 OpenAI `responses` 站点的基座地址；允许直接写成类似 `https://api-vip.codex-for.me/v1`
+- `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY`
+  `prov_openai_compat` 路径使用的 bearer token
+- `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL`
+  `prov_openai_compat` 路径请求里带出的模型名
+- `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC`
+  真实 provider 调用超时时间，默认 `30` 秒；必须大于 `0`
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET`
   bootstrap token 的签名密钥；未设置时会回退到 `BOARDROOM_OS_WORKER_SHARED_SECRET`
 - `BOARDROOM_OS_WORKER_BOOTSTRAP_DEFAULT_TTL_SEC`
@@ -459,5 +479,6 @@ python -m pytest tests -q
 ## 当前限制
 
 - `backend/pyproject.toml` 的 editable install 还没完全补平
+- 当前真实 provider 只落了一个 `prov_openai_compat -> POST {base_url}/responses` 适配；不支持 chat-completions 并行、不支持多 provider routing / fallback，也不做多模型矩阵
 - 当前大文件链路只补到控制面分段上传；还没有扩到 worker-runtime 上传面、浏览器直传或云厂商预签名 multipart
 - 公开互联网场景下还没有完整身份层；当前 `worker-admin` 即使加了可信代理断言，也仍只是受信控制面入口，不适合直接当公网租户自助面暴露

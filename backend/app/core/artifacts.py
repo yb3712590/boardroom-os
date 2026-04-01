@@ -273,6 +273,7 @@ def build_artifact_metadata(
         kind=str(artifact["kind"]),
         media_type=artifact.get("media_type"),
     )
+    display_hint = resolve_artifact_display_hint(preview_kind=preview_kind)
     return {
         "artifact_ref": artifact["artifact_ref"],
         "workflow_id": artifact["workflow_id"],
@@ -282,6 +283,7 @@ def build_artifact_metadata(
         "kind": artifact["kind"],
         "media_type": artifact.get("media_type"),
         "preview_kind": preview_kind,
+        "display_hint": display_hint,
         "status": artifact["materialization_status"],
         "materialization_status": artifact["materialization_status"],
         "lifecycle_status": lifecycle_status,
@@ -315,6 +317,7 @@ def build_unindexed_artifact_access_descriptor(artifact_ref: str) -> dict[str, A
         "kind": None,
         "media_type": None,
         "preview_kind": None,
+        "display_hint": "OPEN_CONTENT_URL",
         "materialization_status": ARTIFACT_STATUS_REGISTERED_ONLY,
         "lifecycle_status": ARTIFACT_LIFECYCLE_ACTIVE,
         "size_bytes": None,
@@ -341,6 +344,7 @@ def build_artifact_access_descriptor(
         "kind": metadata["kind"],
         "media_type": metadata["media_type"],
         "preview_kind": metadata["preview_kind"],
+        "display_hint": metadata["display_hint"],
         "materialization_status": metadata["materialization_status"],
         "lifecycle_status": metadata["lifecycle_status"],
         "size_bytes": metadata["size_bytes"],
@@ -366,3 +370,14 @@ def classify_artifact_preview_kind(
     if media_type == "application/pdf" or normalized_kind == "PDF":
         return "INLINE_MEDIA"
     return "DOWNLOAD_ONLY"
+
+
+def resolve_artifact_display_hint(
+    *,
+    preview_kind: str | None,
+) -> str:
+    if preview_kind == "INLINE_MEDIA":
+        return "OPEN_PREVIEW_URL"
+    if preview_kind == "DOWNLOAD_ONLY":
+        return "DOWNLOAD_ATTACHMENT"
+    return "OPEN_CONTENT_URL"

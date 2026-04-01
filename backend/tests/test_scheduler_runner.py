@@ -6,6 +6,10 @@ from datetime import datetime
 
 import app.core.runtime as runtime_module
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
+from app.core.provider_openai_compat import (
+    OpenAICompatProviderRateLimitedError,
+    OpenAICompatProviderResult,
+)
 from app.scheduler_runner import run_scheduler_loop, run_scheduler_once
 
 
@@ -851,6 +855,225 @@ def test_runtime_skips_later_leased_tickets_after_provider_pause_opens(client, s
     assert executed_ticket_ids == ["tkt_runner_provider_pause_1"]
     assert first_ticket["status"] == "FAILED"
     assert second_ticket["status"] == "LEASED"
+
+
+def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_live", provider_id="prov_openai_compat")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_live",
+            ticket_id="tkt_runner_provider_live",
+            node_id="node_runner_provider_live",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_live",
+            "ticket_id": "tkt_runner_provider_live",
+            "node_id": "node_runner_provider_live",
+            "leased_by": "emp_frontend_live",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_live:tkt_runner_provider_live",
+        },
+    )
+
+    called_ticket_ids: list[str] = []
+
+    def _fake_provider_execute(execution_package):
+        called_ticket_ids.append(execution_package.meta.ticket_id)
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary="Provider completed the runtime ticket.",
+            artifact_refs=["art://runtime/provider/option-a.json"],
+            result_payload={
+                "summary": "Provider completed the runtime ticket.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Provider-backed option.",
+                        "artifact_refs": ["art://runtime/provider/option-a.json"],
+                    }
+                ],
+            },
+            confidence=0.81,
+        )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_execute_openai_compat_provider",
+        _fake_provider_execute,
+        raising=False,
+    )
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_live")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_live"]
+    assert called_ticket_ids == ["tkt_runner_provider_live"]
+    assert ticket_projection["status"] == "COMPLETED"
+
+
+def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_auth", provider_id="prov_openai_compat")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_auth",
+            ticket_id="tkt_runner_provider_auth",
+            node_id="node_runner_provider_auth",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_auth",
+            "ticket_id": "tkt_runner_provider_auth",
+            "node_id": "node_runner_provider_auth",
+            "leased_by": "emp_frontend_auth",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_auth:tkt_runner_provider_auth",
+        },
+    )
+
+    def _fake_provider_execute(execution_package):
+        return RuntimeExecutionResult(
+            result_status="failed",
+            failure_kind="PROVIDER_AUTH_FAILED",
+            failure_message="Provider rejected the configured API key.",
+            failure_detail={
+                "provider_id": "prov_openai_compat",
+                "provider_status_code": 401,
+            },
+        )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_execute_openai_compat_provider",
+        _fake_provider_execute,
+        raising=False,
+    )
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_auth")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_auth"]
+    assert ticket_projection["status"] == "FAILED"
+    assert repository.list_open_incidents() == []
+
+
+def test_runtime_provider_bad_response_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_bad_response", provider_id="prov_openai_compat")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_bad_response",
+            ticket_id="tkt_runner_provider_bad_response",
+            node_id="node_runner_provider_bad_response",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_bad_response",
+            "ticket_id": "tkt_runner_provider_bad_response",
+            "node_id": "node_runner_provider_bad_response",
+            "leased_by": "emp_frontend_bad_response",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_bad_response:tkt_runner_provider_bad_response",
+        },
+    )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "invoke_openai_compat_response",
+        lambda config, rendered_payload: OpenAICompatProviderResult(
+            output_text='{"summary":"Broken provider payload.","recommended_option_id":"option_a","options":[]}',
+            response_id="resp_bad_schema",
+        ),
+    )
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_bad_response")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_bad_response"]
+    assert ticket_projection["status"] == "FAILED"
+    assert repository.list_open_incidents() == []
+
+
+def test_runtime_provider_rate_limited_response_opens_provider_incident(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_rate_limited", provider_id="prov_openai_compat")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_live_rate_limit",
+            ticket_id="tkt_runner_provider_live_rate_limit",
+            node_id="node_runner_provider_live_rate_limit",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_live_rate_limit",
+            "ticket_id": "tkt_runner_provider_live_rate_limit",
+            "node_id": "node_runner_provider_live_rate_limit",
+            "leased_by": "emp_frontend_rate_limited",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_live_rate_limit:tkt_runner_provider_live_rate_limit",
+        },
+    )
+
+    def _raise_rate_limited(config, rendered_payload):
+        raise OpenAICompatProviderRateLimitedError(
+            failure_kind="PROVIDER_RATE_LIMITED",
+            message="Provider quota exhausted.",
+            failure_detail={
+                "provider_status_code": 429,
+                "provider_id": "prov_openai_compat",
+            },
+        )
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_rate_limited)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_live_rate_limit")
+    open_incidents = repository.list_open_incidents()
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_live_rate_limit"]
+    assert ticket_projection["status"] == "FAILED"
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["provider_id"] == "prov_openai_compat"
 
 
 def test_scheduler_runner_auto_closes_recovering_incident_after_followup_success(client, set_ticket_time):

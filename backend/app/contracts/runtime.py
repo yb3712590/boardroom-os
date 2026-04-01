@@ -71,6 +71,12 @@ class CompiledArtifactAccessDescriptor(StrictModel):
     kind: str | None = None
     media_type: str | None = None
     preview_kind: Literal["TEXT", "JSON", "INLINE_MEDIA", "DOWNLOAD_ONLY"] | None = None
+    display_hint: Literal[
+        "INLINE_BODY",
+        "OPEN_PREVIEW_URL",
+        "DOWNLOAD_ATTACHMENT",
+        "OPEN_CONTENT_URL",
+    ] | None = None
     materialization_status: str = Field(min_length=1)
     lifecycle_status: str = Field(min_length=1)
     size_bytes: int | None = Field(default=None, ge=0)

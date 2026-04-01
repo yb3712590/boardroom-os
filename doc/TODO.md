@@ -17,8 +17,8 @@
 - 把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
 - 把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级和更明确的 fix 票约束，剩余重点是换人策略
 - 把 `Context Compiler` 从“文本类 artifact 可内联”的当前版本继续推进，补完二进制 / 大文件 / 检索增强下的编译与降级策略
-  - 当前已完成：`TEXT / MARKDOWN / JSON` 可完整内联；超预算文本 / JSON 会先退到确定性片段编译，片段仍放不下时再退到确定性预览；图片 / PDF 会作为结构化媒体引用进入执行包；其他二进制会作为结构化下载引用进入执行包；bundle / manifest / developer inspector 已暴露结构化降级原因与 selector / 片段汇总；编译时还能拉入同 workspace、跨 workflow 的本地 `review / incident / artifact` 历史摘要卡片；显式输入现在会为后续 mandatory source 预留最小 descriptor 预算，最终 bundle 不再允许悄悄超出 `max_context_tokens`；如果连 mandatory 输入 descriptor 都塞不进去，编译会按 `FAIL_CLOSED` 直接失败；`Review Room` 读面已能直接展示预算总量、已用/剩余预算、截断 token 和显式输入/检索的降级计数；编译产物现在还会稳定派生最小 `json_messages_v1` 渲染结果，并同步进入 worker execution package 与 `Review Room` developer inspector
-  - 当前仍缺：更强的预算压缩矩阵、更细的大文件与二进制策略、真实 provider 适配层，以及向量/联网之外是否还需要更丰富的本地检索策略
+  - 当前已完成：`TEXT / MARKDOWN / JSON` 可完整内联；超预算文本 / JSON 会先退到确定性片段编译，片段仍放不下时再退到确定性预览；图片 / PDF 会作为结构化媒体引用进入执行包；其他二进制会作为结构化下载引用进入执行包；context block 和 worker execution package 现在都会显式带出 `display_hint`，不用再靠字段名猜是正文、预览还是下载；bundle / manifest / developer inspector 已暴露结构化降级原因、selector、片段/预览策略和媒体/下载型附件计数；编译时还能拉入同 workspace、跨 workflow 的本地 `review / incident / artifact` 历史摘要卡片；显式输入现在会为后续 mandatory source 预留最小 descriptor 预算，最终 bundle 不再允许悄悄超出 `max_context_tokens`；如果连 mandatory 输入 descriptor 都塞不进去，编译会按 `FAIL_CLOSED` 直接失败；编译产物现在还会稳定派生最小 `json_messages_v1` 渲染结果，并同步进入 worker execution package 与 `Review Room` developer inspector；in-process runtime 也已经接通最小真实 `prov_openai_compat` provider 路径，配置兼容 `responses` 站点后可直接跑真实调用
+  - 当前仍缺：更强的预算压缩矩阵、更多 schema / role profile 的真实执行覆盖，以及向量/联网之外是否还需要更丰富的本地检索策略；`provider routing / recovery`、浏览器直传和云预签名 multipart 继续后置到 MVP 之后再评估
 - 收敛 runtime 默认路径，优先保证本地单机执行稳定，而不是继续扩远程 handoff 面
 - 明确 MVP 的最小 schema、role profile、ticket 路径，不再边做边膨胀
 

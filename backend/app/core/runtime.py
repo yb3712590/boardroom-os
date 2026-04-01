@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
 
+from app.config import get_settings
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
@@ -18,7 +20,15 @@ from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     compile_and_persist_execution_artifacts,
 )
-from app.core.output_schemas import schema_id
+from app.core.output_schemas import schema_id, validate_output_payload
+from app.core.provider_openai_compat import (
+    OpenAICompatProviderAuthError,
+    OpenAICompatProviderBadResponseError,
+    OpenAICompatProviderConfig,
+    OpenAICompatProviderRateLimitedError,
+    OpenAICompatProviderUnavailableError,
+    invoke_openai_compat_response,
+)
 from app.core.ticket_handlers import (
     handle_ticket_result_submit,
     handle_ticket_start,
@@ -52,6 +62,7 @@ class RuntimeExecutionOutcome:
 
 SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {"ui_milestone_review", "maker_checker_verdict"}
 SUPPORTED_RUNTIME_ROLE_PROFILES = {"ui_designer_primary", "checker_primary"}
+OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
 
 
 def _runtime_sort_key(ticket: dict[str, Any]) -> tuple:
@@ -66,17 +77,24 @@ def _build_result_submit_idempotency_key(ticket: dict[str, Any], result_status: 
     return f"runtime-result-submit:{ticket['workflow_id']}:{ticket['ticket_id']}:{result_status}"
 
 
+def _resolve_ticket_provider_id(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+) -> str | None:
+    lease_owner = ticket.get("lease_owner")
+    if lease_owner is None:
+        return None
+    employee = repository.get_employee_projection(str(lease_owner))
+    if employee is None or not employee.get("provider_id"):
+        return None
+    return str(employee["provider_id"])
+
+
 def _is_provider_paused_for_ticket(
     repository: ControlPlaneRepository,
     ticket: dict[str, Any],
 ) -> bool:
-    lease_owner = ticket.get("lease_owner")
-    if lease_owner is None:
-        return False
-    employee = repository.get_employee_projection(str(lease_owner))
-    if employee is None:
-        return False
-    provider_id = employee.get("provider_id")
+    provider_id = _resolve_ticket_provider_id(repository, ticket)
     if not provider_id:
         return False
     return repository.has_open_circuit_breaker_for_provider(str(provider_id))
@@ -205,6 +223,142 @@ def _schema_version_for_execution_package(execution_package: CompiledExecutionPa
         execution_package.execution.output_schema_ref,
         execution_package.execution.output_schema_version,
     )
+
+
+def _strip_markdown_code_fence(value: str) -> str:
+    stripped = value.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3:
+            return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def _load_provider_payload(output_text: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(_strip_markdown_code_fence(output_text))
+    except ValueError as exc:
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="PROVIDER_BAD_RESPONSE",
+            message=f"Provider output was not valid JSON: {exc}",
+            failure_detail={},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="PROVIDER_BAD_RESPONSE",
+            message="Provider output JSON root must be an object.",
+            failure_detail={},
+        )
+    return payload
+
+
+def _openai_compat_provider_is_configured() -> bool:
+    settings = get_settings()
+    return all(
+        (
+            settings.provider_openai_compat_base_url,
+            settings.provider_openai_compat_api_key,
+            settings.provider_openai_compat_model,
+        )
+    )
+
+
+def _build_openai_compat_provider_config() -> OpenAICompatProviderConfig:
+    settings = get_settings()
+    return OpenAICompatProviderConfig(
+        base_url=str(settings.provider_openai_compat_base_url or ""),
+        api_key=str(settings.provider_openai_compat_api_key or ""),
+        model=str(settings.provider_openai_compat_model or ""),
+        timeout_sec=float(settings.provider_openai_compat_timeout_sec),
+    )
+
+
+def _execute_openai_compat_provider(
+    execution_package: CompiledExecutionPackage,
+) -> RuntimeExecutionResult:
+    config = _build_openai_compat_provider_config()
+    try:
+        provider_result = invoke_openai_compat_response(
+            config,
+            execution_package.rendered_execution_payload,
+        )
+        result_payload = _load_provider_payload(provider_result.output_text)
+        validate_output_payload(
+            schema_ref=execution_package.execution.output_schema_ref,
+            schema_version=execution_package.execution.output_schema_version,
+            submitted_schema_version=_schema_version_for_execution_package(execution_package),
+            payload=result_payload,
+        )
+    except (
+        OpenAICompatProviderRateLimitedError,
+        OpenAICompatProviderUnavailableError,
+        OpenAICompatProviderAuthError,
+        OpenAICompatProviderBadResponseError,
+        ValueError,
+    ) as exc:
+        failure_kind = (
+            exc.failure_kind
+            if isinstance(
+                exc,
+                (
+                    OpenAICompatProviderRateLimitedError,
+                    OpenAICompatProviderUnavailableError,
+                    OpenAICompatProviderAuthError,
+                    OpenAICompatProviderBadResponseError,
+                ),
+            )
+            else "PROVIDER_BAD_RESPONSE"
+        )
+        failure_detail = (
+            dict(exc.failure_detail)
+            if isinstance(
+                exc,
+                (
+                    OpenAICompatProviderRateLimitedError,
+                    OpenAICompatProviderUnavailableError,
+                    OpenAICompatProviderAuthError,
+                    OpenAICompatProviderBadResponseError,
+                ),
+            )
+            else {}
+        )
+        failure_detail.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
+        return RuntimeExecutionResult(
+            result_status="failed",
+            failure_kind=failure_kind,
+            failure_message=str(exc),
+            failure_detail=failure_detail,
+        )
+
+    return RuntimeExecutionResult(
+        result_status="completed",
+        completion_summary=(
+            f"Provider-backed runtime executed ticket {execution_package.meta.ticket_id} via "
+            f"{execution_package.meta.compiler_version}."
+        ),
+        artifact_refs=[],
+        result_payload=result_payload,
+        written_artifacts=[],
+        assumptions=[
+            f"compiler_version={execution_package.meta.compiler_version}",
+            f"compile_request_id={execution_package.meta.compile_request_id}",
+            f"provider_id={OPENAI_COMPAT_PROVIDER_ID}",
+            f"provider_response_id={provider_result.response_id or 'unknown'}",
+        ],
+        issues=[],
+        confidence=0.82,
+    )
+
+
+def _execute_runtime_with_provider_if_configured(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    execution_package: CompiledExecutionPackage,
+) -> RuntimeExecutionResult:
+    provider_id = _resolve_ticket_provider_id(repository, ticket)
+    if provider_id == OPENAI_COMPAT_PROVIDER_ID and _openai_compat_provider_is_configured():
+        return _execute_openai_compat_provider(execution_package)
+    return _execute_compiled_execution_package(execution_package)
 
 
 def _execute_compiled_execution_package(
@@ -381,7 +535,11 @@ def run_leased_ticket_runtime(
         try:
             compiled_artifacts = _build_compiled_execution_artifacts(repository, ticket)
             execution_package = compiled_artifacts.compiled_execution_package
-            execution_result = _execute_compiled_execution_package(execution_package)
+            execution_result = _execute_runtime_with_provider_if_configured(
+                repository,
+                ticket,
+                execution_package,
+            )
         except (ValidationError, ValueError) as exc:
             final_ack = handle_ticket_result_submit(
                 repository,

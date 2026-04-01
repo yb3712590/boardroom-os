@@ -2773,8 +2773,10 @@ def test_worker_runtime_execution_package_keeps_binary_artifact_kind_and_preview
     assert context_payload["content_type"] == "SOURCE_DESCRIPTOR"
     assert context_payload["content_mode"] == "REFERENCE_ONLY"
     assert context_payload["degradation_reason_code"] == "MEDIA_REFERENCE_ONLY"
+    assert context_payload["content_payload"]["display_hint"] == "OPEN_PREVIEW_URL"
     assert artifact_access["kind"] == "IMAGE"
     assert artifact_access["preview_kind"] == "INLINE_MEDIA"
+    assert artifact_access["display_hint"] == "OPEN_PREVIEW_URL"
     assert context_payload["content_payload"]["content_url"].startswith(
         "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/content"
     )
@@ -6691,6 +6693,8 @@ def test_review_room_developer_inspector_compile_summary_counts_media_reference_
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["compile_summary"]["reason_counts"]["MEDIA_REFERENCE_ONLY"] >= 1
+    assert body["compile_summary"]["media_reference_count"] >= 1
+    assert body["compile_summary"]["preview_kind_counts"]["INLINE_MEDIA"] >= 1
 
 
 def test_review_room_developer_inspector_compile_summary_counts_inline_fragments(client):
@@ -6715,6 +6719,37 @@ def test_review_room_developer_inspector_compile_summary_counts_inline_fragments
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["compile_summary"]["inline_fragment_count"] >= 1
+    assert body["compile_summary"]["fragment_strategy_counts"]["MARKDOWN_SECTION_MATCH"] >= 1
+
+
+def test_review_room_developer_inspector_compile_summary_counts_preview_and_download_strategies(client):
+    _seed_input_artifact(
+        client=client,
+        artifact_ref="art://inputs/brief.md",
+        logical_path="artifacts/inputs/brief.md",
+        content=("Neutral source content without keyword matches. " * 800),
+        kind="TEXT",
+        media_type="text/plain",
+    )
+    _seed_input_artifact(
+        client=client,
+        artifact_ref="art://inputs/brand-guide.md",
+        logical_path="artifacts/inputs/archive.zip",
+        content_bytes=b"PK\x03\x04mock-zip",
+        kind="BINARY",
+        media_type="application/zip",
+    )
+    approval = _seed_review_request(client, materialize_real_compile=True)
+
+    response = client.get(
+        f"/api/v1/projections/review-room/{approval['review_pack_id']}/developer-inspector"
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["compile_summary"]["preview_strategy_counts"]["HEAD_EXCERPT"] >= 1
+    assert body["compile_summary"]["download_attachment_count"] >= 1
+    assert body["compile_summary"]["preview_kind_counts"]["DOWNLOAD_ONLY"] >= 1
 
 
 def test_review_room_developer_inspector_returns_partial_when_refs_are_unmaterialized(client):

@@ -512,6 +512,36 @@ def build_review_room_developer_inspector_projection(
         if int(final_bundle_stats.get("dropped_explicit_source_count") or 0) > dropped_explicit_source_count:
             dropped_explicit_source_count = int(final_bundle_stats.get("dropped_explicit_source_count") or 0)
 
+        media_reference_count = 0
+        download_attachment_count = 0
+        fragment_strategy_counts: dict[str, int] = {}
+        preview_strategy_counts: dict[str, int] = {}
+        preview_kind_counts: dict[str, int] = {}
+        if compiled_context_bundle is not None:
+            for block in list(compiled_context_bundle.get("context_blocks") or []):
+                if not isinstance(block, dict):
+                    continue
+                content_payload = block.get("content_payload") or {}
+                if not isinstance(content_payload, dict):
+                    continue
+                fragment_strategy = content_payload.get("content_fragment_strategy")
+                if isinstance(fragment_strategy, str) and fragment_strategy:
+                    fragment_strategy_counts[fragment_strategy] = (
+                        fragment_strategy_counts.get(fragment_strategy, 0) + 1
+                    )
+                preview_strategy = content_payload.get("content_preview_strategy")
+                if isinstance(preview_strategy, str) and preview_strategy:
+                    preview_strategy_counts[preview_strategy] = (
+                        preview_strategy_counts.get(preview_strategy, 0) + 1
+                    )
+                preview_kind = content_payload.get("preview_kind")
+                if isinstance(preview_kind, str) and preview_kind:
+                    preview_kind_counts[preview_kind] = preview_kind_counts.get(preview_kind, 0) + 1
+                    if preview_kind == "INLINE_MEDIA":
+                        media_reference_count += 1
+                    elif preview_kind == "DOWNLOAD_ONLY":
+                        download_attachment_count += 1
+
         compile_summary = ReviewRoomDeveloperInspectorCompileSummary(
             source_count=len(source_entries),
             inline_full_count=inline_full_count,
@@ -529,6 +559,11 @@ def build_review_room_developer_inspector_projection(
             remaining_budget_tokens=remaining_budget_tokens,
             truncated_tokens=truncated_tokens,
             dropped_explicit_source_count=dropped_explicit_source_count,
+            media_reference_count=media_reference_count,
+            download_attachment_count=download_attachment_count,
+            fragment_strategy_counts=fragment_strategy_counts,
+            preview_strategy_counts=preview_strategy_counts,
+            preview_kind_counts=preview_kind_counts,
         )
     if rendered_execution_payload is not None:
         summary_payload = rendered_execution_payload.get("summary") or {}

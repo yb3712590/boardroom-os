@@ -174,6 +174,11 @@ class ReviewRoomDeveloperInspectorCompileSummary(StrictModel):
     remaining_budget_tokens: int = 0
     truncated_tokens: int = 0
     dropped_explicit_source_count: int = 0
+    media_reference_count: int = 0
+    download_attachment_count: int = 0
+    fragment_strategy_counts: dict[str, int] = Field(default_factory=dict)
+    preview_strategy_counts: dict[str, int] = Field(default_factory=dict)
+    preview_kind_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class ReviewRoomDeveloperInspectorProjectionData(StrictModel):

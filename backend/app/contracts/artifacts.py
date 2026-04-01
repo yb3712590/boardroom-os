@@ -14,6 +14,7 @@ class ArtifactMetadata(StrictModel):
     kind: str
     media_type: str | None = None
     preview_kind: str | None = None
+    display_hint: str | None = None
     status: str
     materialization_status: str
     lifecycle_status: str

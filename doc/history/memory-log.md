@@ -43,14 +43,14 @@
 - One worker can now keep multiple bootstrap bindings keyed by `worker_id + tenant_id + workspace_id`; each session and delivery grant still stays bound to exactly one scope.
 - Worker bootstrap issuance is now also persisted as `worker_bootstrap_issue`, so newer bootstrap tokens carry `issue_id` and may be invalidated conservatively without changing the compatibility path for older tokens.
 - Trusted control-plane operators now also have a `worker-admin` HTTP surface for binding, bootstrap, session, and delivery-grant management; the HTTP side now requires signed operator tokens instead of trusting raw operator headers, and it also exposes a dedicated action-audit projection.
-- Output schema enforcement is currently real for `ui_milestone_review@1` and `consensus_document@1`.
+- Output schema enforcement is currently real on the active local MVP runtime paths, including `ui_milestone_review@1` and `maker_checker_verdict@1`.
 
 ### Durable Open Gaps
 
 - There is still no dedicated tenant-management control plane, OAuth or mTLS layer, or broader public-internet hardening.
-- Multipart or large-file upload and object-storage delivery are still missing.
-- Broader scenario-specific artifact retention classes and the larger-file upload path still need follow-through beyond the current local-store auto cleanup loop.
-- Provider routing, richer output schema coverage, and fuller Context Compiler retrieval and caching are still incomplete.
+- Control-plane multipart upload and optional object-store delivery now exist, but browser direct upload, worker-runtime upload, and cloud presigned multipart remain post-MVP.
+- The current large-input / binary handling is now closed for the local MVP read path, but broader artifact platformization and public-network delivery policy are still intentionally frozen.
+- Provider routing, richer output schema coverage, and fuller Context Compiler retrieval and caching beyond the current local MVP path are still incomplete.
 
 ## Recent Memory
 
@@ -190,6 +190,18 @@
 - Fresh focused verification after this change is:
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_context_compiler.py -q` -> `25 passed`
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "worker_runtime_execution_package or review_room_developer_inspector" -q` -> `12 passed, 171 deselected`
+- Closed the local-MVP provider gap without widening into platformization: in-process runtime now recognizes `provider_id=prov_openai_compat`, calls OpenAI-compatible `POST {base_url}/responses` when the compat env vars are present, and otherwise keeps the zero-config deterministic runtime fallback intact.
+- Kept provider failure governance conservative: `429` maps to `PROVIDER_RATE_LIMITED`, timeout / transport / `5xx` map to `UPSTREAM_UNAVAILABLE`, `401/403` map to `PROVIDER_AUTH_FAILED`, and malformed / non-JSON / schema-invalid responses map to `PROVIDER_BAD_RESPONSE`; only rate-limit and upstream-unavailable failures open the existing provider pause / incident path.
+- Closed the current local MVP display-semantics gap for large inputs and binary references: context blocks and worker execution packages now carry explicit `display_hint`, while Review Room compile summaries now also count media references, download-only attachments, fragment strategies, preview strategies, and `preview_kind` totals.
+- Synced artifact metadata contracts with that new display truth, so both control-plane and worker-scoped artifact read APIs now expose `display_hint` instead of silently dropping it at the response boundary.
+- Fresh verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_provider_openai_compat.py -q` -> `5 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_context_compiler.py -q` -> `25 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -q` -> `18 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "review_room_developer_inspector or worker_runtime_execution_package or provider" -q` -> `16 passed, 168 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact" -q` -> `22 passed, 162 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `288 passed`
+- No compatible live provider credentials were present in the environment during this round, so the new provider path is code-complete and mock/full-suite verified, but not yet stamped with a real remote smoke run.
 
 ### Current Watch-Outs
 
