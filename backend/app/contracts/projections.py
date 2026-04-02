@@ -170,6 +170,61 @@ class InboxProjectionEnvelope(ProjectionEnvelopeBase):
     data: InboxProjectionData
 
 
+class DependencyInspectorWorkflowProjection(StrictModel):
+    workflow_id: str
+    title: str
+    current_stage: str
+    status: str
+
+
+class DependencyInspectorCurrentStopProjection(StrictModel):
+    reason: str
+    node_id: str | None = None
+    ticket_id: str | None = None
+    review_pack_id: str | None = None
+    incident_id: str | None = None
+
+
+class DependencyInspectorSummaryProjection(StrictModel):
+    total_nodes: int
+    critical_path_nodes: int
+    blocked_nodes: int
+    open_approvals: int
+    open_incidents: int
+    current_stop: DependencyInspectorCurrentStopProjection | None = None
+
+
+class DependencyInspectorNodeProjection(StrictModel):
+    node_id: str
+    ticket_id: str | None = None
+    parent_ticket_id: str | None = None
+    phase: str
+    delivery_stage: str | None = None
+    node_status: str
+    ticket_status: str | None = None
+    role_profile_ref: str | None = None
+    output_schema_ref: str | None = None
+    lease_owner: str | None = None
+    depends_on_ticket_id: str | None = None
+    dependent_ticket_ids: list[str]
+    block_reason: str
+    is_critical_path: bool
+    is_blocked: bool
+    expected_artifact_scope: list[str]
+    open_review_pack_id: str | None = None
+    open_incident_id: str | None = None
+
+
+class DependencyInspectorProjectionData(StrictModel):
+    workflow: DependencyInspectorWorkflowProjection
+    summary: DependencyInspectorSummaryProjection
+    nodes: list[DependencyInspectorNodeProjection]
+
+
+class DependencyInspectorProjectionEnvelope(ProjectionEnvelopeBase):
+    data: DependencyInspectorProjectionData
+
+
 class ReviewRoomDraftDefaults(StrictModel):
     selected_option_id: str | None = None
     comment_template: str = ""

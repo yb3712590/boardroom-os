@@ -7,6 +7,7 @@
 - 首页会并行拉取 `dashboard`、`inbox` 和 `workforce`
 - 没有 active workflow 时，会显示最小 `project-init` 表单，并明确提示它会把 workflow 推进到首个 scope review
 - 主舞台是 `Workflow River`，使用 `dashboard.pipeline_summary.phases` 的固定五段摘要：`Intake / Plan / Build / Check / Review`
+- active workflow 存在时，可以打开二级 `dependency inspector`，直接看当前自动链路的依赖、停点和回到 `Review Room / Incident` 的入口
 - `Inbox` 里的 review 项可以直接打开 `Review Room`
 - `Inbox` 里的 incident 项可以直接打开 incident 详情抽屉，并提交现有 `incident-resolve` 恢复动作
 - 首页右侧现在会显示 workforce 泳道和最近事件，方便董事会直接看到谁在执行、哪里在报警
@@ -18,7 +19,8 @@
 - 前端只是最薄治理壳，不复刻后端工作流引擎
 - `events/stream` 只做刷新提示，不作为浏览器里的第二真相源
 - `project-init` 现在会同步尝试推进到首个 scope review；scope review 被批准后，后端会继续把当前支持范围内的 follow-up 真正落票并推进到下一个治理停点；如果没有 eligible worker，或途中出现 incident，前端只展示后端停下来的真实状态
-- 本轮没有做 provider/model 设置页和 dependency inspector
+- `dependency inspector` 只展示后端投影好的“当前链路解释”，不在浏览器里自己拼 DAG 或推导阻塞规则
+- 本轮没有做 provider/model 设置页
 
 ## 本地运行
 

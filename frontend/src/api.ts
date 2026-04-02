@@ -230,6 +230,51 @@ export type DeveloperInspectorData = {
   availability: string
 }
 
+export type DependencyInspectorNode = {
+  node_id: string
+  ticket_id: string | null
+  parent_ticket_id: string | null
+  phase: string
+  delivery_stage: string | null
+  node_status: string
+  ticket_status: string | null
+  role_profile_ref: string | null
+  output_schema_ref: string | null
+  lease_owner: string | null
+  depends_on_ticket_id: string | null
+  dependent_ticket_ids: string[]
+  block_reason: string
+  is_critical_path: boolean
+  is_blocked: boolean
+  expected_artifact_scope: string[]
+  open_review_pack_id: string | null
+  open_incident_id: string | null
+}
+
+export type DependencyInspectorData = {
+  workflow: {
+    workflow_id: string
+    title: string
+    current_stage: string
+    status: string
+  }
+  summary: {
+    total_nodes: number
+    critical_path_nodes: number
+    blocked_nodes: number
+    open_approvals: number
+    open_incidents: number
+    current_stop: {
+      reason: string
+      node_id: string | null
+      ticket_id: string | null
+      review_pack_id: string | null
+      incident_id: string | null
+    } | null
+  }
+  nodes: DependencyInspectorNode[]
+}
+
 export type IncidentDetailData = {
   incident: {
     incident_id: string
@@ -292,6 +337,13 @@ export async function getWorkforce(): Promise<WorkforceData> {
 export async function getReviewRoom(reviewPackId: string): Promise<ReviewRoomData> {
   const payload = await requestJson<ProjectionEnvelope<ReviewRoomData>>(
     `/api/v1/projections/review-room/${reviewPackId}`,
+  )
+  return payload.data
+}
+
+export async function getDependencyInspector(workflowId: string): Promise<DependencyInspectorData> {
+  const payload = await requestJson<ProjectionEnvelope<DependencyInspectorData>>(
+    `/api/v1/projections/workflows/${workflowId}/dependency-inspector`,
   )
   return payload.data
 }

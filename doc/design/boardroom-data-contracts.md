@@ -219,6 +219,88 @@ Note:
 
 - `Board Gate` 当前不额外定义一套前端专用命令真相；首页提醒直接由 `inbox_counts.approvals_pending` 和 `pipeline_summary.phases.phase_review` 的状态派生。
 
+## 4.1 Dependency Inspector Projection
+
+Suggested endpoint:
+
+- `GET /api/v1/projections/workflows/{workflow_id}/dependency-inspector`
+
+Purpose:
+
+- let the board inspect the current local-MVP chain without turning the homepage into a full DAG replay
+- explain which stage depends on which upstream ticket
+- show the real current stop and route back into the existing `Review Room` or incident detail
+
+Current scope rules:
+
+- this projection is intentionally scoped to the current workflow's current chain
+- it uses current `node_projection`, `ticket_projection`, open approvals, and open incidents only
+- dependency truth follows `parent_ticket_id`
+- maker-checker internal checker tickets are flattened back to the board-facing maker stage for chain readability
+- it is a thin explanatory read model, not a general graph explorer
+
+```json
+{
+  "schema_version": "2026-03-28.boardroom.v1",
+  "generated_at": "2026-04-02T13:30:00+08:00",
+  "projection_version": 2201,
+  "cursor": "evt_0002201",
+  "data": {
+    "workflow": {
+      "workflow_id": "wf_001",
+      "title": "Homepage governance demo",
+      "current_stage": "project_init",
+      "status": "EXECUTING"
+    },
+    "summary": {
+      "total_nodes": 4,
+      "critical_path_nodes": 4,
+      "blocked_nodes": 1,
+      "open_approvals": 1,
+      "open_incidents": 0,
+      "current_stop": {
+        "reason": "BOARD_REVIEW_OPEN",
+        "node_id": "node_homepage_review",
+        "ticket_id": "tkt_homepage_review",
+        "review_pack_id": "brp_001",
+        "incident_id": null
+      }
+    },
+    "nodes": [
+      {
+        "node_id": "node_homepage_review",
+        "ticket_id": "tkt_homepage_review",
+        "parent_ticket_id": "tkt_homepage_check",
+        "phase": "Review",
+        "delivery_stage": "REVIEW",
+        "node_status": "BLOCKED_FOR_BOARD_REVIEW",
+        "ticket_status": "BLOCKED_FOR_BOARD_REVIEW",
+        "role_profile_ref": "ui_designer_primary",
+        "output_schema_ref": "ui_milestone_review",
+        "lease_owner": null,
+        "depends_on_ticket_id": "tkt_homepage_check",
+        "dependent_ticket_ids": [],
+        "block_reason": "BOARD_REVIEW_OPEN",
+        "is_critical_path": true,
+        "is_blocked": true,
+        "expected_artifact_scope": [
+          "artifacts/ui/scope-followups/tkt_homepage_review/*",
+          "reports/review/tkt_homepage_review/*"
+        ],
+        "open_review_pack_id": "brp_001",
+        "open_incident_id": null
+      }
+    ]
+  }
+}
+```
+
+Field notes:
+
+- `block_reason` is intentionally conservative and only uses current backend-known reasons such as `BOARD_REVIEW_OPEN`, `INCIDENT_OPEN`, `WAITING_PARENT`, `READY`, and `COMPLETED`
+- `ticket_id` represents the logical stage ticket shown to the board, even when maker-checker inserted an internal checker ticket on the same node
+- `open_review_pack_id` and `open_incident_id` let the frontend route back into existing drawers without inventing new workflow truth
+
 ## 5. Inbox Projection
 
 Suggested endpoint:

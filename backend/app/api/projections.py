@@ -10,6 +10,7 @@ from app.api.worker_admin_auth import (
 from app.contracts.projections import (
     ArtifactCleanupCandidatesProjectionEnvelope,
     DashboardProjectionEnvelope,
+    DependencyInspectorProjectionEnvelope,
     IncidentDetailProjectionEnvelope,
     InboxProjectionEnvelope,
     ReviewRoomDeveloperInspectorProjectionEnvelope,
@@ -24,6 +25,7 @@ from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.projections import (
     build_artifact_cleanup_candidates_projection,
     build_dashboard_projection,
+    build_dependency_inspector_projection,
     build_incident_detail_projection,
     build_inbox_projection,
     build_worker_admin_auth_rejection_projection,
@@ -43,6 +45,24 @@ router = APIRouter(prefix="/api/v1/projections", tags=["projections"])
 def get_dashboard(request: Request) -> DashboardProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return build_dashboard_projection(repository)
+
+
+@router.get(
+    "/workflows/{workflow_id}/dependency-inspector",
+    response_model=DependencyInspectorProjectionEnvelope,
+)
+def get_dependency_inspector(
+    request: Request,
+    workflow_id: str,
+) -> DependencyInspectorProjectionEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    projection = build_dependency_inspector_projection(repository, workflow_id)
+    if projection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow '{workflow_id}' was not found.",
+        )
+    return projection
 
 
 @router.get(

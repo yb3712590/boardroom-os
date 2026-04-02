@@ -2349,6 +2349,135 @@ def test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_br
     assert build_phase["node_counts"]["fused"] == 1
 
 
+def test_dependency_inspector_shows_scope_review_stop_after_project_init(client):
+    workflow_id, approval = _project_init_to_scope_approval(client)
+
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["workflow"]["workflow_id"] == workflow_id
+    assert body["summary"]["total_nodes"] == 1
+    assert body["summary"]["blocked_nodes"] == 1
+    assert body["summary"]["open_approvals"] == 1
+    assert body["summary"]["open_incidents"] == 0
+    assert body["summary"]["current_stop"]["reason"] == "BOARD_REVIEW_OPEN"
+    assert body["summary"]["current_stop"]["review_pack_id"] == approval["review_pack_id"]
+    assert [item["phase"] for item in body["nodes"]] == ["Plan"]
+    scope_node = body["nodes"][0]
+    assert scope_node["node_status"] == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW
+    assert scope_node["ticket_status"] == TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW
+    assert scope_node["depends_on_ticket_id"] is None
+    assert scope_node["dependent_ticket_ids"] == []
+    assert scope_node["block_reason"] == "BOARD_REVIEW_OPEN"
+    assert scope_node["is_critical_path"] is True
+    assert scope_node["is_blocked"] is True
+    assert scope_node["open_review_pack_id"] == approval["review_pack_id"]
+    assert scope_node["open_incident_id"] is None
+
+
+def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id, approval = _project_init_to_scope_approval(client)
+
+    approve_response = _approve_open_review(client, approval, idempotency_suffix="dependency-chain")
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
+
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+    assert response.status_code == 200
+    body = response.json()["data"]
+    phases = [item["phase"] for item in body["nodes"]]
+    assert phases == ["Plan", "Build", "Check", "Review"]
+    assert body["summary"]["total_nodes"] == 4
+    assert body["summary"]["critical_path_nodes"] == 4
+    assert body["summary"]["blocked_nodes"] == 1
+    assert body["summary"]["open_approvals"] == 1
+    assert body["summary"]["current_stop"]["reason"] == "BOARD_REVIEW_OPEN"
+
+    build_node = next(item for item in body["nodes"] if item["phase"] == "Build")
+    check_node = next(item for item in body["nodes"] if item["phase"] == "Check")
+    review_node = next(item for item in body["nodes"] if item["phase"] == "Review")
+
+    assert build_node["delivery_stage"] == "BUILD"
+    assert check_node["delivery_stage"] == "CHECK"
+    assert review_node["delivery_stage"] == "REVIEW"
+    assert build_node["block_reason"] == "COMPLETED"
+    assert check_node["depends_on_ticket_id"] == build_node["ticket_id"]
+    assert review_node["depends_on_ticket_id"] == check_node["ticket_id"]
+    assert build_node["dependent_ticket_ids"] == [check_node["ticket_id"]]
+    assert check_node["dependent_ticket_ids"] == [review_node["ticket_id"]]
+    assert review_node["block_reason"] == "BOARD_REVIEW_OPEN"
+    assert review_node["is_blocked"] is True
+    assert review_node["open_review_pack_id"] is not None
+    assert review_node["open_incident_id"] is None
+    assert any(scope.endswith(f"{build_node['ticket_id']}/*") for scope in build_node["expected_artifact_scope"])
+    assert any(scope.endswith(f"{check_node['ticket_id']}/*") for scope in check_node["expected_artifact_scope"])
+
+
+def test_dependency_inspector_marks_incident_stop_for_fused_node(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_incident_dependency_001",
+        node_id="node_incident_dependency_build",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key="test-dependency-incident-opened:node_incident_dependency_build",
+            causation_id="cmd_test_dependency_incident",
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_dependency_build_fused",
+                "node_id": "node_incident_dependency_build",
+                "ticket_id": "tkt_incident_dependency_001",
+                "incident_type": "REPEATED_FAILURE_ESCALATION",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "runtime-timeout:node_incident_dependency_build",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:03:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key="test-dependency-circuit-breaker-opened:node_incident_dependency_build",
+            causation_id="cmd_test_dependency_incident",
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_dependency_build_fused",
+                "node_id": "node_incident_dependency_build",
+                "ticket_id": "tkt_incident_dependency_001",
+                "circuit_breaker_state": "OPEN",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:03:01+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["summary"]["open_incidents"] == 1
+    assert body["summary"]["current_stop"]["reason"] == "INCIDENT_OPEN"
+    incident_node = next(item for item in body["nodes"] if item["node_id"] == "node_incident_dependency_build")
+    assert incident_node["block_reason"] == "INCIDENT_OPEN"
+    assert incident_node["is_blocked"] is True
+    assert incident_node["open_incident_id"] == "inc_dependency_build_fused"
+    assert incident_node["open_review_pack_id"] is None
+
+
 def test_dashboard_workforce_summary_reflects_seeded_roster_and_busy_worker(client, set_ticket_time):
     initial_response = client.get("/api/v1/projections/dashboard")
 

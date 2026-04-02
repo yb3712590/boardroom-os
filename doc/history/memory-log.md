@@ -295,6 +295,14 @@
 - `dashboard.pipeline_summary.phases` 现在也按真实阶段读数：scope consensus 归到 `Plan`，内部实现归到 `Build`，内部检查归到 `Check`，最终董事会 gate 归到 `Review`；董事会现场能直接看到这个小项目已经自动走到哪一段。
 - Fresh verification after this change is:
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `339 passed`
+- 把董事会现场最缺的“链路可解释性”补上了：后端新增 `GET /api/v1/projections/workflows/{workflow_id}/dependency-inspector`，会基于现有 `node_projection / ticket_projection / open approval / open incident` 给出当前小项目链的有序依赖快照，明确每个阶段依赖谁、当前为什么停、以及该回哪个 `Review Room / Incident`。
+- 这条读面继续保持本地 MVP 收口：不做通用 DAG 引擎，不回放完整历史，只解释“当前 active workflow 的当前链路”；maker-checker 的内部 checker 票也会被压回董事会更容易理解的逻辑 stage 票，不把内部返工细节直接暴露成一串难懂节点。
+- React Boardroom UI 现在也补上了二级 `dependency inspector` 抽屉：首页有 active workflow 时可直接打开，看到当前 stop、关键路径、阻塞数和逐节点依赖；对正卡在 review 或 incident 的节点，还能直接跳回现有 `Review Room` 或 incident 抽屉。
+- 这轮同步把 README、TODO、前端 README 和数据契约都更新成真实现状：`dependency inspector` 已从 UI 缺口转成已落地能力，当前剩余 UI 主缺口只剩 `provider / model` 设置页。
+- Fresh verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "dependency_inspector or scope_review or followup" -q` -> `18 passed, 205 deselected`
+  - `cd frontend && npm run test:run` -> `1 passed, 13 tests passed`
+  - `cd frontend && npm run build` -> `built in 204ms`
 
 ### Current Watch-Outs
 

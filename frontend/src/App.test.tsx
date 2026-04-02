@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -7,17 +7,32 @@ import App from './App'
 type JsonRecord = Record<string, unknown>
 
 class FakeEventSource {
+  static instances: FakeEventSource[] = []
+
   url: string
+  listeners: Map<string, Set<() => void>>
 
   constructor(url: string) {
     this.url = url
+    this.listeners = new Map()
+    FakeEventSource.instances.push(this)
   }
 
-  addEventListener() {}
+  addEventListener(type: string, listener: () => void) {
+    const listeners = this.listeners.get(type) ?? new Set()
+    listeners.add(listener)
+    this.listeners.set(type, listeners)
+  }
 
-  removeEventListener() {}
+  removeEventListener(type: string, listener: () => void) {
+    this.listeners.get(type)?.delete(listener)
+  }
 
   close() {}
+
+  emit(type: string) {
+    this.listeners.get(type)?.forEach((listener) => listener())
+  }
 }
 
 function envelope<T>(data: T) {
@@ -272,6 +287,117 @@ function inspectorData() {
   }
 }
 
+function dependencyInspectorData(overrides: Partial<JsonRecord> = {}) {
+  return {
+    workflow: {
+      workflow_id: 'wf_001',
+      title: 'Boardroom UI MVP',
+      current_stage: 'project_init',
+      status: 'EXECUTING',
+    },
+    summary: {
+      total_nodes: 4,
+      critical_path_nodes: 4,
+      blocked_nodes: 1,
+      open_approvals: 1,
+      open_incidents: 0,
+      current_stop: {
+        reason: 'BOARD_REVIEW_OPEN',
+        node_id: 'node_homepage_review',
+        ticket_id: 'tkt_homepage_review',
+        review_pack_id: 'brp_001',
+        incident_id: null,
+      },
+    },
+    nodes: [
+      {
+        node_id: 'node_scope_decision',
+        ticket_id: 'tkt_scope_decision',
+        parent_ticket_id: null,
+        phase: 'Plan',
+        delivery_stage: null,
+        node_status: 'COMPLETED',
+        ticket_status: 'COMPLETED',
+        role_profile_ref: 'ui_designer_primary',
+        output_schema_ref: 'consensus_document',
+        lease_owner: null,
+        depends_on_ticket_id: null,
+        dependent_ticket_ids: ['tkt_homepage_build'],
+        block_reason: 'COMPLETED',
+        is_critical_path: true,
+        is_blocked: false,
+        expected_artifact_scope: ['reports/meeting/*'],
+        open_review_pack_id: null,
+        open_incident_id: null,
+      },
+      {
+        node_id: 'node_homepage_build',
+        ticket_id: 'tkt_homepage_build',
+        parent_ticket_id: 'tkt_scope_decision',
+        phase: 'Build',
+        delivery_stage: 'BUILD',
+        node_status: 'COMPLETED',
+        ticket_status: 'COMPLETED',
+        role_profile_ref: 'ui_designer_primary',
+        output_schema_ref: 'implementation_bundle',
+        lease_owner: null,
+        depends_on_ticket_id: 'tkt_scope_decision',
+        dependent_ticket_ids: ['tkt_homepage_check'],
+        block_reason: 'COMPLETED',
+        is_critical_path: true,
+        is_blocked: false,
+        expected_artifact_scope: ['artifacts/ui/scope-followups/tkt_homepage_build/*'],
+        open_review_pack_id: null,
+        open_incident_id: null,
+      },
+      {
+        node_id: 'node_homepage_check',
+        ticket_id: 'tkt_homepage_check',
+        parent_ticket_id: 'tkt_homepage_build',
+        phase: 'Check',
+        delivery_stage: 'CHECK',
+        node_status: 'COMPLETED',
+        ticket_status: 'COMPLETED',
+        role_profile_ref: 'checker_primary',
+        output_schema_ref: 'delivery_check_report',
+        lease_owner: null,
+        depends_on_ticket_id: 'tkt_homepage_build',
+        dependent_ticket_ids: ['tkt_homepage_review'],
+        block_reason: 'COMPLETED',
+        is_critical_path: true,
+        is_blocked: false,
+        expected_artifact_scope: ['reports/check/tkt_homepage_check/*'],
+        open_review_pack_id: null,
+        open_incident_id: null,
+      },
+      {
+        node_id: 'node_homepage_review',
+        ticket_id: 'tkt_homepage_review',
+        parent_ticket_id: 'tkt_homepage_check',
+        phase: 'Review',
+        delivery_stage: 'REVIEW',
+        node_status: 'BLOCKED_FOR_BOARD_REVIEW',
+        ticket_status: 'BLOCKED_FOR_BOARD_REVIEW',
+        role_profile_ref: 'ui_designer_primary',
+        output_schema_ref: 'ui_milestone_review',
+        lease_owner: null,
+        depends_on_ticket_id: 'tkt_homepage_check',
+        dependent_ticket_ids: [],
+        block_reason: 'BOARD_REVIEW_OPEN',
+        is_critical_path: true,
+        is_blocked: true,
+        expected_artifact_scope: [
+          'artifacts/ui/scope-followups/tkt_homepage_review/*',
+          'reports/review/tkt_homepage_review/*',
+        ],
+        open_review_pack_id: 'brp_001',
+        open_incident_id: null,
+      },
+    ],
+    ...overrides,
+  }
+}
+
 function dashboardData(overrides: Partial<JsonRecord> = {}) {
   return {
     workspace: {
@@ -382,6 +508,7 @@ function installBoardroomMock(options?: {
   workforce?: JsonRecord
   reviewRoom?: JsonRecord
   inspector?: JsonRecord
+  dependencyInspector?: JsonRecord
   incidentDetail?: JsonRecord
 }) {
   const state = {
@@ -390,6 +517,7 @@ function installBoardroomMock(options?: {
     workforce: options?.workforce ?? workforceData(),
     reviewRoom: options?.reviewRoom ?? reviewRoomData(),
     inspector: options?.inspector ?? inspectorData(),
+    dependencyInspector: options?.dependencyInspector ?? dependencyInspectorData(),
     incidentDetail: options?.incidentDetail ?? incidentDetailData(),
   }
 
@@ -408,6 +536,9 @@ function installBoardroomMock(options?: {
     }
     if (method === 'GET' && url.endsWith('/api/v1/projections/review-room/brp_001')) {
       return jsonResponse(envelope(state.reviewRoom))
+    }
+    if (method === 'GET' && url.endsWith('/api/v1/projections/workflows/wf_001/dependency-inspector')) {
+      return jsonResponse(envelope(state.dependencyInspector))
     }
     if (method === 'GET' && url.endsWith('/api/v1/projections/incidents/inc_093')) {
       return jsonResponse(envelope(state.incidentDetail))
@@ -563,6 +694,7 @@ describe('Boardroom UI', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    FakeEventSource.instances = []
   })
 
   it('shows the project init entry when no active workflow exists', async () => {
@@ -699,6 +831,59 @@ describe('Boardroom UI', () => {
     expect(screen.getAllByText('node_homepage_visual').length).toBeGreaterThan(0)
     expect(screen.getByText(/recent event pulse/i)).toBeInTheDocument()
     expect(screen.getByText(/incident_opened timeout escalation/i)).toBeInTheDocument()
+  })
+
+  it('shows the dependency inspector entry only when an active workflow exists', async () => {
+    installBoardroomMock()
+
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: /inspect dependency chain/i })).toBeInTheDocument()
+  })
+
+  it('opens the dependency inspector and routes from the blocked node back to review room', async () => {
+    installBoardroomMock()
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /inspect dependency chain/i }))
+
+    expect(await screen.findByRole('heading', { name: /dependency chain/i })).toBeInTheDocument()
+    expect(screen.getAllByText(/board review open/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('tkt_homepage_review').length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('button', { name: /open review room/i }))
+
+    expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
+  })
+
+  it('refreshes the dependency inspector after an event-stream invalidation', async () => {
+    const { fetchMock } = installBoardroomMock()
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /inspect dependency chain/i }))
+    expect((await screen.findAllByText(/board review open/i)).length).toBeGreaterThan(0)
+
+    const latestCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        url === '/api/v1/projections/workflows/wf_001/dependency-inspector' &&
+        (!init || (init as RequestInit).method == null),
+    )
+    expect(latestCall).toBeTruthy()
+
+    const source = FakeEventSource.instances.at(-1)
+    expect(source).toBeTruthy()
+
+    await act(async () => {
+      ;(source as FakeEventSource).emit('boardroom-event')
+    })
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([url]) => url === '/api/v1/projections/workflows/wf_001/dependency-inspector').length).toBeGreaterThan(1),
+    )
   })
 
   it('opens the review room and loads the review pack when an inbox review item is clicked', async () => {

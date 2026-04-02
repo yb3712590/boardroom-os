@@ -6,6 +6,7 @@ import {
   boardApprove,
   boardReject,
   getDashboard,
+  getDependencyInspector,
   getDeveloperInspector,
   getIncidentDetail,
   getInbox,
@@ -15,6 +16,7 @@ import {
   modifyConstraints,
   projectInit,
   type DashboardData,
+  type DependencyInspectorData,
   type IncidentDetailData,
   type DeveloperInspectorData,
   type InboxData,
@@ -22,6 +24,7 @@ import {
   type ReviewRoomData,
   type WorkforceData,
 } from './api'
+import { DependencyInspectorDrawer } from './components/DependencyInspectorDrawer'
 import { EventTicker } from './components/EventTicker'
 import { IncidentDrawer } from './components/IncidentDrawer'
 import { ReviewRoomDrawer } from './components/ReviewRoomDrawer'
@@ -192,16 +195,20 @@ function ShellRoute() {
   const [reviewRoom, setReviewRoom] = useState<ReviewRoomData | null>(null)
   const [incidentDetail, setIncidentDetail] = useState<IncidentDetailData | null>(null)
   const [developerInspector, setDeveloperInspector] = useState<DeveloperInspectorData | null>(null)
+  const [dependencyInspector, setDependencyInspector] = useState<DependencyInspectorData | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(true)
   const [reviewLoading, setReviewLoading] = useState(false)
   const [incidentLoading, setIncidentLoading] = useState(false)
   const [inspectorLoading, setInspectorLoading] = useState(false)
+  const [dependencyInspectorLoading, setDependencyInspectorLoading] = useState(false)
   const [snapshotError, setSnapshotError] = useState<string | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [incidentError, setIncidentError] = useState<string | null>(null)
+  const [dependencyInspectorError, setDependencyInspectorError] = useState<string | null>(null)
   const [projectInitPending, setProjectInitPending] = useState(false)
   const [submittingAction, setSubmittingAction] = useState<string | null>(null)
   const [submittingIncidentAction, setSubmittingIncidentAction] = useState(false)
+  const [dependencyInspectorOpen, setDependencyInspectorOpen] = useState(false)
 
   const reloadSnapshot = async () => {
     setSnapshotError(null)
@@ -255,6 +262,22 @@ function ShellRoute() {
     }
   })
 
+  const refreshDependencyInspector = useEffectEvent(async (workflowId: string) => {
+    setDependencyInspectorLoading(true)
+    setDependencyInspectorError(null)
+    try {
+      const payload = await getDependencyInspector(workflowId)
+      setDependencyInspector(payload)
+    } catch (error) {
+      setDependencyInspector(null)
+      setDependencyInspectorError(
+        error instanceof Error ? error.message : 'Failed to load the current dependency inspector.',
+      )
+    } finally {
+      setDependencyInspectorLoading(false)
+    }
+  })
+
   useEffect(() => {
     void refreshSnapshot()
   }, [])
@@ -281,6 +304,23 @@ function ShellRoute() {
   }, [incidentId])
 
   useEffect(() => {
+    if (!dependencyInspectorOpen) {
+      return
+    }
+    const workflowId = dashboard?.active_workflow?.workflow_id
+    if (!workflowId) {
+      setDependencyInspector(null)
+      setDependencyInspectorLoading(false)
+      setDependencyInspectorError(null)
+      return
+    }
+    void refreshDependencyInspector(workflowId)
+  }, [dependencyInspectorOpen, dashboard?.active_workflow?.workflow_id])
+
+  useEffect(() => {
+    if (typeof EventSource === 'undefined') {
+      return
+    }
     const eventSource = new EventSource('/api/v1/events/stream')
     const handleInvalidate = () => {
       void refreshSnapshot()
@@ -290,18 +330,23 @@ function ShellRoute() {
       if (incidentId) {
         void refreshIncidentDetail(incidentId)
       }
+      if (dependencyInspectorOpen && dashboard?.active_workflow?.workflow_id) {
+        void refreshDependencyInspector(dashboard.active_workflow.workflow_id)
+      }
     }
     eventSource.addEventListener('boardroom-event', handleInvalidate)
     return () => {
       eventSource.close()
     }
-  }, [reviewPackId, incidentId])
+  }, [reviewPackId, incidentId, dependencyInspectorOpen, dashboard?.active_workflow?.workflow_id])
 
   const handleOpenReview = (packId: string) => {
+    setDependencyInspectorOpen(false)
     navigate(`/review/${packId}`)
   }
 
   const handleOpenIncident = (nextIncidentId: string) => {
+    setDependencyInspectorOpen(false)
     navigate(`/incident/${nextIncidentId}`)
   }
 
@@ -519,6 +564,13 @@ function ShellRoute() {
                       <p className="muted-copy">
                         Workspace {dashboard.workspace.workspace_name} · started {formatTimestamp(activeWorkflow.started_at)}
                       </p>
+                      <button
+                        type="button"
+                        className="secondary-button inspector-launch"
+                        onClick={() => setDependencyInspectorOpen(true)}
+                      >
+                        Inspect dependency chain
+                      </button>
                     </div>
                     <div className="center-detail-list">
                       <div>
@@ -584,6 +636,16 @@ function ShellRoute() {
         submitting={submittingIncidentAction}
         onClose={() => navigate('/')}
         onResolve={handleIncidentResolve}
+      />
+
+      <DependencyInspectorDrawer
+        isOpen={dependencyInspectorOpen}
+        loading={dependencyInspectorLoading}
+        inspectorData={dependencyInspector}
+        error={dependencyInspectorError}
+        onClose={() => setDependencyInspectorOpen(false)}
+        onOpenReview={handleOpenReview}
+        onOpenIncident={handleOpenIncident}
       />
     </>
   )

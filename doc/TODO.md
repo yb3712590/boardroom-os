@@ -50,9 +50,11 @@
   - 无 active workflow 时会显示最小 `project-init` 表单，并明确提示它会把 workflow 推进到首个 review
   - `approve / reject / modify constraints` 动作提交后会立即重新拉取，并用 SSE 做失效刷新
   - `Inbox` 里的 incident 项现在也能直接打开详情，并复用现有 `incident-resolve` 命令完成恢复闭环
+- 已完成直接推进主线：首页现在也能打开 `dependency inspector`
+  - 当前 active workflow 会暴露一份只服务本地 MVP 的依赖快照，直接展示 `Plan / Build / Check / Review` 之间的真实依赖、当前停点、以及回到对应 `Review Room / Incident` 的入口
+  - 这条读面继续保持 projection-first：前端不回放完整 DAG，不在浏览器里推导新工作流状态，只消费后端给出的当前链路解释
 - 直接推进主线：继续补齐 UI 的剩余 MVP 读面
   - `provider / model` 设置页
-  - dependency inspector
 - 为主线解堵：继续保持 projection-first，前端不拥有工作流真相
   - 当前首页河道只消费 `dashboard.pipeline_summary.phases` 的固定五段高层摘要，不新造前端工作流引擎
   - `events/stream` 只用于失效通知，不作为浏览器里的第二真相源
