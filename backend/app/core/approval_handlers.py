@@ -8,6 +8,7 @@ from app.contracts.commands import (
     BoardRejectCommand,
     CommandAckEnvelope,
     CommandAckStatus,
+    DeliveryStage,
     ModifyConstraintsCommand,
     TicketCreateCommand,
 )
@@ -31,6 +32,10 @@ from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
+    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
     schema_id,
     validate_output_payload,
 )
@@ -42,6 +47,7 @@ from app.db.repository import ControlPlaneRepository
 SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS = 6
 FOLLOWUP_OWNER_ROLE_TO_PROFILE = {
     "frontend_engineer": "ui_designer_primary",
+    "checker": "checker_primary",
 }
 
 
@@ -280,10 +286,70 @@ def _build_scope_followup_review_request(summary: str) -> dict[str, Any]:
     }
 
 
-def _build_scope_followup_allowed_write_set(ticket_id: str) -> list[str]:
+def _scope_followup_expected_artifact_ref(ticket_id: str, delivery_stage: DeliveryStage) -> str | None:
+    if delivery_stage == DeliveryStage.BUILD:
+        return f"art://runtime/{ticket_id}/implementation-bundle.json"
+    if delivery_stage == DeliveryStage.CHECK:
+        return f"art://runtime/{ticket_id}/delivery-check-report.json"
+    return None
+
+
+def _build_scope_followup_allowed_write_set(ticket_id: str, delivery_stage: DeliveryStage) -> list[str]:
+    if delivery_stage == DeliveryStage.BUILD:
+        return [f"artifacts/ui/scope-followups/{ticket_id}/*"]
+    if delivery_stage == DeliveryStage.CHECK:
+        return [f"reports/check/{ticket_id}/*"]
     return [
         f"artifacts/ui/scope-followups/{ticket_id}/*",
         f"reports/review/{ticket_id}/*",
+    ]
+
+
+def _scope_followup_output_contract(delivery_stage: DeliveryStage) -> tuple[str, int]:
+    if delivery_stage == DeliveryStage.BUILD:
+        return IMPLEMENTATION_BUNDLE_SCHEMA_REF, IMPLEMENTATION_BUNDLE_SCHEMA_VERSION
+    if delivery_stage == DeliveryStage.CHECK:
+        return DELIVERY_CHECK_REPORT_SCHEMA_REF, DELIVERY_CHECK_REPORT_SCHEMA_VERSION
+    return "ui_milestone_review", 1
+
+
+def _scope_followup_priority(delivery_stage: DeliveryStage) -> str:
+    if delivery_stage == DeliveryStage.REVIEW:
+        return "medium"
+    return "high"
+
+
+def _scope_followup_allowed_tools(delivery_stage: DeliveryStage) -> list[str]:
+    if delivery_stage == DeliveryStage.CHECK:
+        return ["read_artifact", "write_artifact"]
+    return ["read_artifact", "write_artifact", "image_gen"]
+
+
+def _scope_followup_context_keywords(delivery_stage: DeliveryStage) -> list[str]:
+    if delivery_stage == DeliveryStage.BUILD:
+        return ["approved scope", "implementation", "build"]
+    if delivery_stage == DeliveryStage.CHECK:
+        return ["approved scope", "internal check", "qa"]
+    return ["approved scope", "review package", "visual"]
+
+
+def _scope_followup_acceptance_criteria(summary: str, delivery_stage: DeliveryStage) -> list[str]:
+    if delivery_stage == DeliveryStage.BUILD:
+        return [
+            f"Must implement this approved scope follow-up: {summary}",
+            "Must stay inside the locked scope from the approved consensus document.",
+            "Must produce a structured implementation bundle.",
+        ]
+    if delivery_stage == DeliveryStage.CHECK:
+        return [
+            f"Must check this approved scope follow-up: {summary}",
+            "Must verify the implementation bundle still stays inside the locked scope.",
+            "Must produce a structured delivery check report.",
+        ]
+    return [
+        f"Must prepare this approved scope review package: {summary}",
+        "Must stay inside the locked scope from the approved consensus document.",
+        "Must produce a visual milestone review package.",
     ]
 
 
@@ -384,12 +450,17 @@ def _build_scope_followup_ticket_payloads(
     seen_ticket_ids: set[str] = set()
     seen_node_ids: set[str] = set()
     ticket_payloads: list[dict[str, Any]] = []
+    prior_ticket_id = source_ticket_id
+    chained_artifact_refs: list[str] = []
 
     for raw_followup in followup_items:
         followup = dict(raw_followup)
         followup_ticket_id = str(followup.get("ticket_id") or "").strip()
         owner_role = str(followup.get("owner_role") or "").strip()
         followup_summary = str(followup.get("summary") or "").strip()
+        delivery_stage = DeliveryStage(
+            str(followup.get("delivery_stage") or DeliveryStage.REVIEW.value).strip()
+        )
 
         if followup_ticket_id in seen_ticket_ids:
             raise ValueError(
@@ -410,36 +481,41 @@ def _build_scope_followup_ticket_payloads(
         if repository.get_current_node_projection(approval["workflow_id"], node_id, connection=connection) is not None:
             raise ValueError(f"Follow-up node {node_id} already exists in projection state.")
 
+        output_schema_ref, output_schema_version = _scope_followup_output_contract(delivery_stage)
         ticket_command = TicketCreateCommand(
             ticket_id=followup_ticket_id,
             workflow_id=approval["workflow_id"],
             node_id=node_id,
-            parent_ticket_id=source_ticket_id,
+            parent_ticket_id=prior_ticket_id,
             attempt_no=1,
             role_profile_ref=role_profile_ref,
-            constraints_ref="approved_scope_followup_visual",
-            input_artifact_refs=input_artifact_refs,
+            constraints_ref=f"approved_scope_followup_{delivery_stage.value.lower()}",
+            input_artifact_refs=_dedupe_artifact_refs(input_artifact_refs + chained_artifact_refs),
             context_query_plan={
-                "keywords": ["approved scope", "visual", "implementation"],
+                "keywords": _scope_followup_context_keywords(delivery_stage),
                 "semantic_queries": [followup_summary],
                 "max_context_tokens": 3000,
             },
-            acceptance_criteria=[
-                f"Must implement this approved scope follow-up: {followup_summary}",
-                "Must stay inside the locked scope from the approved consensus document.",
-                "Must produce a visual milestone review package.",
-            ],
-            output_schema_ref="ui_milestone_review",
-            output_schema_version=1,
-            allowed_tools=["read_artifact", "write_artifact", "image_gen"],
-            allowed_write_set=_build_scope_followup_allowed_write_set(followup_ticket_id),
+            acceptance_criteria=_scope_followup_acceptance_criteria(followup_summary, delivery_stage),
+            output_schema_ref=output_schema_ref,
+            output_schema_version=output_schema_version,
+            allowed_tools=_scope_followup_allowed_tools(delivery_stage),
+            allowed_write_set=_build_scope_followup_allowed_write_set(
+                followup_ticket_id,
+                delivery_stage,
+            ),
             retry_budget=1,
-            priority="high",
+            priority=_scope_followup_priority(delivery_stage),
             timeout_sla_sec=1800,
             deadline_at=created_spec.get("deadline_at"),
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            auto_review_request=_build_scope_followup_review_request(followup_summary),
+            delivery_stage=delivery_stage,
+            auto_review_request=(
+                _build_scope_followup_review_request(followup_summary)
+                if delivery_stage == DeliveryStage.REVIEW
+                else None
+            ),
             escalation_policy={
                 "on_timeout": "retry",
                 "on_schema_error": "retry",
@@ -450,6 +526,10 @@ def _build_scope_followup_ticket_payloads(
             ),
         )
         ticket_payloads.append(ticket_command.model_dump(mode="json"))
+        prior_ticket_id = followup_ticket_id
+        expected_artifact_ref = _scope_followup_expected_artifact_ref(followup_ticket_id, delivery_stage)
+        if expected_artifact_ref is not None:
+            chained_artifact_refs.append(expected_artifact_ref)
 
     return ticket_payloads
 

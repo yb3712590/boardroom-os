@@ -80,6 +80,7 @@ from app.core.constants import (
     SCHEMA_VERSION,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
+from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -210,7 +211,7 @@ def _build_pipeline_summary(
     with repository.connection() as connection:
         node_rows = connection.execute(
             """
-            SELECT node_id, status
+            SELECT node_id, status, latest_ticket_id
             FROM node_projection
             WHERE workflow_id = ?
             ORDER BY updated_at ASC, node_id ASC
@@ -234,50 +235,78 @@ def _build_pipeline_summary(
         phase_counts["phase_intake"]["completed"] = 1
 
     seen_node_ids: set[str] = set()
-    for row in node_rows:
-        node_id = str(row["node_id"])
-        node_status = str(row["status"])
-        seen_node_ids.add(node_id)
-        if node_status in {
-            NODE_STATUS_EXECUTING,
-            NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
-            NODE_STATUS_REWORK_REQUIRED,
-        }:
-            critical_path_node_ids.append(node_id)
-        if node_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
-            blocked_node_ids.append(node_id)
+    with repository.connection() as connection:
+        for row in node_rows:
+            node_id = str(row["node_id"])
+            node_status = str(row["status"])
+            latest_ticket_id = str(row["latest_ticket_id"] or "")
+            created_spec = (
+                repository.get_latest_ticket_created_payload(connection, latest_ticket_id)
+                if latest_ticket_id
+                else None
+            )
+            phase_id = "phase_build"
+            if created_spec is not None:
+                delivery_stage = str(created_spec.get("delivery_stage") or "").strip().upper()
+                maker_checker_context = created_spec.get("maker_checker_context") or {}
+                maker_ticket_spec = maker_checker_context.get("maker_ticket_spec") or {}
+                maker_delivery_stage = str(maker_ticket_spec.get("delivery_stage") or "").strip().upper()
+                original_review_request = maker_checker_context.get("original_review_request") or {}
+                review_type = str(original_review_request.get("review_type") or "")
+                output_schema_ref = str(created_spec.get("output_schema_ref") or "")
+                if output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF or review_type == "MEETING_ESCALATION":
+                    phase_id = "phase_plan"
+                elif delivery_stage == "BUILD":
+                    phase_id = "phase_build"
+                elif delivery_stage == "CHECK":
+                    phase_id = "phase_check"
+                elif (
+                    delivery_stage == "REVIEW"
+                    or maker_delivery_stage == "REVIEW"
+                    or review_type == "VISUAL_MILESTONE"
+                ):
+                    phase_id = "phase_review"
+            seen_node_ids.add(node_id)
+            if node_status in {
+                NODE_STATUS_EXECUTING,
+                NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+                NODE_STATUS_REWORK_REQUIRED,
+            }:
+                critical_path_node_ids.append(node_id)
+            if node_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+                blocked_node_ids.append(node_id)
 
-        if node_status == NODE_STATUS_PENDING:
-            phase_counts["phase_plan"]["pending"] += 1
-            continue
-        if node_status == NODE_STATUS_EXECUTING:
-            if node_id in open_breaker_nodes:
-                phase_counts["phase_build"]["fused"] += 1
-            else:
-                phase_counts["phase_build"]["executing"] += 1
-            continue
-        if node_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
-            phase_counts["phase_build"]["completed"] += 1
-            phase_counts["phase_review"]["blocked_for_board"] += 1
-            continue
-        if node_status == NODE_STATUS_REWORK_REQUIRED:
-            if node_id in open_breaker_nodes:
-                phase_counts["phase_build"]["fused"] += 1
-            else:
-                phase_counts["phase_check"]["under_review"] += 1
-            continue
-        if node_status == NODE_STATUS_COMPLETED:
-            phase_counts["phase_build"]["completed"] += 1
-            continue
-        if node_status == NODE_STATUS_CANCEL_REQUESTED:
-            phase_counts["phase_build"]["fused"] += 1
+            if node_status == NODE_STATUS_PENDING:
+                phase_counts[phase_id]["pending"] += 1
+                continue
+            if node_status == NODE_STATUS_EXECUTING:
+                if node_id in open_breaker_nodes:
+                    phase_counts[phase_id]["fused"] += 1
+                else:
+                    phase_counts[phase_id]["executing"] += 1
+                continue
+            if node_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+                phase_counts[phase_id]["blocked_for_board"] += 1
+                continue
+            if node_status == NODE_STATUS_REWORK_REQUIRED:
+                if node_id in open_breaker_nodes:
+                    phase_counts[phase_id]["fused"] += 1
+                else:
+                    phase_counts[phase_id]["under_review"] += 1
+                continue
+            if node_status == NODE_STATUS_COMPLETED:
+                phase_counts[phase_id]["completed"] += 1
+                continue
+            if node_status == NODE_STATUS_CANCEL_REQUESTED:
+                phase_counts[phase_id]["fused"] += 1
 
     for node_id in sorted(open_breaker_nodes - seen_node_ids):
         critical_path_node_ids.append(node_id)
         phase_counts["phase_build"]["fused"] += 1
 
-    if pending_approvals > phase_counts["phase_review"]["blocked_for_board"]:
-        phase_counts["phase_review"]["blocked_for_board"] = pending_approvals
+    blocked_for_board_total = sum(item["blocked_for_board"] for item in phase_counts.values())
+    if pending_approvals > blocked_for_board_total:
+        phase_counts["phase_review"]["blocked_for_board"] += pending_approvals - blocked_for_board_total
 
     phases = [
         PhaseSummaryProjection(

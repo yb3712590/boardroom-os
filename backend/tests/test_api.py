@@ -949,14 +949,31 @@ def _consensus_document_payload(
         "rejected_options": ["Expand to remote handoff this round"],
         "open_questions": ["Whether analytics polish should move after MVP"],
         "followup_tickets": followup_tickets
-        or [
-            {
-                "ticket_id": followup_ticket_id,
-                "owner_role": "frontend_engineer",
-                "summary": "Implement the approved scope without expanding the governance surface.",
-            }
-        ],
+        or _staged_scope_followup_tickets(followup_ticket_id.removesuffix("_review")),
     }
+
+
+def _staged_scope_followup_tickets(ticket_id_prefix: str = "tkt_followup_scope_lock") -> list[dict]:
+    return [
+        {
+            "ticket_id": f"{ticket_id_prefix}_build",
+            "owner_role": "frontend_engineer",
+            "summary": "Build the approved homepage foundation without widening the governance surface.",
+            "delivery_stage": "BUILD",
+        },
+        {
+            "ticket_id": f"{ticket_id_prefix}_check",
+            "owner_role": "checker",
+            "summary": "Check the implementation bundle against the approved scope lock.",
+            "delivery_stage": "CHECK",
+        },
+        {
+            "ticket_id": f"{ticket_id_prefix}_review",
+            "owner_role": "frontend_engineer",
+            "summary": "Prepare the final board-facing homepage review package from the approved implementation.",
+            "delivery_stage": "REVIEW",
+        },
+    ]
 
 
 def _consensus_document_result_submit_payload(
@@ -1744,30 +1761,65 @@ def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visu
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id, approval = _project_init_to_scope_approval(client)
-    followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
+    followup_payload = _scope_followup_payload(client, approval)
+    build_ticket_id, check_ticket_id, review_ticket_id = [
+        item["ticket_id"] for item in followup_payload["followup_tickets"]
+    ]
 
     response = _approve_open_review(client, approval)
 
     repository = client.app.state.repository
     open_approvals = repository.list_open_approvals()
     current_scope_approval = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+    build_ticket = repository.get_current_ticket_projection(build_ticket_id)
+    check_ticket = repository.get_current_ticket_projection(check_ticket_id)
+    review_ticket = repository.get_current_ticket_projection(review_ticket_id)
     with repository.connection() as connection:
-        followup_created_spec = repository.get_latest_ticket_created_payload(
+        build_created_spec = repository.get_latest_ticket_created_payload(
             connection,
-            followup_ticket_id,
+            build_ticket_id,
+        )
+        check_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            check_ticket_id,
+        )
+        review_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            review_ticket_id,
         )
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert current_scope_approval["status"] == APPROVAL_STATUS_APPROVED
-    assert followup_ticket is not None
-    assert followup_created_spec is not None
-    assert followup_created_spec["workflow_id"] == workflow_id
-    assert followup_created_spec["output_schema_ref"] == "ui_milestone_review"
-    assert followup_created_spec["role_profile_ref"] == "ui_designer_primary"
-    assert any(ref.endswith("/board-brief.md") for ref in followup_created_spec["input_artifact_refs"])
-    assert any("consensus-document.json" in ref for ref in followup_created_spec["input_artifact_refs"])
+    assert [item["delivery_stage"] for item in followup_payload["followup_tickets"]] == [
+        "BUILD",
+        "CHECK",
+        "REVIEW",
+    ]
+    assert build_ticket is not None
+    assert check_ticket is not None
+    assert review_ticket is not None
+    assert build_created_spec is not None
+    assert check_created_spec is not None
+    assert review_created_spec is not None
+    assert build_created_spec["workflow_id"] == workflow_id
+    assert build_created_spec["delivery_stage"] == "BUILD"
+    assert build_created_spec["output_schema_ref"] == "implementation_bundle"
+    assert build_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert any(ref.endswith("/board-brief.md") for ref in build_created_spec["input_artifact_refs"])
+    assert any("consensus-document.json" in ref for ref in build_created_spec["input_artifact_refs"])
+    assert check_created_spec["delivery_stage"] == "CHECK"
+    assert check_created_spec["output_schema_ref"] == "delivery_check_report"
+    assert check_created_spec["role_profile_ref"] == "checker_primary"
+    assert f"art://runtime/{build_ticket_id}/implementation-bundle.json" in check_created_spec["input_artifact_refs"]
+    assert review_created_spec["delivery_stage"] == "REVIEW"
+    assert review_created_spec["output_schema_ref"] == "ui_milestone_review"
+    assert review_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert f"art://runtime/{build_ticket_id}/implementation-bundle.json" in review_created_spec["input_artifact_refs"]
+    assert f"art://runtime/{check_ticket_id}/delivery-check-report.json" in review_created_spec["input_artifact_refs"]
+    assert build_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert check_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert review_ticket["status"] == TICKET_STATUS_COMPLETED
     assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
 
 
@@ -1777,7 +1829,10 @@ def test_board_approve_scope_review_creates_pending_followup_when_no_eligible_wo
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id, approval = _project_init_to_scope_approval(client)
-    followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
+    followup_payload = _scope_followup_payload(client, approval)
+    build_ticket_id, check_ticket_id, review_ticket_id = [
+        item["ticket_id"] for item in followup_payload["followup_tickets"]
+    ]
 
     freeze_response = client.post(
         "/api/v1/commands/employee-freeze",
@@ -1786,15 +1841,21 @@ def test_board_approve_scope_review_creates_pending_followup_when_no_eligible_wo
     response = _approve_open_review(client, approval, idempotency_suffix="pending")
 
     repository = client.app.state.repository
-    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+    build_ticket = repository.get_current_ticket_projection(build_ticket_id)
+    check_ticket = repository.get_current_ticket_projection(check_ticket_id)
+    review_ticket = repository.get_current_ticket_projection(review_ticket_id)
     open_approvals = repository.list_open_approvals()
 
     assert freeze_response.status_code == 200
     assert freeze_response.json()["status"] == "ACCEPTED"
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    assert followup_ticket is not None
-    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert build_ticket is not None
+    assert check_ticket is not None
+    assert review_ticket is not None
+    assert build_ticket["status"] == TICKET_STATUS_PENDING
+    assert check_ticket["status"] == TICKET_STATUS_PENDING
+    assert review_ticket["status"] == TICKET_STATUS_PENDING
     assert open_approvals == []
 
 
@@ -1808,63 +1869,96 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
     consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
     artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
     payload = _scope_followup_payload(client, approval)
-    payload["followup_tickets"] = [
-        {
-            "ticket_id": "tkt_followup_scope_foundation",
-            "owner_role": "frontend_engineer",
-            "summary": "Build the approved homepage foundation under the locked scope.",
-        },
-        {
-            "ticket_id": "tkt_followup_scope_polish",
-            "owner_role": "frontend_engineer",
-            "summary": "Polish the approved homepage details without widening the scope.",
-        },
-    ]
+    payload["followup_tickets"] = _staged_scope_followup_tickets("tkt_followup_scope")
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
 
     response = _approve_open_review(client, approval, idempotency_suffix="all-followups")
 
     repository = client.app.state.repository
-    first_ticket = repository.get_current_ticket_projection("tkt_followup_scope_foundation")
-    second_ticket = repository.get_current_ticket_projection("tkt_followup_scope_polish")
+    build_ticket = repository.get_current_ticket_projection("tkt_followup_scope_build")
+    check_ticket = repository.get_current_ticket_projection("tkt_followup_scope_check")
+    review_ticket = repository.get_current_ticket_projection("tkt_followup_scope_review")
     current_scope_approval = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
     open_approvals = repository.list_open_approvals()
     with repository.connection() as connection:
-        first_created_spec = repository.get_latest_ticket_created_payload(
+        build_created_spec = repository.get_latest_ticket_created_payload(
             connection,
-            "tkt_followup_scope_foundation",
+            "tkt_followup_scope_build",
         )
-        second_created_spec = repository.get_latest_ticket_created_payload(
+        check_created_spec = repository.get_latest_ticket_created_payload(
             connection,
-            "tkt_followup_scope_polish",
+            "tkt_followup_scope_check",
+        )
+        review_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            "tkt_followup_scope_review",
         )
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert current_scope_approval["status"] == APPROVAL_STATUS_APPROVED
-    assert first_ticket is not None
-    assert second_ticket is not None
-    assert first_created_spec is not None
-    assert second_created_spec is not None
-    assert first_created_spec["workflow_id"] == workflow_id
-    assert second_created_spec["workflow_id"] == workflow_id
-    assert first_created_spec["allowed_write_set"] == [
-        "artifacts/ui/scope-followups/tkt_followup_scope_foundation/*",
-        "reports/review/tkt_followup_scope_foundation/*",
+    assert build_ticket is not None
+    assert check_ticket is not None
+    assert review_ticket is not None
+    assert build_created_spec is not None
+    assert check_created_spec is not None
+    assert review_created_spec is not None
+    assert build_created_spec["workflow_id"] == workflow_id
+    assert check_created_spec["workflow_id"] == workflow_id
+    assert review_created_spec["workflow_id"] == workflow_id
+    assert build_created_spec["allowed_write_set"] == [
+        "artifacts/ui/scope-followups/tkt_followup_scope_build/*",
     ]
-    assert second_created_spec["allowed_write_set"] == [
-        "artifacts/ui/scope-followups/tkt_followup_scope_polish/*",
-        "reports/review/tkt_followup_scope_polish/*",
+    assert check_created_spec["allowed_write_set"] == [
+        "reports/check/tkt_followup_scope_check/*",
     ]
-    assert first_created_spec["acceptance_criteria"][0].endswith(
-        "Build the approved homepage foundation under the locked scope."
+    assert review_created_spec["allowed_write_set"] == [
+        "artifacts/ui/scope-followups/tkt_followup_scope_review/*",
+        "reports/review/tkt_followup_scope_review/*",
+    ]
+    assert build_created_spec["acceptance_criteria"][0].endswith(
+        "Build the approved homepage foundation without widening the governance surface."
     )
-    assert second_created_spec["acceptance_criteria"][0].endswith(
-        "Polish the approved homepage details without widening the scope."
+    assert check_created_spec["acceptance_criteria"][0].endswith(
+        "Check the implementation bundle against the approved scope lock."
     )
+    assert review_created_spec["acceptance_criteria"][0].endswith(
+        "Prepare the final board-facing homepage review package from the approved implementation."
+    )
+    assert build_created_spec["parent_ticket_id"] == f"tkt_{workflow_id}_scope_decision"
+    assert check_created_spec["parent_ticket_id"] == "tkt_followup_scope_build"
+    assert review_created_spec["parent_ticket_id"] == "tkt_followup_scope_check"
+    assert f"art://runtime/tkt_followup_scope_build/implementation-bundle.json" in check_created_spec[
+        "input_artifact_refs"
+    ]
+    assert f"art://runtime/tkt_followup_scope_check/delivery-check-report.json" in review_created_spec[
+        "input_artifact_refs"
+    ]
     assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
-    assert first_ticket["status"] == TICKET_STATUS_COMPLETED
-    assert second_ticket["status"] == TICKET_STATUS_PENDING
+    assert build_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert check_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert review_ticket["status"] == TICKET_STATUS_COMPLETED
+
+
+def test_board_approve_scope_review_rejects_unsupported_followup_delivery_stage(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = _scope_followup_payload(client, approval)
+    payload["followup_tickets"][0]["delivery_stage"] = "LAUNCH"
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="invalid-stage")
+
+    repository = client.app.state.repository
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "delivery_stage" in response.json()["reason"]
+    assert updated["status"] == APPROVAL_STATUS_OPEN
 
 
 def test_board_approve_visual_review_auto_advances_next_pending_followup_to_next_review(
@@ -1882,11 +1976,13 @@ def test_board_approve_visual_review_auto_advances_next_pending_followup_to_next
             "ticket_id": "tkt_followup_scope_foundation",
             "owner_role": "frontend_engineer",
             "summary": "Build the approved homepage foundation under the locked scope.",
+            "delivery_stage": "REVIEW",
         },
         {
             "ticket_id": "tkt_followup_scope_polish",
             "owner_role": "frontend_engineer",
             "summary": "Polish the approved homepage details without widening the scope.",
+            "delivery_stage": "REVIEW",
         },
     ]
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1935,11 +2031,13 @@ def test_board_approve_visual_review_keeps_next_followup_pending_when_no_eligibl
             "ticket_id": "tkt_followup_scope_foundation",
             "owner_role": "frontend_engineer",
             "summary": "Build the approved homepage foundation under the locked scope.",
+            "delivery_stage": "REVIEW",
         },
         {
             "ticket_id": "tkt_followup_scope_polish",
             "owner_role": "frontend_engineer",
             "summary": "Polish the approved homepage details without widening the scope.",
+            "delivery_stage": "REVIEW",
         },
     ]
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -2151,10 +2249,10 @@ def test_dashboard_pipeline_summary_shows_review_stage_after_project_init_auto_a
     intake_phase = phases[0]
     assert intake_phase["status"] == "COMPLETED"
     assert intake_phase["node_counts"]["completed"] == 1
-    assert phases[1]["status"] == "PENDING"
-    assert phases[2]["status"] == "COMPLETED"
+    assert phases[1]["status"] == "BLOCKED_FOR_BOARD"
+    assert phases[2]["status"] == "PENDING"
     assert phases[3]["status"] == "PENDING"
-    assert phases[4]["status"] == "BLOCKED_FOR_BOARD"
+    assert phases[4]["status"] == "PENDING"
 
 
 def test_dashboard_pipeline_summary_shows_build_stage_for_executing_ticket(client):
@@ -2172,13 +2270,22 @@ def test_dashboard_pipeline_summary_shows_build_stage_for_executing_ticket(clien
 
 
 def test_dashboard_pipeline_summary_shows_review_stage_for_open_board_approval(client):
-    client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+    _, approval = _project_init_to_scope_approval(client)
+    approve_response = _approve_open_review(client, approval, idempotency_suffix="dashboard-final-review")
 
     response = client.get("/api/v1/projections/dashboard")
 
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
     assert response.status_code == 200
     phases = response.json()["data"]["pipeline_summary"]["phases"]
+    plan_phase = next(phase for phase in phases if phase["label"] == "Plan")
+    build_phase = next(phase for phase in phases if phase["label"] == "Build")
+    check_phase = next(phase for phase in phases if phase["label"] == "Check")
     review_phase = next(phase for phase in phases if phase["label"] == "Review")
+    assert plan_phase["status"] == "COMPLETED"
+    assert build_phase["status"] == "COMPLETED"
+    assert check_phase["status"] == "COMPLETED"
     assert review_phase["status"] == "BLOCKED_FOR_BOARD"
     assert review_phase["node_counts"]["blocked_for_board"] == 1
 

@@ -863,6 +863,7 @@ def _build_maker_checker_ticket_payload(
         "acceptance_criteria": list(created_spec.get("acceptance_criteria") or []),
         "output_schema_ref": created_spec.get("output_schema_ref"),
         "output_schema_version": created_spec.get("output_schema_version"),
+        "delivery_stage": created_spec.get("delivery_stage"),
         "allowed_tools": list(created_spec.get("allowed_tools") or []),
         "allowed_write_set": list(created_spec.get("allowed_write_set") or []),
         "lease_timeout_sec": created_spec.get("lease_timeout_sec"),
@@ -907,6 +908,7 @@ def _build_maker_checker_ticket_payload(
         "deadline_at": created_spec.get("deadline_at"),
         "tenant_id": created_spec.get("tenant_id"),
         "workspace_id": created_spec.get("workspace_id"),
+        "delivery_stage": created_spec.get("delivery_stage"),
         "escalation_policy": dict(created_spec.get("escalation_policy") or {}),
         "ticket_kind": MAKER_CHECKER_REVIEW_TICKET_KIND,
         "maker_checker_context": {
@@ -992,6 +994,7 @@ def _build_fix_ticket_payload(
         "deadline_at": maker_ticket_spec.get("deadline_at"),
         "tenant_id": maker_ticket_spec.get("tenant_id"),
         "workspace_id": maker_ticket_spec.get("workspace_id"),
+        "delivery_stage": maker_ticket_spec.get("delivery_stage"),
         "excluded_employee_ids": excluded_employee_ids,
         "escalation_policy": dict(maker_ticket_spec.get("escalation_policy") or {}),
         "ticket_kind": MAKER_REWORK_FIX_TICKET_KIND,
@@ -1342,6 +1345,19 @@ def _retry_count(current_ticket: dict[str, Any], created_spec: dict[str, Any]) -
 
 def _resolve_heartbeat_timeout_sec(current_ticket: dict[str, Any]) -> int:
     return int(current_ticket.get("heartbeat_timeout_sec") or DEFAULT_LEASE_TIMEOUT_SEC)
+
+
+def _delivery_stage_parent_completed(
+    repository: ControlPlaneRepository,
+    connection,
+    created_spec: dict[str, Any],
+) -> bool:
+    delivery_stage = str(created_spec.get("delivery_stage") or "").strip()
+    parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
+    if not delivery_stage or not parent_ticket_id:
+        return True
+    parent_ticket = repository.get_current_ticket_projection(parent_ticket_id, connection=connection)
+    return parent_ticket is not None and parent_ticket["status"] == TICKET_STATUS_COMPLETED
 
 
 def _resolve_current_heartbeat_expiry(
@@ -2293,6 +2309,8 @@ def run_scheduler_tick(
 
             created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             if created_spec is None:
+                continue
+            if not _delivery_stage_parent_completed(repository, connection, created_spec):
                 continue
             target_role_profile = created_spec.get("role_profile_ref")
             if not target_role_profile:

@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
+    DeliveryStage,
     DeveloperInspectorRefs,
     TicketBoardReviewRequest,
     TicketResultStatus,
@@ -23,8 +24,13 @@ from app.core.context_compiler import (
     compile_and_persist_execution_artifacts,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
-from app.core.output_schemas import schema_id, validate_output_payload
-from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF
+from app.core.output_schemas import (
+    CONSENSUS_DOCUMENT_SCHEMA_REF,
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    schema_id,
+    validate_output_payload,
+)
 from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
     OpenAICompatProviderBadResponseError,
@@ -68,6 +74,8 @@ SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
     "ui_milestone_review",
     "maker_checker_verdict",
     CONSENSUS_DOCUMENT_SCHEMA_REF,
+    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
 }
 SUPPORTED_RUNTIME_ROLE_PROFILES = {"ui_designer_primary", "checker_primary"}
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
@@ -157,15 +165,25 @@ def _build_runtime_default_artifacts(
     result_payload: dict[str, Any],
 ) -> tuple[list[str], list[dict[str, Any]]]:
     ticket_id = execution_package.meta.ticket_id
-    if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
-        artifact_ref = f"art://runtime/{ticket_id}/consensus-document.json"
+    output_schema_ref = execution_package.execution.output_schema_ref
+    if output_schema_ref in {
+        CONSENSUS_DOCUMENT_SCHEMA_REF,
+        IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    }:
+        filename_by_schema = {
+            CONSENSUS_DOCUMENT_SCHEMA_REF: "consensus-document.json",
+            IMPLEMENTATION_BUNDLE_SCHEMA_REF: "implementation-bundle.json",
+            DELIVERY_CHECK_REPORT_SCHEMA_REF: "delivery-check-report.json",
+        }
+        artifact_ref = f"art://runtime/{ticket_id}/{filename_by_schema[output_schema_ref]}"
         allowed_write_set = list(execution_package.execution.allowed_write_set)
         if not allowed_write_set:
             return [artifact_ref], []
         write_pattern = allowed_write_set[0]
         return [artifact_ref], [
             {
-                "path": _resolve_runtime_write_path(write_pattern, "consensus-document.json"),
+                "path": _resolve_runtime_write_path(write_pattern, filename_by_schema[output_schema_ref]),
                 "artifact_ref": artifact_ref,
                 "kind": "JSON",
                 "retention_class": "REVIEW_EVIDENCE",
@@ -226,14 +244,42 @@ def _build_runtime_success_payload(
             "open_questions": ["Whether non-critical polish should move after board approval."],
             "followup_tickets": [
                 {
-                    "ticket_id": f"{ticket_id}_followup_foundation",
+                    "ticket_id": f"{ticket_id}_followup_build",
                     "owner_role": owner_role,
                     "summary": "Build the approved homepage foundation without widening scope.",
+                    "delivery_stage": DeliveryStage.BUILD.value,
                 },
                 {
-                    "ticket_id": f"{ticket_id}_followup_polish",
+                    "ticket_id": f"{ticket_id}_followup_check",
+                    "owner_role": "checker",
+                    "summary": "Check the implementation bundle against the locked scope before board review.",
+                    "delivery_stage": DeliveryStage.CHECK.value,
+                },
+                {
+                    "ticket_id": f"{ticket_id}_followup_review",
                     "owner_role": owner_role,
-                    "summary": "Polish the approved homepage details without widening scope.",
+                    "summary": "Prepare the final board-facing homepage review package from the approved implementation.",
+                    "delivery_stage": DeliveryStage.REVIEW.value,
+                },
+            ],
+        }
+    if execution_package.execution.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
+        return {
+            "summary": f"Implementation bundle prepared for ticket {execution_package.meta.ticket_id}.",
+            "deliverable_artifact_refs": list(artifact_refs),
+            "implementation_notes": [
+                "Homepage foundation stays inside the approved scope lock and is ready for internal checking."
+            ],
+        }
+    if execution_package.execution.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
+        return {
+            "summary": "Internal delivery check confirmed the implementation bundle stays within the approved scope.",
+            "status": "PASS_WITH_NOTES",
+            "findings": [
+                {
+                    "finding_id": "finding_scope_copy",
+                    "summary": "Keep the launch copy trimmed to the approved scope lock.",
+                    "blocking": False,
                 }
             ],
         }

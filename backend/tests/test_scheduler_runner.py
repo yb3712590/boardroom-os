@@ -1027,7 +1027,7 @@ def test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime
     assert artifact_response.json()["data"]["artifacts"][0]["path"] == "reports/meeting/consensus-document.json"
 
 
-def test_scheduler_runner_auto_advances_multiple_scope_followups_to_next_visual_stop(
+def test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_review_stop(
     client,
     set_ticket_time,
 ):
@@ -1063,12 +1063,17 @@ def test_scheduler_runner_auto_advances_multiple_scope_followups_to_next_visual_
     ]
     open_approvals = repository.list_open_approvals()
 
-    assert len(consensus_payload["followup_tickets"]) == 2
-    assert len(set(followup_ticket_ids)) == 2
+    assert [item["delivery_stage"] for item in consensus_payload["followup_tickets"]] == [
+        "BUILD",
+        "CHECK",
+        "REVIEW",
+    ]
+    assert len(consensus_payload["followup_tickets"]) == 3
+    assert len(set(followup_ticket_ids)) == 3
     assert approve_response.status_code == 200
     assert approve_response.json()["status"] == "ACCEPTED"
     assert all(ticket is not None for ticket in followup_tickets)
-    assert any(ticket["status"] == "COMPLETED" for ticket in followup_tickets if ticket is not None)
+    assert all(ticket["status"] == "COMPLETED" for ticket in followup_tickets if ticket is not None)
     assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
 
 

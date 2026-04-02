@@ -289,6 +289,12 @@
   - `cd frontend && npm run test:run` -> `1 passed, 10 tests passed`
   - `cd frontend && npm run build` -> `built in 196ms`
   - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "dashboard or review_room or inbox or workforce or incident" -q` -> `48 passed, 171 deselected`
+- 把 scope approval 之后的默认小项目链路从“继续开视觉票”推进成了真实 staged follow-up：`consensus_document` 里的 follow-up 现在支持 `BUILD / CHECK / REVIEW`，后端会按列表顺序串成一条真实交付链，而不是把 scope 通过后的后半段继续压扁成同一种视觉票。
+- 这条 staged chain 当前仍保持主线收口：只支持 `frontend_engineer -> ui_designer_primary`、`checker -> checker_primary`，以及最小新 schema `implementation_bundle@1` 和 `delivery_check_report@1`；任一 `delivery_stage`、`owner_role` 或 follow-up payload 不合法，`board-approve` 会 fail-closed，scope review 保持待决。
+- deterministic runtime 现在会为默认 homepage 场景直接生成一条 `BUILD -> CHECK -> REVIEW` follow-up 链；scope review 一旦批准，系统会先自动完成内部 build 和 internal check，再把最终 board-facing visual review 推进进现有 `maker-checker -> Inbox -> Review Room`，而不是停在第一张早期视觉票。
+- `dashboard.pipeline_summary.phases` 现在也按真实阶段读数：scope consensus 归到 `Plan`，内部实现归到 `Build`，内部检查归到 `Check`，最终董事会 gate 归到 `Review`；董事会现场能直接看到这个小项目已经自动走到哪一段。
+- Fresh verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `339 passed`
 
 ### Current Watch-Outs
 

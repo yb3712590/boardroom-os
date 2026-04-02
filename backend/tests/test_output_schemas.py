@@ -31,6 +31,7 @@ def test_output_schema_registry_accepts_valid_consensus_document_payload() -> No
                     "ticket_id": "tkt_followup_001",
                     "owner_role": "frontend_engineer",
                     "summary": "Implement approved homepage direction",
+                    "delivery_stage": "BUILD",
                 }
             ],
         },
@@ -47,6 +48,27 @@ def test_output_schema_registry_rejects_invalid_consensus_document_payload() -> 
                 "topic": "Resolve homepage interaction conflict",
                 "participants": [],
                 "followup_tickets": [],
+            },
+        )
+
+
+def test_output_schema_registry_rejects_invalid_consensus_document_delivery_stage() -> None:
+    with pytest.raises(ValueError, match="delivery_stage"):
+        validate_output_payload(
+            schema_ref="consensus_document",
+            schema_version=1,
+            submitted_schema_version="consensus_document_v1",
+            payload={
+                "topic": "Resolve homepage interaction conflict",
+                "participants": ["emp_frontend_2", "emp_checker_1"],
+                "followup_tickets": [
+                    {
+                        "ticket_id": "tkt_followup_001",
+                        "owner_role": "frontend_engineer",
+                        "summary": "Implement approved homepage direction",
+                        "delivery_stage": "LAUNCH",
+                    }
+                ],
             },
         )
 
@@ -105,3 +127,52 @@ def test_output_schema_registry_rejects_changes_required_without_blocking_findin
                 ],
             },
         )
+
+
+def test_output_schema_registry_exposes_implementation_bundle_schema() -> None:
+    schema = get_output_schema_body("implementation_bundle", 1)
+
+    assert schema["type"] == "object"
+    assert "summary" in schema["required"]
+    assert "deliverable_artifact_refs" in schema["required"]
+
+
+def test_output_schema_registry_accepts_valid_implementation_bundle_payload() -> None:
+    validate_output_payload(
+        schema_ref="implementation_bundle",
+        schema_version=1,
+        submitted_schema_version="implementation_bundle_v1",
+        payload={
+            "summary": "Homepage implementation bundle is ready for internal checking.",
+            "deliverable_artifact_refs": ["art://runtime/tkt_followup_scope_build/implementation-bundle.json"],
+            "implementation_notes": ["Hero layout and CTA hierarchy now follow the approved scope lock."],
+        },
+    )
+
+
+def test_output_schema_registry_exposes_delivery_check_report_schema() -> None:
+    schema = get_output_schema_body("delivery_check_report", 1)
+
+    assert schema["type"] == "object"
+    assert "summary" in schema["required"]
+    assert "status" in schema["required"]
+    assert "findings" in schema["required"]
+
+
+def test_output_schema_registry_accepts_valid_delivery_check_report_payload() -> None:
+    validate_output_payload(
+        schema_ref="delivery_check_report",
+        schema_version=1,
+        submitted_schema_version="delivery_check_report_v1",
+        payload={
+            "summary": "Internal check confirmed the implementation still stays inside the approved scope.",
+            "status": "PASS_WITH_NOTES",
+            "findings": [
+                {
+                    "finding_id": "finding_scope_copy",
+                    "summary": "Keep the launch copy trimmed to the approved scope.",
+                    "blocking": False,
+                }
+            ],
+        },
+    )

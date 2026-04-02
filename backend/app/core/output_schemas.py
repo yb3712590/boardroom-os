@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from app.contracts.commands import DeliveryStage
+
 
 UI_MILESTONE_REVIEW_SCHEMA_REF = "ui_milestone_review"
 UI_MILESTONE_REVIEW_SCHEMA_VERSION = 1
@@ -11,6 +13,10 @@ UI_MILESTONE_REVIEW_SCHEMA_ID = (
 )
 CONSENSUS_DOCUMENT_SCHEMA_REF = "consensus_document"
 CONSENSUS_DOCUMENT_SCHEMA_VERSION = 1
+IMPLEMENTATION_BUNDLE_SCHEMA_REF = "implementation_bundle"
+IMPLEMENTATION_BUNDLE_SCHEMA_VERSION = 1
+DELIVERY_CHECK_REPORT_SCHEMA_REF = "delivery_check_report"
+DELIVERY_CHECK_REPORT_SCHEMA_VERSION = 1
 MAKER_CHECKER_VERDICT_SCHEMA_REF = "maker_checker_verdict"
 MAKER_CHECKER_VERDICT_SCHEMA_VERSION = 1
 
@@ -83,6 +89,55 @@ def _consensus_document_schema_body() -> dict[str, Any]:
                         "ticket_id": {"type": "string"},
                         "owner_role": {"type": "string"},
                         "summary": {"type": "string"},
+                        "delivery_stage": {
+                            "type": "string",
+                            "enum": [stage.value for stage in DeliveryStage],
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
+def _implementation_bundle_schema_body() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["summary", "deliverable_artifact_refs"],
+        "properties": {
+            "summary": {"type": "string"},
+            "deliverable_artifact_refs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"},
+            },
+            "implementation_notes": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+    }
+
+
+def _delivery_check_report_schema_body() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["summary", "status", "findings"],
+        "properties": {
+            "summary": {"type": "string"},
+            "status": {
+                "type": "string",
+                "enum": ["PASS", "PASS_WITH_NOTES", "FAIL"],
+            },
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["finding_id", "summary", "blocking"],
+                    "properties": {
+                        "finding_id": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "blocking": {"type": "boolean"},
                     },
                 },
             },
@@ -191,12 +246,68 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
         ticket_id = item.get("ticket_id")
         owner_role = item.get("owner_role")
         summary = item.get("summary")
+        delivery_stage = item.get("delivery_stage")
         if not isinstance(ticket_id, str) or not ticket_id:
             raise ValueError("Each consensus followup ticket requires ticket_id.")
         if not isinstance(owner_role, str) or not owner_role:
             raise ValueError("Each consensus followup ticket requires owner_role.")
         if not isinstance(summary, str) or not summary:
             raise ValueError("Each consensus followup ticket requires summary.")
+        if delivery_stage is not None:
+            if not isinstance(delivery_stage, str) or delivery_stage not in {stage.value for stage in DeliveryStage}:
+                raise ValueError(
+                    "Each consensus followup ticket delivery_stage must be one of BUILD, CHECK, REVIEW."
+                )
+
+
+def _validate_implementation_bundle_payload(payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("Result payload must be an object.")
+
+    summary = payload.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("Implementation bundle payload.summary must be a non-empty string.")
+
+    deliverable_artifact_refs = payload.get("deliverable_artifact_refs")
+    if not isinstance(deliverable_artifact_refs, list) or not deliverable_artifact_refs or not all(
+        isinstance(item, str) and item for item in deliverable_artifact_refs
+    ):
+        raise ValueError(
+            "Implementation bundle payload.deliverable_artifact_refs must be a non-empty array."
+        )
+
+    implementation_notes = payload.get("implementation_notes")
+    if implementation_notes is not None and (
+        not isinstance(implementation_notes, list)
+        or not all(isinstance(item, str) and item for item in implementation_notes)
+    ):
+        raise ValueError("Implementation bundle payload.implementation_notes must be an array of strings.")
+
+
+def _validate_delivery_check_report_payload(payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("Result payload must be an object.")
+
+    summary = payload.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("Delivery check report payload.summary must be a non-empty string.")
+
+    status = payload.get("status")
+    if not isinstance(status, str) or status not in {"PASS", "PASS_WITH_NOTES", "FAIL"}:
+        raise ValueError("Delivery check report payload.status must be PASS, PASS_WITH_NOTES, or FAIL.")
+
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        raise ValueError("Delivery check report payload.findings must be an array.")
+    for finding in findings:
+        if not isinstance(finding, dict):
+            raise ValueError("Each delivery check finding must be an object.")
+        if not isinstance(finding.get("finding_id"), str) or not finding.get("finding_id"):
+            raise ValueError("Each delivery check finding requires finding_id.")
+        if not isinstance(finding.get("summary"), str) or not finding.get("summary"):
+            raise ValueError("Each delivery check finding requires summary.")
+        if not isinstance(finding.get("blocking"), bool):
+            raise ValueError("Each delivery check finding requires boolean blocking.")
 
 
 def _validate_maker_checker_verdict_payload(payload: dict[str, Any]) -> None:
@@ -265,6 +376,14 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (CONSENSUS_DOCUMENT_SCHEMA_REF, CONSENSUS_DOCUMENT_SCHEMA_VERSION): {
         "body": _consensus_document_schema_body,
         "validator": _validate_consensus_document_payload,
+    },
+    (IMPLEMENTATION_BUNDLE_SCHEMA_REF, IMPLEMENTATION_BUNDLE_SCHEMA_VERSION): {
+        "body": _implementation_bundle_schema_body,
+        "validator": _validate_implementation_bundle_payload,
+    },
+    (DELIVERY_CHECK_REPORT_SCHEMA_REF, DELIVERY_CHECK_REPORT_SCHEMA_VERSION): {
+        "body": _delivery_check_report_schema_body,
+        "validator": _validate_delivery_check_report_payload,
     },
     (MAKER_CHECKER_VERDICT_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_VERSION): {
         "body": _maker_checker_verdict_schema_body,

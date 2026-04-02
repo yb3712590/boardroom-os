@@ -69,6 +69,12 @@ class ArtifactRetentionClass(StrEnum):
     EPHEMERAL = "EPHEMERAL"
 
 
+class DeliveryStage(StrEnum):
+    BUILD = "BUILD"
+    CHECK = "CHECK"
+    REVIEW = "REVIEW"
+
+
 class ProjectInitCommand(StrictModel):
     north_star_goal: str = Field(min_length=1)
     hard_constraints: list[str]
@@ -119,6 +125,7 @@ class TicketCreateCommand(StrictModel):
     deadline_at: datetime | None = None
     tenant_id: str | None = Field(default=None, min_length=1)
     workspace_id: str | None = Field(default=None, min_length=1)
+    delivery_stage: DeliveryStage | None = None
     excluded_employee_ids: list[str] = Field(default_factory=list)
     auto_review_request: TicketBoardReviewRequest | None = None
     escalation_policy: TicketEscalationPolicy
