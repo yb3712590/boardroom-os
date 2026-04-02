@@ -78,6 +78,7 @@ from app.core.constants import (
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     NODE_STATUS_CANCEL_REQUESTED,
     NODE_STATUS_CANCELLED,
+    NODE_STATUS_COMPLETED,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
@@ -99,6 +100,8 @@ from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
@@ -143,6 +146,11 @@ MAKER_CHECKER_SUPPORTED_TARGETS = {
         "MEETING_ESCALATION",
         CONSENSUS_DOCUMENT_SCHEMA_REF,
         CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    ),
+    (
+        "INTERNAL_DELIVERY_REVIEW",
+        IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
     ),
 }
 
@@ -683,7 +691,16 @@ def _maker_checker_subject_label(review_request: TicketBoardReviewRequest | None
         return "submitted visual milestone"
     if review_request.review_type.value == "MEETING_ESCALATION":
         return "submitted consensus document"
+    if review_request.review_type.value == "INTERNAL_DELIVERY_REVIEW":
+        return "submitted implementation bundle"
     return "submitted deliverable"
+
+
+def _is_internal_delivery_review_request(review_request: TicketBoardReviewRequest | None) -> bool:
+    return bool(
+        review_request is not None
+        and review_request.review_type.value == "INTERNAL_DELIVERY_REVIEW"
+    )
 
 
 def _ticket_kind(created_spec: dict[str, Any] | None) -> str | None:
@@ -934,6 +951,7 @@ def _build_fix_ticket_payload(
 ) -> dict[str, Any]:
     maker_checker_context = checker_created_spec.get("maker_checker_context") or {}
     maker_ticket_spec = dict(maker_checker_context.get("maker_ticket_spec") or {})
+    original_review_request = maker_checker_context.get("original_review_request")
     context_query_plan = dict(maker_ticket_spec.get("context_query_plan") or {})
     max_context_tokens = int(context_query_plan.get("max_context_tokens") or 0)
     if max_context_tokens <= 0:
@@ -995,6 +1013,9 @@ def _build_fix_ticket_payload(
         "tenant_id": maker_ticket_spec.get("tenant_id"),
         "workspace_id": maker_ticket_spec.get("workspace_id"),
         "delivery_stage": maker_ticket_spec.get("delivery_stage"),
+        "auto_review_request": (
+            dict(original_review_request) if isinstance(original_review_request, dict) else None
+        ),
         "excluded_employee_ids": excluded_employee_ids,
         "escalation_policy": dict(maker_ticket_spec.get("escalation_policy") or {}),
         "ticket_kind": MAKER_REWORK_FIX_TICKET_KIND,
@@ -1003,7 +1024,7 @@ def _build_fix_ticket_payload(
             "maker_completed_by": maker_checker_context.get("maker_completed_by"),
             "maker_artifact_refs": input_artifact_refs,
             "maker_ticket_spec": maker_ticket_spec,
-            "original_review_request": maker_checker_context.get("original_review_request"),
+            "original_review_request": original_review_request,
             "checker_ticket_id": checker_ticket_id,
             "blocking_finding_refs": [finding["finding_id"] for finding in required_fixes],
             "required_fixes": required_fixes,
@@ -1357,7 +1378,21 @@ def _delivery_stage_parent_completed(
     if not delivery_stage or not parent_ticket_id:
         return True
     parent_ticket = repository.get_current_ticket_projection(parent_ticket_id, connection=connection)
-    return parent_ticket is not None and parent_ticket["status"] == TICKET_STATUS_COMPLETED
+    if parent_ticket is None or parent_ticket["status"] != TICKET_STATUS_COMPLETED:
+        return False
+    current_node_id = str(created_spec.get("node_id") or "").strip()
+    parent_node_id = str(parent_ticket.get("node_id") or "").strip()
+    parent_workflow_id = str(parent_ticket.get("workflow_id") or created_spec.get("workflow_id") or "").strip()
+    if current_node_id and parent_node_id and current_node_id == parent_node_id:
+        return True
+    if not parent_node_id or not parent_workflow_id:
+        return True
+    parent_node = repository.get_current_node_projection(
+        parent_workflow_id,
+        parent_node_id,
+        connection=connection,
+    )
+    return parent_node is not None and parent_node["status"] == NODE_STATUS_COMPLETED
 
 
 def _resolve_current_heartbeat_expiry(
@@ -3889,13 +3924,17 @@ def _complete_ticket_locked(
         if isinstance(result_payload, dict)
         else ""
     )
+    checker_requires_no_board_gate = bool(
+        checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
+        and (
+            checker_review_status in {"CHANGES_REQUIRED", "ESCALATED"}
+            or _is_internal_delivery_review_request(effective_review_request)
+        )
+    )
     open_board_review_now = bool(
         effective_review_request is not None
         and not route_to_maker_checker
-        and not (
-            checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
-            and checker_review_status == "CHANGES_REQUIRED"
-        )
+        and not checker_requires_no_board_gate
     )
 
     event_row = repository.insert_event(
@@ -3945,7 +3984,7 @@ def _complete_ticket_locked(
         causation_hint = f"ticket:{next_ticket_id}"
     elif (
         checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
-        and checker_review_status == "CHANGES_REQUIRED"
+        and checker_review_status in {"CHANGES_REQUIRED", "ESCALATED"}
     ):
         if created_spec is None or not isinstance(result_payload, dict):
             raise RuntimeError("Checker rework routing requires created spec and checker verdict payload.")
@@ -3960,7 +3999,7 @@ def _complete_ticket_locked(
         if _should_escalate_maker_checker_rework(
             created_spec=created_spec,
             rework_streak_count=rework_streak_count,
-        ):
+        ) or checker_review_status == "ESCALATED":
             incident_id = _open_maker_checker_rework_incident(
                 repository=repository,
                 connection=connection,
@@ -4001,67 +4040,70 @@ def _complete_ticket_locked(
             )
             causation_hint = f"ticket:{next_ticket_id}"
     elif effective_review_request is not None:
-        review_request_for_approval = effective_review_request
-        developer_inspector_source_ticket_id = payload.ticket_id
-        if checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND:
-            if created_spec is None or not isinstance(result_payload, dict):
-                raise RuntimeError("Checker approval routing requires created spec and checker verdict payload.")
-            review_request_for_approval = effective_review_request.model_copy(
-                update={
-                    "maker_checker_summary": _build_generated_maker_checker_summary(
-                        checker_payload=result_payload,
-                        checker_completed_by=payload.completed_by,
-                        checker_created_spec=created_spec,
-                    )
-                }
-            )
-            maker_checker_context = created_spec.get("maker_checker_context") or {}
-            developer_inspector_source_ticket_id = str(
-                maker_checker_context.get("maker_ticket_id") or payload.ticket_id
-            )
-
-        if (
-            review_request_for_approval.developer_inspector_refs is not None
-            and developer_inspector_store is None
-        ):
-            raise RuntimeError("Developer inspector store is required to export inspector artifacts.")
-        if (
-            developer_inspector_store is not None
-            and review_request_for_approval.developer_inspector_refs is not None
-        ):
-            persisted_artifacts.extend(
-                export_latest_compile_artifacts_to_developer_inspector(
-                    repository,
-                    developer_inspector_store,
-                    developer_inspector_source_ticket_id,
-                    review_request_for_approval.developer_inspector_refs,
-                    connection=connection,
+        if _is_internal_delivery_review_request(effective_review_request):
+            pass
+        else:
+            review_request_for_approval = effective_review_request
+            developer_inspector_source_ticket_id = payload.ticket_id
+            if checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND:
+                if created_spec is None or not isinstance(result_payload, dict):
+                    raise RuntimeError("Checker approval routing requires created spec and checker verdict payload.")
+                review_request_for_approval = effective_review_request.model_copy(
+                    update={
+                        "maker_checker_summary": _build_generated_maker_checker_summary(
+                            checker_payload=result_payload,
+                            checker_completed_by=payload.completed_by,
+                            checker_created_spec=created_spec,
+                        )
+                    }
                 )
-            )
-        approval = repository.create_approval_request(
-            connection,
-            workflow_id=payload.workflow_id,
-            approval_type=review_request_for_approval.review_type.value,
-            requested_by=payload.completed_by,
-            review_pack=_build_review_pack(
-                payload=payload.model_copy(update={"review_request": review_request_for_approval}),
-                trigger_event_id=event_row["event_id"],
-                command_target_version=int(event_row["sequence_no"]),
+                maker_checker_context = created_spec.get("maker_checker_context") or {}
+                developer_inspector_source_ticket_id = str(
+                    maker_checker_context.get("maker_ticket_id") or payload.ticket_id
+                )
+
+            if (
+                review_request_for_approval.developer_inspector_refs is not None
+                and developer_inspector_store is None
+            ):
+                raise RuntimeError("Developer inspector store is required to export inspector artifacts.")
+            if (
+                developer_inspector_store is not None
+                and review_request_for_approval.developer_inspector_refs is not None
+            ):
+                persisted_artifacts.extend(
+                    export_latest_compile_artifacts_to_developer_inspector(
+                        repository,
+                        developer_inspector_store,
+                        developer_inspector_source_ticket_id,
+                        review_request_for_approval.developer_inspector_refs,
+                        connection=connection,
+                    )
+                )
+            approval = repository.create_approval_request(
+                connection,
+                workflow_id=payload.workflow_id,
+                approval_type=review_request_for_approval.review_type.value,
+                requested_by=payload.completed_by,
+                review_pack=_build_review_pack(
+                    payload=payload.model_copy(update={"review_request": review_request_for_approval}),
+                    trigger_event_id=event_row["event_id"],
+                    command_target_version=int(event_row["sequence_no"]),
+                    occurred_at=received_at,
+                ),
+                available_actions=[action.value for action in review_request_for_approval.available_actions],
+                draft_defaults={
+                    "selected_option_id": review_request_for_approval.draft_selected_option_id,
+                    "comment_template": review_request_for_approval.comment_template,
+                },
+                inbox_title=review_request_for_approval.inbox_title or review_request_for_approval.title,
+                inbox_summary=review_request_for_approval.inbox_summary or payload.completion_summary,
+                badges=review_request_for_approval.badges,
+                priority=review_request_for_approval.priority.value,
                 occurred_at=received_at,
-            ),
-            available_actions=[action.value for action in review_request_for_approval.available_actions],
-            draft_defaults={
-                "selected_option_id": review_request_for_approval.draft_selected_option_id,
-                "comment_template": review_request_for_approval.comment_template,
-            },
-            inbox_title=review_request_for_approval.inbox_title or review_request_for_approval.title,
-            inbox_summary=review_request_for_approval.inbox_summary or payload.completion_summary,
-            badges=review_request_for_approval.badges,
-            priority=review_request_for_approval.priority.value,
-            occurred_at=received_at,
-            idempotency_key=f"{payload.idempotency_key}:approval-request",
-        )
-        causation_hint = f"approval:{approval['approval_id']}"
+                idempotency_key=f"{payload.idempotency_key}:approval-request",
+            )
+            causation_hint = f"approval:{approval['approval_id']}"
 
     _auto_close_recovering_incidents_for_completed_ticket(
         repository=repository,

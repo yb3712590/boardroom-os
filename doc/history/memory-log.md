@@ -316,6 +316,19 @@
   - `python -m pytest backend/tests/test_api.py -k "runtime_provider or completion_summary or scope_review" -q` -> `15 passed, 211 deselected`
   - `python -m pytest backend/tests/test_scheduler_runner.py -k "provider_when_configured or saved_runtime_provider_config" -q` -> `2 passed, 24 deselected`
 
+### 2026-04-02 (build internal delivery review + rework visibility)
+
+- 把 `BUILD` 产物真正收进内部治理主线：`implementation_bundle@1` 现在不再直接放行到下游 `CHECK`，而是会先走同一逻辑 build 节点下的内部 `maker -> checker -> fix / incident`。
+- 这轮保持了董事会边界不扩张：新增的是内部 `INTERNAL_DELIVERY_REVIEW` 语义，不会新开 `Inbox -> Review Room` 的董事会 gate；build checker `APPROVED / APPROVED_WITH_NOTES` 会直接放行主链，`ESCALATED` 会走现有 maker-checker rework incident。
+- build checker `CHANGES_REQUIRED` 现在会开真实 fix 票、沿用原 build 票的写入范围和交付阶段、默认排除原 maker，并在 fix 通过后恢复下游 `CHECK -> REVIEW`，不会再出现“返工看起来跑了、其实主链没恢复”的假打通。
+- `dashboard / workforce` 的 `workers_in_rework_loop` 现在会按打开中的 build `MAKER_REWORK_FIX` 保守计数；React `workforce` 面板也已把 `rework loops` 显式展示出来，排障时不用再靠事件流猜 build 是否卡在返工。
+- 为了拿到真实的全量验证，这轮还顺手修掉了一个已有测试辅助函数失配：`_ticket_fail_payload` 现在支持显式 `idempotency_key`，不再让后端全量测试卡在旧 helper 签名上。
+- Fresh verification after this change is:
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py::test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visual_review tests/test_api.py::test_internal_delivery_build_checker_approved_does_not_open_board_review tests/test_api.py::test_internal_delivery_build_checker_changes_required_creates_fix_ticket_and_counts_rework_loop tests/test_api.py::test_internal_delivery_build_rework_keeps_downstream_check_pending_until_fix_closes tests/test_api.py::test_internal_delivery_build_fix_pass_releases_downstream_check tests/test_api.py::test_internal_delivery_build_checker_escalated_opens_incident_without_board_review tests/test_scheduler_runner.py::test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_review_stop -q` -> `7 passed`
+  - `cd frontend && npm run test:run` -> `1 passed, 16 tests passed`
+  - `cd frontend && npm run build` -> `built in 132ms`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `351 passed`
+
 ### Current Watch-Outs
 
 - Latest commit also continued the append-only `memory-log.md` pattern. Before archival, this file had grown to about `2300` lines, `119 KB`, and `14.9k` words.

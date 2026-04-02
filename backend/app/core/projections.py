@@ -119,10 +119,14 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
     busy_tickets = repository.list_ticket_projections_by_statuses_readonly(
         ["LEASED", "EXECUTING", "CANCEL_REQUESTED"]
     )
+    rework_tickets = repository.list_ticket_projections_by_statuses_readonly(
+        ["PENDING", "LEASED", "EXECUTING", "CANCEL_REQUESTED"]
+    )
     now = now_local()
 
     busy_workers: set[str] = set()
     contained_workers: set[str] = set()
+    workers_in_rework_loop: set[str] = set()
     for ticket in busy_tickets:
         owner = ticket.get("lease_owner")
         if owner is None:
@@ -136,6 +140,26 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
         lease_expiry = ticket.get("lease_expires_at")
         if lease_expiry is not None and lease_expiry > now:
             busy_workers.add(owner)
+
+    with repository.connection() as connection:
+        for ticket in rework_tickets:
+            created_spec = repository.get_latest_ticket_created_payload(
+                connection,
+                str(ticket["ticket_id"]),
+            )
+            if not isinstance(created_spec, dict):
+                continue
+            if str(created_spec.get("ticket_kind") or "") != "MAKER_REWORK_FIX":
+                continue
+            delivery_stage = str(created_spec.get("delivery_stage") or "").strip().upper()
+            maker_checker_context = created_spec.get("maker_checker_context") or {}
+            maker_ticket_spec = maker_checker_context.get("maker_ticket_spec") or {}
+            maker_delivery_stage = str(maker_ticket_spec.get("delivery_stage") or "").strip().upper()
+            if delivery_stage != "BUILD" and maker_delivery_stage != "BUILD":
+                continue
+            maker_employee_id = str(maker_checker_context.get("maker_completed_by") or "").strip()
+            if maker_employee_id:
+                workers_in_rework_loop.add(maker_employee_id)
 
     active_workers = 0
     idle_workers = 0
@@ -162,7 +186,7 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
         idle_workers=idle_workers,
         overloaded_workers=0,
         active_checkers=active_checkers,
-        workers_in_rework_loop=0,
+        workers_in_rework_loop=len(workers_in_rework_loop),
         workers_in_staffing_containment=len(contained_workers),
     )
 

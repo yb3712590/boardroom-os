@@ -956,6 +956,45 @@ def _meeting_escalation_review_request(
     return payload
 
 
+def _internal_delivery_review_request() -> dict:
+    return {
+        "review_type": "INTERNAL_DELIVERY_REVIEW",
+        "priority": "high",
+        "title": "Check approved implementation bundle",
+        "subtitle": "Internal delivery review should pass before downstream checking starts.",
+        "blocking_scope": "NODE_ONLY",
+        "trigger_reason": "Implementation bundle reached the internal checker gate.",
+        "why_now": "Build output should be checked by a separate checker before the next ticket consumes it.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "internal_delivery_ok",
+        "recommendation_summary": "Implementation bundle stays inside the approved scope and is ready for the next stage.",
+        "options": [
+            {
+                "option_id": "internal_delivery_ok",
+                "label": "Accept build bundle",
+                "summary": "Internal checker can pass this implementation bundle downstream.",
+                "artifact_refs": ["art://runtime/build/implementation-bundle.json"],
+                "pros": ["Lets downstream delivery check start immediately"],
+                "cons": ["Leaves only non-blocking polish for later"],
+                "risks": ["Minor implementation notes may still need follow-up"],
+            }
+        ],
+        "evidence_summary": [
+            {
+                "evidence_id": "ev_build_bundle",
+                "source_type": "IMPLEMENTATION_BUNDLE",
+                "headline": "Implementation bundle is ready for internal review",
+                "summary": "Maker produced the structured implementation bundle required by the approved scope.",
+                "source_ref": "art://runtime/build/implementation-bundle.json",
+            }
+        ],
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "internal_delivery_ok",
+        "comment_template": "",
+        "badges": ["internal_delivery", "build_gate"],
+    }
+
+
 def _consensus_document_payload(
     *,
     topic: str = "Boardroom OS scope convergence",
@@ -1109,6 +1148,75 @@ def _maker_checker_result_submit_payload(
     }
 
 
+def _implementation_bundle_result_submit_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_build_001",
+    node_id: str = "node_build_001",
+    submitted_by: str = "emp_frontend_2",
+    include_review_request: bool = False,
+    review_request: dict | None = None,
+    artifact_refs: list[str] | None = None,
+    written_artifact_path: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
+    bundle_ref = (artifact_refs or [f"art://runtime/{ticket_id}/implementation-bundle.json"])[0]
+    payload = {
+        "summary": f"Implementation bundle prepared for {ticket_id}.",
+        "deliverable_artifact_refs": [bundle_ref],
+        "implementation_notes": [
+            "Homepage foundation stays inside the approved scope lock and is ready for internal checking."
+        ],
+    }
+    result = {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "submitted_by": submitted_by,
+        "result_status": "completed",
+        "schema_version": "implementation_bundle_v1",
+        "payload": payload,
+        "artifact_refs": [bundle_ref],
+        "written_artifacts": [
+            {
+                "path": written_artifact_path
+                or f"artifacts/ui/scope-followups/{ticket_id}/implementation-bundle.json",
+                "artifact_ref": bundle_ref,
+                "kind": "JSON",
+                "content_json": payload,
+            }
+        ],
+        "assumptions": ["Build bundle already includes the minimal approved homepage slice."],
+        "issues": [],
+        "confidence": 0.83,
+        "needs_escalation": False,
+        "summary": "Structured implementation bundle submitted.",
+        "failure_kind": None,
+        "failure_message": None,
+        "failure_detail": None,
+        "idempotency_key": idempotency_key or f"ticket-result-submit:{workflow_id}:{ticket_id}:implementation",
+    }
+    if include_review_request:
+        resolved_review_request = review_request or _internal_delivery_review_request()
+        if review_request is None:
+            resolved_review_request = {
+                **resolved_review_request,
+                "options": [
+                    {
+                        **resolved_review_request["options"][0],
+                        "artifact_refs": [bundle_ref],
+                    }
+                ],
+                "evidence_summary": [
+                    {
+                        **resolved_review_request["evidence_summary"][0],
+                        "source_ref": bundle_ref,
+                    }
+                ],
+            }
+        result["review_request"] = resolved_review_request
+    return result
+
+
 def _ticket_cancel_payload(
     workflow_id: str = "wf_seed",
     ticket_id: str = "tkt_visual_001",
@@ -1151,12 +1259,14 @@ def _ticket_create_payload(
     context_query_plan: dict | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
+    delivery_stage: str | None = None,
+    parent_ticket_id: str | None = None,
 ) -> dict:
     payload = {
         "ticket_id": ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
-        "parent_ticket_id": None,
+        "parent_ticket_id": parent_ticket_id,
         "attempt_no": attempt_no,
         "role_profile_ref": role_profile_ref,
         "constraints_ref": "global_constraints_v3",
@@ -1195,6 +1305,8 @@ def _ticket_create_payload(
         payload["tenant_id"] = tenant_id
     if workspace_id is not None:
         payload["workspace_id"] = workspace_id
+    if delivery_stage is not None:
+        payload["delivery_stage"] = delivery_stage
     return payload
 
 
@@ -1237,6 +1349,7 @@ def _ticket_fail_payload(
     failure_kind: str = "RUNTIME_ERROR",
     failure_message: str = "Worker execution failed.",
     failure_detail: dict | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     return {
         "workflow_id": workflow_id,
@@ -1246,7 +1359,7 @@ def _ticket_fail_payload(
         "failure_kind": failure_kind,
         "failure_message": failure_message,
         "failure_detail": failure_detail or {"step": "render", "exit_code": 1},
-        "idempotency_key": f"ticket-fail:{workflow_id}:{ticket_id}:{failure_kind}",
+        "idempotency_key": idempotency_key or f"ticket-fail:{workflow_id}:{ticket_id}:{failure_kind}",
     }
 
 
@@ -1319,6 +1432,7 @@ def _create_and_lease_ticket(
     context_query_plan: dict | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
+    delivery_stage: str | None = None,
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -1346,6 +1460,7 @@ def _create_and_lease_ticket(
             context_query_plan=context_query_plan,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
+            delivery_stage=delivery_stage,
         ),
     )
     assert create_response.status_code == 200
@@ -1391,6 +1506,7 @@ def _create_lease_and_start_ticket(
     context_query_plan: dict | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
+    delivery_stage: str | None = None,
 ) -> None:
     _create_and_lease_ticket(
         client,
@@ -1418,6 +1534,7 @@ def _create_lease_and_start_ticket(
         context_query_plan=context_query_plan,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
+        delivery_stage=delivery_stage,
     )
     start_response = client.post(
         "/api/v1/commands/ticket-start",
@@ -1827,6 +1944,7 @@ def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visu
     assert build_created_spec["delivery_stage"] == "BUILD"
     assert build_created_spec["output_schema_ref"] == "implementation_bundle"
     assert build_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert build_created_spec["auto_review_request"]["review_type"] == "INTERNAL_DELIVERY_REVIEW"
     assert any(ref.endswith("/board-brief.md") for ref in build_created_spec["input_artifact_refs"])
     assert any("consensus-document.json" in ref for ref in build_created_spec["input_artifact_refs"])
     assert check_created_spec["delivery_stage"] == "CHECK"
@@ -1959,6 +2077,581 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
     assert build_ticket["status"] == TICKET_STATUS_COMPLETED
     assert check_ticket["status"] == TICKET_STATUS_COMPLETED
     assert review_ticket["status"] == TICKET_STATUS_COMPLETED
+
+
+def test_internal_delivery_build_checker_approved_does_not_open_board_review(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_build_internal_review",
+        ticket_id="tkt_build_internal_review",
+        node_id="node_build_internal_review",
+        output_schema_ref="implementation_bundle",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_build_internal_review/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved scope follow-up.",
+            "Must produce a structured implementation bundle.",
+        ],
+        delivery_stage="BUILD",
+    )
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_implementation_bundle_result_submit_payload(
+            workflow_id="wf_build_internal_review",
+            ticket_id="tkt_build_internal_review",
+            node_id="node_build_internal_review",
+            include_review_request=True,
+        ),
+    )
+
+    repository = client.app.state.repository
+    node_projection = repository.get_current_node_projection(
+        "wf_build_internal_review",
+        "node_build_internal_review",
+    )
+    assert node_projection is not None
+    checker_ticket_id = node_projection["latest_ticket_id"]
+
+    checker_lease = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_build_internal_review",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_internal_review",
+            leased_by="emp_checker_1",
+        ),
+    )
+    checker_start = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_build_internal_review",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_internal_review",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_build_internal_review",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_internal_review",
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=f"ticket-result-submit:wf_build_internal_review:{checker_ticket_id}:approved",
+        ),
+    )
+
+    maker_ticket = repository.get_current_ticket_projection("tkt_build_internal_review")
+    current_node = repository.get_current_node_projection("wf_build_internal_review", "node_build_internal_review")
+
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+    assert checker_lease.status_code == 200
+    assert checker_start.status_code == 200
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+    assert repository.list_open_approvals() == []
+    assert repository.list_open_incidents() == []
+    assert maker_ticket is not None
+    assert maker_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert current_node is not None
+    assert current_node["status"] == NODE_STATUS_COMPLETED
+
+
+def test_internal_delivery_build_checker_changes_required_creates_fix_ticket_and_counts_rework_loop(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_build_rework",
+        ticket_id="tkt_build_rework",
+        node_id="node_build_rework",
+        output_schema_ref="implementation_bundle",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_build_rework/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved scope follow-up.",
+            "Must produce a structured implementation bundle.",
+        ],
+        delivery_stage="BUILD",
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_implementation_bundle_result_submit_payload(
+            workflow_id="wf_build_rework",
+            ticket_id="tkt_build_rework",
+            node_id="node_build_rework",
+            include_review_request=True,
+        ),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection("wf_build_rework", "node_build_rework")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_build_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_build_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_build_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework",
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_build_scope_drift",
+                    "severity": "high",
+                    "category": "SCOPE_DISCIPLINE",
+                    "headline": "Implementation bundle drifted outside the locked scope.",
+                    "summary": "Build bundle still includes extra non-MVP sections.",
+                    "required_action": "Trim the implementation bundle back to the locked scope before downstream checks.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:wf_build_rework:{checker_ticket_id}:changes-required",
+        ),
+    )
+
+    node_projection = repository.get_current_node_projection("wf_build_rework", "node_build_rework")
+    assert node_projection is not None
+    fix_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+    with repository.connection() as connection:
+        fix_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            node_projection["latest_ticket_id"],
+        )
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    workforce_response = client.get("/api/v1/projections/workforce")
+
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+    assert fix_ticket is not None
+    assert fix_ticket["status"] == TICKET_STATUS_PENDING
+    assert fix_created_spec is not None
+    assert fix_created_spec["output_schema_ref"] == "implementation_bundle"
+    assert fix_created_spec["delivery_stage"] == "BUILD"
+    assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+    assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
+        "INTERNAL_DELIVERY_REVIEW"
+    )
+    assert "Trim the implementation bundle back to the locked scope before downstream checks." in (
+        fix_created_spec["acceptance_criteria"][-1]
+    )
+    assert repository.list_open_approvals() == []
+    assert dashboard_response.json()["data"]["workforce_summary"]["workers_in_rework_loop"] == 1
+    assert workforce_response.json()["data"]["summary"]["workers_in_rework_loop"] == 1
+
+
+def test_internal_delivery_build_rework_keeps_downstream_check_pending_until_fix_closes(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_build_rework_gate",
+        ticket_id="tkt_build_rework_gate",
+        node_id="node_build_rework_gate",
+        output_schema_ref="implementation_bundle",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_build_rework_gate/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved scope follow-up.",
+            "Must produce a structured implementation bundle.",
+        ],
+        delivery_stage="BUILD",
+    )
+    check_create = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_build_rework_gate",
+            ticket_id="tkt_build_rework_gate_check",
+            node_id="node_build_rework_gate_check",
+            role_profile_ref="checker_primary",
+            output_schema_ref="delivery_check_report",
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=["reports/check/tkt_build_rework_gate_check/*"],
+            acceptance_criteria=[
+                "Must check the implementation bundle against the approved scope lock.",
+                "Must produce a structured delivery check report.",
+            ],
+            input_artifact_refs=["art://runtime/tkt_build_rework_gate/implementation-bundle.json"],
+            delivery_stage="CHECK",
+            parent_ticket_id="tkt_build_rework_gate",
+        ),
+    )
+    assert check_create.status_code == 200
+    assert check_create.json()["status"] == "ACCEPTED"
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_implementation_bundle_result_submit_payload(
+            workflow_id="wf_build_rework_gate",
+            ticket_id="tkt_build_rework_gate",
+            node_id="node_build_rework_gate",
+            include_review_request=True,
+        ),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection("wf_build_rework_gate", "node_build_rework_gate")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_build_rework_gate",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework_gate",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_build_rework_gate",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework_gate",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_build_rework_gate",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework_gate",
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_build_scope_drift_gate",
+                    "severity": "high",
+                    "category": "SCOPE_DISCIPLINE",
+                    "headline": "Implementation bundle drifted outside the locked scope.",
+                    "summary": "Build bundle still includes extra non-MVP sections.",
+                    "required_action": "Trim the implementation bundle back to the locked scope before downstream checks.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:wf_build_rework_gate:{checker_ticket_id}:changes-required",
+        ),
+    )
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+
+    scheduler_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:build-rework-gate"),
+    )
+
+    check_ticket = repository.get_current_ticket_projection("tkt_build_rework_gate_check")
+
+    assert scheduler_response.status_code == 200
+    assert scheduler_response.json()["status"] == "ACCEPTED"
+    assert check_ticket is not None
+    assert check_ticket["status"] == TICKET_STATUS_PENDING
+    assert check_ticket["lease_owner"] is None
+
+
+def test_internal_delivery_build_fix_pass_releases_downstream_check(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_worker(client, employee_id="emp_frontend_3")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_build_rework_resume",
+        ticket_id="tkt_build_rework_resume",
+        node_id="node_build_rework_resume",
+        output_schema_ref="implementation_bundle",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_build_rework_resume/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved scope follow-up.",
+            "Must produce a structured implementation bundle.",
+        ],
+        delivery_stage="BUILD",
+    )
+    check_create = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id="tkt_build_rework_resume_check",
+            node_id="node_build_rework_resume_check",
+            role_profile_ref="checker_primary",
+            output_schema_ref="delivery_check_report",
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=["reports/check/tkt_build_rework_resume_check/*"],
+            acceptance_criteria=[
+                "Must check the implementation bundle against the approved scope lock.",
+                "Must produce a structured delivery check report.",
+            ],
+            input_artifact_refs=["art://runtime/tkt_build_rework_resume/implementation-bundle.json"],
+            delivery_stage="CHECK",
+            parent_ticket_id="tkt_build_rework_resume",
+        ),
+    )
+    assert check_create.status_code == 200
+    assert check_create.json()["status"] == "ACCEPTED"
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_implementation_bundle_result_submit_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id="tkt_build_rework_resume",
+            node_id="node_build_rework_resume",
+            include_review_request=True,
+        ),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    first_checker_ticket_id = repository.get_current_node_projection(
+        "wf_build_rework_resume",
+        "node_build_rework_resume",
+    )["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=first_checker_ticket_id,
+            node_id="node_build_rework_resume",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=first_checker_ticket_id,
+            node_id="node_build_rework_resume",
+            started_by="emp_checker_1",
+        ),
+    )
+    first_checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=first_checker_ticket_id,
+            node_id="node_build_rework_resume",
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_build_scope_resume",
+                    "severity": "high",
+                    "category": "SCOPE_DISCIPLINE",
+                    "headline": "Implementation bundle drifted outside the locked scope.",
+                    "summary": "Build bundle still includes extra non-MVP sections.",
+                    "required_action": "Trim the implementation bundle back to the locked scope before downstream checks.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:wf_build_rework_resume:{first_checker_ticket_id}:changes-required",
+        ),
+    )
+    assert first_checker_result.status_code == 200
+    assert first_checker_result.json()["status"] == "ACCEPTED"
+
+    fix_ticket_id = repository.get_current_node_projection("wf_build_rework_resume", "node_build_rework_resume")[
+        "latest_ticket_id"
+    ]
+    with repository.connection() as connection:
+        fix_created_spec = repository.get_latest_ticket_created_payload(connection, fix_ticket_id)
+    fix_lease = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=fix_ticket_id,
+            node_id="node_build_rework_resume",
+            leased_by="emp_frontend_3",
+        ),
+    )
+    fix_start = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=fix_ticket_id,
+            node_id="node_build_rework_resume",
+            started_by="emp_frontend_3",
+        ),
+    )
+    fix_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_implementation_bundle_result_submit_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=fix_ticket_id,
+            node_id="node_build_rework_resume",
+            submitted_by="emp_frontend_3",
+            include_review_request=True,
+            written_artifact_path="artifacts/ui/scope-followups/tkt_build_rework_resume/implementation-bundle.json",
+            idempotency_key=f"ticket-result-submit:wf_build_rework_resume:{fix_ticket_id}:implementation",
+        ),
+    )
+    assert fix_lease.status_code == 200
+    assert fix_start.status_code == 200
+    assert fix_result.status_code == 200
+    assert fix_result.json()["status"] == "ACCEPTED"
+    assert fix_created_spec["auto_review_request"]["review_type"] == "INTERNAL_DELIVERY_REVIEW"
+
+    second_checker_ticket_id = repository.get_current_node_projection(
+        "wf_build_rework_resume",
+        "node_build_rework_resume",
+    )["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=second_checker_ticket_id,
+            node_id="node_build_rework_resume",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=second_checker_ticket_id,
+            node_id="node_build_rework_resume",
+            started_by="emp_checker_1",
+        ),
+    )
+    second_checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_build_rework_resume",
+            ticket_id=second_checker_ticket_id,
+            node_id="node_build_rework_resume",
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=f"ticket-result-submit:wf_build_rework_resume:{second_checker_ticket_id}:approved",
+        ),
+    )
+    assert second_checker_result.status_code == 200
+    assert second_checker_result.json()["status"] == "ACCEPTED"
+
+    scheduler_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:build-rework-resume"),
+    )
+
+    check_ticket = repository.get_current_ticket_projection("tkt_build_rework_resume_check")
+
+    assert scheduler_response.status_code == 200
+    assert scheduler_response.json()["status"] == "ACCEPTED"
+    assert check_ticket is not None
+    assert check_ticket["status"] == TICKET_STATUS_LEASED
+    assert check_ticket["lease_owner"] == "emp_checker_1"
+
+
+def test_internal_delivery_build_checker_escalated_opens_incident_without_board_review(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_build_escalation",
+        ticket_id="tkt_build_escalation",
+        node_id="node_build_escalation",
+        output_schema_ref="implementation_bundle",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_build_escalation/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved scope follow-up.",
+            "Must produce a structured implementation bundle.",
+        ],
+        delivery_stage="BUILD",
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_implementation_bundle_result_submit_payload(
+            workflow_id="wf_build_escalation",
+            ticket_id="tkt_build_escalation",
+            node_id="node_build_escalation",
+            include_review_request=True,
+        ),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection("wf_build_escalation", "node_build_escalation")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_build_escalation",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_escalation",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_build_escalation",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_escalation",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_build_escalation",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_escalation",
+            review_status="ESCALATED",
+            findings=[
+                {
+                    "finding_id": "finding_build_unverifiable",
+                    "severity": "high",
+                    "category": "DELIVERY_RISK",
+                    "headline": "Checker cannot verify the bundle with current evidence.",
+                    "summary": "Implementation bundle needs CEO attention before downstream work continues.",
+                    "required_action": "Escalate this build bundle for deeper intervention.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:wf_build_escalation:{checker_ticket_id}:escalated",
+        ),
+    )
+
+    open_incidents = repository.list_open_incidents()
+
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+    assert repository.list_open_approvals() == []
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["incident_type"] == "MAKER_CHECKER_REWORK_ESCALATION"
+    assert open_incidents[0]["ticket_id"] == checker_ticket_id
 
 
 def test_board_approve_scope_review_rejects_unsupported_followup_delivery_stage(client, set_ticket_time):

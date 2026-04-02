@@ -286,6 +286,46 @@ def _build_scope_followup_review_request(summary: str) -> dict[str, Any]:
     }
 
 
+def _build_scope_followup_internal_delivery_review_request(summary: str) -> dict[str, Any]:
+    clean_summary = summary.strip() or "Approved scope implementation bundle is ready for internal delivery review."
+    return {
+        "review_type": "INTERNAL_DELIVERY_REVIEW",
+        "priority": "high",
+        "title": "Check approved implementation bundle",
+        "subtitle": "Internal checker should validate the build output before downstream checking starts.",
+        "blocking_scope": "NODE_ONLY",
+        "trigger_reason": "Approved scope build bundle reached the internal checker gate.",
+        "why_now": "Downstream delivery check should only consume implementation that already passed peer review.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "internal_delivery_ok",
+        "recommendation_summary": clean_summary,
+        "options": [
+            {
+                "option_id": "internal_delivery_ok",
+                "label": "Pass implementation bundle",
+                "summary": clean_summary,
+                "artifact_refs": [],
+                "pros": ["Lets downstream checking continue without reopening scope."],
+                "cons": ["Leaves only non-blocking polish to later steps."],
+                "risks": ["Implementation notes may still need follow-up after checking."],
+            }
+        ],
+        "evidence_summary": [
+            {
+                "evidence_id": "ev_internal_delivery_bundle",
+                "source_type": "IMPLEMENTATION_BUNDLE",
+                "headline": "Implementation bundle is ready for peer review",
+                "summary": clean_summary,
+                "source_ref": None,
+            }
+        ],
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "internal_delivery_ok",
+        "comment_template": "",
+        "badges": ["internal_delivery", "scope_followup", "build_gate"],
+    }
+
+
 def _scope_followup_expected_artifact_ref(ticket_id: str, delivery_stage: DeliveryStage) -> str | None:
     if delivery_stage == DeliveryStage.BUILD:
         return f"art://runtime/{ticket_id}/implementation-bundle.json"
@@ -512,7 +552,9 @@ def _build_scope_followup_ticket_payloads(
             workspace_id=workspace_id,
             delivery_stage=delivery_stage,
             auto_review_request=(
-                _build_scope_followup_review_request(followup_summary)
+                _build_scope_followup_internal_delivery_review_request(followup_summary)
+                if delivery_stage == DeliveryStage.BUILD
+                else _build_scope_followup_review_request(followup_summary)
                 if delivery_stage == DeliveryStage.REVIEW
                 else None
             ),

@@ -23,7 +23,10 @@
   - 当前剩余缺口：更多票型上的 staffing policy 也还没补齐，replace / freeze 之外的恢复策略仍需要继续收口
 - 直接推进主线：把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
   - 当前已新增第二条真实链路：`MEETING_ESCALATION + consensus_document@1` 现在也会先走 maker-checker，再进 `Inbox -> Review Room`
+  - 当前已新增第三条真实链路：`BUILD + implementation_bundle@1` 现在会先走内部 `maker -> checker -> fix / incident`，通过后才放行下游 `CHECK`
+  - 当前剩余缺口：`delivery_check_report@1` 和更后置的交付产物还没有接进同等级别的内部治理
 - 直接推进主线：把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级、更明确的 fix 票约束，以及返工票默认排除原 maker 的最小换人链，剩余重点是把这套 staffing policy 推广到更多关键产物
+  - 当前已完成一段直接推进主线的返工收口：build checker `CHANGES_REQUIRED` 会开真实 fix 票、默认排除原 maker、挡住下游 `CHECK`，fix 过审后再恢复主链；`ESCALATED` 会停在 incident，而不是误开董事会 approval
 - 把 `Context Compiler` 从“文本类 artifact 可内联”的当前版本继续推进，补完二进制 / 大文件 / 检索增强下的编译与降级策略
   - 当前已完成：`TEXT / MARKDOWN / JSON` 可完整内联；超预算文本 / JSON 会先退到确定性片段编译，片段仍放不下时再退到确定性预览；图片 / PDF 会作为结构化媒体引用进入执行包；其他二进制会作为结构化下载引用进入执行包；context block 和 worker execution package 现在都会显式带出 `display_hint`，不用再靠字段名猜是正文、预览还是下载；bundle / manifest / developer inspector 已暴露结构化降级原因、selector、片段/预览策略和媒体/下载型附件计数；编译时还能拉入同 workspace、跨 workflow 的本地 `review / incident / artifact` 历史摘要卡片；显式输入现在会为后续 mandatory source 预留最小 descriptor 预算，最终 bundle 不再允许悄悄超出 `max_context_tokens`；如果连 mandatory 输入 descriptor 都塞不进去，编译会按 `FAIL_CLOSED` 直接失败；编译产物现在还会稳定派生最小 `json_messages_v1` 渲染结果，并同步进入 worker execution package 与 `Review Room` developer inspector；in-process runtime 也已经接通最小真实 `prov_openai_compat` provider 路径，配置兼容 `responses` 站点后可直接跑真实调用
   - 当前仍缺：更强的预算压缩矩阵、更多 schema / role profile 的真实执行覆盖，以及向量/联网之外是否还需要更丰富的本地检索策略；`provider routing / recovery`、浏览器直传和云预签名 multipart 继续后置到 MVP 之后再评估
@@ -39,7 +42,7 @@
   - 同一条“推进到下一个真实停点”的规则现在也会复用到后续 `board-approve`：scope approval 后，默认小项目链路会顺着 `BUILD -> CHECK -> 最终 REVIEW` 连续推进，直到撞上新的 board review、incident 或无可派单员工
 - 已完成直接推进主线：把已批准 scope 的 follow-up 从“都能落成真实视觉票”推进到“有更丰富的下游票型”
   - 当前 runtime 默认会生成一条受支持的 staged follow-up 链：`BUILD -> CHECK -> REVIEW`
-  - `BUILD` 现在产出 `implementation_bundle@1`，`CHECK` 现在产出 `delivery_check_report@1`，最终 `REVIEW` 再走现有 `ui_milestone_review@1 -> maker-checker -> Inbox -> Review Room`
+  - `BUILD` 现在产出 `implementation_bundle@1`，并先走内部 maker-checker 内审；`CHECK` 现在产出 `delivery_check_report@1`，最终 `REVIEW` 再走现有 `ui_milestone_review@1 -> maker-checker -> Inbox -> Review Room`
   - 当前默认本地路径已经能从 scope approval 直接自动跑到最终董事会 review；更后面的缺口不再是“scope 后没有内部 build/check”，而是最终 review 之后还缺更丰富的交付 / 发布票型
 
 ## P1：套上最薄 Web 壳
@@ -50,6 +53,7 @@
   - 无 active workflow 时会显示最小 `project-init` 表单，并明确提示它会把 workflow 推进到首个 review
   - `approve / reject / modify constraints` 动作提交后会立即重新拉取，并用 SSE 做失效刷新
   - `Inbox` 里的 incident 项现在也能直接打开详情，并复用现有 `incident-resolve` 命令完成恢复闭环
+  - `workforce` 面板现在也会显式显示 `rework loops`，董事会和排障人能直接看见 build 链有没有卡在返工
 - 已完成直接推进主线：首页现在也能打开 `dependency inspector`
   - 当前 active workflow 会暴露一份只服务本地 MVP 的依赖快照，直接展示 `Plan / Build / Check / Review` 之间的真实依赖、当前停点、以及回到对应 `Review Room / Incident` 的入口
   - 这条读面继续保持 projection-first：前端不回放完整 DAG，不在浏览器里推导新工作流状态，只消费后端给出的当前链路解释

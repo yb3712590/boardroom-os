@@ -968,6 +968,24 @@ describe('Boardroom UI', () => {
     expect(screen.getByText(/incident_opened timeout escalation/i)).toBeInTheDocument()
   })
 
+  it('shows rework loops in the workforce panel when build rework is open', async () => {
+    installBoardroomMock({
+      workforce: {
+        ...workforceData(),
+        summary: {
+          ...workforceData().summary,
+          workers_in_rework_loop: 7,
+        },
+      },
+    })
+
+    render(<App />)
+
+    expect(await screen.findByText(/live workforce/i)).toBeInTheDocument()
+    expect(screen.getByText('Rework loops')).toBeInTheDocument()
+    expect(screen.getByText('7')).toBeInTheDocument()
+  })
+
   it('shows the dependency inspector entry only when an active workflow exists', async () => {
     installBoardroomMock()
 

@@ -34,6 +34,10 @@ export function WorkforcePanel({ workforce, loading }: WorkforcePanelProps) {
               <strong>{workforce.summary.active_checkers}</strong>
             </div>
             <div>
+              <span>Rework loops</span>
+              <strong>{workforce.summary.workers_in_rework_loop}</strong>
+            </div>
+            <div>
               <span>Contained</span>
               <strong>{workforce.summary.workers_in_staffing_containment}</strong>
             </div>

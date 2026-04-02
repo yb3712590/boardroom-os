@@ -1149,6 +1149,13 @@ def test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_re
         repository.get_current_ticket_projection(ticket_id) for ticket_id in followup_ticket_ids
     ]
     open_approvals = repository.list_open_approvals()
+    build_checker_creates = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_CREATED"
+        and (event["payload"].get("ticket_kind") == "MAKER_CHECKER_REVIEW")
+        and (event["payload"].get("delivery_stage") == "BUILD")
+    ]
 
     assert [item["delivery_stage"] for item in consensus_payload["followup_tickets"]] == [
         "BUILD",
@@ -1161,6 +1168,7 @@ def test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_re
     assert approve_response.json()["status"] == "ACCEPTED"
     assert all(ticket is not None for ticket in followup_tickets)
     assert all(ticket["status"] == "COMPLETED" for ticket in followup_tickets if ticket is not None)
+    assert len(build_checker_creates) == 1
     assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
 
 
