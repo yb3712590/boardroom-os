@@ -311,6 +311,8 @@ class IncidentProjectionItem(StrictModel):
 
 class IncidentDetailProjectionData(StrictModel):
     incident: IncidentProjectionItem
+    available_followup_actions: list[str]
+    recommended_followup_action: str | None = None
 
 
 class IncidentDetailProjectionEnvelope(ProjectionEnvelopeBase):

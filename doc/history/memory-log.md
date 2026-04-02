@@ -281,6 +281,14 @@
   - `cd backend && . .venv/bin/activate && python -m pytest tests/test_api.py::test_board_approve_visual_review_auto_advances_next_pending_followup_to_next_review tests/test_api.py::test_board_approve_visual_review_keeps_next_followup_pending_when_no_eligible_worker tests/test_api.py::test_board_approve_scope_review_creates_all_supported_followups_and_isolates_write_sets -q` -> `3 passed`
   - `cd backend && . .venv/bin/activate && python -m pytest tests/test_api.py -k "project_init_auto_advances_to_scope_review or scope_review or board_approve_command_resolves_open_approval or board_reject_command_resolves_open_approval or modify_constraints_command_resolves_open_approval" -q` -> `14 passed, 204 deselected`
   - `cd backend && . .venv/bin/activate && python -m pytest tests/test_scheduler_runner.py -k "consensus_document or followup" -q` -> `3 passed, 22 deselected`
+- 把 React Boardroom UI 补成了更适合董事会现场演示的治理闭环：首页右侧新增 `workforce + recent events` 读面，同一壳里能直接看到谁在执行、哪里在报警，而不再只盯着 `workflow river` 和 inbox。
+- `Inbox` 里的 incident 项现在可以直接打开详情抽屉，并复用现有 `incident-resolve` 命令完成恢复闭环；演示异常时不再需要跳回命令行。
+- incident detail projection 这轮只做了最小前端契约补充：新增 `available_followup_actions` 和 `recommended_followup_action`，让浏览器只消费后端允许的动作，不自己硬编码恢复规则。
+- Fresh verification after this change is:
+  - `cd frontend && npm run lint` -> `exit 0`
+  - `cd frontend && npm run test:run` -> `1 passed, 10 tests passed`
+  - `cd frontend && npm run build` -> `built in 196ms`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "dashboard or review_room or inbox or workforce or incident" -q` -> `48 passed, 171 deselected`
 
 ### Current Watch-Outs
 

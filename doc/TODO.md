@@ -44,14 +44,13 @@
 ## P1：套上最薄 Web 壳
 
 - 已完成直接推进主线：独立 React Boardroom UI 已落地在 `frontend/`
-  - 当前已经接通 `dashboard / inbox / review room`
+  - 当前已经接通 `dashboard / inbox / review room / incident detail / workforce / recent events`
   - 首页采用 `workflow river` 主舞台，并以 `Board Gate` 高亮待审状态
   - 无 active workflow 时会显示最小 `project-init` 表单，并明确提示它会把 workflow 推进到首个 review
   - `approve / reject / modify constraints` 动作提交后会立即重新拉取，并用 SSE 做失效刷新
+  - `Inbox` 里的 incident 项现在也能直接打开详情，并复用现有 `incident-resolve` 命令完成恢复闭环
 - 直接推进主线：继续补齐 UI 的剩余 MVP 读面
   - `provider / model` 设置页
-  - `incident` 详情页
-  - `workforce` 深入视图
   - dependency inspector
 - 为主线解堵：继续保持 projection-first，前端不拥有工作流真相
   - 当前首页河道只消费 `dashboard.pipeline_summary.phases` 的固定五段高层摘要，不新造前端工作流引擎

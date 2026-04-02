@@ -60,11 +60,13 @@ from app.contracts.projections import (
     WorkspaceSummary,
 )
 from app.contracts.runtime import RenderedExecutionPayloadSummary
+from app.contracts.commands import IncidentFollowupAction
 from app.config import get_settings
 from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_OPEN,
+    INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
@@ -1026,6 +1028,34 @@ def build_incident_detail_projection(
         return None
 
     cursor, projection_version = repository.get_cursor_and_version()
+    incident_type = str(incident["incident_type"])
+    available_followup_actions = [IncidentFollowupAction.RESTORE_ONLY.value]
+    recommended_followup_action: str | None = IncidentFollowupAction.RESTORE_ONLY.value
+    if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
+        available_followup_actions.append(
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value
+        )
+        recommended_followup_action = IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value
+    elif incident_type == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
+        available_followup_actions.append(
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value
+        )
+        recommended_followup_action = IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value
+    elif incident_type == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
+        available_followup_actions.append(
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE.value
+        )
+        recommended_followup_action = (
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE.value
+        )
+    elif incident_type == INCIDENT_TYPE_STAFFING_CONTAINMENT:
+        available_followup_actions.append(
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT.value
+        )
+        recommended_followup_action = (
+            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT.value
+        )
+
     return IncidentDetailProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
         generated_at=now_local(),
@@ -1046,7 +1076,9 @@ def build_incident_detail_projection(
                 opened_at=incident["opened_at"],
                 closed_at=incident.get("closed_at"),
                 payload=incident.get("payload") or {},
-            )
+            ),
+            available_followup_actions=available_followup_actions,
+            recommended_followup_action=recommended_followup_action,
         ),
     )
 

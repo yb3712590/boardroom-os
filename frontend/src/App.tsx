@@ -7,19 +7,29 @@ import {
   boardReject,
   getDashboard,
   getDeveloperInspector,
+  getIncidentDetail,
   getInbox,
   getReviewRoom,
+  getWorkforce,
+  incidentResolve,
   modifyConstraints,
   projectInit,
   type DashboardData,
+  type IncidentDetailData,
   type DeveloperInspectorData,
   type InboxData,
   type InboxItem,
   type ReviewRoomData,
+  type WorkforceData,
 } from './api'
+import { EventTicker } from './components/EventTicker'
+import { IncidentDrawer } from './components/IncidentDrawer'
 import { ReviewRoomDrawer } from './components/ReviewRoomDrawer'
+import { WorkforcePanel } from './components/WorkforcePanel'
 import { WorkflowRiver } from './components/WorkflowRiver'
 import './App.css'
+
+const DEFAULT_INCIDENT_OPERATOR = 'emp_ops_1'
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('en-US').format(value)
@@ -118,9 +128,10 @@ type InboxWellProps = {
   items: InboxItem[]
   loading: boolean
   onOpenReview: (reviewPackId: string) => void
+  onOpenIncident: (incidentId: string) => void
 }
 
-function InboxWell({ items, loading, onOpenReview }: InboxWellProps) {
+function InboxWell({ items, loading, onOpenReview, onOpenIncident }: InboxWellProps) {
   return (
     <aside className="inbox-well" aria-labelledby="inbox-title">
       <div className="section-heading">
@@ -134,12 +145,20 @@ function InboxWell({ items, loading, onOpenReview }: InboxWellProps) {
       <div className="inbox-item-list">
         {items.map((item) => {
           const isReviewRoute = item.route_target.view === 'review_room' && item.route_target.review_pack_id
-          return isReviewRoute ? (
+          const isIncidentRoute =
+            item.route_target.view === 'incident_detail' && item.route_target.incident_id != null
+          return isReviewRoute || isIncidentRoute ? (
             <button
               key={item.inbox_item_id}
               type="button"
               className={`inbox-item inbox-item-${item.priority}`}
-              onClick={() => onOpenReview(item.route_target.review_pack_id as string)}
+              onClick={() => {
+                if (isReviewRoute) {
+                  onOpenReview(item.route_target.review_pack_id as string)
+                  return
+                }
+                onOpenIncident(item.route_target.incident_id as string)
+              }}
             >
               <span className="inbox-item-ribbon" aria-hidden="true" />
               <span className="inbox-item-copy">
@@ -166,26 +185,36 @@ function InboxWell({ items, loading, onOpenReview }: InboxWellProps) {
 
 function ShellRoute() {
   const navigate = useNavigate()
-  const { reviewPackId } = useParams()
+  const { reviewPackId, incidentId } = useParams()
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [inbox, setInbox] = useState<InboxData | null>(null)
+  const [workforce, setWorkforce] = useState<WorkforceData | null>(null)
   const [reviewRoom, setReviewRoom] = useState<ReviewRoomData | null>(null)
+  const [incidentDetail, setIncidentDetail] = useState<IncidentDetailData | null>(null)
   const [developerInspector, setDeveloperInspector] = useState<DeveloperInspectorData | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(true)
   const [reviewLoading, setReviewLoading] = useState(false)
+  const [incidentLoading, setIncidentLoading] = useState(false)
   const [inspectorLoading, setInspectorLoading] = useState(false)
   const [snapshotError, setSnapshotError] = useState<string | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
+  const [incidentError, setIncidentError] = useState<string | null>(null)
   const [projectInitPending, setProjectInitPending] = useState(false)
   const [submittingAction, setSubmittingAction] = useState<string | null>(null)
+  const [submittingIncidentAction, setSubmittingIncidentAction] = useState(false)
 
   const reloadSnapshot = async () => {
     setSnapshotError(null)
     setSnapshotLoading(true)
     try {
-      const [nextDashboard, nextInbox] = await Promise.all([getDashboard(), getInbox()])
+      const [nextDashboard, nextInbox, nextWorkforce] = await Promise.all([
+        getDashboard(),
+        getInbox(),
+        getWorkforce(),
+      ])
       setDashboard(nextDashboard)
       setInbox(nextInbox)
+      setWorkforce(nextWorkforce)
     } catch (error) {
       setSnapshotError(error instanceof Error ? error.message : 'Failed to load the latest boardroom snapshot.')
     } finally {
@@ -212,6 +241,20 @@ function ShellRoute() {
     }
   })
 
+  const refreshIncidentDetail = useEffectEvent(async (nextIncidentId: string) => {
+    setIncidentLoading(true)
+    setIncidentError(null)
+    try {
+      const payload = await getIncidentDetail(nextIncidentId)
+      setIncidentDetail(payload)
+    } catch (error) {
+      setIncidentError(error instanceof Error ? error.message : 'Failed to load the current incident detail.')
+      setIncidentDetail(null)
+    } finally {
+      setIncidentLoading(false)
+    }
+  })
+
   useEffect(() => {
     void refreshSnapshot()
   }, [])
@@ -228,21 +271,38 @@ function ShellRoute() {
   }, [reviewPackId])
 
   useEffect(() => {
+    if (!incidentId) {
+      setIncidentDetail(null)
+      setIncidentLoading(false)
+      setIncidentError(null)
+      return
+    }
+    void refreshIncidentDetail(incidentId)
+  }, [incidentId])
+
+  useEffect(() => {
     const eventSource = new EventSource('/api/v1/events/stream')
     const handleInvalidate = () => {
       void refreshSnapshot()
       if (reviewPackId) {
         void refreshReviewRoom(reviewPackId)
       }
+      if (incidentId) {
+        void refreshIncidentDetail(incidentId)
+      }
     }
     eventSource.addEventListener('boardroom-event', handleInvalidate)
     return () => {
       eventSource.close()
     }
-  }, [reviewPackId])
+  }, [reviewPackId, incidentId])
 
   const handleOpenReview = (packId: string) => {
     navigate(`/review/${packId}`)
+  }
+
+  const handleOpenIncident = (nextIncidentId: string) => {
+    navigate(`/incident/${nextIncidentId}`)
   }
 
   const handleProjectInit = async (payload: {
@@ -283,6 +343,31 @@ function ShellRoute() {
   }
 
   const reviewPack = reviewRoom?.review_pack
+
+  const handleIncidentResolve = async (input: {
+    resolutionSummary: string
+    followupAction: string
+  }) => {
+    if (!incidentDetail) {
+      return
+    }
+    setSubmittingIncidentAction(true)
+    try {
+      await incidentResolve({
+        incident_id: incidentDetail.incident.incident_id,
+        resolved_by: DEFAULT_INCIDENT_OPERATOR,
+        resolution_summary: input.resolutionSummary,
+        followup_action: input.followupAction,
+        idempotency_key: `incident-resolve:${incidentDetail.incident.incident_id}:${Date.now()}`,
+      })
+      await reloadSnapshot()
+      navigate('/')
+    } catch (error) {
+      setIncidentError(error instanceof Error ? error.message : 'Incident recovery failed.')
+    } finally {
+      setSubmittingIncidentAction(false)
+    }
+  }
 
   const handleApprove = async (input: { selectedOptionId: string; boardComment: string }) => {
     if (!reviewPack) {
@@ -409,7 +494,12 @@ function ShellRoute() {
           </header>
 
           <div className="boardroom-main">
-            <InboxWell items={inbox?.items ?? []} loading={snapshotLoading} onOpenReview={handleOpenReview} />
+            <InboxWell
+              items={inbox?.items ?? []}
+              loading={snapshotLoading}
+              onOpenReview={handleOpenReview}
+              onOpenIncident={handleOpenIncident}
+            />
 
             <section className="boardroom-center">
               {snapshotError ? <div className="shell-error">{snapshotError}</div> : null}
@@ -452,6 +542,11 @@ function ShellRoute() {
                 </>
               ) : null}
             </section>
+
+            <aside className="boardroom-support">
+              <WorkforcePanel workforce={workforce} loading={snapshotLoading && workforce == null} />
+              <EventTicker events={dashboard?.event_stream_preview ?? []} />
+            </aside>
           </div>
         </div>
       </div>
@@ -475,6 +570,21 @@ function ShellRoute() {
         onReject={handleReject}
         onModifyConstraints={handleModifyConstraints}
       />
+
+      <IncidentDrawer
+        key={
+          incidentDetail != null
+            ? `${incidentDetail.incident.incident_id}:${incidentDetail.recommended_followup_action ?? 'none'}`
+            : incidentId ?? 'incident-closed'
+        }
+        isOpen={Boolean(incidentId)}
+        loading={incidentLoading}
+        incidentData={incidentDetail}
+        error={incidentError}
+        submitting={submittingIncidentAction}
+        onClose={() => navigate('/')}
+        onResolve={handleIncidentResolve}
+      />
     </>
   )
 }
@@ -485,6 +595,7 @@ function App() {
       <Routes>
         <Route path="/" element={<ShellRoute />} />
         <Route path="/review/:reviewPackId" element={<ShellRoute />} />
+        <Route path="/incident/:incidentId" element={<ShellRoute />} />
       </Routes>
     </BrowserRouter>
   )

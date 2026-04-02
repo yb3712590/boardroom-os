@@ -133,6 +133,91 @@ function reviewRoomData() {
   }
 }
 
+function workforceData() {
+  return {
+    summary: {
+      active_workers: 1,
+      idle_workers: 1,
+      overloaded_workers: 0,
+      active_checkers: 1,
+      workers_in_rework_loop: 0,
+      workers_in_staffing_containment: 0,
+    },
+    role_lanes: [
+      {
+        role_type: 'frontend_engineer',
+        active_count: 1,
+        idle_count: 1,
+        workers: [
+          {
+            employee_id: 'emp_frontend_2',
+            role_type: 'frontend_engineer',
+            employment_state: 'ACTIVE',
+            activity_state: 'EXECUTING',
+            current_ticket_id: 'tkt_visual_002',
+            current_node_id: 'node_homepage_visual',
+            provider_id: 'prov_openai_compat',
+            last_update_at: '2026-04-01T23:08:00+08:00',
+          },
+          {
+            employee_id: 'emp_frontend_backup',
+            role_type: 'frontend_engineer',
+            employment_state: 'ACTIVE',
+            activity_state: 'IDLE',
+            current_ticket_id: null,
+            current_node_id: null,
+            provider_id: null,
+            last_update_at: '2026-04-01T23:07:00+08:00',
+          },
+        ],
+      },
+      {
+        role_type: 'checker',
+        active_count: 1,
+        idle_count: 0,
+        workers: [
+          {
+            employee_id: 'emp_checker_1',
+            role_type: 'checker',
+            employment_state: 'ACTIVE',
+            activity_state: 'REVIEWING',
+            current_ticket_id: 'tkt_checker_001',
+            current_node_id: 'node_homepage_visual',
+            provider_id: null,
+            last_update_at: '2026-04-01T23:08:00+08:00',
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function incidentDetailData(overrides: Partial<JsonRecord> = {}) {
+  return {
+    incident: {
+      incident_id: 'inc_093',
+      workflow_id: 'wf_001',
+      node_id: 'node_homepage_visual',
+      ticket_id: 'tkt_visual_002',
+      provider_id: null,
+      incident_type: 'RUNTIME_TIMEOUT_ESCALATION',
+      status: 'OPEN',
+      severity: 'high',
+      fingerprint: 'wf_001:node_homepage_visual:runtime-timeout',
+      circuit_breaker_state: 'OPEN',
+      opened_at: '2026-04-01T23:09:00+08:00',
+      closed_at: null,
+      payload: {
+        timeout_streak_count: 2,
+        latest_failure_kind: 'TIMEOUT_SLA_EXCEEDED',
+      },
+    },
+    available_followup_actions: ['RESTORE_ONLY', 'RESTORE_AND_RETRY_LATEST_TIMEOUT'],
+    recommended_followup_action: 'RESTORE_AND_RETRY_LATEST_TIMEOUT',
+    ...overrides,
+  }
+}
+
 function inspectorData() {
   return {
     review_pack_id: 'brp_001',
@@ -256,7 +341,24 @@ function dashboardData(overrides: Partial<JsonRecord> = {}) {
       workers_in_rework_loop: 0,
       workers_in_staffing_containment: 0,
     },
-    event_stream_preview: [],
+    event_stream_preview: [
+      {
+        event_id: 'evt_000041',
+        occurred_at: '2026-04-01T23:09:00+08:00',
+        category: 'ticket',
+        severity: 'info',
+        message: 'TICKET_STARTED by emp_frontend_2',
+        related_ref: 'tkt_visual_002',
+      },
+      {
+        event_id: 'evt_000042',
+        occurred_at: '2026-04-01T23:10:00+08:00',
+        category: 'incident',
+        severity: 'warning',
+        message: 'INCIDENT_OPENED timeout escalation on node_homepage_visual',
+        related_ref: 'inc_093',
+      },
+    ],
     ...overrides,
   }
 }
@@ -277,14 +379,18 @@ function jsonResponse(data: unknown) {
 function installBoardroomMock(options?: {
   dashboard?: JsonRecord
   inbox?: JsonRecord
+  workforce?: JsonRecord
   reviewRoom?: JsonRecord
   inspector?: JsonRecord
+  incidentDetail?: JsonRecord
 }) {
   const state = {
     dashboard: options?.dashboard ?? dashboardData(),
     inbox: options?.inbox ?? inboxData(),
+    workforce: options?.workforce ?? workforceData(),
     reviewRoom: options?.reviewRoom ?? reviewRoomData(),
     inspector: options?.inspector ?? inspectorData(),
+    incidentDetail: options?.incidentDetail ?? incidentDetailData(),
   }
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -297,8 +403,14 @@ function installBoardroomMock(options?: {
     if (method === 'GET' && url.endsWith('/api/v1/projections/inbox')) {
       return jsonResponse(envelope(state.inbox))
     }
+    if (method === 'GET' && url.endsWith('/api/v1/projections/workforce')) {
+      return jsonResponse(envelope(state.workforce))
+    }
     if (method === 'GET' && url.endsWith('/api/v1/projections/review-room/brp_001')) {
       return jsonResponse(envelope(state.reviewRoom))
+    }
+    if (method === 'GET' && url.endsWith('/api/v1/projections/incidents/inc_093')) {
+      return jsonResponse(envelope(state.incidentDetail))
     }
     if (
       method === 'GET' &&
@@ -391,6 +503,47 @@ function installBoardroomMock(options?: {
         received_at: '2026-04-01T23:12:00+08:00',
         reason: null,
         causation_hint: 'approval:apr_001',
+      })
+    }
+    if (method === 'POST' && url.endsWith('/api/v1/commands/incident-resolve')) {
+      state.dashboard = dashboardData({
+        ops_strip: {
+          ...dashboardData().ops_strip,
+          blocked_nodes: 0,
+          active_tickets: 1,
+          open_incidents: 0,
+          open_circuit_breakers: 0,
+        },
+        inbox_counts: {
+          approvals_pending: 0,
+          incidents_pending: 0,
+          budget_alerts: 0,
+          provider_alerts: 0,
+        },
+      })
+      state.inbox = inboxData()
+      state.incidentDetail = incidentDetailData({
+        incident: {
+          ...incidentDetailData().incident,
+          status: 'RECOVERING',
+          circuit_breaker_state: 'CLOSED',
+          payload: {
+            resolved_by: 'emp_ops_1',
+            resolution_summary: 'Restore execution and retry the latest timeout attempt.',
+            followup_action: 'RESTORE_AND_RETRY_LATEST_TIMEOUT',
+            followup_ticket_id: 'tkt_visual_003',
+          },
+        },
+        available_followup_actions: ['RESTORE_ONLY', 'RESTORE_AND_RETRY_LATEST_TIMEOUT'],
+        recommended_followup_action: 'RESTORE_AND_RETRY_LATEST_TIMEOUT',
+      })
+      return jsonResponse({
+        command_id: 'cmd_incident_resolve',
+        idempotency_key: 'incident-resolve:mock',
+        status: 'ACCEPTED',
+        received_at: '2026-04-01T23:13:00+08:00',
+        reason: null,
+        causation_hint: 'incident:inc_093',
       })
     }
 
@@ -536,6 +689,18 @@ describe('Boardroom UI', () => {
     expect(screen.getByText('Review homepage visual milestone')).toBeInTheDocument()
   })
 
+  it('renders workforce lanes and recent event ticker on the homepage', async () => {
+    installBoardroomMock()
+
+    render(<App />)
+
+    expect(await screen.findByText(/live workforce/i)).toBeInTheDocument()
+    expect(screen.getByText('emp_frontend_2')).toBeInTheDocument()
+    expect(screen.getAllByText('node_homepage_visual').length).toBeGreaterThan(0)
+    expect(screen.getByText(/recent event pulse/i)).toBeInTheDocument()
+    expect(screen.getByText(/incident_opened timeout escalation/i)).toBeInTheDocument()
+  })
+
   it('opens the review room and loads the review pack when an inbox review item is clicked', async () => {
     installBoardroomMock({
       inbox: inboxData([
@@ -565,6 +730,103 @@ describe('Boardroom UI', () => {
 
     expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
     expect(screen.getByText(/approve option a to unblock the main build path/i)).toBeInTheDocument()
+  })
+
+  it('opens the incident drawer when an inbox incident item is clicked', async () => {
+    installBoardroomMock({
+      dashboard: dashboardData({
+        ops_strip: {
+          ...dashboardData().ops_strip,
+          open_incidents: 1,
+          open_circuit_breakers: 1,
+          blocked_nodes: 1,
+        },
+        inbox_counts: {
+          approvals_pending: 0,
+          incidents_pending: 1,
+          budget_alerts: 0,
+          provider_alerts: 0,
+        },
+      }),
+      inbox: inboxData([
+        {
+          inbox_item_id: 'inbox_inc_093',
+          workflow_id: 'wf_001',
+          item_type: 'INCIDENT_ESCALATION',
+          priority: 'high',
+          status: 'OPEN',
+          created_at: '2026-04-01T23:10:00+08:00',
+          title: 'Repeated runtime timeout on homepage visual node',
+          summary: 'The same node exceeded the timeout threshold and opened a breaker.',
+          source_ref: 'inc_093',
+          route_target: {
+            view: 'incident_detail',
+            incident_id: 'inc_093',
+          },
+          badges: ['runtime_timeout', 'circuit_breaker'],
+        },
+      ]),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /repeated runtime timeout on homepage visual node/i }))
+
+    expect(await screen.findByRole('heading', { name: /runtime timeout escalation/i })).toBeInTheDocument()
+    expect(screen.getByText(/timeout streak count/i)).toBeInTheDocument()
+  })
+
+  it('submits incident resolve and refreshes the snapshot', async () => {
+    const { fetchMock } = installBoardroomMock({
+      dashboard: dashboardData({
+        ops_strip: {
+          ...dashboardData().ops_strip,
+          open_incidents: 1,
+          open_circuit_breakers: 1,
+          blocked_nodes: 1,
+        },
+        inbox_counts: {
+          approvals_pending: 0,
+          incidents_pending: 1,
+          budget_alerts: 0,
+          provider_alerts: 0,
+        },
+      }),
+      inbox: inboxData([
+        {
+          inbox_item_id: 'inbox_inc_093',
+          workflow_id: 'wf_001',
+          item_type: 'INCIDENT_ESCALATION',
+          priority: 'high',
+          status: 'OPEN',
+          created_at: '2026-04-01T23:10:00+08:00',
+          title: 'Repeated runtime timeout on homepage visual node',
+          summary: 'The same node exceeded the timeout threshold and opened a breaker.',
+          source_ref: 'inc_093',
+          route_target: {
+            view: 'incident_detail',
+            incident_id: 'inc_093',
+          },
+          badges: ['runtime_timeout', 'circuit_breaker'],
+        },
+      ]),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /repeated runtime timeout on homepage visual node/i }))
+    await user.type(await screen.findByLabelText(/resolution summary/i), 'Restore execution and retry the latest timeout attempt.')
+    await user.click(await screen.findByRole('button', { name: /apply recovery action/i }))
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/commands/incident-resolve',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    )
+    expect((await screen.findAllByText(/board gate clear/i)).length).toBeGreaterThan(0)
   })
 
   it('submits approve and refreshes the board gate state', async () => {

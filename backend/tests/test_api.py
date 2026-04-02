@@ -5954,6 +5954,13 @@ def test_incident_projection_dashboard_inbox_and_endpoint_reflect_open_timeout_i
     assert incident_response.json()["data"]["incident"]["incident_id"] == incident_id
     assert incident_response.json()["data"]["incident"]["status"] == "OPEN"
     assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "OPEN"
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RESTORE_ONLY",
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+    )
 
 
 def test_incident_resolve_closes_breaker_and_removes_open_incident_from_dashboard_and_inbox(
@@ -6546,6 +6553,13 @@ def test_provider_failure_opens_provider_incident_blocks_same_provider_and_updat
     assert incident_response.json()["data"]["incident"]["provider_id"] == "prov_openai_compat"
     assert incident_response.json()["data"]["incident"]["incident_type"] == "PROVIDER_EXECUTION_PAUSED"
     assert incident_response.json()["data"]["incident"]["payload"]["pause_reason"] == "PROVIDER_RATE_LIMITED"
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RESTORE_ONLY",
+        "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
+    )
 
 
 def test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure(client, set_ticket_time):
@@ -6701,6 +6715,13 @@ def test_repeated_failure_opens_incident_and_blocks_same_node_dispatch(client, s
     assert incident_response.json()["data"]["incident"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
     assert incident_response.json()["data"]["incident"]["payload"]["failure_streak_count"] == 2
     assert incident_response.json()["data"]["incident"]["payload"]["latest_failure_kind"] == "RUNTIME_ERROR"
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RESTORE_ONLY",
+        "RESTORE_AND_RETRY_LATEST_FAILURE",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_FAILURE"
+    )
     incident_items = [
         item for item in inbox_response.json()["data"]["items"] if item["item_type"] == "INCIDENT_ESCALATION"
     ]
@@ -8653,6 +8674,66 @@ def test_incident_resolve_can_restore_and_retry_staffing_containment_with_preser
     )
     assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == (
         followup_ticket["ticket_id"]
+    )
+
+
+def test_staffing_containment_incident_projection_exposes_retry_followup_actions(client):
+    workflow_id = "wf_scope_staffing_actions"
+    repository = client.app.state.repository
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Expose staffing containment recovery actions"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_frontend_backup_staffing_actions",
+        ),
+    )
+    approval = repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve backup staffing for containment action test.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:staffing-actions",
+        },
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scope_staffing_actions_001",
+        node_id="node_scope_staffing_actions",
+    )
+    client.post(
+        "/api/v1/commands/employee-freeze",
+        json={
+            **_employee_freeze_payload(
+                workflow_id,
+                employee_id="emp_frontend_2",
+            ),
+            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_2:actions",
+        },
+    )
+
+    incident_id = repository.list_open_incidents()[0]["incident_id"]
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["incident"]["incident_type"] == "STAFFING_CONTAINMENT"
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RESTORE_ONLY",
+        "RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT"
     )
 
 

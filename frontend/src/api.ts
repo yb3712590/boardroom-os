@@ -108,6 +108,36 @@ export type InboxData = {
   items: InboxItem[]
 }
 
+export type WorkforceWorker = {
+  employee_id: string
+  role_type: string
+  employment_state: string
+  activity_state: string
+  current_ticket_id: string | null
+  current_node_id: string | null
+  provider_id: string | null
+  last_update_at?: string | null
+}
+
+export type WorkforceRoleLane = {
+  role_type: string
+  active_count: number
+  idle_count: number
+  workers: WorkforceWorker[]
+}
+
+export type WorkforceData = {
+  summary: {
+    active_workers: number
+    idle_workers: number
+    overloaded_workers: number
+    active_checkers: number
+    workers_in_rework_loop: number
+    workers_in_staffing_containment: number
+  }
+  role_lanes: WorkforceRoleLane[]
+}
+
 export type ReviewOption = {
   option_id: string
   label: string
@@ -200,6 +230,26 @@ export type DeveloperInspectorData = {
   availability: string
 }
 
+export type IncidentDetailData = {
+  incident: {
+    incident_id: string
+    workflow_id: string
+    node_id: string | null
+    ticket_id: string | null
+    provider_id: string | null
+    incident_type: string
+    status: string
+    severity: string | null
+    fingerprint: string
+    circuit_breaker_state: string | null
+    opened_at: string
+    closed_at: string | null
+    payload: Record<string, unknown>
+  }
+  available_followup_actions: string[]
+  recommended_followup_action: string | null
+}
+
 export type CommandAck = {
   command_id: string
   idempotency_key: string
@@ -234,9 +284,21 @@ export async function getInbox(): Promise<InboxData> {
   return payload.data
 }
 
+export async function getWorkforce(): Promise<WorkforceData> {
+  const payload = await requestJson<ProjectionEnvelope<WorkforceData>>('/api/v1/projections/workforce')
+  return payload.data
+}
+
 export async function getReviewRoom(reviewPackId: string): Promise<ReviewRoomData> {
   const payload = await requestJson<ProjectionEnvelope<ReviewRoomData>>(
     `/api/v1/projections/review-room/${reviewPackId}`,
+  )
+  return payload.data
+}
+
+export async function getIncidentDetail(incidentId: string): Promise<IncidentDetailData> {
+  const payload = await requestJson<ProjectionEnvelope<IncidentDetailData>>(
+    `/api/v1/projections/incidents/${incidentId}`,
   )
   return payload.data
 }
@@ -304,6 +366,19 @@ export async function modifyConstraints(payload: {
   idempotency_key: string
 }): Promise<CommandAck> {
   return requestJson<CommandAck>('/api/v1/commands/modify-constraints', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function incidentResolve(payload: {
+  incident_id: string
+  resolved_by: string
+  resolution_summary: string
+  followup_action: string
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/incident-resolve', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
