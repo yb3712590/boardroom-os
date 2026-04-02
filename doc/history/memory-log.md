@@ -42,10 +42,11 @@
 
 ## Current Mainline Truth
 
-- Local MVP chain is now real: `project-init -> scope review -> BUILD internal maker-checker -> CHECK -> final REVIEW`.
+- Local MVP chain is now real: `project-init -> scope review -> BUILD internal maker-checker -> CHECK -> final REVIEW -> closeout internal maker-checker`.
 - `BUILD` no longer feeds `CHECK` directly. `implementation_bundle@1` must pass an internal `maker -> checker -> fix / incident` loop first.
 - `CHECK` no longer feeds final board review directly either. `delivery_check_report@1` must now pass its own internal `maker -> checker -> fix / incident` loop before final `REVIEW` starts.
-- Maker-Checker currently covers four real artifact families: `consensus_document@1`, `implementation_bundle@1`, `delivery_check_report@1`, and `ui_milestone_review@1`.
+- Final board approval no longer ends the workflow immediately. It now auto-creates a `delivery_closeout_package@1` ticket, and that package must pass its own internal `maker -> checker -> fix / incident` loop before completion is exposed.
+- Maker-Checker currently covers five real artifact families: `consensus_document@1`, `implementation_bundle@1`, `delivery_check_report@1`, `ui_milestone_review@1`, and `delivery_closeout_package@1`.
 - Employee governance is on the mainline: `hire / replace / freeze / restore`, staffing containment, and containment recovery all run through events and projections.
 - `dashboard / inbox / review room / incident / workforce / dependency inspector / completion` are live in the React shell.
 - `workforce` now exposes `rework loops`, so build/check-chain rework pressure is visible without reading raw events.
@@ -54,8 +55,8 @@
 
 ## Main Remaining Gaps
 
-- More ticket types still need the same staffing policy depth that build/visual/consensus now have.
-- Later deliverables after final board review are still not yet inside the same level of internal maker-checker governance.
+- More ticket types still need the same staffing policy depth that build/visual/consensus/closeout now have.
+- Heavier publish / launch / deploy style post-closeout paths are still not yet on the MVP mainline.
 - UI is still intentionally thin: it shows current truth, but richer trend and analysis surfaces are still missing.
 - Provider routing, richer retrieval, public identity, and remote control-plane work remain post-MVP unless they directly unblock the local chain.
 
@@ -85,6 +86,8 @@
 - `delivery_check_report@1` now has its own internal checker gate with real `maker -> checker -> fix / incident` handling before final board review.
 - Scope follow-up `CHECK` tickets now carry a dedicated internal review type instead of reusing the build-bundle wording.
 - `workforce_summary.rework_loops` now reflects both build-chain and check-chain rework pressure.
+- Final board approval now auto-creates a `delivery_closeout_package@1` ticket, and that package also goes through internal maker-checker before the workflow is considered complete.
+- Dashboard completion now depends on closeout completion, not just final board approval; the React completion card shows both the final review approval time and the closeout completion time.
 
 ### 2026-04-02 (docs compaction)
 

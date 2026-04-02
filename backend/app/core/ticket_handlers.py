@@ -100,6 +100,8 @@ from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
@@ -158,6 +160,11 @@ MAKER_CHECKER_SUPPORTED_TARGETS = {
         "INTERNAL_CHECK_REVIEW",
         DELIVERY_CHECK_REPORT_SCHEMA_REF,
         DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
+    ),
+    (
+        "INTERNAL_CLOSEOUT_REVIEW",
+        DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+        DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     ),
 }
 
@@ -702,6 +709,8 @@ def _maker_checker_subject_label(review_request: TicketBoardReviewRequest | None
         return "submitted implementation bundle"
     if review_request.review_type.value == "INTERNAL_CHECK_REVIEW":
         return "submitted delivery check report"
+    if review_request.review_type.value == "INTERNAL_CLOSEOUT_REVIEW":
+        return "submitted delivery closeout package"
     return "submitted deliverable"
 
 
@@ -720,8 +729,10 @@ def _is_internal_check_review_request(review_request: TicketBoardReviewRequest |
 
 
 def _is_internal_only_review_request(review_request: TicketBoardReviewRequest | None) -> bool:
-    return _is_internal_delivery_review_request(review_request) or _is_internal_check_review_request(
-        review_request
+    return bool(
+        review_request is not None
+        and review_request.review_type.value
+        in {"INTERNAL_DELIVERY_REVIEW", "INTERNAL_CHECK_REVIEW", "INTERNAL_CLOSEOUT_REVIEW"}
     )
 
 
@@ -731,7 +742,7 @@ def _build_maker_checker_input_artifact_refs(
     review_request: TicketBoardReviewRequest,
     maker_artifact_refs: list[str],
 ) -> list[str]:
-    if _is_internal_check_review_request(review_request):
+    if review_request.review_type.value in {"INTERNAL_CHECK_REVIEW", "INTERNAL_CLOSEOUT_REVIEW"}:
         return _dedupe_artifact_refs(
             list(maker_artifact_refs) + list(created_spec.get("input_artifact_refs") or [])
         )

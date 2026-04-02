@@ -32,10 +32,13 @@ from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
+    UI_MILESTONE_REVIEW_SCHEMA_REF,
     schema_id,
     validate_output_payload,
 )
@@ -48,6 +51,11 @@ SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS = 6
 FOLLOWUP_OWNER_ROLE_TO_PROFILE = {
     "frontend_engineer": "ui_designer_primary",
     "checker": "checker_primary",
+}
+SUPPORTED_SCOPE_FOLLOWUP_DELIVERY_STAGES = {
+    DeliveryStage.BUILD,
+    DeliveryStage.CHECK,
+    DeliveryStage.REVIEW,
 }
 
 
@@ -366,6 +374,46 @@ def _build_scope_followup_internal_check_review_request(summary: str) -> dict[st
     }
 
 
+def _build_closeout_internal_review_request(summary: str) -> dict[str, Any]:
+    clean_summary = summary.strip() or "Delivery closeout package is ready for final internal review."
+    return {
+        "review_type": "INTERNAL_CLOSEOUT_REVIEW",
+        "priority": "high",
+        "title": "Check delivery closeout package",
+        "subtitle": "Internal checker should validate the final handoff package before the workflow closes.",
+        "blocking_scope": "NODE_ONLY",
+        "trigger_reason": "Final board-approved delivery package reached the closeout checker gate.",
+        "why_now": "Workflow completion should only happen after the final handoff package is internally checked.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "internal_closeout_ok",
+        "recommendation_summary": clean_summary,
+        "options": [
+            {
+                "option_id": "internal_closeout_ok",
+                "label": "Pass closeout package",
+                "summary": clean_summary,
+                "artifact_refs": [],
+                "pros": ["Lets the workflow close on a checked final delivery package."],
+                "cons": ["Leaves only non-blocking polish outside the current MVP closeout path."],
+                "risks": ["Thin handoff notes would need one more rework pass before completion."],
+            }
+        ],
+        "evidence_summary": [
+            {
+                "evidence_id": "ev_delivery_closeout_package",
+                "source_type": "DELIVERY_CLOSEOUT_PACKAGE",
+                "headline": "Delivery closeout package is ready for internal review",
+                "summary": clean_summary,
+                "source_ref": None,
+            }
+        ],
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "internal_closeout_ok",
+        "comment_template": "",
+        "badges": ["internal_closeout", "closeout_gate"],
+    }
+
+
 def _scope_followup_expected_artifact_ref(ticket_id: str, delivery_stage: DeliveryStage) -> str | None:
     if delivery_stage == DeliveryStage.BUILD:
         return f"art://runtime/{ticket_id}/implementation-bundle.json"
@@ -431,6 +479,149 @@ def _scope_followup_acceptance_criteria(summary: str, delivery_stage: DeliverySt
         "Must stay inside the locked scope from the approved consensus document.",
         "Must produce a visual milestone review package.",
     ]
+
+
+def _resolve_approval_source_ticket_specs(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+) -> tuple[str, dict[str, Any] | None, str, dict[str, Any] | None]:
+    review_pack = approval["payload"].get("review_pack") or {}
+    subject = review_pack.get("subject") or {}
+    source_ticket_id = str(subject.get("source_ticket_id") or "").strip()
+    if not source_ticket_id:
+        return "", None, "", None
+
+    created_spec = repository.get_latest_ticket_created_payload(connection, source_ticket_id)
+    if created_spec is None:
+        return source_ticket_id, None, source_ticket_id, None
+
+    maker_checker_context = created_spec.get("maker_checker_context") or {}
+    maker_ticket_spec = maker_checker_context.get("maker_ticket_spec") or {}
+    logical_source_ticket_id = str(maker_checker_context.get("maker_ticket_id") or source_ticket_id)
+    logical_created_spec = (
+        maker_ticket_spec
+        if str(created_spec.get("output_schema_ref") or "") == "maker_checker_verdict"
+        and isinstance(maker_ticket_spec, dict)
+        and maker_ticket_spec
+        else created_spec
+    )
+    return source_ticket_id, created_spec, logical_source_ticket_id, logical_created_spec
+
+
+def _closeout_ticket_id_for_review_ticket(review_ticket_id: str) -> str:
+    if review_ticket_id.endswith("_review"):
+        return f"{review_ticket_id.removesuffix('_review')}_closeout"
+    return f"{review_ticket_id}_closeout"
+
+
+def _closeout_node_id_for_ticket(closeout_ticket_id: str) -> str:
+    return f"node_followup_{closeout_ticket_id.removeprefix('tkt_')}"
+
+
+def _build_post_review_closeout_ticket_payload(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+    selected_option_id: str,
+) -> dict[str, Any] | None:
+    if approval["approval_type"] != "VISUAL_MILESTONE":
+        return None
+
+    _, _, logical_source_ticket_id, logical_created_spec = _resolve_approval_source_ticket_specs(
+        repository,
+        connection,
+        approval=approval,
+    )
+    if not logical_source_ticket_id or logical_created_spec is None:
+        return None
+    if str(logical_created_spec.get("delivery_stage") or "") != DeliveryStage.REVIEW.value:
+        return None
+    if str(logical_created_spec.get("output_schema_ref") or "") != UI_MILESTONE_REVIEW_SCHEMA_REF:
+        return None
+
+    closeout_ticket_id = _closeout_ticket_id_for_review_ticket(logical_source_ticket_id)
+    closeout_node_id = _closeout_node_id_for_ticket(closeout_ticket_id)
+    if repository.get_current_ticket_projection(closeout_ticket_id, connection=connection) is not None:
+        return None
+    if (
+        repository.get_current_node_projection(approval["workflow_id"], closeout_node_id, connection=connection)
+        is not None
+    ):
+        return None
+
+    review_pack = approval["payload"].get("review_pack") or {}
+    resolution = approval["payload"].get("resolution") or {}
+    selected_option = next(
+        (
+            option
+            for option in review_pack.get("options") or []
+            if option.get("option_id") == selected_option_id
+        ),
+        None,
+    )
+    recommendation = review_pack.get("recommendation") or {}
+    closeout_summary = str(
+        (selected_option or {}).get("summary")
+        or recommendation.get("summary")
+        or review_pack.get("title")
+        or "Board-approved delivery closeout package"
+    ).strip()
+    evidence_refs = [
+        str(item.get("source_ref") or "").strip()
+        for item in review_pack.get("evidence_summary") or []
+        if str(item.get("source_ref") or "").strip()
+    ]
+    selected_artifact_refs = [
+        str(item).strip()
+        for item in ((selected_option or {}).get("artifact_refs") or [])
+        if str(item).strip()
+    ]
+    input_artifact_refs = _dedupe_artifact_refs(
+        list(logical_created_spec.get("input_artifact_refs") or []) + evidence_refs + selected_artifact_refs
+    )
+
+    return TicketCreateCommand(
+        ticket_id=closeout_ticket_id,
+        workflow_id=approval["workflow_id"],
+        node_id=closeout_node_id,
+        parent_ticket_id=logical_source_ticket_id,
+        attempt_no=1,
+        role_profile_ref=str(logical_created_spec.get("role_profile_ref") or "ui_designer_primary"),
+        constraints_ref="approved_scope_followup_closeout",
+        input_artifact_refs=input_artifact_refs,
+        context_query_plan={
+            "keywords": ["approved final review", "delivery closeout", "handoff"],
+            "semantic_queries": [closeout_summary],
+            "max_context_tokens": 3000,
+        },
+        acceptance_criteria=[
+            f"Must capture the approved final delivery choice: {closeout_summary}",
+            "Must gather the final delivery artifact references chosen in board review.",
+            "Must provide minimal handoff notes for the approved delivery package.",
+            "Must stay inside the already approved scope.",
+        ],
+        output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+        output_schema_version=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
+        allowed_tools=["read_artifact", "write_artifact"],
+        allowed_write_set=[f"reports/closeout/{closeout_ticket_id}/*"],
+        retry_budget=1,
+        priority="high",
+        timeout_sla_sec=1800,
+        deadline_at=logical_created_spec.get("deadline_at"),
+        tenant_id=logical_created_spec.get("tenant_id"),
+        workspace_id=logical_created_spec.get("workspace_id"),
+        delivery_stage=DeliveryStage.CLOSEOUT,
+        auto_review_request=_build_closeout_internal_review_request(closeout_summary),
+        escalation_policy={
+            "on_timeout": "retry",
+            "on_schema_error": "retry",
+            "on_repeat_failure": "escalate_ceo",
+        },
+        idempotency_key=f"board-approved-closeout:{approval['approval_id']}:{closeout_ticket_id}",
+    ).model_dump(mode="json")
 
 
 def _load_scope_consensus_payload(
@@ -541,6 +732,10 @@ def _build_scope_followup_ticket_payloads(
         delivery_stage = DeliveryStage(
             str(followup.get("delivery_stage") or DeliveryStage.REVIEW.value).strip()
         )
+        if delivery_stage not in SUPPORTED_SCOPE_FOLLOWUP_DELIVERY_STAGES:
+            raise ValueError(
+                f"Unsupported approved follow-up delivery_stage '{delivery_stage.value}'."
+            )
 
         if followup_ticket_id in seen_ticket_ids:
             raise ValueError(
@@ -752,6 +947,12 @@ def handle_board_approve(
                 "board_comment": payload.board_comment,
             },
         )
+        closeout_ticket_payload = _build_post_review_closeout_ticket_payload(
+            repository,
+            connection,
+            approval=repository.get_approval_by_id(connection, payload.approval_id) or approval,
+            selected_option_id=payload.selected_option_id,
+        )
         for index, followup_ticket_payload in enumerate(followup_ticket_payloads):
             created_followup_ticket_ids.append(
                 _insert_scope_followup_ticket_created_event(
@@ -762,6 +963,18 @@ def handle_board_approve(
                     workflow_id=approval["workflow_id"],
                     idempotency_key=f"{payload.idempotency_key}:scope-followup-create:{index}",
                     ticket_payload=followup_ticket_payload,
+                )
+            )
+        if closeout_ticket_payload is not None:
+            created_followup_ticket_ids.append(
+                _insert_scope_followup_ticket_created_event(
+                    repository,
+                    connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=approval["workflow_id"],
+                    idempotency_key=f"{payload.idempotency_key}:closeout-create",
+                    ticket_payload=closeout_ticket_payload,
                 )
             )
         repository.refresh_projections(connection)

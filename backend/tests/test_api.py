@@ -1036,6 +1036,47 @@ def _internal_check_review_request() -> dict:
     }
 
 
+def _internal_closeout_review_request() -> dict:
+    return {
+        "review_type": "INTERNAL_CLOSEOUT_REVIEW",
+        "priority": "high",
+        "title": "Check delivery closeout package",
+        "subtitle": "Internal checker should validate the final delivery closeout package before the workflow closes.",
+        "blocking_scope": "NODE_ONLY",
+        "trigger_reason": "Delivery closeout package reached the final internal checker gate.",
+        "why_now": "Workflow completion should only happen after the final handoff package is internally checked.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "internal_closeout_ok",
+        "recommendation_summary": (
+            "Delivery closeout package captures the approved board choice and is ready to close the workflow."
+        ),
+        "options": [
+            {
+                "option_id": "internal_closeout_ok",
+                "label": "Accept closeout package",
+                "summary": "Internal checker can pass this final handoff package into workflow completion.",
+                "artifact_refs": ["art://runtime/closeout/delivery-closeout-package.json"],
+                "pros": ["Lets the workflow finish on a checked final delivery package."],
+                "cons": ["Leaves only non-blocking polish outside the MVP closeout path."],
+                "risks": ["Weak handoff notes would require one more rework loop before completion."],
+            }
+        ],
+        "evidence_summary": [
+            {
+                "evidence_id": "ev_delivery_closeout_package",
+                "source_type": "DELIVERY_CLOSEOUT_PACKAGE",
+                "headline": "Delivery closeout package is ready for internal review",
+                "summary": "Maker prepared the final handoff package after board approval.",
+                "source_ref": "art://runtime/closeout/delivery-closeout-package.json",
+            }
+        ],
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "internal_closeout_ok",
+        "comment_template": "",
+        "badges": ["internal_closeout", "closeout_gate"],
+    }
+
+
 def _consensus_document_payload(
     *,
     topic: str = "Boardroom OS scope convergence",
@@ -1326,6 +1367,75 @@ def _delivery_check_report_result_submit_payload(
                     {
                         **resolved_review_request["evidence_summary"][0],
                         "source_ref": report_ref,
+                    }
+                ],
+            }
+        result["review_request"] = resolved_review_request
+    return result
+
+
+def _delivery_closeout_package_result_submit_payload(
+    workflow_id: str = "wf_seed",
+    ticket_id: str = "tkt_closeout_001",
+    node_id: str = "node_closeout_001",
+    submitted_by: str = "emp_frontend_2",
+    include_review_request: bool = False,
+    review_request: dict | None = None,
+    artifact_refs: list[str] | None = None,
+    written_artifact_path: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
+    closeout_ref = (artifact_refs or [f"art://runtime/{ticket_id}/delivery-closeout-package.json"])[0]
+    payload = {
+        "summary": f"Delivery closeout package prepared for {ticket_id}.",
+        "final_artifact_refs": [closeout_ref],
+        "handoff_notes": [
+            "Board-approved final option is captured in this closeout package.",
+            "Final evidence remains linked back to the board review pack.",
+        ],
+    }
+    result = {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "submitted_by": submitted_by,
+        "result_status": "completed",
+        "schema_version": "delivery_closeout_package_v1",
+        "payload": payload,
+        "artifact_refs": [closeout_ref],
+        "written_artifacts": [
+            {
+                "path": written_artifact_path or f"reports/closeout/{ticket_id}/delivery-closeout-package.json",
+                "artifact_ref": closeout_ref,
+                "kind": "JSON",
+                "content_json": payload,
+            }
+        ],
+        "assumptions": ["Closeout package stays within the already approved scope and final board choice."],
+        "issues": [],
+        "confidence": 0.82,
+        "needs_escalation": False,
+        "summary": "Structured delivery closeout package submitted.",
+        "failure_kind": None,
+        "failure_message": None,
+        "failure_detail": None,
+        "idempotency_key": idempotency_key or f"ticket-result-submit:{workflow_id}:{ticket_id}:closeout",
+    }
+    if include_review_request:
+        resolved_review_request = review_request or _internal_closeout_review_request()
+        if review_request is None:
+            resolved_review_request = {
+                **resolved_review_request,
+                "options": [
+                    {
+                        **resolved_review_request["options"][0],
+                        "artifact_refs": [closeout_ref],
+                    }
+                ],
+                "evidence_summary": [
+                    {
+                        **resolved_review_request["evidence_summary"][0],
+                        "source_ref": closeout_ref,
                     }
                 ],
             }
@@ -10404,7 +10514,23 @@ def test_board_approve_command_resolves_open_approval(client):
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == []
 
 
-def test_dashboard_completion_summary_returns_after_final_review_approval(client):
+def _expected_closeout_ids(repository, approval: dict) -> tuple[str, str, str]:
+    source_ticket_id = approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, source_ticket_id)
+    logical_review_ticket_id = (
+        str(((created_spec or {}).get("maker_checker_context") or {}).get("maker_ticket_id") or source_ticket_id)
+    )
+    closeout_ticket_id = (
+        f"{logical_review_ticket_id.removesuffix('_review')}_closeout"
+        if logical_review_ticket_id.endswith("_review")
+        else f"{logical_review_ticket_id}_closeout"
+    )
+    closeout_node_id = f"node_followup_{closeout_ticket_id.removeprefix('tkt_')}"
+    return logical_review_ticket_id, closeout_ticket_id, closeout_node_id
+
+
+def test_final_review_approval_creates_closeout_ticket_and_completion_summary_uses_closeout_fields(client):
     workflow_id, scope_approval = _project_init_to_scope_approval(client)
     scope_response = _approve_open_review(client, scope_approval, idempotency_suffix="completion-scope")
     repository = client.app.state.repository
@@ -10436,18 +10562,179 @@ def test_dashboard_completion_summary_returns_after_final_review_approval(client
     assert dashboard_response.status_code == 200
     assert review_room_response.status_code == 200
 
-    completion_summary = dashboard_response.json()["data"]["completion_summary"]
-    review_pack = approval["payload"]["review_pack"]
+    logical_review_ticket_id, closeout_ticket_id, closeout_node_id = _expected_closeout_ids(
+        repository,
+        approval,
+    )
+    closeout_node = repository.get_current_node_projection(workflow_id, closeout_node_id)
+    assert closeout_node is not None
+    closeout_ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+    checker_ticket = repository.get_current_ticket_projection(closeout_node["latest_ticket_id"])
+    with repository.connection() as connection:
+        closeout_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            closeout_ticket_id,
+        )
+        checker_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            closeout_node["latest_ticket_id"],
+        )
 
+    assert closeout_ticket is not None
+    assert checker_ticket is not None
+    assert closeout_created_spec is not None
+    assert closeout_created_spec["output_schema_ref"] == "delivery_closeout_package"
+    assert closeout_created_spec["delivery_stage"] == "CLOSEOUT"
+    assert closeout_created_spec["ticket_id"] == closeout_ticket_id
+    assert closeout_created_spec["parent_ticket_id"] == logical_review_ticket_id
+    assert closeout_created_spec["auto_review_request"]["review_type"] == "INTERNAL_CLOSEOUT_REVIEW"
+    assert closeout_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert checker_created_spec["output_schema_ref"] == "maker_checker_verdict"
+    assert checker_created_spec["maker_checker_context"]["maker_ticket_id"] == closeout_ticket_id
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+    assert completion_summary is not None
+    assert completion_summary["closeout_ticket_id"] == closeout_ticket_id
+    assert completion_summary["closeout_artifact_refs"] == [
+        f"art://runtime/{closeout_ticket_id}/delivery-closeout-package.json"
+    ]
+    assert review_room_response.json()["data"]["available_actions"] == []
+
+
+def test_closeout_internal_checker_approved_returns_completion_summary(client):
+    workflow_id, scope_approval = _project_init_to_scope_approval(client)
+    _approve_open_review(client, scope_approval, idempotency_suffix="closeout-pass-scope")
+    repository = client.app.state.repository
+    approval = next(
+        item
+        for item in repository.list_open_approvals()
+        if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
+    )
+
+    client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": "option_a",
+            "board_comment": "Proceed with option A.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:closeout-pass-final",
+        },
+    )
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+
+    _, expected_closeout_ticket_id, _ = _expected_closeout_ids(repository, approval)
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
     assert completion_summary["workflow_id"] == workflow_id
     assert completion_summary["final_review_pack_id"] == approval["review_pack_id"]
-    assert completion_summary["title"] == review_pack["subject"]["title"]
-    assert completion_summary["summary"] == review_pack["recommendation"]["summary"]
     assert completion_summary["selected_option_id"] == "option_a"
     assert completion_summary["board_comment"] == "Proceed with option A."
-    assert completion_summary["artifact_refs"] == review_pack["options"][0]["artifact_refs"]
-    assert completion_summary["approved_at"] is not None
-    assert review_room_response.json()["data"]["available_actions"] == []
+    assert completion_summary["final_review_approved_at"] is not None
+    assert completion_summary["closeout_completed_at"] is not None
+    assert completion_summary["closeout_ticket_id"] == expected_closeout_ticket_id
+    assert completion_summary["closeout_artifact_refs"] == [
+        f"art://runtime/{expected_closeout_ticket_id}/delivery-closeout-package.json"
+    ]
+
+
+def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_blocks_completion(client):
+    workflow_id = "wf_closeout_rework"
+    closeout_node_id = "node_closeout_rework"
+    closeout_ticket_id = "tkt_closeout_rework"
+    repository = client.app.state.repository
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=closeout_ticket_id,
+        node_id=closeout_node_id,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="delivery_closeout_package",
+        allowed_write_set=[f"reports/closeout/{closeout_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must capture the approved final delivery choice.",
+            "Must produce a structured delivery closeout package.",
+        ],
+        input_artifact_refs=[
+            "art://runtime/tkt_review_final/option-a.json",
+            "art://runtime/tkt_review_final/option-b.json",
+        ],
+        delivery_stage="CLOSEOUT",
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_delivery_closeout_package_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+            include_review_request=True,
+        ),
+    )
+
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, closeout_node_id)["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=closeout_node_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=closeout_node_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=closeout_node_id,
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_closeout_missing_handoff",
+                    "severity": "high",
+                    "category": "HANDOFF_QUALITY",
+                    "headline": "Closeout package is missing grounded handoff notes.",
+                    "summary": "Final delivery package does not explain how the approved board choice should be handed off.",
+                    "required_action": "Rewrite the closeout package with explicit handoff notes and final evidence links.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:closeout-changes-required",
+        ),
+    )
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+
+    node_projection = repository.get_current_node_projection(workflow_id, closeout_node_id)
+    fix_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+    with repository.connection() as connection:
+        fix_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            node_projection["latest_ticket_id"],
+        )
+
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+    assert checker_response.status_code == 200
+    assert fix_ticket is not None
+    assert fix_created_spec["output_schema_ref"] == "delivery_closeout_package"
+    assert fix_created_spec["delivery_stage"] == "CLOSEOUT"
+    assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+    assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
+        "INTERNAL_CLOSEOUT_REVIEW"
+    )
+    assert dashboard_response.json()["data"]["completion_summary"] is None
 
 
 def test_board_approve_scope_review_rejects_unsupported_followup_owner_role(client, set_ticket_time):

@@ -17,7 +17,7 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 
 默认本地小项目已经能跑通这条链：
 
-`project-init -> scope review -> BUILD 内部 maker-checker -> CHECK -> final REVIEW`
+`project-init -> scope review -> BUILD 内部 maker-checker -> CHECK -> final REVIEW -> closeout 内部 maker-checker`
 
 当前这条链的现实状态：
 
@@ -26,12 +26,13 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 - `CHECK` 产出的 `delivery_check_report@1` 现在也会先走内部 `maker -> checker -> fix / incident`
 - 只有 build 和 check 两段内审都通过后，系统才会放行最终董事会 `REVIEW`
 - 最终董事会只在真正的 board-facing `REVIEW` 进入 `Inbox -> Review Room`
+- 最终董事会通过后，系统会自动补一张 `delivery_closeout_package@1` 收口票，再走内部 `maker -> checker -> fix / incident`
 - React 壳已经能看 `dashboard / inbox / review room / incident / workforce / dependency inspector / completion`
 
 ## 仓库里现在有的主线能力
 
 - FastAPI + SQLite 后端，事件流、投影、ticket 生命周期、approval / incident / breaker 都已可用
-- Maker-Checker 已覆盖 `consensus_document@1`、`implementation_bundle@1`、`delivery_check_report@1`、`ui_milestone_review@1`
+- Maker-Checker 已覆盖 `consensus_document@1`、`implementation_bundle@1`、`delivery_check_report@1`、`ui_milestone_review@1`、`delivery_closeout_package@1`
 - employee 生命周期已进入主线：`hire / replace / freeze / restore` 与 staffing containment 都是事件驱动
 - Context Compiler 已能处理常见文本、媒体、下载型附件和本地历史摘要，并产出可审计执行包
 - runtime 默认走本地 deterministic；也支持本地保存的 `OpenAI Compat` provider 配置
@@ -67,6 +68,7 @@ python -m pytest tests -q
 - 前端通过 Vite dev proxy 直连本地 FastAPI
 - runtime provider 配置默认保存在 `backend/data/runtime-provider-config.json`
 - scope 通过后，如果没有可派单员工或途中出现 incident，链路会停在真实 `pending / incident`，不会伪造完成
+- completion card 现在只会在最终 review 之后的 closeout 内审也收口后出现
 
 ## 建议先读
 

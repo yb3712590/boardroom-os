@@ -17,6 +17,8 @@ IMPLEMENTATION_BUNDLE_SCHEMA_REF = "implementation_bundle"
 IMPLEMENTATION_BUNDLE_SCHEMA_VERSION = 1
 DELIVERY_CHECK_REPORT_SCHEMA_REF = "delivery_check_report"
 DELIVERY_CHECK_REPORT_SCHEMA_VERSION = 1
+DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF = "delivery_closeout_package"
+DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION = 1
 MAKER_CHECKER_VERDICT_SCHEMA_REF = "maker_checker_verdict"
 MAKER_CHECKER_VERDICT_SCHEMA_VERSION = 1
 
@@ -145,6 +147,25 @@ def _delivery_check_report_schema_body() -> dict[str, Any]:
     }
 
 
+def _delivery_closeout_package_schema_body() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["summary", "final_artifact_refs", "handoff_notes"],
+        "properties": {
+            "summary": {"type": "string"},
+            "final_artifact_refs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"},
+            },
+            "handoff_notes": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+    }
+
+
 def _maker_checker_verdict_schema_body() -> dict[str, Any]:
     return {
         "type": "object",
@@ -254,7 +275,11 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
         if not isinstance(summary, str) or not summary:
             raise ValueError("Each consensus followup ticket requires summary.")
         if delivery_stage is not None:
-            if not isinstance(delivery_stage, str) or delivery_stage not in {stage.value for stage in DeliveryStage}:
+            if not isinstance(delivery_stage, str) or delivery_stage not in {
+                DeliveryStage.BUILD.value,
+                DeliveryStage.CHECK.value,
+                DeliveryStage.REVIEW.value,
+            }:
                 raise ValueError(
                     "Each consensus followup ticket delivery_stage must be one of BUILD, CHECK, REVIEW."
                 )
@@ -308,6 +333,29 @@ def _validate_delivery_check_report_payload(payload: dict[str, Any]) -> None:
             raise ValueError("Each delivery check finding requires summary.")
         if not isinstance(finding.get("blocking"), bool):
             raise ValueError("Each delivery check finding requires boolean blocking.")
+
+
+def _validate_delivery_closeout_package_payload(payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("Result payload must be an object.")
+
+    summary = payload.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("Delivery closeout package payload.summary must be a non-empty string.")
+
+    final_artifact_refs = payload.get("final_artifact_refs")
+    if not isinstance(final_artifact_refs, list) or not final_artifact_refs or not all(
+        isinstance(item, str) and item for item in final_artifact_refs
+    ):
+        raise ValueError(
+            "Delivery closeout package payload.final_artifact_refs must be a non-empty array."
+        )
+
+    handoff_notes = payload.get("handoff_notes")
+    if not isinstance(handoff_notes, list) or not all(
+        isinstance(item, str) and item.strip() for item in handoff_notes
+    ):
+        raise ValueError("Delivery closeout package payload.handoff_notes must be an array of strings.")
 
 
 def _validate_maker_checker_verdict_payload(payload: dict[str, Any]) -> None:
@@ -384,6 +432,10 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (DELIVERY_CHECK_REPORT_SCHEMA_REF, DELIVERY_CHECK_REPORT_SCHEMA_VERSION): {
         "body": _delivery_check_report_schema_body,
         "validator": _validate_delivery_check_report_payload,
+    },
+    (DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF, DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION): {
+        "body": _delivery_closeout_package_schema_body,
+        "validator": _validate_delivery_closeout_package_payload,
     },
     (MAKER_CHECKER_VERDICT_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_VERSION): {
         "body": _maker_checker_verdict_schema_body,

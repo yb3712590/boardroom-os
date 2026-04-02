@@ -593,6 +593,8 @@ function ShellRoute() {
     'Runtime is using the currently saved local execution settings.'
   const runtimeHealth =
     runtimeStatus?.provider_health_summary ?? dashboard?.ops_strip.provider_health_summary ?? 'UNKNOWN'
+  const finalReviewApprovedAt =
+    completionSummary?.final_review_approved_at ?? completionSummary?.approved_at ?? null
 
   return (
     <>
@@ -726,7 +728,8 @@ function ShellRoute() {
                     <p className="eyebrow">Workflow result</p>
                     <h2 id="completion-card-title">Delivery completed</h2>
                     <p className="muted-copy">
-                      Approved {formatTimestamp(completionSummary.approved_at)} for workflow{' '}
+                      Board approved {formatTimestamp(finalReviewApprovedAt)} and closeout completed{' '}
+                      {formatTimestamp(completionSummary.closeout_completed_at)} for workflow{' '}
                       {completionSummary.workflow_id}.
                     </p>
                   </div>
@@ -734,6 +737,14 @@ function ShellRoute() {
                     <div>
                       <span>Final title</span>
                       <strong>{completionSummary.title}</strong>
+                    </div>
+                    <div>
+                      <span>Board approved</span>
+                      <strong>{formatTimestamp(finalReviewApprovedAt)}</strong>
+                    </div>
+                    <div>
+                      <span>Closeout completed</span>
+                      <strong>{formatTimestamp(completionSummary.closeout_completed_at)}</strong>
                     </div>
                     <div>
                       <span>Selected option</span>
@@ -746,6 +757,10 @@ function ShellRoute() {
                     <div>
                       <span>Evidence refs</span>
                       <strong>{completionSummary.artifact_refs.length}</strong>
+                    </div>
+                    <div>
+                      <span>Closeout refs</span>
+                      <strong>{completionSummary.closeout_artifact_refs.length}</strong>
                     </div>
                   </div>
                   <p className="completion-card-summary">{completionSummary.summary}</p>

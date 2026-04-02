@@ -537,6 +537,7 @@ function installBoardroomMock(options?: {
   dependencyInspector?: JsonRecord
   incidentDetail?: JsonRecord
   runtimeProvider?: JsonRecord
+  boardActionDashboard?: JsonRecord
 }) {
   const state = {
     dashboard: options?.dashboard ?? dashboardData(),
@@ -686,7 +687,7 @@ function installBoardroomMock(options?: {
         (path) => url.endsWith(path),
       )
     ) {
-      state.dashboard = dashboardData({
+      state.dashboard = options?.boardActionDashboard ?? dashboardData({
         ops_strip: {
           ...dashboardData().ops_strip,
           blocked_nodes: 0,
@@ -714,11 +715,15 @@ function installBoardroomMock(options?: {
           workflow_id: 'wf_001',
           final_review_pack_id: 'brp_001',
           approved_at: '2026-04-01T23:12:00+08:00',
+          final_review_approved_at: '2026-04-01T23:12:00+08:00',
+          closeout_completed_at: '2026-04-01T23:18:00+08:00',
+          closeout_ticket_id: 'tkt_closeout_001',
           title: 'Review homepage visual milestone',
           summary: 'Approve option A to unblock the main build path.',
           selected_option_id: 'option_a',
           board_comment: 'Proceed with option A.',
           artifact_refs: ['art://runtime/tkt_visual_002/option-a.png'],
+          closeout_artifact_refs: ['art://runtime/tkt_closeout_001/delivery-closeout-package.json'],
         },
       })
       state.inbox = inboxData()
@@ -1273,10 +1278,92 @@ describe('Boardroom UI', () => {
     expect(await screen.findByRole('heading', { name: /delivery completed/i })).toBeInTheDocument()
     expect(screen.getAllByText(/approve option a to unblock the main build path/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/proceed with option a/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/apr 1, 11:12 pm/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/apr 1, 11:18 pm/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/closeout refs/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /open final review evidence/i }))
 
     expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
+  })
+
+  it('does not show the completion card when board approval returns but closeout is still running', async () => {
+    installBoardroomMock({
+      dashboard: dashboardData({
+        pipeline_summary: {
+          phases: [
+            phase('Intake', 'COMPLETED', { completed: 1 }),
+            phase('Plan', 'COMPLETED', { completed: 1 }),
+            phase('Build', 'COMPLETED', { completed: 1 }),
+            phase('Check', 'COMPLETED', { completed: 1 }),
+            phase('Review', 'BLOCKED_FOR_BOARD', { blocked_for_board: 1 }),
+          ],
+          critical_path_node_ids: ['node_homepage_visual'],
+          blocked_node_ids: ['node_homepage_visual'],
+        },
+        inbox_counts: {
+          approvals_pending: 1,
+          incidents_pending: 0,
+          budget_alerts: 0,
+          provider_alerts: 0,
+        },
+      }),
+      inbox: inboxData([
+        {
+          inbox_item_id: 'inbox_apr_001',
+          workflow_id: 'wf_001',
+          item_type: 'BOARD_APPROVAL',
+          priority: 'high',
+          status: 'OPEN',
+          created_at: '2026-04-01T23:05:00+08:00',
+          title: 'Review homepage visual milestone',
+          summary: 'Visual milestone is blocked for board review.',
+          source_ref: 'apr_001',
+          route_target: {
+            view: 'review_room',
+            review_pack_id: 'brp_001',
+          },
+          badges: ['visual', 'board_gate'],
+        },
+      ]),
+      boardActionDashboard: dashboardData({
+        ops_strip: {
+          ...dashboardData().ops_strip,
+          blocked_nodes: 0,
+          active_tickets: 1,
+        },
+        pipeline_summary: {
+          phases: [
+            phase('Intake', 'COMPLETED', { completed: 1 }),
+            phase('Plan', 'COMPLETED', { completed: 1 }),
+            phase('Build', 'COMPLETED', { completed: 1 }),
+            phase('Check', 'COMPLETED', { completed: 1 }),
+            phase('Review', 'EXECUTING', { executing: 1 }),
+          ],
+          critical_path_node_ids: ['node_closeout_001'],
+          blocked_node_ids: [],
+        },
+        inbox_counts: {
+          approvals_pending: 0,
+          incidents_pending: 0,
+          budget_alerts: 0,
+          provider_alerts: 0,
+        },
+        runtime_status: dashboardData().runtime_status,
+        completion_summary: null,
+      }),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /review homepage visual milestone/i }))
+    await user.click(await screen.findByRole('button', { name: /approve and continue/i }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: /delivery completed/i })).not.toBeInTheDocument(),
+    )
+    expect(screen.getByText(/live tickets/i)).toBeInTheDocument()
   })
 
   it('submits reject and refreshes the snapshot', async () => {

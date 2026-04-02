@@ -87,11 +87,15 @@ export type DashboardData = {
     workflow_id: string
     final_review_pack_id: string
     approved_at: string
+    final_review_approved_at: string
+    closeout_completed_at: string
+    closeout_ticket_id: string
     title: string
     summary: string
     selected_option_id: string | null
     board_comment: string | null
     artifact_refs: string[]
+    closeout_artifact_refs: string[]
   } | null
   event_stream_preview: Array<{
     event_id: string

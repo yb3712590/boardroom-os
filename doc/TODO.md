@@ -25,7 +25,8 @@
   - 当前已新增第二条真实链路：`MEETING_ESCALATION + consensus_document@1` 现在也会先走 maker-checker，再进 `Inbox -> Review Room`
   - 当前已新增第三条真实链路：`BUILD + implementation_bundle@1` 现在会先走内部 `maker -> checker -> fix / incident`，通过后才放行下游 `CHECK`
   - 当前已新增第四条真实链路：`CHECK + delivery_check_report@1` 现在也会先走内部 `maker -> checker -> fix / incident`，通过后才放行最终董事会 `REVIEW`
-  - 当前剩余缺口：更后置的交付 / 发布产物还没有接进同等级别的内部治理
+  - 当前已新增第五条真实链路：最终董事会 `REVIEW` 通过后，现在会自动补一张 `delivery_closeout_package@1` 收口票，并先走内部 `maker -> checker -> fix / incident`，收口后才出现 completion
+  - 当前剩余缺口：更重的 publish / launch / deploy 级别后续票型仍未接进主线，这一段继续后置
 - 直接推进主线：把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级、更明确的 fix 票约束，以及返工票默认排除原 maker 的最小换人链，剩余重点是把这套 staffing policy 推广到更多关键产物
   - 当前已完成一段直接推进主线的返工收口：build checker `CHANGES_REQUIRED` 会开真实 fix 票、默认排除原 maker、挡住下游 `CHECK`，fix 过审后再恢复主链；`ESCALATED` 会停在 incident，而不是误开董事会 approval
   - 当前已完成同等级别的第二段主线返工收口：check checker `CHANGES_REQUIRED` 现在也会开真实 fix 票、默认排除原 checker、继续挡住最终 `REVIEW`；`ESCALATED` 同样会停在 incident，而不是误开董事会 approval
@@ -45,7 +46,7 @@
 - 已完成直接推进主线：把已批准 scope 的 follow-up 从“都能落成真实视觉票”推进到“有更丰富的下游票型”
   - 当前 runtime 默认会生成一条受支持的 staged follow-up 链：`BUILD -> CHECK -> REVIEW`
   - `BUILD` 现在产出 `implementation_bundle@1`，并先走内部 maker-checker 内审；`CHECK` 现在产出 `delivery_check_report@1`，也会先走自己的内部 maker-checker 内审；最终 `REVIEW` 只会在前两段都过审后，再走现有 `ui_milestone_review@1 -> maker-checker -> Inbox -> Review Room`
-  - 当前默认本地路径已经能从 scope approval 直接自动跑到最终董事会 review；更后面的缺口不再是“scope 后没有内部 build/check”，而是最终 review 之后还缺更丰富的交付 / 发布票型
+  - 当前默认本地路径已经能从 scope approval 直接自动跑到最终董事会 review，再自动补完 `delivery_closeout_package@1` 的内部收口；当前后续缺口已经收窄到更重的发布 / 上线路径，而不是“review 后什么都没有”
 
 ## P1：套上最薄 Web 壳
 
@@ -62,7 +63,7 @@
 - 已完成直接推进主线：董事会演示链路现在能在 UI 里切 runtime 并读到最终完成态
   - React 壳里已落地最小 `runtime provider` 设置抽屉，可直接保存本地 `Deterministic / OpenAI Compat` 配置并立即生效
   - 首页已显式展示 execution mode、模型名、worker 绑定数和当前 effective reason，董事会现场能直接看出现在到底是本地 deterministic、live、paused 还是配置不完整
-  - 最终 review 一旦批准，首页会直接出现 completion card，并复用现有 `Review Room` 打开最终证据
+  - 首页现在会把 completion card 延后到最终 review 之后的 closeout 内审也通过，再复用现有 `Review Room` 打开最终证据
 - 后置观察：完整 provider registry / model routing / provider test route 继续后置，不在这轮扩张
 - 为主线解堵：继续保持 projection-first，前端不拥有工作流真相
   - 当前首页河道只消费 `dashboard.pipeline_summary.phases` 的固定五段高层摘要，不新造前端工作流引擎

@@ -26,6 +26,7 @@ from app.core.context_compiler import (
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     schema_id,
@@ -77,6 +78,7 @@ SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
 }
 SUPPORTED_RUNTIME_ROLE_PROFILES = {"ui_designer_primary", "checker_primary"}
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
@@ -171,11 +173,13 @@ def _build_runtime_default_artifacts(
         CONSENSUS_DOCUMENT_SCHEMA_REF,
         IMPLEMENTATION_BUNDLE_SCHEMA_REF,
         DELIVERY_CHECK_REPORT_SCHEMA_REF,
+        DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     }:
         filename_by_schema = {
             CONSENSUS_DOCUMENT_SCHEMA_REF: "consensus-document.json",
             IMPLEMENTATION_BUNDLE_SCHEMA_REF: "implementation-bundle.json",
             DELIVERY_CHECK_REPORT_SCHEMA_REF: "delivery-check-report.json",
+            DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF: "delivery-closeout-package.json",
         }
         artifact_ref = f"art://runtime/{ticket_id}/{filename_by_schema[output_schema_ref]}"
         allowed_write_set = list(execution_package.execution.allowed_write_set)
@@ -282,6 +286,18 @@ def _build_runtime_success_payload(
                     "summary": "Keep the launch copy trimmed to the approved scope lock.",
                     "blocking": False,
                 }
+            ],
+        }
+    if execution_package.execution.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        return {
+            "summary": (
+                "Final delivery closeout package captures the approved board choice and the handoff notes "
+                "needed to close the workflow."
+            ),
+            "final_artifact_refs": list(artifact_refs),
+            "handoff_notes": [
+                "Board-approved final option is captured in the closeout package.",
+                "Final evidence remains linked back to the board review pack for audit.",
             ],
         }
 

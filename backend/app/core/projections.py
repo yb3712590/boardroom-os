@@ -92,7 +92,11 @@ from app.core.constants import (
     TICKET_STATUS_COMPLETED,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
-from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_REF
+from app.core.output_schemas import (
+    CONSENSUS_DOCUMENT_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    MAKER_CHECKER_VERDICT_SCHEMA_REF,
+)
 from app.core.runtime_provider_config import (
     RuntimeProviderConfigStore,
     count_configured_workers,
@@ -265,19 +269,42 @@ def _build_dashboard_completion_summary(
         if open_incident_count > 0:
             return None
 
-        row = connection.execute(
+        final_review_row = connection.execute(
             """
             SELECT * FROM approval_projection
-            WHERE workflow_id = ? AND status = ?
+            WHERE workflow_id = ? AND status = ? AND approval_type = ?
             ORDER BY resolved_at DESC, updated_at DESC, approval_id DESC
             LIMIT 1
             """,
-            (workflow_id, "APPROVED"),
+            (workflow_id, "APPROVED", "VISUAL_MILESTONE"),
         ).fetchone()
-    if row is None:
+        if final_review_row is None:
+            return None
+
+        closeout_ticket: dict[str, Any] | None = None
+        for ticket in repository.list_ticket_projections_by_statuses(connection, [TICKET_STATUS_COMPLETED]):
+            if ticket["workflow_id"] != workflow_id:
+                continue
+            created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
+            if (
+                created_spec is not None
+                and str(created_spec.get("output_schema_ref") or "") == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
+            ):
+                closeout_ticket = ticket
+        if closeout_ticket is None:
+            return None
+
+        closeout_terminal_event = repository.get_latest_ticket_terminal_event(
+            connection,
+            str(closeout_ticket["ticket_id"]),
+        )
+        if closeout_terminal_event is None:
+            return None
+
+    if final_review_row is None:
         return None
 
-    approval = repository._convert_approval_row(row)
+    approval = repository._convert_approval_row(final_review_row)
     payload = approval.get("payload") or {}
     review_pack = payload.get("review_pack") or {}
     resolution = payload.get("resolution") or {}
@@ -295,16 +322,29 @@ def _build_dashboard_completion_summary(
     resolved_at = approval.get("resolved_at")
     if resolved_at is None:
         return None
+    closeout_payload = closeout_terminal_event.get("payload") or {}
+    closeout_completed_at = closeout_terminal_event.get("occurred_at")
+    if closeout_completed_at is None:
+        return None
 
     return DashboardCompletionSummaryProjection(
         workflow_id=workflow_id,
         final_review_pack_id=str(approval["review_pack_id"]),
         approved_at=resolved_at,
+        final_review_approved_at=resolved_at,
+        closeout_completed_at=closeout_completed_at,
+        closeout_ticket_id=str(closeout_ticket["ticket_id"]),
         title=str(subject.get("title") or review_pack.get("title") or approval["review_pack_id"]),
-        summary=str(recommendation.get("summary") or resolution.get("board_comment") or ""),
+        summary=str(
+            closeout_payload.get("completion_summary")
+            or recommendation.get("summary")
+            or resolution.get("board_comment")
+            or ""
+        ),
         selected_option_id=selected_option_id,
         board_comment=resolution.get("board_comment"),
         artifact_refs=list((selected_option or {}).get("artifact_refs") or []),
+        closeout_artifact_refs=list(closeout_payload.get("artifact_refs") or []),
     )
 
 
@@ -351,7 +391,7 @@ def _resolve_phase_label(created_spec: dict[str, Any] | None) -> str:
         return "Build"
     if delivery_stage == "CHECK":
         return "Check"
-    if delivery_stage == "REVIEW" or maker_delivery_stage == "REVIEW" or review_type == "VISUAL_MILESTONE":
+    if delivery_stage in {"REVIEW", "CLOSEOUT"} or maker_delivery_stage in {"REVIEW", "CLOSEOUT"} or review_type == "VISUAL_MILESTONE":
         return "Review"
     return "Build"
 

@@ -49,11 +49,15 @@ class DashboardCompletionSummaryProjection(StrictModel):
     workflow_id: str
     final_review_pack_id: str
     approved_at: datetime
+    final_review_approved_at: datetime
+    closeout_completed_at: datetime
+    closeout_ticket_id: str
     title: str
     summary: str
     selected_option_id: str | None = None
     board_comment: str | None = None
     artifact_refs: list[str]
+    closeout_artifact_refs: list[str]
 
 
 class NodeCountsProjection(StrictModel):
