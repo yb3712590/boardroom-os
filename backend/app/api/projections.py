@@ -13,6 +13,7 @@ from app.contracts.projections import (
     DependencyInspectorProjectionEnvelope,
     IncidentDetailProjectionEnvelope,
     InboxProjectionEnvelope,
+    RuntimeProviderProjectionEnvelope,
     ReviewRoomDeveloperInspectorProjectionEnvelope,
     ReviewRoomProjectionEnvelope,
     WorkerAdminAuthRejectionProjectionEnvelope,
@@ -28,6 +29,7 @@ from app.core.projections import (
     build_dependency_inspector_projection,
     build_incident_detail_projection,
     build_inbox_projection,
+    build_runtime_provider_projection,
     build_worker_admin_auth_rejection_projection,
     build_worker_admin_audit_projection,
     build_review_room_developer_inspector_projection,
@@ -37,6 +39,7 @@ from app.core.projections import (
     build_workforce_projection,
 )
 from app.db.repository import ControlPlaneRepository
+from app.core.runtime_provider_config import RuntimeProviderConfigStore
 
 router = APIRouter(prefix="/api/v1/projections", tags=["projections"])
 
@@ -44,7 +47,15 @@ router = APIRouter(prefix="/api/v1/projections", tags=["projections"])
 @router.get("/dashboard", response_model=DashboardProjectionEnvelope)
 def get_dashboard(request: Request) -> DashboardProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
-    return build_dashboard_projection(repository)
+    runtime_provider_store: RuntimeProviderConfigStore = request.app.state.runtime_provider_store
+    return build_dashboard_projection(repository, runtime_provider_store)
+
+
+@router.get("/runtime-provider", response_model=RuntimeProviderProjectionEnvelope)
+def get_runtime_provider(request: Request) -> RuntimeProviderProjectionEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    runtime_provider_store: RuntimeProviderConfigStore = request.app.state.runtime_provider_store
+    return build_runtime_provider_projection(repository, runtime_provider_store)
 
 
 @router.get(

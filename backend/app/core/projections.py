@@ -10,8 +10,10 @@ from app.contracts.projections import (
     ArtifactCleanupCandidatesProjectionEnvelope,
     ArtifactCleanupCandidatesProjectionFilters,
     ArtifactMaintenanceProjection,
+    DashboardCompletionSummaryProjection,
     DashboardProjectionData,
     DashboardProjectionEnvelope,
+    DashboardRuntimeStatusProjection,
     DependencyInspectorCurrentStopProjection,
     DependencyInspectorNodeProjection,
     DependencyInspectorProjectionData,
@@ -40,6 +42,8 @@ from app.contracts.projections import (
     OpsStripProjection,
     PhaseSummaryProjection,
     PipelineSummaryProjection,
+    RuntimeProviderProjectionData,
+    RuntimeProviderProjectionEnvelope,
     ReviewRoomDraftDefaults,
     ReviewRoomDeveloperInspectorProjectionData,
     ReviewRoomDeveloperInspectorProjectionEnvelope,
@@ -89,6 +93,13 @@ from app.core.constants import (
 )
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_REF
+from app.core.runtime_provider_config import (
+    RuntimeProviderConfigStore,
+    count_configured_workers,
+    mask_api_key,
+    resolve_runtime_provider_config,
+    runtime_provider_effective_mode,
+)
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -153,6 +164,123 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
         active_checkers=active_checkers,
         workers_in_rework_loop=0,
         workers_in_staffing_containment=len(contained_workers),
+    )
+
+
+def _build_runtime_provider_projection_data(
+    repository: ControlPlaneRepository,
+    runtime_provider_store: RuntimeProviderConfigStore,
+) -> RuntimeProviderProjectionData:
+    config = resolve_runtime_provider_config(runtime_provider_store)
+    effective_mode, effective_reason = runtime_provider_effective_mode(config, repository)
+    return RuntimeProviderProjectionData(
+        mode=config.mode,
+        effective_mode=effective_mode,
+        provider_id=config.provider_id,
+        base_url=config.base_url,
+        model=config.model,
+        timeout_sec=config.timeout_sec,
+        reasoning_effort=config.reasoning_effort,
+        api_key_configured=bool(config.api_key),
+        api_key_masked=mask_api_key(config.api_key),
+        configured_worker_count=count_configured_workers(repository, provider_id=config.provider_id),
+        effective_reason=effective_reason,
+    )
+
+
+def _build_dashboard_completion_summary(
+    repository: ControlPlaneRepository,
+    workflow_id: str,
+) -> DashboardCompletionSummaryProjection | None:
+    with repository.connection() as connection:
+        node_rows = connection.execute(
+            "SELECT status FROM node_projection WHERE workflow_id = ?",
+            (workflow_id,),
+        ).fetchall()
+        if not node_rows:
+            return None
+        if any(str(row["status"]) != NODE_STATUS_COMPLETED for row in node_rows):
+            return None
+
+        active_ticket_count = int(
+            connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM ticket_projection
+                WHERE workflow_id = ? AND status IN (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    workflow_id,
+                    "PENDING",
+                    "LEASED",
+                    "EXECUTING",
+                    "BLOCKED_FOR_BOARD_REVIEW",
+                    "REWORK_REQUIRED",
+                    "CANCEL_REQUESTED",
+                ),
+            ).fetchone()["total"]
+        )
+        if active_ticket_count > 0:
+            return None
+
+        open_approval_count = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM approval_projection WHERE workflow_id = ? AND status = ?",
+                (workflow_id, APPROVAL_STATUS_OPEN),
+            ).fetchone()["total"]
+        )
+        if open_approval_count > 0:
+            return None
+
+        open_incident_count = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM incident_projection WHERE workflow_id = ? AND status = ?",
+                (workflow_id, "OPEN"),
+            ).fetchone()["total"]
+        )
+        if open_incident_count > 0:
+            return None
+
+        row = connection.execute(
+            """
+            SELECT * FROM approval_projection
+            WHERE workflow_id = ? AND status = ?
+            ORDER BY resolved_at DESC, updated_at DESC, approval_id DESC
+            LIMIT 1
+            """,
+            (workflow_id, "APPROVED"),
+        ).fetchone()
+    if row is None:
+        return None
+
+    approval = repository._convert_approval_row(row)
+    payload = approval.get("payload") or {}
+    review_pack = payload.get("review_pack") or {}
+    resolution = payload.get("resolution") or {}
+    selected_option_id = resolution.get("selected_option_id")
+    selected_option = next(
+        (
+            option
+            for option in review_pack.get("options") or []
+            if option.get("option_id") == selected_option_id
+        ),
+        None,
+    )
+    recommendation = review_pack.get("recommendation") or {}
+    subject = review_pack.get("subject") or {}
+    resolved_at = approval.get("resolved_at")
+    if resolved_at is None:
+        return None
+
+    return DashboardCompletionSummaryProjection(
+        workflow_id=workflow_id,
+        final_review_pack_id=str(approval["review_pack_id"]),
+        approved_at=resolved_at,
+        title=str(subject.get("title") or review_pack.get("title") or approval["review_pack_id"]),
+        summary=str(recommendation.get("summary") or resolution.get("board_comment") or ""),
+        selected_option_id=selected_option_id,
+        board_comment=resolution.get("board_comment"),
+        artifact_refs=list((selected_option or {}).get("artifact_refs") or []),
     )
 
 
@@ -727,7 +855,25 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
     )
 
 
-def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardProjectionEnvelope:
+def build_runtime_provider_projection(
+    repository: ControlPlaneRepository,
+    runtime_provider_store: RuntimeProviderConfigStore,
+) -> RuntimeProviderProjectionEnvelope:
+    repository.initialize()
+    cursor, projection_version = repository.get_cursor_and_version()
+    return RuntimeProviderProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=now_local(),
+        projection_version=projection_version,
+        cursor=cursor,
+        data=_build_runtime_provider_projection_data(repository, runtime_provider_store),
+    )
+
+
+def build_dashboard_projection(
+    repository: ControlPlaneRepository,
+    runtime_provider_store: RuntimeProviderConfigStore,
+) -> DashboardProjectionEnvelope:
     repository.initialize()
     generated_at = now_local()
     active_workflow = repository.get_active_workflow()
@@ -793,6 +939,12 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
         )
         for event in repository.get_recent_event_previews()
     ]
+    runtime_provider = _build_runtime_provider_projection_data(repository, runtime_provider_store)
+    completion_summary = (
+        _build_dashboard_completion_summary(repository, active_workflow["workflow_id"])
+        if active_workflow is not None
+        else None
+    )
 
     return DashboardProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
@@ -815,6 +967,18 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                 open_incidents=open_incidents,
                 open_circuit_breakers=open_circuit_breakers,
                 provider_health_summary="DEGRADED" if open_provider_incidents > 0 else "UNKNOWN",
+            ),
+            runtime_status=DashboardRuntimeStatusProjection(
+                effective_mode=runtime_provider.effective_mode,
+                provider_label=(
+                    "OpenAI Compat"
+                    if runtime_provider.mode == "OPENAI_COMPAT"
+                    else "Local Deterministic"
+                ),
+                model=runtime_provider.model,
+                configured_worker_count=runtime_provider.configured_worker_count,
+                provider_health_summary="DEGRADED" if open_provider_incidents > 0 else "UNKNOWN",
+                reason=runtime_provider.effective_reason,
             ),
             pipeline_summary=PipelineSummaryProjection(
                 phases=pipeline_summary.phases,
@@ -853,6 +1017,7 @@ def build_dashboard_projection(repository: ControlPlaneRepository) -> DashboardP
                     artifact_cleanup_payload.get("storage_deleted_count") or 0
                 ),
             ),
+            completion_summary=completion_summary,
             event_stream_preview=preview_events,
         ),
     )

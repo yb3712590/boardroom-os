@@ -39,6 +39,7 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderUnavailableError,
     invoke_openai_compat_response,
 )
+from app.core.runtime_provider_config import resolve_runtime_provider_config
 from app.core.ticket_handlers import (
     handle_ticket_result_submit,
     handle_ticket_start,
@@ -417,24 +418,25 @@ def _load_provider_payload(output_text: str) -> dict[str, Any]:
 
 
 def _openai_compat_provider_is_configured() -> bool:
-    settings = get_settings()
+    config = resolve_runtime_provider_config()
     return all(
         (
-            settings.provider_openai_compat_base_url,
-            settings.provider_openai_compat_api_key,
-            settings.provider_openai_compat_model,
+            config.mode == "OPENAI_COMPAT",
+            config.base_url,
+            config.api_key,
+            config.model,
         )
     )
 
 
 def _build_openai_compat_provider_config() -> OpenAICompatProviderConfig:
-    settings = get_settings()
+    config = resolve_runtime_provider_config()
     return OpenAICompatProviderConfig(
-        base_url=str(settings.provider_openai_compat_base_url or ""),
-        api_key=str(settings.provider_openai_compat_api_key or ""),
-        model=str(settings.provider_openai_compat_model or ""),
-        timeout_sec=float(settings.provider_openai_compat_timeout_sec),
-        reasoning_effort=settings.provider_openai_compat_reasoning_effort,
+        base_url=str(config.base_url or ""),
+        api_key=str(config.api_key or ""),
+        model=str(config.model or ""),
+        timeout_sec=float(config.timeout_sec),
+        reasoning_effort=config.reasoning_effort,
     )
 
 

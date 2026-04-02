@@ -15,6 +15,7 @@ from app.contracts.commands import (
     IncidentResolveCommand,
     ModifyConstraintsCommand,
     ProjectInitCommand,
+    RuntimeProviderUpsertCommand,
     SchedulerTickCommand,
     TicketCancelCommand,
     TicketCompletedCommand,
@@ -34,6 +35,7 @@ from app.core.approval_handlers import (
 )
 from app.core.artifact_store import ArtifactStore
 from app.core.command_handlers import handle_project_init
+from app.core.runtime_provider_config import RuntimeProviderConfigStore, save_runtime_provider_command
 from app.core.employee_handlers import (
     handle_employee_freeze,
     handle_employee_hire_request,
@@ -61,6 +63,15 @@ router = APIRouter(prefix="/api/v1/commands", tags=["commands"])
 def project_init(request: Request, payload: ProjectInitCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_project_init(repository, payload)
+
+
+@router.post("/runtime-provider-upsert", response_model=CommandAckEnvelope)
+def runtime_provider_upsert(
+    request: Request,
+    payload: RuntimeProviderUpsertCommand,
+) -> CommandAckEnvelope:
+    runtime_provider_store: RuntimeProviderConfigStore = request.app.state.runtime_provider_store
+    return save_runtime_provider_command(runtime_provider_store, payload)
 
 
 @router.post("/employee-hire-request", response_model=CommandAckEnvelope)

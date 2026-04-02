@@ -49,6 +49,14 @@ export type DashboardData = {
     open_circuit_breakers: number
     provider_health_summary: string
   }
+  runtime_status: {
+    effective_mode: string
+    provider_label: string
+    model: string | null
+    configured_worker_count: number
+    provider_health_summary: string
+    reason: string
+  }
   pipeline_summary: {
     phases: PhaseSummary[]
     critical_path_node_ids: string[]
@@ -75,6 +83,16 @@ export type DashboardData = {
     workers_in_rework_loop: number
     workers_in_staffing_containment: number
   }
+  completion_summary: {
+    workflow_id: string
+    final_review_pack_id: string
+    approved_at: string
+    title: string
+    summary: string
+    selected_option_id: string | null
+    board_comment: string | null
+    artifact_refs: string[]
+  } | null
   event_stream_preview: Array<{
     event_id: string
     occurred_at: string
@@ -275,6 +293,20 @@ export type DependencyInspectorData = {
   nodes: DependencyInspectorNode[]
 }
 
+export type RuntimeProviderData = {
+  mode: string
+  effective_mode: string
+  provider_id: string
+  base_url: string | null
+  model: string | null
+  timeout_sec: number
+  reasoning_effort: string | null
+  api_key_configured: boolean
+  api_key_masked: string | null
+  configured_worker_count: number
+  effective_reason: string
+}
+
 export type IncidentDetailData = {
   incident: {
     incident_id: string
@@ -329,6 +361,13 @@ export async function getInbox(): Promise<InboxData> {
   return payload.data
 }
 
+export async function getRuntimeProvider(): Promise<RuntimeProviderData> {
+  const payload = await requestJson<ProjectionEnvelope<RuntimeProviderData>>(
+    '/api/v1/projections/runtime-provider',
+  )
+  return payload.data
+}
+
 export async function getWorkforce(): Promise<WorkforceData> {
   const payload = await requestJson<ProjectionEnvelope<WorkforceData>>('/api/v1/projections/workforce')
   return payload.data
@@ -369,6 +408,21 @@ export async function projectInit(payload: {
   deadline_at: string | null
 }): Promise<CommandAck> {
   return requestJson<CommandAck>('/api/v1/commands/project-init', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function runtimeProviderUpsert(payload: {
+  mode: string
+  base_url: string | null
+  api_key: string | null
+  model: string | null
+  timeout_sec: number
+  reasoning_effort: string | null
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/runtime-provider-upsert', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

@@ -75,6 +75,11 @@ class DeliveryStage(StrEnum):
     REVIEW = "REVIEW"
 
 
+class RuntimeProviderMode(StrEnum):
+    DETERMINISTIC = "DETERMINISTIC"
+    OPENAI_COMPAT = "OPENAI_COMPAT"
+
+
 class ProjectInitCommand(StrictModel):
     north_star_goal: str = Field(min_length=1)
     hard_constraints: list[str]
@@ -82,6 +87,16 @@ class ProjectInitCommand(StrictModel):
     deadline_at: datetime | None = None
     tenant_id: str | None = Field(default=None, min_length=1)
     workspace_id: str | None = Field(default=None, min_length=1)
+
+
+class RuntimeProviderUpsertCommand(StrictModel):
+    mode: RuntimeProviderMode
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    timeout_sec: float = Field(default=30.0, gt=0)
+    reasoning_effort: str | None = None
+    idempotency_key: str = Field(min_length=1)
 
 
 class ContextQueryPlan(StrictModel):

@@ -36,6 +36,26 @@ class OpsStripProjection(StrictModel):
     provider_health_summary: str
 
 
+class DashboardRuntimeStatusProjection(StrictModel):
+    effective_mode: str
+    provider_label: str
+    model: str | None = None
+    configured_worker_count: int
+    provider_health_summary: str
+    reason: str
+
+
+class DashboardCompletionSummaryProjection(StrictModel):
+    workflow_id: str
+    final_review_pack_id: str
+    approved_at: datetime
+    title: str
+    summary: str
+    selected_option_id: str | None = None
+    board_comment: str | None = None
+    artifact_refs: list[str]
+
+
 class NodeCountsProjection(StrictModel):
     pending: int
     executing: int
@@ -130,10 +150,12 @@ class DashboardProjectionData(StrictModel):
     workspace: WorkspaceSummary
     active_workflow: ActiveWorkflowProjection | None = None
     ops_strip: OpsStripProjection
+    runtime_status: DashboardRuntimeStatusProjection
     pipeline_summary: PipelineSummaryProjection
     inbox_counts: InboxCountsProjection
     workforce_summary: WorkforceSummaryProjection
     artifact_maintenance: ArtifactMaintenanceProjection
+    completion_summary: DashboardCompletionSummaryProjection | None = None
     event_stream_preview: list[EventStreamPreviewItem]
 
 
@@ -223,6 +245,24 @@ class DependencyInspectorProjectionData(StrictModel):
 
 class DependencyInspectorProjectionEnvelope(ProjectionEnvelopeBase):
     data: DependencyInspectorProjectionData
+
+
+class RuntimeProviderProjectionData(StrictModel):
+    mode: str
+    effective_mode: str
+    provider_id: str
+    base_url: str | None = None
+    model: str | None = None
+    timeout_sec: float
+    reasoning_effort: str | None = None
+    api_key_configured: bool
+    api_key_masked: str | None = None
+    configured_worker_count: int
+    effective_reason: str
+
+
+class RuntimeProviderProjectionEnvelope(ProjectionEnvelopeBase):
+    data: RuntimeProviderProjectionData
 
 
 class ReviewRoomDraftDefaults(StrictModel):

@@ -20,7 +20,8 @@
 - `events/stream` 只做刷新提示，不作为浏览器里的第二真相源
 - `project-init` 现在会同步尝试推进到首个 scope review；scope review 被批准后，后端会继续把当前支持范围内的 follow-up 真正落票并推进到下一个治理停点；如果没有 eligible worker，或途中出现 incident，前端只展示后端停下来的真实状态
 - `dependency inspector` 只展示后端投影好的“当前链路解释”，不在浏览器里自己拼 DAG 或推导阻塞规则
-- 本轮没有做 provider/model 设置页
+- 现在可以直接在 UI 里打开 `runtime provider` 设置抽屉，切换本地 `Deterministic / OpenAI Compat`，并保存本地 `base_url / api_key / model / timeout / reasoning_effort`
+- 首页会显式展示当前 execution mode，并在最终 review 批准后显示 completion card 和最终证据入口
 
 ## 本地运行
 

@@ -304,6 +304,18 @@
   - `cd frontend && npm run test:run` -> `1 passed, 13 tests passed`
   - `cd frontend && npm run build` -> `built in 204ms`
 
+### 2026-04-02 (runtime provider + completion card)
+
+- Closed the main board-demo gap without reopening architecture scope: the backend now exposes a local `runtime provider` config projection plus upsert command, backed by a JSON file outside the workflow event log.
+- Kept workflow truth unchanged: runtime provider config stays local-machine operational state, while workflow completion is derived conservatively in `dashboard` from existing nodes, approvals, incidents, and active tickets instead of adding a new terminal workflow event.
+- The React shell now includes a runtime-settings drawer, a homepage execution-mode status card, and a completion card that appears after final review approval and links straight back into the existing final `Review Room` evidence pack.
+- Runtime provider live mode is still intentionally narrow: only the already-real `prov_openai_compat` path is supported, and incomplete / paused / live states are surfaced explicitly instead of inventing a broader provider registry.
+- Fresh focused verification after this change is:
+  - `cd frontend && npm run test:run -- --reporter=dot` -> `15 passed`
+  - `cd frontend && npm run build` -> `built`
+  - `python -m pytest backend/tests/test_api.py -k "runtime_provider or completion_summary or scope_review" -q` -> `15 passed, 211 deselected`
+  - `python -m pytest backend/tests/test_scheduler_runner.py -k "provider_when_configured or saved_runtime_provider_config" -q` -> `2 passed, 24 deselected`
+
 ### Current Watch-Outs
 
 - Latest commit also continued the append-only `memory-log.md` pattern. Before archival, this file had grown to about `2300` lines, `119 KB`, and `14.9k` words.

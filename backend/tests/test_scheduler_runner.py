@@ -982,6 +982,93 @@ def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_
     assert ticket_projection["status"] == "COMPLETED"
 
 
+def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
+    client,
+    set_ticket_time,
+    monkeypatch,
+    tmp_path,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    config_path = tmp_path / "runtime-provider-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mode": "OPENAI_COMPAT",
+                "base_url": "https://api-vip.codex-for.me/v1",
+                "api_key": "provider-key",
+                "model": "gpt-5.3-codex",
+                "timeout_sec": 30.0,
+                "reasoning_effort": "medium",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", raising=False)
+    monkeypatch.delenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", raising=False)
+    monkeypatch.delenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", raising=False)
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_saved_config", provider_id="prov_openai_compat")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_saved",
+            ticket_id="tkt_runner_provider_saved",
+            node_id="node_runner_provider_saved",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_saved",
+            "ticket_id": "tkt_runner_provider_saved",
+            "node_id": "node_runner_provider_saved",
+            "leased_by": "emp_frontend_saved_config",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_saved:tkt_runner_provider_saved",
+        },
+    )
+
+    called_ticket_ids: list[str] = []
+
+    def _fake_provider_execute(execution_package):
+        called_ticket_ids.append(execution_package.meta.ticket_id)
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary="Provider completed the runtime ticket from saved config.",
+            artifact_refs=["art://runtime/provider-saved/option-a.json"],
+            result_payload={
+                "summary": "Provider completed the runtime ticket from saved config.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Provider-backed option from saved config.",
+                        "artifact_refs": ["art://runtime/provider-saved/option-a.json"],
+                    }
+                ],
+            },
+            confidence=0.84,
+        )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_execute_openai_compat_provider",
+        _fake_provider_execute,
+        raising=False,
+    )
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_saved")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_saved"]
+    assert called_ticket_ids == ["tkt_runner_provider_saved"]
+    assert ticket_projection["status"] == "COMPLETED"
+
+
 def test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post(

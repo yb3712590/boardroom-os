@@ -10,23 +10,27 @@ import {
   getDeveloperInspector,
   getIncidentDetail,
   getInbox,
+  getRuntimeProvider,
   getReviewRoom,
   getWorkforce,
   incidentResolve,
   modifyConstraints,
   projectInit,
+  runtimeProviderUpsert,
   type DashboardData,
   type DependencyInspectorData,
   type IncidentDetailData,
   type DeveloperInspectorData,
   type InboxData,
   type InboxItem,
+  type RuntimeProviderData,
   type ReviewRoomData,
   type WorkforceData,
 } from './api'
 import { DependencyInspectorDrawer } from './components/DependencyInspectorDrawer'
 import { EventTicker } from './components/EventTicker'
 import { IncidentDrawer } from './components/IncidentDrawer'
+import { ProviderSettingsDrawer } from './components/ProviderSettingsDrawer'
 import { ReviewRoomDrawer } from './components/ReviewRoomDrawer'
 import { WorkforcePanel } from './components/WorkforcePanel'
 import { WorkflowRiver } from './components/WorkflowRiver'
@@ -55,6 +59,33 @@ function normalizeConstraints(value: string) {
     .split('\n')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function runtimeModeLabel(value: string | null | undefined) {
+  switch (value) {
+    case 'OPENAI_COMPAT_LIVE':
+      return 'OpenAI Compat'
+    case 'OPENAI_COMPAT_INCOMPLETE':
+      return 'OpenAI Compat incomplete'
+    case 'OPENAI_COMPAT_PAUSED':
+      return 'OpenAI Compat paused'
+    case 'LOCAL_DETERMINISTIC':
+    default:
+      return 'Local deterministic'
+  }
+}
+
+function runtimeModeTone(value: string | null | undefined) {
+  switch (value) {
+    case 'OPENAI_COMPAT_LIVE':
+      return 'live'
+    case 'OPENAI_COMPAT_INCOMPLETE':
+    case 'OPENAI_COMPAT_PAUSED':
+      return 'warning'
+    case 'LOCAL_DETERMINISTIC':
+    default:
+      return 'local'
+  }
 }
 
 type ProjectInitFormProps = {
@@ -209,23 +240,45 @@ function ShellRoute() {
   const [submittingAction, setSubmittingAction] = useState<string | null>(null)
   const [submittingIncidentAction, setSubmittingIncidentAction] = useState(false)
   const [dependencyInspectorOpen, setDependencyInspectorOpen] = useState(false)
+  const [runtimeProvider, setRuntimeProvider] = useState<RuntimeProviderData | null>(null)
+  const [runtimeProviderLoading, setRuntimeProviderLoading] = useState(true)
+  const [runtimeProviderError, setRuntimeProviderError] = useState<string | null>(null)
+  const [runtimeProviderSubmitting, setRuntimeProviderSubmitting] = useState(false)
+  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false)
 
   const reloadSnapshot = async () => {
     setSnapshotError(null)
     setSnapshotLoading(true)
+    setRuntimeProviderLoading(true)
     try {
-      const [nextDashboard, nextInbox, nextWorkforce] = await Promise.all([
-        getDashboard(),
-        getInbox(),
-        getWorkforce(),
+      const [snapshotResult, runtimeProviderResult] = await Promise.allSettled([
+        Promise.all([getDashboard(), getInbox(), getWorkforce()]),
+        getRuntimeProvider(),
       ])
+      if (snapshotResult.status === 'rejected') {
+        throw snapshotResult.reason
+      }
+      const [nextDashboard, nextInbox, nextWorkforce] = snapshotResult.value
       setDashboard(nextDashboard)
       setInbox(nextInbox)
       setWorkforce(nextWorkforce)
+
+      if (runtimeProviderResult.status === 'fulfilled') {
+        setRuntimeProvider(runtimeProviderResult.value)
+        setRuntimeProviderError(null)
+      } else {
+        setRuntimeProvider(null)
+        setRuntimeProviderError(
+          runtimeProviderResult.reason instanceof Error
+            ? runtimeProviderResult.reason.message
+            : 'Failed to load runtime provider settings.',
+        )
+      }
     } catch (error) {
       setSnapshotError(error instanceof Error ? error.message : 'Failed to load the latest boardroom snapshot.')
     } finally {
       setSnapshotLoading(false)
+      setRuntimeProviderLoading(false)
     }
   }
 
@@ -389,6 +442,35 @@ function ShellRoute() {
 
   const reviewPack = reviewRoom?.review_pack
 
+  const handleRuntimeProviderSave = async (input: {
+    mode: string
+    baseUrl: string | null
+    apiKey: string | null
+    model: string | null
+    timeoutSec: number
+    reasoningEffort: string | null
+  }) => {
+    setRuntimeProviderSubmitting(true)
+    setRuntimeProviderError(null)
+    try {
+      await runtimeProviderUpsert({
+        mode: input.mode,
+        base_url: input.baseUrl,
+        api_key: input.apiKey,
+        model: input.model,
+        timeout_sec: input.timeoutSec,
+        reasoning_effort: input.reasoningEffort,
+        idempotency_key: `runtime-provider-upsert:${Date.now()}`,
+      })
+      await reloadSnapshot()
+      setProviderSettingsOpen(false)
+    } catch (error) {
+      setRuntimeProviderError(error instanceof Error ? error.message : 'Failed to save runtime provider settings.')
+    } finally {
+      setRuntimeProviderSubmitting(false)
+    }
+  }
+
   const handleIncidentResolve = async (input: {
     resolutionSummary: string
     followupAction: string
@@ -497,6 +579,20 @@ function ShellRoute() {
 
   const approvalsPending = dashboard?.inbox_counts.approvals_pending ?? 0
   const activeWorkflow = dashboard?.active_workflow
+  const runtimeStatus = dashboard?.runtime_status
+  const completionSummary = dashboard?.completion_summary
+  const effectiveRuntimeMode = runtimeStatus?.effective_mode ?? runtimeProvider?.effective_mode ?? 'LOCAL_DETERMINISTIC'
+  const runtimeProviderLabel =
+    runtimeStatus?.provider_label ?? runtimeModeLabel(runtimeProvider?.effective_mode ?? effectiveRuntimeMode)
+  const runtimeModel = runtimeStatus?.model ?? runtimeProvider?.model
+  const runtimeWorkerCount =
+    runtimeStatus?.configured_worker_count ?? runtimeProvider?.configured_worker_count ?? 0
+  const runtimeReason =
+    runtimeStatus?.reason ??
+    runtimeProvider?.effective_reason ??
+    'Runtime is using the currently saved local execution settings.'
+  const runtimeHealth =
+    runtimeStatus?.provider_health_summary ?? dashboard?.ops_strip.provider_health_summary ?? 'UNKNOWN'
 
   return (
     <>
@@ -512,6 +608,36 @@ function ShellRoute() {
               </p>
             </div>
             <div className="top-chrome-meta">
+              <section className={`runtime-status-card runtime-status-${runtimeModeTone(effectiveRuntimeMode)}`}>
+                <div className="runtime-status-head">
+                  <div>
+                    <p className="eyebrow">Execution mode</p>
+                    <strong>{runtimeProviderLabel}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => setProviderSettingsOpen(true)}
+                  >
+                    Runtime settings
+                  </button>
+                </div>
+                <p className="runtime-status-copy">{runtimeReason}</p>
+                <dl className="runtime-status-grid">
+                  <div>
+                    <dt>Model</dt>
+                    <dd>{runtimeModel ?? 'Deterministic local runtime'}</dd>
+                  </div>
+                  <div>
+                    <dt>Workers</dt>
+                    <dd>{runtimeWorkerCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Health</dt>
+                    <dd>{runtimeHealth}</dd>
+                  </div>
+                </dl>
+              </section>
               <div className={`board-chip ${approvalsPending > 0 ? 'is-armed' : 'is-clear'}`}>
                 <span className="board-chip-light" aria-hidden="true" />
                 <strong>{approvalsPending > 0 ? 'Board Gate armed' : 'Board Gate clear'}</strong>
@@ -551,7 +677,8 @@ function ShellRoute() {
               {snapshotLoading && dashboard == null ? <div className="shell-loading">Loading boardroom snapshot…</div> : null}
               {!snapshotLoading && activeWorkflow == null ? (
                 <ProjectInitForm submitting={projectInitPending} onSubmit={handleProjectInit} />
-              ) : activeWorkflow != null && dashboard != null ? (
+              ) : null}
+              {activeWorkflow != null && dashboard != null ? (
                 <>
                   <WorkflowRiver
                     phases={dashboard.pipeline_summary.phases}
@@ -592,6 +719,46 @@ function ShellRoute() {
                     </div>
                   </section>
                 </>
+              ) : null}
+              {completionSummary && !reviewPackId ? (
+                <section className="completion-card" aria-labelledby="completion-card-title">
+                  <div className="completion-card-copy">
+                    <p className="eyebrow">Workflow result</p>
+                    <h2 id="completion-card-title">Delivery completed</h2>
+                    <p className="muted-copy">
+                      Approved {formatTimestamp(completionSummary.approved_at)} for workflow{' '}
+                      {completionSummary.workflow_id}.
+                    </p>
+                  </div>
+                  <div className="completion-card-grid">
+                    <div>
+                      <span>Final title</span>
+                      <strong>{completionSummary.title}</strong>
+                    </div>
+                    <div>
+                      <span>Selected option</span>
+                      <strong>{completionSummary.selected_option_id ?? 'Board approved without option override'}</strong>
+                    </div>
+                    <div>
+                      <span>Board comment</span>
+                      <strong>{completionSummary.board_comment ?? 'No board comment recorded.'}</strong>
+                    </div>
+                    <div>
+                      <span>Evidence refs</span>
+                      <strong>{completionSummary.artifact_refs.length}</strong>
+                    </div>
+                  </div>
+                  <p className="completion-card-summary">{completionSummary.summary}</p>
+                  <div className="completion-card-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => handleOpenReview(completionSummary.final_review_pack_id)}
+                    >
+                      Open final review evidence
+                    </button>
+                  </div>
+                </section>
               ) : null}
             </section>
 
@@ -646,6 +813,16 @@ function ShellRoute() {
         onClose={() => setDependencyInspectorOpen(false)}
         onOpenReview={handleOpenReview}
         onOpenIncident={handleOpenIncident}
+      />
+
+      <ProviderSettingsDrawer
+        isOpen={providerSettingsOpen}
+        providerData={runtimeProvider}
+        loading={runtimeProviderLoading}
+        error={runtimeProviderError}
+        submitting={runtimeProviderSubmitting}
+        onClose={() => setProviderSettingsOpen(false)}
+        onSave={handleRuntimeProviderSave}
       />
     </>
   )

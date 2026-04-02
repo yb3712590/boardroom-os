@@ -16,6 +16,7 @@ class Settings:
     developer_inspector_root: Path
     artifact_store_root: Path
     artifact_upload_staging_root: Path
+    runtime_provider_config_path: Path
     runtime_execution_mode: RuntimeExecutionMode
     artifact_object_store_enabled: bool
     artifact_object_store_endpoint: str | None
@@ -97,6 +98,12 @@ def get_settings() -> Settings:
         os.environ.get(
             "BOARDROOM_OS_ARTIFACT_UPLOAD_STAGING_ROOT",
             repo_root / "backend" / "data" / "artifact_uploads",
+        )
+    )
+    runtime_provider_config_path = Path(
+        os.environ.get(
+            "BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH",
+            repo_root / "backend" / "data" / "runtime-provider-config.json",
         )
     )
     artifact_object_store_enabled = _read_bool_env(
@@ -249,6 +256,7 @@ def get_settings() -> Settings:
         developer_inspector_root=developer_inspector_root,
         artifact_store_root=artifact_store_root,
         artifact_upload_staging_root=artifact_upload_staging_root,
+        runtime_provider_config_path=runtime_provider_config_path,
         runtime_execution_mode=runtime_execution_mode,
         artifact_object_store_enabled=artifact_object_store_enabled,
         artifact_object_store_endpoint=artifact_object_store_endpoint,

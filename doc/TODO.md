@@ -53,8 +53,11 @@
 - 已完成直接推进主线：首页现在也能打开 `dependency inspector`
   - 当前 active workflow 会暴露一份只服务本地 MVP 的依赖快照，直接展示 `Plan / Build / Check / Review` 之间的真实依赖、当前停点、以及回到对应 `Review Room / Incident` 的入口
   - 这条读面继续保持 projection-first：前端不回放完整 DAG，不在浏览器里推导新工作流状态，只消费后端给出的当前链路解释
-- 直接推进主线：继续补齐 UI 的剩余 MVP 读面
-  - `provider / model` 设置页
+- 已完成直接推进主线：董事会演示链路现在能在 UI 里切 runtime 并读到最终完成态
+  - React 壳里已落地最小 `runtime provider` 设置抽屉，可直接保存本地 `Deterministic / OpenAI Compat` 配置并立即生效
+  - 首页已显式展示 execution mode、模型名、worker 绑定数和当前 effective reason，董事会现场能直接看出现在到底是本地 deterministic、live、paused 还是配置不完整
+  - 最终 review 一旦批准，首页会直接出现 completion card，并复用现有 `Review Room` 打开最终证据
+- 后置观察：完整 provider registry / model routing / provider test route 继续后置，不在这轮扩张
 - 为主线解堵：继续保持 projection-first，前端不拥有工作流真相
   - 当前首页河道只消费 `dashboard.pipeline_summary.phases` 的固定五段高层摘要，不新造前端工作流引擎
   - `events/stream` 只用于失效通知，不作为浏览器里的第二真相源

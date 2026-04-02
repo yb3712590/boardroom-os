@@ -185,6 +185,27 @@ def _employee_restore_payload(
     }
 
 
+def _runtime_provider_upsert_payload(
+    *,
+    mode: str = "OPENAI_COMPAT",
+    base_url: str | None = "https://api.example.test/v1",
+    api_key: str | None = "sk-test-secret",
+    model: str | None = "gpt-5.3-codex",
+    timeout_sec: float = 45.0,
+    reasoning_effort: str | None = "high",
+    idempotency_key: str = "runtime-provider-upsert:test",
+) -> dict:
+    return {
+        "mode": mode,
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+        "timeout_sec": timeout_sec,
+        "reasoning_effort": reasoning_effort,
+        "idempotency_key": idempotency_key,
+    }
+
+
 def _encode_base64(content: bytes) -> str:
     return base64.b64encode(content).decode("ascii")
 
@@ -2236,6 +2257,125 @@ def test_dashboard_returns_latest_active_workflow(client):
     assert data["active_workflow"]["north_star_goal"] == "Ship MVP B"
     assert data["ops_strip"]["budget_total"] == 750000
     assert isinstance(data["pipeline_summary"]["phases"], list)
+
+
+def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_runtime_status(
+    db_path,
+    monkeypatch,
+):
+    config_path = db_path.parent / "runtime-provider-config.json"
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH", str(config_path))
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        _seed_worker(
+            client,
+            employee_id="emp_frontend_runtime_status",
+            provider_id="prov_openai_compat",
+        )
+        command_response = client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(),
+        )
+        projection_response = client.get("/api/v1/projections/runtime-provider")
+        dashboard_response = client.get("/api/v1/projections/dashboard")
+
+        assert command_response.status_code == 200
+        assert command_response.json()["status"] == "ACCEPTED"
+        assert projection_response.status_code == 200
+        assert dashboard_response.status_code == 200
+
+        projection_data = projection_response.json()["data"]
+        dashboard_data = dashboard_response.json()["data"]
+
+        assert projection_data["mode"] == "OPENAI_COMPAT"
+        assert projection_data["effective_mode"] == "OPENAI_COMPAT_LIVE"
+        assert projection_data["provider_id"] == "prov_openai_compat"
+        assert projection_data["base_url"] == "https://api.example.test/v1"
+        assert projection_data["model"] == "gpt-5.3-codex"
+        assert projection_data["timeout_sec"] == 45.0
+        assert projection_data["reasoning_effort"] == "high"
+        assert projection_data["api_key_configured"] is True
+        assert projection_data["api_key_masked"] != "sk-test-secret"
+        assert "secret" not in projection_data["api_key_masked"]
+        assert projection_data["configured_worker_count"] >= 1
+        assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
+        assert dashboard_data["runtime_status"]["provider_label"] == "OpenAI Compat"
+        assert dashboard_data["runtime_status"]["model"] == "gpt-5.3-codex"
+        assert dashboard_data["runtime_status"]["configured_worker_count"] >= 1
+
+        switch_response = client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                mode="DETERMINISTIC",
+                base_url=None,
+                api_key=None,
+                model=None,
+                timeout_sec=30.0,
+                reasoning_effort=None,
+                idempotency_key="runtime-provider-upsert:deterministic",
+            ),
+        )
+        switched_projection = client.get("/api/v1/projections/runtime-provider")
+        switched_dashboard = client.get("/api/v1/projections/dashboard")
+
+        assert switch_response.status_code == 200
+        assert switch_response.json()["status"] == "ACCEPTED"
+        assert switched_projection.json()["data"]["mode"] == "DETERMINISTIC"
+        assert switched_projection.json()["data"]["effective_mode"] == "LOCAL_DETERMINISTIC"
+        assert switched_dashboard.json()["data"]["runtime_status"]["effective_mode"] == (
+            "LOCAL_DETERMINISTIC"
+        )
+
+
+def test_dashboard_runtime_status_shows_provider_paused_when_provider_incident_is_open(
+    db_path,
+    monkeypatch,
+):
+    config_path = db_path.parent / "runtime-provider-config-paused.json"
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH", str(config_path))
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(idempotency_key="runtime-provider-upsert:paused"),
+        )
+        _create_lease_and_start_ticket(
+            client,
+            workflow_id="wf_provider_paused",
+            ticket_id="tkt_provider_paused",
+            node_id="node_provider_paused",
+        )
+        fail_response = client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                workflow_id="wf_provider_paused",
+                ticket_id="tkt_provider_paused",
+                node_id="node_provider_paused",
+                failure_kind="PROVIDER_RATE_LIMITED",
+                failure_message="Provider quota exhausted.",
+                failure_detail={
+                    "provider_id": "prov_openai_compat",
+                    "provider_status_code": 429,
+                },
+                idempotency_key="ticket-fail:wf_provider_paused:tkt_provider_paused:rate-limit",
+            ),
+        )
+        dashboard_response = client.get("/api/v1/projections/dashboard")
+        provider_response = client.get("/api/v1/projections/runtime-provider")
+
+        assert fail_response.status_code == 200
+        assert fail_response.json()["status"] == "ACCEPTED"
+        assert dashboard_response.status_code == 200
+        assert provider_response.status_code == 200
+        assert dashboard_response.json()["data"]["runtime_status"]["effective_mode"] == (
+            "OPENAI_COMPAT_PAUSED"
+        )
+        assert dashboard_response.json()["data"]["runtime_status"]["provider_health_summary"] == "DEGRADED"
+        assert provider_response.json()["data"]["effective_mode"] == "OPENAI_COMPAT_PAUSED"
 
 
 def test_dashboard_pipeline_summary_shows_review_stage_after_project_init_auto_advance(client):
@@ -9008,6 +9148,52 @@ def test_board_approve_command_resolves_open_approval(client):
     assert dashboard_response.json()["data"]["ops_strip"]["active_tickets"] == 0
     assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 0
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == []
+
+
+def test_dashboard_completion_summary_returns_after_final_review_approval(client):
+    workflow_id, scope_approval = _project_init_to_scope_approval(client)
+    scope_response = _approve_open_review(client, scope_approval, idempotency_suffix="completion-scope")
+    repository = client.app.state.repository
+    approval = next(
+        item
+        for item in repository.list_open_approvals()
+        if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
+    )
+
+    response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": "option_a",
+            "board_comment": "Proceed with option A.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:completion-summary",
+        },
+    )
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    review_room_response = client.get(f"/api/v1/projections/review-room/{approval['review_pack_id']}")
+
+    assert scope_response.status_code == 200
+    assert scope_response.json()["status"] == "ACCEPTED"
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert dashboard_response.status_code == 200
+    assert review_room_response.status_code == 200
+
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+    review_pack = approval["payload"]["review_pack"]
+
+    assert completion_summary["workflow_id"] == workflow_id
+    assert completion_summary["final_review_pack_id"] == approval["review_pack_id"]
+    assert completion_summary["title"] == review_pack["subject"]["title"]
+    assert completion_summary["summary"] == review_pack["recommendation"]["summary"]
+    assert completion_summary["selected_option_id"] == "option_a"
+    assert completion_summary["board_comment"] == "Proceed with option A."
+    assert completion_summary["artifact_refs"] == review_pack["options"][0]["artifact_refs"]
+    assert completion_summary["approved_at"] is not None
+    assert review_room_response.json()["data"]["available_actions"] == []
 
 
 def test_board_approve_scope_review_rejects_unsupported_followup_owner_role(client, set_ticket_time):

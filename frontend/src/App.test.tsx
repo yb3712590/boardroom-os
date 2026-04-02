@@ -398,6 +398,23 @@ function dependencyInspectorData(overrides: Partial<JsonRecord> = {}) {
   }
 }
 
+function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
+  return {
+    mode: 'DETERMINISTIC',
+    effective_mode: 'LOCAL_DETERMINISTIC',
+    provider_id: 'prov_openai_compat',
+    base_url: null,
+    model: null,
+    timeout_sec: 30,
+    reasoning_effort: null,
+    api_key_configured: false,
+    api_key_masked: null,
+    configured_worker_count: 1,
+    effective_reason: 'Runtime is using the local deterministic path.',
+    ...overrides,
+  }
+}
+
 function dashboardData(overrides: Partial<JsonRecord> = {}) {
   return {
     workspace: {
@@ -423,6 +440,14 @@ function dashboardData(overrides: Partial<JsonRecord> = {}) {
       open_incidents: 0,
       open_circuit_breakers: 0,
       provider_health_summary: 'UNKNOWN',
+    },
+    runtime_status: {
+      effective_mode: 'LOCAL_DETERMINISTIC',
+      provider_label: 'Local Deterministic',
+      model: null,
+      configured_worker_count: 1,
+      provider_health_summary: 'UNKNOWN',
+      reason: 'Runtime is using the local deterministic path.',
     },
     pipeline_summary: {
       phases: [
@@ -467,6 +492,7 @@ function dashboardData(overrides: Partial<JsonRecord> = {}) {
       workers_in_rework_loop: 0,
       workers_in_staffing_containment: 0,
     },
+    completion_summary: null,
     event_stream_preview: [
       {
         event_id: 'evt_000041',
@@ -510,6 +536,7 @@ function installBoardroomMock(options?: {
   inspector?: JsonRecord
   dependencyInspector?: JsonRecord
   incidentDetail?: JsonRecord
+  runtimeProvider?: JsonRecord
 }) {
   const state = {
     dashboard: options?.dashboard ?? dashboardData(),
@@ -519,6 +546,7 @@ function installBoardroomMock(options?: {
     inspector: options?.inspector ?? inspectorData(),
     dependencyInspector: options?.dependencyInspector ?? dependencyInspectorData(),
     incidentDetail: options?.incidentDetail ?? incidentDetailData(),
+    runtimeProvider: options?.runtimeProvider ?? runtimeProviderData(),
   }
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -530,6 +558,9 @@ function installBoardroomMock(options?: {
     }
     if (method === 'GET' && url.endsWith('/api/v1/projections/inbox')) {
       return jsonResponse(envelope(state.inbox))
+    }
+    if (method === 'GET' && url.endsWith('/api/v1/projections/runtime-provider')) {
+      return jsonResponse(envelope(state.runtimeProvider))
     }
     if (method === 'GET' && url.endsWith('/api/v1/projections/workforce')) {
       return jsonResponse(envelope(state.workforce))
@@ -551,6 +582,7 @@ function installBoardroomMock(options?: {
     }
     if (method === 'POST' && url.endsWith('/api/v1/commands/project-init')) {
       state.dashboard = dashboardData({
+        runtime_status: state.dashboard.runtime_status,
         pipeline_summary: {
           phases: [
             phase('Intake', 'COMPLETED', { completed: 1 }),
@@ -598,6 +630,58 @@ function installBoardroomMock(options?: {
     }
     if (
       method === 'POST' &&
+      url.endsWith('/api/v1/commands/runtime-provider-upsert')
+    ) {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as JsonRecord
+      const mode = String(payload.mode ?? 'DETERMINISTIC')
+      const model = typeof payload.model === 'string' ? payload.model : null
+      const baseUrl = typeof payload.base_url === 'string' ? payload.base_url : null
+      const reasoningEffort =
+        typeof payload.reasoning_effort === 'string' ? payload.reasoning_effort : null
+      const timeoutSec = typeof payload.timeout_sec === 'number' ? payload.timeout_sec : 30
+      const apiKey = typeof payload.api_key === 'string' ? payload.api_key : null
+      state.runtimeProvider = runtimeProviderData({
+        mode,
+        effective_mode: mode === 'OPENAI_COMPAT' ? 'OPENAI_COMPAT_LIVE' : 'LOCAL_DETERMINISTIC',
+        base_url: baseUrl,
+        model,
+        timeout_sec: timeoutSec,
+        reasoning_effort: reasoningEffort,
+        api_key_configured: Boolean(apiKey),
+        api_key_masked: apiKey ? 'sk-***cret' : null,
+        effective_reason:
+          mode === 'OPENAI_COMPAT'
+            ? 'Runtime is using the saved OpenAI-compatible provider config.'
+            : 'Runtime is using the local deterministic path.',
+      })
+      state.dashboard = {
+        ...state.dashboard,
+        runtime_status: {
+          effective_mode: state.runtimeProvider.effective_mode,
+          provider_label:
+            state.runtimeProvider.effective_mode === 'OPENAI_COMPAT_LIVE'
+              ? 'OpenAI Compat'
+              : 'Local Deterministic',
+          model: state.runtimeProvider.model,
+          configured_worker_count: Number(state.runtimeProvider.configured_worker_count),
+          provider_health_summary: String(
+            (state.dashboard as { ops_strip?: { provider_health_summary?: string } }).ops_strip
+              ?.provider_health_summary ?? 'UNKNOWN',
+          ),
+          reason: String(state.runtimeProvider.effective_reason),
+        },
+      }
+      return jsonResponse({
+        command_id: 'cmd_runtime_provider_upsert',
+        idempotency_key: 'runtime-provider-upsert:mock',
+        status: 'ACCEPTED',
+        received_at: '2026-04-01T23:10:30+08:00',
+        reason: null,
+        causation_hint: 'runtime-provider:prov_openai_compat',
+      })
+    }
+    if (
+      method === 'POST' &&
       ['/api/v1/commands/board-approve', '/api/v1/commands/board-reject', '/api/v1/commands/modify-constraints'].some(
         (path) => url.endsWith(path),
       )
@@ -624,6 +708,17 @@ function installBoardroomMock(options?: {
           incidents_pending: 0,
           budget_alerts: 0,
           provider_alerts: 0,
+        },
+        runtime_status: state.dashboard.runtime_status,
+        completion_summary: {
+          workflow_id: 'wf_001',
+          final_review_pack_id: 'brp_001',
+          approved_at: '2026-04-01T23:12:00+08:00',
+          title: 'Review homepage visual milestone',
+          summary: 'Approve option A to unblock the main build path.',
+          selected_option_id: 'option_a',
+          board_comment: 'Proceed with option A.',
+          artifact_refs: ['art://runtime/tkt_visual_002/option-a.png'],
         },
       })
       state.inbox = inboxData()
@@ -727,6 +822,46 @@ describe('Boardroom UI', () => {
 
     expect(await screen.findByRole('heading', { name: /launch workflow to first review/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /launch to first review/i })).toBeInTheDocument()
+  })
+
+  it('opens provider settings without an active workflow and saves runtime provider config', async () => {
+    const { fetchMock } = installBoardroomMock({
+      dashboard: dashboardData({
+        active_workflow: null,
+        ops_strip: {
+          ...dashboardData().ops_strip,
+          budget_total: 0,
+          budget_used: 0,
+          budget_remaining: 0,
+          active_tickets: 0,
+          blocked_nodes: 0,
+        },
+      }),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /runtime settings/i }))
+    expect(await screen.findByRole('heading', { name: /runtime provider/i })).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText(/provider mode/i), 'OPENAI_COMPAT')
+    await user.clear(screen.getByLabelText(/base url/i))
+    await user.type(screen.getByLabelText(/base url/i), 'https://api.example.test/v1')
+    await user.clear(screen.getByLabelText(/api key/i))
+    await user.type(screen.getByLabelText(/api key/i), 'sk-test-secret')
+    await user.clear(screen.getByLabelText(/model/i))
+    await user.type(screen.getByLabelText(/model/i), 'gpt-5.3-codex')
+    await user.click(screen.getByRole('button', { name: /save runtime settings/i }))
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/commands/runtime-provider-upsert',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    )
+    expect(await screen.findByText(/openai compat/i)).toBeInTheDocument()
+    expect(screen.getByText(/gpt-5.3-codex/i)).toBeInTheDocument()
   })
 
   it('launches project init and refreshes into the first review state', async () => {
@@ -1068,6 +1203,62 @@ describe('Boardroom UI', () => {
       ),
     )
     expect((await screen.findAllByText(/board gate clear/i)).length).toBeGreaterThan(0)
+  })
+
+  it('shows the completion card after final review approval and reopens the final evidence', async () => {
+    installBoardroomMock({
+      dashboard: dashboardData({
+        pipeline_summary: {
+          phases: [
+            phase('Intake', 'COMPLETED', { completed: 1 }),
+            phase('Plan', 'COMPLETED', { completed: 1 }),
+            phase('Build', 'COMPLETED', { completed: 1 }),
+            phase('Check', 'COMPLETED', { completed: 1 }),
+            phase('Review', 'BLOCKED_FOR_BOARD', { blocked_for_board: 1 }),
+          ],
+          critical_path_node_ids: ['node_homepage_visual'],
+          blocked_node_ids: ['node_homepage_visual'],
+        },
+        inbox_counts: {
+          approvals_pending: 1,
+          incidents_pending: 0,
+          budget_alerts: 0,
+          provider_alerts: 0,
+        },
+      }),
+      inbox: inboxData([
+        {
+          inbox_item_id: 'inbox_apr_001',
+          workflow_id: 'wf_001',
+          item_type: 'BOARD_APPROVAL',
+          priority: 'high',
+          status: 'OPEN',
+          created_at: '2026-04-01T23:05:00+08:00',
+          title: 'Review homepage visual milestone',
+          summary: 'Visual milestone is blocked for board review.',
+          source_ref: 'apr_001',
+          route_target: {
+            view: 'review_room',
+            review_pack_id: 'brp_001',
+          },
+          badges: ['visual', 'board_gate'],
+        },
+      ]),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /review homepage visual milestone/i }))
+    await user.click(await screen.findByRole('button', { name: /approve and continue/i }))
+
+    expect(await screen.findByRole('heading', { name: /delivery completed/i })).toBeInTheDocument()
+    expect(screen.getAllByText(/approve option a to unblock the main build path/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/proceed with option a/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open final review evidence/i }))
+
+    expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
   })
 
   it('submits reject and refreshes the snapshot', async () => {

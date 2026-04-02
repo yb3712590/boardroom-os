@@ -1,5 +1,12 @@
 # Boardroom OS
 
+## 当前演示闭环
+
+- 董事会现在可以直接在 React 壳里切换本地 `Deterministic` 和已保存的 `OpenAI Compat` runtime，不再需要离开 UI 改环境变量。
+- 首页现在会显式展示当前执行模式、模型名、绑定该 provider 的 worker 数，以及为什么当前仍在本地 deterministic / live / paused / incomplete。
+- 当小项目走到最终 review 并批准后，首页会直接出现完成卡片，展示最终批准标题、摘要、选中的方案、董事会批注和证据入口。
+- 真实 provider 配置只服务本地单机演示，保存在 `backend/data/runtime-provider-config.json`；可用 `BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH` 覆盖路径。
+
 > 一个本地优先、事件溯源、用无状态 Agent Team 推进交付的控制面原型。
 
 ## 项目现在要解决什么
