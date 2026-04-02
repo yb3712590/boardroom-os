@@ -1,0 +1,344 @@
+# Memory Log Archive
+
+> This file is a pre-compaction snapshot of `doc/history/memory-log.md`, archived on 2026-04-02.
+>
+> Use `doc/history/memory-log.md` for the compact working-memory version. Open this file only when the compressed log is not enough.
+
+## How To Use This File
+
+- Read `doc/history/memory-log.md` first for current context.
+- Use this archive when exact historical rationale, raw verification commands, or the longer implementation record from 2026-03-31 to 2026-04-02 is required.
+
+## Long-Term Memory
+
+### Product Model
+
+- Boardroom OS is an event-sourced agent delivery control plane, not a multi-agent chat shell.
+- The intended operating model remains: Board -> CEO -> structured worker execution -> auditable deliverables.
+- Board involvement should stay limited to explicit approval gates, especially user-visible visual milestones.
+- The runtime should keep work moving autonomously and escalate only on defined blocking, risk, or approval conditions.
+
+### Governance And Collaboration Rules
+
+- CEO is responsible for continuous progress, decomposition, delegation, and anti-stall behavior.
+- Meeting Room is a bounded, event-driven alignment subworkflow, not free chat.
+- Maker-Checker is a structured internal adversarial review stage before CEO or Board escalation when quality gates require it.
+- Important outputs must stay schema-checked, write-set-checked, and auditable.
+
+### Architecture Memory
+
+- Backend is the current executable center: FastAPI + Pydantic v2 + SQLite.
+- Durable truth lives in the event log plus projections; reducers stay deterministic and side-effect free.
+- Worker input should come from a compiled execution package, not ad hoc manual payload hydration.
+- Context Compiler remains a deterministic middleware boundary responsible for evidence selection, compression policy, and audit artifacts.
+- Artifacts are persisted and indexed; runtime output should flow through the same structured ingress regardless of internal or external execution.
+
+### Runtime State That Is Now Real
+
+- Ticket lifecycle, review and board commands, incident and breaker governance, retry escalation, and structured result submission are implemented in the backend slice.
+- External worker handoff is real: bootstrap token -> refreshable session -> signed delivery grants -> execution, artifact, and command URLs.
+- Delivery grants can now be revoked from both the local worker auth CLI and the trusted `worker-admin` HTTP surface.
+- Scope binding now exists across workflow, ticket, worker bootstrap and session, delivery grants, and compiled execution package metadata.
+- One worker can now keep multiple bootstrap bindings keyed by `worker_id + tenant_id + workspace_id`; each session and delivery grant still stays bound to exactly one scope.
+- Worker bootstrap issuance is now also persisted as `worker_bootstrap_issue`, so newer bootstrap tokens carry `issue_id` and may be invalidated conservatively without changing the compatibility path for older tokens.
+- Trusted control-plane operators now also have a `worker-admin` HTTP surface for binding, bootstrap, session, and delivery-grant management; the HTTP side now requires signed operator tokens instead of trusting raw operator headers, and it also exposes a dedicated action-audit projection.
+- Output schema enforcement is currently real on the active local MVP runtime paths, including `ui_milestone_review@1` and `maker_checker_verdict@1`.
+
+### Durable Open Gaps
+
+- There is still no dedicated tenant-management control plane, OAuth or mTLS layer, or broader public-internet hardening.
+- Control-plane multipart upload and optional object-store delivery now exist, but browser direct upload, worker-runtime upload, and cloud presigned multipart remain post-MVP.
+- The current large-input / binary handling is now closed for the local MVP read path, but broader artifact platformization and public-network delivery policy are still intentionally frozen.
+- Provider routing, richer output schema coverage, and fuller Context Compiler retrieval and caching beyond the current local MVP path are still incomplete.
+
+## Recent Memory
+
+### 2026-03-29
+
+- Landed conservative recovery governance for timeout incidents: operator-triggered restore closes the breaker and incident, reopens dispatch honestly, and surfaces close events in projections.
+- Landed a controlled timeout follow-up retry path on incident resolve, reusing existing timeout retry policy rather than inventing a separate retry system.
+
+### 2026-03-30
+
+- Converged internal runtime success onto `ticket-result-submit`, so schema validation and write-set validation now go through one structured ingress.
+- Added provider pause and resume governance plus related projection and reporting surface.
+- Made artifact persistence, artifact index, and worker-facing artifact routes real enough for external delivery.
+- Brought external worker runtime handoff online: assignments, compiled execution package delivery, artifact access, and signed worker command endpoints.
+- Hardened delivery grants and worker auth with persisted per-URL grants, session-linked revocation, and CLI support for listing and revoking grants.
+- Added tenant and workspace binding across the worker runtime chain and surfaced scope in assignments and execution-package responses.
+- Extended worker bootstrap state from single-binding to multi-binding, so one worker can now hold multiple tenant/workspace scopes without mixing sessions or delivery grants across them.
+- Added `list-bindings` plus explicit-scope CLI safeguards for multi-binding workers, and kept assignment polling strict: known alternate bindings are filtered by scope, while unknown dirty scopes still reject and audit.
+- Added explicit `create-binding`, enriched `list-bindings`, and `cleanup-bindings`, so local operators can now manage multi-scope worker bindings as lifecycle state instead of only minting tokens.
+- Added `GET /api/v1/projections/worker-runtime`, which aligns binding, session, delivery-grant, and auth-rejection reads under one worker/scope filter instead of requiring multiple local CLI calls.
+- Tightened bootstrap issuance governance with persisted `worker_bootstrap_issue` records, `issue_id` claims on new bootstrap tokens, runtime validation for new tokens, and CLI-side default TTL / max TTL / optional tenant allowlist policy.
+- The most recent archived full-suite verification claim was `backend/tests -q` -> `163 passed`.
+
+### 2026-03-31
+
+- Closed the shortest-path Maker-Checker gap for visual milestones: `ui_milestone_review@1` results with `VISUAL_MILESTONE` review now route through an auto-created checker ticket before any board approval opens.
+- Added `maker_checker_verdict@1` as a real structured output contract, and taught the minimal in-process runtime to execute checker tickets with a deterministic `APPROVED_WITH_NOTES` verdict.
+- Checker pass / escalate now opens the existing `Inbox -> Review Room` path with backend-generated `maker_checker_summary`; `CHANGES_REQUIRED` now creates a follow-up fix ticket instead of sending manual feedback through the board path.
+- Tightened visual-milestone rework governance: `CHANGES_REQUIRED` now derives a stable blocking-finding fingerprint, writes `required_fixes` / `rework_fingerprint` / `rework_streak_count` into fix-ticket context, and appends explicit close-the-finding acceptance criteria.
+- Repeated identical blocking findings in the visual Maker-Checker loop no longer create unbounded fix tickets: once the existing repeat-failure threshold is hit, backend now opens a dedicated `MAKER_CHECKER_REWORK_ESCALATION` incident plus circuit breaker and surfaces that path through inbox copy instead of mislabeling it as a generic runtime failure.
+- The current limitation is explicit: this loop only covers the visual-milestone path for now, and employee lifecycle / richer checker routing are still open.
+- Added a shared worker admin service under the backend, so CLI and HTTP management no longer duplicate binding / bootstrap lifecycle rules.
+- Added `GET /api/v1/worker-admin/bindings`, `GET /api/v1/worker-admin/bootstrap-issues`, and the matching create / issue / revoke / cleanup POST routes, closing the minimal HTTP management loop for worker tenant operations.
+- Kept `worker-runtime` projections as the unified read surface and left session / delivery-grant revoke in CLI for now, rather than widening the HTTP management scope all at once.
+- Extended `worker-admin` with `revoke-session` and `revoke-delivery-grant`, so tenant incident handling can now stay in one control-plane entrypoint instead of bouncing back to local CLI.
+- Added persisted revoke audit fields on worker sessions and delivery grants, and surfaced them back through `GET /api/v1/projections/worker-runtime` for direct post-action verification.
+- Extended `worker-admin` again with `GET /api/v1/worker-admin/sessions`, `delivery-grants`, `auth-rejections`, and `scope-summary`, so operators can now inspect one tenant/workspace scope directly instead of pivoting through one worker at a time.
+- Added `POST /api/v1/worker-admin/contain-scope`, which supports dry-run impact preview first and then real scope containment with `expected_active_*` count checks; the write path now stamps `revoked_via = worker_admin_scope_containment` for batch stop-the-bleeding actions.
+- Closed the earlier legacy scope-backfill risk in current code: repository initialization now backfills default `tenant_id/workspace_id` values for old projection, bootstrap, session, and delivery-grant rows, and the repository test suite covers that upgrade path.
+- Added a minimal operator boundary on `worker-admin`: every HTTP request now requires operator headers, `platform_admin` keeps global read/write, `scope_admin` is limited to one exact tenant/workspace scope, and `scope_viewer` is read-only inside one exact scope.
+- Moved HTTP-side `issued_by` / `revoked_by` truth to the operator headers. Request-body fields with those names are now only compatibility assertions; if they disagree with `X-Boardroom-Operator-Id`, the backend returns `400` instead of silently trusting the body.
+- Tightened the `worker-admin` entry boundary again: HTTP requests now require `X-Boardroom-Operator-Token`, backend validates a short-lived signed operator token against `BOARDROOM_OS_WORKER_ADMIN_SIGNING_SECRET`, and the old `X-Boardroom-Operator-*` headers are now only optional compatibility assertions.
+- Added `python -m app.worker_admin_auth_cli issue-token`, so local operators can mint scoped `platform_admin` / `scope_admin` / `scope_viewer` tokens for real `worker-admin` calls instead of hand-crafting trusted headers.
+- Added persisted `worker_admin_action_log` plus `GET /api/v1/projections/worker-admin-audit`, so operators can now read an independent audit stream of `create-binding`, `issue-bootstrap`, `revoke-*`, `cleanup-bindings`, and `contain-scope` actions, including dry-run previews.
+- Fresh focused verification after this change is:
+  - `backend/.venv/bin/python -m pytest backend/tests/test_worker_admin_auth_cli.py -q` -> `1 passed`
+  - `backend/.venv/bin/python -m pytest backend/tests/test_repository.py -k "worker_admin_action_log" -q` -> `1 passed`
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py -k "legacy_headers_without_signed_token or mismatched_assertion_headers_against_signed_token or audit_projection" -q` -> `4 passed`
+  - `backend/.venv/bin/python -m pytest backend/tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `30 passed`
+- Fresh focused verification after this change is:
+  - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_api.py -k "worker_admin" -q` -> `23 passed`
+  - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_api.py -k "worker_admin or worker_runtime_projection" -q` -> `26 passed`
+  - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_worker_auth_cli.py -q` -> `15 passed`
+  - `source backend/.venv/bin/activate && cd backend && python -m pytest tests/test_repository.py -q` -> `4 passed`
+- Closed the remaining `worker-admin` operator-token governance gap inside the trusted control plane: `issue-token` now persists `worker_admin_token_issue`, new operator tokens carry a durable `token_id`, and backend validation for new tokens now checks persisted issue state instead of trusting signature + TTL alone.
+- Added operator-token management surfaces on both paths: `python -m app.worker_admin_auth_cli list-tokens` / `revoke-token`, plus `GET /api/v1/worker-admin/operator-tokens` and `POST /api/v1/worker-admin/revoke-operator-token`, with the same platform-vs-scope role boundaries on listing and revoke.
+- Added a dedicated `worker_admin_auth_rejection_log` and `GET /api/v1/projections/worker-admin-auth-rejections`, so post-revoke verification no longer depends on manual `401` spot checks; operators can now see missing-token, bad-signature, expired, revoked, assertion-mismatch, and scope-denied failures directly.
+- Closed the next public-entry gap inside that trusted control plane: when `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS` is configured, `worker-admin`, `worker-admin-audit`, and `worker-admin-auth-rejections` now all require `X-Boardroom-Trusted-Proxy-Id` before token validation, so the control plane can be pinned behind one expected reverse proxy hop instead of trusting any direct caller with a valid token.
+- Extended both worker-admin logs with ingress context: `worker_admin_action_log` and `worker_admin_auth_rejection_log` now persist `trusted_proxy_id` and `source_ip`, and the two projection surfaces expose those fields directly for operator-side debugging.
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "trusted_proxy or worker_admin_audit_projection_exposes_trusted_proxy_context" backend/tests/test_repository.py -k "trusted_proxy or worker_admin_action_log_round_trips_filters_and_details or worker_admin_auth_rejection_log_round_trips_filters or legacy_tables" -q` -> `7 passed`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_worker_admin_auth_cli.py -q` -> `4 passed`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -q` -> `11 passed`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "worker_admin" -q` -> `37 passed, 130 deselected`
+- Closed the manual-only artifact cleanup gap for the current local artifact store: `artifact_index` now persists `storage_deleted_at`, cleanup no longer re-counts already-cleared files, and scheduler / runner now trigger automatic cleanup on a bounded interval.
+- Extended `GET /api/v1/projections/dashboard` with `artifact_maintenance`, so排障时可以直接看到自动 cleanup 是否开启、当前过期待清理积压、以及最近一次 cleanup 的触发来源、操作者和删除数量。
+- Extended `GET /api/v1/projections/tickets/{ticket_id}/artifacts` with `deleted_by`, `delete_reason`, and `storage_deleted_at`, so单张 ticket 的 artifact 读面现在能直接区分“逻辑过期”与“文件已物理删除”。
+- Closed the main retention-governance gap in the current artifact path: new `EPHEMERAL` artifacts now default to `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC` when callers omit `retention_ttl_sec`, and legacy `EPHEMERAL` rows without `expires_at` are backfilled conservatively during repository initialization.
+- Added persisted `retention_ttl_sec` and `retention_policy_source` on `artifact_index`, so ticket-level artifact reads now show not only whether an artifact is expired, but also whether that retention came from an explicit TTL, the class default, a legacy backfill, or an unknown older rule.
+- Added `GET /api/v1/projections/artifact-cleanup-candidates`, so值守排障时不再只看 dashboard 汇总计数，而是能直接看到当前哪些 artifact 在等过期处理、哪些只差本地文件清理记账。
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_cleanup_candidates_ignore_storage_already_deleted_rows" -q` -> `1 passed`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact_cleanup_does_not_recount_storage_already_cleared or dashboard_exposes_artifact_cleanup_maintenance_summary or ticket_artifacts_projection_exposes_cleanup_audit_fields or artifact_cleanup_expires_elapsed_artifacts_and_deletes_files" -q` -> `4 passed, 155 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "auto_runs_artifact_cleanup_once_per_interval_bucket" -q` -> `1 passed, 11 deselected`
+- Extended artifact retention from rough long-lived vs temporary handling into a first scenario-based split: `PERSISTENT` still stays non-expiring by default, `REVIEW_EVIDENCE` now defaults to `BOARDROOM_OS_ARTIFACT_REVIEW_EVIDENCE_DEFAULT_TTL_SEC`, and `EPHEMERAL` keeps `BOARDROOM_OS_ARTIFACT_EPHEMERAL_DEFAULT_TTL_SEC`.
+- Runtime-generated default review option artifacts now explicitly land as `REVIEW_EVIDENCE`, so the minimal in-process runtime no longer leaves Board-facing review materials looking like generic persistent blobs.
+- Repository initialization now also backfills legacy `REVIEW_EVIDENCE` rows without `expires_at`, and `GET /api/v1/projections/dashboard` now exposes a `retention_defaults` map alongside the existing cleanup summary.
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "retention or artifact_cleanup or runtime_default_result_artifacts_use_review_evidence_retention" -q` -> `6 passed, 157 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_retention or artifact_cleanup or review_evidence_artifact_retention" -q` -> `3 passed, 7 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup or dispatches_using_persisted_roster" -q` -> `2 passed, 10 deselected`
+- Continued artifact retention governance into conservative scenario defaults: when callers omit `retention_class`, backend now derives it from path with `reports/review/* -> REVIEW_EVIDENCE`, `reports/ops/* -> OPERATIONAL_EVIDENCE`, `reports/diagnostics/* -> OPERATIONAL_EVIDENCE`, and all other paths staying `PERSISTENT`.
+- Added `OPERATIONAL_EVIDENCE` as a first built-in class for ops and diagnostic materials, with `BOARDROOM_OS_ARTIFACT_OPERATIONAL_EVIDENCE_DEFAULT_TTL_SEC` defaulting to 14 days.
+- Persisted `retention_class_source` on `artifact_index` and surfaced it through ticket artifact and cleanup-candidate projections, so operators can now distinguish explicit retention from path-derived defaults and `LEGACY_COMPAT` backfill state directly from one read surface.
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "review_evidence_default_ttl or operational_evidence or explicit_retention_class_overrides_path_default or dashboard_and_cleanup_candidates_expose_retention_policy_state" -q` -> `3 passed, 166 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "retention or artifact_cleanup or runtime_default_result_artifacts_use_review_evidence_retention" -q` -> `7 passed, 162 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact_retention or artifact_cleanup or review_evidence_artifact_retention or retention_class_source" -q` -> `4 passed, 8 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup or runtime_default" -q` -> `1 passed, 11 deselected`
+- Extended artifact storage from local-file only into a local-default / optional object-store abstraction. `artifact_index` now also persists `storage_backend`, `storage_object_key`, `storage_delete_status`, and `storage_delete_error`, while old rows backfill conservatively during repository initialization.
+- Added control-plane multipart upload state under `artifact_upload_session` + `artifact_upload_part`, plus `POST /api/v1/artifact-uploads/sessions`, `PUT /parts/{part_number}`, `POST /complete`, and `POST /abort`, so medium and large binary artifacts can be uploaded first and then consumed through `ticket-result-submit` via `upload_session_id`.
+- Kept artifact governance on one path: `ticket-result-submit` still owns retention-class resolution, expiry calculation, artifact indexing, and audit semantics; upload sessions only prepare the binary body.
+- Extended artifact delete and cleanup from “delete local file” into “delete by storage backend and write back storage outcome”. Cleanup and ticket artifact projections now expose `storage_backend` / `storage_delete_status`, and dashboard maintenance now also shows `delete_failed_count`.
+- Fresh focused verification after this change is:
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact or retention or cleanup or object_store" -q` -> `25 passed, 147 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k "artifact" -q` -> `5 passed, 9 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "artifact_cleanup" -q` -> `1 passed, 11 deselected`
+  - `backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `243 passed`
+
+### 2026-04-01
+
+- Synced `doc/roadmap-reset.md` with the new documentation baseline by adding explicit anti-drift execution constraints, so future development rounds must read the roadmap reset early, stay on one mainline direction, and stop scope growth once a side path no longer shortens the local `Board -> Review` MVP chain.
+- Added a ready-to-copy reset prompt to `doc/roadmap-reset.md`, updating the fixed reading order to include the roadmap decision itself before `doc/TODO.md` and `doc/history/memory-log.md`, and removing outdated default expansion toward `Search / Retrieval` or other post-MVP infrastructure directions.
+- Moved the Context Compiler past the earlier pure reference-only state for local execution: active materialized `TEXT / MARKDOWN / JSON` input artifacts now inline directly into the compiled execution package, while unreadable or over-budget sources fall back to descriptor form with explicit compile-manifest reasons.
+- Extended compile audit output so the manifest now records why a source stayed descriptor-only, distinguishes hydrated vs reference blocks in final bundle stats, and keeps the signed artifact URL path available even for inlined sources.
+- Continued the Context Compiler along the local MVP path instead of widening governance scope: compile requests, context blocks, and manifest source logs now carry stable degradation reason codes such as `ARTIFACT_NOT_INDEXED`, `ARTIFACT_NOT_READABLE`, `UNSUPPORTED_ARTIFACT_KIND`, and `INLINE_BUDGET_EXCEEDED`.
+- Large-but-readable local `TEXT / MARKDOWN / JSON` inputs no longer collapse straight to pure descriptor form when full hydration would overflow the rough token budget. The compiler now emits deterministic head previews for text and top-level previews for JSON, while keeping artifact access URLs and marking the block as partial inline hydration.
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` now adds a compact `compile_summary`, so debugging a blocked review no longer starts with manually reading raw manifest JSON just to answer “how many sources degraded, and why?”.
+- Continued the Context Compiler from “explicit inputs only” into a first real local knowledge path: compile requests now materialize a deterministic `retrieval_plan`, and compilation can pull in same-workspace, cross-workflow `review / incident / artifact` history as structured summary cards instead of leaving `keywords / semantic_queries` unused.
+- Kept that new retrieval path inside the local MVP boundary: no vector store, no web search, no external knowledge service; `semantic_queries` are normalized into deterministic local match terms, and artifact retrieval still prefers compact summary cards over raw historical bodies.
+- Compile manifests and Review Room developer-inspector summaries now expose retrieval counts by channel plus budget-driven retrieval drops, so排障时可以直接看到“本轮编译带进来了哪些历史经验，哪些因为预算被丢掉了”，不用再手翻完整 manifest。
+- Continued the Context Compiler along the same local-execution path instead of widening into provider routing: `IMAGE / PDF` inputs now stay in compiled execution packages as structured media references with explicit `kind` and `preview_kind=INLINE_MEDIA`, while other binary inputs stay as structured download references with `preview_kind=DOWNLOAD_ONLY`.
+- Replaced the earlier catch-all binary fallback in current compiler behavior with more honest degradation codes: review/debug surfaces now distinguish `MEDIA_REFERENCE_ONLY` from `BINARY_REFERENCE_ONLY` instead of reporting both as one vague `UNSUPPORTED_ARTIFACT_KIND`.
+- Worker-facing execution packages keep those new `artifact_access.kind / preview_kind` hints after signed URL rewriting, so downstream workers no longer need to guess whether an input should be previewed inline or handled as a download-only attachment.
+- Continued the Context Compiler on the same mainline by adding deterministic fragment compilation for oversized `TEXT / MARKDOWN / JSON` inputs: the compiler now prefers `MARKDOWN_SECTION`, `TEXT_WINDOW`, and `JSON_PATH` slices before falling back to the older partial-preview path.
+- Worker-facing atomic context blocks now carry the same selector metadata as the compiled bundle, so runtime packages and Review Room debugging no longer disagree about which fragment the worker actually received.
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` compile summaries now count `inline_fragment_count`, making it visible when a run was neither full-inline nor plain preview-only.
+- Closed the current Context Compiler budget-truth gap on the local MVP path: explicit inputs now reserve the minimum descriptor budget required by later mandatory sources, so earlier large sources can no longer consume the whole ticket budget and leave later mandatory inputs with no legal compile form.
+- Tightened the fallback chain itself into a real strict gate: the compiler now only keeps `INLINE_PARTIAL` or `REFERENCE_ONLY` blocks if they individually fit the remaining budget, and if a mandatory source cannot fit even as a descriptor the compile now fails closed instead of emitting an over-budget execution package.
+- Compile manifests now write real budget accounting instead of placeholder totals: `budget_plan` reserves retrieval space only when retrieval is present, `budget_actual.truncated_tokens` now reflects actual tokens removed by fragment/preview/descriptor fallback and dropped retrieval, and final bundle stats now record `dropped_explicit_source_count` alongside retrieval drops.
+- `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` now surfaces compile-budget pressure directly with `total_budget_tokens`, `used_budget_tokens`, `remaining_budget_tokens`, `truncated_tokens`, and `dropped_explicit_source_count`, so operators can see whether a run barely fit without opening raw manifest JSON.
+- Fresh focused verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_context_compiler.py -q` -> `22 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "review_room_developer_inspector or worker_runtime_execution_package" -q` -> `10 passed, 171 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "mandatory_source_descriptor_exceeds_budget" -q` -> `1 passed, 13 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "runtime" -q` -> `1 passed, 13 deselected`
+- Fresh focused verification after this change is:
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_context_compiler.py -q` -> `10 passed`
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py -k "review_room_developer_inspector" -q` -> `3 passed, 174 deselected`
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_context_compiler.py -q` -> `13 passed`
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py -k "review_room_developer_inspector or worker_runtime_execution_package" -q` -> `6 passed, 171 deselected`
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_worker_auth_cli.py -q` -> `15 passed`
+- Continued the Context Compiler on the same mainline by adding a first real render layer on top of the existing bundle truth: each compile now also emits a deterministic `json_messages_v1` rendered execution payload instead of leaving downstream workers and operators to reconstruct final input order from raw context blocks.
+- Kept the boundary conservative: `atomic_context_bundle` remains the source of truth, while the new rendered payload is a pure derived view with fixed channel order `SYSTEM_CONTROLS -> TASK_DEFINITION -> CONTEXT_BLOCK -> OUTPUT_CONTRACT_REMINDER`.
+- Extended worker delivery and Review Room inspection together, so `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package` and `GET /api/v1/projections/review-room/{review_pack_id}/developer-inspector` now surface the same rendered payload plus compact render-summary counts.
+- Extended developer-inspector refs with `render://`, and developer-inspector availability now treats bundle / manifest / rendered payload as one consistent set instead of marking a fully materialized three-artifact export as only partial.
+- Fresh focused verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_context_compiler.py -q` -> `25 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "worker_runtime_execution_package or review_room_developer_inspector" -q` -> `12 passed, 171 deselected`
+- Closed the local-MVP provider gap without widening into platformization: in-process runtime now recognizes `provider_id=prov_openai_compat`, calls OpenAI-compatible `POST {base_url}/responses` when the compat env vars are present, and otherwise keeps the zero-config deterministic runtime fallback intact.
+- The same compat-provider path now also accepts an optional `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT`, so local runtime can transparently pass `low / medium / high / xhigh` through to `responses.reasoning.effort` without widening into a larger provider-parameter matrix.
+- Kept provider failure governance conservative: `429` maps to `PROVIDER_RATE_LIMITED`, timeout / transport / `5xx` map to `UPSTREAM_UNAVAILABLE`, `401/403` map to `PROVIDER_AUTH_FAILED`, and malformed / non-JSON / schema-invalid responses map to `PROVIDER_BAD_RESPONSE`; only rate-limit and upstream-unavailable failures open the existing provider pause / incident path.
+- Closed the current local MVP display-semantics gap for large inputs and binary references: context blocks and worker execution packages now carry explicit `display_hint`, while Review Room compile summaries now also count media references, download-only attachments, fragment strategies, preview strategies, and `preview_kind` totals.
+- Synced artifact metadata contracts with that new display truth, so both control-plane and worker-scoped artifact read APIs now expose `display_hint` instead of silently dropping it at the response boundary.
+- Fresh verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_provider_openai_compat.py -q` -> `5 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_context_compiler.py -q` -> `25 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -q` -> `18 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "review_room_developer_inspector or worker_runtime_execution_package or provider" -q` -> `16 passed, 168 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "artifact" -q` -> `22 passed, 162 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `288 passed`
+- No compatible live provider credentials were present in the environment during this round, so the new provider path is code-complete and mock/full-suite verified, but not yet stamped with a real remote smoke run.
+- Moved employee governance onto the local MVP mainline instead of leaving roster state as startup-only static rows: default employees now bootstrap into `EMPLOYEE_HIRED` events on initialize, `employee_projection` is rebuilt from events, and legacy employee rows are conservatively backfilled into hire events instead of being treated as silent truth.
+- Added the first real staffing-governance command chain: `POST /api/v1/commands/employee-hire-request` and `employee-replace-request` now open `CORE_HIRE_APPROVAL` items in `Inbox -> Review Room`, and board approval writes the resulting `EMPLOYEE_HIRED` / `EMPLOYEE_REPLACED` events back into the same event log.
+- Added `POST /api/v1/commands/employee-freeze` as the minimal immediate stop-the-bleeding control: frozen employees no longer pass manual `ticket-lease`, manual `ticket-start`, scheduler dispatch, or `worker-runtime` bootstrap entry.
+- Closed the next employee-lifecycle gap on the same mainline: `POST /api/v1/commands/employee-restore` now writes a real `EMPLOYEE_RESTORED` event, reducer state moves `FROZEN -> ACTIVE`, and the existing runtime/scheduler gates reopen automatically without inventing a second staffing path.
+- Restore remains intentionally narrow for the current MVP: it is an immediate operator action for frozen workers only, does not go through `Inbox -> Review Room`, and still rejects `ACTIVE`, `REPLACED`, or missing employees.
+- Added `GET /api/v1/projections/workforce`, so local operators can now see role lanes, employee employment state, current activity state, current ticket/node, and provider binding without manually inspecting `employee_projection`.
+- Tightened Maker-Checker staffing governance on the same chain: fix tickets created after checker `CHANGES_REQUIRED` now carry `excluded_employee_ids` that automatically exclude the original maker, and scheduler dispatch respects that exclusion instead of naively handing the rework back to the same worker.
+- Extended employee governance from “block future dispatch” into active-ticket containment: freezing or replacing an employee now scans that worker's live tickets, requeues leased-but-not-started tickets back to `PENDING` with the original employee added to `excluded_employee_ids`, and routes executing tickets into a dedicated `STAFFING_CONTAINMENT` incident plus circuit breaker instead of leaving them silently stuck.
+- Synced the read models with that staffing containment truth: `dashboard` blocked-node state now also reflects open circuit-breaker incidents, `inbox` shows dedicated staffing containment incident copy, and `workforce` now surfaces contained workers as `FUSED` while also reporting `workers_in_staffing_containment`.
+- Refreshed test helpers and older scheduler expectations to match the new event-sourced roster truth: deleting an `employee_projection` row is now treated as projection damage that gets rebuilt from events, not as durable loss of the worker itself.
+- Fresh focused verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "freeze_requeues_leased_ticket or replace_request_requeues_leased_ticket or freeze_containment_opens_staffing_incident" -q` -> `3 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "reassigns_requeued_ticket_after_freeze" -q` -> `1 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "workforce or dashboard or inbox or employee_freeze or employee_restore or employee_replace" -q` -> `21 passed, 174 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "excluded_worker or frozen_worker or restored_employee or requeued_after_freeze" -q` -> `1 passed, 21 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_reducer.py -k "employee_projection or CANCEL_REQUESTED" -q` -> `2 passed, 12 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "employee_restore" backend/tests/test_scheduler_runner.py -k "restored_employee" backend/tests/test_reducer.py -k "restore" -q` -> `12 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "workforce or core_hire or employee_freeze or employee_restore" -q` -> `8 passed, 184 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -k "excluded_worker or frozen_worker or restored_employee" -q` -> `1 passed, 20 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_reducer.py -k "employee_projection" -q` -> `1 passed, 13 deselected`
+- Fresh verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_repository.py -k employee -q` -> `1 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "workforce or core_hire or employee_freeze or checker_changes_required" -q` -> `7 passed, 182 deselected`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_scheduler_runner.py -q` -> `20 passed`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `298 passed`
+- Continued Workflow Governance on the current mainline instead of opening a new UI lane: maker-checker is no longer limited to `VISUAL_MILESTONE + ui_milestone_review@1`; `MEETING_ESCALATION + consensus_document@1` now also routes through checker first, then into the existing `Inbox -> Review Room` board gate.
+- Kept the new path local-MVP sized: deterministic runtime now also knows how to emit a schema-valid `consensus_document@1`, so meeting/scope decision tickets can run end-to-end without introducing a new worker role system or remote dependency.
+- Closed the next staffing-recovery gap on the same chain: `employee-restore` now automatically reopens freeze-requeued pending tickets by removing only the temporary exclusion added by that freeze, instead of leaving operators to recreate those tickets manually.
+- Added explicit staffing-containment incident recovery: `incident-resolve` now accepts `RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT`, closes the contained execution attempt honestly, and creates the next pending ticket while preserving the original `ticket_kind`, maker-checker context, inputs, acceptance criteria, and existing exclusion rules.
+- Fresh focused verification after this change is:
+  - `cd backend && source .venv/bin/activate && python -m pytest tests/test_api.py::test_meeting_escalation_consensus_result_submit_routes_to_checker_ticket_before_board_review tests/test_api.py::test_meeting_escalation_checker_approved_opens_review_pack_with_maker_checker_summary tests/test_api.py::test_meeting_escalation_checker_changes_required_creates_consensus_fix_ticket_and_excludes_original_maker tests/test_api.py::test_employee_restore_recovers_frozen_requeued_ticket_and_clears_only_temporary_exclusion tests/test_api.py::test_incident_resolve_can_restore_and_retry_staffing_containment_with_preserved_maker_checker_context tests/test_scheduler_runner.py::test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime tests/test_scheduler_runner.py::test_scheduler_redispatches_restored_requeued_ticket_to_original_employee -q` -> `7 passed`
+
+### 2026-04-01
+
+- 把第一版真实可用的 React Boardroom UI 壳推进到了本地 MVP 主线上：仓库现在有独立的 `frontend/`，本地启动后能在同一界面里看到 `Dashboard -> Inbox -> Review Room`，而不用继续靠命令行和 JSON 读面操作。
+- 保持了前端边界收口：前端只消费现有 `dashboard / inbox / review-room` 投影并提交 `project-init / board-approve / board-reject / modify-constraints` 命令；SSE 只做失效通知，不作为浏览器里的第二真相源。
+- 补齐了首页河道必须要有的最小后端真相：`dashboard.pipeline_summary.phases` 现在返回固定五段的高层治理摘要 `Intake / Plan / Build / Check / Review`，由 workflow、node、approval 和 open incident 的现状确定性汇总，而不是再新开一套前端专用 API 或假装在浏览器里回放完整 DAG。
+- 当前边界也明确写进文档了：UI 里的 `project-init` 现在只负责创建 workflow，不会自动拆票或自动产出首个 review；如果要把 `Board -> Review` 从零启动彻底再缩短，下一段主线应回到这条后端自动推进链。
+- Fresh focused verification after this change is:
+  - `cd frontend && npm run lint` -> `exit 0`
+  - `cd frontend && npm run test:run` -> `1 passed, 6 tests passed`
+  - `cd frontend && npm run build` -> `built in 154ms`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py -k "dashboard or review_room or inbox" -q` -> `24 passed, 180 deselected`
+
+### 2026-04-02
+
+- 把当前主线上最短的入口缺口补上了：`project-init` 现在不再只写 `WORKFLOW_CREATED`，而是会先落一份 board brief artifact，再自动创建首张 `consensus_document@1` 范围票，同步复用现有 scheduler + runtime 跑完 `maker -> checker -> Inbox -> Review Room`，把本地默认路径直接推到首个 `MEETING_ESCALATION` review。
+- 保持了边界收口：这轮没有新开前端工作流引擎，也没有把自动推进做成常驻后台控制面；入口只做一个有上限的同步推进器，命中 open approval、open incident、无状态推进或最大步数就停。
+- runtime 现在能从票规格里的 `auto_review_request` 模板自动生成真实 review 请求，把真实 artifact refs、运行摘要和 developer inspector refs 带进治理链，而不是继续依赖测试里手写的 review payload。
+- 为了让首张范围票真的能执行，这轮还补了最小 board brief artifact；如果本地没有 eligible worker，或途中出现 incident，系统会停在真实 pending / incident 状态，不会伪造“已经到首审”。
+- React 壳的 `project-init` 文案也同步成了真实语义：空态明确说它会把 workflow 推到首个 review，提交态会显示正在推进，而不是还沿用“只 launch workflow”的旧说法。
+- 把 scope 审批后的下一段主链也接上了：`board-approve` 现在会从已批准的 `consensus_document` artifact 里读取第一张 follow-up，原子创建真实执行票，并继续同步推进到下一个真实停点，而不再只是把首审关掉。
+- 保持了 fail-closed：如果 approved consensus artifact 缺失、不是合法 JSON、第一张 follow-up 的 `owner_role` 这轮不支持，或 `ticket_id` 和现有票冲突，`board-approve` 会直接拒绝，review 保持打开，不制造“董事会已批准但主链没接上”的假完成。
+- 当前这段续跑仍刻意收口：只消费第一张 follow-up，且只支持 `frontend_engineer -> ui_designer_primary`，并把下游票型收口到现有可运行的视觉里程碑 `ui_milestone_review@1` 链，而不是顺势扩成通用 fan-out / 依赖图。
+- runtime 生成的 `consensus_document` artifact 现在会落完整 payload，而不是只落一层摘要壳；后续治理命令可以直接把这个 artifact 当成被批准范围的真实输入源。
+- Fresh verification after this change is:
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py::test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visual_review tests/test_api.py::test_board_approve_scope_review_creates_pending_followup_when_no_eligible_worker tests/test_api.py::test_board_approve_scope_review_rejects_unsupported_followup_owner_role tests/test_api.py::test_board_approve_scope_review_rejects_when_consensus_artifact_is_missing tests/test_api.py::test_board_approve_scope_review_rejects_when_consensus_artifact_is_not_json tests/test_api.py::test_board_approve_scope_review_rejects_when_followup_ticket_id_already_exists -q` -> `6 passed`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py -k "project_init_auto_advances_to_scope_review or board_approve_command_resolves_open_approval or board_reject_command_resolves_open_approval or modify_constraints_command_resolves_open_approval or scope_review" -q` -> `11 passed, 202 deselected`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_scheduler_runner.py::test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime -q` -> `1 passed`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_output_schemas.py -q` -> `6 passed`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `326 passed`
+  - `cd frontend && npm run test:run` -> `1 passed, 7 tests passed`
+  - `cd frontend && npm run lint` -> `exit 0`
+  - `cd frontend && npm run build` -> `built in 673ms`
+- 把 scope review 通过后的剩余 follow-up 也收进了真实事件流：`board-approve` 现在会读取已批准 `consensus_document` 里全部“当前支持范围内”的 follow-up，先整组校验，再原子创建真实执行票，而不是只消费第一张。
+- 这条续跑仍然保持 fail-closed 和主线收口：当前只支持 `frontend_engineer -> ui_designer_primary`；如果任一 follow-up 的 artifact、JSON、`owner_role`、重复 `ticket_id` 或现有投影冲突不合法，整次 `board-approve` 都会被拒绝，review 继续保持待决。
+- 多张同级 follow-up 现在会按 ticket 隔离写入范围，分别写到各自的 `artifacts/ui/scope-followups/<ticket_id>/` 和 `reports/review/<ticket_id>/` 下，避免兄弟票互相覆盖。
+- deterministic runtime 生成的默认 `consensus_document` 现在会直接带两张受支持的视觉 follow-up；scope approval 的同步 auto-advance 也收紧成“每步只派一张票”，因此默认本地路径会在第一张真实 visual review 打开时停下，剩余兄弟票保持 `PENDING`，不再把 scope 通过后的后续工作继续留在文档里。
+- 把“推进到下一个真实停点”的规则从 scope approval 扩到了后续 `board-approve`：现在不只是 scope review 通过会继续落票，第一张 visual review 被批准后，只要同 workflow 里还有没有依赖阻塞、也没有 open approval / incident 卡住的待执行票，后端也会继续自动消费到下一张真实 review、incident 或无可派单停点。
+- 这轮把自动推进逻辑收成了共享 helper，但保留了主线节奏差异：`project-init` 继续沿用现有批量派单上限，`board-approve` 仍保持每步只派一张票，避免 scope approval 一次越过原本该停下来的治理点。
+- Fresh verification after this change is:
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py -k "scope_review or followup" -q` -> `11 passed, 205 deselected`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_scheduler_runner.py -k "consensus_document or followup" -q` -> `3 passed, 22 deselected`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `330 passed`
+- Fresh verification after this change is:
+  - `cd backend && . .venv/bin/activate && python -m pytest tests/test_api.py::test_board_approve_visual_review_auto_advances_next_pending_followup_to_next_review tests/test_api.py::test_board_approve_visual_review_keeps_next_followup_pending_when_no_eligible_worker tests/test_api.py::test_board_approve_scope_review_creates_all_supported_followups_and_isolates_write_sets -q` -> `3 passed`
+  - `cd backend && . .venv/bin/activate && python -m pytest tests/test_api.py -k "project_init_auto_advances_to_scope_review or scope_review or board_approve_command_resolves_open_approval or board_reject_command_resolves_open_approval or modify_constraints_command_resolves_open_approval" -q` -> `14 passed, 204 deselected`
+  - `cd backend && . .venv/bin/activate && python -m pytest tests/test_scheduler_runner.py -k "consensus_document or followup" -q` -> `3 passed, 22 deselected`
+- 把 React Boardroom UI 补成了更适合董事会现场演示的治理闭环：首页右侧新增 `workforce + recent events` 读面，同一壳里能直接看到谁在执行、哪里在报警，而不再只盯着 `workflow river` 和 inbox。
+- `Inbox` 里的 incident 项现在可以直接打开详情抽屉，并复用现有 `incident-resolve` 命令完成恢复闭环；演示异常时不再需要跳回命令行。
+- incident detail projection 这轮只做了最小前端契约补充：新增 `available_followup_actions` 和 `recommended_followup_action`，让浏览器只消费后端允许的动作，不自己硬编码恢复规则。
+- Fresh verification after this change is:
+  - `cd frontend && npm run lint` -> `exit 0`
+  - `cd frontend && npm run test:run` -> `1 passed, 10 tests passed`
+  - `cd frontend && npm run build` -> `built in 196ms`
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "dashboard or review_room or inbox or workforce or incident" -q` -> `48 passed, 171 deselected`
+- 把 scope approval 之后的默认小项目链路从“继续开视觉票”推进成了真实 staged follow-up：`consensus_document` 里的 follow-up 现在支持 `BUILD / CHECK / REVIEW`，后端会按列表顺序串成一条真实交付链，而不是把 scope 通过后的后半段继续压扁成同一种视觉票。
+- 这条 staged chain 当前仍保持主线收口：只支持 `frontend_engineer -> ui_designer_primary`、`checker -> checker_primary`，以及最小新 schema `implementation_bundle@1` 和 `delivery_check_report@1`；任一 `delivery_stage`、`owner_role` 或 follow-up payload 不合法，`board-approve` 会 fail-closed，scope review 保持待决。
+- deterministic runtime 现在会为默认 homepage 场景直接生成一条 `BUILD -> CHECK -> REVIEW` follow-up 链；scope review 一旦批准，系统会先自动完成内部 build 和 internal check，再把最终 board-facing visual review 推进进现有 `maker-checker -> Inbox -> Review Room`，而不是停在第一张早期视觉票。
+- `dashboard.pipeline_summary.phases` 现在也按真实阶段读数：scope consensus 归到 `Plan`，内部实现归到 `Build`，内部检查归到 `Check`，最终董事会 gate 归到 `Review`；董事会现场能直接看到这个小项目已经自动走到哪一段。
+- Fresh verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests -q` -> `339 passed`
+- 把董事会现场最缺的“链路可解释性”补上了：后端新增 `GET /api/v1/projections/workflows/{workflow_id}/dependency-inspector`，会基于现有 `node_projection / ticket_projection / open approval / open incident` 给出当前小项目链的有序依赖快照，明确每个阶段依赖谁、当前为什么停、以及该回哪个 `Review Room / Incident`。
+- 这条读面继续保持本地 MVP 收口：不做通用 DAG 引擎，不回放完整历史，只解释“当前 active workflow 的当前链路”；maker-checker 的内部 checker 票也会被压回董事会更容易理解的逻辑 stage 票，不把内部返工细节直接暴露成一串难懂节点。
+- React Boardroom UI 现在也补上了二级 `dependency inspector` 抽屉：首页有 active workflow 时可直接打开，看到当前 stop、关键路径、阻塞数和逐节点依赖；对正卡在 review 或 incident 的节点，还能直接跳回现有 `Review Room` 或 incident 抽屉。
+- 这轮同步把 README、TODO、前端 README 和数据契约都更新成真实现状：`dependency inspector` 已从 UI 缺口转成已落地能力，当前剩余 UI 主缺口只剩 `provider / model` 设置页。
+- Fresh verification after this change is:
+  - `D:\projects\boardroom-os\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_api.py -k "dependency_inspector or scope_review or followup" -q` -> `18 passed, 205 deselected`
+  - `cd frontend && npm run test:run` -> `1 passed, 13 tests passed`
+  - `cd frontend && npm run build` -> `built in 204ms`
+
+### 2026-04-02 (runtime provider + completion card)
+
+- Closed the main board-demo gap without reopening architecture scope: the backend now exposes a local `runtime provider` config projection plus upsert command, backed by a JSON file outside the workflow event log.
+- Kept workflow truth unchanged: runtime provider config stays local-machine operational state, while workflow completion is derived conservatively in `dashboard` from existing nodes, approvals, incidents, and active tickets instead of adding a new terminal workflow event.
+- The React shell now includes a runtime-settings drawer, a homepage execution-mode status card, and a completion card that appears after final review approval and links straight back into the existing final `Review Room` evidence pack.
+- Runtime provider live mode is still intentionally narrow: only the already-real `prov_openai_compat` path is supported, and incomplete / paused / live states are surfaced explicitly instead of inventing a broader provider registry.
+- Fresh focused verification after this change is:
+  - `cd frontend && npm run test:run -- --reporter=dot` -> `15 passed`
+  - `cd frontend && npm run build` -> `built`
+  - `python -m pytest backend/tests/test_api.py -k "runtime_provider or completion_summary or scope_review" -q` -> `15 passed, 211 deselected`
+  - `python -m pytest backend/tests/test_scheduler_runner.py -k "provider_when_configured or saved_runtime_provider_config" -q` -> `2 passed, 24 deselected`
+
+### 2026-04-02 (build internal delivery review + rework visibility)
+
+- 把 `BUILD` 产物真正收进内部治理主线：`implementation_bundle@1` 现在不再直接放行到下游 `CHECK`，而是会先走同一逻辑 build 节点下的内部 `maker -> checker -> fix / incident`。
+- 这轮保持了董事会边界不扩张：新增的是内部 `INTERNAL_DELIVERY_REVIEW` 语义，不会新开 `Inbox -> Review Room` 的董事会 gate；build checker `APPROVED / APPROVED_WITH_NOTES` 会直接放行主链，`ESCALATED` 会走现有 maker-checker rework incident。
+- build checker `CHANGES_REQUIRED` 现在会开真实 fix 票、沿用原 build 票的写入范围和交付阶段、默认排除原 maker，并在 fix 通过后恢复下游 `CHECK -> REVIEW`，不会再出现“返工看起来跑了、其实主链没恢复”的假打通。
+- `dashboard / workforce` 的 `workers_in_rework_loop` 现在会按打开中的 build `MAKER_REWORK_FIX` 保守计数；React `workforce` 面板也已把 `rework loops` 显式展示出来，排障时不用再靠事件流猜 build 是否卡在返工。
+- 为了拿到真实的全量验证，这轮还顺手修掉了一个已有测试辅助函数失配：`_ticket_fail_payload` 现在支持显式 `idempotency_key`，不再让后端全量测试卡在旧 helper 签名上。
+- Fresh verification after this change is:
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests/test_api.py::test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visual_review tests/test_api.py::test_internal_delivery_build_checker_approved_does_not_open_board_review tests/test_api.py::test_internal_delivery_build_checker_changes_required_creates_fix_ticket_and_counts_rework_loop tests/test_api.py::test_internal_delivery_build_rework_keeps_downstream_check_pending_until_fix_closes tests/test_api.py::test_internal_delivery_build_fix_pass_releases_downstream_check tests/test_api.py::test_internal_delivery_build_checker_escalated_opens_incident_without_board_review tests/test_scheduler_runner.py::test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_review_stop -q` -> `7 passed`
+  - `cd frontend && npm run test:run` -> `1 passed, 16 tests passed`
+  - `cd frontend && npm run build` -> `built in 132ms`
+  - `cd backend && /Users/bill/projects/boardroom-os/backend/.venv/bin/python -m pytest tests -q` -> `351 passed`
+
+### Current Watch-Outs
+
+- Latest commit also continued the append-only `memory-log.md` pattern. Before archival, this file had grown to about `2300` lines, `119 KB`, and `14.9k` words.
+- There is no backend runtime path that automatically loads `doc/history/memory-log.md`; the pressure came from human or agent workflow repeatedly opening the history file as working memory.
+
+## Current Working Set
+
+- Prefer reading `README.md`, `doc/README.md`, and `doc/TODO.md` before touching the archive.
+- Treat this file as semantic memory plus recent episodic memory, not a full transcript.
+- When adding new memory, update stable bullets or the recent section; move raw logs, exhaustive verification output, and long file inventories to the archive.
+
+## Archive Index
+
+- `doc/history/archive/memory-log-detailed-2026-03-27_to_2026-03-30.md`: raw session-by-session history that used to live in this file before archival on 2026-03-30.
