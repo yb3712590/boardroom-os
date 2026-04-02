@@ -114,6 +114,26 @@ class WorkforceSummaryProjection(StrictModel):
     workers_in_staffing_containment: int = 0
 
 
+class WorkforceActionProjection(StrictModel):
+    action_type: str
+    enabled: bool
+    disabled_reason: str | None = None
+    template_id: str | None = None
+
+
+class StaffingHireTemplateProjection(StrictModel):
+    template_id: str
+    label: str
+    role_type: str
+    role_profile_refs: list[str]
+    employee_id_hint: str
+    provider_id: str | None = None
+    request_summary: str
+    skill_profile: dict[str, str] = Field(default_factory=dict)
+    personality_profile: dict[str, str] = Field(default_factory=dict)
+    aesthetic_profile: dict[str, str] = Field(default_factory=dict)
+
+
 class WorkforceWorkerProjection(StrictModel):
     employee_id: str
     role_type: str
@@ -123,6 +143,7 @@ class WorkforceWorkerProjection(StrictModel):
     current_node_id: str | None = None
     provider_id: str | None = None
     last_update_at: datetime | None = None
+    available_actions: list[WorkforceActionProjection] = Field(default_factory=list)
 
 
 class WorkforceRoleLaneProjection(StrictModel):
@@ -134,6 +155,7 @@ class WorkforceRoleLaneProjection(StrictModel):
 
 class WorkforceProjectionData(StrictModel):
     summary: WorkforceSummaryProjection
+    hire_templates: list[StaffingHireTemplateProjection] = Field(default_factory=list)
     role_lanes: list[WorkforceRoleLaneProjection]
 
 

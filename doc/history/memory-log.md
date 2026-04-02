@@ -50,6 +50,7 @@
 - Employee governance is on the mainline: `hire / replace / freeze / restore`, staffing containment, and containment recovery all run through events and projections.
 - `dashboard / inbox / review room / incident / workforce / dependency inspector / completion` are live in the React shell.
 - `workforce` now exposes `rework loops`, so build/check-chain rework pressure is visible without reading raw events.
+- `workforce` now also exposes server-driven staffing templates and actions, so supported `freeze / restore / hire request / replace request` flows no longer require dropping to CLI.
 - Deterministic runtime remains the zero-config default; local `OpenAI Compat` config is optional and already wired into the UI.
 - Context Compiler already supports inline text, fragment fallback, preview fallback, media/download refs, local history summary cards, and deterministic `json_messages_v1` rendering.
 
@@ -88,6 +89,7 @@
 - `workforce_summary.rework_loops` now reflects both build-chain and check-chain rework pressure.
 - Final board approval now auto-creates a `delivery_closeout_package@1` ticket, and that package also goes through internal maker-checker before the workflow is considered complete.
 - Dashboard completion now depends on closeout completion, not just final board approval; the React completion card shows both the final review approval time and the closeout completion time.
+- Staffing deblocking is now closed through the thin UI as well: supported hire/replace requests are validated against a tiny mainline staffing catalog, and `workforce` now provides server-driven `freeze / restore / hire request / replace request` controls instead of leaving operators on the CLI.
 
 ### 2026-04-02 (docs compaction)
 

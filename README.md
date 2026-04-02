@@ -27,7 +27,7 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 - 只有 build 和 check 两段内审都通过后，系统才会放行最终董事会 `REVIEW`
 - 最终董事会只在真正的 board-facing `REVIEW` 进入 `Inbox -> Review Room`
 - 最终董事会通过后，系统会自动补一张 `delivery_closeout_package@1` 收口票，再走内部 `maker -> checker -> fix / incident`
-- React 壳已经能看 `dashboard / inbox / review room / incident / workforce / dependency inspector / completion`
+- React 壳已经能看 `dashboard / inbox / review room / incident / workforce / dependency inspector / completion`，并且能在 `workforce` 上直接做最小 staffing 解堵：`freeze / restore / hire request / replace request`
 
 ## 仓库里现在有的主线能力
 

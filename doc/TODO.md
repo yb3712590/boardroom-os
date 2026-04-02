@@ -20,6 +20,7 @@
   - 冻结或替换员工时，已 lease 未开工票现在会自动回收到 `PENDING` 并把原员工写进 `excluded_employee_ids`；执行中票会进入 `staffing containment` 围堵，并通过 incident / circuit breaker 暴露到 `Inbox / Dashboard / Workforce`
   - `employee-restore` 现在会自动恢复因 freeze 被回收的旧票，只移除这次冻结临时加上的排除名单；`incident-resolve` 也新增了 `RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT`，可以把被 staffing containment 打断的执行票重新拉回待执行链
   - 默认 roster 现在由 employee 事件 bootstrap，再由 reducer 重建，不再把 `employee_projection` 当成静态真相源
+  - 为主线解堵：React `workforce` 面板现在也能直接做 `freeze / restore / hire request / replace request`，值守时不再必须回命令行；当前 UI 只暴露主线支持的两组 staffing 模板：`frontend_engineer / ui_designer_primary` 与 `checker / checker_primary`
   - 当前剩余缺口：更多票型上的 staffing policy 也还没补齐，replace / freeze 之外的恢复策略仍需要继续收口
 - 直接推进主线：把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
   - 当前已新增第二条真实链路：`MEETING_ESCALATION + consensus_document@1` 现在也会先走 maker-checker，再进 `Inbox -> Review Room`
@@ -57,6 +58,7 @@
   - `approve / reject / modify constraints` 动作提交后会立即重新拉取，并用 SSE 做失效刷新
   - `Inbox` 里的 incident 项现在也能直接打开详情，并复用现有 `incident-resolve` 命令完成恢复闭环
   - `workforce` 面板现在也会显式显示 `rework loops`，董事会和排障人能直接看见 build / check 链有没有卡在返工
+  - `workforce` 面板现在还会直接暴露后端给出的 staffing 模板与动作：支持角色可在 UI 里直接 `freeze / restore / hire request / replace request`，提交后仍复用现有 `Inbox -> Review Room`
 - 已完成直接推进主线：首页现在也能打开 `dependency inspector`
   - 当前 active workflow 会暴露一份只服务本地 MVP 的依赖快照，直接展示 `Plan / Build / Check / Review` 之间的真实依赖、当前停点、以及回到对应 `Review Room / Incident` 的入口
   - 这条读面继续保持 projection-first：前端不回放完整 DAG，不在浏览器里推导新工作流状态，只消费后端给出的当前链路解释

@@ -11,6 +11,7 @@
 - `Inbox` 里的 review 项可以直接打开 `Review Room`
 - `Inbox` 里的 incident 项可以直接打开 incident 详情抽屉，并提交现有 `incident-resolve` 恢复动作
 - 首页右侧现在会显示 workforce 泳道和最近事件，方便董事会直接看到谁在执行、哪里在报警
+- `workforce` 面板现在也会消费后端给出的最小 staffing 模板和动作，支持在 UI 里直接做 `freeze / restore / hire request / replace request`
 - 可以直接提交 `board approve / reject / modify constraints`
 - 前端会在命令成功后立即重新拉取，并用 `events/stream` 做失效通知
 
@@ -22,6 +23,7 @@
 - `dependency inspector` 只展示后端投影好的“当前链路解释”，不在浏览器里自己拼 DAG 或推导阻塞规则
 - 现在可以直接在 UI 里打开 `runtime provider` 设置抽屉，切换本地 `Deterministic / OpenAI Compat`，并保存本地 `base_url / api_key / model / timeout / reasoning_effort`
 - 首页会显式展示当前 execution mode，并在最终 review 批准后显示 completion card 和最终证据入口
+- staffing UI 仍然只暴露当前主线支持的两组模板：`frontend_engineer / ui_designer_primary` 与 `checker / checker_primary`
 
 ## 本地运行
 

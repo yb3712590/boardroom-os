@@ -21,6 +21,7 @@ from app.core.staffing_containment import (
     contain_employee_active_tickets,
     restore_employee_requeued_tickets,
 )
+from app.core.staffing_catalog import resolve_mainline_staffing_combo
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -146,6 +147,15 @@ def handle_employee_hire_request(
                 reason=f"Workflow {payload.workflow_id} was not found.",
             )
 
+        _, staffing_reason = resolve_mainline_staffing_combo(payload.role_type, payload.role_profile_refs)
+        if staffing_reason is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=staffing_reason,
+            )
+
         existing_employee = repository.get_employee_projection(payload.employee_id, connection=connection)
         if existing_employee is not None:
             return _rejected_ack(
@@ -246,6 +256,47 @@ def handle_employee_replace_request(
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 reason=f"Employee {payload.replaced_employee_id} is not active and cannot be replaced.",
+                causation_hint=f"employee:{payload.replaced_employee_id}",
+            )
+
+        _, staffing_reason = resolve_mainline_staffing_combo(
+            payload.replacement_role_type,
+            payload.replacement_role_profile_refs,
+        )
+        if staffing_reason is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=staffing_reason,
+                causation_hint=f"employee:{payload.replaced_employee_id}",
+            )
+
+        current_role_type = str(current_employee.get("role_type") or "").strip()
+        current_role_profile_refs = list(current_employee.get("role_profile_refs") or [])
+        _, current_staffing_reason = resolve_mainline_staffing_combo(
+            current_role_type,
+            current_role_profile_refs,
+        )
+        if current_staffing_reason is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=(
+                    f"Employee {payload.replaced_employee_id} is not on the current local MVP staffing path "
+                    "and cannot be replaced from the thin staffing loop."
+                ),
+                causation_hint=f"employee:{payload.replaced_employee_id}",
+            )
+        if current_role_type != payload.replacement_role_type:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=(
+                    f"Replacement must keep the same role_type as {payload.replaced_employee_id} on the current local MVP staffing path."
+                ),
                 causation_hint=f"employee:{payload.replaced_employee_id}",
             )
 

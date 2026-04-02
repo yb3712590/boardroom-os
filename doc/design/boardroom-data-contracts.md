@@ -622,6 +622,20 @@ Purpose:
       "workers_in_rework_loop": 0,
       "workers_in_staffing_containment": 1
     },
+    "hire_templates": [
+      {
+        "template_id": "frontend_engineer_backup",
+        "label": "Frontend backup maker",
+        "role_type": "frontend_engineer",
+        "role_profile_refs": ["ui_designer_primary"],
+        "employee_id_hint": "emp_frontend_backup",
+        "provider_id": "prov_openai_compat",
+        "request_summary": "Hire a backup frontend maker for rework rotation.",
+        "skill_profile": {"primary_domain": "frontend"},
+        "personality_profile": {"style": "maker"},
+        "aesthetic_profile": {"preference": "minimal"}
+      }
+    ],
     "role_lanes": [
       {
         "role_type": "frontend_engineer",
@@ -649,7 +663,27 @@ Purpose:
             "elapsed_sec": 740,
             "rework_pressure": "low",
             "health_state": "healthy",
-            "last_update_at": "2026-03-28T01:58:40+08:00"
+            "last_update_at": "2026-03-28T01:58:40+08:00",
+            "available_actions": [
+              {
+                "action_type": "FREEZE",
+                "enabled": true,
+                "disabled_reason": null,
+                "template_id": null
+              },
+              {
+                "action_type": "RESTORE",
+                "enabled": false,
+                "disabled_reason": "Only frozen workers can be restored.",
+                "template_id": null
+              },
+              {
+                "action_type": "REPLACE",
+                "enabled": true,
+                "disabled_reason": null,
+                "template_id": "frontend_engineer_backup"
+              }
+            ]
           }
         ]
       },
@@ -710,6 +744,8 @@ UI rule:
 - UI should show both `preferred_model_id` and `actual_model_id` when they differ
 - `FUSED` means the worker still owns a live ticket, but that ticket has already moved into `CANCEL_REQUESTED` under staffing containment and should be treated as waiting for operator follow-up rather than normal execution
 - `employment_state` and `activity_state` must be read separately: a worker can appear as `FUSED` while their employment state has already become `FROZEN` or `REPLACED`
+- `hire_templates` is the server-owned list of staffing requests the thin UI is allowed to open on the current local MVP path; the browser should not invent extra roles or role-profile combos
+- `available_actions` is also server-driven: UI can render `FREEZE / RESTORE / REPLACE` from this list, but should not infer action availability by replaying employee state rules in the browser
 
 ## 7. Review Room Projection
 

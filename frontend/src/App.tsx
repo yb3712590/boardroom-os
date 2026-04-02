@@ -5,6 +5,10 @@ import { BrowserRouter, Routes, Route, useNavigate, useParams } from 'react-rout
 import {
   boardApprove,
   boardReject,
+  employeeFreeze,
+  employeeHireRequest,
+  employeeReplaceRequest,
+  employeeRestore,
   getDashboard,
   getDependencyInspector,
   getDeveloperInspector,
@@ -17,8 +21,10 @@ import {
   modifyConstraints,
   projectInit,
   runtimeProviderUpsert,
+  type CommandAck,
   type DashboardData,
   type DependencyInspectorData,
+  type StaffingHireTemplate,
   type IncidentDetailData,
   type DeveloperInspectorData,
   type InboxData,
@@ -37,6 +43,13 @@ import { WorkflowRiver } from './components/WorkflowRiver'
 import './App.css'
 
 const DEFAULT_INCIDENT_OPERATOR = 'emp_ops_1'
+
+function assertAcceptedCommand(ack: CommandAck, fallbackMessage: string) {
+  if (ack.status === 'ACCEPTED' || ack.status === 'DUPLICATE') {
+    return
+  }
+  throw new Error(ack.reason ?? fallbackMessage)
+}
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('en-US').format(value)
@@ -239,6 +252,7 @@ function ShellRoute() {
   const [projectInitPending, setProjectInitPending] = useState(false)
   const [submittingAction, setSubmittingAction] = useState<string | null>(null)
   const [submittingIncidentAction, setSubmittingIncidentAction] = useState(false)
+  const [submittingStaffingAction, setSubmittingStaffingAction] = useState<string | null>(null)
   const [dependencyInspectorOpen, setDependencyInspectorOpen] = useState(false)
   const [runtimeProvider, setRuntimeProvider] = useState<RuntimeProviderData | null>(null)
   const [runtimeProviderLoading, setRuntimeProviderLoading] = useState(true)
@@ -493,6 +507,121 @@ function ShellRoute() {
       setIncidentError(error instanceof Error ? error.message : 'Incident recovery failed.')
     } finally {
       setSubmittingIncidentAction(false)
+    }
+  }
+
+  const handleEmployeeFreeze = async (employeeId: string) => {
+    const workflowId = dashboard?.active_workflow?.workflow_id
+    if (!workflowId) {
+      return
+    }
+    const actionKey = `freeze:${employeeId}`
+    setSubmittingStaffingAction(actionKey)
+    setSnapshotError(null)
+    try {
+      const ack = await employeeFreeze({
+        workflow_id: workflowId,
+        employee_id: employeeId,
+        frozen_by: DEFAULT_INCIDENT_OPERATOR,
+        reason: 'Pause this worker from taking new tickets.',
+        idempotency_key: `employee-freeze:${workflowId}:${employeeId}:${Date.now()}`,
+      })
+      assertAcceptedCommand(ack, 'Employee freeze failed.')
+      await reloadSnapshot()
+    } catch (error) {
+      setSnapshotError(error instanceof Error ? error.message : 'Employee freeze failed.')
+    } finally {
+      setSubmittingStaffingAction(null)
+    }
+  }
+
+  const handleEmployeeRestore = async (employeeId: string) => {
+    const workflowId = dashboard?.active_workflow?.workflow_id
+    if (!workflowId) {
+      return
+    }
+    const actionKey = `restore:${employeeId}`
+    setSubmittingStaffingAction(actionKey)
+    setSnapshotError(null)
+    try {
+      const ack = await employeeRestore({
+        workflow_id: workflowId,
+        employee_id: employeeId,
+        restored_by: DEFAULT_INCIDENT_OPERATOR,
+        reason: 'Return this worker to active duty.',
+        idempotency_key: `employee-restore:${workflowId}:${employeeId}:${Date.now()}`,
+      })
+      assertAcceptedCommand(ack, 'Employee restore failed.')
+      await reloadSnapshot()
+    } catch (error) {
+      setSnapshotError(error instanceof Error ? error.message : 'Employee restore failed.')
+    } finally {
+      setSubmittingStaffingAction(null)
+    }
+  }
+
+  const handleEmployeeHireRequest = async (template: StaffingHireTemplate, employeeId: string) => {
+    const workflowId = dashboard?.active_workflow?.workflow_id
+    if (!workflowId) {
+      return
+    }
+    const actionKey = `hire:${template.template_id}`
+    setSubmittingStaffingAction(actionKey)
+    setSnapshotError(null)
+    try {
+      const ack = await employeeHireRequest({
+        workflow_id: workflowId,
+        employee_id: employeeId,
+        role_type: template.role_type,
+        role_profile_refs: template.role_profile_refs,
+        skill_profile: template.skill_profile,
+        personality_profile: template.personality_profile,
+        aesthetic_profile: template.aesthetic_profile,
+        provider_id: template.provider_id,
+        request_summary: template.request_summary,
+        idempotency_key: `employee-hire-request:${workflowId}:${employeeId}:${Date.now()}`,
+      })
+      assertAcceptedCommand(ack, 'Employee hire request failed.')
+      await reloadSnapshot()
+    } catch (error) {
+      setSnapshotError(error instanceof Error ? error.message : 'Employee hire request failed.')
+    } finally {
+      setSubmittingStaffingAction(null)
+    }
+  }
+
+  const handleEmployeeReplaceRequest = async (
+    employeeId: string,
+    template: StaffingHireTemplate,
+    replacementEmployeeId: string,
+  ) => {
+    const workflowId = dashboard?.active_workflow?.workflow_id
+    if (!workflowId) {
+      return
+    }
+    const actionKey = `replace:${employeeId}`
+    setSubmittingStaffingAction(actionKey)
+    setSnapshotError(null)
+    try {
+      const ack = await employeeReplaceRequest({
+        workflow_id: workflowId,
+        replaced_employee_id: employeeId,
+        replacement_employee_id: replacementEmployeeId,
+        replacement_role_type: template.role_type,
+        replacement_role_profile_refs: template.role_profile_refs,
+        replacement_skill_profile: template.skill_profile,
+        replacement_personality_profile: template.personality_profile,
+        replacement_aesthetic_profile: template.aesthetic_profile,
+        replacement_provider_id: template.provider_id,
+        request_summary: `Replace ${employeeId} with a supported ${template.label.toLowerCase()} to keep the local delivery loop moving.`,
+        idempotency_key: `employee-replace-request:${workflowId}:${employeeId}:${replacementEmployeeId}:${Date.now()}`,
+      })
+      assertAcceptedCommand(ack, 'Employee replacement request failed.')
+      await reloadSnapshot()
+    } catch (error) {
+      setSnapshotError(error instanceof Error ? error.message : 'Employee replacement request failed.')
+    } finally {
+      setSubmittingStaffingAction(null)
     }
   }
 
@@ -778,7 +907,15 @@ function ShellRoute() {
             </section>
 
             <aside className="boardroom-support">
-              <WorkforcePanel workforce={workforce} loading={snapshotLoading && workforce == null} />
+              <WorkforcePanel
+                workforce={workforce}
+                loading={snapshotLoading && workforce == null}
+                submittingAction={submittingStaffingAction}
+                onFreeze={handleEmployeeFreeze}
+                onRestore={handleEmployeeRestore}
+                onRequestHire={handleEmployeeHireRequest}
+                onRequestReplacement={handleEmployeeReplaceRequest}
+              />
               <EventTicker events={dashboard?.event_stream_preview ?? []} />
             </aside>
           </div>

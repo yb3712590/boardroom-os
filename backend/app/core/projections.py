@@ -62,6 +62,8 @@ from app.contracts.projections import (
     WorkerRuntimeProjectionFilters,
     WorkerRuntimeProjectionSummary,
     WorkerSessionAdminProjection,
+    StaffingHireTemplateProjection,
+    WorkforceActionProjection,
     WorkforceProjectionData,
     WorkforceProjectionEnvelope,
     WorkforceRoleLaneProjection,
@@ -87,6 +89,9 @@ from app.core.constants import (
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
+    EMPLOYEE_STATE_ACTIVE,
+    EMPLOYEE_STATE_FROZEN,
+    EMPLOYEE_STATE_REPLACED,
     SCHEMA_VERSION,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
@@ -96,6 +101,10 @@ from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
+)
+from app.core.staffing_catalog import (
+    list_mainline_staffing_hire_templates,
+    mainline_staffing_template_id_for_role,
 )
 from app.core.runtime_provider_config import (
     RuntimeProviderConfigStore,
@@ -214,6 +223,112 @@ def _build_runtime_provider_projection_data(
         configured_worker_count=count_configured_workers(repository, provider_id=config.provider_id),
         effective_reason=effective_reason,
     )
+
+
+def _build_workforce_hire_templates() -> list[StaffingHireTemplateProjection]:
+    return [
+        StaffingHireTemplateProjection(
+            template_id=str(template["template_id"]),
+            label=str(template["label"]),
+            role_type=str(template["role_type"]),
+            role_profile_refs=list(template.get("role_profile_refs") or []),
+            employee_id_hint=str(template["employee_id_hint"]),
+            provider_id=template.get("provider_id"),
+            request_summary=str(template["request_summary"]),
+            skill_profile=dict(template.get("skill_profile") or {}),
+            personality_profile=dict(template.get("personality_profile") or {}),
+            aesthetic_profile=dict(template.get("aesthetic_profile") or {}),
+        )
+        for template in list_mainline_staffing_hire_templates()
+    ]
+
+
+def _build_workforce_available_actions(employee: dict[str, Any]) -> list[WorkforceActionProjection]:
+    state = str(employee.get("state") or "UNKNOWN").strip().upper()
+    role_type = str(employee.get("role_type") or "").strip()
+    template_id = mainline_staffing_template_id_for_role(role_type)
+
+    if state == EMPLOYEE_STATE_ACTIVE:
+        replace_enabled = template_id is not None
+        return [
+            WorkforceActionProjection(action_type="FREEZE", enabled=True, disabled_reason=None, template_id=None),
+            WorkforceActionProjection(
+                action_type="RESTORE",
+                enabled=False,
+                disabled_reason="Only frozen workers can be restored.",
+                template_id=None,
+            ),
+            WorkforceActionProjection(
+                action_type="REPLACE",
+                enabled=replace_enabled,
+                disabled_reason=(
+                    None
+                    if replace_enabled
+                    else "No supported replacement template exists on the current local MVP staffing path."
+                ),
+                template_id=template_id,
+            ),
+        ]
+
+    if state == EMPLOYEE_STATE_FROZEN:
+        return [
+            WorkforceActionProjection(
+                action_type="FREEZE",
+                enabled=False,
+                disabled_reason="Only active workers can be frozen.",
+                template_id=None,
+            ),
+            WorkforceActionProjection(action_type="RESTORE", enabled=True, disabled_reason=None, template_id=None),
+            WorkforceActionProjection(
+                action_type="REPLACE",
+                enabled=False,
+                disabled_reason="Only active workers can be replaced.",
+                template_id=template_id,
+            ),
+        ]
+
+    if state == EMPLOYEE_STATE_REPLACED:
+        return [
+            WorkforceActionProjection(
+                action_type="FREEZE",
+                enabled=False,
+                disabled_reason="Replaced workers cannot be frozen again.",
+                template_id=None,
+            ),
+            WorkforceActionProjection(
+                action_type="RESTORE",
+                enabled=False,
+                disabled_reason="Replaced workers cannot be restored.",
+                template_id=None,
+            ),
+            WorkforceActionProjection(
+                action_type="REPLACE",
+                enabled=False,
+                disabled_reason="Replaced workers cannot be replaced again.",
+                template_id=template_id,
+            ),
+        ]
+
+    return [
+        WorkforceActionProjection(
+            action_type="FREEZE",
+            enabled=False,
+            disabled_reason="This worker is not on an actionable employment state.",
+            template_id=None,
+        ),
+        WorkforceActionProjection(
+            action_type="RESTORE",
+            enabled=False,
+            disabled_reason="This worker is not on an actionable employment state.",
+            template_id=None,
+        ),
+        WorkforceActionProjection(
+            action_type="REPLACE",
+            enabled=False,
+            disabled_reason="This worker is not on an actionable employment state.",
+            template_id=template_id,
+        ),
+    ]
 
 
 def _build_dashboard_completion_summary(
@@ -895,6 +1010,7 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
                 current_node_id=str(ticket.get("node_id")) if ticket is not None else None,
                 provider_id=employee.get("provider_id"),
                 last_update_at=employee.get("updated_at"),
+                available_actions=_build_workforce_available_actions(employee),
             )
         )
 
@@ -915,7 +1031,11 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
         generated_at=now_local(),
         projection_version=projection_version,
         cursor=cursor,
-        data=WorkforceProjectionData(summary=summary, role_lanes=role_lanes),
+        data=WorkforceProjectionData(
+            summary=summary,
+            hire_templates=_build_workforce_hire_templates(),
+            role_lanes=role_lanes,
+        ),
     )
 
 

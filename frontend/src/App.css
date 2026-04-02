@@ -389,10 +389,87 @@
   text-transform: uppercase;
 }
 
+.workforce-section-heading {
+  margin-bottom: 14px;
+}
+
+.staffing-request-panel {
+  margin-bottom: 18px;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(11, 19, 30, 0.72);
+  border: 1px solid rgba(199, 225, 255, 0.08);
+}
+
+.staffing-template-list {
+  display: grid;
+  gap: 12px;
+}
+
+.staffing-template-card,
+.staffing-replacement-form {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(16, 25, 39, 0.7);
+  border: 1px solid rgba(199, 225, 255, 0.08);
+}
+
+.staffing-template-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.staffing-template-copy strong,
+.worker-card-state span:first-child {
+  color: var(--text-strong);
+}
+
+.staffing-template-copy span,
+.staffing-inline-field span,
+.worker-action-hint,
+.worker-card-state span:last-child {
+  color: var(--muted-label);
+  font-size: 0.82rem;
+}
+
+.staffing-inline-field {
+  display: grid;
+  gap: 6px;
+}
+
+.staffing-inline-field input {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1px solid rgba(199, 225, 255, 0.12);
+  background: rgba(9, 15, 25, 0.92);
+  color: var(--text-strong);
+  padding: 10px 12px;
+}
+
+.worker-card-state {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
 .worker-card-meta {
   display: grid;
   gap: 4px;
   margin-top: 8px;
+}
+
+.worker-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.worker-action-hint {
+  margin: 10px 0 0;
 }
 
 .event-card {

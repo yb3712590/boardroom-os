@@ -9705,6 +9705,44 @@ def test_employee_hire_request_opens_core_hire_approval_in_inbox_and_review_room
     assert review_pack["subject"]["employee_id"] == "emp_frontend_backup"
 
 
+def test_employee_hire_request_rejects_unsupported_mainline_staffing_combo(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_platform_ops",
+            role_type="platform_engineer",
+            role_profile_refs=["platform_ops_primary"],
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "not on the current local mvp staffing path" in response.json()["reason"].lower()
+
+
+def test_employee_replace_request_rejects_role_profile_mismatch_for_supported_role(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Replace maker"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    response = client.post(
+        "/api/v1/commands/employee-replace-request",
+        json=_employee_replace_request_payload(
+            workflow_id,
+            replacement_employee_id="emp_frontend_backup_replace",
+            replacement_role_type="frontend_engineer",
+            replacement_role_profile_refs=["checker_primary"],
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "must use role profile refs" in response.json()["reason"].lower()
+
+
 def test_board_approve_core_hire_request_adds_employee_to_workforce_projection(client):
     workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
     workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
@@ -9746,6 +9784,84 @@ def test_board_approve_core_hire_request_adds_employee_to_workforce_projection(c
     assert [worker["employee_id"] for worker in frontend_lane["workers"]] == [
         "emp_frontend_2",
         "emp_frontend_backup",
+    ]
+
+
+def test_workforce_projection_exposes_staffing_templates_and_server_driven_actions(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(
+            workflow_id,
+            employee_id="emp_checker_1",
+        ),
+    )
+
+    workforce_response = client.get("/api/v1/projections/workforce")
+
+    assert workforce_response.status_code == 200
+    body = workforce_response.json()["data"]
+    assert [template["template_id"] for template in body["hire_templates"]] == [
+        "frontend_engineer_backup",
+        "checker_backup",
+    ]
+
+    frontend_lane = next(
+        lane
+        for lane in body["role_lanes"]
+        if lane["role_type"] == "frontend_engineer"
+    )
+    active_frontend_worker = next(
+        worker
+        for worker in frontend_lane["workers"]
+        if worker["employee_id"] == "emp_frontend_2"
+    )
+    assert active_frontend_worker["employment_state"] == "ACTIVE"
+    assert active_frontend_worker["available_actions"] == [
+        {
+            "action_type": "FREEZE",
+            "enabled": True,
+            "disabled_reason": None,
+            "template_id": None,
+        },
+        {
+            "action_type": "RESTORE",
+            "enabled": False,
+            "disabled_reason": "Only frozen workers can be restored.",
+            "template_id": None,
+        },
+        {
+            "action_type": "REPLACE",
+            "enabled": True,
+            "disabled_reason": None,
+            "template_id": "frontend_engineer_backup",
+        },
+    ]
+
+    checker_lane = next(lane for lane in body["role_lanes"] if lane["role_type"] == "checker")
+    frozen_checker = next(worker for worker in checker_lane["workers"] if worker["employee_id"] == "emp_checker_1")
+    assert frozen_checker["employment_state"] == "FROZEN"
+    assert frozen_checker["available_actions"] == [
+        {
+            "action_type": "FREEZE",
+            "enabled": False,
+            "disabled_reason": "Only active workers can be frozen.",
+            "template_id": None,
+        },
+        {
+            "action_type": "RESTORE",
+            "enabled": True,
+            "disabled_reason": None,
+            "template_id": None,
+        },
+        {
+            "action_type": "REPLACE",
+            "enabled": False,
+            "disabled_reason": "Only active workers can be replaced.",
+            "template_id": "checker_backup",
+        },
     ]
 
 

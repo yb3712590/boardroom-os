@@ -139,6 +139,7 @@ export type WorkforceWorker = {
   current_node_id: string | null
   provider_id: string | null
   last_update_at?: string | null
+  available_actions: WorkforceWorkerAction[]
 }
 
 export type WorkforceRoleLane = {
@@ -146,6 +147,26 @@ export type WorkforceRoleLane = {
   active_count: number
   idle_count: number
   workers: WorkforceWorker[]
+}
+
+export type WorkforceWorkerAction = {
+  action_type: string
+  enabled: boolean
+  disabled_reason: string | null
+  template_id: string | null
+}
+
+export type StaffingHireTemplate = {
+  template_id: string
+  label: string
+  role_type: string
+  role_profile_refs: string[]
+  employee_id_hint: string
+  provider_id: string | null
+  request_summary: string
+  skill_profile: Record<string, string>
+  personality_profile: Record<string, string>
+  aesthetic_profile: Record<string, string>
 }
 
 export type WorkforceData = {
@@ -157,6 +178,7 @@ export type WorkforceData = {
     workers_in_rework_loop: number
     workers_in_staffing_containment: number
   }
+  hire_templates: StaffingHireTemplate[]
   role_lanes: WorkforceRoleLane[]
 }
 
@@ -489,6 +511,69 @@ export async function incidentResolve(payload: {
   idempotency_key: string
 }): Promise<CommandAck> {
   return requestJson<CommandAck>('/api/v1/commands/incident-resolve', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function employeeFreeze(payload: {
+  workflow_id: string
+  employee_id: string
+  frozen_by: string
+  reason: string
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/employee-freeze', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function employeeRestore(payload: {
+  workflow_id: string
+  employee_id: string
+  restored_by: string
+  reason: string
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/employee-restore', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function employeeHireRequest(payload: {
+  workflow_id: string
+  employee_id: string
+  role_type: string
+  role_profile_refs: string[]
+  skill_profile: Record<string, string>
+  personality_profile: Record<string, string>
+  aesthetic_profile: Record<string, string>
+  provider_id: string | null
+  request_summary: string
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/employee-hire-request', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function employeeReplaceRequest(payload: {
+  workflow_id: string
+  replaced_employee_id: string
+  replacement_employee_id: string
+  replacement_role_type: string
+  replacement_role_profile_refs: string[]
+  replacement_skill_profile: Record<string, string>
+  replacement_personality_profile: Record<string, string>
+  replacement_aesthetic_profile: Record<string, string>
+  replacement_provider_id: string | null
+  request_summary: string
+  idempotency_key: string
+}): Promise<CommandAck> {
+  return requestJson<CommandAck>('/api/v1/commands/employee-replace-request', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

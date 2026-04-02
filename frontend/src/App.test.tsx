@@ -148,6 +148,49 @@ function reviewRoomData() {
   }
 }
 
+function workforceAction(
+  actionType: string,
+  enabled: boolean,
+  disabledReason: string | null = null,
+  templateId: string | null = null,
+) {
+  return {
+    action_type: actionType,
+    enabled,
+    disabled_reason: disabledReason,
+    template_id: templateId,
+  }
+}
+
+function hireTemplates() {
+  return [
+    {
+      template_id: 'frontend_engineer_backup',
+      label: 'Frontend backup maker',
+      role_type: 'frontend_engineer',
+      role_profile_refs: ['ui_designer_primary'],
+      employee_id_hint: 'emp_frontend_backup',
+      provider_id: 'prov_openai_compat',
+      request_summary: 'Hire a backup frontend maker for rework rotation.',
+      skill_profile: { primary_domain: 'frontend' },
+      personality_profile: { style: 'maker' },
+      aesthetic_profile: { preference: 'minimal' },
+    },
+    {
+      template_id: 'checker_backup',
+      label: 'Checker backup',
+      role_type: 'checker',
+      role_profile_refs: ['checker_primary'],
+      employee_id_hint: 'emp_checker_backup',
+      provider_id: 'prov_openai_compat',
+      request_summary: 'Hire a backup checker to keep internal review moving.',
+      skill_profile: { primary_domain: 'quality' },
+      personality_profile: { style: 'checker' },
+      aesthetic_profile: { preference: 'systematic' },
+    },
+  ]
+}
+
 function workforceData() {
   return {
     summary: {
@@ -158,6 +201,7 @@ function workforceData() {
       workers_in_rework_loop: 0,
       workers_in_staffing_containment: 0,
     },
+    hire_templates: hireTemplates(),
     role_lanes: [
       {
         role_type: 'frontend_engineer',
@@ -173,6 +217,11 @@ function workforceData() {
             current_node_id: 'node_homepage_visual',
             provider_id: 'prov_openai_compat',
             last_update_at: '2026-04-01T23:08:00+08:00',
+            available_actions: [
+              workforceAction('FREEZE', true),
+              workforceAction('RESTORE', false, 'Only frozen workers can be restored.'),
+              workforceAction('REPLACE', true, null, 'frontend_engineer_backup'),
+            ],
           },
           {
             employee_id: 'emp_frontend_backup',
@@ -183,6 +232,11 @@ function workforceData() {
             current_node_id: null,
             provider_id: null,
             last_update_at: '2026-04-01T23:07:00+08:00',
+            available_actions: [
+              workforceAction('FREEZE', true),
+              workforceAction('RESTORE', false, 'Only frozen workers can be restored.'),
+              workforceAction('REPLACE', true, null, 'frontend_engineer_backup'),
+            ],
           },
         ],
       },
@@ -200,6 +254,11 @@ function workforceData() {
             current_node_id: 'node_homepage_visual',
             provider_id: null,
             last_update_at: '2026-04-01T23:08:00+08:00',
+            available_actions: [
+              workforceAction('FREEZE', true),
+              workforceAction('RESTORE', false, 'Only frozen workers can be restored.'),
+              workforceAction('REPLACE', true, null, 'checker_backup'),
+            ],
           },
         ],
       },
@@ -528,6 +587,56 @@ function jsonResponse(data: unknown) {
   )
 }
 
+function setMockWorkerEmploymentState(workforce: JsonRecord, employeeId: string, nextState: 'ACTIVE' | 'FROZEN') {
+  const roleLanes = ((workforce.role_lanes as JsonRecord[]) ?? [])
+  for (const lane of roleLanes) {
+    const workers = ((lane.workers as JsonRecord[]) ?? [])
+    for (const worker of workers) {
+      if (worker.employee_id !== employeeId) {
+        continue
+      }
+      worker.employment_state = nextState
+      worker.activity_state = nextState === 'FROZEN' ? 'OFFLINE' : 'IDLE'
+      worker.current_ticket_id = nextState === 'FROZEN' ? worker.current_ticket_id : null
+      worker.current_node_id = nextState === 'FROZEN' ? worker.current_node_id : null
+      const currentActions = ((worker.available_actions as JsonRecord[]) ?? [])
+      const templateId = (currentActions.find((action) => action.action_type === 'REPLACE')?.template_id ??
+        null) as string | null
+      worker.available_actions =
+        nextState === 'FROZEN'
+          ? [
+              workforceAction('FREEZE', false, 'Only active workers can be frozen.'),
+              workforceAction('RESTORE', true),
+              workforceAction('REPLACE', false, 'Only active workers can be replaced.', templateId),
+            ]
+          : [
+              workforceAction('FREEZE', true),
+              workforceAction('RESTORE', false, 'Only frozen workers can be restored.'),
+              workforceAction('REPLACE', true, null, templateId),
+            ]
+    }
+  }
+}
+
+function pushMockStaffingInboxItem(
+  state: {
+    dashboard: JsonRecord
+    inbox: JsonRecord
+  },
+  item: JsonRecord,
+) {
+  const currentItems = (((state.inbox.items as JsonRecord[]) ?? []).slice())
+  currentItems.unshift(item)
+  state.inbox = inboxData(currentItems)
+  state.dashboard = {
+    ...state.dashboard,
+    inbox_counts: {
+      ...((state.dashboard.inbox_counts as JsonRecord) ?? {}),
+      approvals_pending: currentItems.length,
+    },
+  }
+}
+
 function installBoardroomMock(options?: {
   dashboard?: JsonRecord
   inbox?: JsonRecord
@@ -627,6 +736,84 @@ function installBoardroomMock(options?: {
         received_at: '2026-04-01T23:11:00+08:00',
         reason: null,
         causation_hint: 'workflow:wf_001',
+      })
+    }
+    if (method === 'POST' && url.endsWith('/api/v1/commands/employee-freeze')) {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as JsonRecord
+      setMockWorkerEmploymentState(state.workforce, String(payload.employee_id), 'FROZEN')
+      return jsonResponse({
+        command_id: 'cmd_employee_freeze',
+        idempotency_key: String(payload.idempotency_key ?? 'employee-freeze:mock'),
+        status: 'ACCEPTED',
+        received_at: '2026-04-01T23:13:00+08:00',
+        reason: null,
+        causation_hint: `employee:${String(payload.employee_id)}`,
+      })
+    }
+    if (method === 'POST' && url.endsWith('/api/v1/commands/employee-restore')) {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as JsonRecord
+      setMockWorkerEmploymentState(state.workforce, String(payload.employee_id), 'ACTIVE')
+      return jsonResponse({
+        command_id: 'cmd_employee_restore',
+        idempotency_key: String(payload.idempotency_key ?? 'employee-restore:mock'),
+        status: 'ACCEPTED',
+        received_at: '2026-04-01T23:14:00+08:00',
+        reason: null,
+        causation_hint: `employee:${String(payload.employee_id)}`,
+      })
+    }
+    if (method === 'POST' && url.endsWith('/api/v1/commands/employee-hire-request')) {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as JsonRecord
+      pushMockStaffingInboxItem(state, {
+        inbox_item_id: 'inbox_hire_001',
+        workflow_id: String(payload.workflow_id ?? 'wf_001'),
+        item_type: 'CORE_HIRE_APPROVAL',
+        priority: 'high',
+        status: 'OPEN',
+        created_at: '2026-04-01T23:15:00+08:00',
+        title: `Approve hire: ${String(payload.employee_id)}`,
+        summary: String(payload.request_summary ?? 'Approve staffing hire.'),
+        source_ref: 'apr_hire_001',
+        route_target: {
+          view: 'review_room',
+          review_pack_id: 'brp_001',
+        },
+        badges: ['staffing', 'core_hire'],
+      })
+      return jsonResponse({
+        command_id: 'cmd_employee_hire',
+        idempotency_key: String(payload.idempotency_key ?? 'employee-hire-request:mock'),
+        status: 'ACCEPTED',
+        received_at: '2026-04-01T23:15:00+08:00',
+        reason: null,
+        causation_hint: `approval:${String(payload.employee_id)}`,
+      })
+    }
+    if (method === 'POST' && url.endsWith('/api/v1/commands/employee-replace-request')) {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as JsonRecord
+      pushMockStaffingInboxItem(state, {
+        inbox_item_id: 'inbox_replace_001',
+        workflow_id: String(payload.workflow_id ?? 'wf_001'),
+        item_type: 'CORE_HIRE_APPROVAL',
+        priority: 'high',
+        status: 'OPEN',
+        created_at: '2026-04-01T23:16:00+08:00',
+        title: `Approve replacement: ${String(payload.replaced_employee_id)}`,
+        summary: String(payload.request_summary ?? 'Approve staffing replacement.'),
+        source_ref: 'apr_replace_001',
+        route_target: {
+          view: 'review_room',
+          review_pack_id: 'brp_001',
+        },
+        badges: ['staffing', 'core_hire', 'replacement'],
+      })
+      return jsonResponse({
+        command_id: 'cmd_employee_replace',
+        idempotency_key: String(payload.idempotency_key ?? 'employee-replace-request:mock'),
+        status: 'ACCEPTED',
+        received_at: '2026-04-01T23:16:00+08:00',
+        reason: null,
+        causation_hint: `approval:${String(payload.replaced_employee_id)}`,
       })
     }
     if (
@@ -989,6 +1176,55 @@ describe('Boardroom UI', () => {
     expect(await screen.findByText(/live workforce/i)).toBeInTheDocument()
     expect(screen.getByText('Rework loops')).toBeInTheDocument()
     expect(screen.getByText('7')).toBeInTheDocument()
+  })
+
+  it('shows staffing templates, employment state, and worker actions in the workforce panel', async () => {
+    installBoardroomMock()
+
+    render(<App />)
+
+    expect(await screen.findByText(/request staffing/i)).toBeInTheDocument()
+    expect(screen.getByDisplayValue('emp_frontend_backup')).toBeInTheDocument()
+    expect(screen.getAllByText(/employment active/i).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /freeze emp_frontend_2/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /request replacement for emp_frontend_2/i })).toBeInTheDocument()
+  })
+
+  it('freezes and restores a worker from the workforce panel with snapshot refresh', async () => {
+    const { fetchMock } = installBoardroomMock()
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /freeze emp_frontend_2/i }))
+
+    expect(await screen.findByText(/employment frozen/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /restore emp_frontend_2/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /restore emp_frontend_2/i }))
+
+    expect((await screen.findAllByText(/employment active/i)).length).toBeGreaterThan(0)
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/v1/commands/employee-freeze').length).toBe(1)
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/v1/commands/employee-restore').length).toBe(1)
+  })
+
+  it('submits hire and replacement requests from the workforce panel and refreshes inbox', async () => {
+    installBoardroomMock()
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.clear(await screen.findByLabelText(/frontend backup maker employee id/i))
+    await user.type(screen.getByLabelText(/frontend backup maker employee id/i), 'emp_frontend_new')
+    await user.click(screen.getByRole('button', { name: /request hire for frontend backup maker/i }))
+
+    expect(await screen.findByText('Approve hire: emp_frontend_new')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /request replacement for emp_frontend_2/i }))
+    await user.type(await screen.findByLabelText(/replacement employee id for emp_frontend_2/i), 'emp_frontend_swap')
+    await user.click(screen.getByRole('button', { name: /submit replacement for emp_frontend_2/i }))
+
+    expect(await screen.findByText('Approve replacement: emp_frontend_2')).toBeInTheDocument()
   })
 
   it('shows the dependency inspector entry only when an active workflow exists', async () => {
