@@ -155,7 +155,7 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
             maker_checker_context = created_spec.get("maker_checker_context") or {}
             maker_ticket_spec = maker_checker_context.get("maker_ticket_spec") or {}
             maker_delivery_stage = str(maker_ticket_spec.get("delivery_stage") or "").strip().upper()
-            if delivery_stage != "BUILD" and maker_delivery_stage != "BUILD":
+            if delivery_stage not in {"BUILD", "CHECK"} and maker_delivery_stage not in {"BUILD", "CHECK"}:
                 continue
             maker_employee_id = str(maker_checker_context.get("maker_completed_by") or "").strip()
             if maker_employee_id:

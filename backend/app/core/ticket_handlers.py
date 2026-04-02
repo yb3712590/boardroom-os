@@ -100,6 +100,8 @@ from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
@@ -151,6 +153,11 @@ MAKER_CHECKER_SUPPORTED_TARGETS = {
         "INTERNAL_DELIVERY_REVIEW",
         IMPLEMENTATION_BUNDLE_SCHEMA_REF,
         IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
+    ),
+    (
+        "INTERNAL_CHECK_REVIEW",
+        DELIVERY_CHECK_REPORT_SCHEMA_REF,
+        DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
     ),
 }
 
@@ -693,6 +700,8 @@ def _maker_checker_subject_label(review_request: TicketBoardReviewRequest | None
         return "submitted consensus document"
     if review_request.review_type.value == "INTERNAL_DELIVERY_REVIEW":
         return "submitted implementation bundle"
+    if review_request.review_type.value == "INTERNAL_CHECK_REVIEW":
+        return "submitted delivery check report"
     return "submitted deliverable"
 
 
@@ -701,6 +710,34 @@ def _is_internal_delivery_review_request(review_request: TicketBoardReviewReques
         review_request is not None
         and review_request.review_type.value == "INTERNAL_DELIVERY_REVIEW"
     )
+
+
+def _is_internal_check_review_request(review_request: TicketBoardReviewRequest | None) -> bool:
+    return bool(
+        review_request is not None
+        and review_request.review_type.value == "INTERNAL_CHECK_REVIEW"
+    )
+
+
+def _is_internal_only_review_request(review_request: TicketBoardReviewRequest | None) -> bool:
+    return _is_internal_delivery_review_request(review_request) or _is_internal_check_review_request(
+        review_request
+    )
+
+
+def _build_maker_checker_input_artifact_refs(
+    *,
+    created_spec: dict[str, Any],
+    review_request: TicketBoardReviewRequest,
+    maker_artifact_refs: list[str],
+) -> list[str]:
+    if _is_internal_check_review_request(review_request):
+        return _dedupe_artifact_refs(
+            list(maker_artifact_refs) + list(created_spec.get("input_artifact_refs") or [])
+        )
+    if maker_artifact_refs:
+        return maker_artifact_refs
+    return list(created_spec.get("input_artifact_refs") or [])
 
 
 def _ticket_kind(created_spec: dict[str, Any] | None) -> str | None:
@@ -893,7 +930,11 @@ def _build_maker_checker_ticket_payload(
         "excluded_employee_ids": list(created_spec.get("excluded_employee_ids") or []),
         "escalation_policy": dict(created_spec.get("escalation_policy") or {}),
     }
-    input_artifact_refs = maker_artifact_refs or list(created_spec.get("input_artifact_refs") or [])
+    input_artifact_refs = _build_maker_checker_input_artifact_refs(
+        created_spec=created_spec,
+        review_request=review_request,
+        maker_artifact_refs=maker_artifact_refs,
+    )
     return {
         "ticket_id": new_prefixed_id("tkt"),
         "workflow_id": workflow_id,
@@ -3928,7 +3969,7 @@ def _complete_ticket_locked(
         checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
         and (
             checker_review_status in {"CHANGES_REQUIRED", "ESCALATED"}
-            or _is_internal_delivery_review_request(effective_review_request)
+            or _is_internal_only_review_request(effective_review_request)
         )
     )
     open_board_review_now = bool(
@@ -4040,7 +4081,7 @@ def _complete_ticket_locked(
             )
             causation_hint = f"ticket:{next_ticket_id}"
     elif effective_review_request is not None:
-        if _is_internal_delivery_review_request(effective_review_request):
+        if _is_internal_only_review_request(effective_review_request):
             pass
         else:
             review_request_for_approval = effective_review_request

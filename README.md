@@ -23,14 +23,15 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 
 - `project-init` 会自动推进到首个 scope review
 - scope 通过后，`BUILD` 会先产出 `implementation_bundle@1`，再走内部 `maker -> checker -> fix / incident`
-- 只有 build 内审通过后，系统才会放行下游 `CHECK`
+- `CHECK` 产出的 `delivery_check_report@1` 现在也会先走内部 `maker -> checker -> fix / incident`
+- 只有 build 和 check 两段内审都通过后，系统才会放行最终董事会 `REVIEW`
 - 最终董事会只在真正的 board-facing `REVIEW` 进入 `Inbox -> Review Room`
 - React 壳已经能看 `dashboard / inbox / review room / incident / workforce / dependency inspector / completion`
 
 ## 仓库里现在有的主线能力
 
 - FastAPI + SQLite 后端，事件流、投影、ticket 生命周期、approval / incident / breaker 都已可用
-- Maker-Checker 已覆盖 `consensus_document@1`、`implementation_bundle@1`、`ui_milestone_review@1`
+- Maker-Checker 已覆盖 `consensus_document@1`、`implementation_bundle@1`、`delivery_check_report@1`、`ui_milestone_review@1`
 - employee 生命周期已进入主线：`hire / replace / freeze / restore` 与 staffing containment 都是事件驱动
 - Context Compiler 已能处理常见文本、媒体、下载型附件和本地历史摘要，并产出可审计执行包
 - runtime 默认走本地 deterministic；也支持本地保存的 `OpenAI Compat` provider 配置

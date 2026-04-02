@@ -44,17 +44,18 @@
 
 - Local MVP chain is now real: `project-init -> scope review -> BUILD internal maker-checker -> CHECK -> final REVIEW`.
 - `BUILD` no longer feeds `CHECK` directly. `implementation_bundle@1` must pass an internal `maker -> checker -> fix / incident` loop first.
-- Maker-Checker currently covers three real artifact families: `consensus_document@1`, `implementation_bundle@1`, and `ui_milestone_review@1`.
+- `CHECK` no longer feeds final board review directly either. `delivery_check_report@1` must now pass its own internal `maker -> checker -> fix / incident` loop before final `REVIEW` starts.
+- Maker-Checker currently covers four real artifact families: `consensus_document@1`, `implementation_bundle@1`, `delivery_check_report@1`, and `ui_milestone_review@1`.
 - Employee governance is on the mainline: `hire / replace / freeze / restore`, staffing containment, and containment recovery all run through events and projections.
 - `dashboard / inbox / review room / incident / workforce / dependency inspector / completion` are live in the React shell.
-- `workforce` now exposes `rework loops`, so build-chain rework pressure is visible without reading raw events.
+- `workforce` now exposes `rework loops`, so build/check-chain rework pressure is visible without reading raw events.
 - Deterministic runtime remains the zero-config default; local `OpenAI Compat` config is optional and already wired into the UI.
 - Context Compiler already supports inline text, fragment fallback, preview fallback, media/download refs, local history summary cards, and deterministic `json_messages_v1` rendering.
 
 ## Main Remaining Gaps
 
-- `delivery_check_report@1` and later deliverables are not yet inside the same level of internal maker-checker governance.
 - More ticket types still need the same staffing policy depth that build/visual/consensus now have.
+- Later deliverables after final board review are still not yet inside the same level of internal maker-checker governance.
 - UI is still intentionally thin: it shows current truth, but richer trend and analysis surfaces are still missing.
 - Provider routing, richer retrieval, public identity, and remote control-plane work remain post-MVP unless they directly unblock the local chain.
 
@@ -78,6 +79,12 @@
 - `board-approve` now consumes approved scope follow-ups and continues the staged chain toward the next real governance stop.
 - The default local chain now runs `BUILD -> CHECK -> REVIEW` instead of stopping at a single early visual ticket.
 - `implementation_bundle@1` now has an internal build checker gate with real rework and incident handling before downstream `CHECK`.
+
+### 2026-04-03
+
+- `delivery_check_report@1` now has its own internal checker gate with real `maker -> checker -> fix / incident` handling before final board review.
+- Scope follow-up `CHECK` tickets now carry a dedicated internal review type instead of reusing the build-bundle wording.
+- `workforce_summary.rework_loops` now reflects both build-chain and check-chain rework pressure.
 
 ### 2026-04-02 (docs compaction)
 
