@@ -1,8 +1,0 @@
-{
-  "api_key": null,
-  "base_url": null,
-  "mode": "DETERMINISTIC",
-  "model": null,
-  "reasoning_effort": null,
-  "timeout_sec": 30.0
-}
