@@ -9,6 +9,7 @@ from app.api.worker_admin_auth import (
 )
 from app.contracts.projections import (
     ArtifactCleanupCandidatesProjectionEnvelope,
+    CEOShadowProjectionEnvelope,
     DashboardProjectionEnvelope,
     DependencyInspectorProjectionEnvelope,
     IncidentDetailProjectionEnvelope,
@@ -25,6 +26,7 @@ from app.contracts.projections import (
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.projections import (
     build_artifact_cleanup_candidates_projection,
+    build_ceo_shadow_projection,
     build_dashboard_projection,
     build_dependency_inspector_projection,
     build_incident_detail_projection,
@@ -68,6 +70,25 @@ def get_dependency_inspector(
 ) -> DependencyInspectorProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     projection = build_dependency_inspector_projection(repository, workflow_id)
+    if projection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow '{workflow_id}' was not found.",
+        )
+    return projection
+
+
+@router.get(
+    "/workflows/{workflow_id}/ceo-shadow",
+    response_model=CEOShadowProjectionEnvelope,
+)
+def get_ceo_shadow_projection(
+    request: Request,
+    workflow_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> CEOShadowProjectionEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    projection = build_ceo_shadow_projection(repository, workflow_id, limit=limit)
     if projection is None:
         raise HTTPException(
             status_code=404,

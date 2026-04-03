@@ -16,9 +16,14 @@ def db_path(monkeypatch):
     path = base_dir / f"boardroom_os_test_{run_id}.db"
     developer_inspector_root = base_dir / f"developer_inspector_{run_id}"
     artifact_store_root = base_dir / f"artifacts_{run_id}"
+    runtime_provider_config_path = base_dir / f"runtime_provider_{run_id}.json"
     monkeypatch.setenv("BOARDROOM_OS_DB_PATH", str(path))
     monkeypatch.setenv("BOARDROOM_OS_DEVELOPER_INSPECTOR_ROOT", str(developer_inspector_root))
     monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_STORE_ROOT", str(artifact_store_root))
+    monkeypatch.setenv(
+        "BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH",
+        str(runtime_provider_config_path),
+    )
     return path
 
 

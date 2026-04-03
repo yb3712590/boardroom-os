@@ -135,6 +135,7 @@ class ControlPlaneRepository:
             self._ensure_compiled_context_bundle_shape(connection)
             self._ensure_compile_manifest_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
+            self._ensure_ceo_shadow_run_shape(connection)
             self._ensure_artifact_index_shape(connection)
             self._ensure_artifact_upload_session_shape(connection)
             self._ensure_artifact_upload_part_shape(connection)
@@ -2115,6 +2116,98 @@ class ControlPlaneRepository:
             rows = owned_connection.execute(query, tuple(params)).fetchall()
             return [self._convert_worker_admin_action_log_row(row) for row in rows]
 
+    def append_ceo_shadow_run(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        workflow_id: str,
+        trigger_type: str,
+        trigger_ref: str | None,
+        occurred_at: datetime,
+        effective_mode: str,
+        provider_health_summary: str,
+        model: str | None,
+        prompt_version: str,
+        provider_response_id: str | None,
+        fallback_reason: str | None,
+        snapshot: dict[str, Any],
+        proposed_action_batch: dict[str, Any],
+        accepted_actions: list[dict[str, Any]],
+        rejected_actions: list[dict[str, Any]],
+        comparison: dict[str, Any],
+    ) -> dict[str, Any]:
+        run_id = new_prefixed_id("ceo")
+        connection.execute(
+            """
+            INSERT INTO ceo_shadow_run (
+                run_id,
+                workflow_id,
+                trigger_type,
+                trigger_ref,
+                occurred_at,
+                effective_mode,
+                provider_health_summary,
+                model,
+                prompt_version,
+                provider_response_id,
+                fallback_reason,
+                snapshot_json,
+                proposed_action_batch_json,
+                accepted_actions_json,
+                rejected_actions_json,
+                comparison_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                workflow_id,
+                trigger_type,
+                trigger_ref,
+                occurred_at.isoformat(),
+                effective_mode,
+                provider_health_summary,
+                model,
+                prompt_version,
+                provider_response_id,
+                fallback_reason,
+                json.dumps(snapshot, sort_keys=True),
+                json.dumps(proposed_action_batch, sort_keys=True),
+                json.dumps(accepted_actions, sort_keys=True),
+                json.dumps(rejected_actions, sort_keys=True),
+                json.dumps(comparison, sort_keys=True),
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM ceo_shadow_run WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("CEO shadow run could not be created.")
+        return self._convert_ceo_shadow_run_row(row)
+
+    def list_ceo_shadow_runs(
+        self,
+        workflow_id: str,
+        *,
+        limit: int = 20,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM ceo_shadow_run
+            WHERE workflow_id = ?
+            ORDER BY occurred_at DESC, run_id DESC
+            LIMIT ?
+        """
+        params = (workflow_id, int(limit))
+        if connection is not None:
+            rows = connection.execute(query, params).fetchall()
+            return [self._convert_ceo_shadow_run_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, params).fetchall()
+            return [self._convert_ceo_shadow_run_row(row) for row in rows]
+
     def list_ticket_projections_by_statuses(
         self,
         connection: sqlite3.Connection,
@@ -3806,6 +3899,16 @@ class ControlPlaneRepository:
         converted["payload"] = json.loads(converted["payload_json"])
         return converted
 
+    def _convert_ceo_shadow_run_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["occurred_at"] = datetime.fromisoformat(converted["occurred_at"])
+        converted["snapshot"] = json.loads(converted["snapshot_json"])
+        converted["proposed_action_batch"] = json.loads(converted["proposed_action_batch_json"])
+        converted["accepted_actions"] = json.loads(converted["accepted_actions_json"])
+        converted["rejected_actions"] = json.loads(converted["rejected_actions_json"])
+        converted["comparison"] = json.loads(converted["comparison_json"])
+        return converted
+
     def _convert_artifact_index_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["created_at"] = datetime.fromisoformat(converted["created_at"])
@@ -5168,6 +5271,63 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_compiled_execution_package_compile_request_id ON compiled_execution_package(compile_request_id)"
+        )
+
+    def _ensure_ceo_shadow_run_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ceo_shadow_run (
+                run_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                trigger_type TEXT NOT NULL,
+                trigger_ref TEXT,
+                occurred_at TEXT NOT NULL,
+                effective_mode TEXT NOT NULL,
+                provider_health_summary TEXT NOT NULL,
+                model TEXT,
+                prompt_version TEXT NOT NULL,
+                provider_response_id TEXT,
+                fallback_reason TEXT,
+                snapshot_json TEXT NOT NULL,
+                proposed_action_batch_json TEXT NOT NULL,
+                accepted_actions_json TEXT NOT NULL,
+                rejected_actions_json TEXT NOT NULL,
+                comparison_json TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(ceo_shadow_run)").fetchall()
+        }
+        required_columns = {
+            "run_id": "TEXT",
+            "workflow_id": "TEXT",
+            "trigger_type": "TEXT",
+            "trigger_ref": "TEXT",
+            "occurred_at": "TEXT",
+            "effective_mode": "TEXT",
+            "provider_health_summary": "TEXT",
+            "model": "TEXT",
+            "prompt_version": "TEXT",
+            "provider_response_id": "TEXT",
+            "fallback_reason": "TEXT",
+            "snapshot_json": "TEXT",
+            "proposed_action_batch_json": "TEXT",
+            "accepted_actions_json": "TEXT",
+            "rejected_actions_json": "TEXT",
+            "comparison_json": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE ceo_shadow_run ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ceo_shadow_run_workflow_id ON ceo_shadow_run(workflow_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ceo_shadow_run_occurred_at ON ceo_shadow_run(occurred_at)"
         )
 
     def _ensure_artifact_index_shape(self, connection: sqlite3.Connection) -> None:

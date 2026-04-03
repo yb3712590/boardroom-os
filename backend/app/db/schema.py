@@ -206,6 +206,25 @@ CREATE TABLE IF NOT EXISTS compiled_execution_package (
     payload_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ceo_shadow_run (
+    run_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    trigger_ref TEXT,
+    occurred_at TEXT NOT NULL,
+    effective_mode TEXT NOT NULL,
+    provider_health_summary TEXT NOT NULL,
+    model TEXT,
+    prompt_version TEXT NOT NULL,
+    provider_response_id TEXT,
+    fallback_reason TEXT,
+    snapshot_json TEXT NOT NULL,
+    proposed_action_batch_json TEXT NOT NULL,
+    accepted_actions_json TEXT NOT NULL,
+    rejected_actions_json TEXT NOT NULL,
+    comparison_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS artifact_index (
     artifact_ref TEXT PRIMARY KEY,
     workflow_id TEXT NOT NULL,

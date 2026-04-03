@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+
+from app.contracts.ceo_actions import CEOActionBatch, CEONoAction, CEONoActionPayload
+from app.core.ceo_prompts import build_ceo_shadow_rendered_payload
+from app.core.provider_openai_compat import (
+    OpenAICompatProviderConfig,
+    OpenAICompatProviderError,
+    invoke_openai_compat_response,
+)
+from app.core.runtime_provider_config import (
+    RuntimeProviderConfigStore,
+    resolve_runtime_provider_config,
+    runtime_provider_effective_mode,
+    runtime_provider_health_summary,
+)
+from app.db.repository import ControlPlaneRepository
+
+
+@dataclass(frozen=True)
+class CEOProposalResult:
+    action_batch: CEOActionBatch
+    effective_mode: str
+    provider_health_summary: str
+    model: str | None
+    provider_response_id: str | None = None
+    fallback_reason: str | None = None
+
+
+def build_no_action_batch(reason: str) -> CEOActionBatch:
+    return CEOActionBatch(
+        summary=reason,
+        actions=[
+            CEONoAction(
+                action_type="NO_ACTION",
+                payload=CEONoActionPayload(reason=reason),
+            )
+        ],
+    )
+
+
+def propose_ceo_action_batch(
+    repository: ControlPlaneRepository,
+    *,
+    snapshot: dict,
+    runtime_provider_store: RuntimeProviderConfigStore | None = None,
+) -> CEOProposalResult:
+    config = resolve_runtime_provider_config(runtime_provider_store)
+    effective_mode, effective_reason = runtime_provider_effective_mode(config, repository)
+    provider_health_summary = runtime_provider_health_summary(config, repository)
+    if effective_mode != "OPENAI_COMPAT_LIVE":
+        return CEOProposalResult(
+            action_batch=build_no_action_batch(effective_reason),
+            effective_mode=effective_mode,
+            provider_health_summary=provider_health_summary,
+            model=config.model,
+            fallback_reason=effective_reason,
+        )
+
+    if config.base_url is None or config.api_key is None or config.model is None:
+        fallback_reason = "OpenAI-compatible provider config is incomplete for CEO shadow mode."
+        return CEOProposalResult(
+            action_batch=build_no_action_batch(fallback_reason),
+            effective_mode=effective_mode,
+            provider_health_summary=provider_health_summary,
+            model=config.model,
+            fallback_reason=fallback_reason,
+        )
+
+    try:
+        provider_result = invoke_openai_compat_response(
+            OpenAICompatProviderConfig(
+                base_url=config.base_url,
+                api_key=config.api_key,
+                model=config.model,
+                timeout_sec=config.timeout_sec,
+                reasoning_effort=config.reasoning_effort,
+            ),
+            build_ceo_shadow_rendered_payload(snapshot),
+        )
+        payload = json.loads(provider_result.output_text)
+        action_batch = CEOActionBatch.model_validate(payload)
+        return CEOProposalResult(
+            action_batch=action_batch,
+            effective_mode=effective_mode,
+            provider_health_summary=provider_health_summary,
+            model=config.model,
+            provider_response_id=provider_result.response_id,
+        )
+    except (OpenAICompatProviderError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        fallback_reason = str(exc)
+        return CEOProposalResult(
+            action_batch=build_no_action_batch(fallback_reason),
+            effective_mode=effective_mode,
+            provider_health_summary=provider_health_summary,
+            model=config.model,
+            fallback_reason=fallback_reason,
+        )

@@ -111,6 +111,12 @@
 - Runtime now writes the same default artifact refs and persisted artifact bodies for successful live-path structured outputs as it does for deterministic outputs, so scope approval, review evidence, and closeout completion all read from the same audit shape.
 - Full backend verification after this fix finished at `367 passed`.
 - Frontend `npm run build` and `npm run test:run` are still blocked on this machine because `npm` is not installed, so the remaining frontend verification gap is environmental rather than code-level.
+- Added the first real CEO shadow slice without changing mainline authority: `ceo_actions.py`, `ceo_snapshot.py`, `ceo_prompts.py`, `ceo_proposer.py`, `ceo_validator.py`, and `ceo_scheduler.py` now produce auditable CEO suggestions instead of free text.
+- CEO shadow runs are now triggered after ticket completion, ticket failure, approval resolution, and incident recovery; they persist to a dedicated `ceo_shadow_run` store instead of polluting the event log with unexecuted suggestions.
+- Added a new read path at `/api/v1/projections/workflows/{workflow_id}/ceo-shadow`, so later UI work can read shadow suggestions and accepted/rejected validation results without direct database inspection.
+- Backend verification after the CEO shadow batch finished at `372 passed`.
+- CEO shadow closure fixed one real wiring mistake: `ticket-create` no longer emits a bogus `TICKET_FAILED` shadow trigger, and `ticket-fail` now emits its audit trigger from the real failure success path; full backend verification still finished at `372 passed`.
+- This machine still does not have `npm`, and the bare `pytest` command is not on PATH; backend verification is reproducible via `py -m pytest tests -q`, while frontend build/test remain environment-blocked rather than code-blocked.
 
 ### 2026-04-02 (docs compaction)
 

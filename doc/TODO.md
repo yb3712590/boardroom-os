@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-03
+> 最后更新：2026-04-04
 > 本文件是项目唯一的待办真相源。合并了原 `doc/TODO.md`、根目录 `codex-followup-todo.md` 和 `detailed-todo.md`（现 `doc/task-backlog.md`）三份文档。
 
 ---
@@ -16,7 +16,7 @@
 
 ## 当前基线（2026-04-04 实测）
 
-- backend：`py -m pytest tests -q` → 367 passed
+- backend：`py -m pytest tests -q` → 372 passed
 - frontend：`npm run build` → 本轮未复核（当前环境缺少 Node.js / npm）
 - frontend：`npm run test:run` → 本轮未复核（当前环境缺少 Node.js / npm）
 
@@ -36,6 +36,7 @@
 - **返工治理**：重复问题指纹升级、fix 票默认排除原 maker/checker、incident 升级不误开审批
 - **Context Compiler**：TEXT/MARKDOWN/JSON 内联、超预算降级（片段→预览）、媒体/二进制引用、跨 workflow 历史摘要、`json_messages_v1` 渲染、`prov_openai_compat` 最小真实调用路径
 - **完整主链**：`project-init → scope review → BUILD → CHECK → REVIEW → closeout` 端到端打通
+- **CEO 影子模式**：CEO 动作契约、快照、提示词、提议器、校验器、影子审计日志和只读 projection 已落地；当前只做建议与差异记录，不改主状态
 - **React Boardroom UI**：dashboard / inbox / review room / incident detail / workforce / events / workflow river / Board Gate / project-init form / dependency inspector / runtime provider settings / completion card
 
 ---
@@ -99,15 +100,24 @@
 
 > 结果：系统开始出现真正的"CEO 判断"，但先不直接改状态，先拿真实数据比对质量。
 
-- [ ] 定义 CEO 动作契约、状态快照、系统提示和输出校验
-- [ ] 在工单完成、失败、审批完成、incident 恢复这些节点上，让 CEO 读当前快照并产出建议动作
-- [ ] 影子模式下只记录建议、校验结果和与现有确定性调度器的差异，不执行动作
-- [ ] 为 CEO 决策加审计日志和回放测试
-- [ ] 跑一轮代表性场景回放，确认 CEO 建议质量够稳定，再决定哪些动作进入有限接管
+- [x] 定义 CEO 动作契约、状态快照、系统提示和输出校验
+- [x] 在工单完成、失败、审批完成、incident 恢复这些节点上，让 CEO 读当前快照并产出建议动作
+- [x] 影子模式下只记录建议、校验结果和与现有确定性调度器的差异，不执行动作
+- [x] 为 CEO 决策加审计日志和回放测试
+- [x] 跑一轮代表性场景回放，确认 CEO 建议质量够稳定，再决定哪些动作进入有限接管
 
 验收门槛：至少覆盖"创建首票、失败重试、升级 incident、招聘建议、等待董事会"五类场景；影子模式不影响现有主链成功率。
 
 对应任务库：`P0-CEO-001` 到 `P0-CEO-015`，但新增"影子模式"阶段，不直接一步切换主调度器。
+
+本轮产物：
+
+- 后端新增 `ceo_actions.py / ceo_snapshot.py / ceo_prompts.py / ceo_proposer.py / ceo_validator.py / ceo_scheduler.py`，先把 CEO 落成影子判断器而不是执行器
+- 当前影子模式只开放 5 类受控动作：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / ESCALATE_TO_BOARD / NO_ACTION`
+- `ticket_handlers` 与 `approval_handlers` 现在会在工单完成、工单失败、审批完成、incident 恢复后追加 CEO 影子审计，不影响现有 `workflow_auto_advance`
+- 后端新增 `ceo_shadow_run` 审计表和 `/api/v1/projections/workflows/{workflow_id}/ceo-shadow` 只读投影，后续前端可以直接接入，不需要翻库
+- 新增 `backend/tests/test_ceo_scheduler.py`，覆盖 fallback、live provider 提议、失败触发、审批触发、incident 恢复触发；本轮后端全量验证为 `372 passed`
+- 2026-04-04 收尾修正：移除了 `ticket-create` 上误插的 `TICKET_FAILED` 影子触发，并把 `ticket-fail` 的真实影子触发补回成功出口，避免 CEO 审计把“建票成功”误记成“失败后决策”
 
 ---
 

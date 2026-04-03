@@ -14,6 +14,10 @@ from app.contracts.projections import (
     DashboardProjectionData,
     DashboardProjectionEnvelope,
     DashboardRuntimeStatusProjection,
+    CEOShadowProjectionData,
+    CEOShadowProjectionEnvelope,
+    CEOShadowRunProjection,
+    CEOShadowValidatedActionProjection,
     DependencyInspectorCurrentStopProjection,
     DependencyInspectorNodeProjection,
     DependencyInspectorProjectionData,
@@ -1038,6 +1042,63 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
             summary=summary,
             hire_templates=_build_workforce_hire_templates(),
             role_lanes=role_lanes,
+        ),
+    )
+
+
+def build_ceo_shadow_projection(
+    repository: ControlPlaneRepository,
+    workflow_id: str,
+    *,
+    limit: int = 20,
+) -> CEOShadowProjectionEnvelope | None:
+    repository.initialize()
+    workflow = repository.get_workflow_projection(workflow_id)
+    if workflow is None:
+        return None
+
+    cursor, projection_version = repository.get_cursor_and_version()
+    runs = repository.list_ceo_shadow_runs(workflow_id, limit=limit)
+    return CEOShadowProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=now_local(),
+        projection_version=projection_version,
+        cursor=cursor,
+        data=CEOShadowProjectionData(
+            workflow_id=workflow_id,
+            runs=[
+                CEOShadowRunProjection(
+                    run_id=str(run["run_id"]),
+                    occurred_at=run["occurred_at"],
+                    trigger_type=str(run["trigger_type"]),
+                    trigger_ref=run.get("trigger_ref"),
+                    effective_mode=str(run["effective_mode"]),
+                    provider_health_summary=str(run["provider_health_summary"]),
+                    model=run.get("model"),
+                    prompt_version=str(run["prompt_version"]),
+                    provider_response_id=run.get("provider_response_id"),
+                    fallback_reason=run.get("fallback_reason"),
+                    proposed_action_batch=dict(run.get("proposed_action_batch") or {}),
+                    accepted_actions=[
+                        CEOShadowValidatedActionProjection(
+                            action_type=str(item["action_type"]),
+                            payload=dict(item.get("payload") or {}),
+                            reason=str(item["reason"]),
+                        )
+                        for item in run.get("accepted_actions") or []
+                    ],
+                    rejected_actions=[
+                        CEOShadowValidatedActionProjection(
+                            action_type=str(item["action_type"]),
+                            payload=dict(item.get("payload") or {}),
+                            reason=str(item["reason"]),
+                        )
+                        for item in run.get("rejected_actions") or []
+                    ],
+                    comparison=dict(run.get("comparison") or {}),
+                )
+                for run in runs
+            ],
         ),
     )
 

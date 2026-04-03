@@ -12,6 +12,7 @@ from app.contracts.commands import (
     ModifyConstraintsCommand,
     TicketCreateCommand,
 )
+from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.constants import (
     APPROVAL_STATUS_APPROVED,
     APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
@@ -57,6 +58,23 @@ SUPPORTED_SCOPE_FOLLOWUP_DELIVERY_STAGES = {
     DeliveryStage.CHECK,
     DeliveryStage.REVIEW,
 }
+
+
+def _trigger_ceo_shadow_safely(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    approval_id: str,
+) -> None:
+    try:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="APPROVAL_RESOLVED",
+            trigger_ref=approval_id,
+        )
+    except Exception:
+        return
 
 
 def _rejected_ack(
@@ -987,6 +1005,11 @@ def handle_board_approve(
         max_dispatches=1,
     )
 
+    _trigger_ceo_shadow_safely(
+        repository,
+        workflow_id=approval["workflow_id"],
+        approval_id=payload.approval_id,
+    )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -1093,6 +1116,11 @@ def handle_board_reject(
         )
         repository.refresh_projections(connection)
 
+    _trigger_ceo_shadow_safely(
+        repository,
+        workflow_id=approval["workflow_id"],
+        approval_id=payload.approval_id,
+    )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -1191,6 +1219,11 @@ def handle_modify_constraints(
         )
         repository.refresh_projections(connection)
 
+    _trigger_ceo_shadow_safely(
+        repository,
+        workflow_id=approval["workflow_id"],
+        approval_id=payload.approval_id,
+    )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,

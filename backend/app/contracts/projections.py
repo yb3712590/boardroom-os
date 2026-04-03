@@ -163,6 +163,38 @@ class WorkforceProjectionEnvelope(ProjectionEnvelopeBase):
     data: WorkforceProjectionData
 
 
+class CEOShadowValidatedActionProjection(StrictModel):
+    action_type: str
+    payload: dict[str, object]
+    reason: str
+
+
+class CEOShadowRunProjection(StrictModel):
+    run_id: str
+    occurred_at: datetime
+    trigger_type: str
+    trigger_ref: str | None = None
+    effective_mode: str
+    provider_health_summary: str
+    model: str | None = None
+    prompt_version: str
+    provider_response_id: str | None = None
+    fallback_reason: str | None = None
+    proposed_action_batch: dict[str, object]
+    accepted_actions: list[CEOShadowValidatedActionProjection]
+    rejected_actions: list[CEOShadowValidatedActionProjection]
+    comparison: dict[str, object]
+
+
+class CEOShadowProjectionData(StrictModel):
+    workflow_id: str
+    runs: list[CEOShadowRunProjection]
+
+
+class CEOShadowProjectionEnvelope(ProjectionEnvelopeBase):
+    data: CEOShadowProjectionData
+
+
 class EventStreamPreviewItem(StrictModel):
     event_id: str
     occurred_at: datetime

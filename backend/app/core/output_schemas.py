@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app.contracts.commands import DeliveryStage
+from app.contracts.ceo_actions import CEOActionBatch
 
 
 UI_MILESTONE_REVIEW_SCHEMA_REF = "ui_milestone_review"
@@ -21,6 +22,8 @@ DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF = "delivery_closeout_package"
 DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION = 1
 MAKER_CHECKER_VERDICT_SCHEMA_REF = "maker_checker_verdict"
 MAKER_CHECKER_VERDICT_SCHEMA_VERSION = 1
+CEO_ACTION_BATCH_SCHEMA_REF = "ceo_action_batch"
+CEO_ACTION_BATCH_SCHEMA_VERSION = 1
 
 OutputSchemaValidator = Callable[[dict[str, Any]], None]
 
@@ -202,6 +205,27 @@ def _maker_checker_verdict_schema_body() -> dict[str, Any]:
                         "summary": {"type": "string"},
                         "required_action": {"type": "string"},
                         "blocking": {"type": "boolean"},
+                    },
+                },
+            },
+        },
+    }
+
+
+def _ceo_action_batch_schema_body() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["summary", "actions"],
+        "properties": {
+            "summary": {"type": "string"},
+            "actions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["action_type", "payload"],
+                    "properties": {
+                        "action_type": {"type": "string"},
+                        "payload": {"type": "object"},
                     },
                 },
             },
@@ -416,6 +440,10 @@ def _validate_maker_checker_verdict_payload(payload: dict[str, Any]) -> None:
         )
 
 
+def _validate_ceo_action_batch_payload(payload: dict[str, Any]) -> None:
+    CEOActionBatch.model_validate(payload)
+
+
 OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (UI_MILESTONE_REVIEW_SCHEMA_REF, UI_MILESTONE_REVIEW_SCHEMA_VERSION): {
         "body": _ui_milestone_review_schema_body,
@@ -440,6 +468,10 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (MAKER_CHECKER_VERDICT_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_VERSION): {
         "body": _maker_checker_verdict_schema_body,
         "validator": _validate_maker_checker_verdict_payload,
+    },
+    (CEO_ACTION_BATCH_SCHEMA_REF, CEO_ACTION_BATCH_SCHEMA_VERSION): {
+        "body": _ceo_action_batch_schema_body,
+        "validator": _validate_ceo_action_batch_payload,
     },
 }
 

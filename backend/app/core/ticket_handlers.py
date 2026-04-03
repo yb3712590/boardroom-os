@@ -95,6 +95,7 @@ from app.core.constants import (
     TIMEOUT_FAMILY_RUNTIME,
 )
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
+from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
@@ -168,6 +169,24 @@ MAKER_CHECKER_SUPPORTED_TARGETS = {
         DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     ),
 }
+
+
+def _trigger_ceo_shadow_safely(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    trigger_type: str,
+    trigger_ref: str | None,
+) -> None:
+    try:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type=trigger_type,
+            trigger_ref=trigger_ref,
+        )
+    except Exception:
+        return
 
 
 def _duplicate_ack(
@@ -2749,6 +2768,12 @@ def handle_incident_resolve(
 
         repository.refresh_projections(connection)
 
+    _trigger_ceo_shadow_safely(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=EVENT_INCIDENT_RECOVERY_STARTED,
+        trigger_ref=payload.incident_id,
+    )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -3589,6 +3614,12 @@ def handle_ticket_fail(
 
         repository.refresh_projections(connection)
 
+    _trigger_ceo_shadow_safely(
+        repository,
+        workflow_id=payload.workflow_id,
+        trigger_type=EVENT_TICKET_FAILED,
+        trigger_ref=payload.ticket_id,
+    )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -3926,6 +3957,12 @@ def handle_ticket_result_submit(
                 developer_inspector_store.delete_ref(artifact.ref)
         raise
 
+    _trigger_ceo_shadow_safely(
+        repository,
+        workflow_id=payload.workflow_id,
+        trigger_type=EVENT_TICKET_COMPLETED,
+        trigger_ref=payload.ticket_id,
+    )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -4227,6 +4264,12 @@ def handle_ticket_completed(
                 developer_inspector_store.delete_ref(artifact.ref)
         raise
 
+    _trigger_ceo_shadow_safely(
+        repository,
+        workflow_id=payload.workflow_id,
+        trigger_type=EVENT_TICKET_COMPLETED,
+        trigger_ref=payload.ticket_id,
+    )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
