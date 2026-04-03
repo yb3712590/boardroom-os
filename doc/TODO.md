@@ -1,6 +1,9 @@
 # TODO
 
-这份 TODO 只保留当前主线待办。已经实现但被降级为后置能力的基础设施，不再作为近期开发重点。
+> 最后更新：2026-04-03
+> 本文件是项目唯一的待办真相源。合并了原 `doc/TODO.md`、根目录 `codex-followup-todo.md` 和 `detailed-todo.md`（现 `doc/task-backlog.md`）三份文档。
+
+---
 
 ## 当前阶段目标
 
@@ -11,73 +14,144 @@
 - Maker-Checker 和 Review 闭环真实可用
 - 最后以最薄的 React Web 壳呈现 `dashboard / inbox / review room`
 
-## P0：必须先完成的主链路
+## 当前基线（2026-04-03 实测）
 
-- 已完成核心 employee lifecycle：`employee hire / replace / freeze / restore` 现在都进入真实治理链
-  - `employee-hire-request / employee-replace-request` 现在会走 `CORE_HIRE_APPROVAL -> Inbox -> Review Room -> board approve`
-  - `employee-freeze` 会立即阻止 scheduler dispatch、手动 `ticket-lease / ticket-start` 和 `worker-runtime` bootstrap
-  - `employee-restore` 会把 `FROZEN` 员工直接恢复回 `ACTIVE`，重新放开 scheduler dispatch、手动 `ticket-lease` 和 `worker-runtime` bootstrap
-  - 冻结或替换员工时，已 lease 未开工票现在会自动回收到 `PENDING` 并把原员工写进 `excluded_employee_ids`；执行中票会进入 `staffing containment` 围堵，并通过 incident / circuit breaker 暴露到 `Inbox / Dashboard / Workforce`
-  - `employee-restore` 现在会自动恢复因 freeze 被回收的旧票，只移除这次冻结临时加上的排除名单；`incident-resolve` 也新增了 `RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT`，可以把被 staffing containment 打断的执行票重新拉回待执行链
-  - 默认 roster 现在由 employee 事件 bootstrap，再由 reducer 重建，不再把 `employee_projection` 当成静态真相源
-  - 为主线解堵：React `workforce` 面板现在也能直接做 `freeze / restore / hire request / replace request`，值守时不再必须回命令行；当前 UI 只暴露主线支持的两组 staffing 模板：`frontend_engineer / ui_designer_primary` 与 `checker / checker_primary`
-  - 当前剩余缺口：更多票型上的 staffing policy 也还没补齐，replace / freeze 之外的恢复策略仍需要继续收口
-- 直接推进主线：把已落地的视觉里程碑 Maker-Checker 闭环扩到更多关键产物，而不只停在这一条链上
-  - 当前已新增第二条真实链路：`MEETING_ESCALATION + consensus_document@1` 现在也会先走 maker-checker，再进 `Inbox -> Review Room`
-  - 当前已新增第三条真实链路：`BUILD + implementation_bundle@1` 现在会先走内部 `maker -> checker -> fix / incident`，通过后才放行下游 `CHECK`
-  - 当前已新增第四条真实链路：`CHECK + delivery_check_report@1` 现在也会先走内部 `maker -> checker -> fix / incident`，通过后才放行最终董事会 `REVIEW`
-  - 当前已新增第五条真实链路：最终董事会 `REVIEW` 通过后，现在会自动补一张 `delivery_closeout_package@1` 收口票，并先走内部 `maker -> checker -> fix / incident`，收口后才出现 completion
-  - 当前剩余缺口：更重的 publish / launch / deploy 级别后续票型仍未接进主线，这一段继续后置
-- 直接推进主线：把 Maker-Checker 返工治理继续补完到视觉链之外；当前已具备重复问题指纹升级、更明确的 fix 票约束，以及返工票默认排除原 maker 的最小换人链，剩余重点是把这套 staffing policy 推广到更多关键产物
-  - 当前已完成一段直接推进主线的返工收口：build checker `CHANGES_REQUIRED` 会开真实 fix 票、默认排除原 maker、挡住下游 `CHECK`，fix 过审后再恢复主链；`ESCALATED` 会停在 incident，而不是误开董事会 approval
-  - 当前已完成同等级别的第二段主线返工收口：check checker `CHANGES_REQUIRED` 现在也会开真实 fix 票、默认排除原 checker、继续挡住最终 `REVIEW`；`ESCALATED` 同样会停在 incident，而不是误开董事会 approval
-- 把 `Context Compiler` 从“文本类 artifact 可内联”的当前版本继续推进，补完二进制 / 大文件 / 检索增强下的编译与降级策略
-  - 当前已完成：`TEXT / MARKDOWN / JSON` 可完整内联；超预算文本 / JSON 会先退到确定性片段编译，片段仍放不下时再退到确定性预览；图片 / PDF 会作为结构化媒体引用进入执行包；其他二进制会作为结构化下载引用进入执行包；context block 和 worker execution package 现在都会显式带出 `display_hint`，不用再靠字段名猜是正文、预览还是下载；bundle / manifest / developer inspector 已暴露结构化降级原因、selector、片段/预览策略和媒体/下载型附件计数；编译时还能拉入同 workspace、跨 workflow 的本地 `review / incident / artifact` 历史摘要卡片；显式输入现在会为后续 mandatory source 预留最小 descriptor 预算，最终 bundle 不再允许悄悄超出 `max_context_tokens`；如果连 mandatory 输入 descriptor 都塞不进去，编译会按 `FAIL_CLOSED` 直接失败；编译产物现在还会稳定派生最小 `json_messages_v1` 渲染结果，并同步进入 worker execution package 与 `Review Room` developer inspector；in-process runtime 也已经接通最小真实 `prov_openai_compat` provider 路径，配置兼容 `responses` 站点后可直接跑真实调用
-  - 当前仍缺：更强的预算压缩矩阵、更多 schema / role profile 的真实执行覆盖，以及向量/联网之外是否还需要更丰富的本地检索策略；`provider routing / recovery`、浏览器直传和云预签名 multipart 继续后置到 MVP 之后再评估
-- 收敛 runtime 默认路径，优先保证本地单机执行稳定，而不是继续扩远程 handoff 面
-- 明确 MVP 的最小 schema、role profile、ticket 路径，不再边做边膨胀
-- 已完成直接推进主线：`project-init -> 首个 review` 现在已经打通
-  - `project-init` 现在会先生成 board brief artifact，再自动创建首张 `consensus_document@1` 范围票，并在同一条后端链上同步跑完 `maker -> checker -> Inbox -> Review Room`
-  - 如果本地没有 eligible worker，或途中出现 incident，这条入口会停在真实 pending / incident 状态，不会伪造首个 review 已经完成
-- 已完成直接推进主线：把首个 scope review 的通过结果继续接成后续执行票
-  - `board-approve` 现在会从已批准的 `consensus_document` artifact 读取全部“当前支持范围内”的 follow-up，先整组校验，再原子创建真实执行票，并继续同步推进到下一个治理停点
-  - 当前这段续跑仍保持主线收口：只支持 `frontend_engineer -> ui_designer_primary`、`checker -> checker_primary`，以及 `BUILD / CHECK / REVIEW` 三种 `delivery_stage`；如果 artifact 缺失、不是合法 JSON、任一 follow-up 的 `owner_role`、`delivery_stage`、payload 内 `ticket_id` 重复或与现有投影冲突不合法，审批会 fail-closed，保持 review 继续待决
-  - 多张 follow-up 现在也会按 ticket 隔离写入范围，避免兄弟票共用 `artifacts/ui/homepage/*`、`reports/check/*` 或 `reports/review/*` 造成互相覆盖
-  - 同一条“推进到下一个真实停点”的规则现在也会复用到后续 `board-approve`：scope approval 后，默认小项目链路会顺着 `BUILD -> CHECK -> 最终 REVIEW` 连续推进，直到撞上新的 board review、incident 或无可派单员工
-- 已完成直接推进主线：把已批准 scope 的 follow-up 从“都能落成真实视觉票”推进到“有更丰富的下游票型”
-  - 当前 runtime 默认会生成一条受支持的 staged follow-up 链：`BUILD -> CHECK -> REVIEW`
-  - `BUILD` 现在产出 `implementation_bundle@1`，并先走内部 maker-checker 内审；`CHECK` 现在产出 `delivery_check_report@1`，也会先走自己的内部 maker-checker 内审；最终 `REVIEW` 只会在前两段都过审后，再走现有 `ui_milestone_review@1 -> maker-checker -> Inbox -> Review Room`
-  - 当前默认本地路径已经能从 scope approval 直接自动跑到最终董事会 review，再自动补完 `delivery_closeout_package@1` 的内部收口；当前后续缺口已经收窄到更重的发布 / 上线路径，而不是“review 后什么都没有”
+- backend：`pytest tests -q` → 360 passed
+- frontend：`npm run build` → 成功
+- frontend：`npm run test:run` → 20 passed
 
-## P1：套上最薄 Web 壳
+---
 
-- 已完成直接推进主线：独立 React Boardroom UI 已落地在 `frontend/`
-  - 当前已经接通 `dashboard / inbox / review room / incident detail / workforce / recent events`
-  - 首页采用 `workflow river` 主舞台，并以 `Board Gate` 高亮待审状态
-  - 无 active workflow 时会显示最小 `project-init` 表单，并明确提示它会把 workflow 推进到首个 review
-  - `approve / reject / modify constraints` 动作提交后会立即重新拉取，并用 SSE 做失效刷新
-  - `Inbox` 里的 incident 项现在也能直接打开详情，并复用现有 `incident-resolve` 命令完成恢复闭环
-  - `workforce` 面板现在也会显式显示 `rework loops`，董事会和排障人能直接看见 build / check 链有没有卡在返工
-  - `workforce` 面板现在还会直接暴露后端给出的 staffing 模板与动作：支持角色可在 UI 里直接 `freeze / restore / hire request / replace request`，提交后仍复用现有 `Inbox -> Review Room`
-- 已完成直接推进主线：首页现在也能打开 `dependency inspector`
-  - 当前 active workflow 会暴露一份只服务本地 MVP 的依赖快照，直接展示 `Plan / Build / Check / Review` 之间的真实依赖、当前停点、以及回到对应 `Review Room / Incident` 的入口
-  - 这条读面继续保持 projection-first：前端不回放完整 DAG，不在浏览器里推导新工作流状态，只消费后端给出的当前链路解释
-- 已完成直接推进主线：董事会演示链路现在能在 UI 里切 runtime 并读到最终完成态
-  - React 壳里已落地最小 `runtime provider` 设置抽屉，可直接保存本地 `Deterministic / OpenAI Compat` 配置并立即生效
-  - 首页已显式展示 execution mode、模型名、worker 绑定数和当前 effective reason，董事会现场能直接看出现在到底是本地 deterministic、live、paused 还是配置不完整
-  - 首页现在会把 completion card 延后到最终 review 之后的 closeout 内审也通过，再复用现有 `Review Room` 打开最终证据
-- 后置观察：完整 provider registry / model routing / provider test route 继续后置，不在这轮扩张
-- 为主线解堵：继续保持 projection-first，前端不拥有工作流真相
-  - 当前首页河道只消费 `dashboard.pipeline_summary.phases` 的固定五段高层摘要，不新造前端工作流引擎
-  - `events/stream` 只用于失效通知，不作为浏览器里的第二真相源
+## 已完成能力概要
 
-## P2：在 MVP 之后补齐
+下面这些能力已经在代码中真实运行，不是 stub：
 
-- MVP 后补上 Meeting Room 专用界面
-- MVP 后补上 dependency graph explorer
-- MVP 后补上历史分析、多 workspace 管理和更深入的员工画像浏览
-- 再评估是否需要在当前本地历史摘要检索之上继续扩更丰富的 Search / Retrieval
-- 再评估是否需要更完整的 provider routing / recovery
+- **Employee lifecycle**：hire / replace / freeze / restore 全部进入真实治理链；冻结/替换时自动回收已 lease 票、围堵执行中票；restore 自动恢复被冻结回收的旧票
+- **Maker-Checker 五条真实链路**：
+  1. `MEETING_ESCALATION + consensus_document@1`
+  2. `BUILD + implementation_bundle@1`（内部 maker → checker → fix / incident）
+  3. `CHECK + delivery_check_report@1`（内部 maker → checker → fix / incident）
+  4. `REVIEW + ui_milestone_review@1`（→ Inbox → Review Room）
+  5. `delivery_closeout_package@1`（review 通过后自动补收口票）
+- **返工治理**：重复问题指纹升级、fix 票默认排除原 maker/checker、incident 升级不误开审批
+- **Context Compiler**：TEXT/MARKDOWN/JSON 内联、超预算降级（片段→预览）、媒体/二进制引用、跨 workflow 历史摘要、`json_messages_v1` 渲染、`prov_openai_compat` 最小真实调用路径
+- **完整主链**：`project-init → scope review → BUILD → CHECK → REVIEW → closeout` 端到端打通
+- **React Boardroom UI**：dashboard / inbox / review room / incident detail / workforce / events / workflow river / Board Gate / project-init form / dependency inspector / runtime provider settings / completion card
+
+---
+
+## P0：把主链上的智能补齐
+
+### P0-A：现状校准与单一真相源
+
+> 结果：之后任何开发都能明确知道"哪些已经真实存在，哪些只是文档目标"。
+
+- [ ] 做一份"代码 vs 文档"能力对照表，确认主链上每个阶段到底是真实运行、半真实、还是仅文档存在
+- [ ] 明确 Runtime 支持矩阵：按角色、输出类型、执行模式列清楚当前支持范围和缺口
+- [ ] 把冻结模块列成清单和边界说明，先在文档上隔离，不做物理搬迁
+- [ ] 修正文档里的明显漂移项（路径写法、过时规模估计、验证命令入口）
+
+验收门槛：新人只看入口文档就能判断当前主线和冻结边界；不再出现"文档说已经有，代码里其实还没有"的关键误判。
+
+对应任务库：借用 `P1-CLN-*` 的边界整理思路，但不执行 `_frozen/` 迁移。
+
+### P0-B：把真实 Worker 执行扩到当前主链
+
+> 结果：现有 `project-init → scope → build → check → review → closeout` 这条链，在配置 Provider 后能真实跑模型，而不是只靠确定性结果。
+
+- [ ] 先把当前已接好的 OpenAI Compat 路径补成稳定能力：超时、限流、认证失败、坏响应都要有清晰分类和回退
+- [ ] 把真实执行覆盖扩到主链需要的 5 类输出：`consensus_document`、`implementation_bundle`、`delivery_check_report`、`ui_milestone_review`、`delivery_closeout_package`，以及对应的 `maker_checker_verdict`
+- [ ] 统一 live path 和 deterministic path 的结果校验、审计产物、incident 记录方式
+- [ ] 给 Dashboard / Incident / Review 读面补足 provider 健康和回退信号
+- [ ] 用 mock provider 补完整端到端测试，覆盖 build / check / review / closeout 四段
+
+验收门槛：配好 Provider 后，一条完整 workflow 能在真实模型输出下跑到 closeout；Provider 出错时不会把工作流打坏，能自动降回确定性路径并留下证据。
+
+对应任务库：`P0-WRK-001` 到 `P0-WRK-012`。
+
+### P0-C：让 CEO 先进入影子模式
+
+> 结果：系统开始出现真正的"CEO 判断"，但先不直接改状态，先拿真实数据比对质量。
+
+- [ ] 定义 CEO 动作契约、状态快照、系统提示和输出校验
+- [ ] 在工单完成、失败、审批完成、incident 恢复这些节点上，让 CEO 读当前快照并产出建议动作
+- [ ] 影子模式下只记录建议、校验结果和与现有确定性调度器的差异，不执行动作
+- [ ] 为 CEO 决策加审计日志和回放测试
+- [ ] 跑一轮代表性场景回放，确认 CEO 建议质量够稳定，再决定哪些动作进入有限接管
+
+验收门槛：至少覆盖"创建首票、失败重试、升级 incident、招聘建议、等待董事会"五类场景；影子模式不影响现有主链成功率。
+
+对应任务库：`P0-CEO-001` 到 `P0-CEO-015`，但新增"影子模式"阶段，不直接一步切换主调度器。
+
+---
+
+## P1：在 P0 稳住后推进
+
+### P1-A：CEO 有限接管
+
+- [ ] 先放开有限动作：创建工单、重试工单、升级董事会、发起招聘建议
+- [ ] 所有动作都必须经过 Reducer 级校验；校验失败自动退回确定性调度器
+- [ ] 保留现有 `workflow_auto_advance` 作为总回退
+- [ ] 增加"影子建议 vs 实际执行"对照读面或审计产物
+
+验收门槛：CEO 至少能稳定处理首票创建、失败重试、无 worker 时招聘、需要董事会时升级四类动作。
+
+### P1-B：前端拆壳，只拆会继续长的部分
+
+- [ ] 先拆数据层：类型、API 客户端、SSE 管理器、主 store、review store、UI store
+- [ ] 再拆页面壳和抽屉壳：`DashboardPage`、各类 Drawer、错误边界
+- [ ] 保持视觉和交互基本不变，不在这一阶段重新设计品牌风格
+- [ ] 测试重点放在 store、API、关键交互和错误状态
+- [ ] 把 `App.tsx` 缩到只剩路由和组装职责
+
+对应任务库：选择性吸收 `P0-FE-001` 到 `P0-FE-022`。
+
+### P1-C：人格模型接入真实决策
+
+- [ ] 定义最小可用的 `skill / personality / aesthetic` 三组维度
+- [ ] 先做 4 到 6 个模板，接进 staffing catalog、CEO 提示词和 worker 提示词
+- [ ] 在招聘决策里加入最小多样性约束
+- [ ] 在 Review Pack 或 Workforce 里可见当前员工画像
+
+对应任务库：`P1-PER-001` 到 `P1-PER-008`。
+
+---
+
+## P2：功能收口与后置能力
+
+### P2-A：会议室协议最小版
+
+- [ ] 只实现 1 个会议类型（建议先做 `TECHNICAL_DECISION`）
+- [ ] 只支持最小轮次：立场、质疑、方案、收敛
+- [ ] 输出必须还是结构化文档，并能回到现有审查/审批链
+
+对应任务库：`P1-MTG-001` 到 `P1-MTG-010`。
+
+### P2-B：代码瘦身与冻结能力隔离
+
+- [ ] 先做 import 依赖图和调用清单，再决定是否物理迁移冻结模块
+- [ ] 如果迁移，以"不影响主线测试"为绝对前提
+- [ ] 如果不迁移，也至少把入口、文档和目录注释补齐
+
+对应任务库：`P1-CLN-001` 到 `P1-CLN-006`。
+
+### P2-C：检索、Provider 路由、发布准备
+
+- [ ] 检索只在真实证明本地历史摘要不够后再做
+- [ ] Provider registry / routing / fallback 策略放在真实 Worker 和 CEO 稳定之后
+- [ ] 发布准备以"本地单机演示可复现"为目标
+
+对应任务库：`P2-RET-*`、`P2-PRV-*`、`P0-REL-*`。
+
+### P2-D：UI 打磨与文档
+
+- [ ] Workflow River 粒子动画、Board Gate 呼吸动画、加载骨架屏、响应式布局
+- [ ] 键盘可访问性、暗色主题微调、性能优化
+- [ ] 更新 README、运维指南、API 文档
+
+对应任务库：`P2-UI-*`、`P2-DOC-*`。
+
+---
 
 ## 已实现但暂停扩张
 
@@ -102,5 +176,20 @@
 ## 执行约束
 
 - 新工作如果不能直接缩短本地 MVP 路径，就默认延后
-- 文档、任务拆分和代码审查都应以“本地无状态 agent team + web 壳”作为判断基准
-- 对已有基础设施代码优先采取“冻结、收口、少动”的策略，而不是继续加面
+- 文档、任务拆分和代码审查都应以"本地无状态 agent team + web 壳"作为判断基准
+- 对已有基础设施代码优先采取"冻结、收口、少动"的策略
+
+## 建议首轮执行批次
+
+- 批次 1：现状校准 + 支持矩阵 + 文档入口纠偏
+- 批次 2：OpenAI Compat live path 稳定化 + provider 观测信号
+- 批次 3：把 live Worker 覆盖扩到 build / check / review / closeout 主链
+- 批次 4：CEO 影子模式 + 审计日志 + 回放测试
+
+---
+
+## 参考
+
+- 完整 112 项任务清单（含工时估算、依赖图、验收标准）：[task-backlog.md](task-backlog.md)
+- CTO 评审报告（诊断与差距分析）：[cto-assessment-report.md](cto-assessment-report.md)
+- 里程碑时间线（13 周 9 里程碑）：[milestone-timeline.md](milestone-timeline.md)

@@ -1,8 +1,29 @@
 # Boardroom OS 开发推进提示词
 
-> 版本：1.0
+> 版本：2.0
 > 日期：2026-04-03
 > 用途：每轮开发会话的系统提示词模板
+
+---
+
+## 文档结构说明
+
+所有项目文档集中在 `doc/` 目录下：
+
+| 文档 | 位置 | 用途 |
+|------|------|------|
+| 路线纠偏决议 | `doc/roadmap-reset.md` | 当前阶段范围边界 |
+| 唯一待办 | `doc/TODO.md` | 主线待办 + 已完成概要 + 执行批次 |
+| 任务清单 | `doc/task-backlog.md` | 112 项任务（工时、依赖、验收标准） |
+| CTO 评审 | `doc/cto-assessment-report.md` | 诊断、差距分析、优先级建议 |
+| 里程碑时间线 | `doc/milestone-timeline.md` | 13 周 9 里程碑 |
+| 后端运行指南 | `doc/backend-runtime-guide.md` | Runtime / Worker 操作手册 |
+| 产品规格 | `doc/feature-spec.md` | 57 条设计原则 |
+| 设计文档 | `doc/design/*.md` | 事件总线、Context Compiler、UI 等 |
+| 前端架构 | `doc/design/frontend-architecture-guide.md` | 目录结构、类型、状态管理、迁移计划 |
+| 前端组件规格 | `doc/design/frontend-component-spec.md` | 组件 Props、HTML、视觉规则 |
+| 工作记忆 | `doc/history/memory-log.md` | 长期记忆与近期进展 |
+| 历史归档 | `doc/history/archive/` | 详细历史（按需查阅） |
 
 ---
 
@@ -14,20 +35,22 @@
 上下文加载顺序：
 1. README.md
 2. doc/README.md → doc/roadmap-reset.md → doc/TODO.md → doc/history/memory-log.md
-3. CTO/milestone-timeline.md → CTO/detailed-todo.md
+3. doc/milestone-timeline.md → doc/task-backlog.md
 4. 按需读相关设计文档，不读无关文件
 5. doc/history/archive/* 仅在需要精确历史原因时查看
 
 推进规则：
-- 以 CTO/milestone-timeline.md 的里程碑顺序为主线，以 CTO/detailed-todo.md 的任务清单为执行依据
-- 优先完成当前里程碑中状态为「未开始」的最高优先级任务
+- 以 doc/TODO.md 的优先级和执行批次为主线
+- 以 doc/task-backlog.md 的任务清单为执行依据（含工时、依赖、验收标准）
+- 以 doc/milestone-timeline.md 的里程碑顺序为参考时间线
+- 优先完成当前批次中状态为「未开始」的最高优先级任务
 - 同一闭环内的相邻环节可以连续推进，允许跨后端/前端一起做
 - 不开多个无关方向，不顺手优化，不为假想需求铺扩展点
 - 已降级代码（worker-admin/多租户/对象存储/远程handoff）视为冻结，不动
 
 开始前输出：
 1. 当前所处里程碑和进度判断（一句话）
-2. 本轮要完成的具体任务 ID 列表（引用 CTO/detailed-todo.md）
+2. 本轮要完成的具体任务 ID 列表（引用 doc/task-backlog.md）
 3. 每个任务完成后的直接结果
 4. 本轮明确不做的内容
 
@@ -58,19 +81,19 @@
 继续推进 Boardroom OS 前端重构，在现有代码上增量开发。
 
 上下文加载顺序：
-1. CTO/frontend-architecture-guide.md（架构总纲）
-2. CTO/frontend-component-spec.md（组件规格）
-3. CTO/detailed-todo.md（P0-FE-* 任务）
+1. doc/design/frontend-architecture-guide.md（架构总纲）
+2. doc/design/frontend-component-spec.md（组件规格）
+3. doc/task-backlog.md（P0-FE-* 任务）
 4. doc/design/boardroom-ui-visual-spec.md（视觉规范）
 5. frontend/README.md
 6. 按需读当前要改的组件源码
 
 推进规则：
-- 严格按 CTO/detailed-todo.md 中 P0-FE-* 的依赖顺序执行
+- 严格按 doc/task-backlog.md 中 P0-FE-* 的依赖顺序执行
 - 每完成一个任务，立即运行 npm run build 和 npm run test:run 验证
 - 功能必须与重构前完全一致，不加新功能
-- 样式遵循 CTO/frontend-architecture-guide.md 中的设计令牌和命名规范
-- 组件 props 接口遵循 CTO/frontend-component-spec.md
+- 样式遵循 doc/design/frontend-architecture-guide.md 中的设计令牌和命名规范
+- 组件 props 接口遵循 doc/design/frontend-component-spec.md
 
 开始前输出：
 1. 当前前端重构进度（已完成哪些 P0-FE-* 任务）
@@ -95,8 +118,8 @@
 继续推进 Boardroom OS 的 CEO Agent 实现。
 
 上下文加载顺序：
-1. CTO/detailed-todo.md（P0-CEO-* 任务）
-2. CTO/milestone-timeline.md（M1 里程碑）
+1. doc/task-backlog.md（P0-CEO-* 任务）
+2. doc/milestone-timeline.md（M1 里程碑）
 3. doc/design/message-bus-design.md（事件总线设计）
 4. backend/app/core/workflow_auto_advance.py（当前硬编码逻辑，要被替换）
 5. backend/app/core/runtime.py（当前执行逻辑）
@@ -129,8 +152,8 @@
 继续推进 Boardroom OS 的 Worker 真实执行能力。
 
 上下文加载顺序：
-1. CTO/detailed-todo.md（P0-WRK-* 任务）
-2. CTO/milestone-timeline.md（M2 里程碑）
+1. doc/task-backlog.md（P0-WRK-* 任务）
+2. doc/milestone-timeline.md（M2 里程碑）
 3. backend/app/core/runtime.py（当前确定性 mock）
 4. backend/app/core/provider_openai_compat.py（OpenAI 适配层）
 5. backend/app/core/context_compiler.py（上下文编译器）
@@ -161,8 +184,8 @@
 对 Boardroom OS 进行端到端集成验证。
 
 上下文加载顺序：
-1. CTO/milestone-timeline.md（当前里程碑的成功标准）
-2. CTO/detailed-todo.md（P0-INT-* 任务）
+1. doc/milestone-timeline.md（当前里程碑的成功标准）
+2. doc/task-backlog.md（P0-INT-* 任务）
 3. doc/TODO.md
 4. doc/history/memory-log.md
 
@@ -178,7 +201,7 @@
 1. 每项验证的通过/失败状态
 2. 失败项的具体错误信息
 3. 当前里程碑的成功标准达成情况
-4. 需要修复的问题列表（引用 CTO/detailed-todo.md 任务 ID）
+4. 需要修复的问题列表（引用 doc/task-backlog.md 任务 ID）
 ```
 
 ---
@@ -192,7 +215,7 @@
 1. doc/TODO.md — 标记已完成的任务，添加新发现的任务
 2. doc/history/memory-log.md — 追加本轮进展到 Recent Memory
 3. README.md — 如果本轮改变了对外能力或运行方式
-4. CTO/detailed-todo.md — 标记已完成的任务 ID
+4. doc/task-backlog.md — 标记已完成的任务 ID
 
 规则：
 - 只写真实现状，不预写未来能力
