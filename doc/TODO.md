@@ -14,9 +14,9 @@
 - Maker-Checker 和 Review 闭环真实可用
 - 最后以最薄的 React Web 壳呈现 `dashboard / inbox / review room`
 
-## 当前基线（2026-04-03 实测）
+## 当前基线（2026-04-04 实测）
 
-- backend：`py -m pytest tests -q` → 365 passed
+- backend：`py -m pytest tests -q` → 367 passed
 - frontend：`npm run build` → 本轮未复核（当前环境缺少 Node.js / npm）
 - frontend：`npm run test:run` → 本轮未复核（当前环境缺少 Node.js / npm）
 
@@ -72,7 +72,7 @@
 - [x] 把真实执行覆盖扩到主链需要的 5 类输出：`consensus_document`、`implementation_bundle`、`delivery_check_report`、`ui_milestone_review`、`delivery_closeout_package`，以及对应的 `maker_checker_verdict`
 - [x] 统一 live path 和 deterministic path 的结果校验、审计产物、incident 记录方式
 - [x] 给 Dashboard / Incident / Review 读面补足 provider 健康和回退信号
-- [ ] 用 mock provider 补完整端到端测试，覆盖 build / check / review / closeout 四段
+- [x] 用 mock provider 补完整端到端测试，覆盖 build / check / review / closeout 四段
 
 验收门槛：配好 Provider 后，一条完整 workflow 能在真实模型输出下跑到 closeout；Provider 出错时不会把工作流打坏，能自动降回确定性路径并留下证据。
 
@@ -84,6 +84,8 @@
 - pause-worthy 的 provider 故障会继续打开现有 provider incident + breaker，但当前票会立即回落到 deterministic，不再把 workflow 卡死在 live path
 - Dashboard / runtime provider 读面现在统一使用 `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`，paused / incomplete 文案会明确说明当前会回落到 deterministic
 - 已 lease 的 OpenAI Compat 票在 provider 已 paused 时可以继续走本地 fallback 完成，不再只停在 `LEASED`
+- live path 成功产出 `consensus_document / implementation_bundle / delivery_check_report / ui_milestone_review / delivery_closeout_package` 时，现在也会补齐和 deterministic path 一致的默认 artifact refs 与写入记录，scope 审批和 closeout 收口不再因为缺证据引用被拒
+- 后端新增了两条 mock provider 主链验证：一条覆盖 provider-backed happy path 到 closeout completion，另一条覆盖 final review 上的 `PROVIDER_BAD_RESPONSE` fallback 后仍能完成主链
 - 后端补了 provider 重试、pause、fallback、健康读面的最小测试；前端 mock / 类型也已对齐新契约
 - `frontend_engineer` 现在已经拆成独立 `frontend_engineer_primary` runtime worker；`BUILD / REVIEW / closeout` 改走独立 profile，scope 共识链仍保留 `ui_designer_primary` 并由调度兼容承接
 

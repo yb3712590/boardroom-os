@@ -104,6 +104,14 @@
 - `project-init -> scope review` still stays on `ui_designer_primary`, so scheduler dispatch now carries a narrow compatibility alias from `frontend_engineer_primary` to that legacy scope-only ticket lane instead of rewriting the scope chain itself.
 - This round’s focused backend verification for the worker-role split finished at `344 passed`, and the follow-up API + scheduler sweep that exercises the mainline chain finished at `268 passed`.
 
+### 2026-04-04
+
+- Added mock-provider end-to-end coverage for the current mainline in `backend/tests/test_scheduler_runner.py`: one path now proves provider-backed `BUILD -> CHECK -> REVIEW -> closeout` reaches completion, and one path proves a `PROVIDER_BAD_RESPONSE` on final review still falls back cleanly and reaches closeout.
+- That verification exposed a real live-path gap: successful OpenAI Compat executions were not materializing the same default runtime artifacts as deterministic execution, which caused provider-backed scope approvals to miss the approved consensus artifact reference.
+- Runtime now writes the same default artifact refs and persisted artifact bodies for successful live-path structured outputs as it does for deterministic outputs, so scope approval, review evidence, and closeout completion all read from the same audit shape.
+- Full backend verification after this fix finished at `367 passed`.
+- Frontend `npm run build` and `npm run test:run` are still blocked on this machine because `npm` is not installed, so the remaining frontend verification gap is environmental rather than code-level.
+
 ### 2026-04-02 (docs compaction)
 
 - Simplified the homepage `README.md` so first-time readers see the product definition, current real chain, quick start, and doc entrypoints without scrolling through round-by-round implementation history.

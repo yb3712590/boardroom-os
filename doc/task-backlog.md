@@ -696,6 +696,8 @@
 
 #### P0-WRK-012：端到端执行链路验证
 
+**状态**：已完成（2026-04-04，本轮按主线收口）
+
 **描述**：验证完整的 CEO → Worker → Maker-Checker → Board 链路。
 
 **文件**：
@@ -711,6 +713,11 @@
 - 所有测试通过
 
 **风险**：中
+
+**完成补记**：
+- 本轮按当前代码现实，把 mock provider 端到端验证落在 `backend/tests/test_scheduler_runner.py`，没有为了贴旧文案强行搬去 `test_api.py`
+- 已补两条主链验证：一条覆盖 provider-backed happy path 从 `project-init` 经 `BUILD / CHECK / REVIEW / closeout` 到 completion；另一条覆盖 final review 上的 `PROVIDER_BAD_RESPONSE` fallback 后仍能完成 closeout
+- 验证过程中补了一个真实主链缺口：OpenAI Compat live path 成功返回后，现在会和 deterministic path 一样补齐默认 artifact refs 与写入记录，避免 scope 审批和 closeout 因缺证据引用被拒
 
 ---
 

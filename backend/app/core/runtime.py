@@ -548,15 +548,23 @@ def _execute_openai_compat_provider(
                 submitted_schema_version=_schema_version_for_execution_package(execution_package),
                 payload=result_payload,
             )
+            if execution_package.execution.output_schema_ref == "maker_checker_verdict":
+                artifact_refs: list[str] = []
+                written_artifacts: list[dict[str, Any]] = []
+            else:
+                artifact_refs, written_artifacts = _build_runtime_default_artifacts(
+                    execution_package,
+                    result_payload,
+                )
             return RuntimeExecutionResult(
                 result_status="completed",
                 completion_summary=(
                     f"Provider-backed runtime executed ticket {execution_package.meta.ticket_id} via "
                     f"{execution_package.meta.compiler_version}."
                 ),
-                artifact_refs=[],
+                artifact_refs=artifact_refs,
                 result_payload=result_payload,
-                written_artifacts=[],
+                written_artifacts=written_artifacts,
                 assumptions=[
                     f"compiler_version={execution_package.meta.compiler_version}",
                     f"compile_request_id={execution_package.meta.compile_request_id}",

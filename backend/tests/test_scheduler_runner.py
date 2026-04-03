@@ -298,6 +298,138 @@ def _maker_checker_verdict_result(
     )
 
 
+def _approval_by_type(repository, workflow_id: str, approval_type: str) -> dict:
+    return next(
+        approval
+        for approval in repository.list_open_approvals()
+        if approval["workflow_id"] == workflow_id and approval["approval_type"] == approval_type
+    )
+
+
+def _approve_review(client, approval: dict, *, idempotency_suffix: str) -> None:
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve and continue the mainline chain.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:{idempotency_suffix}",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+
+def _mock_provider_payload_for_schema(schema_ref: str) -> dict:
+    if schema_ref == "consensus_document":
+        return {
+            "topic": "Homepage scope consensus",
+            "participants": ["frontend_engineer_primary", "checker_primary"],
+            "input_artifact_refs": ["art://inputs/brief.md"],
+            "consensus_summary": "Lock scope to the narrow homepage MVP path and continue delivery.",
+            "rejected_options": ["Expand beyond the current MVP boundary in this round."],
+            "open_questions": ["Whether non-blocking polish should move after board approval."],
+            "followup_tickets": [
+                {
+                    "ticket_id": "tkt_scope_provider_build",
+                    "owner_role": "frontend_engineer",
+                    "summary": "Build the approved homepage foundation without widening scope.",
+                    "delivery_stage": "BUILD",
+                },
+                {
+                    "ticket_id": "tkt_scope_provider_check",
+                    "owner_role": "checker",
+                    "summary": "Check the implementation bundle against the locked scope.",
+                    "delivery_stage": "CHECK",
+                },
+                {
+                    "ticket_id": "tkt_scope_provider_review",
+                    "owner_role": "frontend_engineer",
+                    "summary": "Prepare the final board-facing review package.",
+                    "delivery_stage": "REVIEW",
+                },
+            ],
+        }
+    if schema_ref == "implementation_bundle":
+        return {
+            "summary": "Provider-backed implementation bundle is ready for internal checking.",
+            "deliverable_artifact_refs": ["art://runtime/provider/implementation-bundle.json"],
+            "implementation_notes": [
+                "Implementation stays inside the approved homepage MVP scope."
+            ],
+        }
+    if schema_ref == "delivery_check_report":
+        return {
+            "summary": "Provider-backed internal delivery check passed with one non-blocking note.",
+            "status": "PASS_WITH_NOTES",
+            "findings": [
+                {
+                    "finding_id": "finding_copy_trim",
+                    "summary": "Keep copy trimmed to the approved homepage scope.",
+                    "blocking": False,
+                }
+            ],
+        }
+    if schema_ref == "delivery_closeout_package":
+        return {
+            "summary": "Provider-backed closeout package captured the approved board choice.",
+            "final_artifact_refs": ["art://runtime/provider/delivery-closeout-package.json"],
+            "handoff_notes": [
+                "Approved board choice is captured in the closeout package.",
+                "Final evidence stays linked to the board review pack for audit.",
+            ],
+        }
+    if schema_ref == "maker_checker_verdict":
+        return {
+            "summary": "Provider-backed checker approved the submitted deliverable.",
+            "review_status": "APPROVED",
+            "findings": [],
+        }
+    if schema_ref == "ui_milestone_review":
+        return {
+            "summary": "Provider-backed final review package is ready for board approval.",
+            "recommended_option_id": "option_a",
+            "options": [
+                {
+                    "option_id": "option_a",
+                    "label": "Option A",
+                    "summary": "Approved homepage direction with clear hierarchy.",
+                    "artifact_refs": ["art://runtime/provider/final-review-option-a.json"],
+                },
+                {
+                    "option_id": "option_b",
+                    "label": "Option B",
+                    "summary": "Fallback direction with lower emphasis.",
+                    "artifact_refs": ["art://runtime/provider/final-review-option-b.json"],
+                },
+            ],
+        }
+    raise AssertionError(f"Unexpected schema_ref for mock provider: {schema_ref}")
+
+
+def _build_mock_provider_responder(*, bad_response_schemas: set[str] | None = None):
+    observed_schema_refs: list[str] = []
+
+    def _respond(config, rendered_payload):
+        schema_ref = str(rendered_payload.messages[-1].content_payload["output_schema_ref"])
+        observed_schema_refs.append(schema_ref)
+        if schema_ref in (bad_response_schemas or set()):
+            return OpenAICompatProviderResult(
+                output_text='{"summary":"Broken provider payload.","recommended_option_id":"option_a","options":[]}',
+                response_id=f"resp_bad_{schema_ref}_{len(observed_schema_refs)}",
+            )
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(_mock_provider_payload_for_schema(schema_ref)),
+            response_id=f"resp_{schema_ref}_{len(observed_schema_refs)}",
+        )
+
+    return _respond, observed_schema_refs
+
+
 def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post(
@@ -1185,6 +1317,94 @@ def test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_re
     assert all(ticket["status"] == "COMPLETED" for ticket in followup_tickets if ticket is not None)
     assert len(build_checker_creates) == 1
     assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
+
+
+def test_provider_backed_scope_delivery_chain_reaches_closeout_completion(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    provider_responder, observed_schema_refs = _build_mock_provider_responder()
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder)
+
+    workflow_id = _project_init(client, goal="Provider-backed mainline completion")
+    repository = client.app.state.repository
+
+    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
+    _approve_review(client, scope_approval, idempotency_suffix="provider-scope")
+
+    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
+    _approve_review(client, final_review_approval, idempotency_suffix="provider-final-review")
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    assert dashboard_response.status_code == 200
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+
+    assert completion_summary is not None
+    assert completion_summary["workflow_id"] == workflow_id
+    assert completion_summary["final_review_pack_id"] == final_review_approval["review_pack_id"]
+    assert completion_summary["closeout_completed_at"] is not None
+    assert completion_summary["closeout_ticket_id"] is not None
+    assert completion_summary["closeout_artifact_refs"] == [
+        f"art://runtime/{completion_summary['closeout_ticket_id']}/delivery-closeout-package.json"
+    ]
+    assert repository.list_open_approvals() == []
+    assert repository.list_open_incidents() == []
+    assert "implementation_bundle" in observed_schema_refs
+    assert "delivery_check_report" in observed_schema_refs
+    assert "ui_milestone_review" in observed_schema_refs
+    assert "delivery_closeout_package" in observed_schema_refs
+    assert observed_schema_refs.count("maker_checker_verdict") >= 3
+    assert observed_schema_refs.index("implementation_bundle") < observed_schema_refs.index("delivery_check_report")
+    assert observed_schema_refs.index("delivery_check_report") < observed_schema_refs.index("ui_milestone_review")
+    assert observed_schema_refs.index("ui_milestone_review") < observed_schema_refs.index("delivery_closeout_package")
+
+
+def test_provider_bad_response_on_final_review_falls_back_and_still_reaches_closeout_completion(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    provider_responder, observed_schema_refs = _build_mock_provider_responder(
+        bad_response_schemas={"ui_milestone_review"}
+    )
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder)
+
+    workflow_id = _project_init(client, goal="Provider fallback on final review")
+    repository = client.app.state.repository
+
+    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
+    _approve_review(client, scope_approval, idempotency_suffix="fallback-scope")
+
+    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
+    evidence_summary = final_review_approval["payload"]["review_pack"]["evidence_summary"]
+    provider_fallback_evidence = next(
+        evidence for evidence in evidence_summary if evidence["evidence_id"] == "provider_fallback"
+    )
+    _approve_review(client, final_review_approval, idempotency_suffix="fallback-final-review")
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    assert dashboard_response.status_code == 200
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+
+    assert provider_fallback_evidence["source_type"] == "RUNTIME_FALLBACK"
+    assert provider_fallback_evidence["headline"] == "Provider fallback on prov_openai_compat"
+    assert "PROVIDER_BAD_RESPONSE" in provider_fallback_evidence["summary"]
+    assert completion_summary is not None
+    assert completion_summary["workflow_id"] == workflow_id
+    assert completion_summary["closeout_completed_at"] is not None
+    assert repository.list_open_approvals() == []
+    assert repository.list_open_incidents() == []
+    assert "ui_milestone_review" in observed_schema_refs
+    assert "delivery_closeout_package" in observed_schema_refs
 
 
 def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
