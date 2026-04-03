@@ -454,13 +454,16 @@
 
 #### P0-WRK-003：实现 frontend_engineer Worker
 
-**状态**：未完成。当前主线里 `frontend_engineer` 仍只是 owner role 名字，实际执行仍映射到 `ui_designer_primary`。
+**状态**：已完成（2026-04-03，本轮按主线收口）
 
-**描述**：实现 frontend_engineer 角色的 Worker，能执行 `implementation_bundle@1` 工单。
+**描述**：实现 frontend_engineer 角色的独立 Worker，使 `BUILD / REVIEW / closeout` 的 maker 主线不再复用 `ui_designer_primary`。
 
 **文件**：
 - 修改：`backend/app/core/runtime.py`
-- 修改：`backend/app/core/ceo_prompts.py`（添加 frontend_engineer 角色描述）
+- 修改：`backend/app/core/approval_handlers.py`
+- 修改：`backend/app/db/repository.py`
+- 修改：`backend/app/core/staffing_catalog.py`
+- 修改：`backend/app/core/mainline_truth.py`
 
 **依赖**：P0-WRK-002
 
@@ -469,11 +472,16 @@
 **feature-spec**：条目 26
 
 **验收标准**：
-- frontend_engineer 能接收 implementation_bundle 工单
-- 通过 LLM 产出有效的 implementation_bundle 结构化输出
-- 输出通过 schema 校验和写集验证
+- frontend_engineer 使用独立的 `frontend_engineer_primary` role profile 接收 `implementation_bundle` 工单
+- `BUILD / REVIEW / closeout` 三段 maker 票的 created spec、运行时支持矩阵和默认员工模板对齐到新 profile
+- `project-init / scope review` 仍保留 `ui_designer_primary`，并由调度兼容保证旧 scope 共识链不断
 
 **风险**：中
+
+**完成补记**：
+- 当前默认前端员工 roster、hire/replace 模板和 scope follow-up 映射都已对齐到 `frontend_engineer_primary`
+- runtime 现在显式支持 `frontend_engineer_primary`
+- 为了不打断旧 scope 共识链，调度层对 `ui_designer_primary` 保留了最小兼容匹配
 
 ---
 

@@ -85,7 +85,11 @@ SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
 }
-SUPPORTED_RUNTIME_ROLE_PROFILES = {"ui_designer_primary", "checker_primary"}
+SUPPORTED_RUNTIME_ROLE_PROFILES = {
+    "ui_designer_primary",
+    "frontend_engineer_primary",
+    "checker_primary",
+}
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
 PROVIDER_MAX_ATTEMPTS = 3
 PROVIDER_RETRY_BACKOFF_BASE_SEC = 1.0

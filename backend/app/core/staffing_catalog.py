@@ -8,7 +8,7 @@ _MAINLINE_STAFFING_HIRE_TEMPLATES: tuple[dict[str, Any], ...] = (
         "template_id": "frontend_engineer_backup",
         "label": "Frontend backup maker",
         "role_type": "frontend_engineer",
-        "role_profile_refs": ["ui_designer_primary"],
+        "role_profile_refs": ["frontend_engineer_primary"],
         "employee_id_hint": "emp_frontend_backup",
         "provider_id": "prov_openai_compat",
         "request_summary": "Hire a backup frontend maker for rework rotation.",

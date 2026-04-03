@@ -12,7 +12,7 @@ def _ticket_create_payload(
     workflow_id: str = "wf_inprocess",
     ticket_id: str = "tkt_inprocess_001",
     node_id: str = "node_inprocess_001",
-    role_profile_ref: str = "ui_designer_primary",
+    role_profile_ref: str = "frontend_engineer_primary",
 ) -> dict:
     return {
         "ticket_id": ticket_id,

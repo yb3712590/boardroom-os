@@ -1566,7 +1566,7 @@ def test_initialize_backfills_legacy_employee_rows_into_employee_events(db_path)
             "ACTIVE",
             1,
             "prov_openai_compat",
-            '["ui_designer_primary"]',
+            '["frontend_engineer_primary"]',
             "2026-04-01T10:00:00+08:00",
             4,
         ),
@@ -1590,7 +1590,7 @@ def test_initialize_backfills_legacy_employee_rows_into_employee_events(db_path)
             "state": "ACTIVE",
             "board_approved": True,
             "provider_id": "prov_openai_compat",
-            "role_profile_refs": ["ui_designer_primary"],
+            "role_profile_refs": ["frontend_engineer_primary"],
             "updated_at": datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
             "version": 1,
         }

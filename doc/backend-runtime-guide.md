@@ -112,12 +112,13 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 - 请求输入直接来自编译后的 `rendered_execution_payload.messages`；后端不会依赖 provider 端 JSON schema 强约束，而是拿回文本后在本地做 JSON 解析和现有 output schema 校验
 - 当前代码现实里，这条 live path 已覆盖主线需要的 6 组 role/schema 组合：
   - `ui_designer_primary -> consensus_document`
-  - `ui_designer_primary -> implementation_bundle`
+  - `frontend_engineer_primary -> implementation_bundle`
   - `checker_primary -> delivery_check_report`
-  - `ui_designer_primary -> ui_milestone_review`
-  - `ui_designer_primary -> delivery_closeout_package`
+  - `frontend_engineer_primary -> ui_milestone_review`
+  - `frontend_engineer_primary -> delivery_closeout_package`
   - `checker_primary -> maker_checker_verdict`
-- 但当前仍没有独立的 `frontend_engineer` worker 角色；scope follow-up 里的 `frontend_engineer` 只是 owner role 名字，实际仍映射到 `ui_designer_primary`
+- `frontend_engineer` 现在已经有独立的 `frontend_engineer_primary` worker profile
+- 只有 `project-init -> scope review` 这条旧共识链仍保留 `ui_designer_primary`；调度层会把 `frontend_engineer_primary` 兼容匹配到这类旧票，避免 scope 主链中断
 - 失败映射固定为：`429 -> PROVIDER_RATE_LIMITED`、超时 / 连接失败 / `5xx -> UPSTREAM_UNAVAILABLE`、`401/403 -> PROVIDER_AUTH_FAILED`、其他 `4xx` / 空响应 / 非 JSON / 结构不匹配 -> `PROVIDER_BAD_RESPONSE`
 - 只有 `PROVIDER_RATE_LIMITED` 和 `UPSTREAM_UNAVAILABLE` 会进入既有 provider incident / breaker 暂停链；鉴权失败和坏响应只让当前 ticket 失败，不自动扩大成 provider pause
 

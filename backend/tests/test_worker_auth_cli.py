@@ -35,7 +35,7 @@ def _create_leased_worker_ticket(client, *, workflow_id: str, ticket_id: str, no
             "node_id": node_id,
             "parent_ticket_id": None,
             "attempt_no": 1,
-            "role_profile_ref": "ui_designer_primary",
+            "role_profile_ref": "frontend_engineer_primary",
             "constraints_ref": "global_constraints_v3",
             "input_artifact_refs": ["art://inputs/brief.md"],
             "context_query_plan": {
@@ -410,7 +410,7 @@ def test_worker_auth_cli_revoke_bootstrap_invalidates_old_token(
             "node_id": "node_cli_revoke_bootstrap",
             "parent_ticket_id": None,
             "attempt_no": 1,
-            "role_profile_ref": "ui_designer_primary",
+            "role_profile_ref": "frontend_engineer_primary",
             "constraints_ref": "global_constraints_v3",
             "input_artifact_refs": ["art://inputs/brief.md"],
             "context_query_plan": {
@@ -484,7 +484,7 @@ def test_worker_auth_cli_revoke_session_only_revokes_target_session(
             "node_id": "node_cli_revoke_session",
             "parent_ticket_id": None,
             "attempt_no": 1,
-            "role_profile_ref": "ui_designer_primary",
+            "role_profile_ref": "frontend_engineer_primary",
             "constraints_ref": "global_constraints_v3",
             "input_artifact_refs": ["art://inputs/brief.md"],
             "context_query_plan": {

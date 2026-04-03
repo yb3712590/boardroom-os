@@ -69,7 +69,7 @@
 > 结果：现有 `project-init → scope → build → check → review → closeout` 这条链，在配置 Provider 后能真实跑模型，而不是只靠确定性结果。
 
 - [x] 先把当前已接好的 OpenAI Compat 路径补成稳定能力：超时、限流、认证失败、坏响应都要有清晰分类和回退
-- [ ] 把真实执行覆盖扩到主链需要的 5 类输出：`consensus_document`、`implementation_bundle`、`delivery_check_report`、`ui_milestone_review`、`delivery_closeout_package`，以及对应的 `maker_checker_verdict`
+- [x] 把真实执行覆盖扩到主链需要的 5 类输出：`consensus_document`、`implementation_bundle`、`delivery_check_report`、`ui_milestone_review`、`delivery_closeout_package`，以及对应的 `maker_checker_verdict`
 - [x] 统一 live path 和 deterministic path 的结果校验、审计产物、incident 记录方式
 - [x] 给 Dashboard / Incident / Review 读面补足 provider 健康和回退信号
 - [ ] 用 mock provider 补完整端到端测试，覆盖 build / check / review / closeout 四段
@@ -85,12 +85,7 @@
 - Dashboard / runtime provider 读面现在统一使用 `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`，paused / incomplete 文案会明确说明当前会回落到 deterministic
 - 已 lease 的 OpenAI Compat 票在 provider 已 paused 时可以继续走本地 fallback 完成，不再只停在 `LEASED`
 - 后端补了 provider 重试、pause、fallback、健康读面的最小测试；前端 mock / 类型也已对齐新契约
-
-本轮新发现：
-
-- [ ] 明确 `frontend_engineer` 是继续保留为 owner role 别名，还是正式拆成独立 runtime worker；在结论落地前，不再把它写成“已经存在的独立 Worker”
-
-主线关系：**直接影响 BUILD / REVIEW / closeout 三段后续由谁真实执行**，也决定 `P0-WRK-003` 应该是补角色还是继续补稳定性。
+- `frontend_engineer` 现在已经拆成独立 `frontend_engineer_primary` runtime worker；`BUILD / REVIEW / closeout` 改走独立 profile，scope 共识链仍保留 `ui_designer_primary` 并由调度兼容承接
 
 - [ ] 当前开发环境缺少 Node.js / npm，前端 `build` 与 `test:run` 还需要在可用环境里补一次真实复核
 

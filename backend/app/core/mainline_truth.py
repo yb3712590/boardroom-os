@@ -56,12 +56,9 @@ MAINLINE_WORKFLOW_STAGE_TRUTH: tuple[MainlineWorkflowStageTruth, ...] = (
         label="Build internal maker-checker",
         truth_status="REAL",
         actual_owner_roles=("frontend_engineer", "checker"),
-        actual_role_profiles=("ui_designer_primary", "checker_primary"),
+        actual_role_profiles=("frontend_engineer_primary", "checker_primary"),
         output_schema_refs=(IMPLEMENTATION_BUNDLE_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_REF),
-        notes=(
-            "BUILD 先产出 implementation_bundle，再走内部 checker。当前 frontend_engineer "
-            "owner role 仍映射到 ui_designer_primary，不是独立 worker。"
-        ),
+        notes="BUILD 先产出 implementation_bundle，再走内部 checker。frontend_engineer 现在已有独立 runtime worker。",
     ),
     MainlineWorkflowStageTruth(
         stage_id="check_internal_maker_checker",
@@ -77,7 +74,7 @@ MAINLINE_WORKFLOW_STAGE_TRUTH: tuple[MainlineWorkflowStageTruth, ...] = (
         label="Final board review",
         truth_status="REAL",
         actual_owner_roles=("frontend_engineer",),
-        actual_role_profiles=("ui_designer_primary",),
+        actual_role_profiles=("frontend_engineer_primary",),
         output_schema_refs=(UI_MILESTONE_REVIEW_SCHEMA_REF,),
         notes="最终董事会 REVIEW 只在真正 board-facing 的 review pack 上进入 Inbox -> Review Room。",
     ),
@@ -86,7 +83,7 @@ MAINLINE_WORKFLOW_STAGE_TRUTH: tuple[MainlineWorkflowStageTruth, ...] = (
         label="Closeout internal maker-checker",
         truth_status="REAL",
         actual_owner_roles=("frontend_engineer", "checker"),
-        actual_role_profiles=("ui_designer_primary", "checker_primary"),
+        actual_role_profiles=("frontend_engineer_primary", "checker_primary"),
         output_schema_refs=(DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_REF),
         notes="最终 board approve 后会自动补 closeout ticket，closeout 完成后才显示 workflow completion。",
     ),
@@ -101,10 +98,10 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
         notes="当前共识文档仍由主线 maker 角色产出。",
     ),
     RuntimeSupportRow(
-        role_profile_ref="ui_designer_primary",
+        role_profile_ref="frontend_engineer_primary",
         output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
-        notes="BUILD 阶段的实现包当前仍由 ui_designer_primary 产出。",
+        notes="BUILD 阶段的实现包当前由 frontend_engineer_primary 产出。",
     ),
     RuntimeSupportRow(
         role_profile_ref="checker_primary",
@@ -113,16 +110,16 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
         notes="CHECK 阶段的交付检查报告当前由 checker_primary 产出。",
     ),
     RuntimeSupportRow(
-        role_profile_ref="ui_designer_primary",
+        role_profile_ref="frontend_engineer_primary",
         output_schema_ref=UI_MILESTONE_REVIEW_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
-        notes="最终 REVIEW 包仍由 ui_designer_primary 产出。",
+        notes="最终 REVIEW 包当前由 frontend_engineer_primary 产出。",
     ),
     RuntimeSupportRow(
-        role_profile_ref="ui_designer_primary",
+        role_profile_ref="frontend_engineer_primary",
         output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
-        notes="最终 closeout package 当前由 ui_designer_primary 产出。",
+        notes="最终 closeout package 当前由 frontend_engineer_primary 产出。",
     ),
     RuntimeSupportRow(
         role_profile_ref="checker_primary",

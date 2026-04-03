@@ -139,7 +139,7 @@ def test_reducer_rebuilds_employee_projection_through_hire_replace_freeze_and_re
                 "state": "ACTIVE",
                 "board_approved": True,
                 "provider_id": "prov_openai_compat",
-                "role_profile_refs": ["ui_designer_primary"],
+                "role_profile_refs": ["frontend_engineer_primary"],
             }
         ),
     }
@@ -186,7 +186,7 @@ def test_reducer_rebuilds_employee_projection_through_hire_replace_freeze_and_re
     assert by_id["emp_frontend_2"]["state"] == "REPLACED"
     assert by_id["emp_frontend_2"]["board_approved"] is False
     assert by_id["emp_frontend_backup"]["state"] == "ACTIVE"
-    assert by_id["emp_frontend_backup"]["role_profile_refs"] == ["ui_designer_primary"]
+    assert by_id["emp_frontend_backup"]["role_profile_refs"] == ["frontend_engineer_primary"]
     assert by_id["emp_frontend_backup"]["provider_id"] == "prov_openai_compat"
 
 

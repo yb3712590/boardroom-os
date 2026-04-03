@@ -49,7 +49,7 @@ from app.db.repository import ControlPlaneRepository
 
 SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS = 6
 FOLLOWUP_OWNER_ROLE_TO_PROFILE = {
-    "frontend_engineer": "ui_designer_primary",
+    "frontend_engineer": "frontend_engineer_primary",
     "checker": "checker_primary",
 }
 SUPPORTED_SCOPE_FOLLOWUP_DELIVERY_STAGES = {

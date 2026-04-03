@@ -30,13 +30,18 @@ def _ticket_create_payload(
     allowed_tools: list[str] | None = None,
     context_query_plan: dict | None = None,
 ) -> dict:
+    resolved_role_profile_ref = (
+        "frontend_engineer_primary"
+        if role_profile_ref == "ui_designer_primary"
+        else role_profile_ref
+    )
     return {
         "ticket_id": ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
         "parent_ticket_id": None,
         "attempt_no": 1,
-        "role_profile_ref": role_profile_ref,
+        "role_profile_ref": resolved_role_profile_ref,
         "constraints_ref": "global_constraints_v3",
         "input_artifact_refs": input_artifact_refs or ["art://inputs/brief.md"],
         "context_query_plan": context_query_plan or {
@@ -91,7 +96,7 @@ def _approve_hire_worker(
             "workflow_id": workflow_id,
             "employee_id": employee_id,
             "role_type": "frontend_engineer",
-            "role_profile_refs": ["ui_designer_primary"],
+            "role_profile_refs": ["frontend_engineer_primary"],
             "skill_profile": {"primary_domain": "frontend"},
             "personality_profile": {"style": "maker"},
             "aesthetic_profile": {"preference": "minimal"},
@@ -141,7 +146,7 @@ def _seed_worker(repository, *, employee_id: str, provider_id: str) -> None:
                 "state": "ACTIVE",
                 "board_approved": True,
                 "provider_id": provider_id,
-                "role_profile_refs": ["ui_designer_primary"],
+                "role_profile_refs": ["frontend_engineer_primary"],
             },
             occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
         )

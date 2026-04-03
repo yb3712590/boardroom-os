@@ -100,6 +100,9 @@
 - Dashboard and runtime-provider read models now use stable provider health labels: `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`; paused and incomplete reasons explicitly state that runtime is falling back to deterministic.
 - Already leased OpenAI Compat tickets can now continue through local fallback even when the provider is already paused, instead of getting stranded before execution.
 - Backend verification for this round finished at `365 passed`; frontend code was updated to match the new runtime-provider contract, but this machine still does not have Node.js / npm, so frontend build and test were not rerun here.
+- `frontend_engineer` now has an independent `frontend_engineer_primary` runtime profile for `implementation_bundle@1`, `ui_milestone_review@1`, and `delivery_closeout_package@1`; mainline staffing templates and the default roster now expose that profile instead of `ui_designer_primary`.
+- `project-init -> scope review` still stays on `ui_designer_primary`, so scheduler dispatch now carries a narrow compatibility alias from `frontend_engineer_primary` to that legacy scope-only ticket lane instead of rewriting the scope chain itself.
+- This round’s focused backend verification for the worker-role split finished at `344 passed`, and the follow-up API + scheduler sweep that exercises the mainline chain finished at `268 passed`.
 
 ### 2026-04-02 (docs compaction)
 

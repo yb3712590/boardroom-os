@@ -2133,7 +2133,10 @@ def _add_worker_candidate(
 ) -> None:
     if employee_id in worker_by_id:
         return
-    worker_by_id[employee_id] = set(role_profile_refs)
+    normalized_role_profiles = set(role_profile_refs)
+    if "frontend_engineer_primary" in normalized_role_profiles:
+        normalized_role_profiles.add("ui_designer_primary")
+    worker_by_id[employee_id] = normalized_role_profiles
     worker_candidates.append(employee_id)
 
 

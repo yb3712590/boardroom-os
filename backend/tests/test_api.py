@@ -120,7 +120,7 @@ def _employee_hire_request_payload(
         "workflow_id": workflow_id,
         "employee_id": employee_id,
         "role_type": role_type,
-        "role_profile_refs": role_profile_refs or ["ui_designer_primary"],
+        "role_profile_refs": role_profile_refs or ["frontend_engineer_primary"],
         "skill_profile": {"primary_domain": "frontend"},
         "personality_profile": {"style": "maker"},
         "aesthetic_profile": {"preference": "minimal"},
@@ -143,7 +143,7 @@ def _employee_replace_request_payload(
         "replaced_employee_id": replaced_employee_id,
         "replacement_employee_id": replacement_employee_id,
         "replacement_role_type": replacement_role_type,
-        "replacement_role_profile_refs": replacement_role_profile_refs or ["ui_designer_primary"],
+        "replacement_role_profile_refs": replacement_role_profile_refs or ["frontend_engineer_primary"],
         "replacement_skill_profile": {"primary_domain": "frontend"},
         "replacement_personality_profile": {"style": "maker"},
         "replacement_aesthetic_profile": {"preference": "minimal"},
@@ -238,7 +238,7 @@ def _seed_worker(
                 "state": "ACTIVE",
                 "board_approved": True,
                 "provider_id": provider_id,
-                "role_profile_refs": list(role_profile_refs or ["ui_designer_primary"]),
+                "role_profile_refs": list(role_profile_refs or ["frontend_engineer_primary"]),
             },
             occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
         )
@@ -1466,7 +1466,7 @@ def _ticket_create_payload(
     ticket_id: str = "tkt_visual_001",
     node_id: str = "node_homepage_visual",
     attempt_no: int = 1,
-    role_profile_ref: str = "ui_designer_primary",
+    role_profile_ref: str | None = None,
     lease_timeout_sec: int = 600,
     retry_budget: int = 2,
     on_timeout: str = "retry",
@@ -1488,13 +1488,18 @@ def _ticket_create_payload(
     delivery_stage: str | None = None,
     parent_ticket_id: str | None = None,
 ) -> dict:
+    resolved_role_profile_ref = role_profile_ref
+    if resolved_role_profile_ref is None:
+        resolved_role_profile_ref = (
+            "ui_designer_primary" if output_schema_ref == "consensus_document" else "frontend_engineer_primary"
+        )
     payload = {
         "ticket_id": ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
         "parent_ticket_id": parent_ticket_id,
         "attempt_no": attempt_no,
-        "role_profile_ref": role_profile_ref,
+        "role_profile_ref": resolved_role_profile_ref,
         "constraints_ref": "global_constraints_v3",
         "input_artifact_refs": input_artifact_refs or ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
         "context_query_plan": context_query_plan or {
@@ -1640,7 +1645,7 @@ def _create_and_lease_ticket(
     attempt_no: int = 1,
     leased_by: str = "emp_frontend_2",
     lease_timeout_sec: int = 600,
-    role_profile_ref: str = "ui_designer_primary",
+    role_profile_ref: str | None = None,
     retry_budget: int = 2,
     on_timeout: str = "retry",
     on_schema_error: str = "retry",
@@ -1714,7 +1719,7 @@ def _create_lease_and_start_ticket(
     attempt_no: int = 1,
     leased_by: str = "emp_frontend_2",
     lease_timeout_sec: int = 600,
-    role_profile_ref: str = "ui_designer_primary",
+    role_profile_ref: str | None = None,
     retry_budget: int = 2,
     on_timeout: str = "retry",
     on_schema_error: str = "retry",
@@ -2058,7 +2063,7 @@ def test_startup_seeds_minimal_employee_roster(client):
         "emp_frontend_2",
     ]
     assert employees[0]["role_profile_refs"] == ["checker_primary"]
-    assert employees[1]["role_profile_refs"] == ["ui_designer_primary"]
+    assert employees[1]["role_profile_refs"] == ["frontend_engineer_primary"]
 
 
 def test_project_init_returns_real_command_ack(client):
@@ -2169,7 +2174,7 @@ def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visu
     assert build_created_spec["workflow_id"] == workflow_id
     assert build_created_spec["delivery_stage"] == "BUILD"
     assert build_created_spec["output_schema_ref"] == "implementation_bundle"
-    assert build_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert build_created_spec["role_profile_ref"] == "frontend_engineer_primary"
     assert build_created_spec["auto_review_request"]["review_type"] == "INTERNAL_DELIVERY_REVIEW"
     assert any(ref.endswith("/board-brief.md") for ref in build_created_spec["input_artifact_refs"])
     assert any("consensus-document.json" in ref for ref in build_created_spec["input_artifact_refs"])
@@ -2180,7 +2185,7 @@ def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visu
     assert f"art://runtime/{build_ticket_id}/implementation-bundle.json" in check_created_spec["input_artifact_refs"]
     assert review_created_spec["delivery_stage"] == "REVIEW"
     assert review_created_spec["output_schema_ref"] == "ui_milestone_review"
-    assert review_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert review_created_spec["role_profile_ref"] == "frontend_engineer_primary"
     assert f"art://runtime/{build_ticket_id}/implementation-bundle.json" in review_created_spec["input_artifact_refs"]
     assert f"art://runtime/{check_ticket_id}/delivery-check-report.json" in review_created_spec["input_artifact_refs"]
     assert build_ticket["status"] == TICKET_STATUS_COMPLETED
@@ -2908,7 +2913,7 @@ def test_check_followup_result_creates_internal_checker_and_preserves_review_gat
             workflow_id="wf_check_internal_review",
             ticket_id="tkt_check_internal_review_review",
             node_id="node_check_internal_review_review",
-            role_profile_ref="ui_designer_primary",
+            role_profile_ref="frontend_engineer_primary",
             output_schema_ref="ui_milestone_review",
             allowed_tools=["read_artifact", "write_artifact"],
             allowed_write_set=[
@@ -2995,7 +3000,7 @@ def test_check_internal_checker_approved_releases_final_review_ticket(client, se
             workflow_id="wf_check_release_review",
             ticket_id="tkt_check_release_review_final",
             node_id="node_check_release_review_final",
-            role_profile_ref="ui_designer_primary",
+            role_profile_ref="frontend_engineer_primary",
             output_schema_ref="ui_milestone_review",
             allowed_tools=["read_artifact", "write_artifact"],
             allowed_write_set=[
@@ -3103,7 +3108,7 @@ def test_check_internal_checker_changes_required_creates_fix_ticket_and_counts_r
             workflow_id="wf_check_rework",
             ticket_id="tkt_check_rework_final",
             node_id="node_check_rework_final",
-            role_profile_ref="ui_designer_primary",
+            role_profile_ref="frontend_engineer_primary",
             output_schema_ref="ui_milestone_review",
             allowed_tools=["read_artifact", "write_artifact"],
             allowed_write_set=[
@@ -3232,7 +3237,7 @@ def test_check_internal_checker_escalated_opens_incident_and_marks_dependency_st
             workflow_id=workflow_id,
             ticket_id="tkt_check_escalation_final",
             node_id="node_check_escalation_final",
-            role_profile_ref="ui_designer_primary",
+            role_profile_ref="frontend_engineer_primary",
             output_schema_ref="ui_milestone_review",
             allowed_tools=["read_artifact", "write_artifact"],
             allowed_write_set=[
@@ -8710,7 +8715,7 @@ def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(cl
         "/api/v1/commands/scheduler-tick",
         json=_scheduler_tick_payload(
             workers=[
-                {"employee_id": "emp_frontend_2", "role_profile_refs": ["ui_designer_primary"]},
+                {"employee_id": "emp_frontend_2", "role_profile_refs": ["frontend_engineer_primary"]},
                 {"employee_id": "emp_checker_1", "role_profile_refs": ["checker_primary"]},
             ],
             idempotency_key="scheduler-tick:expired-lease",
@@ -8750,7 +8755,7 @@ def test_scheduler_tick_skips_busy_worker_and_role_mismatch(client, set_ticket_t
         workflow_id="wf_busy",
         ticket_id="tkt_busy",
         node_id="node_busy",
-        role_profile_ref="ui_designer_primary",
+        role_profile_ref="frontend_engineer_primary",
     )
     client.post(
         "/api/v1/commands/ticket-create",
@@ -8758,7 +8763,7 @@ def test_scheduler_tick_skips_busy_worker_and_role_mismatch(client, set_ticket_t
             workflow_id="wf_busy",
             ticket_id="tkt_pending",
             node_id="node_pending",
-            role_profile_ref="ui_designer_primary",
+            role_profile_ref="frontend_engineer_primary",
         ),
     )
 
@@ -8767,7 +8772,7 @@ def test_scheduler_tick_skips_busy_worker_and_role_mismatch(client, set_ticket_t
         "/api/v1/commands/scheduler-tick",
         json=_scheduler_tick_payload(
             workers=[
-                {"employee_id": "emp_frontend_2", "role_profile_refs": ["ui_designer_primary"]},
+                {"employee_id": "emp_frontend_2", "role_profile_refs": ["frontend_engineer_primary"]},
                 {"employee_id": "emp_checker_1", "role_profile_refs": ["checker_primary"]},
             ],
             idempotency_key="scheduler-tick:busy",
@@ -9149,7 +9154,7 @@ def test_checker_changes_required_creates_fix_ticket_instead_of_board_review(cli
     assert fix_ticket["status"] == TICKET_STATUS_PENDING
     assert fix_created_spec is not None
     assert fix_created_spec["parent_ticket_id"] == checker_ticket_id
-    assert fix_created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert fix_created_spec["role_profile_ref"] == "frontend_engineer_primary"
     assert fix_created_spec["output_schema_ref"] == "ui_milestone_review"
     assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
     maker_checker_context = fix_created_spec["maker_checker_context"]
@@ -10771,7 +10776,7 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
         workflow_id=workflow_id,
         ticket_id=closeout_ticket_id,
         node_id=closeout_node_id,
-        role_profile_ref="ui_designer_primary",
+        role_profile_ref="frontend_engineer_primary",
         output_schema_ref="delivery_closeout_package",
         allowed_write_set=[f"reports/closeout/{closeout_ticket_id}/*"],
         allowed_tools=["read_artifact", "write_artifact"],

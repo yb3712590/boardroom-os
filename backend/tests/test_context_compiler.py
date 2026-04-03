@@ -32,7 +32,7 @@ def _ticket_create_payload(
         "node_id": node_id,
         "parent_ticket_id": None,
         "attempt_no": 1,
-        "role_profile_ref": "ui_designer_primary",
+        "role_profile_ref": "frontend_engineer_primary",
         "constraints_ref": "global_constraints_v3",
         "input_artifact_refs": input_artifact_refs if input_artifact_refs is not None else [
             "art://inputs/brief.md",
@@ -382,7 +382,7 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
     assert compiled_package.meta.tenant_id == "tenant_default"
     assert compiled_package.meta.workspace_id == "ws_default"
     assert compiled_package.meta.compiler_version == MINIMAL_CONTEXT_COMPILER_VERSION
-    assert compiled_package.compiled_role.role_profile_ref == "ui_designer_primary"
+    assert compiled_package.compiled_role.role_profile_ref == "frontend_engineer_primary"
     assert compiled_package.compiled_role.employee_role_type == "frontend_engineer"
     assert compiled_package.compiled_constraints.constraints_ref == "global_constraints_v3"
     assert compiled_package.compiled_constraints.global_rules == []

@@ -82,7 +82,7 @@ DEFAULT_EMPLOYEE_ROSTER = (
         "state": "ACTIVE",
         "board_approved": True,
         "provider_id": "prov_openai_compat",
-        "role_profile_refs_json": ["ui_designer_primary"],
+        "role_profile_refs_json": ["frontend_engineer_primary"],
     },
     {
         "employee_id": "emp_checker_1",

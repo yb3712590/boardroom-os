@@ -29,9 +29,9 @@ def test_mainline_runtime_support_matrix_matches_runtime_constants() -> None:
         for entry in MAINLINE_RUNTIME_SUPPORT_MATRIX
     } == {
         ("ui_designer_primary", CONSENSUS_DOCUMENT_SCHEMA_REF),
-        ("ui_designer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
-        ("ui_designer_primary", UI_MILESTONE_REVIEW_SCHEMA_REF),
-        ("ui_designer_primary", DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF),
+        ("frontend_engineer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
+        ("frontend_engineer_primary", UI_MILESTONE_REVIEW_SCHEMA_REF),
+        ("frontend_engineer_primary", DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF),
         ("checker_primary", DELIVERY_CHECK_REPORT_SCHEMA_REF),
         ("checker_primary", MAKER_CHECKER_VERDICT_SCHEMA_REF),
     }
@@ -41,10 +41,10 @@ def test_mainline_truth_records_frontend_followup_mapping_as_current_reality() -
     stage_truth_by_id = {entry.stage_id: entry for entry in MAINLINE_WORKFLOW_STAGE_TRUTH}
     build_stage = stage_truth_by_id["build_internal_maker_checker"]
 
-    assert FOLLOWUP_OWNER_ROLE_TO_PROFILE["frontend_engineer"] == "ui_designer_primary"
+    assert FOLLOWUP_OWNER_ROLE_TO_PROFILE["frontend_engineer"] == "frontend_engineer_primary"
     assert "frontend_engineer" in build_stage.actual_owner_roles
-    assert "ui_designer_primary" in build_stage.actual_role_profiles
-    assert "不是独立 worker" in build_stage.notes
+    assert "frontend_engineer_primary" in build_stage.actual_role_profiles
+    assert "独立 runtime worker" in build_stage.notes
 
 
 def test_frozen_capability_boundaries_match_current_mounted_routes() -> None:

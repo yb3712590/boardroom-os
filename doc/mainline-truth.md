@@ -15,8 +15,9 @@
 
 补充差异：
 
-- 当前主链 follow-up 里的 `frontend_engineer` 只是 **owner role 名字**，代码里仍映射到 `ui_designer_primary`
-- 也就是说，当前并没有独立的 `frontend_engineer` worker 角色
+- `project-init -> scope review` 这条共识链仍保留 `ui_designer_primary`
+- 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
+- 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
 
 ## 2. Runtime 支持矩阵
 
@@ -24,17 +25,17 @@
 
 | owner role | role profile | 输出 | Deterministic | OpenAI Compat Live | 备注 |
 |------------|--------------|------|---------------|--------------------|------|
-| `frontend_engineer` | `ui_designer_primary` | `consensus_document` | 支持 | 支持 | 当前共识文档仍由主线 maker 角色产出 |
-| `frontend_engineer` | `ui_designer_primary` | `implementation_bundle` | 支持 | 支持 | `BUILD` 产物当前仍由 `ui_designer_primary` 产出 |
+| `frontend_engineer` | `ui_designer_primary` | `consensus_document` | 支持 | 支持 | 当前共识文档仍由旧 scope 共识链产出 |
+| `frontend_engineer` | `frontend_engineer_primary` | `implementation_bundle` | 支持 | 支持 | `BUILD` 产物当前由独立 frontend worker 产出 |
 | `checker` | `checker_primary` | `delivery_check_report` | 支持 | 支持 | `CHECK` 报告当前由 checker 产出 |
-| `frontend_engineer` | `ui_designer_primary` | `ui_milestone_review` | 支持 | 支持 | 最终董事会 review 包当前仍由主线 maker 产出 |
-| `frontend_engineer` | `ui_designer_primary` | `delivery_closeout_package` | 支持 | 支持 | closeout package 当前仍由主线 maker 产出 |
+| `frontend_engineer` | `frontend_engineer_primary` | `ui_milestone_review` | 支持 | 支持 | 最终董事会 review 包当前由独立 frontend worker 产出 |
+| `frontend_engineer` | `frontend_engineer_primary` | `delivery_closeout_package` | 支持 | 支持 | closeout package 当前由独立 frontend worker 产出 |
 | `checker` | `checker_primary` | `maker_checker_verdict` | 支持 | 支持 | 主线 maker-checker verdict 当前都走 checker |
 
 当前不应误判的点：
 
 - `OpenAI Compat` live path **不只** 支持 `ui_milestone_review` 和 `maker_checker_verdict`
-- 但它也**没有**扩成独立的一套 worker roster；仍然只覆盖当前这两类 role profile：`ui_designer_primary`、`checker_primary`
+- 当前主线真实覆盖的 role profile 已经是三类：`ui_designer_primary`、`frontend_engineer_primary`、`checker_primary`
 
 ## 3. 冻结边界清单
 
