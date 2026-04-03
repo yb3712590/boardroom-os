@@ -1,8 +1,9 @@
 # Boardroom OS 开发推进提示词
 
-> 版本：2.0
+> 版本：3.0
 > 日期：2026-04-03
 > 用途：每轮开发会话的系统提示词模板
+> 使用方式：复制对应提示词内容，粘贴到任意 LLM 客户端（Codex App / VS Code Codex / Claude / ChatGPT 等）
 
 ---
 
@@ -12,6 +13,7 @@
 
 | 文档 | 位置 | 用途 |
 |------|------|------|
+| 代码真相表 | `doc/mainline-truth.md` | 主链现实、runtime 支持矩阵、冻结边界 |
 | 路线纠偏决议 | `doc/roadmap-reset.md` | 当前阶段范围边界 |
 | 唯一待办 | `doc/TODO.md` | 主线待办 + 已完成概要 + 执行批次 |
 | 任务清单 | `doc/task-backlog.md` | 112 项任务（工时、依赖、验收标准） |
@@ -27,14 +29,29 @@
 
 ---
 
-## 提示词 A：标准推进（每轮使用）
+## 工作流概览
+
+每个批次的完整流程：
+
+```
+开工（选 A/B/C/D 之一）→ 实现 → 自动收尾（验证 + 文档 + 提交）
+```
+
+**提示词 A~D 已内置收尾流程**，做完代码后会自动执行验证、文档更新和 git 提交。
+正常情况下你只需要贴一次提示词。
+
+如果某轮只做了一半、或者需要单独补收尾，使用 **提示词 Z（单独收尾）**。
+
+---
+
+## 提示词 A：标准推进
 
 ```
 继续推进 Boardroom OS，在现有代码上增量开发，不重建骨架。
 
 上下文加载顺序：
 1. README.md
-2. doc/README.md → doc/roadmap-reset.md → doc/TODO.md → doc/history/memory-log.md
+2. doc/README.md → doc/mainline-truth.md → doc/roadmap-reset.md → doc/TODO.md → doc/history/memory-log.md
 3. doc/milestone-timeline.md → doc/task-backlog.md
 4. 按需读相关设计文档，不读无关文件
 5. doc/history/archive/* 仅在需要精确历史原因时查看
@@ -61,14 +78,37 @@
 - 设计与代码不一致时，先说明差异，做最保守处理
 - 不把 stub/placeholder 写成已完成
 
-完成后汇报：
+--- 收尾（代码完成后自动执行以下全部步骤）---
+
+第一步：验证
+- 运行后端测试：cd backend && pytest tests/ -q
+- 运行前端构建：cd frontend && npm run build
+- 运行前端测试：cd frontend && npm run test:run
+- 如果任何一项失败，先修复再继续
+
+第二步：文档更新
+- doc/TODO.md — 标记已完成的任务，添加新发现的任务，每项标明与主线的关系
+- doc/history/memory-log.md — 追加本轮进展到 Recent Memory，只记影响实现决策的事实
+- doc/task-backlog.md — 标记已完成的任务 ID
+- README.md — 仅当本轮改变了对外能力或运行方式时更新
+- 只写真实现状，不预写未来能力
+
+第三步：Git 提交
+- git status 查看变更
+- git diff 确认变更内容
+- git add 相关文件（不要 add 敏感文件）
+- git commit（提交信息用中文，格式：feat/fix/refactor/docs: 一句话描述）
+- 如果有冲突或验证失败，说明卡点，不假装完成
+
+第四步：汇报
 1. 改了哪些文件
 2. 落地了哪些能力
 3. 哪些仍是 mock/stub
-4. 做了哪些测试，哪些因环境限制没做
-5. 更新了哪些文档（README / TODO / memory-log）
-6. 下一步最合理的任务 ID
-7. 当前里程碑完成度
+4. 测试结果（后端 passed 数 / 前端 build 状态 / 前端 passed 数）
+5. 更新了哪些文档
+6. git commit hash
+7. 下一步最合理的任务 ID
+8. 当前里程碑完成度
 
 全程用通俗中文，先结论后细节，不堆术语。
 ```
@@ -102,11 +142,28 @@
 
 然后直接开始实现。
 
-完成后汇报：
+--- 收尾（代码完成后自动执行以下全部步骤）---
+
+第一步：验证
+- cd frontend && npm run build
+- cd frontend && npm run test:run
+- cd backend && pytest tests/ -q（确认没有跨端回归）
+- 如果任何一项失败，先修复再继续
+
+第二步：文档更新
+- doc/TODO.md — 标记已完成的任务
+- doc/history/memory-log.md — 追加本轮进展
+- doc/task-backlog.md — 标记已完成的任务 ID
+- 只写真实现状，不预写未来能力
+
+第三步：Git 提交
+- git add 相关文件 && git commit（中文，格式：refactor/feat: 一句话描述）
+
+第四步：汇报
 1. 完成的任务 ID
 2. 新建/修改的文件列表
-3. npm run build 结果
-4. npm run test:run 结果
+3. 测试结果（build 状态 / 前端 passed 数 / 后端 passed 数）
+4. git commit hash
 5. 下一个任务 ID
 ```
 
@@ -141,7 +198,26 @@
 
 然后直接开始实现。
 
-完成后运行 pytest tests/ -q 验证无回归，然后汇报。
+--- 收尾（代码完成后自动执行以下全部步骤）---
+
+第一步：验证
+- cd backend && pytest tests/ -q
+- cd frontend && npm run build（确认没有跨端回归）
+- 如果任何一项失败，先修复再继续
+
+第二步：文档更新
+- doc/TODO.md — 标记已完成的任务
+- doc/history/memory-log.md — 追加本轮进展
+- doc/task-backlog.md — 标记已完成的任务 ID
+
+第三步：Git 提交
+- git add 相关文件 && git commit（中文，格式：feat: 一句话描述）
+
+第四步：汇报
+1. 完成的任务 ID 和落地能力
+2. 测试结果（后端 passed 数）
+3. git commit hash
+4. 下一个任务 ID
 ```
 
 ---
@@ -173,90 +249,86 @@
 
 然后直接开始实现。
 
-完成后运行 pytest tests/ -q 验证无回归，然后汇报。
+--- 收尾（代码完成后自动执行以下全部步骤）---
+
+第一步：验证
+- cd backend && pytest tests/ -q
+- cd frontend && npm run build（确认没有跨端回归）
+- 如果任何一项失败，先修复再继续
+
+第二步：文档更新
+- doc/TODO.md — 标记已完成的任务
+- doc/history/memory-log.md — 追加本轮进展
+- doc/task-backlog.md — 标记已完成的任务 ID
+
+第三步：Git 提交
+- git add 相关文件 && git commit（中文，格式：feat: 一句话描述）
+
+第四步：汇报
+1. 完成的任务 ID 和落地能力
+2. 测试结果（后端 passed 数）
+3. git commit hash
+4. 下一个任务 ID
 ```
 
 ---
 
-## 提示词 E：集成验证
+## 提示词 Z：单独收尾
+
+> 用于：本轮开发已经做完代码但还没收尾，或者上一轮中断了需要补收尾。
+> 正常情况下不需要用这个——A/B/C/D 已经内置了收尾流程。
 
 ```
-对 Boardroom OS 进行端到端集成验证。
+对 Boardroom OS 当前工作目录中的变更执行收尾流程。
 
-上下文加载顺序：
-1. doc/milestone-timeline.md（当前里程碑的成功标准）
-2. doc/task-backlog.md（P0-INT-* 任务）
-3. doc/TODO.md
-4. doc/history/memory-log.md
+先读取上下文：
+1. doc/TODO.md
+2. doc/history/memory-log.md
+3. doc/task-backlog.md
+4. git status 和 git diff 了解当前变更
 
-验证步骤：
-1. 启动后端：cd backend && source .venv/bin/activate && uvicorn app.main:app
-2. 启动前端：cd frontend && npm run dev
-3. 运行后端测试：cd backend && pytest tests/ -q
-4. 运行前端测试：cd frontend && npm run test:run
-5. 运行前端构建：cd frontend && npm run build
-6. 手动验证核心链路：project-init → 查看 dashboard → 查看 inbox → 打开 review room
+然后按顺序执行以下全部步骤：
 
-汇报：
-1. 每项验证的通过/失败状态
-2. 失败项的具体错误信息
-3. 当前里程碑的成功标准达成情况
-4. 需要修复的问题列表（引用 doc/task-backlog.md 任务 ID）
-```
+第一步：验证
+- cd backend && pytest tests/ -q
+- cd frontend && npm run build
+- cd frontend && npm run test:run
+- 如果任何一项失败，先修复再继续
 
----
-
-## 提示词 F：文档收尾
-
-```
-对 Boardroom OS 进行本轮文档收尾。
-
-需要更新的文档：
-1. doc/TODO.md — 标记已完成的任务，添加新发现的任务
-2. doc/history/memory-log.md — 追加本轮进展到 Recent Memory
-3. README.md — 如果本轮改变了对外能力或运行方式
-4. doc/task-backlog.md — 标记已完成的任务 ID
-
-规则：
+第二步：文档更新
+- doc/TODO.md — 根据本轮实际变更，标记已完成的任务，添加新发现的任务，每项标明与主线的关系
+- doc/history/memory-log.md — 追加本轮进展到 Recent Memory，只记影响实现决策的事实
+- doc/task-backlog.md — 标记已完成的任务 ID
+- README.md — 仅当本轮改变了对外能力或运行方式时更新
 - 只写真实现状，不预写未来能力
-- README 保持简洁，细节下沉到对应文档
-- TODO 每项标明与主线的关系
-- memory-log 只记影响实现决策的事实
 
-完成后列出更新了哪些文档，每个文档改了什么。
-```
+第三步：Git 提交
+- git status 查看变更
+- git diff 确认变更内容
+- git add 相关文件（不要 add 敏感文件）
+- git commit（提交信息用中文，格式：feat/fix/refactor/docs: 一句话描述）
+- 如果有冲突或验证失败，说明卡点，不假装完成
 
----
-
-## 提示词 G：Git 收尾
-
-```
-本轮开发已完成并验证通过，执行 git 收尾。
-
-步骤：
-1. git status 查看变更
-2. git diff 确认变更内容
-3. git add 相关文件
-4. git commit（提交信息用中文，格式：feat/fix/refactor/docs: 一句话描述）
-5. 如果在分支上，合并到 main
-6. git push
-7. 清理本地分支
-
-如果有冲突、权限或验证失败，说明卡点，不假装完成。
+第四步：汇报
+1. 改了哪些文件
+2. 落地了哪些能力
+3. 测试结果（后端 passed 数 / 前端 build 状态 / 前端 passed 数）
+4. 更新了哪些文档
+5. git commit hash
+6. 下一步最合理的任务 ID
 ```
 
 ---
 
 ## 使用指南
 
-| 场景 | 使用的提示词 |
-|------|-------------|
-| 日常推进（不确定做什么） | A |
-| 专门做前端 | B |
-| 专门做 CEO Agent | C |
-| 专门做 Worker 执行 | D |
-| 里程碑结束时验证 | E |
-| 每轮结束时更新文档 | F |
-| 确认完成后提交代码 | G |
+| 场景 | 贴哪个 | 说明 |
+|------|--------|------|
+| 日常推进 | A | 自动选任务 + 实现 + 收尾，一次搞定 |
+| 专门做前端 | B | 前端重构 + 收尾 |
+| 专门做 CEO Agent | C | CEO 实现 + 收尾 |
+| 专门做 Worker 执行 | D | Worker 实现 + 收尾 |
+| 补收尾（上轮中断/只做了代码） | Z | 单独跑验证 + 文档 + 提交 |
 
-典型工作流：A（或 B/C/D）→ F → E → G
+**正常流程：贴一次 A/B/C/D，等它做完就行。**
+只有中断恢复时才需要 Z。
