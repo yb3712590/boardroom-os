@@ -721,7 +721,10 @@ function ShellRoute() {
     runtimeProvider?.effective_reason ??
     'Runtime is using the currently saved local execution settings.'
   const runtimeHealth =
-    runtimeStatus?.provider_health_summary ?? dashboard?.ops_strip.provider_health_summary ?? 'UNKNOWN'
+    runtimeStatus?.provider_health_summary ??
+    runtimeProvider?.provider_health_summary ??
+    dashboard?.ops_strip.provider_health_summary ??
+    'LOCAL_ONLY'
   const finalReviewApprovedAt =
     completionSummary?.final_review_approved_at ?? completionSummary?.approved_at ?? null
 

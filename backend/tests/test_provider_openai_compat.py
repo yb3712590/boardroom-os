@@ -148,7 +148,11 @@ def test_invoke_openai_compat_response_returns_text_from_responses_message_paylo
 
 def test_invoke_openai_compat_response_maps_429_to_rate_limited() -> None:
     def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, json={"error": {"message": "quota exhausted"}})
+        return httpx.Response(
+            429,
+            headers={"Retry-After": "7"},
+            json={"error": {"message": "quota exhausted"}},
+        )
 
     with pytest.raises(OpenAICompatProviderRateLimitedError) as exc_info:
         invoke_openai_compat_response(
@@ -159,6 +163,7 @@ def test_invoke_openai_compat_response_maps_429_to_rate_limited() -> None:
 
     assert exc_info.value.failure_kind == "PROVIDER_RATE_LIMITED"
     assert exc_info.value.failure_detail["provider_status_code"] == 429
+    assert exc_info.value.failure_detail["retry_after_sec"] == 7.0
 
 
 def test_invoke_openai_compat_response_maps_timeout_to_unavailable() -> None:

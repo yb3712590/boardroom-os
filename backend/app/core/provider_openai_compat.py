@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from typing import Literal
 
 import httpx
@@ -48,6 +50,26 @@ class OpenAICompatProviderAuthError(OpenAICompatProviderError):
 
 class OpenAICompatProviderBadResponseError(OpenAICompatProviderError):
     pass
+
+
+def _parse_retry_after_sec(header_value: str | None) -> float | None:
+    if header_value is None:
+        return None
+    stripped = header_value.strip()
+    if not stripped:
+        return None
+    try:
+        seconds = float(stripped)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(stripped)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        delta = (retry_at - datetime.now(retry_at.tzinfo)).total_seconds()
+        return max(delta, 0.0)
+    return max(seconds, 0.0)
 
 
 def _message_payload_to_text(content_type: str, content_payload: dict[str, object]) -> str:
@@ -168,6 +190,9 @@ def invoke_openai_compat_response(
         "provider_status_code": response.status_code,
     }
     if response.status_code == 429:
+        retry_after_sec = _parse_retry_after_sec(response.headers.get("Retry-After"))
+        if retry_after_sec is not None:
+            failure_detail["retry_after_sec"] = retry_after_sec
         raise OpenAICompatProviderRateLimitedError(
             failure_kind="PROVIDER_RATE_LIMITED",
             message="Provider rejected the request with rate limiting.",

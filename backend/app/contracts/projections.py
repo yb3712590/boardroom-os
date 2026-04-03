@@ -276,6 +276,7 @@ class DependencyInspectorProjectionEnvelope(ProjectionEnvelopeBase):
 class RuntimeProviderProjectionData(StrictModel):
     mode: str
     effective_mode: str
+    provider_health_summary: str
     provider_id: str
     base_url: str | None = None
     model: str | None = None

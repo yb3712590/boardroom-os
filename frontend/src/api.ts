@@ -322,6 +322,7 @@ export type DependencyInspectorData = {
 export type RuntimeProviderData = {
   mode: string
   effective_mode: string
+  provider_health_summary: string
   provider_id: string
   base_url: string | null
   model: string | null

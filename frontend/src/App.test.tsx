@@ -461,6 +461,7 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
   return {
     mode: 'DETERMINISTIC',
     effective_mode: 'LOCAL_DETERMINISTIC',
+    provider_health_summary: 'LOCAL_ONLY',
     provider_id: 'prov_openai_compat',
     base_url: null,
     model: null,
@@ -498,14 +499,14 @@ function dashboardData(overrides: Partial<JsonRecord> = {}) {
       blocked_nodes: 1,
       open_incidents: 0,
       open_circuit_breakers: 0,
-      provider_health_summary: 'UNKNOWN',
+      provider_health_summary: 'LOCAL_ONLY',
     },
     runtime_status: {
       effective_mode: 'LOCAL_DETERMINISTIC',
       provider_label: 'Local Deterministic',
       model: null,
       configured_worker_count: 1,
-      provider_health_summary: 'UNKNOWN',
+      provider_health_summary: 'LOCAL_ONLY',
       reason: 'Runtime is using the local deterministic path.',
     },
     pipeline_summary: {
@@ -831,6 +832,7 @@ function installBoardroomMock(options?: {
       state.runtimeProvider = runtimeProviderData({
         mode,
         effective_mode: mode === 'OPENAI_COMPAT' ? 'OPENAI_COMPAT_LIVE' : 'LOCAL_DETERMINISTIC',
+        provider_health_summary: mode === 'OPENAI_COMPAT' ? 'HEALTHY' : 'LOCAL_ONLY',
         base_url: baseUrl,
         model,
         timeout_sec: timeoutSec,
@@ -854,7 +856,7 @@ function installBoardroomMock(options?: {
           configured_worker_count: Number(state.runtimeProvider.configured_worker_count),
           provider_health_summary: String(
             (state.dashboard as { ops_strip?: { provider_health_summary?: string } }).ops_strip
-              ?.provider_health_summary ?? 'UNKNOWN',
+              ?.provider_health_summary ?? 'LOCAL_ONLY',
           ),
           reason: String(state.runtimeProvider.effective_reason),
         },

@@ -3655,6 +3655,7 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
 
         assert projection_data["mode"] == "OPENAI_COMPAT"
         assert projection_data["effective_mode"] == "OPENAI_COMPAT_LIVE"
+        assert projection_data["provider_health_summary"] == "HEALTHY"
         assert projection_data["provider_id"] == "prov_openai_compat"
         assert projection_data["base_url"] == "https://api.example.test/v1"
         assert projection_data["model"] == "gpt-5.3-codex"
@@ -3665,6 +3666,7 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert "secret" not in projection_data["api_key_masked"]
         assert projection_data["configured_worker_count"] >= 1
         assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
+        assert dashboard_data["runtime_status"]["provider_health_summary"] == "HEALTHY"
         assert dashboard_data["runtime_status"]["provider_label"] == "OpenAI Compat"
         assert dashboard_data["runtime_status"]["model"] == "gpt-5.3-codex"
         assert dashboard_data["runtime_status"]["configured_worker_count"] >= 1
@@ -3688,9 +3690,11 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert switch_response.json()["status"] == "ACCEPTED"
         assert switched_projection.json()["data"]["mode"] == "DETERMINISTIC"
         assert switched_projection.json()["data"]["effective_mode"] == "LOCAL_DETERMINISTIC"
+        assert switched_projection.json()["data"]["provider_health_summary"] == "LOCAL_ONLY"
         assert switched_dashboard.json()["data"]["runtime_status"]["effective_mode"] == (
             "LOCAL_DETERMINISTIC"
         )
+        assert switched_dashboard.json()["data"]["runtime_status"]["provider_health_summary"] == "LOCAL_ONLY"
 
 
 def test_dashboard_runtime_status_shows_provider_paused_when_provider_incident_is_open(
@@ -3738,8 +3742,9 @@ def test_dashboard_runtime_status_shows_provider_paused_when_provider_incident_i
         assert dashboard_response.json()["data"]["runtime_status"]["effective_mode"] == (
             "OPENAI_COMPAT_PAUSED"
         )
-        assert dashboard_response.json()["data"]["runtime_status"]["provider_health_summary"] == "DEGRADED"
+        assert dashboard_response.json()["data"]["runtime_status"]["provider_health_summary"] == "PAUSED"
         assert provider_response.json()["data"]["effective_mode"] == "OPENAI_COMPAT_PAUSED"
+        assert provider_response.json()["data"]["provider_health_summary"] == "PAUSED"
 
 
 def test_dashboard_pipeline_summary_shows_review_stage_after_project_init_auto_advance(client):
@@ -8284,7 +8289,7 @@ def test_provider_failure_opens_provider_incident_blocks_same_provider_and_updat
     assert leased_tickets[0]["lease_owner"] == "emp_frontend_backup"
     assert len(pending_tickets) == 1
     assert pending_tickets[0]["lease_owner"] is None
-    assert dashboard_response.json()["data"]["ops_strip"]["provider_health_summary"] == "DEGRADED"
+    assert dashboard_response.json()["data"]["ops_strip"]["provider_health_summary"] == "PAUSED"
     assert dashboard_response.json()["data"]["inbox_counts"]["provider_alerts"] == 1
     incident_items = [
         item for item in inbox_response.json()["data"]["items"] if item["item_type"] == "PROVIDER_INCIDENT"

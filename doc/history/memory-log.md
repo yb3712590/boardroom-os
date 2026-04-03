@@ -95,6 +95,11 @@
 - Re-aligned `README.md`, `doc/README.md`, `doc/TODO.md`, and `doc/backend-runtime-guide.md` around that truth source rather than the older mixed mainline-plus-frozen narrative.
 - Follow-up doc closure marked `P0-A` as done in `doc/TODO.md`, added explicit mainline-relation notes to the active TODO sections, and recorded one still-open decision: whether `frontend_engineer` should stay an owner-role alias or become a real runtime worker.
 - Updated `doc/task-backlog.md` to reflect current code truth: `P0-WRK-001 / 002 / 004 / 005` are already complete, while `P0-WRK-003` remains open because the repo still routes that work through `ui_designer_primary`.
+- OpenAI Compat live execution now retries `timeout / 429 / 5xx` with fixed backoff and `Retry-After` support, while `401/403 / bad response / schema mismatch` stop live execution immediately.
+- Pause-worthy provider failures now keep using the existing provider incident + breaker loop, but the current ticket no longer dies with them; runtime falls back to deterministic completion and carries the fallback evidence forward.
+- Dashboard and runtime-provider read models now use stable provider health labels: `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`; paused and incomplete reasons explicitly state that runtime is falling back to deterministic.
+- Already leased OpenAI Compat tickets can now continue through local fallback even when the provider is already paused, instead of getting stranded before execution.
+- Backend verification for this round finished at `365 passed`; frontend code was updated to match the new runtime-provider contract, but this machine still does not have Node.js / npm, so frontend build and test were not rerun here.
 
 ### 2026-04-02 (docs compaction)
 

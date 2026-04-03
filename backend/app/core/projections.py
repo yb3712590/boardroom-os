@@ -112,6 +112,7 @@ from app.core.runtime_provider_config import (
     mask_api_key,
     resolve_runtime_provider_config,
     runtime_provider_effective_mode,
+    runtime_provider_health_summary,
 )
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -210,9 +211,11 @@ def _build_runtime_provider_projection_data(
 ) -> RuntimeProviderProjectionData:
     config = resolve_runtime_provider_config(runtime_provider_store)
     effective_mode, effective_reason = runtime_provider_effective_mode(config, repository)
+    health_summary = runtime_provider_health_summary(config, repository)
     return RuntimeProviderProjectionData(
         mode=config.mode,
         effective_mode=effective_mode,
+        provider_health_summary=health_summary,
         provider_id=config.provider_id,
         base_url=config.base_url,
         model=config.model,
@@ -1124,6 +1127,9 @@ def build_dashboard_projection(
         for event in repository.get_recent_event_previews()
     ]
     runtime_provider = _build_runtime_provider_projection_data(repository, runtime_provider_store)
+    provider_health_summary = (
+        "PAUSED" if open_provider_incidents > 0 else runtime_provider.provider_health_summary
+    )
     completion_summary = (
         _build_dashboard_completion_summary(repository, active_workflow["workflow_id"])
         if active_workflow is not None
@@ -1150,7 +1156,7 @@ def build_dashboard_projection(
                 blocked_nodes=blocked_nodes,
                 open_incidents=open_incidents,
                 open_circuit_breakers=open_circuit_breakers,
-                provider_health_summary="DEGRADED" if open_provider_incidents > 0 else "UNKNOWN",
+                provider_health_summary=provider_health_summary,
             ),
             runtime_status=DashboardRuntimeStatusProjection(
                 effective_mode=runtime_provider.effective_mode,
@@ -1161,7 +1167,7 @@ def build_dashboard_projection(
                 ),
                 model=runtime_provider.model,
                 configured_worker_count=runtime_provider.configured_worker_count,
-                provider_health_summary="DEGRADED" if open_provider_incidents > 0 else "UNKNOWN",
+                provider_health_summary=provider_health_summary,
                 reason=runtime_provider.effective_reason,
             ),
             pipeline_summary=PipelineSummaryProjection(

@@ -16,9 +16,9 @@
 
 ## 当前基线（2026-04-03 实测）
 
-- backend：`pytest tests -q` → 363 passed
-- frontend：`npm run build` → 成功
-- frontend：`npm run test:run` → 20 passed
+- backend：`py -m pytest tests -q` → 365 passed
+- frontend：`npm run build` → 本轮未复核（当前环境缺少 Node.js / npm）
+- frontend：`npm run test:run` → 本轮未复核（当前环境缺少 Node.js / npm）
 
 ---
 
@@ -68,21 +68,33 @@
 
 > 结果：现有 `project-init → scope → build → check → review → closeout` 这条链，在配置 Provider 后能真实跑模型，而不是只靠确定性结果。
 
-- [ ] 先把当前已接好的 OpenAI Compat 路径补成稳定能力：超时、限流、认证失败、坏响应都要有清晰分类和回退
+- [x] 先把当前已接好的 OpenAI Compat 路径补成稳定能力：超时、限流、认证失败、坏响应都要有清晰分类和回退
 - [ ] 把真实执行覆盖扩到主链需要的 5 类输出：`consensus_document`、`implementation_bundle`、`delivery_check_report`、`ui_milestone_review`、`delivery_closeout_package`，以及对应的 `maker_checker_verdict`
-- [ ] 统一 live path 和 deterministic path 的结果校验、审计产物、incident 记录方式
-- [ ] 给 Dashboard / Incident / Review 读面补足 provider 健康和回退信号
+- [x] 统一 live path 和 deterministic path 的结果校验、审计产物、incident 记录方式
+- [x] 给 Dashboard / Incident / Review 读面补足 provider 健康和回退信号
 - [ ] 用 mock provider 补完整端到端测试，覆盖 build / check / review / closeout 四段
 
 验收门槛：配好 Provider 后，一条完整 workflow 能在真实模型输出下跑到 closeout；Provider 出错时不会把工作流打坏，能自动降回确定性路径并留下证据。
 
 对应任务库：`P0-WRK-001` 到 `P0-WRK-012`。
 
+本轮产物：
+
+- OpenAI Compat live path 现在会对 `timeout / 429 / 5xx` 做固定重试，对 `401/403 / 坏响应 / schema 不符` 直接归类为非重试错误
+- pause-worthy 的 provider 故障会继续打开现有 provider incident + breaker，但当前票会立即回落到 deterministic，不再把 workflow 卡死在 live path
+- Dashboard / runtime provider 读面现在统一使用 `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`，paused / incomplete 文案会明确说明当前会回落到 deterministic
+- 已 lease 的 OpenAI Compat 票在 provider 已 paused 时可以继续走本地 fallback 完成，不再只停在 `LEASED`
+- 后端补了 provider 重试、pause、fallback、健康读面的最小测试；前端 mock / 类型也已对齐新契约
+
 本轮新发现：
 
 - [ ] 明确 `frontend_engineer` 是继续保留为 owner role 别名，还是正式拆成独立 runtime worker；在结论落地前，不再把它写成“已经存在的独立 Worker”
 
 主线关系：**直接影响 BUILD / REVIEW / closeout 三段后续由谁真实执行**，也决定 `P0-WRK-003` 应该是补角色还是继续补稳定性。
+
+- [ ] 当前开发环境缺少 Node.js / npm，前端 `build` 与 `test:run` 还需要在可用环境里补一次真实复核
+
+主线关系：**只服务验证闭环**，不改变主链能力，但影响这条主线的前端交付是否完成最终验收。
 
 ### P0-C：让 CEO 先进入影子模式
 

@@ -549,6 +549,8 @@
 
 #### P0-WRK-007：Provider 错误处理与重试
 
+**状态**：已完成（2026-04-03，本轮按主线收口）
+
 **描述**：增强 LLM 调用的错误处理，包括超时重试、速率限制退避、认证失败处理。
 
 **文件**：
@@ -570,9 +572,16 @@
 
 **风险**：低
 
+**完成补记**：
+- 现已在 `provider_openai_compat.py + runtime.py` 中落地固定分类与重试；`429` 会读取 `Retry-After`
+- `401/403 / PROVIDER_BAD_RESPONSE` 不再重试，而是进入当前票的 deterministic fallback 证据链
+- pause-worthy 失败会在重试耗尽后继续触发现有 provider incident / breaker
+
 ---
 
 #### P0-WRK-008：Provider 健康监控
+
+**状态**：已完成（2026-04-03，本轮按主线收口）
 
 **描述**：追踪 Provider 请求成功率，在健康度下降时自动降级。
 
@@ -593,6 +602,11 @@
 - 健康状态在 dashboard 投影中可见
 
 **风险**：低
+
+**完成补记**：
+- 这轮没有新建独立 `provider_health.py`，而是先按主线最小收口，把健康信号统一落进现有投影与 incident 闭环
+- `dashboard / runtime-provider / incident` 现在稳定区分 `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`
+- provider pause 仍然沿用现有 incident + breaker 机制，不额外引入新的健康存储层
 
 ---
 
@@ -621,6 +635,8 @@
 
 #### P0-WRK-010：确定性路径保留
 
+**状态**：已完成（2026-04-03，本轮按主线收口）
+
 **描述**：确保确定性执行路径在 LLM 模式下仍然可用作回退。
 
 **文件**：
@@ -637,9 +653,16 @@
 
 **风险**：低
 
+**完成补记**：
+- live provider 在 `429 / timeout / transport / 5xx` 重试耗尽后，会开现有 provider incident，然后当前票立即走 deterministic fallback
+- `401/403 / PROVIDER_BAD_RESPONSE` 不会暂停 provider，但当前票同样会回退到 deterministic 并留下结构化证据
+- 已 lease 的 OpenAI Compat 票在 provider 已 paused 时也能继续走本地 fallback 完成
+
 ---
 
 #### P0-WRK-011：Worker 执行单元测试
+
+**状态**：已完成（2026-04-03，本轮按主线收口）
 
 **描述**：为 Worker 执行管道编写单元测试。
 
@@ -656,6 +679,10 @@
 - 使用 mock LLM 响应
 
 **风险**：低
+
+**完成补记**：
+- 本轮测试没有新建 `test_worker_execution.py`，而是把最小必要覆盖补进现有 `test_provider_openai_compat.py`、`test_scheduler_runner.py`、`test_api.py`
+- 已覆盖 `Retry-After`、provider 重试成功、paused fallback、auth/bad-response fallback、dashboard/runtime-provider 健康信号
 
 ---
 

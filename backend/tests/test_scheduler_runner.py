@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import importlib
 from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
 
 import app.core.runtime as runtime_module
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
     OpenAICompatProviderRateLimitedError,
     OpenAICompatProviderResult,
+    OpenAICompatProviderUnavailableError,
 )
 from app.scheduler_runner import run_scheduler_loop, run_scheduler_once
 
@@ -841,7 +844,11 @@ def test_scheduler_runner_execution_events_are_visible_in_stream(client, set_tic
     assert "TICKET_COMPLETED" in body
 
 
-def test_runtime_skips_later_leased_tickets_after_provider_pause_opens(client, set_ticket_time, monkeypatch):
+def test_runtime_continues_later_leased_tickets_when_provider_pause_opens_outside_live_mode(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_backup", provider_id="prov_openai_compat")
@@ -909,7 +916,10 @@ def test_runtime_skips_later_leased_tickets_after_provider_pause_opens(client, s
     first_ticket = repository.get_current_ticket_projection("tkt_runner_provider_pause_1")
     second_ticket = repository.get_current_ticket_projection("tkt_runner_provider_pause_2")
 
-    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_pause_1"]
+    assert [outcome.ticket_id for outcome in outcomes] == [
+        "tkt_runner_provider_pause_1",
+        "tkt_runner_provider_pause_2",
+    ]
     assert executed_ticket_ids == ["tkt_runner_provider_pause_1"]
     assert first_ticket["status"] == "FAILED"
     assert second_ticket["status"] == "LEASED"
@@ -986,10 +996,10 @@ def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
     client,
     set_ticket_time,
     monkeypatch,
-    tmp_path,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    config_path = tmp_path / "runtime-provider-config.json"
+    config_path = Path.cwd() / ".tmp" / f"runtime-provider-config-{uuid4().hex}.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         json.dumps(
             {
@@ -1223,7 +1233,7 @@ def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, s
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_auth")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_auth"]
-    assert ticket_projection["status"] == "FAILED"
+    assert ticket_projection["status"] == "COMPLETED"
     assert repository.list_open_incidents() == []
 
 
@@ -1269,7 +1279,7 @@ def test_runtime_provider_bad_response_does_not_open_provider_incident(client, s
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_bad_response")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_bad_response"]
-    assert ticket_projection["status"] == "FAILED"
+    assert ticket_projection["status"] == "COMPLETED"
     assert repository.list_open_incidents() == []
 
 
@@ -1319,7 +1329,179 @@ def test_runtime_provider_rate_limited_response_opens_provider_incident(client, 
     open_incidents = repository.list_open_incidents()
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_live_rate_limit"]
-    assert ticket_projection["status"] == "FAILED"
+    assert ticket_projection["status"] == "COMPLETED"
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["provider_id"] == "prov_openai_compat"
+
+
+def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_retry", provider_id="prov_openai_compat")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_retry",
+            ticket_id="tkt_runner_provider_retry",
+            node_id="node_runner_provider_retry",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_retry",
+            "ticket_id": "tkt_runner_provider_retry",
+            "node_id": "node_runner_provider_retry",
+            "leased_by": "emp_frontend_retry",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_retry:tkt_runner_provider_retry",
+        },
+    )
+
+    attempt_count = {"value": 0}
+    sleep_calls: list[float] = []
+
+    def _invoke_retry_then_success(config, rendered_payload):
+        attempt_count["value"] += 1
+        if attempt_count["value"] < 3:
+            raise OpenAICompatProviderUnavailableError(
+                failure_kind="UPSTREAM_UNAVAILABLE",
+                message="Provider returned 503.",
+                failure_detail={
+                    "provider_id": "prov_openai_compat",
+                    "provider_status_code": 503,
+                },
+            )
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Provider succeeded after retries.",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Recovered provider option.",
+                            "artifact_refs": [],
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_retry_success",
+        )
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _invoke_retry_then_success)
+    monkeypatch.setattr(runtime_module, "_sleep", sleep_calls.append)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_retry")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_retry"]
+    assert ticket_projection["status"] == "COMPLETED"
+    assert attempt_count["value"] == 3
+    assert sleep_calls == [1.0, 2.0]
+    assert repository.list_open_incidents() == []
+
+
+def test_runtime_provider_paused_ticket_falls_back_to_deterministic_completion(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_paused", provider_id="prov_openai_compat")
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_paused_fallback",
+            ticket_id="tkt_runner_provider_paused_fallback",
+            node_id="node_runner_provider_paused_fallback",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_paused_fallback",
+            "ticket_id": "tkt_runner_provider_paused_fallback",
+            "node_id": "node_runner_provider_paused_fallback",
+            "leased_by": "emp_frontend_paused",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_paused_fallback:tkt_runner_provider_paused_fallback",
+        },
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_pause_seed",
+            ticket_id="tkt_runner_provider_pause_seed",
+            node_id="node_runner_provider_pause_seed",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_pause_seed",
+            "ticket_id": "tkt_runner_provider_pause_seed",
+            "node_id": "node_runner_provider_pause_seed",
+            "leased_by": "emp_frontend_paused",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_pause_seed:tkt_runner_provider_pause_seed",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": "wf_runner_provider_pause_seed",
+            "ticket_id": "tkt_runner_provider_pause_seed",
+            "node_id": "node_runner_provider_pause_seed",
+            "started_by": "emp_frontend_paused",
+            "idempotency_key": "ticket-start:wf_runner_provider_pause_seed:tkt_runner_provider_pause_seed",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json={
+            "workflow_id": "wf_runner_provider_pause_seed",
+            "ticket_id": "tkt_runner_provider_pause_seed",
+            "node_id": "node_runner_provider_pause_seed",
+            "failed_by": "emp_frontend_paused",
+            "failure_kind": "PROVIDER_RATE_LIMITED",
+            "failure_message": "Provider quota exhausted.",
+            "failure_detail": {
+                "provider_id": "prov_openai_compat",
+                "provider_status_code": 429,
+            },
+            "idempotency_key": "ticket-fail:wf_runner_provider_pause_seed:tkt_runner_provider_pause_seed",
+        },
+    )
+
+    called_live_path = {"value": 0}
+    monkeypatch.setattr(
+        runtime_module,
+        "invoke_openai_compat_response",
+        lambda config, rendered_payload: called_live_path.__setitem__("value", called_live_path["value"] + 1),
+    )
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_paused_fallback")
+    open_incidents = repository.list_open_incidents()
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_paused_fallback"]
+    assert ticket_projection["status"] == "COMPLETED"
+    assert called_live_path["value"] == 0
     assert len(open_incidents) == 1
     assert open_incidents[0]["provider_id"] == "prov_openai_compat"
 

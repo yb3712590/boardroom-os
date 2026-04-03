@@ -94,6 +94,10 @@ export function ProviderSettingsDrawer({
                     <p>{providerData?.effective_mode ?? 'Unknown'}</p>
                   </div>
                   <div>
+                    <span className="eyebrow">Health</span>
+                    <p>{providerData?.provider_health_summary ?? 'Unknown'}</p>
+                  </div>
+                  <div>
                     <span className="eyebrow">Saved key</span>
                     <p>{providerData?.api_key_masked ?? 'No key saved'}</p>
                   </div>
@@ -102,6 +106,7 @@ export function ProviderSettingsDrawer({
                     <p>{providerData?.configured_worker_count ?? 0}</p>
                   </div>
                 </section>
+                <p className="muted-copy">{providerData?.effective_reason ?? 'Runtime provider state is not available.'}</p>
 
                 <section className="review-room-action-panel provider-settings-panel">
                   <label>

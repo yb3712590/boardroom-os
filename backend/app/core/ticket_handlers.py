@@ -112,6 +112,7 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
     validate_output_payload,
 )
+from app.core.runtime_provider_config import OPENAI_COMPAT_PROVIDER_ID, resolve_runtime_provider_config
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -1318,6 +1319,13 @@ def _is_provider_paused(
     if provider_id is None:
         return False
     return repository.has_open_circuit_breaker_for_provider(provider_id, connection=connection)
+
+
+def _allow_paused_provider_start(provider_id: str | None) -> bool:
+    if provider_id != OPENAI_COMPAT_PROVIDER_ID:
+        return False
+    config = resolve_runtime_provider_config()
+    return getattr(config.mode, "value", config.mode) == "OPENAI_COMPAT"
 
 
 def _resolve_timeout_root_created_spec(
@@ -3242,7 +3250,9 @@ def handle_ticket_start(
             ticket=current_ticket,
             lease_owner=lease_owner,
         )
-        if _is_provider_paused(repository, connection, provider_id):
+        if _is_provider_paused(repository, connection, provider_id) and not _allow_paused_provider_start(
+            provider_id
+        ):
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,

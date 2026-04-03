@@ -109,19 +109,39 @@ def runtime_provider_effective_mode(
     if not all((config.base_url, config.api_key, config.model)):
         return (
             "OPENAI_COMPAT_INCOMPLETE",
-            "OpenAI-compatible provider mode is selected but configuration is incomplete.",
+            (
+                "OpenAI-compatible provider mode is selected but configuration is incomplete, "
+                "so runtime falls back to the local deterministic path."
+            ),
         )
     open_incidents = repository.list_open_provider_incidents()
     if open_incidents:
         pause_reason = str((open_incidents[0].get("payload") or {}).get("pause_reason") or "provider pause")
         return (
             "OPENAI_COMPAT_PAUSED",
-            f"OpenAI-compatible provider execution is paused because of {pause_reason}.",
+            (
+                f"OpenAI-compatible provider execution is paused because of {pause_reason}, "
+                "so runtime falls back to the local deterministic path."
+            ),
         )
     return (
         "OPENAI_COMPAT_LIVE",
         "Runtime is using the saved OpenAI-compatible provider config.",
     )
+
+
+def runtime_provider_health_summary(
+    config: RuntimeProviderResolvedConfig,
+    repository: ControlPlaneRepository,
+) -> str:
+    effective_mode, _ = runtime_provider_effective_mode(config, repository)
+    if effective_mode == "LOCAL_DETERMINISTIC":
+        return "LOCAL_ONLY"
+    if effective_mode == "OPENAI_COMPAT_INCOMPLETE":
+        return "INCOMPLETE"
+    if effective_mode == "OPENAI_COMPAT_PAUSED":
+        return "PAUSED"
+    return "HEALTHY"
 
 
 def mask_api_key(api_key: str | None) -> str | None:

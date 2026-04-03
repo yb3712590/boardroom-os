@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -13,6 +14,7 @@ from app.contracts.commands import (
     DeliveryStage,
     DeveloperInspectorRefs,
     TicketBoardReviewRequest,
+    TicketReviewEvidence,
     TicketResultStatus,
     TicketResultSubmitCommand,
     TicketWrittenArtifact,
@@ -23,7 +25,9 @@ from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     compile_and_persist_execution_artifacts,
 )
+from app.core.constants import PROVIDER_PAUSE_FAILURE_KINDS
 from app.core.developer_inspector import DeveloperInspectorStore
+from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -42,6 +46,7 @@ from app.core.provider_openai_compat import (
 )
 from app.core.runtime_provider_config import resolve_runtime_provider_config
 from app.core.ticket_handlers import (
+    _open_provider_incident,
     handle_ticket_result_submit,
     handle_ticket_start,
 )
@@ -82,6 +87,10 @@ SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
 }
 SUPPORTED_RUNTIME_ROLE_PROFILES = {"ui_designer_primary", "checker_primary"}
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
+PROVIDER_MAX_ATTEMPTS = 3
+PROVIDER_RETRY_BACKOFF_BASE_SEC = 1.0
+PROVIDER_RETRY_BACKOFF_MAX_SEC = 8.0
+_sleep = time.sleep
 
 
 def _runtime_sort_key(ticket: dict[str, Any]) -> tuple:
@@ -387,6 +396,10 @@ def _build_runtime_review_request(
             )
         )
 
+    fallback_evidence = _build_provider_fallback_evidence(execution_result)
+    if fallback_evidence is not None:
+        updated_evidence.append(fallback_evidence)
+
     return review_request.model_copy(
         update={
             "options": updated_options,
@@ -456,80 +469,264 @@ def _build_openai_compat_provider_config() -> OpenAICompatProviderConfig:
     )
 
 
+def _provider_failure_is_retryable(failure_kind: str) -> bool:
+    return failure_kind in PROVIDER_PAUSE_FAILURE_KINDS
+
+
+def _provider_retry_delay_sec(failure_kind: str, failure_detail: dict[str, Any], attempt_no: int) -> float:
+    if failure_kind == "PROVIDER_RATE_LIMITED":
+        retry_after_sec = failure_detail.get("retry_after_sec")
+        if isinstance(retry_after_sec, (int, float)) and retry_after_sec >= 0:
+            return float(retry_after_sec)
+    return min(PROVIDER_RETRY_BACKOFF_BASE_SEC * (2 ** max(attempt_no - 1, 0)), PROVIDER_RETRY_BACKOFF_MAX_SEC)
+
+
+def _normalize_provider_failure_detail(
+    failure_detail: dict[str, Any] | None,
+    *,
+    attempt_count: int,
+    fallback_applied: bool,
+    fallback_mode: str | None = None,
+    fallback_reason: str | None = None,
+    incident_id: str | None = None,
+) -> dict[str, Any]:
+    normalized = dict(failure_detail or {})
+    normalized.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
+    normalized["attempt_count"] = attempt_count
+    normalized["fallback_applied"] = fallback_applied
+    if fallback_mode is not None:
+        normalized["fallback_mode"] = fallback_mode
+    if fallback_reason is not None:
+        normalized["fallback_reason"] = fallback_reason
+    if incident_id is not None:
+        normalized["incident_id"] = incident_id
+    return normalized
+
+
+def _build_provider_fallback_evidence(execution_result: RuntimeExecutionResult) -> TicketReviewEvidence | None:
+    failure_detail = execution_result.failure_detail or {}
+    if failure_detail.get("fallback_mode") != "LOCAL_DETERMINISTIC":
+        return None
+    provider_id = str(failure_detail.get("provider_id") or OPENAI_COMPAT_PROVIDER_ID)
+    failure_kind = str(failure_detail.get("provider_failure_kind") or "PROVIDER_FAILURE")
+    incident_id = failure_detail.get("incident_id")
+    return TicketReviewEvidence(
+        evidence_id="provider_fallback",
+        source_type="RUNTIME_FALLBACK",
+        headline=f"Provider fallback on {provider_id}",
+        summary=f"OpenAI Compat hit {failure_kind} and this result fell back to the local deterministic path.",
+        source_ref=(f"incident:{incident_id}" if incident_id is not None else provider_id),
+    )
+
+
 def _execute_openai_compat_provider(
     execution_package: CompiledExecutionPackage,
+    *,
+    sleep_fn=None,
 ) -> RuntimeExecutionResult:
+    if sleep_fn is None:
+        sleep_fn = _sleep
     config = _build_openai_compat_provider_config()
-    try:
-        provider_result = invoke_openai_compat_response(
-            config,
-            execution_package.rendered_execution_payload,
-        )
-        result_payload = _load_provider_payload(provider_result.output_text)
-        validate_output_payload(
-            schema_ref=execution_package.execution.output_schema_ref,
-            schema_version=execution_package.execution.output_schema_version,
-            submitted_schema_version=_schema_version_for_execution_package(execution_package),
-            payload=result_payload,
-        )
-    except (
-        OpenAICompatProviderRateLimitedError,
-        OpenAICompatProviderUnavailableError,
-        OpenAICompatProviderAuthError,
-        OpenAICompatProviderBadResponseError,
-        ValueError,
-    ) as exc:
-        failure_kind = (
-            exc.failure_kind
-            if isinstance(
-                exc,
-                (
-                    OpenAICompatProviderRateLimitedError,
-                    OpenAICompatProviderUnavailableError,
-                    OpenAICompatProviderAuthError,
-                    OpenAICompatProviderBadResponseError,
-                ),
-            )
-            else "PROVIDER_BAD_RESPONSE"
-        )
-        failure_detail = (
-            dict(exc.failure_detail)
-            if isinstance(
-                exc,
-                (
-                    OpenAICompatProviderRateLimitedError,
-                    OpenAICompatProviderUnavailableError,
-                    OpenAICompatProviderAuthError,
-                    OpenAICompatProviderBadResponseError,
-                ),
-            )
-            else {}
-        )
-        failure_detail.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
-        return RuntimeExecutionResult(
-            result_status="failed",
-            failure_kind=failure_kind,
-            failure_message=str(exc),
-            failure_detail=failure_detail,
-        )
+    last_failure_kind = "PROVIDER_BAD_RESPONSE"
+    last_failure_message = "Provider execution failed."
+    last_failure_detail: dict[str, Any] = {"provider_id": OPENAI_COMPAT_PROVIDER_ID}
 
+    for attempt_no in range(1, PROVIDER_MAX_ATTEMPTS + 1):
+        try:
+            provider_result = invoke_openai_compat_response(
+                config,
+                execution_package.rendered_execution_payload,
+            )
+            result_payload = _load_provider_payload(provider_result.output_text)
+            validate_output_payload(
+                schema_ref=execution_package.execution.output_schema_ref,
+                schema_version=execution_package.execution.output_schema_version,
+                submitted_schema_version=_schema_version_for_execution_package(execution_package),
+                payload=result_payload,
+            )
+            return RuntimeExecutionResult(
+                result_status="completed",
+                completion_summary=(
+                    f"Provider-backed runtime executed ticket {execution_package.meta.ticket_id} via "
+                    f"{execution_package.meta.compiler_version}."
+                ),
+                artifact_refs=[],
+                result_payload=result_payload,
+                written_artifacts=[],
+                assumptions=[
+                    f"compiler_version={execution_package.meta.compiler_version}",
+                    f"compile_request_id={execution_package.meta.compile_request_id}",
+                    f"provider_id={OPENAI_COMPAT_PROVIDER_ID}",
+                    f"provider_response_id={provider_result.response_id or 'unknown'}",
+                    f"provider_attempt_count={attempt_no}",
+                ],
+                issues=[],
+                confidence=0.82,
+            )
+        except (
+            OpenAICompatProviderRateLimitedError,
+            OpenAICompatProviderUnavailableError,
+            OpenAICompatProviderAuthError,
+            OpenAICompatProviderBadResponseError,
+            ValueError,
+        ) as exc:
+            failure_kind = (
+                exc.failure_kind
+                if isinstance(
+                    exc,
+                    (
+                        OpenAICompatProviderRateLimitedError,
+                        OpenAICompatProviderUnavailableError,
+                        OpenAICompatProviderAuthError,
+                        OpenAICompatProviderBadResponseError,
+                    ),
+                )
+                else "PROVIDER_BAD_RESPONSE"
+            )
+            failure_detail = (
+                dict(exc.failure_detail)
+                if isinstance(
+                    exc,
+                    (
+                        OpenAICompatProviderRateLimitedError,
+                        OpenAICompatProviderUnavailableError,
+                        OpenAICompatProviderAuthError,
+                        OpenAICompatProviderBadResponseError,
+                    ),
+                )
+                else {}
+            )
+            last_failure_kind = failure_kind
+            last_failure_message = str(exc)
+            last_failure_detail = _normalize_provider_failure_detail(
+                failure_detail,
+                attempt_count=attempt_no,
+                fallback_applied=False,
+            )
+            if _provider_failure_is_retryable(failure_kind) and attempt_no < PROVIDER_MAX_ATTEMPTS:
+                sleep_fn(_provider_retry_delay_sec(failure_kind, last_failure_detail, attempt_no))
+                continue
+            return RuntimeExecutionResult(
+                result_status="failed",
+                failure_kind=last_failure_kind,
+                failure_message=last_failure_message,
+                failure_detail=last_failure_detail,
+            )
+
+    return RuntimeExecutionResult(
+        result_status="failed",
+        failure_kind=last_failure_kind,
+        failure_message=last_failure_message,
+        failure_detail=last_failure_detail,
+    )
+
+
+def _build_provider_fallback_execution_result(
+    execution_package: CompiledExecutionPackage,
+    provider_failure: RuntimeExecutionResult,
+    *,
+    fallback_reason: str,
+    incident_id: str | None = None,
+) -> RuntimeExecutionResult:
+    deterministic_result = _execute_compiled_execution_package(execution_package)
+    if deterministic_result.result_status != "completed":
+        return deterministic_result
+
+    failure_detail = _normalize_provider_failure_detail(
+        provider_failure.failure_detail,
+        attempt_count=int((provider_failure.failure_detail or {}).get("attempt_count") or 0),
+        fallback_applied=True,
+        fallback_mode="LOCAL_DETERMINISTIC",
+        fallback_reason=fallback_reason,
+        incident_id=incident_id,
+    )
+    failure_detail["provider_failure_kind"] = provider_failure.failure_kind or "PROVIDER_FAILURE"
+    failure_detail["provider_failure_message"] = provider_failure.failure_message or fallback_reason
+
+    provider_id = str(failure_detail.get("provider_id") or OPENAI_COMPAT_PROVIDER_ID)
+    failure_kind = str(failure_detail["provider_failure_kind"])
+    fallback_issue = (
+        f"OpenAI Compat provider {provider_id} hit {failure_kind}; runtime fell back to the local "
+        "deterministic path for this result."
+    )
     return RuntimeExecutionResult(
         result_status="completed",
         completion_summary=(
-            f"Provider-backed runtime executed ticket {execution_package.meta.ticket_id} via "
-            f"{execution_package.meta.compiler_version}."
+            f"{deterministic_result.completion_summary} OpenAI Compat fallback was applied because {fallback_reason}."
         ),
-        artifact_refs=[],
-        result_payload=result_payload,
-        written_artifacts=[],
+        artifact_refs=list(deterministic_result.artifact_refs),
+        result_payload=dict(deterministic_result.result_payload),
+        written_artifacts=list(deterministic_result.written_artifacts),
         assumptions=[
-            f"compiler_version={execution_package.meta.compiler_version}",
-            f"compile_request_id={execution_package.meta.compile_request_id}",
-            f"provider_id={OPENAI_COMPAT_PROVIDER_ID}",
-            f"provider_response_id={provider_result.response_id or 'unknown'}",
+            *deterministic_result.assumptions,
+            "runtime_fallback=LOCAL_DETERMINISTIC",
+            f"runtime_fallback_reason={fallback_reason}",
+            f"provider_id={provider_id}",
+            f"provider_failure_kind={failure_kind}",
         ],
-        issues=[],
-        confidence=0.82,
+        issues=[fallback_issue, *deterministic_result.issues],
+        confidence=deterministic_result.confidence,
+        failure_detail=failure_detail,
+    )
+
+
+def _open_runtime_provider_incident(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    provider_failure: RuntimeExecutionResult,
+) -> str | None:
+    provider_id = str(
+        (provider_failure.failure_detail or {}).get("provider_id")
+        or _resolve_ticket_provider_id(repository, ticket)
+        or ""
+    )
+    if not provider_id:
+        return None
+    command_id = new_prefixed_id("cmd")
+    occurred_at = now_local()
+    with repository.transaction() as connection:
+        incident_id = _open_provider_incident(
+            repository=repository,
+            connection=connection,
+            command_id=command_id,
+            occurred_at=occurred_at,
+            workflow_id=str(ticket["workflow_id"]),
+            ticket_id=str(ticket["ticket_id"]),
+            node_id=str(ticket["node_id"]),
+            provider_id=provider_id,
+            failure_payload={
+                "failure_kind": provider_failure.failure_kind,
+                "failure_message": provider_failure.failure_message,
+                "failure_fingerprint": provider_failure.failure_kind,
+            },
+            idempotency_key_base=(
+                f"runtime-provider-fallback:{ticket['workflow_id']}:{ticket['ticket_id']}:"
+                f"{provider_failure.failure_kind or 'provider_failure'}"
+            ),
+        )
+        repository.refresh_projections(connection)
+    return incident_id
+
+
+def _build_preemptive_provider_fallback_result(
+    execution_package: CompiledExecutionPackage,
+    *,
+    failure_kind: str,
+    failure_message: str,
+    fallback_reason: str,
+) -> RuntimeExecutionResult:
+    return _build_provider_fallback_execution_result(
+        execution_package,
+        RuntimeExecutionResult(
+            result_status="failed",
+            failure_kind=failure_kind,
+            failure_message=failure_message,
+            failure_detail={
+                "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+                "attempt_count": 0,
+            },
+        ),
+        fallback_reason=fallback_reason,
     )
 
 
@@ -539,8 +736,41 @@ def _execute_runtime_with_provider_if_configured(
     execution_package: CompiledExecutionPackage,
 ) -> RuntimeExecutionResult:
     provider_id = _resolve_ticket_provider_id(repository, ticket)
-    if provider_id == OPENAI_COMPAT_PROVIDER_ID and _openai_compat_provider_is_configured():
-        return _execute_openai_compat_provider(execution_package)
+    runtime_config = resolve_runtime_provider_config()
+    runtime_mode = getattr(runtime_config.mode, "value", runtime_config.mode)
+    if provider_id == OPENAI_COMPAT_PROVIDER_ID and runtime_mode == "OPENAI_COMPAT":
+        if _is_provider_paused_for_ticket(repository, ticket):
+            return _build_preemptive_provider_fallback_result(
+                execution_package,
+                failure_kind="UPSTREAM_UNAVAILABLE",
+                failure_message="Provider execution is currently paused by an open incident.",
+                fallback_reason="provider execution is paused",
+            )
+        if not all((runtime_config.base_url, runtime_config.api_key, runtime_config.model)):
+            return _build_preemptive_provider_fallback_result(
+                execution_package,
+                failure_kind="PROVIDER_CONFIG_INCOMPLETE",
+                failure_message="Provider config is incomplete for OpenAI Compat execution.",
+                fallback_reason="provider configuration is incomplete",
+            )
+        provider_result = _execute_openai_compat_provider(execution_package)
+        if provider_result.result_status == "completed":
+            return provider_result
+        if provider_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
+            incident_id = _open_runtime_provider_incident(repository, ticket, provider_result)
+            return _build_provider_fallback_execution_result(
+                execution_package,
+                provider_result,
+                fallback_reason="provider execution is paused after retry exhaustion",
+                incident_id=incident_id,
+            )
+        if provider_result.failure_kind in {"PROVIDER_AUTH_FAILED", "PROVIDER_BAD_RESPONSE"}:
+            return _build_provider_fallback_execution_result(
+                execution_package,
+                provider_result,
+                fallback_reason="provider returned a non-retryable error",
+            )
+        return provider_result
     return _execute_compiled_execution_package(execution_package)
 
 
@@ -704,8 +934,6 @@ def run_leased_ticket_runtime(
     developer_inspector_store = DeveloperInspectorStore(get_settings().developer_inspector_root)
 
     for ticket in _list_runtime_startable_leased_tickets(repository):
-        if _is_provider_paused_for_ticket(repository, ticket):
-            continue
         lease_owner = str(ticket["lease_owner"])
         start_ack = handle_ticket_start(
             repository,
