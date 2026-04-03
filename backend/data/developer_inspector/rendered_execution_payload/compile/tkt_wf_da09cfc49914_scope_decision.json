@@ -1,0 +1,269 @@
+{
+  "messages": [
+    {
+      "block_id": null,
+      "channel": "SYSTEM_CONTROLS",
+      "content_payload": {
+        "allowed_write_set": [
+          "reports/meeting/*"
+        ],
+        "board_constraints": [],
+        "hard_rules": [],
+        "output_contract": {
+          "schema_body": {
+            "properties": {
+              "consensus_summary": {
+                "type": "string"
+              },
+              "followup_tickets": {
+                "items": {
+                  "properties": {
+                    "delivery_stage": {
+                      "enum": [
+                        "BUILD",
+                        "CHECK",
+                        "REVIEW",
+                        "CLOSEOUT"
+                      ],
+                      "type": "string"
+                    },
+                    "owner_role": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "ticket_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "ticket_id",
+                    "owner_role",
+                    "summary"
+                  ],
+                  "type": "object"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              "input_artifact_refs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "open_questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "participants": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              "rejected_options": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "topic": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "topic",
+              "participants",
+              "followup_tickets"
+            ],
+            "type": "object"
+          },
+          "schema_ref": "consensus_document",
+          "schema_version": 1
+        },
+        "role_profile": {
+          "aesthetic_profile": {
+            "preference": "minimal"
+          },
+          "employee_id": "emp_frontend_2",
+          "employee_role_type": "frontend_engineer",
+          "personality_profile": {
+            "style": "maker"
+          },
+          "role_profile_ref": "ui_designer_primary",
+          "skill_profile": {
+            "primary_domain": "frontend"
+          }
+        }
+      },
+      "content_type": "JSON",
+      "role": "system",
+      "source_ref": null
+    },
+    {
+      "block_id": null,
+      "channel": "TASK_DEFINITION",
+      "content_payload": {
+        "acceptance_criteria": [
+          "Must produce a consensus document",
+          "Must include follow-up tickets"
+        ],
+        "atomic_task": "Produce output that conforms to consensus_document for ticket tkt_wf_da09cfc49914_scope_decision.",
+        "budget_profile": "FAIL_CLOSED",
+        "risk_class": "medium",
+        "task_type": "EXECUTION"
+      },
+      "content_type": "JSON",
+      "role": "user",
+      "source_ref": null
+    },
+    {
+      "block_id": "ctxblk_bf11db416de0",
+      "channel": "CONTEXT_BLOCK",
+      "content_payload": {
+        "artifact_access": {
+          "artifact_ref": "art://project-init/wf_da09cfc49914/board-brief.md",
+          "content_hash": "b7f94b960fdd72c1bb03402362ffe5770e4bab1b2279b63389d2357fb471b85b",
+          "content_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fproject-init%2Fwf_da09cfc49914%2Fboard-brief.md&disposition=inline",
+          "display_hint": "INLINE_BODY",
+          "download_url": "/api/v1/artifacts/content?artifact_ref=art%3A%2F%2Fproject-init%2Fwf_da09cfc49914%2Fboard-brief.md&disposition=attachment",
+          "kind": "MARKDOWN",
+          "lifecycle_status": "ACTIVE",
+          "logical_path": "inputs/project-init/wf_da09cfc49914/board-brief.md",
+          "materialization_status": "MATERIALIZED",
+          "media_type": "text/markdown",
+          "preview_kind": "TEXT",
+          "preview_url": "/api/v1/artifacts/preview?artifact_ref=art%3A%2F%2Fproject-init%2Fwf_da09cfc49914%2Fboard-brief.md",
+          "size_bytes": 177
+        },
+        "artifact_ref": "art://project-init/wf_da09cfc49914/board-brief.md",
+        "content_mode": "INLINE_FULL",
+        "content_text": "# Board Brief for wf_da09cfc49914\n\n- North star goal: Provider-backed mainline completion\n- Budget cap: 500000\n- Deadline: None\n\n## Hard constraints\n- Keep governance explicit.\n",
+        "content_truncated": false,
+        "degradation_reason_code": null,
+        "display_hint": "INLINE_BODY",
+        "is_mandatory": true,
+        "preview_kind": "TEXT",
+        "priority_class": "P1",
+        "selector": {
+          "selector_type": "SOURCE_REF",
+          "selector_value": "art://project-init/wf_da09cfc49914/board-brief.md"
+        },
+        "source_kind": "ARTIFACT",
+        "source_ref": "art://project-init/wf_da09cfc49914/board-brief.md"
+      },
+      "content_type": "TEXT",
+      "role": "user",
+      "source_ref": "art://project-init/wf_da09cfc49914/board-brief.md"
+    },
+    {
+      "block_id": null,
+      "channel": "OUTPUT_CONTRACT_REMINDER",
+      "content_payload": {
+        "output_schema_body": {
+          "properties": {
+            "consensus_summary": {
+              "type": "string"
+            },
+            "followup_tickets": {
+              "items": {
+                "properties": {
+                  "delivery_stage": {
+                    "enum": [
+                      "BUILD",
+                      "CHECK",
+                      "REVIEW",
+                      "CLOSEOUT"
+                    ],
+                    "type": "string"
+                  },
+                  "owner_role": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "ticket_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ticket_id",
+                  "owner_role",
+                  "summary"
+                ],
+                "type": "object"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "input_artifact_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "open_questions": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "participants": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "rejected_options": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "topic": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "topic",
+            "participants",
+            "followup_tickets"
+          ],
+          "type": "object"
+        },
+        "output_schema_ref": "consensus_document",
+        "output_schema_version": 1
+      },
+      "content_type": "JSON",
+      "role": "system",
+      "source_ref": null
+    }
+  ],
+  "meta": {
+    "bundle_id": "ctx_5769aaa07cfc",
+    "compile_id": "cmp_f9e49f444ca4",
+    "compile_request_id": "creq_4dc98810001e",
+    "compiler_version": "context-compiler.min.v1",
+    "model_profile": "boardroom_os.runtime.min",
+    "node_id": "node_scope_decision",
+    "render_target": "json_messages_v1",
+    "rendered_at": "2026-04-04T00:51:27.533437+08:00",
+    "ticket_id": "tkt_wf_da09cfc49914_scope_decision",
+    "workflow_id": "wf_da09cfc49914"
+  },
+  "summary": {
+    "control_message_count": 3,
+    "data_message_count": 1,
+    "degraded_data_message_count": 0,
+    "reference_message_count": 0,
+    "retrieval_message_count": 0,
+    "total_message_count": 4
+  }
+}

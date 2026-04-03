@@ -1,0 +1,94 @@
+{
+  "budget_actual": {
+    "final_bundle_tokens": 317,
+    "truncated_tokens": 0,
+    "used_p0": 0,
+    "used_p1": 317,
+    "used_p2": 0,
+    "used_p3": 0
+  },
+  "budget_plan": {
+    "hard_limit_tokens": 3000,
+    "reserved_p0": 0,
+    "reserved_p1": 3000,
+    "reserved_p2": 0,
+    "reserved_p3": 0,
+    "soft_limit_tokens": 3000,
+    "total_budget_tokens": 3000
+  },
+  "cache_report": {
+    "cache_hit": false,
+    "invalidated_by": [],
+    "reused_from_compile_id": null
+  },
+  "compile_meta": {
+    "bundle_id": "ctx_5769aaa07cfc",
+    "cache_key": "abbd2e1153abc56fddb3cf6b23689d8b75549938cce484c946900cd1ba9ed77f",
+    "compile_id": "cmp_f9e49f444ca4",
+    "compile_request_id": "creq_4dc98810001e",
+    "compiled_at": "2026-04-04T00:51:27.533437+08:00",
+    "compiler_version": "context-compiler.min.v1",
+    "duration_ms": 0,
+    "model_profile": "boardroom_os.runtime.min",
+    "node_id": "node_scope_decision",
+    "ticket_id": "tkt_wf_da09cfc49914_scope_decision",
+    "workflow_id": "wf_da09cfc49914"
+  },
+  "degradation": {
+    "fail_mode": "FAIL_CLOSED",
+    "is_degraded": false,
+    "missing_critical_sources": [],
+    "warnings": [
+      "Token counts are deterministic estimates, not provider tokenizer results."
+    ]
+  },
+  "final_bundle_stats": {
+    "context_block_count": 1,
+    "dropped_explicit_source_count": 0,
+    "dropped_retrieval_count": 0,
+    "fragment_block_count": 0,
+    "hydrated_block_count": 1,
+    "negative_pattern_count": 0,
+    "partially_hydrated_block_count": 0,
+    "reference_block_count": 0,
+    "retrieved_block_count": 0,
+    "trusted_block_count": 1
+  },
+  "input_fingerprint": {
+    "artifact_hashes": [
+      {
+        "artifact_id": "art://project-init/wf_da09cfc49914/board-brief.md",
+        "hash": "fcb1f32cfa0e795648ace233547636d6d1f417de8da8291e22f89a2a3e617b3e"
+      }
+    ],
+    "constraints_version": "project_init_scope_lock",
+    "output_schema_version": "consensus_document@1",
+    "role_profile_version": "ui_designer_primary",
+    "ticket_hash": "b8ad010000564787094ba627e71faa3ca4618741dc22e577a70e25aba199acda"
+  },
+  "source_log": [
+    {
+      "content_mode": "INLINE_FULL",
+      "critical": true,
+      "priority_class": "P1",
+      "reason": "Inlined active materialized artifact body into the execution package.",
+      "reason_code": null,
+      "selector_used": "SOURCE_REF:art://project-init/wf_da09cfc49914/board-brief.md",
+      "source_kind": "ARTIFACT_REFERENCE",
+      "source_ref": "art://project-init/wf_da09cfc49914/board-brief.md",
+      "status": "USED",
+      "tokens_after": 317,
+      "tokens_before": 317,
+      "trust_level": 1
+    }
+  ],
+  "transform_log": [
+    {
+      "operation_type": "HYDRATE",
+      "output_block_id": "ctxblk_bf11db416de0",
+      "reason": "Inlined active materialized artifact body into the execution package.",
+      "stage": "HYDRATE_SOURCES",
+      "target_ref": "art://project-init/wf_da09cfc49914/board-brief.md"
+    }
+  ]
+}

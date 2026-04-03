@@ -1,0 +1,37 @@
+{
+  "consensus_summary": "Runtime converged on the narrowest scope that keeps delivery moving.",
+  "followup_tickets": [
+    {
+      "delivery_stage": "BUILD",
+      "owner_role": "frontend_engineer",
+      "summary": "Build the approved homepage foundation without widening scope.",
+      "ticket_id": "tkt_wf_86ca846e4642_scope_decision_followup_build"
+    },
+    {
+      "delivery_stage": "CHECK",
+      "owner_role": "checker",
+      "summary": "Check the implementation bundle against the locked scope before board review.",
+      "ticket_id": "tkt_wf_86ca846e4642_scope_decision_followup_check"
+    },
+    {
+      "delivery_stage": "REVIEW",
+      "owner_role": "frontend_engineer",
+      "summary": "Prepare the final board-facing homepage review package from the approved implementation.",
+      "ticket_id": "tkt_wf_86ca846e4642_scope_decision_followup_review"
+    }
+  ],
+  "input_artifact_refs": [
+    "art://project-init/wf_86ca846e4642/board-brief.md"
+  ],
+  "open_questions": [
+    "Whether non-critical polish should move after board approval."
+  ],
+  "participants": [
+    "ui_designer_primary",
+    "checker_primary"
+  ],
+  "rejected_options": [
+    "Expand beyond the current MVP boundary in this round."
+  ],
+  "topic": "Consensus for ticket tkt_wf_86ca846e4642_scope_decision"
+}
