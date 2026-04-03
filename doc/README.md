@@ -4,10 +4,11 @@
 
 ## 优先阅读
 
-1. [roadmap-reset.md](roadmap-reset.md)：当前阶段的路线纠偏决议与范围边界
-2. [TODO.md](TODO.md)：当前主线待办（唯一待办真相源）
-3. [backend-runtime-guide.md](backend-runtime-guide.md)：后端运行方式与现有 runtime / worker 面
-4. [feature-spec.md](feature-spec.md)：产品边界、治理规则与长期设计原则
+1. [mainline-truth.md](mainline-truth.md)：当前代码真相表，先看主链现实、runtime 支持矩阵和冻结边界
+2. [roadmap-reset.md](roadmap-reset.md)：当前阶段的路线纠偏决议与范围边界
+3. [TODO.md](TODO.md)：当前主线待办（唯一待办真相源）
+4. [backend-runtime-guide.md](backend-runtime-guide.md)：后端运行方式与现有 runtime / worker 面
+5. [feature-spec.md](feature-spec.md)：产品边界、治理规则与长期设计原则
 
 ## 评审与规划
 

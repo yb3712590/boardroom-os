@@ -2,11 +2,13 @@
 
 这份文档承接根目录 `README.md` 里不适合放在首页的运行细节，主要面向当前在仓库里继续开发或排查 Runtime / Backend 的人。
 
+如果你只是想先判断"现在什么是真的"，先看 [mainline-truth.md](mainline-truth.md)。这份文档更偏运行和排障，不再把冻结能力写成当前主线。
+
 ## 当前可运行切片
 
 当前后端位于 `backend/`，技术栈是 FastAPI + Pydantic v2 + SQLite。
 
-已经真实落地的能力包括：
+当前主线里已经真实落地的能力包括：
 
 - 命令入口、投影视图和 SSE 事件流
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消和人工恢复
@@ -18,12 +20,23 @@
 - artifact store / artifact index / ticket artifacts projection
 - Context Compiler 最小内联链：`TEXT / MARKDOWN / JSON` 且当前可读的 input artifact 会直接进 compiled execution package；超预算的文本和 JSON 现在会先退到确定性的相关片段编译，片段仍放不下时再退到头部预览 / 顶层预览，并在 bundle / manifest 里写明结构化降级原因和 selector；图片 / PDF 会作为结构化媒体引用保留；其他二进制、未落盘、已删除材料仍保留 descriptor + URL 兜底
 - 最小真实 provider 适配层：当 in-process runtime 遇到 `provider_id=prov_openai_compat`，并且本地配置了兼容 OpenAI `responses` 的 `base_url / api_key / model` 后，会直接打 `POST {base_url}/responses`；未配置时继续走本地 deterministic runtime
-- artifact 大文件链路：控制面分段上传会话、`ticket-result-submit` 对 `upload_session_id` 的消费，以及本地默认 / 可选对象存储双后端
 - artifact cleanup 闭环：场景留存分级、物理删除记账、scheduler 自动 cleanup，以及 `dashboard` 上可直接看的 cleanup 状态
-- 外部 worker handoff：bootstrap token、refreshable session、signed delivery grants、artifact 访问、worker 命令 URL
-- 多租户 worker 运维面：binding 生命周期、`worker-runtime` 投影读面、bootstrap issue 签发记录，以及带签名操作人令牌入口、独立动作审计读面的 `worker-admin` HTTP 管理面
+
+## 仓库保留但冻结
+
+下面这些能力还在仓库里，部分入口也还挂着，但**默认不继续扩张**。除非直接解堵本地 MVP，否则这轮不要把它们当当前主线：
+
+- `worker-admin` HTTP 管理面与操作人令牌链
+- 多租户 `tenant/workspace` scope binding
+- 控制面分段上传与可选对象存储
+- 外部 worker handoff、bootstrap、session、delivery grant
 
 ## 本地运行
+
+运行前提：
+
+- 后端命令默认都假设你已经在 `backend/` 目录下，并且先执行了 `source .venv/bin/activate`
+- 如果当前机器还没有这个虚拟环境，先按项目依赖把 `fastapi / httpx / pydantic / uvicorn / pytest` 装进 `backend/.venv`
 
 启动后端：
 
@@ -97,7 +110,14 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 - `base_url` 可以直接带 `/v1`，运行时会调用 `POST {base_url}/responses`
 - 如果配置了 `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT`，运行时会把它透传成 `reasoning.effort`；当前支持 `low / medium / high / xhigh`
 - 请求输入直接来自编译后的 `rendered_execution_payload.messages`；后端不会依赖 provider 端 JSON schema 强约束，而是拿回文本后在本地做 JSON 解析和现有 output schema 校验
-- 当前只把这条真实 provider 路径收口到 `ui_milestone_review` 和 `maker_checker_verdict` 两条主链 schema
+- 当前代码现实里，这条 live path 已覆盖主线需要的 6 组 role/schema 组合：
+  - `ui_designer_primary -> consensus_document`
+  - `ui_designer_primary -> implementation_bundle`
+  - `checker_primary -> delivery_check_report`
+  - `ui_designer_primary -> ui_milestone_review`
+  - `ui_designer_primary -> delivery_closeout_package`
+  - `checker_primary -> maker_checker_verdict`
+- 但当前仍没有独立的 `frontend_engineer` worker 角色；scope follow-up 里的 `frontend_engineer` 只是 owner role 名字，实际仍映射到 `ui_designer_primary`
 - 失败映射固定为：`429 -> PROVIDER_RATE_LIMITED`、超时 / 连接失败 / `5xx -> UPSTREAM_UNAVAILABLE`、`401/403 -> PROVIDER_AUTH_FAILED`、其他 `4xx` / 空响应 / 非 JSON / 结构不匹配 -> `PROVIDER_BAD_RESPONSE`
 - 只有 `PROVIDER_RATE_LIMITED` 和 `UPSTREAM_UNAVAILABLE` 会进入既有 provider incident / breaker 暂停链；鉴权失败和坏响应只让当前 ticket 失败，不自动扩大成 provider pause
 
@@ -134,7 +154,7 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 - `GET /api/v1/projections/workforce`
   - 按角色泳道返回当前 active / frozen / replaced 员工，以及他们当前是否在执行 ticket
 
-切到外部 worker handoff 模式：
+如果你只是为了兼容旧链路，才需要切到外部 worker handoff 模式：
 
 ```bash
 cd backend
@@ -146,7 +166,9 @@ BOARDROOM_OS_PUBLIC_BASE_URL=http://127.0.0.1:8000 \
 uvicorn app.main:app --reload
 ```
 
-## Worker bootstrap 与运维命令
+## 冻结能力：Worker bootstrap 与运维命令
+
+下面这组命令仍然可用，但属于保留兼容面，不是当前主线默认操作路径。
 
 给某个 worker 签发 bootstrap token：
 
@@ -189,7 +211,9 @@ python -m app.worker_auth_cli revoke-delivery-grant --grant-id <grant_id>
 - `revoke-session` 现在支持传 `--session-id`，或者传 `--worker-id` 并同时显式带 `--tenant-id` / `--workspace-id`
 - `revoke-session` 和 `revoke-delivery-grant` 都会回显 `revoked_via`、`revoked_by`、`revoke_reason`，并把这些字段写进持久化读面
 
-## Worker admin HTTP 管理面
+## 冻结能力：Worker admin HTTP 管理面
+
+这部分仍保留在仓库里，方便排查或兼容旧链路，但默认不作为当前 MVP 的继续建设方向。
 
 现在也可以直接走后端控制面，而不是只能回本地 CLI。和上一轮不同的是，`worker-admin` 不再单独信裸请求头，必须先拿到短时效签名令牌，再用它调用接口。新的操作人令牌还会持久化 `token_id`，所以值守同学现在不只会“签一张短票”，还可以列出活动令牌、按 `token_id` 撤销，并从拒绝读面里确认它是否已经失效。对于挂在反向代理后的部署，现在还可以额外开启可信代理断言，把入口进一步收口到预期代理。
 

@@ -72,6 +72,7 @@ python -m pytest tests -q
 
 ## 建议先读
 
+- [doc/mainline-truth.md](doc/mainline-truth.md)：当前代码真相表，先看主链现实、runtime 支持矩阵和冻结边界
 - [doc/roadmap-reset.md](doc/roadmap-reset.md)：当前阶段边界和判断规则
 - [doc/TODO.md](doc/TODO.md)：当前主线待办
 - [doc/history/memory-log.md](doc/history/memory-log.md)：压缩后的长期记忆和最近进展

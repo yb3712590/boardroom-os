@@ -403,6 +403,8 @@
 
 #### P0-WRK-001：扩展 OpenAI Compat 适配层支持所有输出 Schema
 
+**状态**：已完成（2026-04-03 校准确认）
+
 **描述**：当前 `provider_openai_compat.py` 只支持基础的文本输出。需要扩展为支持所有 5 种结构化输出 schema。
 
 **文件**：
@@ -425,6 +427,8 @@
 ---
 
 #### P0-WRK-002：实现 Worker 执行管道
+
+**状态**：已完成（2026-04-03 校准确认）
 
 **描述**：将 `runtime.py` 中的确定性 mock 替换为真实 LLM 调用管道。
 
@@ -450,6 +454,8 @@
 
 #### P0-WRK-003：实现 frontend_engineer Worker
 
+**状态**：未完成。当前主线里 `frontend_engineer` 仍只是 owner role 名字，实际执行仍映射到 `ui_designer_primary`。
+
 **描述**：实现 frontend_engineer 角色的 Worker，能执行 `implementation_bundle@1` 工单。
 
 **文件**：
@@ -473,6 +479,8 @@
 
 #### P0-WRK-004：实现 checker Worker
 
+**状态**：已完成（2026-04-03 校准确认）
+
 **描述**：实现 checker 角色的 Worker，能执行 `delivery_check_report@1` 和 `maker_checker_verdict` 工单。
 
 **文件**：
@@ -494,6 +502,8 @@
 ---
 
 #### P0-WRK-005：实现 ui_designer Worker
+
+**状态**：已完成（2026-04-03 校准确认）
 
 **描述**：实现 ui_designer 角色的 Worker，能执行 `ui_milestone_review@1` 工单。
 
@@ -1194,6 +1204,8 @@
 | P1-MTG-010 | 会议室测试 | 6h |
 
 ### 3.3 代码清理 (P1-CLN-001 到 P1-CLN-006)
+
+> 当前状态补记：这 6 个任务本轮**没有执行**。这轮只借用了它们的边界梳理思路来完成文档隔离，没有做 `_frozen/` 物理迁移。
 
 | ID | 标题 | 预估 |
 |----|------|------|

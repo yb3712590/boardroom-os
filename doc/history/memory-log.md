@@ -90,6 +90,11 @@
 - Final board approval now auto-creates a `delivery_closeout_package@1` ticket, and that package also goes through internal maker-checker before the workflow is considered complete.
 - Dashboard completion now depends on closeout completion, not just final board approval; the React completion card shows both the final review approval time and the closeout completion time.
 - Staffing deblocking is now closed through the thin UI as well: supported hire/replace requests are validated against a tiny mainline staffing catalog, and `workforce` now provides server-driven `freeze / restore / hire request / replace request` controls instead of leaving operators on the CLI.
+- Added a dedicated `doc/mainline-truth.md` entrypoint so the current code truth, runtime support matrix, and frozen boundary list stop drifting across docs.
+- Locked the current reality in code as `backend/app/core/mainline_truth.py`, including the important gap that `frontend_engineer` still maps to `ui_designer_primary` instead of a separate worker role.
+- Re-aligned `README.md`, `doc/README.md`, `doc/TODO.md`, and `doc/backend-runtime-guide.md` around that truth source rather than the older mixed mainline-plus-frozen narrative.
+- Follow-up doc closure marked `P0-A` as done in `doc/TODO.md`, added explicit mainline-relation notes to the active TODO sections, and recorded one still-open decision: whether `frontend_engineer` should stay an owner-role alias or become a real runtime worker.
+- Updated `doc/task-backlog.md` to reflect current code truth: `P0-WRK-001 / 002 / 004 / 005` are already complete, while `P0-WRK-003` remains open because the repo still routes that work through `ui_designer_primary`.
 
 ### 2026-04-02 (docs compaction)
 
