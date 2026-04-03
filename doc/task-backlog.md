@@ -1030,6 +1030,8 @@
 
 #### P0-FE-011：创建 ErrorBoundary 组件
 
+**状态**：已完成（2026-04-04，前端页面壳收口）
+
 **描述**：创建全局和页面级错误边界。
 
 **文件**：
@@ -1046,9 +1048,15 @@
 
 **风险**：低
 
+**完成补记**：
+- 已新增 `frontend/src/components/shared/ErrorBoundary.tsx`
+- 当前先按最小页面兜底落地：提供默认 fallback 和 `Retry`，不额外引入全局错误总线
+
 ---
 
 #### P0-FE-012：创建通用 Drawer 组件
+
+**状态**：已完成（2026-04-04，前端页面壳收口）
 
 **描述**：创建可复用的右侧抽屉容器，使用 framer-motion 动画。
 
@@ -1067,6 +1075,11 @@
 - 有单元测试
 
 **风险**：低
+
+**完成补记**：
+- 已新增 `frontend/src/components/shared/Drawer.tsx`
+- 当前复用现有抽屉样式类名收口动画和遮罩，避免这一轮为样式体系再开一条线
+- 已补最小测试，覆盖 backdrop 点击关闭与 `Escape` 关闭
 
 ---
 
@@ -1165,6 +1178,8 @@
 
 #### P0-FE-017：重构覆盖层组件使用通用 Drawer
 
+**状态**：已完成（2026-04-04，前端页面壳收口）
+
 **描述**：将 ReviewRoomDrawer、IncidentDrawer、DependencyInspectorDrawer、ProviderSettingsDrawer 重构为使用通用 Drawer 组件。
 
 **文件**：
@@ -1181,9 +1196,16 @@
 
 **风险**：中
 
+**完成补记**：
+- `ReviewRoomDrawer / IncidentDrawer / DependencyInspectorDrawer / ProviderSettingsDrawer` 已迁到 `frontend/src/components/overlays/`
+- 四个抽屉的业务内容保持原样，外层统一复用 shared `Drawer`
+- 旧的四个重复抽屉壳文件已删除，避免仓库里同时保留两套入口
+
 ---
 
 #### P0-FE-018：创建 DashboardPage
+
+**状态**：已完成（2026-04-04，按保守路径落地）
 
 **描述**：创建页面组件，组装所有仪表盘组件和覆盖层。
 
@@ -1202,9 +1224,16 @@
 
 **风险**：中
 
+**完成补记**：
+- 已新增 `frontend/src/pages/DashboardPage.tsx`，承接页面组装、SSE 失效刷新、路由驱动的 review / incident 读取，以及 `incident detail / dependency inspector` 的本地读状态
+- 这轮优先把职责从 `App.tsx` 下沉到页面层，保住现有交互与命令 wiring，不顺手改后端契约
+- `DashboardPage` 体积仍大于设计文档中的理想目标；这是当前已知真实差异，后续会继续拆细，但不影响本轮页面壳已落地
+
 ---
 
 #### P0-FE-019：简化 App.tsx
+
+**状态**：已完成（2026-04-04，前端页面壳收口）
 
 **描述**：将 App.tsx 简化为只包含路由配置。
 
@@ -1221,6 +1250,10 @@
 - 所有功能正常
 
 **风险**：低
+
+**完成补记**：
+- `frontend/src/App.tsx` 已缩到纯路由入口，只保留 `BrowserRouter + Routes`
+- 当前三条路由都指向 `DashboardPage`，继续保持“主面板常驻、review / incident 以覆盖层打开”的现状
 
 ---
 

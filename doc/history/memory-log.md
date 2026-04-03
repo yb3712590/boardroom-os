@@ -125,6 +125,11 @@
 - Frontend data-layer split is now real: `frontend/src/api.ts` has been reduced to a compatibility barrel, while the actual types, projection/command clients, SSE manager, `useSSE` hook, and three Zustand stores live under `frontend/src/types/`, `frontend/src/api/`, `frontend/src/hooks/`, and `frontend/src/stores/`.
 - `App.tsx` no longer owns inline fetch wiring or inline SSE setup; it now reads snapshot/review/UI state from stores and calls the split API modules, while `incident detail` and `dependency inspector` state intentionally remain local for the next page-shell batch.
 - Frontend verification for this round finished at `npm run build` passed and `npm run test:run` passed with `31 passed`; store resets were added in test setup so the existing long `App.test.tsx` regression suite still runs against clean state.
+- Frontend page-shell follow-up is now real: `frontend/src/pages/DashboardPage.tsx` owns route-driven page assembly, SSE invalidation, review/incident loading, and the local `incident detail / dependency inspector` reads that previously stayed in `App.tsx`.
+- `frontend/src/components/shared/ErrorBoundary.tsx` and `frontend/src/components/shared/Drawer.tsx` are now in place; the four governance overlays moved under `frontend/src/components/overlays/` and share the same drawer shell instead of each carrying duplicated motion/backdrop code.
+- `frontend/src/App.tsx` is now a pure router entry again; the old top-level drawer component files were removed after the overlay migration so there is only one active implementation path.
+- Added minimal frontend shared-component tests for drawer close behavior and ErrorBoundary retry behavior; backend verification for this batch still finished at `py -m pytest tests -q` → `378 passed`.
+- Current shell no longer has Node.js / npm on PATH, so this round’s frontend `build` and `test:run` could not be re-executed here; the remaining frontend verification gap is environmental again, not a deliberate skip.
 
 ### 2026-04-02 (docs compaction)
 

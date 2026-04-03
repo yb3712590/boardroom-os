@@ -17,8 +17,7 @@
 ## 当前基线（2026-04-04 实测）
 
 - backend：`py -m pytest tests -q` → 378 passed
-- frontend：`npm run build` → passed
-- frontend：`npm run test:run` → 31 passed
+- frontend：当前环境缺少 Node.js / npm，`npm run build` 与 `npm run test:run` 本轮无法复核
 
 ---
 
@@ -140,20 +139,25 @@
 主线关系：**间接服务主链**，目标是降低后续 UI 继续演进和验证的成本，不改变当前工作流真相。
 
 - [x] 先拆数据层：类型、API 客户端、SSE 管理器、主 store、review store、UI store
-- [ ] 再拆页面壳和抽屉壳：`DashboardPage`、各类 Drawer、错误边界
-- [ ] 保持视觉和交互基本不变，不在这一阶段重新设计品牌风格
+- [x] 再拆页面壳和抽屉壳：`DashboardPage`、各类 Drawer、错误边界
+- [x] 保持视觉和交互基本不变，不在这一阶段重新设计品牌风格
 - [x] 测试重点放在 store、API、关键交互和错误状态
-- [ ] 把 `App.tsx` 缩到只剩路由和组装职责
+- [x] 把 `App.tsx` 缩到只剩路由和组装职责
 
 本轮产物：
 
 - 前端已完成 `P0-FE-001` 到 `P0-FE-010`：`zustand` 已接入，`src/api.ts` 已拆成 `types/ + api/ + stores/ + hooks/`，`App.tsx` 改为通过独立 API 模块、SSE hook 和 store 取数/提交
-- 前端验证已补齐：`npm run build` 通过，`npm run test:run` 通过，当前前端总计 `31 passed`
+- `frontend/src/pages/DashboardPage.tsx` 现在承接原 `App.tsx` 的页面组装、SSE 失效刷新、路由驱动的 review / incident 读取，以及 `incident detail / dependency inspector` 的本地读状态
+- `frontend/src/components/shared/ErrorBoundary.tsx` 与 `frontend/src/components/shared/Drawer.tsx` 已落地；`ReviewRoomDrawer / IncidentDrawer / DependencyInspectorDrawer / ProviderSettingsDrawer` 已统一迁到 `components/overlays/` 并复用同一套抽屉壳
+- `frontend/src/App.tsx` 已缩到纯路由入口；旧的四个重复抽屉壳文件已移除，避免仓库里同时留两套实现
+- 前端补了 shared 组件最小测试：新增 `Drawer` 的 backdrop / Escape 关闭验证，以及 `ErrorBoundary` 的渲染兜底与重试恢复验证
+- 本轮前端真实命令级验证仍受环境限制：当前 shell 没有 Node.js / npm，`npm run build` 与 `npm run test:run` 无法复跑
 - `frontend/src/api.ts` 目前保留为兼容出口，现有组件还没整体迁到新目录，这一层兼容先保留到页面壳和组件壳拆分完成
 
 新发现任务：
 
-- [ ] 把 `incident detail / dependency inspector` 的本地读状态和页面组装从 `App.tsx` 继续下沉到 `DashboardPage` 与抽屉层，避免 `App.tsx` 在数据层拆完后继续滞留页面职责
+- [ ] 把 `DashboardPage` 里仍偏多的命令回调、格式化 helper 和本地拉取细节继续下沉，尽量逼近设计文档里的轻页壳目标
+- [ ] 共享基础组件、CSS 拆分和工具函数模块（`P0-FE-013 / P0-FE-020 / P0-FE-021`）仍未做，留在前端拆壳下一批处理
 
 主线关系：**间接服务主链验证**，降低前端后续演进和回归成本，不改变工作流真相。
 
