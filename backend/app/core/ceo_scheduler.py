@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.ceo_executor import execute_ceo_action_batch
 from app.core.ceo_proposer import build_no_action_batch, propose_ceo_action_batch
 from app.core.ceo_prompts import CEO_SHADOW_PROMPT_VERSION
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
@@ -63,6 +64,17 @@ def run_ceo_shadow_for_trigger(
     proposal = None
     accepted_actions: list[dict[str, Any]] = []
     rejected_actions: list[dict[str, Any]] = []
+    executed_actions: list[dict[str, Any]] = []
+    execution_summary: dict[str, Any] = {
+        "attempted_action_count": 0,
+        "executed_action_count": 0,
+        "duplicate_action_count": 0,
+        "passthrough_action_count": 0,
+        "deferred_action_count": 0,
+        "failed_action_count": 0,
+    }
+    deterministic_fallback_used = False
+    deterministic_fallback_reason: str | None = None
     comparison: dict[str, Any] = {
         "mainline_controller": "workflow_auto_advance",
         "deterministic_effect": "SHADOW_ERROR",
@@ -87,11 +99,28 @@ def run_ceo_shadow_for_trigger(
         validation = validate_ceo_action_batch(repository, action_batch=proposal.action_batch)
         accepted_actions = validation["accepted_actions"]
         rejected_actions = validation["rejected_actions"]
+        execution_result = execute_ceo_action_batch(
+            repository,
+            action_batch=proposal.action_batch,
+            accepted_actions=accepted_actions,
+        )
+        executed_actions = execution_result["executed_actions"]
+        execution_summary = execution_result["execution_summary"]
         comparison = _build_comparison(
             snapshot=snapshot,
             accepted_actions=accepted_actions,
             rejected_actions=rejected_actions,
         )
+        if proposal.fallback_reason is not None:
+            deterministic_fallback_used = True
+            deterministic_fallback_reason = proposal.fallback_reason
+        first_failed_action = next(
+            (item for item in executed_actions if item.get("execution_status") == "FAILED"),
+            None,
+        )
+        if first_failed_action is not None:
+            deterministic_fallback_used = True
+            deterministic_fallback_reason = str(first_failed_action.get("reason") or "Limited CEO execution failed.")
     except Exception as exc:
         fallback_reason = f"CEO shadow snapshot/proposal pipeline failed: {exc}"
         proposal = type("FallbackProposal", (), {})()
@@ -101,6 +130,8 @@ def run_ceo_shadow_for_trigger(
         proposal.model = None
         proposal.provider_response_id = None
         proposal.fallback_reason = fallback_reason
+        deterministic_fallback_used = True
+        deterministic_fallback_reason = fallback_reason
 
     with repository.transaction() as connection:
         return repository.append_ceo_shadow_run(
@@ -119,5 +150,9 @@ def run_ceo_shadow_for_trigger(
             proposed_action_batch=proposal.action_batch.model_dump(mode="json"),
             accepted_actions=accepted_actions,
             rejected_actions=rejected_actions,
+            executed_actions=executed_actions,
+            execution_summary=execution_summary,
+            deterministic_fallback_used=deterministic_fallback_used,
+            deterministic_fallback_reason=deterministic_fallback_reason,
             comparison=comparison,
         )

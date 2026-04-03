@@ -2134,6 +2134,10 @@ class ControlPlaneRepository:
         proposed_action_batch: dict[str, Any],
         accepted_actions: list[dict[str, Any]],
         rejected_actions: list[dict[str, Any]],
+        executed_actions: list[dict[str, Any]],
+        execution_summary: dict[str, Any],
+        deterministic_fallback_used: bool,
+        deterministic_fallback_reason: str | None,
         comparison: dict[str, Any],
     ) -> dict[str, Any]:
         run_id = new_prefixed_id("ceo")
@@ -2155,8 +2159,12 @@ class ControlPlaneRepository:
                 proposed_action_batch_json,
                 accepted_actions_json,
                 rejected_actions_json,
+                executed_actions_json,
+                execution_summary_json,
+                deterministic_fallback_used,
+                deterministic_fallback_reason,
                 comparison_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -2174,6 +2182,10 @@ class ControlPlaneRepository:
                 json.dumps(proposed_action_batch, sort_keys=True),
                 json.dumps(accepted_actions, sort_keys=True),
                 json.dumps(rejected_actions, sort_keys=True),
+                json.dumps(executed_actions, sort_keys=True),
+                json.dumps(execution_summary, sort_keys=True),
+                1 if deterministic_fallback_used else 0,
+                deterministic_fallback_reason,
                 json.dumps(comparison, sort_keys=True),
             ),
         )
@@ -3906,6 +3918,10 @@ class ControlPlaneRepository:
         converted["proposed_action_batch"] = json.loads(converted["proposed_action_batch_json"])
         converted["accepted_actions"] = json.loads(converted["accepted_actions_json"])
         converted["rejected_actions"] = json.loads(converted["rejected_actions_json"])
+        converted["executed_actions"] = json.loads(converted.get("executed_actions_json") or "[]")
+        converted["execution_summary"] = json.loads(converted.get("execution_summary_json") or "{}")
+        converted["deterministic_fallback_used"] = bool(converted.get("deterministic_fallback_used"))
+        converted["deterministic_fallback_reason"] = converted.get("deterministic_fallback_reason")
         converted["comparison"] = json.loads(converted["comparison_json"])
         return converted
 
@@ -5292,6 +5308,10 @@ class ControlPlaneRepository:
                 proposed_action_batch_json TEXT NOT NULL,
                 accepted_actions_json TEXT NOT NULL,
                 rejected_actions_json TEXT NOT NULL,
+                executed_actions_json TEXT NOT NULL,
+                execution_summary_json TEXT NOT NULL,
+                deterministic_fallback_used INTEGER NOT NULL DEFAULT 0,
+                deterministic_fallback_reason TEXT,
                 comparison_json TEXT NOT NULL
             )
             """
@@ -5316,6 +5336,10 @@ class ControlPlaneRepository:
             "proposed_action_batch_json": "TEXT",
             "accepted_actions_json": "TEXT",
             "rejected_actions_json": "TEXT",
+            "executed_actions_json": "TEXT",
+            "execution_summary_json": "TEXT",
+            "deterministic_fallback_used": "INTEGER NOT NULL DEFAULT 0",
+            "deterministic_fallback_reason": "TEXT",
             "comparison_json": "TEXT",
         }
         for column_name, column_type in required_columns.items():

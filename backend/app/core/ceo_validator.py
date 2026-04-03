@@ -6,16 +6,10 @@ from app.contracts.ceo_actions import (
     CEOActionBatch,
     CEOActionType,
 )
+from app.core.ceo_execution_presets import supports_ceo_create_ticket_preset
 from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY
 from app.core.staffing_catalog import resolve_mainline_staffing_combo
 from app.db.repository import ControlPlaneRepository
-
-
-_SUPPORTED_ROLE_PROFILES = {
-    "ui_designer_primary",
-    "frontend_engineer_primary",
-    "checker_primary",
-}
 
 
 def _action_entry(action, reason: str) -> dict[str, Any]:
@@ -77,7 +71,7 @@ def validate_ceo_action_batch(
             if ticket["workflow_id"] != action.payload.workflow_id or ticket["node_id"] != action.payload.node_id:
                 rejected_actions.append(_action_entry(action, "Target ticket does not match workflow or node."))
                 continue
-            if ticket["status"] not in {"FAILED", "TIMED_OUT", "CANCELLED", "CANCEL_REQUESTED"}:
+            if ticket["status"] not in {"FAILED", "TIMED_OUT"}:
                 rejected_actions.append(
                     _action_entry(action, f"Ticket status {ticket['status']} is not retryable on the current mainline.")
                 )
@@ -86,13 +80,16 @@ def validate_ceo_action_batch(
             continue
 
         if action.action_type == CEOActionType.CREATE_TICKET:
-            if action.payload.role_profile_ref not in _SUPPORTED_ROLE_PROFILES:
-                rejected_actions.append(
-                    _action_entry(action, "role_profile_ref is not on the current local MVP staffing path.")
-                )
-                continue
             if (action.payload.output_schema_ref, 1) not in OUTPUT_SCHEMA_REGISTRY:
                 rejected_actions.append(_action_entry(action, "output_schema_ref is not registered."))
+                continue
+            if not supports_ceo_create_ticket_preset(
+                role_profile_ref=action.payload.role_profile_ref,
+                output_schema_ref=action.payload.output_schema_ref,
+            ):
+                rejected_actions.append(
+                    _action_entry(action, "role_profile_ref and output_schema_ref are not on the current limited CEO execution path.")
+                )
                 continue
             if repository.get_current_node_projection(action.payload.workflow_id, action.payload.node_id) is not None:
                 rejected_actions.append(_action_entry(action, "node_id already exists in the current workflow."))

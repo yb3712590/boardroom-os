@@ -222,6 +222,10 @@ CREATE TABLE IF NOT EXISTS ceo_shadow_run (
     proposed_action_batch_json TEXT NOT NULL,
     accepted_actions_json TEXT NOT NULL,
     rejected_actions_json TEXT NOT NULL,
+    executed_actions_json TEXT NOT NULL,
+    execution_summary_json TEXT NOT NULL,
+    deterministic_fallback_used INTEGER NOT NULL DEFAULT 0,
+    deterministic_fallback_reason TEXT,
     comparison_json TEXT NOT NULL
 );
 

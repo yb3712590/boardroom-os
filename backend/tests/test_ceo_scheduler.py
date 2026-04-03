@@ -36,6 +36,19 @@ def _set_deterministic_mode(client) -> None:
     )
 
 
+def _set_live_provider(client) -> None:
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            mode=RuntimeProviderMode.OPENAI_COMPAT,
+            base_url="https://api.example.test/v1",
+            api_key="sk-test-secret",
+            model="gpt-5.3-codex",
+            timeout_sec=30.0,
+            reasoning_effort="medium",
+        )
+    )
+
+
 def _approve_scope_review(client, workflow_id: str) -> None:
     approval = next(
         item for item in client.app.state.repository.list_open_approvals() if item["workflow_id"] == workflow_id
@@ -62,6 +75,7 @@ def _ticket_create_payload(
     workflow_id: str,
     ticket_id: str,
     node_id: str,
+    retry_budget: int = 0,
 ) -> dict:
     return {
         "ticket_id": ticket_id,
@@ -82,7 +96,7 @@ def _ticket_create_payload(
         "output_schema_version": 1,
         "allowed_tools": ["read_artifact", "write_artifact"],
         "allowed_write_set": ["artifacts/ui/homepage/*"],
-        "retry_budget": 0,
+        "retry_budget": retry_budget,
         "priority": "high",
         "timeout_sla_sec": 1800,
         "deadline_at": None,
@@ -94,6 +108,68 @@ def _ticket_create_payload(
         },
         "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
     }
+
+
+def _create_and_fail_ticket(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    retry_budget: int,
+) -> None:
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            retry_budget=retry_budget,
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}",
+        },
+    )
+    assert lease_response.status_code == 200
+
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
+        },
+    )
+    assert start_response.status_code == 200
+
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "failed_by": "emp_frontend_2",
+            "failure_kind": "TEST_FAILURE",
+            "failure_message": "Synthetic failure for CEO limited execution coverage.",
+            "failure_detail": {},
+            "idempotency_key": f"ticket-fail:{workflow_id}:{ticket_id}",
+        },
+    )
+    assert fail_response.status_code == 200
+    assert fail_response.json()["status"] == "ACCEPTED"
 
 
 def test_ceo_shadow_run_records_fallback_without_touching_mainline_state(client):
@@ -115,20 +191,13 @@ def test_ceo_shadow_run_records_fallback_without_touching_mainline_state(client)
     assert run["trigger_type"] == "MANUAL_TEST"
     assert run["fallback_reason"] is not None
     assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
+    assert run["deterministic_fallback_used"] is True
+    assert run["deterministic_fallback_reason"] is not None
 
 
-def test_ceo_shadow_run_uses_live_provider_and_validates_actions(client, monkeypatch):
+def test_ceo_shadow_run_uses_live_provider_and_executes_hire_request(client, monkeypatch):
     workflow_id = _project_init(client, "CEO shadow live provider")
-    client.app.state.runtime_provider_store.save_config(
-        RuntimeProviderStoredConfig(
-            mode=RuntimeProviderMode.OPENAI_COMPAT,
-            base_url="https://api.example.test/v1",
-            api_key="sk-test-secret",
-            model="gpt-5.3-codex",
-            timeout_sec=30.0,
-            reasoning_effort="medium",
-        )
-    )
+    _set_live_provider(client)
 
     from app.core import ceo_proposer
 
@@ -178,61 +247,270 @@ def test_ceo_shadow_run_uses_live_provider_and_validates_actions(client, monkeyp
     assert run["fallback_reason"] is None
     assert run["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
     assert run["rejected_actions"][0]["action_type"] == "RETRY_TICKET"
+    assert run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    assert run["execution_summary"]["executed_action_count"] == 1
+    assert run["deterministic_fallback_used"] is False
+    assert any(
+        approval["approval_type"] == "CORE_HIRE_APPROVAL"
+        for approval in client.app.state.repository.list_open_approvals()
+        if approval["workflow_id"] == workflow_id
+    )
+
+
+def test_ceo_shadow_run_executes_retry_ticket(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO limited retry execution")
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_retry_source",
+        node_id="node_ceo_retry_source",
+        retry_budget=1,
+    )
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Retry the failed ticket once.",
+                    "actions": [
+                        {
+                            "action_type": "RETRY_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "ticket_id": "tkt_ceo_retry_source",
+                                "node_id": "node_ceo_retry_source",
+                                "reason": "The ticket failed once and still has retry budget.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_retry_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:retry",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["executed_actions"][0]["action_type"] == "RETRY_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    retry_ticket_id = run["executed_actions"][0]["causation_hint"].split(":", 1)[1]
+    retry_ticket = client.app.state.repository.get_current_ticket_projection(retry_ticket_id)
+    assert retry_ticket is not None
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, retry_ticket_id)
+    assert created_spec["parent_ticket_id"] == "tkt_ceo_retry_source"
+    assert created_spec["attempt_no"] == 2
+    assert created_spec["retry_count"] == 1
+    assert run["deterministic_fallback_used"] is False
+
+
+def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
+    workflow_id = _project_init(client, "CEO limited create execution")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Create a mainline implementation ticket.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_ceo_create_bundle",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": "implementation_bundle",
+                                "summary": "Create the implementation bundle for the approved scope slice.",
+                                "parent_ticket_id": None,
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_create_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:create",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+    assert created_spec["output_schema_ref"] == "implementation_bundle"
+    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
+    assert created_spec["delivery_stage"] == "BUILD"
+
+
+def test_ceo_shadow_run_rejects_invalid_create_ticket_preset(client, monkeypatch):
+    workflow_id = _project_init(client, "CEO invalid create preset")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Try an invalid create-ticket combo.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_ceo_invalid_create",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": "delivery_check_report",
+                                "summary": "This combo should be rejected.",
+                                "parent_ticket_id": None,
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_create_invalid_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:create-invalid",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["rejected_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"] == []
+
+
+def test_ceo_shadow_run_marks_deferred_board_escalation(client, monkeypatch):
+    workflow_id = _project_init(client, "CEO deferred board escalation")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Escalate to board later, but stay shadow-only now.",
+                    "actions": [
+                        {
+                            "action_type": "ESCALATE_TO_BOARD",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "reason": "Potential board escalation should remain shadow-only in this round.",
+                                "target_ref": "workflow",
+                                "review_type": "VISUAL_MILESTONE",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_escalate_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:escalate",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["accepted_actions"][0]["action_type"] == "ESCALATE_TO_BOARD"
+    assert run["executed_actions"][0]["execution_status"] == "DEFERRED_SHADOW_ONLY"
+    assert run["deterministic_fallback_used"] is False
+
+
+def test_ceo_shadow_run_records_execution_failure_without_breaking_mainline(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO failed retry execution")
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_retry_exhausted",
+        node_id="node_ceo_retry_exhausted",
+        retry_budget=0,
+    )
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Try a retry that should fail execution because budget is exhausted.",
+                    "actions": [
+                        {
+                            "action_type": "RETRY_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "ticket_id": "tkt_ceo_retry_exhausted",
+                                "node_id": "node_ceo_retry_exhausted",
+                                "reason": "Budget is already exhausted, so execution should fail safely.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_retry_fail_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:retry-fail",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["executed_actions"][0]["execution_status"] == "FAILED"
+    assert run["deterministic_fallback_used"] is True
+    assert run["deterministic_fallback_reason"] is not None
+    assert client.app.state.repository.get_current_ticket_projection("tkt_ceo_retry_exhausted")["status"] == "FAILED"
 
 
 def test_ticket_fail_triggers_ceo_shadow_audit(client):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO shadow ticket fail trigger")
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_ceo_shadow_fail",
-            node_id="node_ceo_shadow_fail",
-        ),
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_shadow_fail",
+        node_id="node_ceo_shadow_fail",
+        retry_budget=1,
     )
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
-
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_ceo_shadow_fail",
-            "node_id": "node_ceo_shadow_fail",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:tkt_ceo_shadow_fail",
-        },
-    )
-    assert lease_response.status_code == 200
-    start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_ceo_shadow_fail",
-            "node_id": "node_ceo_shadow_fail",
-            "started_by": "emp_frontend_2",
-            "idempotency_key": f"ticket-start:{workflow_id}:tkt_ceo_shadow_fail",
-        },
-    )
-    assert start_response.status_code == 200
-
-    fail_response = client.post(
-        "/api/v1/commands/ticket-fail",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_ceo_shadow_fail",
-            "node_id": "node_ceo_shadow_fail",
-            "failed_by": "emp_frontend_2",
-            "failure_kind": "TEST_FAILURE",
-            "failure_message": "Synthetic failure for CEO shadow trigger coverage.",
-            "failure_detail": {},
-            "idempotency_key": f"ticket-fail:{workflow_id}:tkt_ceo_shadow_fail",
-        },
-    )
-    assert fail_response.status_code == 200
-    assert fail_response.json()["status"] == "ACCEPTED"
 
     runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
     assert runs
@@ -252,6 +530,55 @@ def test_board_approve_triggers_ceo_shadow_projection_route(client):
     assert payload["workflow_id"] == workflow_id
     assert payload["runs"]
     assert any(item["trigger_type"] == "APPROVAL_RESOLVED" for item in payload["runs"])
+
+
+def test_ceo_shadow_projection_route_exposes_execution_fields(client, monkeypatch):
+    workflow_id = _project_init(client, "CEO projection execution fields")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Hire a checker so projection includes executed actions.",
+                    "actions": [
+                        {
+                            "action_type": "HIRE_EMPLOYEE",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "role_type": "checker",
+                                "role_profile_refs": ["checker_primary"],
+                                "request_summary": "Hire a checker from CEO limited execution.",
+                                "employee_id_hint": "emp_checker_projection",
+                                "provider_id": "prov_openai_compat",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_projection_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:projection-fields",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/ceo-shadow")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]["runs"][0]
+    assert "executed_actions" in payload
+    assert "execution_summary" in payload
+    assert "deterministic_fallback_used" in payload
+    assert payload["executed_actions"][0]["execution_status"] == "EXECUTED"
 
 
 def test_incident_resolve_triggers_ceo_shadow_audit(client):

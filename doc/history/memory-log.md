@@ -117,6 +117,10 @@
 - Backend verification after the CEO shadow batch finished at `372 passed`.
 - CEO shadow closure fixed one real wiring mistake: `ticket-create` no longer emits a bogus `TICKET_FAILED` shadow trigger, and `ticket-fail` now emits its audit trigger from the real failure success path; full backend verification still finished at `372 passed`.
 - This machine still does not have `npm`, and the bare `pytest` command is not on PATH; backend verification is reproducible via `py -m pytest tests -q`, while frontend build/test remain environment-blocked rather than code-blocked.
+- CEO has now moved past pure shadow mode into a limited-execution first slice: accepted `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE` actions are translated into the existing command handlers, while `ESCALATE_TO_BOARD` is intentionally left as `DEFERRED_SHADOW_ONLY`.
+- The `ceo_shadow_run` store and `/api/v1/projections/workflows/{workflow_id}/ceo-shadow` route now expose `executed_actions`, `execution_summary`, and `deterministic_fallback_*`, so later UI work can compare suggestion, validation, execution, and fallback without opening the database.
+- Retry execution now reuses the same ticket retry scheduling helper as the mainline failure path, so retry tickets keep the existing `attempt_no / retry_count / parent_ticket_id / timeout backoff` rules instead of inventing a second retry mechanism.
+- Full backend verification after the limited-execution batch finished at `378 passed`; frontend `npm run build` and `npm run test:run` are still blocked on this machine because `npm` is not installed.
 
 ### 2026-04-02 (docs compaction)
 

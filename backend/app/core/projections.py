@@ -15,6 +15,7 @@ from app.contracts.projections import (
     DashboardProjectionEnvelope,
     DashboardRuntimeStatusProjection,
     CEOShadowProjectionData,
+    CEOShadowExecutedActionProjection,
     CEOShadowProjectionEnvelope,
     CEOShadowRunProjection,
     CEOShadowValidatedActionProjection,
@@ -1095,6 +1096,32 @@ def build_ceo_shadow_projection(
                         )
                         for item in run.get("rejected_actions") or []
                     ],
+                    executed_actions=[
+                        CEOShadowExecutedActionProjection(
+                            action_type=str(item["action_type"]),
+                            payload=dict(item.get("payload") or {}),
+                            execution_status=str(item.get("execution_status") or "UNKNOWN"),
+                            reason=str(item.get("reason") or ""),
+                            command_status=(
+                                str(item["command_status"])
+                                if item.get("command_status") is not None
+                                else None
+                            ),
+                            causation_hint=(
+                                str(item["causation_hint"])
+                                if item.get("causation_hint") is not None
+                                else None
+                            ),
+                        )
+                        for item in run.get("executed_actions") or []
+                    ],
+                    execution_summary=dict(run.get("execution_summary") or {}),
+                    deterministic_fallback_used=bool(run.get("deterministic_fallback_used")),
+                    deterministic_fallback_reason=(
+                        str(run["deterministic_fallback_reason"])
+                        if run.get("deterministic_fallback_reason") is not None
+                        else None
+                    ),
                     comparison=dict(run.get("comparison") or {}),
                 )
                 for run in runs

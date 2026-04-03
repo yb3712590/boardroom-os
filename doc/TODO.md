@@ -16,7 +16,7 @@
 
 ## 当前基线（2026-04-04 实测）
 
-- backend：`py -m pytest tests -q` → 372 passed
+- backend：`py -m pytest tests -q` → 378 passed
 - frontend：`npm run build` → 本轮未复核（当前环境缺少 Node.js / npm）
 - frontend：`npm run test:run` → 本轮未复核（当前环境缺少 Node.js / npm）
 
@@ -36,7 +36,7 @@
 - **返工治理**：重复问题指纹升级、fix 票默认排除原 maker/checker、incident 升级不误开审批
 - **Context Compiler**：TEXT/MARKDOWN/JSON 内联、超预算降级（片段→预览）、媒体/二进制引用、跨 workflow 历史摘要、`json_messages_v1` 渲染、`prov_openai_compat` 最小真实调用路径
 - **完整主链**：`project-init → scope review → BUILD → CHECK → REVIEW → closeout` 端到端打通
-- **CEO 影子模式**：CEO 动作契约、快照、提示词、提议器、校验器、影子审计日志和只读 projection 已落地；当前只做建议与差异记录，不改主状态
+- **CEO 有限接管首轮**：CEO 动作契约、快照、提示词、提议器、校验器、执行器、影子审计日志和只读 projection 已落地；当前已能真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`，`ESCALATE_TO_BOARD` 仍只做影子建议与对照记录
 - **React Boardroom UI**：dashboard / inbox / review room / incident detail / workforce / events / workflow river / Board Gate / project-init form / dependency inspector / runtime provider settings / completion card
 
 ---
@@ -112,12 +112,13 @@
 
 本轮产物：
 
-- 后端新增 `ceo_actions.py / ceo_snapshot.py / ceo_prompts.py / ceo_proposer.py / ceo_validator.py / ceo_scheduler.py`，先把 CEO 落成影子判断器而不是执行器
+- 后端新增 `ceo_actions.py / ceo_snapshot.py / ceo_prompts.py / ceo_proposer.py / ceo_validator.py / ceo_scheduler.py / ceo_executor.py`，先从影子判断器起步，再接入有限执行首轮
 - 当前影子模式只开放 5 类受控动作：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / ESCALATE_TO_BOARD / NO_ACTION`
 - `ticket_handlers` 与 `approval_handlers` 现在会在工单完成、工单失败、审批完成、incident 恢复后追加 CEO 影子审计，不影响现有 `workflow_auto_advance`
 - 后端新增 `ceo_shadow_run` 审计表和 `/api/v1/projections/workflows/{workflow_id}/ceo-shadow` 只读投影，后续前端可以直接接入，不需要翻库
-- 新增 `backend/tests/test_ceo_scheduler.py`，覆盖 fallback、live provider 提议、失败触发、审批触发、incident 恢复触发；本轮后端全量验证为 `372 passed`
+- 新增 `backend/tests/test_ceo_scheduler.py`，覆盖 fallback、live provider 提议、有限执行建票 / 重试 / 招聘、deferred escalation、失败触发、审批触发、incident 恢复触发；本轮后端全量验证为 `378 passed`
 - 2026-04-04 收尾修正：移除了 `ticket-create` 上误插的 `TICKET_FAILED` 影子触发，并把 `ticket-fail` 的真实影子触发补回成功出口，避免 CEO 审计把“建票成功”误记成“失败后决策”
+- 2026-04-04 增量推进：`ceo_executor.py` 已接入有限执行首轮，当前会真实落地 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`，并把 `executed_actions / execution_summary / deterministic_fallback_*` 一起写入 `ceo-shadow` 审计与投影；`ESCALATE_TO_BOARD` 仍明确保留为 `DEFERRED_SHADOW_ONLY`
 
 ---
 
@@ -127,12 +128,12 @@
 
 主线关系：**主链增强**，建立在 `P0-B / P0-C` 已稳定的前提上。
 
-- [ ] 先放开有限动作：创建工单、重试工单、升级董事会、发起招聘建议
-- [ ] 所有动作都必须经过 Reducer 级校验；校验失败自动退回确定性调度器
-- [ ] 保留现有 `workflow_auto_advance` 作为总回退
-- [ ] 增加"影子建议 vs 实际执行"对照读面或审计产物
+- [x] 先放开有限动作中的 3 类真实执行：创建工单、重试工单、发起招聘建议；`ESCALATE_TO_BOARD` 继续保持 shadow-only
+- [x] 所有动作仍经过 Reducer 级校验；校验失败不会改主状态，并会在 `ceo-shadow` 中留下 rejected / fallback 记录
+- [x] 保留现有 `workflow_auto_advance` 作为总回退；provider fallback 和执行失败现在会显式写入 `deterministic_fallback_*`
+- [x] 增加"影子建议 vs 实际执行"对照审计与读面：`ceo-shadow` 投影现在会返回 `executed_actions / execution_summary`
 
-验收门槛：CEO 至少能稳定处理首票创建、失败重试、无 worker 时招聘、需要董事会时升级四类动作。
+验收门槛：P1-A 首轮当前已满足“失败重试、无 worker 时招聘、受限主线 preset 建票”三类动作；“project-init 后首票自主拆解”和“通用董事会升级执行”仍留在后续批次。
 
 ### P1-B：前端拆壳，只拆会继续长的部分
 

@@ -2505,6 +2505,148 @@ def run_scheduler_tick(
     )
 
 
+def handle_retry_ticket_from_ceo(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    reason: str,
+    idempotency_key: str,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, idempotency_key)
+        if existing_event is not None:
+            return CommandAckEnvelope(
+                command_id=command_id,
+                idempotency_key=idempotency_key,
+                status=CommandAckStatus.DUPLICATE,
+                received_at=received_at,
+                reason="An identical CEO retry execution was already accepted.",
+                causation_hint=f"event:{existing_event['event_id']}",
+            )
+
+        current_ticket = repository.get_current_ticket_projection(ticket_id, connection=connection)
+        if current_ticket is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=idempotency_key,
+                received_at=received_at,
+                ticket_id=ticket_id,
+                reason=f"Ticket {ticket_id} does not exist in projection state.",
+            )
+        if current_ticket["workflow_id"] != workflow_id or current_ticket["node_id"] != node_id:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=idempotency_key,
+                received_at=received_at,
+                ticket_id=ticket_id,
+                reason="Ticket does not match the requested workflow or node.",
+            )
+        if current_ticket["status"] not in {TICKET_STATUS_FAILED, TICKET_STATUS_TIMED_OUT}:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=idempotency_key,
+                received_at=received_at,
+                ticket_id=ticket_id,
+                reason=f"Ticket {ticket_id} is not on a retryable terminal state.",
+            )
+
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id)
+        if created_spec is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=idempotency_key,
+                received_at=received_at,
+                ticket_id=ticket_id,
+                reason=f"Ticket {ticket_id} is missing its created spec.",
+            )
+
+        latest_terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+        if latest_terminal_event is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=idempotency_key,
+                received_at=received_at,
+                ticket_id=ticket_id,
+                reason=f"Ticket {ticket_id} has no terminal event to retry from.",
+            )
+
+        failure_payload = _build_failure_payload(
+            failure_kind=str(
+                latest_terminal_event["payload"].get("failure_kind")
+                or current_ticket.get("last_failure_kind")
+                or "RETRY_REQUESTED"
+            ),
+            failure_message=str(
+                latest_terminal_event["payload"].get("failure_message")
+                or reason
+                or "CEO requested a retry for the latest terminal ticket."
+            ),
+            failure_detail=latest_terminal_event["payload"].get("failure_detail"),
+        )
+
+        retry_source_event_type = latest_terminal_event["event_type"]
+        if retry_source_event_type == EVENT_TICKET_TIMED_OUT:
+            if not _should_retry_timeout(current_ticket=current_ticket, created_spec=created_spec):
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=idempotency_key,
+                    received_at=received_at,
+                    ticket_id=ticket_id,
+                    reason=f"Ticket {ticket_id} exhausted its timeout retry budget or timeout retry is disabled.",
+                )
+        elif retry_source_event_type == EVENT_TICKET_FAILED:
+            latest_failure_kind = str(latest_terminal_event["payload"].get("failure_kind") or "")
+            if not _should_retry_failure(
+                current_ticket=current_ticket,
+                created_spec=created_spec,
+                failure_kind=latest_failure_kind,
+            ):
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=idempotency_key,
+                    received_at=received_at,
+                    ticket_id=ticket_id,
+                    reason=f"Ticket {ticket_id} exhausted its failure retry budget or failure retry is disabled.",
+                )
+        else:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=idempotency_key,
+                received_at=received_at,
+                ticket_id=ticket_id,
+                reason=f"Ticket {ticket_id} cannot be retried from terminal event {retry_source_event_type}.",
+            )
+
+        next_ticket_id = _schedule_retry(
+            repository=repository,
+            connection=connection,
+            command_id=command_id,
+            occurred_at=received_at,
+            workflow_id=workflow_id,
+            failed_ticket_id=ticket_id,
+            node_id=node_id,
+            created_spec=created_spec,
+            failure_payload=failure_payload,
+            retry_source_event_type=retry_source_event_type,
+            idempotency_key_base=idempotency_key,
+        )
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=f"ticket:{next_ticket_id}",
+    )
+
+
 def handle_incident_resolve(
     repository: ControlPlaneRepository,
     payload: IncidentResolveCommand,

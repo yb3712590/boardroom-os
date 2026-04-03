@@ -190,6 +190,8 @@
 
 #### P0-CEO-006：实现 CEO Action Executor
 
+**状态**：已完成（2026-04-04，有限接管首轮落地）
+
 **描述**：将通过校验的 CEO 动作转换为实际的命令调用（复用现有 handler）。
 
 **文件**：
@@ -211,6 +213,11 @@
 - 有单元测试
 
 **风险**：低
+
+**完成补记**：
+- 本轮新增 `backend/app/core/ceo_executor.py`，当前只执行 3 类有限动作：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`
+- `ESCALATE_TO_BOARD` 继续保留在 action schema 中，但执行层会明确记成 `DEFERRED_SHADOW_ONLY`，不伪装成已落地
+- 所有执行结果都会进入 `ceo_shadow_run.executed_actions / execution_summary`，不额外发明第二套审计存储
 
 ---
 
@@ -239,8 +246,8 @@
 **风险**：中
 
 **完成补记**：
-- 本轮按影子模式实现的是 `snapshot -> propose -> validate -> persist audit`，没有接 `execute`
-- 现有 `workflow_auto_advance.py` 没有被替换，仍然是主链唯一状态推进器
+- 本轮已从 `snapshot -> propose -> validate -> persist audit` 扩成有限执行首轮：校验通过的 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE` 会继续落到现有 handler
+- `workflow_auto_advance.py` 仍然没有被替换，继续是主链唯一状态推进器；CEO 只是在既有触发点旁路执行受限动作并补审计
 
 ---
 
@@ -302,6 +309,8 @@
 
 #### P0-CEO-010：实现确定性回退
 
+**状态**：已完成（2026-04-04，有限接管首轮落地）
+
 **描述**：当 LLM 不可用时，CEO 回退到当前的硬编码逻辑（workflow_auto_advance.py）。
 
 **文件**：
@@ -321,6 +330,11 @@
 - 有测试验证回退行为
 
 **风险**：低
+
+**完成补记**：
+- 这轮没有把 CEO 变成新的主调度器；现有 `workflow_auto_advance` 仍是总回退和主推进器
+- `ceo-shadow` 审计现在会显式记录 `deterministic_fallback_used / deterministic_fallback_reason`，覆盖 provider 不可用、proposal fallback 和有限执行失败三类情况
+- 有限执行失败只会留下失败与 fallback 记录，不会反向打坏现有主链状态
 
 ---
 
@@ -349,6 +363,8 @@
 
 #### P0-CEO-012：CEO 招聘决策能力
 
+**状态**：已完成（2026-04-04，有限接管首轮落地）
+
 **描述**：CEO 能根据工单需求自主决定是否需要招聘新员工。
 
 **文件**：
@@ -369,9 +385,15 @@
 
 **风险**：低
 
+**完成补记**：
+- 当前 CEO 提议的 `HIRE_EMPLOYEE` 已会真实落成 `employee-hire-request` 命令，继续复用现有 staffing catalog 和 `CORE_HIRE_APPROVAL` 闭环
+- 执行层不会自造员工画像，仍沿用 staffing template 自带的 `skill / personality / aesthetic` 默认值
+
 ---
 
 #### P0-CEO-013：CEO 重试与重分派决策
+
+**状态**：已完成（2026-04-04，有限接管首轮按“只做重试、不做重分派”收口）
 
 **描述**：CEO 能在工单失败后决定重试（同一 Worker）还是重分派（换 Worker）。
 
@@ -393,11 +415,16 @@
 
 **风险**：低
 
+**完成补记**：
+- 本轮只把 `RETRY_TICKET` 落成真实执行，不把 `REASSIGN_TICKET` 写成已完成
+- CEO 重试现在复用 `ticket_handlers.py` 里的同一套 retry scheduling 规则，保留 `attempt_no / retry_count / parent_ticket_id / timeout backoff`
+- 当前只允许对 `FAILED / TIMED_OUT` 终态票执行 CEO 重试；被围堵取消类场景仍留给现有 incident / staffing recovery 路径
+
 ---
 
 #### P0-CEO-014：CEO 集成测试
 
-**状态**：已完成（2026-04-04，影子阶段最小覆盖）
+**状态**：已完成（2026-04-04，有限接管首轮补齐）
 
 **描述**：编写 CEO Agent 的集成测试，覆盖核心决策路径。
 
@@ -419,8 +446,9 @@
 **风险**：低
 
 **完成补记**：
-- 本轮没有按旧文案强行补满 10 条和定时唤醒用例，而是按 `P0-C` 影子模式补最小闭环回放
-- 当前新增测试已覆盖：fallback、live provider 提议、失败触发、审批触发、incident 恢复触发
+- 本轮没有补定时唤醒，而是围绕有限接管首轮补最小闭环
+- 当前 `backend/tests/test_ceo_scheduler.py` 已覆盖：deterministic fallback、hire 执行、retry 执行、白名单 create-ticket 执行、非法 create-ticket preset 拒绝、`ESCALATE_TO_BOARD` deferred、执行失败 fallback、失败触发、审批触发、incident 恢复、projection 字段暴露
+- 本轮后端全量验证更新为 `378 passed`
 
 ---
 

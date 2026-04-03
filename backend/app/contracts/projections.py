@@ -169,6 +169,15 @@ class CEOShadowValidatedActionProjection(StrictModel):
     reason: str
 
 
+class CEOShadowExecutedActionProjection(StrictModel):
+    action_type: str
+    payload: dict[str, object]
+    execution_status: str
+    reason: str
+    command_status: str | None = None
+    causation_hint: str | None = None
+
+
 class CEOShadowRunProjection(StrictModel):
     run_id: str
     occurred_at: datetime
@@ -183,6 +192,10 @@ class CEOShadowRunProjection(StrictModel):
     proposed_action_batch: dict[str, object]
     accepted_actions: list[CEOShadowValidatedActionProjection]
     rejected_actions: list[CEOShadowValidatedActionProjection]
+    executed_actions: list[CEOShadowExecutedActionProjection]
+    execution_summary: dict[str, object]
+    deterministic_fallback_used: bool = False
+    deterministic_fallback_reason: str | None = None
     comparison: dict[str, object]
 
 
