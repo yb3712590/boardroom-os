@@ -121,6 +121,10 @@
 - The `ceo_shadow_run` store and `/api/v1/projections/workflows/{workflow_id}/ceo-shadow` route now expose `executed_actions`, `execution_summary`, and `deterministic_fallback_*`, so later UI work can compare suggestion, validation, execution, and fallback without opening the database.
 - Retry execution now reuses the same ticket retry scheduling helper as the mainline failure path, so retry tickets keep the existing `attempt_no / retry_count / parent_ticket_id / timeout backoff` rules instead of inventing a second retry mechanism.
 - Full backend verification after the limited-execution batch finished at `378 passed`; frontend `npm run build` and `npm run test:run` are still blocked on this machine because `npm` is not installed.
+- This machine now has Node.js LTS available again, so frontend verification is no longer environment-blocked.
+- Frontend data-layer split is now real: `frontend/src/api.ts` has been reduced to a compatibility barrel, while the actual types, projection/command clients, SSE manager, `useSSE` hook, and three Zustand stores live under `frontend/src/types/`, `frontend/src/api/`, `frontend/src/hooks/`, and `frontend/src/stores/`.
+- `App.tsx` no longer owns inline fetch wiring or inline SSE setup; it now reads snapshot/review/UI state from stores and calls the split API modules, while `incident detail` and `dependency inspector` state intentionally remain local for the next page-shell batch.
+- Frontend verification for this round finished at `npm run build` passed and `npm run test:run` passed with `31 passed`; store resets were added in test setup so the existing long `App.test.tsx` regression suite still runs against clean state.
 
 ### 2026-04-02 (docs compaction)
 

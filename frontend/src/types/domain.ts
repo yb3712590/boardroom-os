@@ -1,0 +1,170 @@
+export type WorkflowSummary = {
+  workflow_id: string
+  title: string
+  north_star_goal: string
+  status: string
+  current_stage: string
+  started_at: string
+  deadline_at: string | null
+}
+
+export type NodeCounts = {
+  pending: number
+  executing: number
+  under_review: number
+  blocked_for_board: number
+  fused: number
+  completed: number
+}
+
+export type PhaseSummary = {
+  phase_id: string
+  label: string
+  status: string
+  node_counts: NodeCounts
+}
+
+export type InboxItem = {
+  inbox_item_id: string
+  workflow_id: string
+  item_type: string
+  priority: string
+  status: string
+  created_at: string
+  sla_due_at?: string | null
+  title: string
+  summary: string
+  source_ref: string
+  route_target: {
+    view: string
+    review_pack_id?: string | null
+    incident_id?: string | null
+  }
+  badges: string[]
+}
+
+export type WorkforceWorkerAction = {
+  action_type: string
+  enabled: boolean
+  disabled_reason: string | null
+  template_id: string | null
+}
+
+export type WorkforceWorker = {
+  employee_id: string
+  role_type: string
+  employment_state: string
+  activity_state: string
+  current_ticket_id: string | null
+  current_node_id: string | null
+  provider_id: string | null
+  last_update_at?: string | null
+  available_actions: WorkforceWorkerAction[]
+}
+
+export type WorkforceRoleLane = {
+  role_type: string
+  active_count: number
+  idle_count: number
+  workers: WorkforceWorker[]
+}
+
+export type StaffingHireTemplate = {
+  template_id: string
+  label: string
+  role_type: string
+  role_profile_refs: string[]
+  employee_id_hint: string
+  provider_id: string | null
+  request_summary: string
+  skill_profile: Record<string, string>
+  personality_profile: Record<string, string>
+  aesthetic_profile: Record<string, string>
+}
+
+export type ReviewOption = {
+  option_id: string
+  label: string
+  summary: string
+  artifact_refs?: string[]
+}
+
+export type ReviewPack = {
+  meta: {
+    approval_id: string
+    review_pack_id: string
+    review_pack_version: number
+    workflow_id: string
+    review_type: string
+    created_at: string
+    priority: string
+  }
+  subject: {
+    title: string
+    subtitle?: string | null
+    source_node_id?: string | null
+    source_ticket_id?: string | null
+    blocking_scope?: string | null
+    change_kind?: string | null
+    employee_id?: string | null
+  }
+  trigger: {
+    trigger_event_id: string
+    trigger_reason: string
+    why_now: string
+  }
+  recommendation: {
+    recommended_action: string
+    recommended_option_id?: string | null
+    summary: string
+  }
+  options: ReviewOption[]
+  evidence_summary?: Array<{
+    evidence_id: string
+    label: string
+    summary: string
+  }>
+  delta_summary?: string | null
+  maker_checker_summary?: {
+    review_status?: string
+    summary?: string
+    checker_employee_id?: string
+  } | null
+  risk_summary?: string[] | null
+  budget_impact?: {
+    budget_delta_tokens?: number
+    summary?: string
+  } | null
+  decision_form: {
+    allowed_actions: string[]
+    command_target_version: number
+    requires_comment_on_reject: boolean
+    requires_constraint_patch_on_modify: boolean
+  }
+  developer_inspector_refs?: {
+    compiled_context_bundle_ref?: string
+    compile_manifest_ref?: string
+    rendered_execution_payload_ref?: string
+  } | null
+}
+
+export type DependencyInspectorNode = {
+  node_id: string
+  ticket_id: string | null
+  parent_ticket_id: string | null
+  phase: string
+  delivery_stage: string | null
+  node_status: string
+  ticket_status: string | null
+  role_profile_ref: string | null
+  output_schema_ref: string | null
+  lease_owner: string | null
+  depends_on_ticket_id: string | null
+  dependent_ticket_ids: string[]
+  block_reason: string
+  is_critical_path: boolean
+  is_blocked: boolean
+  expected_artifact_scope: string[]
+  open_review_pack_id: string | null
+  open_incident_id: string | null
+}

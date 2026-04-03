@@ -17,8 +17,8 @@
 ## 当前基线（2026-04-04 实测）
 
 - backend：`py -m pytest tests -q` → 378 passed
-- frontend：`npm run build` → 本轮未复核（当前环境缺少 Node.js / npm）
-- frontend：`npm run test:run` → 本轮未复核（当前环境缺少 Node.js / npm）
+- frontend：`npm run build` → passed
+- frontend：`npm run test:run` → 31 passed
 
 ---
 
@@ -139,11 +139,23 @@
 
 主线关系：**间接服务主链**，目标是降低后续 UI 继续演进和验证的成本，不改变当前工作流真相。
 
-- [ ] 先拆数据层：类型、API 客户端、SSE 管理器、主 store、review store、UI store
+- [x] 先拆数据层：类型、API 客户端、SSE 管理器、主 store、review store、UI store
 - [ ] 再拆页面壳和抽屉壳：`DashboardPage`、各类 Drawer、错误边界
 - [ ] 保持视觉和交互基本不变，不在这一阶段重新设计品牌风格
-- [ ] 测试重点放在 store、API、关键交互和错误状态
+- [x] 测试重点放在 store、API、关键交互和错误状态
 - [ ] 把 `App.tsx` 缩到只剩路由和组装职责
+
+本轮产物：
+
+- 前端已完成 `P0-FE-001` 到 `P0-FE-010`：`zustand` 已接入，`src/api.ts` 已拆成 `types/ + api/ + stores/ + hooks/`，`App.tsx` 改为通过独立 API 模块、SSE hook 和 store 取数/提交
+- 前端验证已补齐：`npm run build` 通过，`npm run test:run` 通过，当前前端总计 `31 passed`
+- `frontend/src/api.ts` 目前保留为兼容出口，现有组件还没整体迁到新目录，这一层兼容先保留到页面壳和组件壳拆分完成
+
+新发现任务：
+
+- [ ] 把 `incident detail / dependency inspector` 的本地读状态和页面组装从 `App.tsx` 继续下沉到 `DashboardPage` 与抽屉层，避免 `App.tsx` 在数据层拆完后继续滞留页面职责
+
+主线关系：**间接服务主链验证**，降低前端后续演进和回归成本，不改变工作流真相。
 
 对应任务库：选择性吸收 `P0-FE-001` 到 `P0-FE-022`。
 
