@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.persona_profiles import (
+    clone_persona_template,
+    get_hire_persona_template_id,
+)
+
 
 _MAINLINE_STAFFING_HIRE_TEMPLATES: tuple[dict[str, Any], ...] = (
     {
@@ -12,9 +17,7 @@ _MAINLINE_STAFFING_HIRE_TEMPLATES: tuple[dict[str, Any], ...] = (
         "employee_id_hint": "emp_frontend_backup",
         "provider_id": "prov_openai_compat",
         "request_summary": "Hire a backup frontend maker for rework rotation.",
-        "skill_profile": {"primary_domain": "frontend"},
-        "personality_profile": {"style": "maker"},
-        "aesthetic_profile": {"preference": "minimal"},
+        **clone_persona_template(get_hire_persona_template_id("frontend_engineer")),
     },
     {
         "template_id": "checker_backup",
@@ -24,9 +27,7 @@ _MAINLINE_STAFFING_HIRE_TEMPLATES: tuple[dict[str, Any], ...] = (
         "employee_id_hint": "emp_checker_backup",
         "provider_id": "prov_openai_compat",
         "request_summary": "Hire a backup checker to keep internal review moving.",
-        "skill_profile": {"primary_domain": "quality"},
-        "personality_profile": {"style": "checker"},
-        "aesthetic_profile": {"preference": "systematic"},
+        **clone_persona_template(get_hire_persona_template_id("checker")),
     },
 )
 

@@ -339,6 +339,7 @@ class CompiledRole(StrictModel):
     skill_profile: dict[str, Any] = Field(default_factory=dict)
     personality_profile: dict[str, Any] = Field(default_factory=dict)
     aesthetic_profile: dict[str, Any] = Field(default_factory=dict)
+    persona_summary: str = Field(min_length=1)
 
 
 class CompiledConstraints(StrictModel):

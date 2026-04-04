@@ -50,6 +50,12 @@ export type WorkforceWorkerAction = {
   template_id: string | null
 }
 
+export type EmployeeProfileBundle = {
+  skill_profile: Record<string, string>
+  personality_profile: Record<string, string>
+  aesthetic_profile: Record<string, string>
+}
+
 export type WorkforceWorker = {
   employee_id: string
   role_type: string
@@ -58,6 +64,10 @@ export type WorkforceWorker = {
   current_ticket_id: string | null
   current_node_id: string | null
   provider_id: string | null
+  skill_profile: Record<string, string>
+  personality_profile: Record<string, string>
+  aesthetic_profile: Record<string, string>
+  profile_summary: string
   last_update_at?: string | null
   available_actions: WorkforceWorkerAction[]
 }
@@ -80,6 +90,24 @@ export type StaffingHireTemplate = {
   skill_profile: Record<string, string>
   personality_profile: Record<string, string>
   aesthetic_profile: Record<string, string>
+}
+
+export type ReviewPackEmployeeChange = {
+  change_kind: string
+  employee_id?: string | null
+  replacement_employee_id?: string | null
+  role_type?: string | null
+  role_profile_refs?: string[]
+  skill_profile?: Record<string, string>
+  personality_profile?: Record<string, string>
+  aesthetic_profile?: Record<string, string>
+  replacement_role_type?: string | null
+  replacement_role_profile_refs?: string[]
+  replacement_skill_profile?: Record<string, string>
+  replacement_personality_profile?: Record<string, string>
+  replacement_aesthetic_profile?: Record<string, string>
+  provider_id?: string | null
+  replacement_provider_id?: string | null
 }
 
 export type ReviewOption = {
@@ -146,6 +174,7 @@ export type ReviewPack = {
     compile_manifest_ref?: string
     rendered_execution_payload_ref?: string
   } | null
+  employee_change?: ReviewPackEmployeeChange | null
 }
 
 export type DependencyInspectorNode = {

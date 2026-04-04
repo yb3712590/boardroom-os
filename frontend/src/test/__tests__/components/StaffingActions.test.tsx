@@ -16,9 +16,23 @@ describe('StaffingActions', () => {
       employee_id_hint: 'emp_frontend_backup',
       provider_id: 'prov_openai_compat',
       request_summary: 'Hire a backup frontend maker for rework rotation.',
-      skill_profile: { primary_domain: 'frontend' },
-      personality_profile: { style: 'maker' },
-      aesthetic_profile: { preference: 'minimal' },
+      skill_profile: {
+        primary_domain: 'frontend',
+        system_scope: 'surface_polish',
+        validation_bias: 'finish_first',
+      },
+      personality_profile: {
+        risk_posture: 'cautious',
+        challenge_style: 'probing',
+        execution_pace: 'measured',
+        detail_rigor: 'rigorous',
+        communication_style: 'concise',
+      },
+      aesthetic_profile: {
+        surface_preference: 'polished',
+        information_density: 'layered',
+        motion_tolerance: 'restrained',
+      },
     }
 
     render(

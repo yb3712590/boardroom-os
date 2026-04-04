@@ -62,6 +62,10 @@ from app.core.constants import (
     TICKET_STATUS_PENDING,
 )
 from app.core.ids import new_prefixed_id
+from app.core.persona_profiles import (
+    build_default_employee_roster,
+    normalize_employee_projection_profiles,
+)
 from app.core.reducer import (
     rebuild_employee_projections,
     rebuild_incident_projections,
@@ -72,30 +76,7 @@ from app.core.reducer import (
 from app.core.time import now_local
 from app.db.schema import TABLE_SCHEMA_SQL
 
-DEFAULT_EMPLOYEE_ROSTER = (
-    {
-        "employee_id": "emp_frontend_2",
-        "role_type": "frontend_engineer",
-        "skill_profile_json": {"primary_domain": "frontend"},
-        "personality_profile_json": {"style": "maker"},
-        "aesthetic_profile_json": {"preference": "minimal"},
-        "state": "ACTIVE",
-        "board_approved": True,
-        "provider_id": "prov_openai_compat",
-        "role_profile_refs_json": ["frontend_engineer_primary"],
-    },
-    {
-        "employee_id": "emp_checker_1",
-        "role_type": "checker",
-        "skill_profile_json": {"primary_domain": "quality"},
-        "personality_profile_json": {"style": "checker"},
-        "aesthetic_profile_json": {"preference": "structured"},
-        "state": "ACTIVE",
-        "board_approved": True,
-        "provider_id": "prov_openai_compat",
-        "role_profile_refs_json": ["checker_primary"],
-    },
-)
+DEFAULT_EMPLOYEE_ROSTER = build_default_employee_roster()
 
 
 class ControlPlaneRepository:
@@ -4062,7 +4043,7 @@ class ControlPlaneRepository:
         converted["provider_id"] = converted.get("provider_id")
         converted["board_approved"] = bool(converted.get("board_approved"))
         converted["version"] = int(converted.get("version") or 0)
-        return converted
+        return normalize_employee_projection_profiles(converted)
 
     def _convert_worker_bootstrap_state_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)

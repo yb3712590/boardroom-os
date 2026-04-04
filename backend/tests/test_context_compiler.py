@@ -330,6 +330,9 @@ def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time
     assert compile_request.worker_binding.employee_role_type == "frontend_engineer"
     assert compile_request.worker_binding.tenant_id == "tenant_default"
     assert compile_request.worker_binding.workspace_id == "ws_default"
+    assert compile_request.worker_binding.skill_profile["system_scope"] == "delivery_slice"
+    assert compile_request.worker_binding.personality_profile["risk_posture"] == "assertive"
+    assert compile_request.worker_binding.aesthetic_profile["surface_preference"] == "functional"
     assert compile_request.budget_policy.max_input_tokens == 3000
     assert compile_request.budget_policy.overflow_policy == "FAIL_CLOSED"
     assert [source.source_ref for source in compile_request.explicit_sources] == [
@@ -384,6 +387,7 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
     assert compiled_package.meta.compiler_version == MINIMAL_CONTEXT_COMPILER_VERSION
     assert compiled_package.compiled_role.role_profile_ref == "frontend_engineer_primary"
     assert compiled_package.compiled_role.employee_role_type == "frontend_engineer"
+    assert compiled_package.compiled_role.persona_summary.startswith("Skill frontend")
     assert compiled_package.compiled_constraints.constraints_ref == "global_constraints_v3"
     assert compiled_package.compiled_constraints.global_rules == []
     assert compiled_package.execution.output_schema_ref == "ui_milestone_review"
@@ -397,6 +401,9 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
     assert all(
         block.content_type == "SOURCE_DESCRIPTOR"
         for block in compiled_package.atomic_context_bundle.context_blocks
+    )
+    assert compiled_package.rendered_execution_payload.messages[0].content_payload["role_profile"]["persona_summary"].startswith(
+        "Skill frontend"
     )
 
 

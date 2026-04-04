@@ -437,6 +437,53 @@
   margin-top: 8px;
 }
 
+.profile-summary-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(16, 25, 39, 0.7);
+  border: 1px solid rgba(199, 225, 255, 0.08);
+}
+
+.profile-summary-title {
+  color: var(--text-strong);
+}
+
+.profile-summary-copy,
+.profile-summary-grid dt,
+.profile-summary-grid dd {
+  color: var(--muted-label);
+}
+
+.profile-summary-copy {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.profile-summary-grid {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.profile-summary-grid div {
+  display: grid;
+  gap: 4px;
+}
+
+.profile-summary-grid dt {
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.profile-summary-grid dd {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
 .worker-action-row {
   display: flex;
   flex-wrap: wrap;

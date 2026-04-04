@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.core.persona_profiles import normalize_persona_profiles
 from app.db.repository import ControlPlaneRepository
 
 
@@ -156,6 +157,16 @@ def build_ceo_shadow_snapshot(
                 "board_approved": bool(employee.get("board_approved")),
                 "provider_id": employee.get("provider_id"),
                 "role_profile_refs": list(employee.get("role_profile_refs") or []),
+                **{
+                    key: value
+                    for key, value in normalize_persona_profiles(
+                        str(employee.get("role_type") or ""),
+                        skill_profile=employee.get("skill_profile_json"),
+                        personality_profile=employee.get("personality_profile_json"),
+                        aesthetic_profile=employee.get("aesthetic_profile_json"),
+                    ).items()
+                    if key in {"skill_profile", "personality_profile", "aesthetic_profile", "profile_summary"}
+                },
             }
             for employee in employees
         ],

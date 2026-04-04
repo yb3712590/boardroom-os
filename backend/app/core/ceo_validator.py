@@ -13,6 +13,10 @@ from app.core.ceo_execution_presets import (
     supports_ceo_create_ticket_preset,
 )
 from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY
+from app.core.persona_profiles import (
+    build_high_overlap_rejection_reason,
+    find_same_role_high_overlap_conflict,
+)
 from app.core.staffing_catalog import resolve_mainline_staffing_combo
 from app.db.repository import ControlPlaneRepository
 
@@ -58,6 +62,27 @@ def validate_ceo_action_batch(
             ):
                 rejected_actions.append(
                     _action_entry(action, "Suggested employee_id_hint already exists in the current roster.")
+                )
+                continue
+            conflict = find_same_role_high_overlap_conflict(
+                role_type=action.payload.role_type,
+                skill_profile=template.get("skill_profile") or {},
+                personality_profile=template.get("personality_profile") or {},
+                aesthetic_profile=template.get("aesthetic_profile") or {},
+                employees=repository.list_employee_projections(
+                    states=["ACTIVE"],
+                    board_approved_only=True,
+                ),
+            )
+            if conflict is not None:
+                rejected_actions.append(
+                    _action_entry(
+                        action,
+                        build_high_overlap_rejection_reason(
+                            role_type=action.payload.role_type,
+                            conflict=conflict,
+                        ),
+                    )
                 )
                 continue
             accepted_actions.append(

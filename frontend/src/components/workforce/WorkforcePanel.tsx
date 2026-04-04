@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Badge } from '../shared/Badge'
 import { Button } from '../shared/Button'
 import { LoadingSkeleton } from '../shared/LoadingSkeleton'
+import { ProfileSummary } from '../shared/ProfileSummary'
 import { StaffingActions } from './StaffingActions'
 
 import type { WorkforceData } from '../../types/api'
@@ -132,6 +133,13 @@ export function WorkforcePanel({
                           <span>{worker.current_ticket_id ?? 'No current ticket'}</span>
                           <span>{worker.provider_id ?? 'No provider binding'}</span>
                         </div>
+                        <ProfileSummary
+                          label="Current profile"
+                          summary={worker.profile_summary}
+                          skillProfile={worker.skill_profile}
+                          personalityProfile={worker.personality_profile}
+                          aestheticProfile={worker.aesthetic_profile}
+                        />
                         <div className="worker-action-row">
                           {freezeAction?.enabled ? (
                             <Button

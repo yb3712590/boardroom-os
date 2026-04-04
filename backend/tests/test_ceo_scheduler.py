@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
+from app.contracts.ceo_actions import CEOActionBatch
+from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_SCOPE_NODE_ID,
     build_project_init_scope_ticket_id,
 )
+from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.ceo_scheduler import (
     SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
     list_due_ceo_maintenance_workflows,
@@ -15,8 +19,10 @@ from app.core.ceo_scheduler import (
 from app.core.constants import (
     EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_EMPLOYEE_HIRED,
     EVENT_INCIDENT_OPENED,
 )
+from app.core.persona_profiles import clone_persona_template, get_hire_persona_template_id
 from app.core.provider_openai_compat import OpenAICompatProviderResult
 from app.core.runtime_provider_config import RuntimeProviderMode, RuntimeProviderStoredConfig
 
@@ -225,6 +231,83 @@ def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(cli
     assert created_spec["node_id"] == PROJECT_INIT_SCOPE_NODE_ID
     assert created_spec["role_profile_ref"] == "ui_designer_primary"
     assert any(ref.endswith("/board-brief.md") for ref in created_spec["input_artifact_refs"])
+
+
+def test_ceo_shadow_snapshot_includes_normalized_profiles_and_summary(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO snapshot persona")
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:persona",
+    )
+
+    frontend_employee = next(
+        employee for employee in snapshot["employees"] if employee["employee_id"] == "emp_frontend_2"
+    )
+    assert frontend_employee["skill_profile"]["system_scope"] == "delivery_slice"
+    assert frontend_employee["personality_profile"]["risk_posture"] == "assertive"
+    assert frontend_employee["profile_summary"].startswith("Skill frontend")
+
+
+def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_already_active(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO validator overlap")
+    repository = client.app.state.repository
+    hire_template = clone_persona_template(get_hire_persona_template_id("frontend_engineer"))
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_HIRED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=None,
+            idempotency_key="test-seed-employee:emp_frontend_polish",
+            causation_id=None,
+            correlation_id=None,
+            payload={
+                "employee_id": "emp_frontend_polish",
+                "role_type": "frontend_engineer",
+                "skill_profile": hire_template["skill_profile"],
+                "personality_profile": hire_template["personality_profile"],
+                "aesthetic_profile": hire_template["aesthetic_profile"],
+                "state": "ACTIVE",
+                "board_approved": True,
+                "provider_id": "prov_openai_compat",
+                "role_profile_refs": ["frontend_engineer_primary"],
+            },
+            occurred_at=datetime.fromisoformat("2026-04-04T18:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    result = validate_ceo_action_batch(
+        repository,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Hire a frontend backup.",
+                "actions": [
+                    {
+                        "action_type": "HIRE_EMPLOYEE",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "role_type": "frontend_engineer",
+                            "role_profile_refs": ["frontend_engineer_primary"],
+                            "request_summary": "Hire another frontend backup.",
+                            "employee_id_hint": "emp_frontend_duplicate",
+                            "provider_id": "prov_openai_compat",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert result["accepted_actions"] == []
+    assert result["rejected_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert "too similar" in result["rejected_actions"][0]["reason"].lower()
 
 
 def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monkeypatch):

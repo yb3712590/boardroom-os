@@ -142,6 +142,10 @@ class WorkforceWorkerProjection(StrictModel):
     current_ticket_id: str | None = None
     current_node_id: str | None = None
     provider_id: str | None = None
+    skill_profile: dict[str, str] = Field(default_factory=dict)
+    personality_profile: dict[str, str] = Field(default_factory=dict)
+    aesthetic_profile: dict[str, str] = Field(default_factory=dict)
+    profile_summary: str = Field(min_length=1)
     last_update_at: datetime | None = None
     available_actions: list[WorkforceActionProjection] = Field(default_factory=list)
 

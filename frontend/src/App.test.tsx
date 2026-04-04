@@ -168,13 +168,27 @@ function hireTemplates() {
       template_id: 'frontend_engineer_backup',
       label: 'Frontend backup maker',
       role_type: 'frontend_engineer',
-      role_profile_refs: ['ui_designer_primary'],
+      role_profile_refs: ['frontend_engineer_primary'],
       employee_id_hint: 'emp_frontend_backup',
       provider_id: 'prov_openai_compat',
       request_summary: 'Hire a backup frontend maker for rework rotation.',
-      skill_profile: { primary_domain: 'frontend' },
-      personality_profile: { style: 'maker' },
-      aesthetic_profile: { preference: 'minimal' },
+      skill_profile: {
+        primary_domain: 'frontend',
+        system_scope: 'surface_polish',
+        validation_bias: 'finish_first',
+      },
+      personality_profile: {
+        risk_posture: 'cautious',
+        challenge_style: 'probing',
+        execution_pace: 'measured',
+        detail_rigor: 'rigorous',
+        communication_style: 'concise',
+      },
+      aesthetic_profile: {
+        surface_preference: 'polished',
+        information_density: 'layered',
+        motion_tolerance: 'restrained',
+      },
     },
     {
       template_id: 'checker_backup',
@@ -184,9 +198,23 @@ function hireTemplates() {
       employee_id_hint: 'emp_checker_backup',
       provider_id: 'prov_openai_compat',
       request_summary: 'Hire a backup checker to keep internal review moving.',
-      skill_profile: { primary_domain: 'quality' },
-      personality_profile: { style: 'checker' },
-      aesthetic_profile: { preference: 'systematic' },
+      skill_profile: {
+        primary_domain: 'quality',
+        system_scope: 'release_sweep',
+        validation_bias: 'regression_first',
+      },
+      personality_profile: {
+        risk_posture: 'cautious',
+        challenge_style: 'constructive',
+        execution_pace: 'deliberate',
+        detail_rigor: 'sweeping',
+        communication_style: 'concise',
+      },
+      aesthetic_profile: {
+        surface_preference: 'clarifying',
+        information_density: 'balanced',
+        motion_tolerance: 'restrained',
+      },
     },
   ]
 }
@@ -216,6 +244,25 @@ function workforceData() {
             current_ticket_id: 'tkt_visual_002',
             current_node_id: 'node_homepage_visual',
             provider_id: 'prov_openai_compat',
+            skill_profile: {
+              primary_domain: 'frontend',
+              system_scope: 'delivery_slice',
+              validation_bias: 'balanced',
+            },
+            personality_profile: {
+              risk_posture: 'assertive',
+              challenge_style: 'constructive',
+              execution_pace: 'fast',
+              detail_rigor: 'focused',
+              communication_style: 'direct',
+            },
+            aesthetic_profile: {
+              surface_preference: 'functional',
+              information_density: 'balanced',
+              motion_tolerance: 'measured',
+            },
+            profile_summary:
+              'Skill frontend, delivery slice, balanced. Personality assertive, constructive, fast, focused, direct. Aesthetic functional, balanced, measured.',
             last_update_at: '2026-04-01T23:08:00+08:00',
             available_actions: [
               workforceAction('FREEZE', true),
@@ -231,6 +278,25 @@ function workforceData() {
             current_ticket_id: null,
             current_node_id: null,
             provider_id: null,
+            skill_profile: {
+              primary_domain: 'frontend',
+              system_scope: 'surface_polish',
+              validation_bias: 'finish_first',
+            },
+            personality_profile: {
+              risk_posture: 'cautious',
+              challenge_style: 'probing',
+              execution_pace: 'measured',
+              detail_rigor: 'rigorous',
+              communication_style: 'concise',
+            },
+            aesthetic_profile: {
+              surface_preference: 'polished',
+              information_density: 'layered',
+              motion_tolerance: 'restrained',
+            },
+            profile_summary:
+              'Skill frontend, surface polish, finish first. Personality cautious, probing, measured, rigorous, concise. Aesthetic polished, layered, restrained.',
             last_update_at: '2026-04-01T23:07:00+08:00',
             available_actions: [
               workforceAction('FREEZE', true),
@@ -253,6 +319,25 @@ function workforceData() {
             current_ticket_id: 'tkt_checker_001',
             current_node_id: 'node_homepage_visual',
             provider_id: null,
+            skill_profile: {
+              primary_domain: 'quality',
+              system_scope: 'release_guard',
+              validation_bias: 'evidence_first',
+            },
+            personality_profile: {
+              risk_posture: 'guarded',
+              challenge_style: 'probing',
+              execution_pace: 'measured',
+              detail_rigor: 'rigorous',
+              communication_style: 'forensic',
+            },
+            aesthetic_profile: {
+              surface_preference: 'systematic',
+              information_density: 'dense',
+              motion_tolerance: 'minimal',
+            },
+            profile_summary:
+              'Skill quality, release guard, evidence first. Personality guarded, probing, measured, rigorous, forensic. Aesthetic systematic, dense, minimal.',
             last_update_at: '2026-04-01T23:08:00+08:00',
             available_actions: [
               workforceAction('FREEZE', true),

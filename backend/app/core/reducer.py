@@ -60,6 +60,7 @@ from app.core.constants import (
     TICKET_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_TIMED_OUT,
 )
+from app.core.persona_profiles import normalize_persona_profiles
 
 
 def _event_payload(event: dict) -> dict:
@@ -178,12 +179,18 @@ def rebuild_employee_projections(events: Iterable[dict]) -> list[dict]:
 
         if event_type == EVENT_EMPLOYEE_HIRED:
             employee_id = payload["employee_id"]
+            normalized_profiles = normalize_persona_profiles(
+                str(payload.get("role_type") or "unknown"),
+                skill_profile=payload.get("skill_profile"),
+                personality_profile=payload.get("personality_profile"),
+                aesthetic_profile=payload.get("aesthetic_profile"),
+            )
             projections[employee_id] = {
                 "employee_id": employee_id,
                 "role_type": str(payload.get("role_type") or "unknown"),
-                "skill_profile_json": dict(payload.get("skill_profile") or {}),
-                "personality_profile_json": dict(payload.get("personality_profile") or {}),
-                "aesthetic_profile_json": dict(payload.get("aesthetic_profile") or {}),
+                "skill_profile_json": normalized_profiles["skill_profile"],
+                "personality_profile_json": normalized_profiles["personality_profile"],
+                "aesthetic_profile_json": normalized_profiles["aesthetic_profile"],
                 "state": str(payload.get("state") or EMPLOYEE_STATE_ACTIVE),
                 "board_approved": bool(payload.get("board_approved")),
                 "provider_id": payload.get("provider_id"),

@@ -145,6 +145,11 @@
 - Deterministic CEO fallback now covers that `project-init` kickoff path as well, so the zero-config local chain still reaches the first real scope review even when no live provider is configured or the proposal pipeline fails.
 - `scheduler_runner.py` now adds idle CEO maintenance after scheduler tick, leased runtime, and artifact cleanup; it only targets workflows with no open approval or incident, no leased/executing tickets, and a still-actionable signal (`no tickets yet`, `ready ticket`, or `failed ticket`), and records those runs as `SCHEDULER_IDLE_MAINTENANCE`.
 - Backend verification for this round finished at `385 passed`; frontend verification finished at `npm run build` passed and `npm run test:run` → `47 passed`. In this shell, bare `pytest` is still missing on PATH, but bare `npm` works again.
+- Added `backend/app/core/persona_profiles.py` as the new single truth source for persona data: the mainline now uses fixed `skill / personality / aesthetic` dimensions, four concrete persona templates, and read-time compatibility for older `style / preference / simplified primary_domain` payloads.
+- Default employees, `staffing_catalog`, CEO snapshot/prompting, and the Context Compiler now all consume the same normalized persona bundle; runtime execution packages expose `persona_summary` in system controls instead of carrying raw profile dicts without a readable summary.
+- Thin staffing governance now enforces a hard same-role diversity guard: `hire` and `replace` compare against `ACTIVE + board_approved` peers, reject high-overlap persona matches, and keep replacement checks scoped by excluding the employee being replaced.
+- `workforce` now exposes current worker persona fields plus `profile_summary`, and the React shell now renders the same persona shape in both Workforce and staffing Review Room instead of leaving persona data hidden in backend-only payloads.
+- Full verification after the persona slice finished at `py -m pytest tests/ -q` → `391 passed`, `npm run build` → passed, and `npm run test:run` → `49 passed`; in this shell, bare `pytest` is still missing on PATH, so backend validation remains reproducible through `py -m pytest`.
 
 ### 2026-04-02 (docs compaction)
 

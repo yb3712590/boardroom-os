@@ -17,6 +17,11 @@ from app.core.constants import (
     EVENT_EMPLOYEE_RESTORED,
 )
 from app.core.ids import new_prefixed_id
+from app.core.persona_profiles import (
+    build_high_overlap_rejection_reason,
+    find_same_role_high_overlap_conflict,
+    normalize_persona_profiles,
+)
 from app.core.staffing_containment import (
     contain_employee_active_tickets,
     restore_employee_requeued_tickets,
@@ -166,6 +171,34 @@ def handle_employee_hire_request(
                 causation_hint=f"employee:{payload.employee_id}",
             )
 
+        normalized_profiles = normalize_persona_profiles(
+            payload.role_type,
+            skill_profile=payload.skill_profile,
+            personality_profile=payload.personality_profile,
+            aesthetic_profile=payload.aesthetic_profile,
+        )
+        conflict = find_same_role_high_overlap_conflict(
+            role_type=payload.role_type,
+            skill_profile=normalized_profiles["skill_profile"],
+            personality_profile=normalized_profiles["personality_profile"],
+            aesthetic_profile=normalized_profiles["aesthetic_profile"],
+            employees=repository.list_employee_projections(
+                connection=connection,
+                states=[EMPLOYEE_STATE_ACTIVE],
+                board_approved_only=True,
+            ),
+        )
+        if conflict is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=build_high_overlap_rejection_reason(
+                    role_type=payload.role_type,
+                    conflict=conflict,
+                ),
+            )
+
         approval = repository.create_approval_request(
             connection,
             workflow_id=payload.workflow_id,
@@ -181,9 +214,9 @@ def handle_employee_hire_request(
                     "employee_id": payload.employee_id,
                     "role_type": payload.role_type,
                     "role_profile_refs": list(payload.role_profile_refs),
-                    "skill_profile": dict(payload.skill_profile),
-                    "personality_profile": dict(payload.personality_profile),
-                    "aesthetic_profile": dict(payload.aesthetic_profile),
+                    "skill_profile": normalized_profiles["skill_profile"],
+                    "personality_profile": normalized_profiles["personality_profile"],
+                    "aesthetic_profile": normalized_profiles["aesthetic_profile"],
                     "provider_id": payload.provider_id,
                 },
                 trigger_reason="Core staffing changes require explicit board approval.",
@@ -313,6 +346,36 @@ def handle_employee_replace_request(
                 causation_hint=f"employee:{payload.replacement_employee_id}",
             )
 
+        normalized_profiles = normalize_persona_profiles(
+            payload.replacement_role_type,
+            skill_profile=payload.replacement_skill_profile,
+            personality_profile=payload.replacement_personality_profile,
+            aesthetic_profile=payload.replacement_aesthetic_profile,
+        )
+        conflict = find_same_role_high_overlap_conflict(
+            role_type=payload.replacement_role_type,
+            skill_profile=normalized_profiles["skill_profile"],
+            personality_profile=normalized_profiles["personality_profile"],
+            aesthetic_profile=normalized_profiles["aesthetic_profile"],
+            employees=repository.list_employee_projections(
+                connection=connection,
+                states=[EMPLOYEE_STATE_ACTIVE],
+                board_approved_only=True,
+            ),
+            exclude_employee_ids=[payload.replaced_employee_id],
+        )
+        if conflict is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=build_high_overlap_rejection_reason(
+                    role_type=payload.replacement_role_type,
+                    conflict=conflict,
+                ),
+                causation_hint=f"employee:{payload.replaced_employee_id}",
+            )
+
         approval = repository.create_approval_request(
             connection,
             workflow_id=payload.workflow_id,
@@ -329,9 +392,9 @@ def handle_employee_replace_request(
                     "replacement_employee_id": payload.replacement_employee_id,
                     "replacement_role_type": payload.replacement_role_type,
                     "replacement_role_profile_refs": list(payload.replacement_role_profile_refs),
-                    "replacement_skill_profile": dict(payload.replacement_skill_profile),
-                    "replacement_personality_profile": dict(payload.replacement_personality_profile),
-                    "replacement_aesthetic_profile": dict(payload.replacement_aesthetic_profile),
+                    "replacement_skill_profile": normalized_profiles["skill_profile"],
+                    "replacement_personality_profile": normalized_profiles["personality_profile"],
+                    "replacement_aesthetic_profile": normalized_profiles["aesthetic_profile"],
                     "replacement_provider_id": payload.replacement_provider_id,
                 },
                 trigger_reason="Replacing a core worker requires explicit board approval.",

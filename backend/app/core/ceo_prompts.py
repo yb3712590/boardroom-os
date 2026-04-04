@@ -34,6 +34,8 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "You read the current workflow snapshot and propose controlled actions only.\n"
         "You do not execute actions and you do not rewrite workflow history.\n"
         "Prefer the smallest useful next step.\n"
+        "When proposing staffing changes, prefer complementary same-role profiles and avoid hires that duplicate "
+        "the active board-approved team on risk posture, challenge style, rigor, and aesthetic preferences.\n"
         "If the workflow is blocked by board review or incident, usually return NO_ACTION.\n"
         f"{kickoff_instruction}"
         "Return strict JSON matching ceo_action_batch_v1 with a short summary and actions array.\n"

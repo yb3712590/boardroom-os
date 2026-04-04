@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import type { DeveloperInspectorData, ReviewRoomData } from '../../types/api'
+import { ProfileSummary } from '../shared/ProfileSummary'
 import { Drawer } from '../shared/Drawer'
 
 type ReviewRoomDrawerProps = {
@@ -62,6 +63,7 @@ export function ReviewRoomDrawer({
 
   const reviewPack = reviewData?.review_pack
   const availableActions = reviewData?.available_actions ?? []
+  const employeeChange = reviewPack?.employee_change ?? null
 
   return (
     <Drawer
@@ -154,6 +156,41 @@ export function ReviewRoomDrawer({
               </ul>
             </div>
           </section>
+
+          {employeeChange != null ? (
+            <section className="review-room-columns">
+              {employeeChange.skill_profile != null &&
+              employeeChange.personality_profile != null &&
+              employeeChange.aesthetic_profile != null ? (
+                <div className="review-room-column">
+                  <h3>Candidate profile</h3>
+                  <ProfileSummary
+                    label={employeeChange.employee_id ?? 'Candidate'}
+                    skillProfile={employeeChange.skill_profile}
+                    personalityProfile={employeeChange.personality_profile}
+                    aestheticProfile={employeeChange.aesthetic_profile}
+                  />
+                </div>
+              ) : null}
+              {employeeChange.replacement_skill_profile != null &&
+              employeeChange.replacement_personality_profile != null &&
+              employeeChange.replacement_aesthetic_profile != null ? (
+                <div className="review-room-column">
+                  <h3>Replacement profile</h3>
+                  <p className="muted-copy">
+                    Replace {employeeChange.employee_id ?? 'current worker'} with{' '}
+                    {employeeChange.replacement_employee_id ?? 'replacement candidate'}.
+                  </p>
+                  <ProfileSummary
+                    label={employeeChange.replacement_employee_id ?? 'Replacement'}
+                    skillProfile={employeeChange.replacement_skill_profile}
+                    personalityProfile={employeeChange.replacement_personality_profile}
+                    aestheticProfile={employeeChange.replacement_aesthetic_profile}
+                  />
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           <section className="review-room-actions">
             <div className="review-room-action-grid">

@@ -1439,16 +1439,16 @@
 
 ### 3.1 人格模型 (P1-PER-001 到 P1-PER-008)
 
-| ID | 标题 | 预估 |
-|----|------|------|
-| P1-PER-001 | 定义 skill_profile 维度 | 3h |
-| P1-PER-002 | 定义 personality_profile 维度 | 3h |
-| P1-PER-003 | 定义 aesthetic_profile 维度 | 2h |
-| P1-PER-004 | 创建 6 种预设人格模板 | 4h |
-| P1-PER-005 | 人格注入 Context Compiler | 4h |
-| P1-PER-006 | 多样性约束实现 | 3h |
-| P1-PER-007 | 更新 staffing_catalog.py | 2h |
-| P1-PER-008 | 人格模型测试 | 3h |
+| ID | 标题 | 预估 | 状态 |
+|----|------|------|------|
+| P1-PER-001 | 定义 skill_profile 维度 | 3h | 已完成（2026-04-04） |
+| P1-PER-002 | 定义 personality_profile 维度 | 3h | 已完成（2026-04-04） |
+| P1-PER-003 | 定义 aesthetic_profile 维度 | 2h | 已完成（2026-04-04） |
+| P1-PER-004 | 创建 4 套主线预设人格模板 | 4h | 已完成（2026-04-04） |
+| P1-PER-005 | 人格注入 Context Compiler | 4h | 已完成（2026-04-04） |
+| P1-PER-006 | 多样性约束实现 | 3h | 已完成（2026-04-04） |
+| P1-PER-007 | 更新 staffing_catalog.py | 2h | 已完成（2026-04-04） |
+| P1-PER-008 | 人格模型测试 | 3h | 已完成（2026-04-04） |
 
 ### 3.2 会议室协议 (P1-MTG-001 到 P1-MTG-010)
 

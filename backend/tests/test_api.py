@@ -116,15 +116,35 @@ def _employee_hire_request_payload(
     employee_id: str = "emp_frontend_backup",
     role_type: str = "frontend_engineer",
     role_profile_refs: list[str] | None = None,
+    skill_profile: dict | None = None,
+    personality_profile: dict | None = None,
+    aesthetic_profile: dict | None = None,
 ) -> dict:
     return {
         "workflow_id": workflow_id,
         "employee_id": employee_id,
         "role_type": role_type,
         "role_profile_refs": role_profile_refs or ["frontend_engineer_primary"],
-        "skill_profile": {"primary_domain": "frontend"},
-        "personality_profile": {"style": "maker"},
-        "aesthetic_profile": {"preference": "minimal"},
+        "skill_profile": skill_profile
+        or {
+            "primary_domain": "frontend",
+            "system_scope": "surface_polish",
+            "validation_bias": "finish_first",
+        },
+        "personality_profile": personality_profile
+        or {
+            "risk_posture": "cautious",
+            "challenge_style": "probing",
+            "execution_pace": "measured",
+            "detail_rigor": "rigorous",
+            "communication_style": "concise",
+        },
+        "aesthetic_profile": aesthetic_profile
+        or {
+            "surface_preference": "polished",
+            "information_density": "layered",
+            "motion_tolerance": "restrained",
+        },
         "provider_id": "prov_openai_compat",
         "request_summary": "Hire a backup frontend maker for rework rotation.",
         "idempotency_key": f"employee-hire-request:{workflow_id}:{employee_id}",
@@ -138,6 +158,9 @@ def _employee_replace_request_payload(
     replacement_employee_id: str = "emp_frontend_backup",
     replacement_role_type: str = "frontend_engineer",
     replacement_role_profile_refs: list[str] | None = None,
+    replacement_skill_profile: dict | None = None,
+    replacement_personality_profile: dict | None = None,
+    replacement_aesthetic_profile: dict | None = None,
 ) -> dict:
     return {
         "workflow_id": workflow_id,
@@ -145,9 +168,26 @@ def _employee_replace_request_payload(
         "replacement_employee_id": replacement_employee_id,
         "replacement_role_type": replacement_role_type,
         "replacement_role_profile_refs": replacement_role_profile_refs or ["frontend_engineer_primary"],
-        "replacement_skill_profile": {"primary_domain": "frontend"},
-        "replacement_personality_profile": {"style": "maker"},
-        "replacement_aesthetic_profile": {"preference": "minimal"},
+        "replacement_skill_profile": replacement_skill_profile
+        or {
+            "primary_domain": "frontend",
+            "system_scope": "surface_polish",
+            "validation_bias": "finish_first",
+        },
+        "replacement_personality_profile": replacement_personality_profile
+        or {
+            "risk_posture": "cautious",
+            "challenge_style": "probing",
+            "execution_pace": "measured",
+            "detail_rigor": "rigorous",
+            "communication_style": "concise",
+        },
+        "replacement_aesthetic_profile": replacement_aesthetic_profile
+        or {
+            "surface_preference": "polished",
+            "information_density": "layered",
+            "motion_tolerance": "restrained",
+        },
         "replacement_provider_id": "prov_openai_compat",
         "request_summary": "Replace the current maker with a backup frontend worker.",
         "idempotency_key": (
@@ -9725,6 +9765,29 @@ def test_employee_hire_request_opens_core_hire_approval_in_inbox_and_review_room
     assert review_pack["meta"]["review_type"] == "CORE_HIRE_APPROVAL"
     assert review_pack["subject"]["change_kind"] == "EMPLOYEE_HIRE"
     assert review_pack["subject"]["employee_id"] == "emp_frontend_backup"
+    assert review_pack["employee_change"]["skill_profile"]["system_scope"] == "surface_polish"
+    assert review_pack["employee_change"]["personality_profile"]["risk_posture"] == "cautious"
+    assert review_pack["employee_change"]["aesthetic_profile"]["surface_preference"] == "polished"
+
+
+def test_employee_hire_request_rejects_high_overlap_same_role_profile(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_frontend_overlap",
+            skill_profile={"primary_domain": "frontend"},
+            personality_profile={"style": "maker"},
+            aesthetic_profile={"preference": "minimal"},
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "too similar" in response.json()["reason"].lower()
 
 
 def test_employee_hire_request_rejects_unsupported_mainline_staffing_combo(client):
@@ -9798,6 +9861,7 @@ def test_board_approve_core_hire_request_adds_employee_to_workforce_projection(c
     assert hired_employee is not None
     assert hired_employee["state"] == "ACTIVE"
     assert hired_employee["board_approved"] is True
+    assert hired_employee["personality_profile_json"]["risk_posture"] == "cautious"
     frontend_lane = next(
         lane
         for lane in workforce_response.json()["data"]["role_lanes"]
@@ -9807,6 +9871,31 @@ def test_board_approve_core_hire_request_adds_employee_to_workforce_projection(c
         "emp_frontend_2",
         "emp_frontend_backup",
     ]
+    hired_worker = next(worker for worker in frontend_lane["workers"] if worker["employee_id"] == "emp_frontend_backup")
+    assert hired_worker["profile_summary"]
+    assert hired_worker["skill_profile"]["system_scope"] == "surface_polish"
+
+
+def test_employee_replace_request_rejects_high_overlap_against_other_active_same_role_worker(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Replace maker"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    _seed_worker(client, employee_id="emp_frontend_3")
+
+    response = client.post(
+        "/api/v1/commands/employee-replace-request",
+        json=_employee_replace_request_payload(
+            workflow_id,
+            replacement_employee_id="emp_frontend_overlap_replace",
+            replacement_skill_profile={"primary_domain": "frontend"},
+            replacement_personality_profile={"style": "maker"},
+            replacement_aesthetic_profile={"preference": "minimal"},
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "too similar" in response.json()["reason"].lower()
 
 
 def test_workforce_projection_exposes_staffing_templates_and_server_driven_actions(client):
@@ -9841,6 +9930,8 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
         if worker["employee_id"] == "emp_frontend_2"
     )
     assert active_frontend_worker["employment_state"] == "ACTIVE"
+    assert active_frontend_worker["profile_summary"]
+    assert active_frontend_worker["skill_profile"]["primary_domain"] == "frontend"
     assert active_frontend_worker["available_actions"] == [
         {
             "action_type": "FREEZE",

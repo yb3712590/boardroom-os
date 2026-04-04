@@ -16,8 +16,8 @@
 
 ## 当前基线（2026-04-04 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 385 passed
-- frontend：`npm run build` → passed，`npm run test:run` → 47 passed
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 391 passed
+- frontend：`npm run build` → passed，`npm run test:run` → 49 passed
 
 ---
 
@@ -181,10 +181,24 @@
 
 主线关系：**主链增强但不阻塞当前闭环**，晚于真实执行和调度稳定化。
 
-- [ ] 定义最小可用的 `skill / personality / aesthetic` 三组维度
-- [ ] 先做 4 到 6 个模板，接进 staffing catalog、CEO 提示词和 worker 提示词
-- [ ] 在招聘决策里加入最小多样性约束
-- [ ] 在 Review Pack 或 Workforce 里可见当前员工画像
+- [x] 定义最小可用的 `skill / personality / aesthetic` 三组维度
+- [x] 先做 4 到 6 个模板，接进 staffing catalog、CEO 提示词和 worker 提示词
+- [x] 在招聘决策里加入最小多样性约束
+- [x] 在 Review Pack 或 Workforce 里可见当前员工画像
+
+本轮产物：
+
+- 后端新增 `persona_profiles.py` 作为人格模型真相源，固定 `skill / personality / aesthetic` 三组维度与枚举值，并把旧 `style / preference / 简化 primary_domain` 在 reducer 与 repository 读口统一归一
+- 当前主线已落地 4 套真实画像模板：`frontend_core_builder`、`frontend_polish_counterweight`、`checker_evidence_guard`、`checker_release_sweeper`
+- 默认 roster 与 `staffing_catalog` 已切到真实画像模板；零配置本地启动时，frontend / checker 不再是空壳画像
+- CEO snapshot / prompt、Context Compiler、runtime 编译包现在都会显式携带标准化画像与 `persona_summary`
+- 同岗高重合招聘约束已进入主线：只比较 `ACTIVE + board_approved` 的同岗员工；`hire` 比较全部同岗现役，`replace` 排除被替换员工本人；命中高重合会直接拒绝
+- `workforce` 读面已新增现役员工 `skill_profile / personality_profile / aesthetic_profile / profile_summary`
+- React 壳现在能在 `Workforce` 和 staffing `Review Room` 里看到统一画像摘要
+
+新发现任务：
+
+- [ ] 在 `StaffingActions` 请求卡片里直接展示补位模板画像摘要；当前现役员工画像和 staffing Review Room 已可见，但发起 hire 前仍要靠原始字段自己读。主线关系：只服务人格模型继续可见性，不改变主链
 
 对应任务库：`P1-PER-001` 到 `P1-PER-008`。
 

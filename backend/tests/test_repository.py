@@ -1584,13 +1584,32 @@ def test_initialize_backfills_legacy_employee_rows_into_employee_events(db_path)
         {
             "employee_id": "emp_legacy_frontend",
             "role_type": "frontend_engineer",
-            "skill_profile_json": {"primary_domain": "frontend"},
-            "personality_profile_json": {"style": "maker"},
-            "aesthetic_profile_json": {"preference": "minimal"},
+            "skill_profile_json": {
+                "primary_domain": "frontend",
+                "system_scope": "delivery_slice",
+                "validation_bias": "balanced",
+            },
+            "personality_profile_json": {
+                "risk_posture": "assertive",
+                "challenge_style": "constructive",
+                "execution_pace": "fast",
+                "detail_rigor": "focused",
+                "communication_style": "direct",
+            },
+            "aesthetic_profile_json": {
+                "surface_preference": "functional",
+                "information_density": "balanced",
+                "motion_tolerance": "measured",
+            },
             "state": "ACTIVE",
             "board_approved": True,
             "provider_id": "prov_openai_compat",
             "role_profile_refs": ["frontend_engineer_primary"],
+            "profile_summary": (
+                "Skill frontend, delivery slice, balanced. "
+                "Personality assertive, constructive, fast, focused, direct. "
+                "Aesthetic functional, balanced, measured."
+            ),
             "updated_at": datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
             "version": 1,
         }

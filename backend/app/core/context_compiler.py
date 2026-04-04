@@ -61,6 +61,7 @@ from app.core.artifacts import (
 from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import get_output_schema_body
+from app.core.persona_profiles import normalize_persona_profiles
 from app.core.time import now_local
 from app.core.developer_inspector import (
     DeveloperInspectorStore,
@@ -313,13 +314,20 @@ def _require_worker_binding(
 
 
 def _build_compiled_role(compile_request: CompileRequest) -> CompiledRole:
+    normalized_profiles = normalize_persona_profiles(
+        compile_request.worker_binding.employee_role_type,
+        skill_profile=compile_request.worker_binding.skill_profile,
+        personality_profile=compile_request.worker_binding.personality_profile,
+        aesthetic_profile=compile_request.worker_binding.aesthetic_profile,
+    )
     return CompiledRole(
         role_profile_ref=compile_request.control_refs.role_profile_ref,
         employee_id=compile_request.worker_binding.employee_id,
         employee_role_type=compile_request.worker_binding.employee_role_type,
-        skill_profile=compile_request.worker_binding.skill_profile,
-        personality_profile=compile_request.worker_binding.personality_profile,
-        aesthetic_profile=compile_request.worker_binding.aesthetic_profile,
+        skill_profile=normalized_profiles["skill_profile"],
+        personality_profile=normalized_profiles["personality_profile"],
+        aesthetic_profile=normalized_profiles["aesthetic_profile"],
+        persona_summary=normalized_profiles["profile_summary"],
     )
 
 
@@ -1414,6 +1422,13 @@ def build_compile_request(
             )
         )
 
+    normalized_profiles = normalize_persona_profiles(
+        str(employee.get("role_type") or "unknown"),
+        skill_profile=employee.get("skill_profile_json"),
+        personality_profile=employee.get("personality_profile_json"),
+        aesthetic_profile=employee.get("aesthetic_profile_json"),
+    )
+
     return CompileRequest(
         meta=CompileRequestMeta(
             compile_request_id=new_prefixed_id("creq"),
@@ -1436,9 +1451,9 @@ def build_compile_request(
             employee_role_type=str(employee.get("role_type") or "unknown"),
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            skill_profile=dict(employee.get("skill_profile_json") or {}),
-            personality_profile=dict(employee.get("personality_profile_json") or {}),
-            aesthetic_profile=dict(employee.get("aesthetic_profile_json") or {}),
+            skill_profile=normalized_profiles["skill_profile"],
+            personality_profile=normalized_profiles["personality_profile"],
+            aesthetic_profile=normalized_profiles["aesthetic_profile"],
         ),
         budget_policy=CompileRequestBudgetPolicy(
             max_input_tokens=max_input_tokens,

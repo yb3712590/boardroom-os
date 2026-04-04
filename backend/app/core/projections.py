@@ -1017,6 +1017,10 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
                 current_ticket_id=str(ticket.get("ticket_id")) if ticket is not None else None,
                 current_node_id=str(ticket.get("node_id")) if ticket is not None else None,
                 provider_id=employee.get("provider_id"),
+                skill_profile=dict(employee.get("skill_profile_json") or {}),
+                personality_profile=dict(employee.get("personality_profile_json") or {}),
+                aesthetic_profile=dict(employee.get("aesthetic_profile_json") or {}),
+                profile_summary=str(employee.get("profile_summary") or ""),
                 last_update_at=employee.get("updated_at"),
                 available_actions=_build_workforce_available_actions(employee),
             )

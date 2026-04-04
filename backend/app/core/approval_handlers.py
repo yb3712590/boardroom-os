@@ -43,6 +43,7 @@ from app.core.output_schemas import (
     schema_id,
     validate_output_payload,
 )
+from app.core.persona_profiles import normalize_persona_profiles
 from app.core.staffing_containment import contain_employee_active_tickets
 from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
@@ -176,6 +177,12 @@ def _apply_employee_change_approval(
     change_kind = str(employee_change.get("change_kind") or "")
 
     if change_kind == "EMPLOYEE_HIRE":
+        normalized_profiles = normalize_persona_profiles(
+            str(employee_change.get("role_type") or ""),
+            skill_profile=employee_change.get("skill_profile"),
+            personality_profile=employee_change.get("personality_profile"),
+            aesthetic_profile=employee_change.get("aesthetic_profile"),
+        )
         repository.insert_event(
             connection,
             event_type=EVENT_EMPLOYEE_HIRED,
@@ -188,9 +195,9 @@ def _apply_employee_change_approval(
             payload={
                 "employee_id": employee_change["employee_id"],
                 "role_type": employee_change["role_type"],
-                "skill_profile": dict(employee_change.get("skill_profile") or {}),
-                "personality_profile": dict(employee_change.get("personality_profile") or {}),
-                "aesthetic_profile": dict(employee_change.get("aesthetic_profile") or {}),
+                "skill_profile": normalized_profiles["skill_profile"],
+                "personality_profile": normalized_profiles["personality_profile"],
+                "aesthetic_profile": normalized_profiles["aesthetic_profile"],
                 "state": EMPLOYEE_STATE_ACTIVE,
                 "board_approved": True,
                 "provider_id": employee_change.get("provider_id"),
@@ -203,6 +210,12 @@ def _apply_employee_change_approval(
     if change_kind == "EMPLOYEE_REPLACE":
         replaced_employee_id = str(employee_change["employee_id"])
         replacement_employee_id = str(employee_change["replacement_employee_id"])
+        normalized_profiles = normalize_persona_profiles(
+            str(employee_change.get("replacement_role_type") or ""),
+            skill_profile=employee_change.get("replacement_skill_profile"),
+            personality_profile=employee_change.get("replacement_personality_profile"),
+            aesthetic_profile=employee_change.get("replacement_aesthetic_profile"),
+        )
         repository.insert_event(
             connection,
             event_type=EVENT_EMPLOYEE_HIRED,
@@ -215,9 +228,9 @@ def _apply_employee_change_approval(
             payload={
                 "employee_id": replacement_employee_id,
                 "role_type": employee_change["replacement_role_type"],
-                "skill_profile": dict(employee_change.get("replacement_skill_profile") or {}),
-                "personality_profile": dict(employee_change.get("replacement_personality_profile") or {}),
-                "aesthetic_profile": dict(employee_change.get("replacement_aesthetic_profile") or {}),
+                "skill_profile": normalized_profiles["skill_profile"],
+                "personality_profile": normalized_profiles["personality_profile"],
+                "aesthetic_profile": normalized_profiles["aesthetic_profile"],
                 "state": EMPLOYEE_STATE_ACTIVE,
                 "board_approved": True,
                 "provider_id": employee_change.get("replacement_provider_id"),
