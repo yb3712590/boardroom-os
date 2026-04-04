@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-04
+> 最后更新：2026-04-05
 > 本文件是项目唯一的待办真相源。合并了原 `doc/TODO.md`、根目录 `codex-followup-todo.md` 和 `detailed-todo.md`（现 `doc/task-backlog.md`）三份文档。
 
 ---
@@ -215,22 +215,37 @@
 - [x] `P0-INT-002`：把已有 provider happy path / `PROVIDER_BAD_RESPONSE` fallback 主线测试正式收口到 `P0-INT`
 - [x] `P0-INT-003`：补出 `staffing containment -> incident resolve -> 恢复重试 -> checker -> board review` 的真实集成证明
 - [x] `P0-INT-004`：补出前端主线烟囱测试，串起 `project-init -> review approve -> completion evidence`
-- [ ] `P0-INT-005`：补出 build/check 主线 timeout / repeated failure incident 恢复后一直走到 workflow completion 的证明
-- [ ] `P0-INT-006`：补出 provider incident 人工恢复后的主线闭环证明
-- [ ] `P0-INT-007`：把前端 incident drawer / resolve 收口成明确的主线烟囱场景
-- [ ] `P0-INT-008`：整理 P0 集成验收矩阵总表
+- [x] `P0-INT-005`：补出 build/check 主线 timeout / repeated failure incident 恢复后一直走到 workflow completion 的证明
+- [x] `P0-INT-006`：补出 provider incident 人工恢复后的主线闭环证明
+- [x] `P0-INT-007`：把前端 incident drawer / resolve 收口成明确的主线烟囱场景
+- [x] `P0-INT-008`：整理 P0 集成验收矩阵总表
+
+`P0-INT` 覆盖矩阵：
+
+| 覆盖维度 | 任务 ID | 当前证明 | 状态 |
+|----|----|----|----|
+| deterministic 主线闭环 | `P0-INT-001` | `project-init -> scope -> BUILD -> CHECK -> REVIEW -> closeout completion` 后端集成回归 | 已覆盖 |
+| provider happy path / fallback | `P0-INT-002` | provider happy path 与 `PROVIDER_BAD_RESPONSE` fallback 都能到 `closeout completion` | 已覆盖 |
+| staffing containment 恢复 | `P0-INT-003` | staffing containment -> incident resolve -> 恢复重试 -> checker -> board review | 已覆盖 |
+| 前端主线烟囱 | `P0-INT-004` | `project-init -> review approve -> completion evidence` | 已覆盖 |
+| timeout incident 恢复 | `P0-INT-005` | build/check timeout incident -> `RESTORE_AND_RETRY_LATEST_TIMEOUT` -> `closeout completion` | 已覆盖 |
+| repeated failure incident 恢复 | `P0-INT-005` | build/check repeated failure incident -> `RESTORE_AND_RETRY_LATEST_FAILURE` -> `closeout completion` | 已覆盖 |
+| provider incident 恢复 | `P0-INT-006` | provider paused/unavailable -> `RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE` -> `closeout completion` | 已覆盖 |
+| 前端 incident 烟囱 | `P0-INT-007` | `Inbox -> Incident Drawer -> Resolve -> Snapshot Refresh` | 已覆盖 |
+| 验收矩阵收口 | `P0-INT-008` | `TODO / task-backlog / memory-log` 同步真实验收口径 | 已覆盖 |
 
 本轮产物：
 
-- 后端新增了 2 条明确的 `P0-INT` 集成测试支点：
-  - deterministic 主线完整闭环到 `closeout completion`
-  - staffing containment 恢复后重新回到 `maker -> checker -> board review`
-- provider happy path / fallback 两条主线闭环测试本来就已存在；这轮不重复造同类测试，而是把它们正式收口到 `P0-INT-002`
-- 前端新增了 1 条主线烟囱测试，证明治理壳能从首页发起 `project-init`、进入 review、执行 approve，并展示 completion card 与 final evidence 入口
+- 后端现在补齐了 3 条 incident 集成回归：
+  - timeout incident 恢复后继续走到 `closeout completion`
+  - repeated failure incident 恢复后继续走到 `closeout completion`
+  - provider incident 人工恢复后继续走到 `closeout completion`
+- 前端现在补齐了 1 条 incident 烟囱回归，串起 `Inbox -> Incident Drawer -> Resolve -> Snapshot Refresh`
+- `P0-INT-001` 到 `P0-INT-008` 现在已经能从矩阵里直接看到覆盖范围，不再需要靠历史记忆拼接
 
 新发现的任务：
 
-- [ ] `P0-INT-005` 需要单独补 build/check 主线 timeout 或 repeated failure incident 恢复后一直走到 workflow completion 的完整证明。主线关系：直接服务主线验收闭环，不新增新能力。
+- 无。主线关系：本轮只做 `P0-INT` 收口，没有额外打开新方向。
 
 ---
 

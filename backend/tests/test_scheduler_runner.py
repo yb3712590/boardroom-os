@@ -4,10 +4,12 @@ import json
 import importlib
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 import app.core.ceo_proposer as ceo_proposer_module
 import app.core.runtime as runtime_module
+import app.core.workflow_auto_advance as workflow_auto_advance_module
 import pytest
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
@@ -341,6 +343,60 @@ def _approve_review(client, approval: dict, *, idempotency_suffix: str) -> None:
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
+
+
+def _assert_workflow_reaches_closeout_completion(client, *, workflow_id: str, final_review_approval: dict) -> None:
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    assert dashboard_response.status_code == 200
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+
+    assert completion_summary is not None
+    assert completion_summary["workflow_id"] == workflow_id
+    assert completion_summary["final_review_pack_id"] == final_review_approval["review_pack_id"]
+    assert completion_summary["closeout_completed_at"] is not None
+    assert completion_summary["closeout_ticket_id"] is not None
+    assert completion_summary["closeout_artifact_refs"] == [
+        f"art://runtime/{completion_summary['closeout_ticket_id']}/delivery-closeout-package.json"
+    ]
+
+
+def _followup_ticket_from_scope_approval(client, repository, approval: dict, *, delivery_stage: str) -> dict:
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact = repository.get_artifact_by_ref(consensus_artifact_ref)
+    assert artifact is not None
+    assert artifact["storage_relpath"] is not None
+
+    artifact_path = client.app.state.artifact_store.root / artifact["storage_relpath"]
+    consensus_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    return next(
+        item for item in consensus_payload["followup_tickets"] if item["delivery_stage"] == delivery_stage
+    )
+
+
+def _run_scheduler_until_workflow_stop(
+    repository,
+    *,
+    workflow_id: str,
+    idempotency_key_prefix: str,
+    max_runs: int = 10,
+    before_each_run: Callable[[int], None] | None = None,
+) -> None:
+    for run_index in range(max_runs):
+        if before_each_run is not None:
+            before_each_run(run_index)
+        _, version_before = repository.get_cursor_and_version()
+        run_scheduler_once(
+            repository,
+            idempotency_key=f"{idempotency_key_prefix}:{run_index}",
+            max_dispatches=10,
+        )
+        if any(approval["workflow_id"] == workflow_id for approval in repository.list_open_approvals()):
+            return
+        if any(incident["workflow_id"] == workflow_id for incident in repository.list_open_incidents()):
+            return
+        _, version_after = repository.get_cursor_and_version()
+        if version_after == version_before:
+            return
 
 
 def _mock_provider_payload_for_schema(schema_ref: str) -> dict:
@@ -1530,6 +1586,423 @@ def test_provider_bad_response_on_final_review_falls_back_and_still_reaches_clos
     assert "ceo_action_batch" in observed_schema_refs
     assert "ui_milestone_review" in observed_schema_refs
     assert "delivery_closeout_package" in observed_schema_refs
+
+
+def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_completion(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, goal="Timeout recovery reaches completion")
+    repository = client.app.state.repository
+    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
+    build_followup = _followup_ticket_from_scope_approval(
+        client,
+        repository,
+        scope_approval,
+        delivery_stage="BUILD",
+    )
+    build_ticket_id = build_followup["ticket_id"]
+
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "run_leased_ticket_runtime",
+        lambda _repository: [],
+    )
+    _approve_review(client, scope_approval, idempotency_suffix="timeout-build-scope")
+
+    build_ticket = repository.get_current_ticket_projection(build_ticket_id)
+    assert build_ticket is not None
+    assert build_ticket["status"] == "LEASED"
+
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": build_ticket_id,
+            "node_id": build_ticket["node_id"],
+            "started_by": build_ticket["lease_owner"],
+            "idempotency_key": f"ticket-start:{workflow_id}:{build_ticket_id}",
+        },
+    )
+
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:mainline-timeout-first"},
+    )
+
+    second_ticket_id = repository.get_current_node_projection(workflow_id, build_ticket["node_id"])["latest_ticket_id"]
+    second_ticket = repository.get_current_ticket_projection(second_ticket_id)
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": second_ticket_id,
+            "node_id": second_ticket["node_id"],
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{second_ticket_id}",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": second_ticket_id,
+            "node_id": second_ticket["node_id"],
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{second_ticket_id}",
+        },
+    )
+
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:mainline-timeout-second"},
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "INCIDENT_OPENED"
+    ][0]
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "run_leased_ticket_runtime",
+        run_leased_ticket_runtime,
+    )
+    set_ticket_time("2026-03-28T11:20:00+08:00")
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json={
+            "incident_id": incident_id,
+            "resolved_by": "emp_ops_1",
+            "resolution_summary": "Retry after timeout mitigation.",
+            "followup_action": "RESTORE_AND_RETRY_LATEST_TIMEOUT",
+            "idempotency_key": "incident-resolve:mainline-timeout",
+        },
+    )
+    recovered_incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    followup_ticket_id = repository.get_current_node_projection(workflow_id, build_ticket["node_id"])["latest_ticket_id"]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
+    set_ticket_time("2026-03-28T11:21:00+08:00")
+    _run_scheduler_until_workflow_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="scheduler-runner:mainline-timeout-recovery",
+        before_each_run=lambda index: set_ticket_time(
+            f"2026-03-28T11:{21 + index:02d}:00+08:00"
+        ),
+    )
+
+    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
+    _approve_review(client, final_review_approval, idempotency_suffix="timeout-build-final-review")
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert incident_response.status_code == 200
+    assert recovered_incident_response.status_code == 200
+    assert recovered_incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+    )
+    assert followup_ticket["ticket_id"] not in {build_ticket_id, second_ticket_id}
+    assert followup_ticket["retry_count"] == 2
+    _assert_workflow_reaches_closeout_completion(
+        client,
+        workflow_id=workflow_id,
+        final_review_approval=final_review_approval,
+    )
+    assert repository.list_open_incidents() == []
+    assert repository.list_open_approvals() == []
+
+
+def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeout_completion(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, goal="Repeated failure recovery reaches completion")
+    repository = client.app.state.repository
+    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
+    build_followup = _followup_ticket_from_scope_approval(
+        client,
+        repository,
+        scope_approval,
+        delivery_stage="BUILD",
+    )
+    build_ticket_id = build_followup["ticket_id"]
+    repeated_failure = {"step": "render", "exit_code": 1, "component": "hero"}
+
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "run_leased_ticket_runtime",
+        lambda _repository: [],
+    )
+    _approve_review(client, scope_approval, idempotency_suffix="repeat-failure-build-scope")
+
+    first_ticket = repository.get_current_ticket_projection(build_ticket_id)
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": build_ticket_id,
+            "node_id": first_ticket["node_id"],
+            "started_by": first_ticket["lease_owner"],
+            "idempotency_key": f"ticket-start:{workflow_id}:{build_ticket_id}",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": build_ticket_id,
+            "node_id": first_ticket["node_id"],
+            "failed_by": first_ticket["lease_owner"],
+            "failure_kind": "RUNTIME_ERROR",
+            "failure_message": "Primary hero render crashed.",
+            "failure_detail": repeated_failure,
+            "idempotency_key": f"ticket-fail:{workflow_id}:{build_ticket_id}:first",
+        },
+    )
+
+    second_ticket_id = repository.get_current_node_projection(workflow_id, first_ticket["node_id"])["latest_ticket_id"]
+    second_ticket = repository.get_current_ticket_projection(second_ticket_id)
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": second_ticket_id,
+            "node_id": second_ticket["node_id"],
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{second_ticket_id}",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": second_ticket_id,
+            "node_id": second_ticket["node_id"],
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{second_ticket_id}",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": second_ticket_id,
+            "node_id": second_ticket["node_id"],
+            "failed_by": "emp_frontend_2",
+            "failure_kind": "RUNTIME_ERROR",
+            "failure_message": "Primary hero render crashed.",
+            "failure_detail": repeated_failure,
+            "idempotency_key": f"ticket-fail:{workflow_id}:{second_ticket_id}:second",
+        },
+    )
+
+    incident_id = [
+        event["payload"]["incident_id"]
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "INCIDENT_OPENED"
+    ][0]
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "run_leased_ticket_runtime",
+        run_leased_ticket_runtime,
+    )
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json={
+            "incident_id": incident_id,
+            "resolved_by": "emp_ops_1",
+            "resolution_summary": "Retry after repeated failure mitigation.",
+            "followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+            "idempotency_key": "incident-resolve:mainline-repeated-failure",
+        },
+    )
+    recovered_incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    followup_ticket_id = repository.get_current_node_projection(workflow_id, first_ticket["node_id"])["latest_ticket_id"]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
+    _run_scheduler_until_workflow_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="scheduler-runner:mainline-repeated-failure-recovery",
+        before_each_run=lambda index: set_ticket_time(
+            f"2026-03-28T11:{21 + index:02d}:00+08:00"
+        ),
+    )
+
+    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
+    _approve_review(client, final_review_approval, idempotency_suffix="repeat-failure-build-final-review")
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert incident_response.status_code == 200
+    assert recovered_incident_response.status_code == 200
+    assert recovered_incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_FAILURE"
+    )
+    assert followup_ticket["ticket_id"] not in {build_ticket_id, second_ticket_id}
+    assert followup_ticket["retry_count"] == 2
+    _assert_workflow_reaches_closeout_completion(
+        client,
+        workflow_id=workflow_id,
+        final_review_approval=final_review_approval,
+    )
+    assert repository.list_open_incidents() == []
+    assert repository.list_open_approvals() == []
+
+
+def test_provider_incident_recovery_on_mainline_still_reaches_closeout_completion(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+
+    workflow_id = _project_init(client, goal="Provider incident recovery reaches completion")
+    repository = client.app.state.repository
+    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
+    build_followup = _followup_ticket_from_scope_approval(
+        client,
+        repository,
+        scope_approval,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "run_leased_ticket_runtime",
+        lambda _repository: [],
+    )
+    _approve_review(client, scope_approval, idempotency_suffix="provider-recovery-scope")
+
+    build_ticket = repository.get_current_ticket_projection(build_followup["ticket_id"])
+    assert build_ticket is not None
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": build_ticket["ticket_id"],
+            "node_id": build_ticket["node_id"],
+            "started_by": build_ticket["lease_owner"],
+            "idempotency_key": f"ticket-start:{workflow_id}:{build_ticket['ticket_id']}",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-fail",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": build_ticket["ticket_id"],
+            "node_id": build_ticket["node_id"],
+            "failed_by": build_ticket["lease_owner"],
+            "failure_kind": "PROVIDER_RATE_LIMITED",
+            "failure_message": "Provider quota exhausted.",
+            "failure_detail": {
+                "provider_id": "prov_openai_compat",
+                "provider_status_code": 429,
+            },
+            "idempotency_key": f"ticket-fail:{workflow_id}:{build_ticket['ticket_id']}:provider",
+        },
+    )
+
+    blocked_ticket_id = "tkt_provider_recovery_probe"
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=blocked_ticket_id,
+            node_id="node_provider_recovery_probe",
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="implementation_bundle",
+        ),
+    )
+    blocked_tick = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:provider-recovery-before-resolve"},
+    )
+    blocked_ticket = repository.get_current_ticket_projection(blocked_ticket_id)
+    incident_id = repository.list_open_incidents()[0]["incident_id"]
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "run_leased_ticket_runtime",
+        run_leased_ticket_runtime,
+    )
+    provider_responder_after_restore, observed_after_restore = _build_mock_provider_responder()
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder_after_restore)
+    monkeypatch.setattr(ceo_proposer_module, "invoke_openai_compat_response", provider_responder_after_restore)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json={
+            "incident_id": incident_id,
+            "resolved_by": "emp_ops_1",
+            "resolution_summary": "Restore provider execution and retry the blocked mainline step.",
+            "followup_action": "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE",
+            "idempotency_key": "incident-resolve:mainline-provider-recovery",
+        },
+    )
+    recovered_incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    followup_ticket_id = repository.get_current_node_projection(workflow_id, build_ticket["node_id"])[
+        "latest_ticket_id"
+    ]
+
+    resumed_tick = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:provider-recovery-after-resolve"},
+    )
+    _run_scheduler_until_workflow_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="scheduler-runner:mainline-provider-recovery",
+        before_each_run=lambda index: set_ticket_time(
+            f"2026-03-28T11:{21 + index:02d}:00+08:00"
+        ),
+    )
+    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
+    _approve_review(client, final_review_approval, idempotency_suffix="provider-recovery-final-review")
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    assert blocked_tick.status_code == 200
+    assert blocked_tick.json()["status"] == "ACCEPTED"
+    assert blocked_ticket["status"] == "PENDING"
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["recommended_followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
+    )
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert recovered_incident_response.status_code == 200
+    assert recovered_incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
+    )
+    assert resumed_tick.status_code == 200
+    assert resumed_tick.json()["status"] == "ACCEPTED"
+    assert repository.get_current_ticket_projection(followup_ticket_id)["status"] == "COMPLETED"
+    _assert_workflow_reaches_closeout_completion(
+        client,
+        workflow_id=workflow_id,
+        final_review_approval=final_review_approval,
+    )
+    assert repository.list_open_incidents() == []
+    assert repository.list_open_approvals() == []
+    assert "implementation_bundle" in observed_after_restore
 
 
 def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):

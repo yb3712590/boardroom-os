@@ -161,6 +161,11 @@
 - Reclassified the existing provider-backed happy path and final-review `PROVIDER_BAD_RESPONSE` fallback closeout tests as the completed scope for `P0-INT-002`, instead of duplicating the same coverage under a new name.
 - Added a new incident recovery integration proof in `backend/tests/test_api.py`: the real `staffing containment -> incident resolve -> restore and retry -> maker -> checker -> board review` path is now covered end-to-end enough to prove `maker_checker_context` survives recovery and governance can reopen after the incident closes.
 - Added a frontend smoke test in `frontend/src/App.test.tsx` that strings together `project-init`, inbox review entry, board approve, completion card display, and reopening final evidence, so `P0-INT-004` is no longer implied only by several smaller UI tests.
+- Incident recovery follow-up actions no longer stop at exhausted retry budget: timeout, repeated failure, and provider incidents now accept manual `restore and retry` so the backend matches the existing incident drawer contract.
+- Recovery-generated retry chains now recreate pending delivery descendants and cancel the superseded pending tickets, which keeps node ownership on the new tickets and lets the recovered mainline reach `VISUAL_MILESTONE` and `closeout completion` without stale pending tickets blocking `completion_summary`.
+- Added three new recovery closure regressions in `backend/tests/test_scheduler_runner.py`: timeout incident recovery, repeated failure recovery, and provider incident recovery all now prove the mainline can recover and finish at `closeout completion`.
+- Added a dedicated frontend incident smoke path in `frontend/src/App.test.tsx`: `Inbox -> /incident/:incidentId -> Incident Drawer -> incident-resolve -> dashboard refresh` now has one explicit regression instead of two smaller disconnected assertions.
+- Full verification for this round finished at `py -m pytest tests/ -q` -> `399 passed`, `npm run build` -> passed, and `npm run test:run` -> `49 passed`; in this shell, bare `pytest` is still missing on PATH, so the exact required backend command remains environment-blocked rather than code-blocked.
 
 ### 2026-04-02 (docs compaction)
 

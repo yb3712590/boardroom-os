@@ -8074,7 +8074,7 @@ def test_incident_resolve_rejects_missing_or_closed_incidents(client, set_ticket
     assert second_response.json()["status"] == "REJECTED"
 
 
-def test_incident_resolve_restore_and_retry_rejects_when_retry_budget_is_exhausted(client, set_ticket_time):
+def test_incident_resolve_restore_and_retry_can_override_exhausted_retry_budget(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client, retry_budget=1)
 
@@ -8117,12 +8117,23 @@ def test_incident_resolve_restore_and_retry_rejects_when_retry_budget_is_exhaust
         ),
     )
     incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    followup_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
 
     assert response.status_code == 200
-    assert response.json()["status"] == "REJECTED"
-    assert "retry budget" in response.json()["reason"].lower()
-    assert incident_response.json()["data"]["incident"]["status"] == "OPEN"
-    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 1
+    assert response.json()["status"] == "ACCEPTED"
+    assert followup_ticket_id not in {"tkt_visual_001", second_ticket_id}
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_ticket["retry_count"] == 2
+    assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+    )
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == followup_ticket_id
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 2
 
 
 def test_incident_resolve_restore_and_retry_rejects_when_source_ticket_spec_is_missing(
@@ -8663,7 +8674,7 @@ def test_incident_resolve_can_restore_and_retry_latest_failure_in_one_command(cl
     assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == followup_ticket_id
 
 
-def test_incident_resolve_restore_and_retry_latest_failure_rejects_when_retry_budget_is_exhausted(
+def test_incident_resolve_restore_and_retry_latest_failure_can_override_exhausted_retry_budget(
     client,
     set_ticket_time,
 ):
@@ -8724,10 +8735,23 @@ def test_incident_resolve_restore_and_retry_latest_failure_rejects_when_retry_bu
             followup_action="RESTORE_AND_RETRY_LATEST_FAILURE",
         ),
     )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    followup_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
+        "latest_ticket_id"
+    ]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
 
     assert resolve_response.status_code == 200
-    assert resolve_response.json()["status"] == "REJECTED"
-    assert "retry budget" in resolve_response.json()["reason"].lower()
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert followup_ticket_id not in {"tkt_visual_001", second_ticket_id}
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_ticket["retry_count"] == 2
+    assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_FAILURE"
+    )
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == followup_ticket_id
 
 
 def test_provider_failure_still_uses_provider_incident_path_not_repeated_failure_incident(

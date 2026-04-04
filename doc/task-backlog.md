@@ -1521,41 +1521,58 @@
 
 #### P0-INT-005：主线 timeout / repeated failure incident 恢复到 workflow completion
 
-**状态**：未开始
+**状态**：已完成（2026-04-05）
 
 **描述**：补出 build/check 主线在 timeout 或 repeated failure incident 后，恢复并继续走到 workflow completion 的完整集成证明。
 
 **预估**：4h
 
+**验收补记**：
+- 已在 `backend/tests/test_scheduler_runner.py` 补 timeout 与 repeated failure 两条恢复回归。
+- 两条场景都覆盖 `incident-resolve -> 恢复 follow-up -> 最终 review approve -> closeout completion`。
+- 同步补齐了 exhausted retry budget 下允许人工恢复继续推进的 API 回归。
+
 ---
 
 #### P0-INT-006：provider incident 人工恢复后的主线闭环
 
-**状态**：未开始
+**状态**：已完成（2026-04-05）
 
 **描述**：覆盖 provider pause / unavailable 类 incident 经人工恢复后，主线重新回到 closeout completion 的验证。
 
 **预估**：4h
 
+**验收补记**：
+- 已在 `backend/tests/test_scheduler_runner.py` 补 provider incident 恢复回归。
+- 场景覆盖 provider paused / unavailable 打开 incident、人工恢复、主线恢复 dispatch，并最终到 `closeout completion`。
+
 ---
 
 #### P0-INT-007：前端 incident 路由与恢复烟囱测试
 
-**状态**：未开始
+**状态**：已完成（2026-04-05）
 
 **描述**：把前端现有 incident drawer / resolve 行为收口成明确的主线烟囱场景，和 `P0-INT-004` 形成成对验收。
 
 **预估**：4h
 
+**验收补记**：
+- 已在 `frontend/src/App.test.tsx` 补 incident 主线烟囱。
+- 场景固定覆盖 `Inbox -> /incident/:incidentId -> Drawer -> incident-resolve -> dashboard 刷新`。
+
 ---
 
 #### P0-INT-008：P0 集成验收矩阵总表
 
-**状态**：未开始
+**状态**：已完成（2026-04-05）
 
-**描述**：整理 `P0-INT-001` 到 `P0-INT-007` 的覆盖矩阵，明确 deterministic、provider、incident、frontend 烟囱各自覆盖范围与剩余缺口。
+**描述**：整理 `P0-INT-001` 到 `P0-INT-008` 的覆盖矩阵，明确 deterministic、provider、timeout、repeated failure、staffing、frontend 烟囱各自覆盖范围与当前缺口。
 
 **预估**：4h
+
+**验收补记**：
+- 已在 `doc/TODO.md` 写入 `P0-INT` 覆盖矩阵总表。
+- `doc/task-backlog.md` 与 `doc/history/memory-log.md` 已同步到本轮真实验收口径。
 
 ---
 

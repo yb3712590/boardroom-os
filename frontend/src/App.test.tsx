@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1454,52 +1454,7 @@ describe('Boardroom UI', () => {
     expect(screen.getByText(/approve option a to unblock the main build path/i)).toBeInTheDocument()
   })
 
-  it('opens the incident drawer when an inbox incident item is clicked', async () => {
-    installBoardroomMock({
-      dashboard: dashboardData({
-        ops_strip: {
-          ...dashboardData().ops_strip,
-          open_incidents: 1,
-          open_circuit_breakers: 1,
-          blocked_nodes: 1,
-        },
-        inbox_counts: {
-          approvals_pending: 0,
-          incidents_pending: 1,
-          budget_alerts: 0,
-          provider_alerts: 0,
-        },
-      }),
-      inbox: inboxData([
-        {
-          inbox_item_id: 'inbox_inc_093',
-          workflow_id: 'wf_001',
-          item_type: 'INCIDENT_ESCALATION',
-          priority: 'high',
-          status: 'OPEN',
-          created_at: '2026-04-01T23:10:00+08:00',
-          title: 'Repeated runtime timeout on homepage visual node',
-          summary: 'The same node exceeded the timeout threshold and opened a breaker.',
-          source_ref: 'inc_093',
-          route_target: {
-            view: 'incident_detail',
-            incident_id: 'inc_093',
-          },
-          badges: ['runtime_timeout', 'circuit_breaker'],
-        },
-      ]),
-    })
-    const user = userEvent.setup()
-
-    render(<App />)
-
-    await user.click(await screen.findByRole('button', { name: /repeated runtime timeout on homepage visual node/i }))
-
-    expect(await screen.findByRole('heading', { name: /runtime timeout escalation/i })).toBeInTheDocument()
-    expect(screen.getByText(/timeout streak count/i)).toBeInTheDocument()
-  })
-
-  it('submits incident resolve and refreshes the snapshot', async () => {
+  it('runs the incident inbox to drawer to resolve to snapshot refresh smoke path', async () => {
     const { fetchMock } = installBoardroomMock({
       dashboard: dashboardData({
         ops_strip: {
@@ -1538,8 +1493,22 @@ describe('Boardroom UI', () => {
 
     render(<App />)
 
+    expect(within((await screen.findByText('Incidents')).closest('div') as HTMLElement).getByText('1')).toBeInTheDocument()
+    expect(within((await screen.findByText('Blocked')).closest('div') as HTMLElement).getByText('1')).toBeInTheDocument()
+    expect((await screen.findAllByText(/board gate clear/i)).length).toBeGreaterThan(0)
+
     await user.click(await screen.findByRole('button', { name: /repeated runtime timeout on homepage visual node/i }))
-    await user.type(await screen.findByLabelText(/resolution summary/i), 'Restore execution and retry the latest timeout attempt.')
+
+    expect(window.location.pathname).toBe('/incident/inc_093')
+    expect(await screen.findByRole('heading', { name: /runtime timeout escalation/i })).toBeInTheDocument()
+    expect(screen.getByText(/execution timed out repeatedly and the breaker is now open/i)).toBeInTheDocument()
+    expect(screen.getByText(/timeout streak count/i)).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toHaveValue('RESTORE_AND_RETRY_LATEST_TIMEOUT')
+
+    await user.type(
+      await screen.findByLabelText(/resolution summary/i),
+      'Restore execution and retry the latest timeout attempt.',
+    )
     await user.click(await screen.findByRole('button', { name: /apply recovery action/i }))
 
     await waitFor(() =>
@@ -1548,7 +1517,17 @@ describe('Boardroom UI', () => {
         expect.objectContaining({ method: 'POST' }),
       ),
     )
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([url]) => url === '/api/v1/projections/dashboard').length,
+      ).toBeGreaterThan(1),
+    )
+
+    expect(within(screen.getByText('Incidents').closest('div') as HTMLElement).getByText('0')).toBeInTheDocument()
+    expect(within(screen.getByText('Blocked').closest('div') as HTMLElement).getByText('0')).toBeInTheDocument()
     expect((await screen.findAllByText(/board gate clear/i)).length).toBeGreaterThan(0)
+    expect(screen.getByText(/no board escalations are waiting right now/i)).toBeInTheDocument()
   })
 
   it('submits approve and refreshes the board gate state', async () => {

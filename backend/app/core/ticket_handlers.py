@@ -1457,14 +1457,16 @@ def _delivery_stage_parent_completed(
     parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
     if not delivery_stage or not parent_ticket_id:
         return True
-    parent_ticket = repository.get_current_ticket_projection(parent_ticket_id, connection=connection)
-    if parent_ticket is None or parent_ticket["status"] != TICKET_STATUS_COMPLETED:
-        return False
     current_node_id = str(created_spec.get("node_id") or "").strip()
+    parent_ticket = repository.get_current_ticket_projection(parent_ticket_id, connection=connection)
+    if parent_ticket is None:
+        return False
     parent_node_id = str(parent_ticket.get("node_id") or "").strip()
-    parent_workflow_id = str(parent_ticket.get("workflow_id") or created_spec.get("workflow_id") or "").strip()
     if current_node_id and parent_node_id and current_node_id == parent_node_id:
         return True
+    if parent_ticket["status"] != TICKET_STATUS_COMPLETED:
+        return False
+    parent_workflow_id = str(parent_ticket.get("workflow_id") or created_spec.get("workflow_id") or "").strip()
     if not parent_node_id or not parent_workflow_id:
         return True
     parent_node = repository.get_current_node_projection(
@@ -1473,6 +1475,136 @@ def _delivery_stage_parent_completed(
         connection=connection,
     )
     return parent_node is not None and parent_node["status"] == NODE_STATUS_COMPLETED
+
+
+def _expected_primary_artifact_ref(created_spec: dict[str, Any], ticket_id: str) -> str | None:
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    if output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
+        return f"art://runtime/{ticket_id}/implementation-bundle.json"
+    if output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
+        return f"art://runtime/{ticket_id}/delivery-check-report.json"
+    if output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        return f"art://runtime/{ticket_id}/delivery-closeout-package.json"
+    if output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
+        return f"art://runtime/{ticket_id}/consensus-document.json"
+    return None
+
+
+def _delivery_stage_rank(created_spec: dict[str, Any]) -> int:
+    delivery_stage = str(created_spec.get("delivery_stage") or "").strip()
+    return {
+        "BUILD": 0,
+        "CHECK": 1,
+        "REVIEW": 2,
+        "CLOSEOUT": 3,
+    }.get(delivery_stage, 99)
+
+
+def _recreate_pending_delivery_descendants_for_retry(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    failed_ticket_id: str,
+    replacement_ticket_id: str,
+    replacement_created_spec: dict[str, Any],
+    idempotency_key_base: str,
+) -> None:
+    current_node_id = str(replacement_created_spec.get("node_id") or "").strip()
+    ticket_replacements = {failed_ticket_id: replacement_ticket_id}
+    artifact_replacements: dict[str, str] = {}
+    lineage_ticket_id = failed_ticket_id
+    seen_ticket_ids: set[str] = set()
+    while lineage_ticket_id and lineage_ticket_id not in seen_ticket_ids:
+        seen_ticket_ids.add(lineage_ticket_id)
+        ticket_replacements[lineage_ticket_id] = replacement_ticket_id
+        old_artifact_ref = _expected_primary_artifact_ref(replacement_created_spec, lineage_ticket_id)
+        new_artifact_ref = _expected_primary_artifact_ref(replacement_created_spec, replacement_ticket_id)
+        if old_artifact_ref and new_artifact_ref:
+            artifact_replacements[old_artifact_ref] = new_artifact_ref
+        lineage_created_spec = repository.get_latest_ticket_created_payload(connection, lineage_ticket_id)
+        if lineage_created_spec is None:
+            break
+        parent_ticket_id = str(lineage_created_spec.get("parent_ticket_id") or "").strip()
+        if not parent_ticket_id:
+            break
+        parent_spec = repository.get_latest_ticket_created_payload(connection, parent_ticket_id)
+        if parent_spec is None:
+            break
+        if (
+            str(parent_spec.get("workflow_id") or "").strip() != workflow_id
+            or str(parent_spec.get("node_id") or "").strip() != current_node_id
+        ):
+            break
+        lineage_ticket_id = parent_ticket_id
+
+    pending_tickets = [
+        ticket
+        for ticket in repository.list_ticket_projections_by_statuses(connection, [TICKET_STATUS_PENDING])
+        if ticket["workflow_id"] == workflow_id
+    ]
+    pending_specs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for ticket in pending_tickets:
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
+        if created_spec is None:
+            continue
+        pending_specs.append((ticket, created_spec))
+
+    pending_specs.sort(key=lambda item: (_delivery_stage_rank(item[1]), item[0]["updated_at"], item[0]["ticket_id"]))
+
+    for ticket, created_spec in pending_specs:
+        parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
+        if parent_ticket_id not in ticket_replacements:
+            continue
+
+        next_ticket_id = new_prefixed_id("tkt")
+        _insert_ticket_cancelled_event(
+            repository=repository,
+            connection=connection,
+            command_id=command_id,
+            occurred_at=occurred_at,
+            workflow_id=workflow_id,
+            ticket_id=str(ticket["ticket_id"]),
+            node_id=str(ticket["node_id"]),
+            cancelled_by="incident-recovery",
+            reason=(
+                f"Superseded by retry follow-up ticket {next_ticket_id} after incident recovery "
+                f"for {replacement_ticket_id}."
+            ),
+            idempotency_key=f"{idempotency_key_base}:cancel-descendant:{ticket['ticket_id']}",
+        )
+        next_created_spec = {
+            **created_spec,
+            "ticket_id": next_ticket_id,
+            "parent_ticket_id": ticket_replacements[parent_ticket_id],
+            "idempotency_key": f"incident-recovery-recreate:{workflow_id}:{next_ticket_id}",
+            "input_artifact_refs": [
+                artifact_replacements.get(str(artifact_ref), str(artifact_ref))
+                for artifact_ref in (created_spec.get("input_artifact_refs") or [])
+            ],
+        }
+        created_event = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="operator",
+            actor_id="incident-recovery",
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:recreate-descendant:{ticket['ticket_id']}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload=next_created_spec,
+            occurred_at=occurred_at,
+        )
+        if created_event is None:
+            raise RuntimeError("Incident recovery descendant recreation idempotency conflict.")
+
+        ticket_replacements[ticket["ticket_id"]] = next_ticket_id
+        old_ref = _expected_primary_artifact_ref(created_spec, ticket["ticket_id"])
+        new_ref = _expected_primary_artifact_ref(created_spec, next_ticket_id)
+        if old_ref and new_ref:
+            artifact_replacements[old_ref] = new_ref
 
 
 def _resolve_current_heartbeat_expiry(
@@ -1577,11 +1709,6 @@ def _validate_restore_and_retry_followup(
             f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
             "projection is missing."
         )
-    if not _should_retry_timeout(current_ticket=current_ticket, created_spec=created_spec):
-        raise ValueError(
-            f"Incident {incident['incident_id']} cannot restore and retry because the retry budget "
-            "is exhausted or timeout retry is disabled."
-        )
 
     return current_ticket, created_spec
 
@@ -1628,15 +1755,6 @@ def _validate_restore_and_retry_failure_followup(
             f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
             "projection is missing."
         )
-    if not _should_retry_failure(
-        current_ticket=current_ticket,
-        created_spec=created_spec,
-        failure_kind=latest_failure_kind,
-    ):
-        raise ValueError(
-            f"Incident {incident['incident_id']} cannot restore and retry because the retry budget "
-            "is exhausted or failure retry is disabled."
-        )
 
     return current_ticket, created_spec
 
@@ -1681,15 +1799,6 @@ def _validate_restore_and_retry_provider_followup(
         raise ValueError(
             f"Incident {incident['incident_id']} cannot restore and retry because the source ticket "
             "projection is missing."
-        )
-    if not _should_retry_failure(
-        current_ticket=current_ticket,
-        created_spec=created_spec,
-        failure_kind=str(latest_failure_kind),
-    ):
-        raise ValueError(
-            f"Incident {incident['incident_id']} cannot restore and retry because the retry budget "
-            "is exhausted or provider retry is disabled."
         )
 
     return current_ticket, created_spec
@@ -2883,6 +2992,17 @@ def handle_incident_resolve(
                     },
                     retry_source_event_type=retry_source_event_type,
                     idempotency_key_base=f"{payload.idempotency_key}:followup-timeout",
+                )
+                _recreate_pending_delivery_descendants_for_retry(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=workflow_id,
+                    failed_ticket_id=str(incident["ticket_id"]),
+                    replacement_ticket_id=followup_ticket_id,
+                    replacement_created_spec=retry_created_spec,
+                    idempotency_key_base=f"{payload.idempotency_key}:followup-descendants",
                 )
             resolution_payload["followup_ticket_id"] = followup_ticket_id
 
