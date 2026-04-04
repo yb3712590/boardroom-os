@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+import app.core.ceo_proposer as ceo_proposer_module
 import app.core.runtime as runtime_module
 import pytest
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
@@ -1423,6 +1424,7 @@ def test_provider_backed_scope_delivery_chain_reaches_closeout_completion(
     monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
     provider_responder, observed_schema_refs = _build_mock_provider_responder()
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder)
+    monkeypatch.setattr(ceo_proposer_module, "invoke_openai_compat_response", provider_responder)
 
     workflow_id = _project_init(client, goal="Provider-backed mainline completion")
     repository = client.app.state.repository
@@ -1447,6 +1449,7 @@ def test_provider_backed_scope_delivery_chain_reaches_closeout_completion(
     ]
     assert repository.list_open_approvals() == []
     assert repository.list_open_incidents() == []
+    assert "ceo_action_batch" in observed_schema_refs
     assert "implementation_bundle" in observed_schema_refs
     assert "delivery_check_report" in observed_schema_refs
     assert "ui_milestone_review" in observed_schema_refs
@@ -1470,6 +1473,7 @@ def test_provider_bad_response_on_final_review_falls_back_and_still_reaches_clos
         bad_response_schemas={"ui_milestone_review"}
     )
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder)
+    monkeypatch.setattr(ceo_proposer_module, "invoke_openai_compat_response", provider_responder)
 
     workflow_id = _project_init(client, goal="Provider fallback on final review")
     repository = client.app.state.repository
@@ -1496,6 +1500,7 @@ def test_provider_bad_response_on_final_review_falls_back_and_still_reaches_clos
     assert completion_summary["closeout_completed_at"] is not None
     assert repository.list_open_approvals() == []
     assert repository.list_open_incidents() == []
+    assert "ceo_action_batch" in observed_schema_refs
     assert "ui_milestone_review" in observed_schema_refs
     assert "delivery_closeout_package" in observed_schema_refs
 
