@@ -11,6 +11,7 @@
 当前主线里已经真实落地的能力包括：
 
 - 命令入口、投影视图和 SSE 事件流
+- `project-init` 现在会先物化 `board-brief`，再由 CEO 发起首个 kickoff scope 共识票，继续复用现有 `consensus_document@1 + MEETING_ESCALATION`
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消和人工恢复
 - 最小 incident / circuit-breaker / retry 治理链
 - 视觉里程碑最小 Maker-Checker 闭环：maker 完成后自动生成 checker ticket，checker 通过后再进入 review room，要求返工则自动生成带 required fixes 的 fix ticket；相同 blocking finding 指纹重复达到阈值时会直接升级为 incident / breaker
@@ -98,6 +99,9 @@ artifact cleanup 默认会跟着 runner / in-process scheduler 一起跑：
 - 默认每 300 秒检查一次过期 artifact
 - `BOARDROOM_OS_ARTIFACT_CLEANUP_INTERVAL_SEC <= 0` 时关闭自动 cleanup，只保留手动命令兜底
 - 自动 cleanup 的操作人默认记成 `system:artifact-cleanup`，可用 `BOARDROOM_OS_ARTIFACT_CLEANUP_OPERATOR_ID` 覆盖
+- CEO idle maintenance 默认也会跟着 runner / in-process scheduler 一起检查
+- `BOARDROOM_OS_CEO_MAINTENANCE_INTERVAL_SEC` 默认是 `60`；当 workflow 没有 open approval / incident、没有 leased / executing 工单，但仍有 `无票待起步 / ready ticket / failed ticket` 这三类待推进信号时，scheduler 会补打一轮 `SCHEDULER_IDLE_MAINTENANCE`
+- `BOARDROOM_OS_CEO_MAINTENANCE_INTERVAL_SEC <= 0` 时关闭这层 idle maintenance，只保留事件驱动 CEO 触发
 
 ## 运行模式
 

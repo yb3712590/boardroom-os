@@ -19,6 +19,7 @@ from app.core.constants import (
     BLOCKING_REASON_BOARD_REJECTED,
     BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
     BLOCKING_REASON_MODIFY_CONSTRAINTS,
+    EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
@@ -3583,6 +3584,17 @@ def test_project_init_stops_auto_advance_when_no_worker_is_available(client, mon
     assert ticket_projection["status"] == "PENDING"
     assert approvals == []
     assert incidents == []
+
+
+def test_project_init_exposes_board_directive_ceo_shadow_run(client):
+    response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+
+    projection_response = client.get(f"/api/v1/projections/workflows/{workflow_id}/ceo-shadow")
+
+    assert projection_response.status_code == 200
+    runs = projection_response.json()["data"]["runs"]
+    assert any(run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED for run in runs)
 
 
 def test_ticket_create_persists_explicit_tenant_and_workspace_and_matches_workflow(client):

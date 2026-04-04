@@ -74,8 +74,90 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
 }
 
 
+PROJECT_INIT_SCOPE_NODE_ID = "node_scope_decision"
+
+
+def build_project_init_scope_ticket_id(workflow_id: str) -> str:
+    return f"tkt_{workflow_id}_scope_decision"
+
+
+def build_project_init_scope_summary(north_star_goal: str) -> str:
+    clean_goal = north_star_goal.strip() or "the current workflow"
+    return (
+        "Prepare the kickoff consensus report and the first batch of follow-up ticket outlines for "
+        f"{clean_goal}."
+    )
+
+
+def build_project_init_brief_artifact_ref(workflow_id: str) -> str:
+    return f"art://project-init/{workflow_id}/board-brief.md"
+
+
+def is_project_init_scope_preset(*, role_profile_ref: str, output_schema_ref: str) -> bool:
+    return role_profile_ref == "ui_designer_primary" and output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF
+
+
 def supports_ceo_create_ticket_preset(*, role_profile_ref: str, output_schema_ref: str) -> bool:
     return (role_profile_ref, output_schema_ref) in _CREATE_TICKET_PRESETS
+
+
+def _build_project_init_auto_review_request(ticket_id: str) -> dict[str, Any]:
+    return {
+        "review_type": "MEETING_ESCALATION",
+        "priority": "high",
+        "title": "Review scope decision consensus",
+        "subtitle": "Initial scope decision is ready for board lock-in.",
+        "blocking_scope": "WORKFLOW",
+        "trigger_reason": "Project init produced the first scope decision that needs explicit board confirmation.",
+        "why_now": "Execution should not widen before the first scope lock is approved.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "consensus_scope_lock",
+        "recommendation_summary": "The narrowest scope that still ships the workflow is ready for board review.",
+        "options": [
+            {
+                "option_id": "consensus_scope_lock",
+                "label": "Lock consensus scope",
+                "summary": "Proceed with the converged scope and follow-up tickets.",
+                "artifact_refs": [],
+                "pros": ["Keeps delivery scope stable"],
+                "cons": ["Defers non-critical stretch ideas"],
+                "risks": ["Some polish moves slip to later rounds"],
+            }
+        ],
+        "evidence_summary": [
+            {
+                "evidence_id": "ev_scope_consensus",
+                "source_type": "CONSENSUS_DOCUMENT",
+                "headline": "Generated scope consensus document",
+                "summary": "The first scope decision is ready for board review.",
+                "source_ref": None,
+            }
+        ],
+        "risk_summary": {
+            "user_risk": "LOW",
+            "engineering_risk": "MEDIUM",
+            "schedule_risk": "LOW",
+            "budget_risk": "LOW",
+        },
+        "budget_impact": {
+            "tokens_spent_so_far": 0,
+            "tokens_if_approved_estimate_range": {"min_tokens": 100, "max_tokens": 250},
+            "tokens_if_rework_estimate_range": {"min_tokens": 350, "max_tokens": 700},
+            "estimate_confidence": "medium",
+            "budget_risk": "LOW",
+        },
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "consensus_scope_lock",
+        "comment_template": "",
+        "inbox_title": "Review scope decision consensus",
+        "inbox_summary": "A consensus document is ready for board review.",
+        "badges": ["meeting", "board_gate", "scope"],
+        "developer_inspector_refs": {
+            "compiled_context_bundle_ref": f"ctx://compile/{ticket_id}",
+            "compile_manifest_ref": f"manifest://compile/{ticket_id}",
+            "rendered_execution_payload_ref": f"render://compile/{ticket_id}",
+        },
+    }
 
 
 def _build_consensus_review_request(summary: str) -> dict[str, Any]:
@@ -391,22 +473,50 @@ def build_ceo_create_ticket_command(
     payload: CEOCreateTicketPayload,
 ) -> TicketCreateCommand:
     preset = _CREATE_TICKET_PRESETS[(payload.role_profile_ref, payload.output_schema_ref)]
-    ticket_id = new_prefixed_id("tkt")
+    is_project_init_scope = is_project_init_scope_preset(
+        role_profile_ref=payload.role_profile_ref,
+        output_schema_ref=payload.output_schema_ref,
+    )
+    ticket_id = (
+        build_project_init_scope_ticket_id(payload.workflow_id)
+        if is_project_init_scope
+        else new_prefixed_id("tkt")
+    )
+    node_id = PROJECT_INIT_SCOPE_NODE_ID if is_project_init_scope else payload.node_id
+    input_artifact_refs = (
+        [build_project_init_brief_artifact_ref(payload.workflow_id)]
+        if is_project_init_scope
+        else []
+    )
+    semantic_queries = [
+        str(workflow.get("north_star_goal") or payload.summary).strip() or payload.summary
+    ]
     return TicketCreateCommand(
         ticket_id=ticket_id,
         workflow_id=payload.workflow_id,
-        node_id=payload.node_id,
+        node_id=node_id,
         parent_ticket_id=payload.parent_ticket_id,
         attempt_no=1,
         role_profile_ref=preset.role_profile_ref,
         constraints_ref=preset.constraints_ref,
-        input_artifact_refs=[],
+        input_artifact_refs=input_artifact_refs,
         context_query_plan={
-            "keywords": _context_keywords_for_preset(preset),
-            "semantic_queries": [payload.summary],
+            "keywords": (
+                ["scope", "constraints", "board review"]
+                if is_project_init_scope
+                else _context_keywords_for_preset(preset)
+            ),
+            "semantic_queries": semantic_queries,
             "max_context_tokens": 3000,
         },
-        acceptance_criteria=_acceptance_criteria_for_preset(payload.summary, preset),
+        acceptance_criteria=(
+            [
+                "Must produce a consensus document",
+                "Must include follow-up tickets",
+            ]
+            if is_project_init_scope
+            else _acceptance_criteria_for_preset(payload.summary, preset)
+        ),
         output_schema_ref=preset.output_schema_ref,
         output_schema_version=preset.output_schema_version,
         allowed_tools=_allowed_tools_for_preset(preset),
@@ -418,11 +528,15 @@ def build_ceo_create_ticket_command(
         tenant_id=workflow.get("tenant_id"),
         workspace_id=workflow.get("workspace_id"),
         delivery_stage=preset.delivery_stage,
-        auto_review_request=_review_request_for_preset(payload.summary, preset),
+        auto_review_request=(
+            _build_project_init_auto_review_request(ticket_id)
+            if is_project_init_scope
+            else _review_request_for_preset(payload.summary, preset)
+        ),
         escalation_policy={
             "on_timeout": "retry",
             "on_schema_error": "retry",
             "on_repeat_failure": "escalate_ceo",
         },
-        idempotency_key=f"ceo-create-ticket:{payload.workflow_id}:{payload.node_id}",
+        idempotency_key=f"ceo-create-ticket:{payload.workflow_id}:{node_id}",
     )

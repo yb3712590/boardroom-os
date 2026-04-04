@@ -2,8 +2,21 @@ from __future__ import annotations
 
 import json
 
-from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
-from app.core.constants import EVENT_CIRCUIT_BREAKER_OPENED, EVENT_INCIDENT_OPENED
+from app.core.ceo_execution_presets import (
+    PROJECT_INIT_SCOPE_NODE_ID,
+    build_project_init_scope_ticket_id,
+)
+from app.core.ceo_scheduler import (
+    SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+    list_due_ceo_maintenance_workflows,
+    run_ceo_shadow_for_trigger,
+    run_due_ceo_maintenance,
+)
+from app.core.constants import (
+    EVENT_BOARD_DIRECTIVE_RECEIVED,
+    EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_OPENED,
+)
 from app.core.provider_openai_compat import OpenAICompatProviderResult
 from app.core.runtime_provider_config import RuntimeProviderMode, RuntimeProviderStoredConfig
 
@@ -193,6 +206,72 @@ def test_ceo_shadow_run_records_fallback_without_touching_mainline_state(client)
     assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
     assert run["deterministic_fallback_used"] is True
     assert run["deterministic_fallback_reason"] is not None
+
+
+def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO kickoff deterministic fallback")
+    repository = client.app.state.repository
+
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+    scope_ticket_id = build_project_init_scope_ticket_id(workflow_id)
+    scope_ticket = repository.get_current_ticket_projection(scope_ticket_id)
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, scope_ticket_id)
+
+    assert any(run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED for run in runs)
+    assert scope_ticket is not None
+    assert created_spec is not None
+    assert created_spec["node_id"] == PROJECT_INIT_SCOPE_NODE_ID
+    assert created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert any(ref.endswith("/board-brief.md") for ref in created_spec["input_artifact_refs"])
+
+
+def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monkeypatch):
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, rendered_payload):
+        snapshot = rendered_payload.messages[2].content_payload
+        workflow_id = snapshot["workflow"]["workflow_id"]
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Create the kickoff scope consensus ticket first.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": PROJECT_INIT_SCOPE_NODE_ID,
+                                "role_profile_ref": "ui_designer_primary",
+                                "output_schema_ref": "consensus_document",
+                                "summary": "Prepare the kickoff consensus report and the first batch of follow-up ticket outlines.",
+                                "parent_ticket_id": None,
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_project_init_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    workflow_id = _project_init(client, "CEO kickoff live provider")
+    repository = client.app.state.repository
+    scope_ticket_id = build_project_init_scope_ticket_id(workflow_id)
+    board_directive_run = next(
+        run for run in repository.list_ceo_shadow_runs(workflow_id) if run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED
+    )
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, scope_ticket_id)
+
+    assert created_spec is not None
+    assert created_spec["ticket_id"] == scope_ticket_id
+    assert created_spec["node_id"] == PROJECT_INIT_SCOPE_NODE_ID
+    assert board_directive_run["provider_response_id"] == "resp_ceo_project_init_1"
 
 
 def test_ceo_shadow_run_uses_live_provider_and_executes_hire_request(client, monkeypatch):
@@ -639,3 +718,66 @@ def test_incident_resolve_triggers_ceo_shadow_audit(client):
     assert response.json()["status"] == "ACCEPTED"
     runs = repository.list_ceo_shadow_runs(workflow_id)
     assert runs[0]["trigger_type"] == "INCIDENT_RECOVERY_STARTED"
+
+
+def test_idle_ceo_maintenance_targets_pending_workflow_once_per_interval(
+    client,
+    monkeypatch,
+    set_ticket_time,
+):
+    set_ticket_time("2026-04-04T10:00:00+08:00")
+    _set_deterministic_mode(client)
+    monkeypatch.setattr(
+        client.app.state.repository,
+        "list_scheduler_worker_candidates",
+        lambda connection=None: [],
+    )
+    workflow_id = _project_init(client, "CEO idle maintenance pending scope")
+    repository = client.app.state.repository
+    current_time = repository.get_active_workflow()["updated_at"]
+
+    due_before = {
+        item["workflow_id"]
+        for item in list_due_ceo_maintenance_workflows(
+            repository,
+            current_time=current_time,
+            interval_sec=60,
+        )
+    }
+    runs = run_due_ceo_maintenance(
+        repository,
+        current_time=current_time,
+        trigger_ref="scheduler-runner:test-idle-maintenance",
+        interval_sec=60,
+    )
+    due_after = {
+        item["workflow_id"]
+        for item in list_due_ceo_maintenance_workflows(
+            repository,
+            current_time=current_time,
+            interval_sec=60,
+        )
+    }
+
+    assert workflow_id in due_before
+    assert runs[0]["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER
+    assert workflow_id not in due_after
+
+
+def test_idle_ceo_maintenance_skips_workflow_waiting_for_board_review(client, set_ticket_time):
+    set_ticket_time("2026-04-04T10:00:00+08:00")
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO idle maintenance open approval")
+    repository = client.app.state.repository
+    current_time = repository.get_active_workflow()["updated_at"]
+
+    due_workflow_ids = {
+        item["workflow_id"]
+        for item in list_due_ceo_maintenance_workflows(
+            repository,
+            current_time=current_time,
+            interval_sec=60,
+        )
+    }
+
+    assert workflow_id not in due_workflow_ids

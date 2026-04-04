@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
+from app.config import get_settings
 from app.core.ceo_executor import execute_ceo_action_batch
-from app.core.ceo_proposer import build_no_action_batch, propose_ceo_action_batch
+from app.core.ceo_proposer import (
+    build_deterministic_fallback_batch,
+    build_no_action_batch,
+    propose_ceo_action_batch,
+)
 from app.core.ceo_prompts import CEO_SHADOW_PROMPT_VERSION
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.runtime_provider_config import RuntimeProviderConfigStore
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
+
+SCHEDULER_IDLE_MAINTENANCE_TRIGGER = "SCHEDULER_IDLE_MAINTENANCE"
 
 
 def _build_mainline_effect(snapshot: dict[str, Any]) -> str:
@@ -45,6 +53,80 @@ def _build_comparison(
         "rejected_action_count": len(rejected_actions),
         "diverges_from_mainline": diverges_from_mainline,
     }
+
+
+def _snapshot_has_idle_maintenance_signal(snapshot: dict[str, Any]) -> bool:
+    ticket_summary = snapshot.get("ticket_summary") or {}
+    return (
+        int(ticket_summary.get("total") or 0) == 0
+        or int(ticket_summary.get("ready_count") or 0) > 0
+        or int(ticket_summary.get("failed_count") or 0) > 0
+    )
+
+
+def list_due_ceo_maintenance_workflows(
+    repository: ControlPlaneRepository,
+    *,
+    current_time: datetime,
+    interval_sec: int | None = None,
+) -> list[dict[str, Any]]:
+    resolved_interval_sec = (
+        get_settings().ceo_maintenance_interval_sec if interval_sec is None else interval_sec
+    )
+    if resolved_interval_sec <= 0:
+        return []
+
+    due_workflows: list[dict[str, Any]] = []
+    for workflow in repository.list_workflow_projections():
+        snapshot = build_ceo_shadow_snapshot(
+            repository,
+            workflow_id=str(workflow["workflow_id"]),
+            trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+            trigger_ref=None,
+        )
+        if snapshot.get("approvals") or snapshot.get("incidents"):
+            continue
+        if int((snapshot.get("ticket_summary") or {}).get("working_count") or 0) > 0:
+            continue
+        if not _snapshot_has_idle_maintenance_signal(snapshot):
+            continue
+        latest_run = repository.get_latest_ceo_shadow_run_for_trigger(
+            str(workflow["workflow_id"]),
+            SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        )
+        if latest_run is not None:
+            elapsed_sec = (current_time - latest_run["occurred_at"]).total_seconds()
+            if elapsed_sec < resolved_interval_sec:
+                continue
+        due_workflows.append(workflow)
+
+    return due_workflows
+
+
+def run_due_ceo_maintenance(
+    repository: ControlPlaneRepository,
+    *,
+    current_time: datetime,
+    trigger_ref: str,
+    interval_sec: int | None = None,
+    runtime_provider_store: RuntimeProviderConfigStore | None = None,
+) -> list[dict[str, Any]]:
+    runs: list[dict[str, Any]] = []
+    for workflow in list_due_ceo_maintenance_workflows(
+        repository,
+        current_time=current_time,
+        interval_sec=interval_sec,
+    ):
+        runs.append(
+            run_ceo_shadow_for_trigger(
+                repository,
+                workflow_id=str(workflow["workflow_id"]),
+                trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+                trigger_ref=trigger_ref,
+                runtime_provider_store=runtime_provider_store,
+            )
+        )
+    return runs
 
 
 def run_ceo_shadow_for_trigger(
@@ -123,8 +205,44 @@ def run_ceo_shadow_for_trigger(
             deterministic_fallback_reason = str(first_failed_action.get("reason") or "Limited CEO execution failed.")
     except Exception as exc:
         fallback_reason = f"CEO shadow snapshot/proposal pipeline failed: {exc}"
+        fallback_action_batch = build_deterministic_fallback_batch(snapshot, fallback_reason)
+        try:
+            validation = validate_ceo_action_batch(repository, action_batch=fallback_action_batch)
+            accepted_actions = validation["accepted_actions"]
+            rejected_actions = validation["rejected_actions"]
+            execution_result = execute_ceo_action_batch(
+                repository,
+                action_batch=fallback_action_batch,
+                accepted_actions=accepted_actions,
+            )
+            executed_actions = execution_result["executed_actions"]
+            execution_summary = execution_result["execution_summary"]
+        except Exception:
+            fallback_action_batch = build_no_action_batch(fallback_reason)
+            accepted_actions = [
+                {
+                    "action_type": "NO_ACTION",
+                    "payload": fallback_action_batch.actions[0].payload.model_dump(mode="json"),
+                    "reason": fallback_reason,
+                }
+            ]
+            rejected_actions = []
+            executed_actions = []
+            execution_summary = {
+                "attempted_action_count": 0,
+                "executed_action_count": 0,
+                "duplicate_action_count": 0,
+                "passthrough_action_count": 0,
+                "deferred_action_count": 0,
+                "failed_action_count": 0,
+            }
+        comparison = _build_comparison(
+            snapshot=snapshot,
+            accepted_actions=accepted_actions,
+            rejected_actions=rejected_actions,
+        )
         proposal = type("FallbackProposal", (), {})()
-        proposal.action_batch = build_no_action_batch(fallback_reason)
+        proposal.action_batch = fallback_action_batch
         proposal.effective_mode = "SHADOW_ERROR"
         proposal.provider_health_summary = "ERROR"
         proposal.model = None

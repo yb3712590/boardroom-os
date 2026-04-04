@@ -6,6 +6,8 @@ from app.contracts.runtime import (
     RenderedExecutionPayloadMeta,
     RenderedExecutionPayloadSummary,
 )
+from app.core.ceo_execution_presets import PROJECT_INIT_SCOPE_NODE_ID
+from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 
@@ -13,13 +15,27 @@ from app.core.time import now_local
 CEO_SHADOW_PROMPT_VERSION = "ceo_shadow_v1"
 
 
-def build_ceo_shadow_system_prompt() -> str:
+def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
+    trigger_type = str((snapshot.get("trigger") or {}).get("trigger_type") or "")
+    workflow = snapshot.get("workflow") or {}
+    ticket_summary = snapshot.get("ticket_summary") or {}
+    kickoff_instruction = ""
+    if trigger_type == EVENT_BOARD_DIRECTIVE_RECEIVED and int(ticket_summary.get("total") or 0) == 0:
+        kickoff_instruction = (
+            "When a new board directive arrives and no tickets exist yet, propose exactly one CREATE_TICKET "
+            f"for the initial scope kickoff using role_profile_ref `ui_designer_primary`, "
+            f"output_schema_ref `consensus_document`, and node_id `{PROJECT_INIT_SCOPE_NODE_ID}`. "
+            "That kickoff ticket should produce a startup consensus report plus the first batch of follow-up "
+            f"ticket outlines for north star goal: {workflow.get('north_star_goal')}. "
+            "Do not create downstream BUILD, CHECK, or REVIEW tickets directly before board approval.\n"
+        )
     return (
         "You are the Boardroom OS CEO in shadow mode.\n"
         "You read the current workflow snapshot and propose controlled actions only.\n"
         "You do not execute actions and you do not rewrite workflow history.\n"
         "Prefer the smallest useful next step.\n"
         "If the workflow is blocked by board review or incident, usually return NO_ACTION.\n"
+        f"{kickoff_instruction}"
         "Return strict JSON matching ceo_action_batch_v1 with a short summary and actions array.\n"
         "Supported actions: CREATE_TICKET, RETRY_TICKET, HIRE_EMPLOYEE, ESCALATE_TO_BOARD, NO_ACTION."
     )
@@ -34,7 +50,7 @@ def build_ceo_shadow_rendered_payload(snapshot: dict) -> RenderedExecutionPayloa
             role="system",
             channel="SYSTEM_CONTROLS",
             content_type="TEXT",
-            content_payload={"text": build_ceo_shadow_system_prompt()},
+            content_payload={"text": build_ceo_shadow_system_prompt(snapshot)},
         ),
         RenderedExecutionMessage(
             role="user",
@@ -88,4 +104,3 @@ def build_ceo_shadow_rendered_payload(snapshot: dict) -> RenderedExecutionPayloa
             reference_message_count=0,
         ),
     )
-

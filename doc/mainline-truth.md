@@ -1,13 +1,13 @@
 # 主线真相表
 
-> 最后更新：2026-04-03
+> 最后更新：2026-04-04
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
 
 | 阶段 | 当前状态 | 代码现实 | 直接结论 |
 |------|----------|----------|----------|
-| `project-init -> scope review` | 真实运行 | `project-init` 会自动推进到首个 scope review | 不是只建 workflow 的空壳 |
+| `project-init -> scope review` | 真实运行 | `project-init` 会先由 CEO 发起首个 kickoff scope 共识票，再自动推进到首个 scope review | 不是只建 workflow 的空壳 |
 | `BUILD` 内部 maker-checker | 真实运行 | 先产出 `implementation_bundle@1`，再走 `maker -> checker -> fix / incident` | `BUILD` 不会直接放行到 `CHECK` |
 | `CHECK` 内部 maker-checker | 真实运行 | `delivery_check_report@1` 也有独立内审闭环 | `CHECK` 不会直接放行到最终董事会 |
 | 最终 `REVIEW` | 真实运行 | 只有真正 board-facing 的 review 才进入 `Inbox -> Review Room` | 董事会只看真实审批点 |
@@ -15,7 +15,7 @@
 
 补充差异：
 
-- `project-init -> scope review` 这条共识链仍保留 `ui_designer_primary`
+- `project-init -> scope review` 这条共识链仍保留 `ui_designer_primary`，但首个 scope kickoff 票已经不再由命令处理器硬编码创建，而是由 `BOARD_DIRECTIVE_RECEIVED` 的 CEO shadow run 发起
 - 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
 - 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
 

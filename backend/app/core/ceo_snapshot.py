@@ -14,6 +14,10 @@ _ACTIVE_TICKET_STATUSES = [
     "REWORK_REQUIRED",
     "CANCEL_REQUESTED",
 ]
+_WORKING_TICKET_STATUSES = {
+    "LEASED",
+    "EXECUTING",
+}
 
 
 def _serialize_timestamp(value: datetime | None) -> str | None:
@@ -92,6 +96,7 @@ def build_ceo_shadow_snapshot(
             "total": len(tickets),
             "ready_count": len(ready_tickets),
             "active_count": sum(1 for ticket in tickets if ticket["status"] in _ACTIVE_TICKET_STATUSES),
+            "working_count": sum(1 for ticket in tickets if ticket["status"] in _WORKING_TICKET_STATUSES),
             "completed_count": sum(1 for ticket in tickets if ticket["status"] == "COMPLETED"),
             "failed_count": sum(1 for ticket in tickets if ticket["status"] in {"FAILED", "TIMED_OUT"}),
         },

@@ -286,13 +286,15 @@
 
 #### P0-CEO-009：实现 CEO 定时唤醒
 
-**状态**：未开始（2026-04-04，文档校准确认）
+**状态**：已完成（2026-04-04，按“空转补偿，不做全量轮询”落地）
 
 **描述**：在 scheduler_runner 中添加定时 CEO 唤醒，确保系统不会因为错过事件而停滞。
 
 **文件**：
 - 修改：`backend/app/scheduler_runner.py`
 - 修改：`backend/app/core/ceo_scheduler.py`
+- 修改：`backend/app/config.py`
+- 修改：`backend/app/db/repository.py`
 
 **依赖**：P0-CEO-007
 
@@ -307,9 +309,10 @@
 
 **风险**：低
 
-**当前补记**：
-- 当前 `backend/app/scheduler_runner.py` 只负责 scheduler tick、leased runtime 和 artifact cleanup，还没有接 CEO 定时唤醒
-- 现有 CEO 触发点仍只覆盖事件驱动入口：工单完成、工单失败、审批完成、incident 恢复
+**完成补记**：
+- 这轮没有做“固定频率直接唤醒所有 workflow 的 CEO 轮询”，而是按主线收口成 idle maintenance：只有 workflow 没有 open approval / incident、没有 leased / executing 工单、但仍存在 `无票待起步 / ready ticket / failed ticket` 这三类待推进信号时，scheduler 才会补打一轮 CEO 审计
+- `backend/app/scheduler_runner.py` 现在会在 `scheduler tick -> leased runtime -> artifact cleanup` 之后调用 `run_due_ceo_maintenance()`；触发类型统一记为 `SCHEDULER_IDLE_MAINTENANCE`，仍落在现有 `ceo_shadow_run` 审计表，不另起第二套事件总线
+- 定时间隔现在由 `BOARDROOM_OS_CEO_MAINTENANCE_INTERVAL_SEC` 控制，默认 60 秒；补充了 workflow 列表读口和“按 trigger_type 查最新 CEO run”的 repository 读方法，避免在调度层散落手写 SQL
 
 ---
 
@@ -346,13 +349,17 @@
 
 #### P0-CEO-011：CEO 任务拆解能力
 
-**状态**：未完成（2026-04-04，当前只支持受限 preset 建票）
+**状态**：已完成（2026-04-04，先按主线保守口径收口）
 
 **描述**：CEO 能根据 north_star_goal 和当前阶段，自主决定需要创建哪些工单。
 
 **文件**：
+- 修改：`backend/app/core/command_handlers.py`
+- 修改：`backend/app/core/ceo_execution_presets.py`
 - 修改：`backend/app/core/ceo_prompts.py`
 - 修改：`backend/app/core/ceo_proposer.py`
+- 修改：`backend/app/core/ceo_validator.py`
+- 修改：`backend/app/core/ceo_scheduler.py`
 
 **依赖**：P0-CEO-007
 
@@ -367,9 +374,11 @@
 
 **风险**：高（依赖提示工程质量）
 
-**当前补记**：
-- 当前有限接管首轮只支持受控 `CREATE_TICKET` 白名单 preset，并能把通过校验的建票动作落到现有 handler
-- 现在还没有做到 `project-init` 后由 CEO 基于 `north_star_goal` 自主拆出第一批工单，也没有让工单 spec 由 CEO 生成
+**完成补记**：
+- `task-backlog` 原本把这项任务写得偏轻，只提了 `ceo_prompts.py / ceo_proposer.py`；但按当前代码现实，要把 `project-init` 后首票创建权真正迁到 CEO，还必须一起改 `command_handlers.py` 入口、create-ticket preset 稳定 ID、校验守卫和 deterministic fallback
+- `project-init` 现在不再由命令处理器硬编码创建首个 scope 票；系统会先物化 `board-brief.md`，再触发一次 `BOARD_DIRECTIVE_RECEIVED` 的 CEO 审计/提议/有限执行，由 CEO 创建稳定 kickoff 票：`node_scope_decision / tkt_<workflow_id>_scope_decision`
+- 这轮按你确认的保守边界落地：不新增 kickoff artifact / review 类型，而是继续复用现有 `consensus_document@1 + MEETING_ESCALATION`，让“项目启动报告 + 第一批工单概要”落在现有 `topic / consensus_summary / followup_tickets` 语义里
+- 为了保住零配置主链，提议器和调度层都补了 deterministic kickoff fallback：即使 live provider 不可用、配置不完整或 proposal pipeline 出错，`project-init -> scope review` 仍能继续自动推进到当前首个真实董事会停点
 
 ---
 
@@ -458,9 +467,10 @@
 **风险**：低
 
 **完成补记**：
-- 本轮没有补定时唤醒，而是围绕有限接管首轮补最小闭环
-- 当前 `backend/tests/test_ceo_scheduler.py` 已覆盖：deterministic fallback、hire 执行、retry 执行、白名单 create-ticket 执行、非法 create-ticket preset 拒绝、`ESCALATE_TO_BOARD` deferred、执行失败 fallback、失败触发、审批触发、incident 恢复、projection 字段暴露
-- 本轮后端全量验证更新为 `378 passed`
+- 当前 `backend/tests/test_ceo_scheduler.py` 已覆盖：deterministic fallback、`project-init` 首票创建、live provider 首票建票、hire 执行、retry 执行、白名单 create-ticket 执行、非法 create-ticket preset 拒绝、`ESCALATE_TO_BOARD` deferred、执行失败 fallback、失败触发、审批触发、incident 恢复、idle maintenance 选择与节流、projection 字段暴露
+- `backend/tests/test_scheduler_runner.py` 这轮补了两条 runner 级验证：一条确认 pending workflow 会被 `SCHEDULER_IDLE_MAINTENANCE` 命中，另一条确认 executing ticket 不会误触发 idle maintenance
+- `backend/tests/test_api.py` 补了 `project-init` 后 `ceo-shadow` 读面暴露 `BOARD_DIRECTIVE_RECEIVED` 的回归验证
+- 本轮后端全量验证更新为 `385 passed`
 
 ---
 

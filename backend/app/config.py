@@ -46,6 +46,7 @@ class Settings:
     recent_event_limit: int = 10
     scheduler_poll_interval_sec: float = 5.0
     scheduler_max_dispatches: int = 10
+    ceo_maintenance_interval_sec: int = 60
     enable_inprocess_scheduler: bool = False
     artifact_cleanup_interval_sec: int = 300
     artifact_cleanup_operator_id: str = "system:artifact-cleanup"
@@ -149,6 +150,13 @@ def get_settings() -> Settings:
     scheduler_max_dispatches = int(
         os.environ.get("BOARDROOM_OS_SCHEDULER_MAX_DISPATCHES", "10")
     )
+    ceo_maintenance_interval_sec = int(
+        os.environ.get("BOARDROOM_OS_CEO_MAINTENANCE_INTERVAL_SEC", "60")
+    )
+    if ceo_maintenance_interval_sec < 0:
+        raise ValueError(
+            "BOARDROOM_OS_CEO_MAINTENANCE_INTERVAL_SEC must be greater than or equal to 0."
+        )
     runtime_execution_mode = _read_runtime_execution_mode()
     worker_bootstrap_signing_secret = os.environ.get(
         "BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET"
@@ -286,6 +294,7 @@ def get_settings() -> Settings:
         recent_event_limit=recent_event_limit,
         scheduler_poll_interval_sec=scheduler_poll_interval_sec,
         scheduler_max_dispatches=scheduler_max_dispatches,
+        ceo_maintenance_interval_sec=ceo_maintenance_interval_sec,
         enable_inprocess_scheduler=enable_inprocess_scheduler,
         artifact_cleanup_interval_sec=artifact_cleanup_interval_sec,
         artifact_cleanup_operator_id=artifact_cleanup_operator_id,

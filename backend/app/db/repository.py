@@ -493,6 +493,23 @@ class ControlPlaneRepository:
                 return None
             return self._convert_workflow_projection_row(row)
 
+    def list_workflow_projections(
+        self,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM workflow_projection
+            ORDER BY version DESC, workflow_id DESC
+        """
+        if connection is not None:
+            rows = connection.execute(query).fetchall()
+            return [self._convert_workflow_projection_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query).fetchall()
+            return [self._convert_workflow_projection_row(row) for row in rows]
+
     def get_workflow_projection(
         self,
         workflow_id: str,
@@ -2219,6 +2236,29 @@ class ControlPlaneRepository:
         with self.connection() as owned_connection:
             rows = owned_connection.execute(query, params).fetchall()
             return [self._convert_ceo_shadow_run_row(row) for row in rows]
+
+    def get_latest_ceo_shadow_run_for_trigger(
+        self,
+        workflow_id: str,
+        trigger_type: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM ceo_shadow_run
+            WHERE workflow_id = ? AND trigger_type = ?
+            ORDER BY occurred_at DESC, run_id DESC
+            LIMIT 1
+        """
+        params = (workflow_id, trigger_type)
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_ceo_shadow_run_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_ceo_shadow_run_row(row)
 
     def list_ticket_projections_by_statuses(
         self,

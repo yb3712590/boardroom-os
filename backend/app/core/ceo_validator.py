@@ -6,7 +6,12 @@ from app.contracts.ceo_actions import (
     CEOActionBatch,
     CEOActionType,
 )
-from app.core.ceo_execution_presets import supports_ceo_create_ticket_preset
+from app.core.ceo_execution_presets import (
+    PROJECT_INIT_SCOPE_NODE_ID,
+    build_project_init_scope_ticket_id,
+    is_project_init_scope_preset,
+    supports_ceo_create_ticket_preset,
+)
 from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY
 from app.core.staffing_catalog import resolve_mainline_staffing_combo
 from app.db.repository import ControlPlaneRepository
@@ -91,6 +96,32 @@ def validate_ceo_action_batch(
                     _action_entry(action, "role_profile_ref and output_schema_ref are not on the current limited CEO execution path.")
                 )
                 continue
+            if is_project_init_scope_preset(
+                role_profile_ref=action.payload.role_profile_ref,
+                output_schema_ref=action.payload.output_schema_ref,
+            ):
+                if action.payload.node_id != PROJECT_INIT_SCOPE_NODE_ID:
+                    rejected_actions.append(
+                        _action_entry(
+                            action,
+                            f"Project-init kickoff ticket must use node_id {PROJECT_INIT_SCOPE_NODE_ID}.",
+                        )
+                    )
+                    continue
+                expected_ticket_id = build_project_init_scope_ticket_id(action.payload.workflow_id)
+                if repository.get_current_node_projection(
+                    action.payload.workflow_id,
+                    PROJECT_INIT_SCOPE_NODE_ID,
+                ) is not None:
+                    rejected_actions.append(
+                        _action_entry(action, "Project-init kickoff node already exists in the current workflow.")
+                    )
+                    continue
+                if repository.get_current_ticket_projection(expected_ticket_id) is not None:
+                    rejected_actions.append(
+                        _action_entry(action, "Project-init kickoff ticket already exists in projection state.")
+                    )
+                    continue
             if repository.get_current_node_projection(action.payload.workflow_id, action.payload.node_id) is not None:
                 rejected_actions.append(_action_entry(action, "node_id already exists in the current workflow."))
                 continue

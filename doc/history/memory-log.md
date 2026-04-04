@@ -141,6 +141,10 @@
 - Closed the last M4 frontend cleanup batch (`P0-FE-020 / P0-FE-021 / P0-FE-022`); the next reasonable frontend slice is to keep slimming `DashboardPage` without changing workflow truth or reopening shell architecture.
 - Revalidated the current mainline after the frontend cleanup closure: backend still finishes at `378 passed`, while frontend still finishes at `npm run build` passed and `npm run test:run` → `47 passed`.
 - In this PowerShell host, bare `pytest` and `npm` are still not directly callable on PATH; backend verification remains reproducible through `py -m pytest`, and frontend verification remains reproducible through `C:\Program Files\nodejs\npm.cmd`.
+- `project-init` no longer hardcodes the first scope ticket in `command_handlers.py`; it now writes the board brief, triggers a `BOARD_DIRECTIVE_RECEIVED` CEO shadow run, and lets CEO create the stable kickoff scope ticket (`node_scope_decision` / `tkt_<workflow_id>_scope_decision`) while still reusing `consensus_document@1 + MEETING_ESCALATION`.
+- Deterministic CEO fallback now covers that `project-init` kickoff path as well, so the zero-config local chain still reaches the first real scope review even when no live provider is configured or the proposal pipeline fails.
+- `scheduler_runner.py` now adds idle CEO maintenance after scheduler tick, leased runtime, and artifact cleanup; it only targets workflows with no open approval or incident, no leased/executing tickets, and a still-actionable signal (`no tickets yet`, `ready ticket`, or `failed ticket`), and records those runs as `SCHEDULER_IDLE_MAINTENANCE`.
+- Backend verification for this round finished at `385 passed`; frontend verification finished at `npm run build` passed and `npm run test:run` → `47 passed`. In this shell, bare `pytest` is still missing on PATH, but bare `npm` works again.
 
 ### 2026-04-02 (docs compaction)
 

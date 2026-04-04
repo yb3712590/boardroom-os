@@ -21,7 +21,7 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 
 当前这条链的现实状态：
 
-- `project-init` 会自动推进到首个 scope review
+- `project-init` 会先由 CEO 发起首个 kickoff scope 共识票，再自动推进到首个 scope review
 - scope 通过后，`BUILD` 会先产出 `implementation_bundle@1`，再走内部 `maker -> checker -> fix / incident`
 - `CHECK` 产出的 `delivery_check_report@1` 现在也会先走内部 `maker -> checker -> fix / incident`
 - 只有 build 和 check 两段内审都通过后，系统才会放行最终董事会 `REVIEW`
@@ -34,7 +34,7 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 - FastAPI + SQLite 后端，事件流、投影、ticket 生命周期、approval / incident / breaker 都已可用
 - Maker-Checker 已覆盖 `consensus_document@1`、`implementation_bundle@1`、`delivery_check_report@1`、`ui_milestone_review@1`、`delivery_closeout_package@1`
 - employee 生命周期已进入主线：`hire / replace / freeze / restore` 与 staffing containment 都是事件驱动
-- CEO 已从纯影子进入有限接管首轮：当前会真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`，并把执行结果与 deterministic 回退信号写入 `/api/v1/projections/workflows/{workflow_id}/ceo-shadow`；`ESCALATE_TO_BOARD` 仍保持 shadow-only
+- CEO 已从纯影子进入有限接管首轮：当前会真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`，其中 `project-init` 后的首个 scope kickoff 票已由 CEO 发起；scheduler 也会在 workflow 空转但仍有待推进信号时补打一轮 CEO idle maintenance 审计；`ESCALATE_TO_BOARD` 仍保持 shadow-only
 - Context Compiler 已能处理常见文本、媒体、下载型附件和本地历史摘要，并产出可审计执行包
 - runtime 默认走本地 deterministic；也支持本地保存的 `OpenAI Compat` provider 配置，并会在 provider 暂停、限流、超时或坏响应时按现有 incident 规则留痕后自动回退到 deterministic
 

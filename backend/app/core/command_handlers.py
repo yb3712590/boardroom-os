@@ -7,7 +7,6 @@ from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
     ProjectInitCommand,
-    TicketCreateCommand,
 )
 from app.core.constants import (
     DEFAULT_TENANT_ID,
@@ -17,13 +16,16 @@ from app.core.constants import (
     EVENT_WORKFLOW_CREATED,
     SYSTEM_INITIALIZED_KEY,
 )
+from app.core.ceo_execution_presets import (
+    PROJECT_INIT_SCOPE_NODE_ID,
+    build_project_init_scope_ticket_id,
+)
+from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.ids import new_prefixed_id
-from app.core.ticket_handlers import handle_ticket_create
 from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.db.repository import ControlPlaneRepository
 
-PROJECT_INIT_SCOPE_NODE_ID = "node_scope_decision"
 PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS = 6
 
 
@@ -35,69 +37,6 @@ def _command_base_key(payload: ProjectInitCommand) -> str:
     )
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
     return f"project-init:{digest}"
-
-
-def _project_init_scope_ticket_id(workflow_id: str) -> str:
-    return f"tkt_{workflow_id}_scope_decision"
-
-
-def _build_project_init_auto_review_request(ticket_id: str) -> dict:
-    return {
-        "review_type": "MEETING_ESCALATION",
-        "priority": "high",
-        "title": "Review scope decision consensus",
-        "subtitle": "Initial scope decision is ready for board lock-in.",
-        "blocking_scope": "WORKFLOW",
-        "trigger_reason": "Project init produced the first scope decision that needs explicit board confirmation.",
-        "why_now": "Execution should not widen before the first scope lock is approved.",
-        "recommended_action": "APPROVE",
-        "recommended_option_id": "consensus_scope_lock",
-        "recommendation_summary": "The narrowest scope that still ships the workflow is ready for board review.",
-        "options": [
-            {
-                "option_id": "consensus_scope_lock",
-                "label": "Lock consensus scope",
-                "summary": "Proceed with the converged scope and follow-up tickets.",
-                "artifact_refs": [],
-                "pros": ["Keeps delivery scope stable"],
-                "cons": ["Defers non-critical stretch ideas"],
-                "risks": ["Some polish moves slip to later rounds"],
-            }
-        ],
-        "evidence_summary": [
-            {
-                "evidence_id": "ev_scope_consensus",
-                "source_type": "CONSENSUS_DOCUMENT",
-                "headline": "Generated scope consensus document",
-                "summary": "The first scope decision is ready for board review.",
-                "source_ref": None,
-            }
-        ],
-        "risk_summary": {
-            "user_risk": "LOW",
-            "engineering_risk": "MEDIUM",
-            "schedule_risk": "LOW",
-            "budget_risk": "LOW",
-        },
-        "budget_impact": {
-            "tokens_spent_so_far": 0,
-            "tokens_if_approved_estimate_range": {"min_tokens": 100, "max_tokens": 250},
-            "tokens_if_rework_estimate_range": {"min_tokens": 350, "max_tokens": 700},
-            "estimate_confidence": "medium",
-            "budget_risk": "LOW",
-        },
-        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
-        "draft_selected_option_id": "consensus_scope_lock",
-        "comment_template": "",
-        "inbox_title": "Review scope decision consensus",
-        "inbox_summary": "A consensus document is ready for board review.",
-        "badges": ["meeting", "board_gate", "scope"],
-        "developer_inspector_refs": {
-            "compiled_context_bundle_ref": f"ctx://compile/{ticket_id}",
-            "compile_manifest_ref": f"manifest://compile/{ticket_id}",
-            "rendered_execution_payload_ref": f"render://compile/{ticket_id}",
-        },
-    }
 
 
 def _create_project_init_brief_artifact(
@@ -163,69 +102,10 @@ def _create_project_init_brief_artifact(
             deleted_by=None,
             delete_reason=None,
             created_at=now_local(),
-        )
+    )
     return artifact_ref
 
 
-def _create_project_init_scope_ticket(
-    repository: ControlPlaneRepository,
-    *,
-    workflow_id: str,
-    command_key: str,
-    payload: ProjectInitCommand,
-    tenant_id: str,
-    workspace_id: str,
-) -> None:
-    ticket_id = _project_init_scope_ticket_id(workflow_id)
-    brief_artifact_ref = _create_project_init_brief_artifact(
-        repository,
-        workflow_id=workflow_id,
-        ticket_id=ticket_id,
-        payload=payload,
-    )
-    semantic_queries = [payload.north_star_goal]
-    semantic_queries.extend(constraint for constraint in payload.hard_constraints[:1] if constraint)
-    create_ack = handle_ticket_create(
-        repository,
-        TicketCreateCommand(
-            ticket_id=ticket_id,
-            workflow_id=workflow_id,
-            node_id=PROJECT_INIT_SCOPE_NODE_ID,
-            parent_ticket_id=None,
-            attempt_no=1,
-            role_profile_ref="ui_designer_primary",
-            constraints_ref="project_init_scope_lock",
-            input_artifact_refs=[brief_artifact_ref],
-            context_query_plan={
-                "keywords": ["scope", "constraints", "board review"],
-                "semantic_queries": semantic_queries,
-                "max_context_tokens": 3000,
-            },
-            acceptance_criteria=[
-                "Must produce a consensus document",
-                "Must include follow-up tickets",
-            ],
-            output_schema_ref="consensus_document",
-            output_schema_version=1,
-            allowed_tools=["read_artifact", "write_artifact"],
-            allowed_write_set=["reports/meeting/*"],
-            retry_budget=1,
-            priority="high",
-            timeout_sla_sec=1800,
-            deadline_at=payload.deadline_at,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
-            auto_review_request=_build_project_init_auto_review_request(ticket_id),
-            escalation_policy={
-                "on_timeout": "retry",
-                "on_schema_error": "retry",
-                "on_repeat_failure": "escalate_ceo",
-            },
-            idempotency_key=f"{command_key}:scope-ticket-create",
-        ),
-    )
-    if create_ack.status not in {CommandAckStatus.ACCEPTED, CommandAckStatus.DUPLICATE}:
-        raise RuntimeError(f"Project-init scope ticket was not accepted: {create_ack.reason}")
 def _auto_advance_project_init_to_first_review(
     repository: ControlPlaneRepository,
     *,
@@ -320,13 +200,17 @@ def handle_project_init(
 
         repository.refresh_projections(connection)
 
-    _create_project_init_scope_ticket(
+    _create_project_init_brief_artifact(
         repository,
         workflow_id=workflow_id,
-        command_key=command_key,
+        ticket_id=build_project_init_scope_ticket_id(workflow_id),
         payload=payload,
-        tenant_id=tenant_id,
-        workspace_id=workspace_id,
+    )
+    run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
+        trigger_ref=f"project-init:{workflow_id}",
     )
     _auto_advance_project_init_to_first_review(
         repository,

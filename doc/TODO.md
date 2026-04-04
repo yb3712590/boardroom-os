@@ -16,8 +16,8 @@
 
 ## 当前基线（2026-04-04 实测）
 
-- backend：`py -m pytest tests -q` → 378 passed
-- frontend：当前 shell 的 `node / npm` 仍不在 PATH；已通过显式调用 `C:\Program Files\nodejs\npm.cmd` 完成复核，`npm run build` → passed，`npm run test:run` → 47 passed
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 385 passed
+- frontend：`npm run build` → passed，`npm run test:run` → 47 passed
 
 ---
 
@@ -35,7 +35,7 @@
 - **返工治理**：重复问题指纹升级、fix 票默认排除原 maker/checker、incident 升级不误开审批
 - **Context Compiler**：TEXT/MARKDOWN/JSON 内联、超预算降级（片段→预览）、媒体/二进制引用、跨 workflow 历史摘要、`json_messages_v1` 渲染、`prov_openai_compat` 最小真实调用路径
 - **完整主链**：`project-init → scope review → BUILD → CHECK → REVIEW → closeout` 端到端打通
-- **CEO 有限接管首轮**：CEO 动作契约、快照、提示词、提议器、校验器、执行器、影子审计日志和只读 projection 已落地；当前已能真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`，`ESCALATE_TO_BOARD` 仍只做影子建议与对照记录
+- **CEO 最小接管闭环**：CEO 动作契约、快照、提示词、提议器、校验器、执行器、影子审计日志和只读 projection 已落地；当前已能真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`，其中 `project-init` 后首个 scope kickoff 票已改由 CEO 发起，scheduler 也会在 workflow 空转但仍有待推进信号时触发一次 idle maintenance 审计；`ESCALATE_TO_BOARD` 仍只做影子建议与对照记录
 - **React Boardroom UI**：dashboard / inbox / review room / incident detail / workforce / events / workflow river / Board Gate / project-init form / dependency inspector / runtime provider settings / completion card
 
 ---
@@ -89,11 +89,11 @@
 - 后端补了 provider 重试、pause、fallback、健康读面的最小测试；前端 mock / 类型也已对齐新契约
 - `frontend_engineer` 现在已经拆成独立 `frontend_engineer_primary` runtime worker；`BUILD / REVIEW / closeout` 改走独立 profile，scope 共识链仍保留 `ui_designer_primary` 并由调度兼容承接
 
-- [x] 前端 `build` 与 `test:run` 已完成真实复核；当前 shell 仍缺 `node / npm` PATH，但机器上可通过显式调用 `C:\Program Files\nodejs\npm.cmd` 复现 `build passed` 与 `test:run -> 47 passed`
+- [x] 前端 `build` 与 `test:run` 已完成真实复核；当前 shell 可直接运行 `npm run build` 与 `npm run test:run`
 
 主线关系：**只服务验证闭环**，不改变主链能力，但影响这条主线的前端交付是否完成最终验收。
 
-### P0-C：让 CEO 先进入影子模式
+### P0-C：让 CEO 进入影子并补最小接管
 
 主线关系：**直接服务后续主调度器接管**，但必须建立在现有主链成功率不被影响的前提上。
 
@@ -104,8 +104,10 @@
 - [x] 影子模式下只记录建议、校验结果和与现有确定性调度器的差异，不执行动作
 - [x] 为 CEO 决策加审计日志和回放测试
 - [x] 跑一轮代表性场景回放，确认 CEO 建议质量够稳定，再决定哪些动作进入有限接管
+- [x] `project-init` 后由 CEO 基于 `north_star_goal` 发起首个 kickoff 共识票，继续复用 `consensus_document@1 + MEETING_ESCALATION`
+- [x] 在 `scheduler_runner` 中增加空转补偿唤醒，只对空转但仍有待推进信号的 workflow 触发 CEO 审计
 
-验收门槛：至少覆盖"创建首票、失败重试、升级 incident、招聘建议、等待董事会"五类场景；影子模式不影响现有主链成功率。
+验收门槛：至少覆盖"创建首票、失败重试、升级 incident、招聘建议、等待董事会、空转补偿唤醒"六类场景；影子/有限接管不影响现有主链成功率。
 
 对应任务库：`P0-CEO-001` 到 `P0-CEO-015`，但新增"影子模式"阶段，不直接一步切换主调度器。
 
@@ -115,9 +117,12 @@
 - 当前影子模式只开放 5 类受控动作：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / ESCALATE_TO_BOARD / NO_ACTION`
 - `ticket_handlers` 与 `approval_handlers` 现在会在工单完成、工单失败、审批完成、incident 恢复后追加 CEO 影子审计，不影响现有 `workflow_auto_advance`
 - 后端新增 `ceo_shadow_run` 审计表和 `/api/v1/projections/workflows/{workflow_id}/ceo-shadow` 只读投影，后续前端可以直接接入，不需要翻库
-- 新增 `backend/tests/test_ceo_scheduler.py`，覆盖 fallback、live provider 提议、有限执行建票 / 重试 / 招聘、deferred escalation、失败触发、审批触发、incident 恢复触发；本轮后端全量验证为 `378 passed`
+- 新增 `backend/tests/test_ceo_scheduler.py`，覆盖 fallback、live provider 提议、有限执行建票 / 重试 / 招聘、deferred escalation、失败触发、审批触发、incident 恢复触发，并在本轮补上 `project-init` 首票与 idle maintenance 覆盖；后端全量验证已更新为 `385 passed`
 - 2026-04-04 收尾修正：移除了 `ticket-create` 上误插的 `TICKET_FAILED` 影子触发，并把 `ticket-fail` 的真实影子触发补回成功出口，避免 CEO 审计把“建票成功”误记成“失败后决策”
 - 2026-04-04 增量推进：`ceo_executor.py` 已接入有限执行首轮，当前会真实落地 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`，并把 `executed_actions / execution_summary / deterministic_fallback_*` 一起写入 `ceo-shadow` 审计与投影；`ESCALATE_TO_BOARD` 仍明确保留为 `DEFERRED_SHADOW_ONLY`
+- 2026-04-04 增量推进：`project-init` 现在不再由命令处理器硬编码创建首个 scope 票；系统会先物化 `board-brief`，再触发 `BOARD_DIRECTIVE_RECEIVED` 的 CEO 审计/提议/有限执行，由 CEO 创建稳定的 kickoff scope 票（`node_scope_decision / tkt_<workflow_id>_scope_decision`），继续复用现有 `consensus_document@1 + MEETING_ESCALATION`
+- 2026-04-04 增量推进：`scheduler_runner` 现在会在 `scheduler tick -> leased runtime -> artifact cleanup` 后追加 idle maintenance 检查；只要 workflow 没有 open approval / incident、没有 leased / executing 工单、但仍存在 `无票待起步 / ready ticket / failed ticket` 这三类待推进信号，就会按 `BOARDROOM_OS_CEO_MAINTENANCE_INTERVAL_SEC` 节拍触发一次 `SCHEDULER_IDLE_MAINTENANCE`
+- 2026-04-04 本轮验证：后端全量复核更新为 `385 passed`；前端 `npm run build` → passed，`npm run test:run` → `47 passed`
 
 ---
 
@@ -132,7 +137,7 @@
 - [x] 保留现有 `workflow_auto_advance` 作为总回退；provider fallback 和执行失败现在会显式写入 `deterministic_fallback_*`
 - [x] 增加"影子建议 vs 实际执行"对照审计与读面：`ceo-shadow` 投影现在会返回 `executed_actions / execution_summary`
 
-验收门槛：P1-A 首轮当前已满足“失败重试、无 worker 时招聘、受限主线 preset 建票”三类动作；“project-init 后首票自主拆解”和“通用董事会升级执行”仍留在后续批次。
+验收门槛：P1-A 首轮当前已满足“project-init 后首票自主拆解、失败重试、无 worker 时招聘、受限主线 preset 建票”四类动作；“通用董事会升级执行”仍留在后续批次。
 
 ### P1-B：前端拆壳，只拆会继续长的部分
 
@@ -161,7 +166,7 @@
 - `frontend/src/utils/format.ts` 与 `frontend/src/utils/ids.ts` 已落地；`DashboardPage / OpsStrip / CompletionCard / ProjectInitForm / EventTicker` 不再各自维护重复 helper，staffing 表单在缺省 `employee_id_hint` 时会回退到前端生成 `emp_*`
 - 前端本轮新增最小组件测试：`ProjectInitForm / InboxWell / StaffingActions / RuntimeStatusCard`，并顺手修正了 `ErrorBoundary` 测试以适配当前 React 19 恢复行为
 - 前端本轮继续补齐 `WorkflowRiver` 与 utils 最小回归测试；现有 store / API / SSE 测试继续保留，`npm run test:run` 现在为 `47 passed`
-- 前端真实命令级验证已完成：`npm run build` passed，`npm run test:run` → 47 passed；当前 shell 只是 PATH 仍缺 `node / npm`
+- 前端真实命令级验证已完成：`npm run build` passed，`npm run test:run` → 47 passed
 - `frontend/src/api.ts` 目前保留为兼容出口，现有组件还没整体迁到新目录，这一层兼容先保留到页面壳和组件壳拆分完成
 
 新发现任务：

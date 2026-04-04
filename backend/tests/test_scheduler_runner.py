@@ -7,6 +7,8 @@ from pathlib import Path
 from uuid import uuid4
 
 import app.core.runtime as runtime_module
+from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
+from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
     OpenAICompatProviderRateLimitedError,
@@ -1317,6 +1319,81 @@ def test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_re
     assert all(ticket["status"] == "COMPLETED" for ticket in followup_tickets if ticket is not None)
     assert len(build_checker_creates) == 1
     assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
+
+
+def test_scheduler_runner_triggers_idle_ceo_maintenance_for_pending_workflow(
+    client,
+    monkeypatch,
+    set_ticket_time,
+):
+    set_ticket_time("2026-04-04T10:00:00+08:00")
+    monkeypatch.setattr(
+        client.app.state.repository,
+        "list_scheduler_worker_candidates",
+        lambda connection=None: [],
+    )
+    workflow_id = _project_init(client, goal="Scheduler idle CEO maintenance")
+
+    set_ticket_time("2026-04-04T10:01:05+08:00")
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-idle-ceo-maintenance",
+        max_dispatches=10,
+    )
+
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+
+    assert any(run["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER for run in runs)
+
+
+def test_scheduler_runner_skips_idle_ceo_maintenance_when_ticket_is_executing(
+    client,
+    monkeypatch,
+    set_ticket_time,
+):
+    set_ticket_time("2026-04-04T10:00:00+08:00")
+    monkeypatch.setattr(
+        client.app.state.repository,
+        "list_scheduler_worker_candidates",
+        lambda connection=None: [],
+    )
+    workflow_id = _project_init(client, goal="Scheduler executing workflow")
+    scope_ticket_id = build_project_init_scope_ticket_id(workflow_id)
+
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": scope_ticket_id,
+            "node_id": "node_scope_decision",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{scope_ticket_id}",
+        },
+    )
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": scope_ticket_id,
+            "node_id": "node_scope_decision",
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{scope_ticket_id}",
+        },
+    )
+
+    set_ticket_time("2026-04-04T10:01:05+08:00")
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-executing-no-maintenance",
+        max_dispatches=10,
+    )
+
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+
+    assert lease_response.status_code == 200
+    assert start_response.status_code == 200
+    assert not any(run["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER for run in runs)
 
 
 def test_provider_backed_scope_delivery_chain_reaches_closeout_completion(

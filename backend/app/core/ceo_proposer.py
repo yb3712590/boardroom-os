@@ -3,8 +3,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from app.contracts.ceo_actions import CEOActionBatch, CEONoAction, CEONoActionPayload
+from app.contracts.ceo_actions import (
+    CEOActionBatch,
+    CEOActionType,
+    CEOCreateTicketAction,
+    CEOCreateTicketPayload,
+    CEONoAction,
+    CEONoActionPayload,
+)
+from app.core.ceo_execution_presets import (
+    PROJECT_INIT_SCOPE_NODE_ID,
+    build_project_init_scope_summary,
+)
 from app.core.ceo_prompts import build_ceo_shadow_rendered_payload
+from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED
 from app.core.provider_openai_compat import (
     OpenAICompatProviderConfig,
     OpenAICompatProviderError,
@@ -41,6 +53,45 @@ def build_no_action_batch(reason: str) -> CEOActionBatch:
     )
 
 
+def _should_fallback_to_project_init_scope_kickoff(snapshot: dict) -> bool:
+    trigger = snapshot.get("trigger") or {}
+    ticket_summary = snapshot.get("ticket_summary") or {}
+    return (
+        str(trigger.get("trigger_type") or "") == EVENT_BOARD_DIRECTIVE_RECEIVED
+        and int(ticket_summary.get("total") or 0) == 0
+        and not snapshot.get("approvals")
+        and not snapshot.get("incidents")
+    )
+
+
+def _build_project_init_scope_kickoff_batch(snapshot: dict, reason: str) -> CEOActionBatch:
+    workflow = snapshot.get("workflow") or {}
+    north_star_goal = str(workflow.get("north_star_goal") or workflow.get("title") or "").strip()
+    summary = build_project_init_scope_summary(north_star_goal)
+    return CEOActionBatch(
+        summary=reason,
+        actions=[
+            CEOCreateTicketAction(
+                action_type=CEOActionType.CREATE_TICKET,
+                payload=CEOCreateTicketPayload(
+                    workflow_id=str(workflow["workflow_id"]),
+                    node_id=PROJECT_INIT_SCOPE_NODE_ID,
+                    role_profile_ref="ui_designer_primary",
+                    output_schema_ref="consensus_document",
+                    summary=summary,
+                    parent_ticket_id=None,
+                ),
+            )
+        ],
+    )
+
+
+def build_deterministic_fallback_batch(snapshot: dict, reason: str) -> CEOActionBatch:
+    if _should_fallback_to_project_init_scope_kickoff(snapshot):
+        return _build_project_init_scope_kickoff_batch(snapshot, reason)
+    return build_no_action_batch(reason)
+
+
 def propose_ceo_action_batch(
     repository: ControlPlaneRepository,
     *,
@@ -52,7 +103,7 @@ def propose_ceo_action_batch(
     provider_health_summary = runtime_provider_health_summary(config, repository)
     if effective_mode != "OPENAI_COMPAT_LIVE":
         return CEOProposalResult(
-            action_batch=build_no_action_batch(effective_reason),
+            action_batch=build_deterministic_fallback_batch(snapshot, effective_reason),
             effective_mode=effective_mode,
             provider_health_summary=provider_health_summary,
             model=config.model,
@@ -62,7 +113,7 @@ def propose_ceo_action_batch(
     if config.base_url is None or config.api_key is None or config.model is None:
         fallback_reason = "OpenAI-compatible provider config is incomplete for CEO shadow mode."
         return CEOProposalResult(
-            action_batch=build_no_action_batch(fallback_reason),
+            action_batch=build_deterministic_fallback_batch(snapshot, fallback_reason),
             effective_mode=effective_mode,
             provider_health_summary=provider_health_summary,
             model=config.model,
@@ -92,7 +143,7 @@ def propose_ceo_action_batch(
     except (OpenAICompatProviderError, ValueError, TypeError, json.JSONDecodeError) as exc:
         fallback_reason = str(exc)
         return CEOProposalResult(
-            action_batch=build_no_action_batch(fallback_reason),
+            action_batch=build_deterministic_fallback_batch(snapshot, fallback_reason),
             effective_mode=effective_mode,
             provider_health_summary=provider_health_summary,
             model=config.model,

@@ -9,6 +9,7 @@ from app.config import Settings, get_settings
 from app.contracts.commands import ArtifactCleanupCommand
 from app.core.artifact_store import ArtifactStore
 from app.core.artifact_handlers import handle_artifact_cleanup
+from app.core.ceo_scheduler import run_due_ceo_maintenance
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.ticket_handlers import run_scheduler_tick
 from app.core.time import now_local
@@ -93,14 +94,21 @@ def run_scheduler_once(
     tick_index: int = 0,
 ):
     settings = get_settings()
+    runner_idempotency_key = idempotency_key or _build_runner_idempotency_key(tick_index)
     scheduler_ack = run_scheduler_tick(
         repository,
-        idempotency_key=idempotency_key or _build_runner_idempotency_key(tick_index),
+        idempotency_key=runner_idempotency_key,
         max_dispatches=max_dispatches or settings.scheduler_max_dispatches,
     )
     if settings.runtime_execution_mode == "INPROCESS":
         run_leased_ticket_runtime(repository)
     maybe_run_artifact_cleanup(repository, current_time=now_local())
+    run_due_ceo_maintenance(
+        repository,
+        current_time=now_local(),
+        trigger_ref=runner_idempotency_key,
+        interval_sec=settings.ceo_maintenance_interval_sec,
+    )
     return scheduler_ack
 
 
