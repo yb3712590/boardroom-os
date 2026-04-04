@@ -1244,6 +1244,7 @@
 - `frontend/src/components/workforce/WorkforcePanel.tsx`、`StaffingActions.tsx` 与 `frontend/src/components/events/EventTicker.tsx` 已落地
 - 招聘模板输入与提交现在由 `StaffingActions` 单独承接；替换表单仍保留在 `WorkforcePanel` 内，避免这一轮继续过拆
 - 旧的顶层 `frontend/src/components/WorkforcePanel.tsx` 与 `EventTicker.tsx` 已移除，仓库里不再保留两套活动入口
+- 2026-04-05 补充收口：`StaffingActions` 现在会直接复用 `ProfileSummary` 展示 hire 模板的 `skill / personality / aesthetic` 画像，发起招聘前不再只能靠原始字段自己读
 
 ---
 
@@ -1299,6 +1300,7 @@
 - 已新增 `frontend/src/pages/DashboardPage.tsx`，承接页面组装、SSE 失效刷新、路由驱动的 review / incident 读取，以及 `incident detail / dependency inspector` 的本地读状态
 - 这轮优先把职责从 `App.tsx` 下沉到页面层，保住现有交互与命令 wiring，不顺手改后端契约
 - `DashboardPage` 体积仍大于设计文档中的理想目标；这是当前已知真实差异，后续会继续拆细，但不影响本轮页面壳已落地
+- 2026-04-05 补充收口：命令提交与本地详情拉取已拆到 `dashboard-page-actions.ts / dashboard-page-detail-state.ts / dashboard-page-helpers.ts`，`DashboardPage.tsx` 现在降到 298 行，主要只保留路由、store 读取、派生展示字段和组件组装
 
 ---
 

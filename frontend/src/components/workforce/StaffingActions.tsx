@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { Button } from '../shared/Button'
+import { ProfileSummary } from '../shared/ProfileSummary'
 
 import type { StaffingHireTemplate } from '../../types/domain'
 import { newPrefixedId } from '../../utils/ids'
@@ -61,6 +62,12 @@ export function StaffingActions({ templates, submittingAction, onRequestHire }: 
                 <strong>{template.label}</strong>
                 <span>{template.request_summary}</span>
               </div>
+              <ProfileSummary
+                label="Template profile"
+                skillProfile={template.skill_profile}
+                personalityProfile={template.personality_profile}
+                aestheticProfile={template.aesthetic_profile}
+              />
               <label className="staffing-inline-field">
                 <span>{template.label} employee id</span>
                 <input

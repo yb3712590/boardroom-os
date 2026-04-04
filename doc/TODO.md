@@ -14,10 +14,10 @@
 - Maker-Checker 和 Review 闭环真实可用
 - 最后以最薄的 React Web 壳呈现 `dashboard / inbox / review room`
 
-## 当前基线（2026-04-04 实测）
+## 当前基线（2026-04-05 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 394 passed
-- frontend：`npm run build` → passed，`npm run test:run` → 49 passed
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 399 passed
+- frontend：`npm run build` → passed，`npm run test:run` → 50 passed
 
 ---
 
@@ -164,7 +164,7 @@
 - `frontend/src/components/shared/Button.tsx`、`Badge.tsx`、`LoadingSkeleton.tsx`、`Toast.tsx` 已新增；当前页面壳批次已真实接入前 3 个，`Toast` 先保持局部受控组件，不引入全局消息总线
 - `frontend/src/components/layout/`、`components/dashboard/`、`components/workforce/`、`components/events/` 现在都已有真实实现；旧的顶层 `WorkflowRiver / WorkforcePanel / EventTicker` 文件已删除，避免并行双入口
 - `frontend/src/App.tsx` 已缩到纯路由入口；旧的四个重复抽屉壳文件已移除，避免仓库里同时留两套实现
-- `frontend/src/pages/DashboardPage.tsx` 现在已从 903 行降到 629 行；页面壳继续变薄，但命令回调和本地详情拉取仍留在页层
+- `frontend/src/pages/DashboardPage.tsx` 现在已从 903 行先降到 629 行，本轮再降到 298 行；命令提交和本地详情拉取已下沉到页面级 helper / hook，页层现在主要保留路由、store 读取、少量派生字段和组件组装
 - `frontend/src/styles/` 现在已落地：`tokens / global / layout / components / overlays` 五份样式真实接管当前前端壳；`index.css` 回到统一聚合入口，旧 `frontend/src/App.css` 已删除
 - `frontend/src/utils/format.ts` 与 `frontend/src/utils/ids.ts` 已落地；`DashboardPage / OpsStrip / CompletionCard / ProjectInitForm / EventTicker` 不再各自维护重复 helper，staffing 表单在缺省 `employee_id_hint` 时会回退到前端生成 `emp_*`
 - 前端本轮新增最小组件测试：`ProjectInitForm / InboxWell / StaffingActions / RuntimeStatusCard`，并顺手修正了 `ErrorBoundary` 测试以适配当前 React 19 恢复行为
@@ -174,7 +174,7 @@
 
 新发现任务：
 
-- [ ] 把 `DashboardPage` 里仍偏多的命令回调和本地拉取细节继续下沉；当前 629 行已比上一轮薄，但还没到设计文档里的轻页壳目标。主线关系：只服务前端继续收口与验证成本下降，不改变工作流真相
+- [x] 把 `DashboardPage` 里仍偏多的命令回调和本地拉取细节继续下沉；本轮已把这两块拆到页面级 helper / hook，主链交互不变。主线关系：只服务前端继续收口与验证成本下降，不改变工作流真相
 
 主线关系：**间接服务主链验证**，降低前端后续演进和回归成本，不改变工作流真相。
 
@@ -201,7 +201,7 @@
 
 新发现任务：
 
-- [ ] 在 `StaffingActions` 请求卡片里直接展示补位模板画像摘要；当前现役员工画像和 staffing Review Room 已可见，但发起 hire 前仍要靠原始字段自己读。主线关系：只服务人格模型继续可见性，不改变主链
+- [x] 在 `StaffingActions` 请求卡片里直接展示补位模板画像摘要；当前现役员工画像、staffing Review Room 和 hire 模板卡片都已可见统一画像信息。主线关系：只服务人格模型继续可见性，不改变主链
 
 对应任务库：`P1-PER-001` 到 `P1-PER-008`。
 

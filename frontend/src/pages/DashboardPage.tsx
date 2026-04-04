@@ -1,20 +1,5 @@
-import { useEffect, useEffectEvent, useState } from 'react'
-
 import { useNavigate, useParams } from 'react-router-dom'
 
-import {
-  boardApprove,
-  boardReject,
-  employeeFreeze,
-  employeeHireRequest,
-  employeeReplaceRequest,
-  employeeRestore,
-  incidentResolve,
-  modifyConstraints,
-  projectInit,
-  runtimeProviderUpsert,
-} from '../api/commands'
-import { getDependencyInspector, getIncidentDetail } from '../api/projections'
 import { CompletionCard } from '../components/dashboard/CompletionCard'
 import { InboxWell } from '../components/dashboard/InboxWell'
 import { ProjectInitForm } from '../components/dashboard/ProjectInitForm'
@@ -30,37 +15,13 @@ import { ReviewRoomDrawer } from '../components/overlays/ReviewRoomDrawer'
 import { Button } from '../components/shared/Button'
 import { ErrorBoundary } from '../components/shared/ErrorBoundary'
 import { WorkforcePanel } from '../components/workforce/WorkforcePanel'
-import { useSSE } from '../hooks/useSSE'
 import { useBoardroomStore } from '../stores/boardroom-store'
 import { useReviewStore } from '../stores/review-store'
 import { useUIStore } from '../stores/ui-store'
-import type { CommandAck, DependencyInspectorData, IncidentDetailData } from '../types/api'
-import type { StaffingHireTemplate } from '../types/domain'
-import { newPrefixedId } from '../utils/ids'
 import { formatTimestamp } from '../utils/format'
-
-const DEFAULT_INCIDENT_OPERATOR = 'emp_ops_1'
-
-function assertAcceptedCommand(ack: CommandAck, fallbackMessage: string) {
-  if (ack.status === 'ACCEPTED' || ack.status === 'DUPLICATE') {
-    return
-  }
-  throw new Error(ack.reason ?? fallbackMessage)
-}
-
-function runtimeModeLabel(value: string | null | undefined) {
-  switch (value) {
-    case 'OPENAI_COMPAT_LIVE':
-      return 'OpenAI Compat'
-    case 'OPENAI_COMPAT_INCOMPLETE':
-      return 'OpenAI Compat incomplete'
-    case 'OPENAI_COMPAT_PAUSED':
-      return 'OpenAI Compat paused'
-    case 'LOCAL_DETERMINISTIC':
-    default:
-      return 'Local deterministic'
-  }
-}
+import { useDashboardPageActions } from './dashboard-page-actions'
+import { useDashboardPageDetailState } from './dashboard-page-detail-state'
+import { runtimeModeLabel } from './dashboard-page-helpers'
 
 export function DashboardPage() {
   const navigate = useNavigate()
@@ -103,390 +64,74 @@ export function DashboardPage() {
   const setSubmittingIncidentAction = useUIStore((state) => state.setSubmittingIncidentAction)
   const setRuntimeProviderSubmitting = useUIStore((state) => state.setRuntimeProviderSubmitting)
 
-  const [incidentDetail, setIncidentDetail] = useState<IncidentDetailData | null>(null)
-  const [dependencyInspector, setDependencyInspector] = useState<DependencyInspectorData | null>(null)
-  const [incidentLoading, setIncidentLoading] = useState(false)
-  const [dependencyInspectorLoading, setDependencyInspectorLoading] = useState(false)
-  const [incidentError, setIncidentError] = useState<string | null>(null)
-  const [dependencyInspectorError, setDependencyInspectorError] = useState<string | null>(null)
-
   const activeWorkflowId = dashboard?.active_workflow?.workflow_id ?? null
+  const reviewPack = reviewRoom?.review_pack
 
-  const refreshSnapshot = useEffectEvent(async () => {
-    await loadSnapshot()
+  const {
+    incidentDetail,
+    dependencyInspector,
+    incidentLoading,
+    dependencyInspectorLoading,
+    incidentError,
+    dependencyInspectorError,
+    setIncidentError,
+  } = useDashboardPageDetailState({
+    reviewPackId,
+    incidentId,
+    dependencyInspectorOpen,
+    activeWorkflowId,
+    loadSnapshot,
+    loadReviewRoom,
+    clearReview,
   })
 
-  const refreshReviewRoom = useEffectEvent(async (packId: string) => {
-    await loadReviewRoom(packId)
+  const {
+    handleOpenReview,
+    handleOpenIncident,
+    handleProjectInit,
+    handleRuntimeProviderSave,
+    handleIncidentResolve,
+    handleEmployeeFreeze,
+    handleEmployeeRestore,
+    handleEmployeeHireRequest,
+    handleEmployeeReplaceRequest,
+    handleApprove,
+    handleReject,
+    handleModifyConstraints,
+    closeReviewRoom,
+    closeIncident,
+    openInspectorForReview,
+  } = useDashboardPageActions({
+    activeWorkflowId,
+    reviewPackId,
+    navigate,
+    loadSnapshot,
+    reviewPack,
+    incidentDetail,
+    setProjectInitPending,
+    setSnapshotError,
+    setRuntimeProviderError,
+    setProviderSettingsOpen,
+    setRuntimeProviderSubmitting,
+    setSubmittingIncidentAction,
+    setIncidentError,
+    setSubmittingStaffingAction,
+    setSubmittingAction,
+    setReviewError,
   })
 
-  const refreshIncidentDetail = useEffectEvent(async (nextIncidentId: string) => {
-    setIncidentLoading(true)
-    setIncidentError(null)
-    try {
-      const payload = await getIncidentDetail(nextIncidentId)
-      setIncidentDetail(payload)
-    } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : 'Failed to load the current incident detail.')
-      setIncidentDetail(null)
-    } finally {
-      setIncidentLoading(false)
-    }
-  })
-
-  const refreshDependencyInspector = useEffectEvent(async (workflowId: string) => {
-    setDependencyInspectorLoading(true)
-    setDependencyInspectorError(null)
-    try {
-      const payload = await getDependencyInspector(workflowId)
-      setDependencyInspector(payload)
-    } catch (error) {
-      setDependencyInspector(null)
-      setDependencyInspectorError(
-        error instanceof Error ? error.message : 'Failed to load the current dependency inspector.',
-      )
-    } finally {
-      setDependencyInspectorLoading(false)
-    }
-  })
-
-  useEffect(() => {
-    void refreshSnapshot()
-  }, [])
-
-  const handleInvalidate = useEffectEvent(async () => {
-    await refreshSnapshot()
-    if (reviewPackId) {
-      await refreshReviewRoom(reviewPackId)
-    }
-    if (incidentId) {
-      await refreshIncidentDetail(incidentId)
-    }
-    if (dependencyInspectorOpen && activeWorkflowId) {
-      await refreshDependencyInspector(activeWorkflowId)
-    }
-  })
-
-  useEffect(() => {
-    if (!reviewPackId) {
-      clearReview()
-      return
-    }
-    void refreshReviewRoom(reviewPackId)
-  }, [reviewPackId])
-
-  useEffect(() => {
-    if (!incidentId) {
-      setIncidentDetail(null)
-      setIncidentLoading(false)
-      setIncidentError(null)
-      return
-    }
-    void refreshIncidentDetail(incidentId)
-  }, [incidentId])
-
-  useEffect(() => {
-    if (!dependencyInspectorOpen) {
-      return
-    }
-    if (!activeWorkflowId) {
-      setDependencyInspector(null)
-      setDependencyInspectorLoading(false)
-      setDependencyInspectorError(null)
-      return
-    }
-    void refreshDependencyInspector(activeWorkflowId)
-  }, [dependencyInspectorOpen, activeWorkflowId])
-
-  useSSE(() => {
-    void handleInvalidate()
-  })
-
-  const handleOpenReview = (packId: string) => {
+  const handleOpenReviewRoom = (packId: string) => {
     setDependencyInspectorOpen(false)
-    navigate(`/review/${packId}`)
+    handleOpenReview(packId)
   }
 
-  const handleOpenIncident = (nextIncidentId: string) => {
+  const handleOpenIncidentRoom = (nextIncidentId: string) => {
     setDependencyInspectorOpen(false)
-    navigate(`/incident/${nextIncidentId}`)
-  }
-
-  const handleProjectInit = async (payload: {
-    northStarGoal: string
-    hardConstraints: string[]
-    budgetCap: number
-  }) => {
-    setProjectInitPending(true)
-    setSnapshotError(null)
-    try {
-      await projectInit({
-        north_star_goal: payload.northStarGoal,
-        hard_constraints: payload.hardConstraints,
-        budget_cap: payload.budgetCap,
-        deadline_at: null,
-      })
-      await loadSnapshot()
-    } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : 'Failed to launch the local workflow.')
-    } finally {
-      setProjectInitPending(false)
-    }
+    handleOpenIncident(nextIncidentId)
   }
 
   const handleOpenInspector = async () => {
-    if (!reviewPackId) {
-      return
-    }
-    await loadDeveloperInspector(reviewPackId)
-  }
-
-  const reviewPack = reviewRoom?.review_pack
-
-  const handleRuntimeProviderSave = async (input: {
-    mode: string
-    baseUrl: string | null
-    apiKey: string | null
-    model: string | null
-    timeoutSec: number
-    reasoningEffort: string | null
-  }) => {
-    setRuntimeProviderSubmitting(true)
-    setRuntimeProviderError(null)
-    try {
-      await runtimeProviderUpsert({
-        mode: input.mode,
-        base_url: input.baseUrl,
-        api_key: input.apiKey,
-        model: input.model,
-        timeout_sec: input.timeoutSec,
-        reasoning_effort: input.reasoningEffort,
-        idempotency_key: newPrefixedId('runtime-provider-upsert'),
-      })
-      await loadSnapshot()
-      setProviderSettingsOpen(false)
-    } catch (error) {
-      setRuntimeProviderError(error instanceof Error ? error.message : 'Failed to save runtime provider settings.')
-    } finally {
-      setRuntimeProviderSubmitting(false)
-    }
-  }
-
-  const handleIncidentResolve = async (input: {
-    resolutionSummary: string
-    followupAction: string
-  }) => {
-    if (!incidentDetail) {
-      return
-    }
-    setSubmittingIncidentAction(true)
-    try {
-      await incidentResolve({
-        incident_id: incidentDetail.incident.incident_id,
-        resolved_by: DEFAULT_INCIDENT_OPERATOR,
-        resolution_summary: input.resolutionSummary,
-        followup_action: input.followupAction,
-        idempotency_key: newPrefixedId('incident-resolve'),
-      })
-      await loadSnapshot()
-      navigate('/')
-    } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : 'Incident recovery failed.')
-    } finally {
-      setSubmittingIncidentAction(false)
-    }
-  }
-
-  const handleEmployeeFreeze = async (employeeId: string) => {
-    if (!activeWorkflowId) {
-      return
-    }
-    const actionKey = `freeze:${employeeId}`
-    setSubmittingStaffingAction(actionKey)
-    setSnapshotError(null)
-    try {
-      const ack = await employeeFreeze({
-        workflow_id: activeWorkflowId,
-        employee_id: employeeId,
-        frozen_by: DEFAULT_INCIDENT_OPERATOR,
-        reason: 'Pause this worker from taking new tickets.',
-        idempotency_key: newPrefixedId('employee-freeze'),
-      })
-      assertAcceptedCommand(ack, 'Employee freeze failed.')
-      await loadSnapshot()
-    } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : 'Employee freeze failed.')
-    } finally {
-      setSubmittingStaffingAction(null)
-    }
-  }
-
-  const handleEmployeeRestore = async (employeeId: string) => {
-    if (!activeWorkflowId) {
-      return
-    }
-    const actionKey = `restore:${employeeId}`
-    setSubmittingStaffingAction(actionKey)
-    setSnapshotError(null)
-    try {
-      const ack = await employeeRestore({
-        workflow_id: activeWorkflowId,
-        employee_id: employeeId,
-        restored_by: DEFAULT_INCIDENT_OPERATOR,
-        reason: 'Return this worker to active duty.',
-        idempotency_key: newPrefixedId('employee-restore'),
-      })
-      assertAcceptedCommand(ack, 'Employee restore failed.')
-      await loadSnapshot()
-    } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : 'Employee restore failed.')
-    } finally {
-      setSubmittingStaffingAction(null)
-    }
-  }
-
-  const handleEmployeeHireRequest = async (template: StaffingHireTemplate, employeeId: string) => {
-    if (!activeWorkflowId) {
-      return
-    }
-    const actionKey = `hire:${template.template_id}`
-    setSubmittingStaffingAction(actionKey)
-    setSnapshotError(null)
-    try {
-      const ack = await employeeHireRequest({
-        workflow_id: activeWorkflowId,
-        employee_id: employeeId,
-        role_type: template.role_type,
-        role_profile_refs: template.role_profile_refs,
-        skill_profile: template.skill_profile,
-        personality_profile: template.personality_profile,
-        aesthetic_profile: template.aesthetic_profile,
-        provider_id: template.provider_id,
-        request_summary: template.request_summary,
-        idempotency_key: newPrefixedId('employee-hire-request'),
-      })
-      assertAcceptedCommand(ack, 'Employee hire request failed.')
-      await loadSnapshot()
-    } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : 'Employee hire request failed.')
-    } finally {
-      setSubmittingStaffingAction(null)
-    }
-  }
-
-  const handleEmployeeReplaceRequest = async (
-    employeeId: string,
-    template: StaffingHireTemplate,
-    replacementEmployeeId: string,
-  ) => {
-    if (!activeWorkflowId) {
-      return
-    }
-    const actionKey = `replace:${employeeId}`
-    setSubmittingStaffingAction(actionKey)
-    setSnapshotError(null)
-    try {
-      const ack = await employeeReplaceRequest({
-        workflow_id: activeWorkflowId,
-        replaced_employee_id: employeeId,
-        replacement_employee_id: replacementEmployeeId,
-        replacement_role_type: template.role_type,
-        replacement_role_profile_refs: template.role_profile_refs,
-        replacement_skill_profile: template.skill_profile,
-        replacement_personality_profile: template.personality_profile,
-        replacement_aesthetic_profile: template.aesthetic_profile,
-        replacement_provider_id: template.provider_id,
-        request_summary: `Replace ${employeeId} with a supported ${template.label.toLowerCase()} to keep the local delivery loop moving.`,
-        idempotency_key: newPrefixedId('employee-replace-request'),
-      })
-      assertAcceptedCommand(ack, 'Employee replacement request failed.')
-      await loadSnapshot()
-    } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : 'Employee replacement request failed.')
-    } finally {
-      setSubmittingStaffingAction(null)
-    }
-  }
-
-  const handleApprove = async (input: { selectedOptionId: string; boardComment: string }) => {
-    if (!reviewPack) {
-      return
-    }
-    setSubmittingAction('APPROVE')
-    try {
-      await boardApprove({
-        review_pack_id: reviewPack.meta.review_pack_id,
-        review_pack_version: reviewPack.meta.review_pack_version,
-        command_target_version: reviewPack.decision_form.command_target_version,
-        approval_id: reviewPack.meta.approval_id,
-        selected_option_id: input.selectedOptionId,
-        board_comment: input.boardComment,
-        idempotency_key: newPrefixedId('board-approve'),
-      })
-      await loadSnapshot()
-      navigate('/')
-    } catch (error) {
-      setReviewError(error instanceof Error ? error.message : 'Board approve failed.')
-    } finally {
-      setSubmittingAction(null)
-    }
-  }
-
-  const handleReject = async (input: { boardComment: string; rejectionReasons: string[] }) => {
-    if (!reviewPack) {
-      return
-    }
-    setSubmittingAction('REJECT')
-    try {
-      await boardReject({
-        review_pack_id: reviewPack.meta.review_pack_id,
-        review_pack_version: reviewPack.meta.review_pack_version,
-        command_target_version: reviewPack.decision_form.command_target_version,
-        approval_id: reviewPack.meta.approval_id,
-        board_comment: input.boardComment,
-        rejection_reasons: input.rejectionReasons,
-        idempotency_key: newPrefixedId('board-reject'),
-      })
-      await loadSnapshot()
-      navigate('/')
-    } catch (error) {
-      setReviewError(error instanceof Error ? error.message : 'Board reject failed.')
-    } finally {
-      setSubmittingAction(null)
-    }
-  }
-
-  const handleModifyConstraints = async (input: {
-    boardComment: string
-    addRules: string[]
-    removeRules: string[]
-    replaceRules: string[]
-  }) => {
-    if (!reviewPack) {
-      return
-    }
-    setSubmittingAction('MODIFY_CONSTRAINTS')
-    try {
-      await modifyConstraints({
-        review_pack_id: reviewPack.meta.review_pack_id,
-        review_pack_version: reviewPack.meta.review_pack_version,
-        command_target_version: reviewPack.decision_form.command_target_version,
-        approval_id: reviewPack.meta.approval_id,
-        constraint_patch: {
-          add_rules: input.addRules,
-          remove_rules: input.removeRules,
-          replace_rules: input.replaceRules,
-        },
-        board_comment: input.boardComment,
-        idempotency_key: newPrefixedId('modify-constraints'),
-      })
-      await loadSnapshot()
-      navigate('/')
-    } catch (error) {
-      setReviewError(error instanceof Error ? error.message : 'Constraint update failed.')
-    } finally {
-      setSubmittingAction(null)
-    }
+    await openInspectorForReview(loadDeveloperInspector)
   }
 
   const approvalsPending = dashboard?.inbox_counts.approvals_pending ?? 0
@@ -535,8 +180,8 @@ export function DashboardPage() {
             <InboxWell
               items={inbox?.items ?? []}
               loading={snapshotLoading}
-              onOpenReview={handleOpenReview}
-              onOpenIncident={handleOpenIncident}
+              onOpenReview={handleOpenReviewRoom}
+              onOpenIncident={handleOpenIncidentRoom}
             />
           }
           center={
@@ -591,7 +236,7 @@ export function DashboardPage() {
                 </>
               ) : null}
               {completionSummary && !reviewPackId ? (
-                <CompletionCard summary={completionSummary} onOpenReview={handleOpenReview} />
+                <CompletionCard summary={completionSummary} onOpenReview={handleOpenReviewRoom} />
               ) : null}
             </section>
           }
@@ -625,7 +270,7 @@ export function DashboardPage() {
         inspectorLoading={inspectorLoading}
         error={reviewError}
         submittingAction={submittingAction}
-        onClose={() => navigate('/')}
+        onClose={closeReviewRoom}
         onOpenInspector={handleOpenInspector}
         onApprove={handleApprove}
         onReject={handleReject}
@@ -643,7 +288,7 @@ export function DashboardPage() {
         incidentData={incidentDetail}
         error={incidentError}
         submitting={submittingIncidentAction}
-        onClose={() => navigate('/')}
+        onClose={closeIncident}
         onResolve={handleIncidentResolve}
       />
 
@@ -653,8 +298,8 @@ export function DashboardPage() {
         inspectorData={dependencyInspector}
         error={dependencyInspectorError}
         onClose={() => setDependencyInspectorOpen(false)}
-        onOpenReview={handleOpenReview}
-        onOpenIncident={handleOpenIncident}
+        onOpenReview={handleOpenReviewRoom}
+        onOpenIncident={handleOpenIncidentRoom}
       />
 
       <ProviderSettingsDrawer
