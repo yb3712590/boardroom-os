@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Button } from '../shared/Button'
 
 import type { StaffingHireTemplate } from '../../types/domain'
+import { newPrefixedId } from '../../utils/ids'
 
 type StaffingActionsProps = {
   templates: StaffingHireTemplate[]
@@ -13,6 +14,24 @@ type StaffingActionsProps = {
 export function StaffingActions({ templates, submittingAction, onRequestHire }: StaffingActionsProps) {
   const [hireDrafts, setHireDrafts] = useState<Record<string, string>>({})
 
+  useEffect(() => {
+    setHireDrafts((current) => {
+      let changed = false
+      const next = { ...current }
+
+      for (const template of templates) {
+        if (next[template.template_id] != null) {
+          continue
+        }
+
+        next[template.template_id] = template.employee_id_hint.trim() || newPrefixedId('emp')
+        changed = true
+      }
+
+      return changed ? next : current
+    })
+  }, [templates])
+
   return (
     <section className="staffing-request-panel" aria-labelledby="staffing-request-title">
       <div className="section-heading workforce-section-heading">
@@ -21,7 +40,9 @@ export function StaffingActions({ templates, submittingAction, onRequestHire }: 
       </div>
       <div className="staffing-template-list">
         {templates.map((template) => {
-          const value = hireDrafts[template.template_id] ?? template.employee_id_hint
+          const value =
+            hireDrafts[template.template_id] ??
+            (template.employee_id_hint.trim() || newPrefixedId('emp'))
           const isSubmitting = submittingAction === `hire:${template.template_id}`
           return (
             <form

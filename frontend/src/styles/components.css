@@ -1,69 +1,25 @@
-.boardroom-app {
-  min-height: 100vh;
-  padding: 28px;
-  box-sizing: border-box;
-}
-
-.boardroom-shell {
-  position: relative;
-  min-height: calc(100vh - 56px);
-  padding: 28px;
-  border: 1px solid rgba(199, 225, 255, 0.16);
-  border-radius: 34px;
-  background:
-    radial-gradient(circle at top left, rgba(61, 106, 160, 0.24), transparent 28%),
-    radial-gradient(circle at 78% 18%, rgba(225, 198, 139, 0.1), transparent 18%),
-    linear-gradient(160deg, rgba(16, 25, 39, 0.92), rgba(10, 17, 27, 0.96));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 24px 80px rgba(2, 6, 17, 0.4);
-  overflow: hidden;
-}
-
-.boardroom-shell::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(120deg, rgba(255, 255, 255, 0.04), transparent 25%, transparent 70%, rgba(255, 255, 255, 0.03)),
-    radial-gradient(circle at bottom left, rgba(25, 55, 96, 0.24), transparent 26%);
-  pointer-events: none;
-}
-
-.top-chrome,
-.boardroom-main,
-.review-room-panel,
-.project-init-panel,
-.review-room-state {
+.project-init-panel {
   position: relative;
   z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.92fr);
+  gap: 26px;
+  padding: 34px 36px;
+  border-radius: 32px;
+  background:
+    radial-gradient(circle at 82% 20%, rgba(61, 106, 160, 0.16), transparent 26%),
+    linear-gradient(180deg, rgba(18, 29, 43, 0.92), rgba(10, 17, 27, 0.76));
+  border: 1px solid rgba(199, 225, 255, 0.12);
 }
 
-.top-chrome {
-  display: flex;
-  justify-content: space-between;
-  gap: 32px;
-  align-items: flex-start;
-  padding-bottom: 26px;
-  border-bottom: 1px solid rgba(199, 225, 255, 0.12);
+.project-init-copy h1 {
+  margin: 0 0 12px;
+  color: var(--text-strong);
 }
 
-.top-chrome h1 {
-  margin: 0;
-  font-size: clamp(2rem, 2.6vw, 3.4rem);
-  letter-spacing: -0.05em;
-}
-
-.top-chrome-copy {
-  max-width: 42rem;
-  color: var(--muted-label);
-}
-
-.top-chrome-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  align-items: flex-end;
+.project-init-form {
+  display: grid;
+  gap: 14px;
 }
 
 .runtime-status-card {
@@ -203,13 +159,6 @@
   color: var(--text-strong);
 }
 
-.boardroom-main {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.86fr) minmax(0, 1.5fr) minmax(300px, 0.92fr);
-  gap: 24px;
-  padding-top: 28px;
-}
-
 .inbox-well {
   min-height: 620px;
   padding: 24px 20px;
@@ -227,9 +176,7 @@
 
 .section-heading h2,
 .workflow-river h2,
-.center-detail-grid h2,
-.review-room-panel h2,
-.review-room-panel h3 {
+.center-detail-grid h2 {
   margin: 0;
   color: var(--text-strong);
 }
@@ -295,17 +242,6 @@
 
 .inbox-item-high .inbox-item-ribbon {
   background: linear-gradient(180deg, rgba(225, 198, 139, 1), rgba(199, 164, 94, 0.34));
-}
-
-.boardroom-center {
-  display: grid;
-  gap: 22px;
-}
-
-.boardroom-support {
-  display: grid;
-  gap: 18px;
-  align-content: start;
 }
 
 .support-panel {
@@ -483,12 +419,9 @@
 }
 
 .staffing-inline-field input {
-  width: 100%;
-  box-sizing: border-box;
   border-radius: 12px;
   border: 1px solid rgba(199, 225, 255, 0.12);
   background: rgba(9, 15, 25, 0.92);
-  color: var(--text-strong);
   padding: 10px 12px;
 }
 
@@ -551,8 +484,7 @@
 }
 
 .shell-loading,
-.shell-error,
-.review-room-state {
+.shell-error {
   min-height: 220px;
   display: grid;
   place-items: center;
@@ -562,8 +494,7 @@
   color: var(--text-strong);
 }
 
-.shell-error,
-.review-room-error {
+.shell-error {
   color: #ffd7df;
   border-color: rgba(163, 79, 99, 0.32);
 }
@@ -780,29 +711,6 @@
   justify-content: flex-start;
 }
 
-.project-init-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.92fr);
-  gap: 26px;
-  padding: 34px 36px;
-  border-radius: 32px;
-  background:
-    radial-gradient(circle at 82% 20%, rgba(61, 106, 160, 0.16), transparent 26%),
-    linear-gradient(180deg, rgba(18, 29, 43, 0.92), rgba(10, 17, 27, 0.76));
-  border: 1px solid rgba(199, 225, 255, 0.12);
-}
-
-.project-init-copy h1 {
-  margin: 0 0 12px;
-}
-
-.project-init-form,
-.review-room-action-panel,
-.review-room-constraint-panel {
-  display: grid;
-  gap: 14px;
-}
-
 .field-label {
   display: inline-block;
   margin-bottom: 8px;
@@ -810,27 +718,6 @@
   font-size: 0.82rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-}
-
-textarea,
-input,
-select {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(199, 225, 255, 0.14);
-  background: rgba(10, 17, 27, 0.72);
-  color: var(--text-strong);
-  font: inherit;
-  resize: vertical;
-}
-
-textarea:focus,
-input:focus,
-select:focus {
-  outline: 1px solid rgba(236, 247, 255, 0.28);
-  box-shadow: 0 0 0 4px rgba(199, 225, 255, 0.08);
 }
 
 .primary-button,
@@ -919,232 +806,6 @@ select:focus {
   border-color: rgba(199, 225, 255, 0.2);
 }
 
-.review-room-drawer {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.review-room-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(3, 7, 16, 0.62);
-  backdrop-filter: blur(8px);
-}
-
-.review-room-panel {
-  position: relative;
-  width: min(860px, calc(100vw - 32px));
-  height: 100vh;
-  padding: 26px;
-  box-sizing: border-box;
-  background:
-    linear-gradient(180deg, rgba(18, 29, 43, 0.96), rgba(10, 17, 27, 0.94)),
-    rgba(10, 17, 27, 0.94);
-  border-left: 1px solid rgba(199, 225, 255, 0.12);
-  overflow-y: auto;
-}
-
-.incident-panel {
-  width: min(720px, calc(100vw - 32px));
-}
-
-.review-room-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: flex-start;
-  margin-bottom: 22px;
-}
-
-.review-room-content {
-  display: grid;
-  gap: 22px;
-}
-
-.review-room-overview,
-.review-room-columns,
-.review-room-actions {
-  display: grid;
-  gap: 16px;
-}
-
-.review-room-overview {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.review-room-overview > div,
-.review-room-column,
-.review-room-action-panel,
-.review-room-constraint-panel,
-.review-room-inspector-panel {
-  padding: 18px;
-  border-radius: 24px;
-  background: rgba(11, 19, 30, 0.82);
-  border: 1px solid rgba(199, 225, 255, 0.1);
-}
-
-.review-room-option-list,
-.review-room-list {
-  display: grid;
-  gap: 12px;
-}
-
-.review-room-option {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 12px;
-  padding: 14px;
-  border-radius: 18px;
-  background: rgba(16, 25, 39, 0.76);
-}
-
-.review-room-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.review-room-list li {
-  display: grid;
-  gap: 6px;
-}
-
-.review-room-list strong {
-  color: var(--text-strong);
-}
-
-.review-room-list span {
-  color: var(--muted-label);
-}
-
-.review-room-columns {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.review-room-action-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.constraint-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.review-room-inspector {
-  display: grid;
-  gap: 14px;
-}
-
-.incident-action-panel {
-  display: grid;
-  gap: 14px;
-}
-
-.provider-settings-panel {
-  display: grid;
-  gap: 14px;
-}
-
-.provider-settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.dependency-inspector-panel {
-  width: min(840px, calc(100vw - 32px));
-}
-
-.dependency-summary-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.dependency-node-list {
-  display: grid;
-  gap: 16px;
-}
-
-.dependency-node {
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border-radius: 24px;
-  background: rgba(11, 19, 30, 0.82);
-  border: 1px solid rgba(199, 225, 255, 0.1);
-}
-
-.dependency-node.is-critical {
-  border-color: rgba(142, 212, 255, 0.24);
-}
-
-.dependency-node.is-blocked {
-  border-color: rgba(232, 197, 118, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(232, 197, 118, 0.08);
-}
-
-.dependency-node-header,
-.dependency-node-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-}
-
-.dependency-node-header h3 {
-  margin: 6px 0 0;
-}
-
-.dependency-node-badges,
-.dependency-node-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.dependency-node-badges span {
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(16, 25, 39, 0.76);
-  border: 1px solid rgba(199, 225, 255, 0.08);
-  font-size: 0.78rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted-label);
-}
-
-.dependency-node-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin: 0;
-}
-
-.dependency-node-grid div {
-  padding: 12px 14px;
-  border-radius: 18px;
-  background: rgba(16, 25, 39, 0.76);
-}
-
-.dependency-node-grid dt {
-  font-size: 0.74rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted-label);
-}
-
-.dependency-node-grid dd {
-  margin: 8px 0 0;
-  color: var(--text-strong);
-}
-
 @keyframes drift {
   0% {
     transform: translateX(0);
@@ -1184,34 +845,17 @@ select:focus {
 }
 
 @media (max-width: 1180px) {
-  .boardroom-app {
-    padding: 18px;
-  }
-
-  .top-chrome,
-  .boardroom-main,
-  .project-init-panel,
   .runtime-status-grid,
   .completion-card-grid,
-  .review-room-overview,
-  .review-room-columns,
-  .review-room-action-grid,
-  .constraint-grid,
-  .provider-settings-grid,
   .support-summary-grid,
-  .dependency-summary-grid,
-  .dependency-node-grid {
+  .center-detail-grid,
+  .center-detail-list,
+  .project-init-panel {
     grid-template-columns: 1fr;
   }
 
-  .top-chrome,
   .river-header {
     flex-direction: column;
-  }
-
-  .top-chrome-meta {
-    align-items: stretch;
-    width: 100%;
   }
 
   .ops-strip {
@@ -1220,12 +864,6 @@ select:focus {
 }
 
 @media (max-width: 900px) {
-  .boardroom-shell {
-    min-height: auto;
-    padding: 20px;
-    border-radius: 26px;
-  }
-
   .river-stage-strip {
     grid-template-columns: 1fr;
     padding-top: 0;
@@ -1234,10 +872,5 @@ select:focus {
   .river-mainline,
   .river-board-branch {
     display: none;
-  }
-
-  .review-room-panel {
-    width: 100vw;
-    padding: 20px;
   }
 }

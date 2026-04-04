@@ -1,0 +1,73 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+:root {
+  font-family: var(--font-family-sans);
+  line-height: 1.5;
+  font-weight: 500;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top, rgba(23, 35, 52, 0.76), transparent 35%),
+    linear-gradient(180deg, #0a111b, #07101a 60%, #050b12);
+  color: var(--text-strong);
+}
+
+body,
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-family-sans);
+}
+
+code,
+pre {
+  font-family: var(--font-family-mono);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+textarea,
+input,
+select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(199, 225, 255, 0.14);
+  background: rgba(10, 17, 27, 0.72);
+  color: var(--text-strong);
+  resize: vertical;
+}
+
+textarea:focus,
+input:focus,
+select:focus {
+  outline: 1px solid rgba(236, 247, 255, 0.28);
+  box-shadow: 0 0 0 4px rgba(199, 225, 255, 0.08);
+}

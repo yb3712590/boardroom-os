@@ -1,7 +1,7 @@
 # Boardroom OS 详细 TODO 清单
 
 > 版本：1.0
-> 日期：2026-04-03
+> 日期：2026-04-04
 > 作者：CTO
 > 总任务数：112
 
@@ -1313,6 +1313,8 @@
 
 #### P0-FE-020：拆分 CSS
 
+**状态**：已完成（2026-04-04，M4 前端收口）
+
 **描述**：将 App.css 拆分为 tokens.css、global.css、layout.css、components.css、overlays.css。
 
 **文件**：
@@ -1334,9 +1336,16 @@
 
 **风险**：低
 
+**完成补记**：
+- 已新增 `frontend/src/styles/tokens.css`、`global.css`、`layout.css`、`components.css`、`overlays.css`
+- `frontend/src/index.css` 现在只负责聚合导入这 5 份样式；`frontend/src/App.css` 已删除
+- 当前按“只搬运、不改类名、不改视觉”收口，页面交互和样式类名保持原状
+
 ---
 
 #### P0-FE-021：创建工具函数模块
+
+**状态**：已完成（2026-04-04，M4 前端收口）
 
 **描述**：提取格式化函数和 ID 生成函数。
 
@@ -1355,9 +1364,16 @@
 
 **风险**：低
 
+**完成补记**：
+- 已新增 `frontend/src/utils/format.ts` 与 `frontend/src/utils/ids.ts`
+- `DashboardPage / OpsStrip / CompletionCard / ProjectInitForm / EventTicker` 已改用共享格式化函数，不再在组件内各自维护重复 helper
+- `DashboardPage` 的命令 `idempotency_key` 已统一改用 `newPrefixedId`；staffing 表单在缺省 `employee_id_hint` 时会回退到前端生成 `emp_*`
+
 ---
 
 #### P0-FE-022：前端核心测试
+
+**状态**：已完成（2026-04-04，M4 前端收口）
 
 **描述**：为 stores、API 客户端、关键组件编写测试。
 
@@ -1379,6 +1395,11 @@
 - `npm run test:run` 全部通过
 
 **风险**：低
+
+**完成补记**：
+- 已补齐 `frontend/src/test/__tests__/components/WorkflowRiver.test.tsx`
+- 已新增 `frontend/src/test/__tests__/utils/format.test.ts` 与 `frontend/src/test/__tests__/utils/ids.test.ts`
+- 现有 store / API / SSE / 组件测试继续保留；本轮前端全量验证为 `npm run build` passed、`npm run test:run` → `47 passed`
 
 ---
 

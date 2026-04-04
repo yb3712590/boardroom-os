@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { Button } from '../shared/Button'
+import { normalizeConstraints } from '../../utils/format'
 
 type ProjectInitFormProps = {
   submitting: boolean
@@ -9,13 +10,6 @@ type ProjectInitFormProps = {
     hardConstraints: string[]
     budgetCap: number
   }) => Promise<void>
-}
-
-function normalizeConstraints(value: string) {
-  return value
-    .split('\n')
-    .map((item) => item.trim())
-    .filter(Boolean)
 }
 
 export function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) {

@@ -17,7 +17,7 @@
 ## 当前基线（2026-04-04 实测）
 
 - backend：`py -m pytest tests -q` → 378 passed
-- frontend：当前 shell 的 `node / npm` 仍不在 PATH；已通过显式调用 `C:\Program Files\nodejs\npm.cmd` 完成复核，`npm run build` → passed，`npm run test:run` → 39 passed
+- frontend：当前 shell 的 `node / npm` 仍不在 PATH；已通过显式调用 `C:\Program Files\nodejs\npm.cmd` 完成复核，`npm run build` → passed，`npm run test:run` → 47 passed
 
 ---
 
@@ -89,7 +89,7 @@
 - 后端补了 provider 重试、pause、fallback、健康读面的最小测试；前端 mock / 类型也已对齐新契约
 - `frontend_engineer` 现在已经拆成独立 `frontend_engineer_primary` runtime worker；`BUILD / REVIEW / closeout` 改走独立 profile，scope 共识链仍保留 `ui_designer_primary` 并由调度兼容承接
 
-- [x] 前端 `build` 与 `test:run` 已完成真实复核；当前 shell 仍缺 `node / npm` PATH，但机器上可通过显式调用 `C:\Program Files\nodejs\npm.cmd` 复现 `build passed` 与 `test:run -> 39 passed`
+- [x] 前端 `build` 与 `test:run` 已完成真实复核；当前 shell 仍缺 `node / npm` PATH，但机器上可通过显式调用 `C:\Program Files\nodejs\npm.cmd` 复现 `build passed` 与 `test:run -> 47 passed`
 
 主线关系：**只服务验证闭环**，不改变主链能力，但影响这条主线的前端交付是否完成最终验收。
 
@@ -156,15 +156,17 @@
 - `frontend/src/components/shared/Button.tsx`、`Badge.tsx`、`LoadingSkeleton.tsx`、`Toast.tsx` 已新增；当前页面壳批次已真实接入前 3 个，`Toast` 先保持局部受控组件，不引入全局消息总线
 - `frontend/src/components/layout/`、`components/dashboard/`、`components/workforce/`、`components/events/` 现在都已有真实实现；旧的顶层 `WorkflowRiver / WorkforcePanel / EventTicker` 文件已删除，避免并行双入口
 - `frontend/src/App.tsx` 已缩到纯路由入口；旧的四个重复抽屉壳文件已移除，避免仓库里同时留两套实现
-- `frontend/src/pages/DashboardPage.tsx` 已从 903 行降到 680 行；页面壳明显变薄，但命令回调和本地详情拉取仍留在页层
+- `frontend/src/pages/DashboardPage.tsx` 现在已从 903 行降到 629 行；页面壳继续变薄，但命令回调和本地详情拉取仍留在页层
+- `frontend/src/styles/` 现在已落地：`tokens / global / layout / components / overlays` 五份样式真实接管当前前端壳；`index.css` 回到统一聚合入口，旧 `frontend/src/App.css` 已删除
+- `frontend/src/utils/format.ts` 与 `frontend/src/utils/ids.ts` 已落地；`DashboardPage / OpsStrip / CompletionCard / ProjectInitForm / EventTicker` 不再各自维护重复 helper，staffing 表单在缺省 `employee_id_hint` 时会回退到前端生成 `emp_*`
 - 前端本轮新增最小组件测试：`ProjectInitForm / InboxWell / StaffingActions / RuntimeStatusCard`，并顺手修正了 `ErrorBoundary` 测试以适配当前 React 19 恢复行为
-- 前端真实命令级验证已完成：`npm run build` passed，`npm run test:run` → 39 passed；当前 shell 只是 PATH 仍缺 `node / npm`
+- 前端本轮继续补齐 `WorkflowRiver` 与 utils 最小回归测试；现有 store / API / SSE 测试继续保留，`npm run test:run` 现在为 `47 passed`
+- 前端真实命令级验证已完成：`npm run build` passed，`npm run test:run` → 47 passed；当前 shell 只是 PATH 仍缺 `node / npm`
 - `frontend/src/api.ts` 目前保留为兼容出口，现有组件还没整体迁到新目录，这一层兼容先保留到页面壳和组件壳拆分完成
 
 新发现任务：
 
-- [ ] 把 `DashboardPage` 里仍偏多的命令回调、格式化 helper 和本地拉取细节继续下沉；当前 680 行已比上一轮薄，但还没到设计文档里的轻页壳目标
-- [ ] 继续完成 `P0-FE-020 / P0-FE-021 / P0-FE-022`：CSS 拆分、工具函数模块、前端核心测试整包收口；这三项都只服务主线验证成本下降，不改变工作流真相
+- [ ] 把 `DashboardPage` 里仍偏多的命令回调和本地拉取细节继续下沉；当前 629 行已比上一轮薄，但还没到设计文档里的轻页壳目标。主线关系：只服务前端继续收口与验证成本下降，不改变工作流真相
 
 主线关系：**间接服务主链验证**，降低前端后续演进和回归成本，不改变工作流真相。
 

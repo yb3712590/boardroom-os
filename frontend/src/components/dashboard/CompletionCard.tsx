@@ -1,22 +1,11 @@
 import { Button } from '../shared/Button'
 
 import type { DashboardData } from '../../types/api'
+import { formatTimestamp } from '../../utils/format'
 
 type CompletionCardProps = {
   summary: NonNullable<DashboardData['completion_summary']>
   onOpenReview: (reviewPackId: string) => void
-}
-
-function formatTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return 'Not recorded'
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(value))
 }
 
 export function CompletionCard({ summary, onOpenReview }: CompletionCardProps) {
@@ -28,8 +17,8 @@ export function CompletionCard({ summary, onOpenReview }: CompletionCardProps) {
         <p className="eyebrow">Workflow result</p>
         <h2 id="completion-card-title">Delivery completed</h2>
         <p className="muted-copy">
-          Board approved {formatTimestamp(finalReviewApprovedAt)} and closeout completed{' '}
-          {formatTimestamp(summary.closeout_completed_at)} for workflow {summary.workflow_id}.
+          Board approved {formatTimestamp(finalReviewApprovedAt, 'Not recorded')} and closeout completed{' '}
+          {formatTimestamp(summary.closeout_completed_at, 'Not recorded')} for workflow {summary.workflow_id}.
         </p>
       </div>
       <div className="completion-card-grid">
@@ -39,11 +28,11 @@ export function CompletionCard({ summary, onOpenReview }: CompletionCardProps) {
         </div>
         <div>
           <span>Board approved</span>
-          <strong>{formatTimestamp(finalReviewApprovedAt)}</strong>
+          <strong>{formatTimestamp(finalReviewApprovedAt, 'Not recorded')}</strong>
         </div>
         <div>
           <span>Closeout completed</span>
-          <strong>{formatTimestamp(summary.closeout_completed_at)}</strong>
+          <strong>{formatTimestamp(summary.closeout_completed_at, 'Not recorded')}</strong>
         </div>
         <div>
           <span>Selected option</span>

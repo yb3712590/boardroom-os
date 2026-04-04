@@ -36,6 +36,8 @@ import { useReviewStore } from '../stores/review-store'
 import { useUIStore } from '../stores/ui-store'
 import type { CommandAck, DependencyInspectorData, IncidentDetailData } from '../types/api'
 import type { StaffingHireTemplate } from '../types/domain'
+import { newPrefixedId } from '../utils/ids'
+import { formatTimestamp } from '../utils/format'
 
 const DEFAULT_INCIDENT_OPERATOR = 'emp_ops_1'
 
@@ -44,18 +46,6 @@ function assertAcceptedCommand(ack: CommandAck, fallbackMessage: string) {
     return
   }
   throw new Error(ack.reason ?? fallbackMessage)
-}
-
-function formatTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return 'No deadline'
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(value))
 }
 
 function runtimeModeLabel(value: string | null | undefined) {
@@ -271,7 +261,7 @@ export function DashboardPage() {
         model: input.model,
         timeout_sec: input.timeoutSec,
         reasoning_effort: input.reasoningEffort,
-        idempotency_key: `runtime-provider-upsert:${Date.now()}`,
+        idempotency_key: newPrefixedId('runtime-provider-upsert'),
       })
       await loadSnapshot()
       setProviderSettingsOpen(false)
@@ -296,7 +286,7 @@ export function DashboardPage() {
         resolved_by: DEFAULT_INCIDENT_OPERATOR,
         resolution_summary: input.resolutionSummary,
         followup_action: input.followupAction,
-        idempotency_key: `incident-resolve:${incidentDetail.incident.incident_id}:${Date.now()}`,
+        idempotency_key: newPrefixedId('incident-resolve'),
       })
       await loadSnapshot()
       navigate('/')
@@ -320,7 +310,7 @@ export function DashboardPage() {
         employee_id: employeeId,
         frozen_by: DEFAULT_INCIDENT_OPERATOR,
         reason: 'Pause this worker from taking new tickets.',
-        idempotency_key: `employee-freeze:${activeWorkflowId}:${employeeId}:${Date.now()}`,
+        idempotency_key: newPrefixedId('employee-freeze'),
       })
       assertAcceptedCommand(ack, 'Employee freeze failed.')
       await loadSnapshot()
@@ -344,7 +334,7 @@ export function DashboardPage() {
         employee_id: employeeId,
         restored_by: DEFAULT_INCIDENT_OPERATOR,
         reason: 'Return this worker to active duty.',
-        idempotency_key: `employee-restore:${activeWorkflowId}:${employeeId}:${Date.now()}`,
+        idempotency_key: newPrefixedId('employee-restore'),
       })
       assertAcceptedCommand(ack, 'Employee restore failed.')
       await loadSnapshot()
@@ -373,7 +363,7 @@ export function DashboardPage() {
         aesthetic_profile: template.aesthetic_profile,
         provider_id: template.provider_id,
         request_summary: template.request_summary,
-        idempotency_key: `employee-hire-request:${activeWorkflowId}:${employeeId}:${Date.now()}`,
+        idempotency_key: newPrefixedId('employee-hire-request'),
       })
       assertAcceptedCommand(ack, 'Employee hire request failed.')
       await loadSnapshot()
@@ -407,7 +397,7 @@ export function DashboardPage() {
         replacement_aesthetic_profile: template.aesthetic_profile,
         replacement_provider_id: template.provider_id,
         request_summary: `Replace ${employeeId} with a supported ${template.label.toLowerCase()} to keep the local delivery loop moving.`,
-        idempotency_key: `employee-replace-request:${activeWorkflowId}:${employeeId}:${replacementEmployeeId}:${Date.now()}`,
+        idempotency_key: newPrefixedId('employee-replace-request'),
       })
       assertAcceptedCommand(ack, 'Employee replacement request failed.')
       await loadSnapshot()
@@ -431,7 +421,7 @@ export function DashboardPage() {
         approval_id: reviewPack.meta.approval_id,
         selected_option_id: input.selectedOptionId,
         board_comment: input.boardComment,
-        idempotency_key: `board-approve:${reviewPack.meta.approval_id}:${Date.now()}`,
+        idempotency_key: newPrefixedId('board-approve'),
       })
       await loadSnapshot()
       navigate('/')
@@ -455,7 +445,7 @@ export function DashboardPage() {
         approval_id: reviewPack.meta.approval_id,
         board_comment: input.boardComment,
         rejection_reasons: input.rejectionReasons,
-        idempotency_key: `board-reject:${reviewPack.meta.approval_id}:${Date.now()}`,
+        idempotency_key: newPrefixedId('board-reject'),
       })
       await loadSnapshot()
       navigate('/')
@@ -488,7 +478,7 @@ export function DashboardPage() {
           replace_rules: input.replaceRules,
         },
         board_comment: input.boardComment,
-        idempotency_key: `modify-constraints:${reviewPack.meta.approval_id}:${Date.now()}`,
+        idempotency_key: newPrefixedId('modify-constraints'),
       })
       await loadSnapshot()
       navigate('/')
@@ -567,7 +557,8 @@ export function DashboardPage() {
                       <p className="eyebrow">Current workflow</p>
                       <h2>{activeWorkflow.north_star_goal}</h2>
                       <p className="muted-copy">
-                        Workspace {dashboard.workspace.workspace_name} · started {formatTimestamp(activeWorkflow.started_at)}
+                        Workspace {dashboard.workspace.workspace_name} · started{' '}
+                        {formatTimestamp(activeWorkflow.started_at, 'Not recorded')}
                       </p>
                       <Button
                         type="button"

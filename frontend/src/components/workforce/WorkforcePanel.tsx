@@ -6,6 +6,7 @@ import { LoadingSkeleton } from '../shared/LoadingSkeleton'
 import { StaffingActions } from './StaffingActions'
 
 import type { WorkforceData } from '../../types/api'
+import { newPrefixedId } from '../../utils/ids'
 
 type WorkforcePanelProps = {
   workforce: WorkforceData | null
@@ -158,9 +159,20 @@ export function WorkforcePanel({
                             <Button
                               type="button"
                               variant="ghost"
-                              onClick={() =>
+                              onClick={() => {
+                                setReplaceDrafts((current) => {
+                                  if (current[worker.employee_id] != null) {
+                                    return current
+                                  }
+
+                                  return {
+                                    ...current,
+                                    [worker.employee_id]:
+                                      replaceTemplate.employee_id_hint.trim() || newPrefixedId('emp'),
+                                  }
+                                })
                                 setReplaceOpenFor((current) => (current === worker.employee_id ? null : worker.employee_id))
-                              }
+                              }}
                               disabled={submittingAction === `replace:${worker.employee_id}`}
                               aria-label={`Request replacement for ${worker.employee_id}`}
                             >

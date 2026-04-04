@@ -1,0 +1,18 @@
+:root {
+  color-scheme: dark;
+  --font-family-sans: 'Manrope', sans-serif;
+  --font-family-mono: 'IBM Plex Mono', monospace;
+
+  --page-background: #0a111b;
+  --deep-glass: #101927;
+  --mid-glass: #172334;
+  --line-blue: #c7e1ff;
+  --soft-blue-fill: #ddeeff;
+  --active-ice: #ecf7ff;
+  --muted-label: #9eb3ca;
+  --text-strong: #f2f7ff;
+  --board-gold: #e1c68b;
+  --board-gold-deep: #c7a45e;
+  --incident-rose: #a34f63;
+  --incident-deep: #6e2433;
+}

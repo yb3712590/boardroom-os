@@ -1,29 +1,8 @@
 import type { DashboardData } from '../../types/api'
+import { formatRelativeTime } from '../../utils/format'
 
 type EventTickerProps = {
   events: DashboardData['event_stream_preview']
-}
-
-function formatRelativeTime(value: string) {
-  const diff = Date.now() - new Date(value).getTime()
-  const seconds = Math.max(0, Math.floor(diff / 1000))
-  if (seconds < 60) {
-    return `${seconds}s ago`
-  }
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) {
-    return `${minutes}m ago`
-  }
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) {
-    return `${hours}h ago`
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(value))
 }
 
 export function EventTicker({ events }: EventTickerProps) {
