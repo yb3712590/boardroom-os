@@ -432,20 +432,196 @@ def _strip_markdown_code_fence(value: str) -> str:
     return stripped
 
 
+def _strip_bom(value: str) -> str:
+    return value.lstrip("\ufeff")
+
+
+def _strip_json_comments(value: str) -> str:
+    result: list[str] = []
+    in_string = False
+    string_delimiter = ""
+    escaping = False
+    index = 0
+
+    while index < len(value):
+        char = value[index]
+        next_char = value[index + 1] if index + 1 < len(value) else ""
+
+        if in_string:
+            result.append(char)
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == string_delimiter:
+                in_string = False
+            index += 1
+            continue
+
+        if char in {'"', "'"}:
+            in_string = True
+            string_delimiter = char
+            result.append(char)
+            index += 1
+            continue
+
+        if char == "/" and next_char == "/":
+            index += 2
+            while index < len(value) and value[index] not in "\r\n":
+                index += 1
+            continue
+
+        if char == "/" and next_char == "*":
+            index += 2
+            while index + 1 < len(value) and not (value[index] == "*" and value[index + 1] == "/"):
+                index += 1
+            index = min(index + 2, len(value))
+            continue
+
+        result.append(char)
+        index += 1
+
+    return "".join(result)
+
+
+def _strip_trailing_commas(value: str) -> str:
+    result: list[str] = []
+    in_string = False
+    string_delimiter = ""
+    escaping = False
+    index = 0
+
+    while index < len(value):
+        char = value[index]
+
+        if in_string:
+            result.append(char)
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == string_delimiter:
+                in_string = False
+            index += 1
+            continue
+
+        if char in {'"', "'"}:
+            in_string = True
+            string_delimiter = char
+            result.append(char)
+            index += 1
+            continue
+
+        if char == ",":
+            lookahead = index + 1
+            while lookahead < len(value) and value[lookahead].isspace():
+                lookahead += 1
+            if lookahead < len(value) and value[lookahead] in {"]", "}"}:
+                index += 1
+                continue
+
+        result.append(char)
+        index += 1
+
+    return "".join(result)
+
+
+def _normalize_single_quoted_strings(value: str) -> tuple[str, bool]:
+    result: list[str] = []
+    in_double_quoted_string = False
+    escaping = False
+    index = 0
+    changed = False
+
+    while index < len(value):
+        char = value[index]
+
+        if in_double_quoted_string:
+            result.append(char)
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == '"':
+                in_double_quoted_string = False
+            index += 1
+            continue
+
+        if char == '"':
+            in_double_quoted_string = True
+            result.append(char)
+            index += 1
+            continue
+
+        if char != "'":
+            result.append(char)
+            index += 1
+            continue
+
+        index += 1
+        string_buffer: list[str] = []
+        single_quoted_escaping = False
+        while index < len(value):
+            string_char = value[index]
+            if single_quoted_escaping:
+                string_buffer.append(string_char)
+                single_quoted_escaping = False
+                index += 1
+                continue
+            if string_char == "\\":
+                single_quoted_escaping = True
+                index += 1
+                continue
+            if string_char == "'":
+                break
+            string_buffer.append(string_char)
+            index += 1
+
+        if index >= len(value) or value[index] != "'":
+            return value, False
+
+        result.append(json.dumps("".join(string_buffer), ensure_ascii=False))
+        changed = True
+        index += 1
+
+    return "".join(result), changed
+
+
 def _load_provider_payload(output_text: str) -> dict[str, Any]:
+    cleaned_output = _strip_bom(_strip_markdown_code_fence(output_text))
     try:
-        payload = json.loads(_strip_markdown_code_fence(output_text))
+        payload = json.loads(cleaned_output)
     except ValueError as exc:
-        raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
-            message=f"Provider output was not valid JSON: {exc}",
-            failure_detail={},
-        ) from exc
+        repair_steps = [
+            "strip_markdown_code_fence",
+            "strip_bom",
+            "strip_json_comments",
+            "strip_trailing_commas",
+        ]
+        repaired_output = _strip_trailing_commas(_strip_json_comments(cleaned_output))
+        normalized_output, normalized = _normalize_single_quoted_strings(repaired_output)
+        if normalized:
+            repaired_output = normalized_output
+            repair_steps.append("normalize_single_quoted_strings")
+        try:
+            payload = json.loads(repaired_output)
+        except ValueError as repaired_exc:
+            raise OpenAICompatProviderBadResponseError(
+                failure_kind="PROVIDER_BAD_RESPONSE",
+                message=f"Provider output was not valid JSON: {repaired_exc}",
+                failure_detail={
+                    "parse_stage": "repair_parse",
+                    "repair_steps": repair_steps,
+                    "parse_error": str(repaired_exc),
+                },
+            ) from repaired_exc
     if not isinstance(payload, dict):
         raise OpenAICompatProviderBadResponseError(
             failure_kind="PROVIDER_BAD_RESPONSE",
             message="Provider output JSON root must be an object.",
-            failure_detail={},
+            failure_detail={
+                "parse_stage": "root_validation",
+            },
         )
     return payload
 

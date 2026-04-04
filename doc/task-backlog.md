@@ -635,13 +635,17 @@
 
 #### P0-WRK-006：LLM 输出 Schema 校验增强
 
-**状态**：部分完成（2026-04-04，当前只做到标准 schema 校验）
+**状态**：已完成（2026-04-04，本轮按主线收口）
 
 **描述**：增强 schema 校验，处理真实 LLM 输出中常见的格式问题。
 
 **文件**：
+- 修改：`backend/app/core/runtime.py`
 - 修改：`backend/app/core/ticket_handlers.py`（`handle_ticket_result_submit` 中的校验逻辑）
 - 修改：`backend/app/core/output_schemas.py`
+- 修改：`backend/tests/test_output_schemas.py`
+- 修改：`backend/tests/test_scheduler_runner.py`
+- 修改：`backend/tests/test_api.py`
 
 **依赖**：P0-WRK-001
 
@@ -656,10 +660,12 @@
 
 **风险**：低
 
-**当前补记**：
-- `ticket_handlers.py` 现在已经对 schema version mismatch、schema validator failure 和 write-set violation 产出结构化失败详情
-- `runtime.py` live path 目前只会去掉 markdown code fence 后直接做 `json.loads`，还没有补尾逗号、单引号之类常见 JSON 修复逻辑
-- 因此这项只能算“标准校验已落地”，还不能写成“真实 LLM 脏输出鲁棒性已完成”
+**完成补记**：
+- `runtime.py` 现在会按保守顺序处理 live provider 脏输出：`strip markdown fence -> strip BOM -> direct parse -> strip comments -> strip trailing commas -> normalize single-quoted strings -> repair parse`
+- 修复后仍无法解析时，会继续归类为 `PROVIDER_BAD_RESPONSE`，并把 `parse_stage / repair_steps / parse_error` 写进 `failure_detail`
+- `output_schemas.py` 现已统一抛出结构化 `OutputSchemaValidationError`；主线 schema 校验失败现在会显式带出 `field_path / expected / actual`
+- `ticket_handlers.py` 现在会把这些结构化字段写进 `SCHEMA_ERROR.failure_detail`，同时保留 `schema_ref / schema_version`
+- 本轮补了最小回归测试：一条覆盖 provider 脏 JSON 修复成功，一条覆盖不可修复坏 JSON 的 failure detail，一条覆盖 `ticket-result-submit` 的结构化 schema 失败细节
 
 ---
 

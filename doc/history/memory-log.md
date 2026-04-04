@@ -150,6 +150,9 @@
 - Thin staffing governance now enforces a hard same-role diversity guard: `hire` and `replace` compare against `ACTIVE + board_approved` peers, reject high-overlap persona matches, and keep replacement checks scoped by excluding the employee being replaced.
 - `workforce` now exposes current worker persona fields plus `profile_summary`, and the React shell now renders the same persona shape in both Workforce and staffing Review Room instead of leaving persona data hidden in backend-only payloads.
 - Full verification after the persona slice finished at `py -m pytest tests/ -q` → `391 passed`, `npm run build` → passed, and `npm run test:run` → `49 passed`; in this shell, bare `pytest` is still missing on PATH, so backend validation remains reproducible through `py -m pytest`.
+- Closed `P0-WRK-006`: OpenAI Compat live runtime now does a conservative cleanup pass for markdown fences, BOM, JSON comments, trailing commas, and single-quoted JSON-like strings before declaring `PROVIDER_BAD_RESPONSE`.
+- Irreparable provider payloads now carry `parse_stage / repair_steps / parse_error`, and schema validation failures now carry `field_path / expected / actual` through `SCHEMA_ERROR.failure_detail`, which makes runtime triage readable without opening raw payloads.
+- Full verification after this slice finished at `py -m pytest tests/ -q` → `394 passed`, `npm run build` → passed, and `npm run test:run` → `49 passed`.
 
 ### 2026-04-02 (docs compaction)
 

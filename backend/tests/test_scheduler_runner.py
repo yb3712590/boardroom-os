@@ -7,10 +7,12 @@ from pathlib import Path
 from uuid import uuid4
 
 import app.core.runtime as runtime_module
+import pytest
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
+    OpenAICompatProviderBadResponseError,
     OpenAICompatProviderRateLimitedError,
     OpenAICompatProviderResult,
     OpenAICompatProviderUnavailableError,
@@ -1597,6 +1599,51 @@ def test_runtime_provider_bad_response_does_not_open_provider_incident(client, s
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_bad_response"]
     assert ticket_projection["status"] == "COMPLETED"
     assert repository.list_open_incidents() == []
+
+
+def test_runtime_load_provider_payload_repairs_common_json_noise():
+    payload = runtime_module._load_provider_payload(
+        """```json
+        {
+          // provider side comment
+          'summary': 'Recovered payload',
+          'recommended_option_id': 'option_a',
+          'options': [
+            {
+              'option_id': 'option_a',
+              'label': 'Primary option',
+              'summary': 'Recovered after cleanup',
+            },
+          ],
+        }
+        ```"""
+    )
+
+    assert payload["summary"] == "Recovered payload"
+    assert payload["recommended_option_id"] == "option_a"
+    assert payload["options"][0]["option_id"] == "option_a"
+
+
+def test_runtime_load_provider_payload_reports_parse_stage_and_repairs_for_irreparable_json():
+    with pytest.raises(OpenAICompatProviderBadResponseError) as exc_info:
+        runtime_module._load_provider_payload(
+            """```json
+            {
+              "summary": "Broken payload",
+              "recommended_option_id": option_a,
+            }
+            ```"""
+        )
+
+    assert exc_info.value.failure_kind == "PROVIDER_BAD_RESPONSE"
+    assert exc_info.value.failure_detail["parse_stage"] == "repair_parse"
+    assert exc_info.value.failure_detail["repair_steps"] == [
+        "strip_markdown_code_fence",
+        "strip_bom",
+        "strip_json_comments",
+        "strip_trailing_commas",
+    ]
+    assert "parse_error" in exc_info.value.failure_detail
 
 
 def test_runtime_provider_rate_limited_response_opens_provider_incident(client, set_ticket_time, monkeypatch):

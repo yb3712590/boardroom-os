@@ -109,6 +109,7 @@ from app.core.output_schemas import (
     IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
+    OutputSchemaValidationError,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
     validate_output_payload,
@@ -3885,6 +3886,26 @@ def handle_ticket_result_submit(
             schema_version=int(created_spec.get("output_schema_version") or 0),
             submitted_schema_version=payload.schema_version,
             payload=payload.payload,
+        )
+    except OutputSchemaValidationError as exc:
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind="SCHEMA_ERROR",
+                failure_message=str(exc),
+                failure_detail={
+                    "schema_ref": created_spec.get("output_schema_ref"),
+                    "schema_version": created_spec.get("output_schema_version"),
+                    "field_path": exc.field_path,
+                    "expected": exc.expected,
+                    "actual": exc.actual,
+                },
+                idempotency_key=payload.idempotency_key,
+            ),
         )
     except ValueError as exc:
         return handle_ticket_fail(

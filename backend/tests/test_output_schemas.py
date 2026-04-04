@@ -176,3 +176,20 @@ def test_output_schema_registry_accepts_valid_delivery_check_report_payload() ->
             ],
         },
     )
+
+
+def test_output_schema_registry_exposes_structured_failure_detail_for_missing_required_field() -> None:
+    with pytest.raises(Exception) as exc_info:
+        validate_output_payload(
+            schema_ref="ui_milestone_review",
+            schema_version=1,
+            submitted_schema_version="ui_milestone_review_v1",
+            payload={
+                "summary": "Provider left out the options array.",
+                "recommended_option_id": "option_a",
+            },
+        )
+
+    assert getattr(exc_info.value, "field_path", None) == "options"
+    assert getattr(exc_info.value, "expected", None) == "non-empty array"
+    assert getattr(exc_info.value, "actual", None) == "missing"

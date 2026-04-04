@@ -7223,6 +7223,9 @@ def test_ticket_result_submit_schema_error_converts_to_controlled_failure(client
     assert latest_ticket_id != "tkt_visual_001"
     assert latest_ticket["status"] == TICKET_STATUS_PENDING
     assert failed_events[-1]["payload"]["failure_kind"] == "SCHEMA_ERROR"
+    assert failed_events[-1]["payload"]["failure_detail"]["field_path"] == "options"
+    assert failed_events[-1]["payload"]["failure_detail"]["expected"] == "non-empty array"
+    assert failed_events[-1]["payload"]["failure_detail"]["actual"] == "missing"
 
 
 def test_ticket_result_submit_write_set_violation_converts_to_controlled_failure(client, set_ticket_time):

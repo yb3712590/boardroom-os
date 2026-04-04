@@ -16,7 +16,7 @@
 
 ## 当前基线（2026-04-04 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 391 passed
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 394 passed
 - frontend：`npm run build` → passed，`npm run test:run` → 49 passed
 
 ---
@@ -85,9 +85,12 @@
 - Dashboard / runtime provider 读面现在统一使用 `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`，paused / incomplete 文案会明确说明当前会回落到 deterministic
 - 已 lease 的 OpenAI Compat 票在 provider 已 paused 时可以继续走本地 fallback 完成，不再只停在 `LEASED`
 - live path 成功产出 `consensus_document / implementation_bundle / delivery_check_report / ui_milestone_review / delivery_closeout_package` 时，现在也会补齐和 deterministic path 一致的默认 artifact refs 与写入记录，scope 审批和 closeout 收口不再因为缺证据引用被拒
+- `P0-WRK-006` 本轮已真正收口：OpenAI Compat live path 现在会先做 `code fence / BOM / 注释 / 尾逗号 / 单引号 JSON-like` 的保守清洗，再进入 schema 校验；修不动时仍归类为 `PROVIDER_BAD_RESPONSE`，并补 `parse_stage / repair_steps / parse_error`
+- 输出 schema 校验现在会返回结构化失败详情；`ticket-result-submit` 上的 `SCHEMA_ERROR` 会补 `field_path / expected / actual`，排障时不再只剩一条字符串报错
 - 后端新增了两条 mock provider 主链验证：一条覆盖 provider-backed happy path 到 closeout completion，另一条覆盖 final review 上的 `PROVIDER_BAD_RESPONSE` fallback 后仍能完成主链
 - 后端补了 provider 重试、pause、fallback、健康读面的最小测试；前端 mock / 类型也已对齐新契约
 - `frontend_engineer` 现在已经拆成独立 `frontend_engineer_primary` runtime worker；`BUILD / REVIEW / closeout` 改走独立 profile，scope 共识链仍保留 `ui_designer_primary` 并由调度兼容承接
+- 本轮验证后，后端全量复核更新为 `394 passed`
 
 - [x] 前端 `build` 与 `test:run` 已完成真实复核；当前 shell 可直接运行 `npm run build` 与 `npm run test:run`
 
