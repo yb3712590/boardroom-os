@@ -14,7 +14,7 @@
 
 - [cto-assessment-report.md](cto-assessment-report.md)：CTO 技术评审报告（诊断、差距分析、优先级建议）
 - [milestone-timeline.md](milestone-timeline.md)：13 周 9 里程碑时间线
-- [task-backlog.md](task-backlog.md)：112 项任务清单（含工时估算、依赖图、验收标准）
+- [task-backlog.md](task-backlog.md)：121 项任务清单（含工时估算、依赖图、验收标准）
 
 ## 设计文档
 
@@ -35,3 +35,8 @@
 
 说明：
 `memory-log.md` 和归档文件保留了最近几轮基础设施推进的真实记录；当前主线请以 `roadmap-reset.md` 和 `TODO.md` 为准。
+
+补充边界：
+- `TODO.md` 只记录当前主线待办；远期需求不要直接写进这里。
+- 远期框架能力，例如多 Provider、多模型共存、角色与模型绑定、任务级模型覆盖、成本分层路由，统一看 `feature-spec.md`、`milestone-timeline.md`、`task-backlog.md`。
+- 远期公司治理能力，例如 CTO / 架构师这类低频文档型角色、治理模板和文档产物职责，统一看 `feature-spec.md` 与 `task-backlog.md`；跨角色会审协议细节仍看 `design/meeting-room-protocol.md`。

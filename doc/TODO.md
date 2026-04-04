@@ -330,6 +330,6 @@
 
 ## 参考
 
-- 完整 112 项任务清单（含工时估算、依赖图、验收标准）：[task-backlog.md](task-backlog.md)
+- 完整 121 项任务清单（含工时估算、依赖图、验收标准）：[task-backlog.md](task-backlog.md)
 - CTO 评审报告（诊断与差距分析）：[cto-assessment-report.md](cto-assessment-report.md)
 - 里程碑时间线（13 周 9 里程碑）：[milestone-timeline.md](milestone-timeline.md)

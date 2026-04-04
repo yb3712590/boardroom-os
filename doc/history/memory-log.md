@@ -166,6 +166,9 @@
 - Added three new recovery closure regressions in `backend/tests/test_scheduler_runner.py`: timeout incident recovery, repeated failure recovery, and provider incident recovery all now prove the mainline can recover and finish at `closeout completion`.
 - Added a dedicated frontend incident smoke path in `frontend/src/App.test.tsx`: `Inbox -> /incident/:incidentId -> Incident Drawer -> incident-resolve -> dashboard refresh` now has one explicit regression instead of two smaller disconnected assertions.
 - Full verification for this round finished at `py -m pytest tests/ -q` -> `399 passed`, `npm run build` -> passed, and `npm run test:run` -> `49 passed`; in this shell, bare `pytest` is still missing on PATH, so the exact required backend command remains environment-blocked rather than code-blocked.
+- Split a new long-term requirement into two tracks and kept it out of current mainline `doc/TODO.md`: framework capability and company governance.
+- `doc/feature-spec.md`, `doc/milestone-timeline.md`, and `doc/task-backlog.md` now explicitly cover multi-model coexistence, role-to-model binding, task-level override, preferred/actual model tracking, and high-cost low-frequency routing.
+- The same doc pass now also records CTO / 架构师这类低频文档型角色、其默认产物边界，以及 CEO 按治理模板决定何时拉起这些角色参与。
 
 ### 2026-04-02 (docs compaction)
 
