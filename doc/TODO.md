@@ -207,6 +207,33 @@
 
 ---
 
+### P0-D：P0 集成收口首批
+
+主线关系：**直接服务主线验收闭环**，不新增功能，只把当前代码已经具备的主线能力收成更清楚的验收证明。
+
+- [x] `P0-INT-001`：补出 deterministic 主线从 `project-init` 到 `closeout completion` 的完整后端集成证明
+- [x] `P0-INT-002`：把已有 provider happy path / `PROVIDER_BAD_RESPONSE` fallback 主线测试正式收口到 `P0-INT`
+- [x] `P0-INT-003`：补出 `staffing containment -> incident resolve -> 恢复重试 -> checker -> board review` 的真实集成证明
+- [x] `P0-INT-004`：补出前端主线烟囱测试，串起 `project-init -> review approve -> completion evidence`
+- [ ] `P0-INT-005`：补出 build/check 主线 timeout / repeated failure incident 恢复后一直走到 workflow completion 的证明
+- [ ] `P0-INT-006`：补出 provider incident 人工恢复后的主线闭环证明
+- [ ] `P0-INT-007`：把前端 incident drawer / resolve 收口成明确的主线烟囱场景
+- [ ] `P0-INT-008`：整理 P0 集成验收矩阵总表
+
+本轮产物：
+
+- 后端新增了 2 条明确的 `P0-INT` 集成测试支点：
+  - deterministic 主线完整闭环到 `closeout completion`
+  - staffing containment 恢复后重新回到 `maker -> checker -> board review`
+- provider happy path / fallback 两条主线闭环测试本来就已存在；这轮不重复造同类测试，而是把它们正式收口到 `P0-INT-002`
+- 前端新增了 1 条主线烟囱测试，证明治理壳能从首页发起 `project-init`、进入 review、执行 approve，并展示 completion card 与 final evidence 入口
+
+新发现的任务：
+
+- [ ] `P0-INT-005` 需要单独补 build/check 主线 timeout 或 repeated failure incident 恢复后一直走到 workflow completion 的完整证明。主线关系：直接服务主线验收闭环，不新增新能力。
+
+---
+
 ## P2：功能收口与后置能力
 
 ### P2-A：会议室协议最小版

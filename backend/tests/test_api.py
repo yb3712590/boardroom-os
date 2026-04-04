@@ -10649,6 +10649,239 @@ def test_incident_resolve_can_restore_and_retry_staffing_containment_with_preser
     )
 
 
+def test_staffing_containment_recovery_followup_can_reenter_checker_and_board_review(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Recover staffing-contained meeting fix ticket back into review"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    hire_response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_frontend_backup_staffing",
+        ),
+    )
+    assert hire_response.status_code == 200
+
+    repository = client.app.state.repository
+    approval = repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve backup staffing for staffing recovery.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:staffing-recovery-review",
+        },
+    )
+    assert approve_response.status_code == 200
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scope_staffing_review_001",
+        node_id="node_scope_staffing_review",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_scope_staffing_review_001",
+            node_id="node_scope_staffing_review",
+            include_review_request=True,
+            review_request=_meeting_escalation_review_request(),
+        ),
+    )
+
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_staffing_review")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_staffing_review",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_staffing_review",
+            started_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_staffing_review",
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_scope_unbounded",
+                    "severity": "high",
+                    "category": "SCOPE_DISCIPLINE",
+                    "headline": "Consensus still includes non-MVP scope.",
+                    "summary": "Document keeps remote handoff inside the current round.",
+                    "required_action": "Remove non-MVP scope before board review.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:changes-required-review",
+        ),
+    )
+
+    fix_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_staffing_review")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=fix_ticket_id,
+            node_id="node_scope_staffing_review",
+            leased_by="emp_frontend_backup_staffing",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=fix_ticket_id,
+            node_id="node_scope_staffing_review",
+            started_by="emp_frontend_backup_staffing",
+        ),
+    )
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json={
+            **_employee_freeze_payload(
+                workflow_id,
+                employee_id="emp_frontend_backup_staffing",
+            ),
+            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_backup_staffing:review",
+        },
+    )
+    assert freeze_response.status_code == 200
+
+    incident = repository.list_open_incidents()[0]
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident["incident_id"],
+            idempotency_key=f"incident-resolve:{incident['incident_id']}:review-recovery",
+            followup_action="RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT",
+        ),
+    )
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+
+    followup_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_staffing_review")[
+        "latest_ticket_id"
+    ]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=followup_ticket_id,
+            node_id="node_scope_staffing_review",
+            leased_by="emp_frontend_2",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=followup_ticket_id,
+            node_id="node_scope_staffing_review",
+            started_by="emp_frontend_2",
+        ),
+    )
+    maker_recovery_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=followup_ticket_id,
+            node_id="node_scope_staffing_review",
+            include_review_request=False,
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{followup_ticket_id}:recovered-maker",
+        ),
+    )
+
+    assert maker_recovery_response.status_code == 200
+    assert maker_recovery_response.json()["status"] == "ACCEPTED"
+
+    recovered_checker_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_staffing_review")[
+        "latest_ticket_id"
+    ]
+    assert recovered_checker_ticket_id != followup_ticket_id
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=recovered_checker_ticket_id,
+            node_id="node_scope_staffing_review",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=recovered_checker_ticket_id,
+            node_id="node_scope_staffing_review",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_recovery_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=recovered_checker_ticket_id,
+            node_id="node_scope_staffing_review",
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{recovered_checker_ticket_id}:recovered-checker",
+        ),
+    )
+
+    approvals = [
+        item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id
+    ]
+
+    assert checker_recovery_response.status_code == 200
+    assert checker_recovery_response.json()["status"] == "ACCEPTED"
+    assert len(approvals) == 1
+    assert approvals[0]["approval_type"] == "MEETING_ESCALATION"
+    assert approvals[0]["payload"]["review_pack"]["meta"]["review_type"] == "MEETING_ESCALATION"
+    assert approvals[0]["payload"]["review_pack"]["maker_checker_summary"]["review_status"] == (
+        "APPROVED_WITH_NOTES"
+    )
+    assert repository.list_open_incidents() == []
+
+
 def test_staffing_containment_incident_projection_exposes_retry_followup_actions(client):
     workflow_id = "wf_scope_staffing_actions"
     repository = client.app.state.repository

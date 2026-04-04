@@ -154,6 +154,14 @@
 - Irreparable provider payloads now carry `parse_stage / repair_steps / parse_error`, and schema validation failures now carry `field_path / expected / actual` through `SCHEMA_ERROR.failure_detail`, which makes runtime triage readable without opening raw payloads.
 - Full verification after this slice finished at `py -m pytest tests/ -q` → `394 passed`, `npm run build` → passed, and `npm run test:run` → `49 passed`.
 
+### 2026-04-05
+
+- Expanded the old aggregated `P0-INT-*` placeholder in `doc/task-backlog.md` into eight explicit tasks, so integration-closure progress is now visible task by task instead of hiding behind one heading.
+- Added a new deterministic mainline integration proof in `backend/tests/test_scheduler_runner.py`: zero-config `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` now has an explicit regression test that asserts `completion_summary`, `closeout_ticket_id`, `closeout_artifact_refs`, and no open approvals or incidents.
+- Reclassified the existing provider-backed happy path and final-review `PROVIDER_BAD_RESPONSE` fallback closeout tests as the completed scope for `P0-INT-002`, instead of duplicating the same coverage under a new name.
+- Added a new incident recovery integration proof in `backend/tests/test_api.py`: the real `staffing containment -> incident resolve -> restore and retry -> maker -> checker -> board review` path is now covered end-to-end enough to prove `maker_checker_context` survives recovery and governance can reopen after the incident closes.
+- Added a frontend smoke test in `frontend/src/App.test.tsx` that strings together `project-init`, inbox review entry, board approve, completion card display, and reopening final evidence, so `P0-INT-004` is no longer implied only by several smaller UI tests.
+
 ### 2026-04-02 (docs compaction)
 
 - Simplified the homepage `README.md` so first-time readers see the product definition, current real chain, quick start, and doc entrypoints without scrolling through round-by-round implementation history.

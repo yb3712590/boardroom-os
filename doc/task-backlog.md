@@ -1423,11 +1423,139 @@
 
 ---
 
-#### P0-INT-001 到 P0-INT-008：端到端集成测试
+#### P0-INT-001：deterministic 主线完整闭环
 
-（8 个任务，覆盖完整链路、故障恢复、确定性回退、前后端联调等场景）
+**状态**：已完成（2026-04-05，P0 集成收口批次 1）
 
-**预估**：共 32h
+**描述**：补出零配置 deterministic 主线从 `project-init` 到 `closeout completion` 的完整后端集成证明。
+
+**文件**：
+- 新增：`backend/tests/test_scheduler_runner.py`
+
+**依赖**：`P0-CEO-014`、`P0-WRK-012`
+
+**预估**：4h
+
+**验收标准**：
+- `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` 在 deterministic 路径下可完整闭环
+- 最终 `completion_summary` 包含 `closeout_ticket_id` 与 `closeout_artifact_refs`
+- 无 open approval、无 open incident
+
+**完成补记**：
+- 已新增 deterministic 全链路回归测试，直接断言 workflow 完成态和 closeout 证据
+
+---
+
+#### P0-INT-002：provider happy path / fallback 主线收口
+
+**状态**：已完成（2026-04-05，按现有测试收口验收）
+
+**描述**：把已有 provider happy path 与 `PROVIDER_BAD_RESPONSE` fallback 主线验证正式纳入 `P0-INT` 验收口径，不再只散在 Worker/provider 批次里。
+
+**文件**：
+- 复用：`backend/tests/test_scheduler_runner.py`
+
+**依赖**：`P0-WRK-007`、`P0-WRK-008`、`P0-WRK-012`
+
+**预估**：4h
+
+**验收标准**：
+- provider-backed happy path 能从 scope 审批跑到 closeout completion
+- final review 的 `PROVIDER_BAD_RESPONSE` fallback 后仍能到 closeout completion
+- 两条路径都保留清晰的 provider / fallback 证据
+
+**完成补记**：
+- 现有 `test_provider_backed_scope_delivery_chain_reaches_closeout_completion`
+- 现有 `test_provider_bad_response_on_final_review_falls_back_and_still_reaches_closeout_completion`
+- 本轮把它们正式收口到 `P0-INT`，不重复造同类测试
+
+---
+
+#### P0-INT-003：incident 恢复后重新回到 maker-checker 与 board review
+
+**状态**：已完成（2026-04-05，P0 集成收口批次 1）
+
+**描述**：补出主线 incident 恢复后的真实继续链路证明，覆盖 `staffing containment -> incident resolve -> 恢复重试 -> checker -> board review`，避免只停在单点命令成功。
+
+**文件**：
+- 新增：`backend/tests/test_api.py`
+
+**依赖**：`P0-WRK-012`
+
+**预估**：4h
+
+**验收标准**：
+- `RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT` 能创建 follow-up ticket
+- follow-up ticket 能重新进入 `maker -> checker`
+- checker 通过后重新打开 `MEETING_ESCALATION` board review
+- incident 已关闭，maker-checker 上下文未丢
+
+**完成补记**：
+- 已新增恢复后重新进入 checker 和 board review 的集成测试，直接验证 `maker_checker_context` 与 reopened approval
+
+---
+
+#### P0-INT-004：前端主线治理壳烟囱测试
+
+**状态**：已完成（2026-04-05，P0 集成收口批次 1）
+
+**描述**：补出前端主线烟囱测试，证明治理壳能正确发起 `project-init`、进入 review、提交 board approve，并在 closeout 完成后展示 completion evidence。
+
+**文件**：
+- 新增：`frontend/src/App.test.tsx`
+
+**依赖**：`P0-FE-022`
+
+**预估**：4h
+
+**验收标准**：
+- 首页可发起 `project-init`
+- 能从 inbox 进入 review drawer
+- board approve 后会刷新快照并出现 completion card
+- 能重新打开 final review evidence
+
+**完成补记**：
+- 已新增主线烟囱测试，串起 `project-init -> review approve -> completion evidence`
+
+---
+
+#### P0-INT-005：主线 timeout / repeated failure incident 恢复到 workflow completion
+
+**状态**：未开始
+
+**描述**：补出 build/check 主线在 timeout 或 repeated failure incident 后，恢复并继续走到 workflow completion 的完整集成证明。
+
+**预估**：4h
+
+---
+
+#### P0-INT-006：provider incident 人工恢复后的主线闭环
+
+**状态**：未开始
+
+**描述**：覆盖 provider pause / unavailable 类 incident 经人工恢复后，主线重新回到 closeout completion 的验证。
+
+**预估**：4h
+
+---
+
+#### P0-INT-007：前端 incident 路由与恢复烟囱测试
+
+**状态**：未开始
+
+**描述**：把前端现有 incident drawer / resolve 行为收口成明确的主线烟囱场景，和 `P0-INT-004` 形成成对验收。
+
+**预估**：4h
+
+---
+
+#### P0-INT-008：P0 集成验收矩阵总表
+
+**状态**：未开始
+
+**描述**：整理 `P0-INT-001` 到 `P0-INT-007` 的覆盖矩阵，明确 deterministic、provider、incident、frontend 烟囱各自覆盖范围与剩余缺口。
+
+**预估**：4h
 
 ---
 

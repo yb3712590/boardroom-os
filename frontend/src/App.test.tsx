@@ -1184,6 +1184,62 @@ describe('Boardroom UI', () => {
     expect(screen.getByText(/review scope decision consensus/i)).toBeInTheDocument()
   })
 
+  it('runs the mainline smoke from project init to review approval and completion evidence', async () => {
+    const { fetchMock } = installBoardroomMock({
+      dashboard: dashboardData({
+        active_workflow: null,
+        ops_strip: {
+          ...dashboardData().ops_strip,
+          budget_total: 0,
+          budget_used: 0,
+          budget_remaining: 0,
+          active_tickets: 0,
+          blocked_nodes: 0,
+        },
+        pipeline_summary: {
+          phases: [
+            phase('Intake', 'PENDING'),
+            phase('Plan', 'PENDING'),
+            phase('Build', 'PENDING'),
+            phase('Check', 'PENDING'),
+            phase('Review', 'PENDING'),
+          ],
+          critical_path_node_ids: [],
+          blocked_node_ids: [],
+        },
+      }),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /launch to first review/i }))
+    await user.click(await screen.findByRole('button', { name: /review scope decision consensus/i }))
+
+    expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: /approve and continue/i }))
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/commands/project-init',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    )
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/commands/board-approve',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    )
+    expect(await screen.findByRole('heading', { name: /delivery completed/i })).toBeInTheDocument()
+    expect(screen.getByText(/closeout refs/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open final review evidence/i }))
+
+    expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
+  })
+
   it('lights board gate and lists the inbox approval when board review is pending', async () => {
     installBoardroomMock({
       dashboard: dashboardData({

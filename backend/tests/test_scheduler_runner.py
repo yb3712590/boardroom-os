@@ -1338,6 +1338,33 @@ def test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_re
     assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
 
 
+def test_deterministic_scope_delivery_chain_reaches_closeout_completion(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, goal="Deterministic mainline completion")
+    repository = client.app.state.repository
+
+    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
+    _approve_review(client, scope_approval, idempotency_suffix="deterministic-scope")
+
+    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
+    _approve_review(client, final_review_approval, idempotency_suffix="deterministic-final-review")
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    assert dashboard_response.status_code == 200
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+
+    assert completion_summary is not None
+    assert completion_summary["workflow_id"] == workflow_id
+    assert completion_summary["final_review_pack_id"] == final_review_approval["review_pack_id"]
+    assert completion_summary["closeout_completed_at"] is not None
+    assert completion_summary["closeout_ticket_id"] is not None
+    assert completion_summary["closeout_artifact_refs"] == [
+        f"art://runtime/{completion_summary['closeout_ticket_id']}/delivery-closeout-package.json"
+    ]
+    assert repository.list_open_approvals() == []
+    assert repository.list_open_incidents() == []
+
+
 def test_scheduler_runner_triggers_idle_ceo_maintenance_for_pending_workflow(
     client,
     monkeypatch,
