@@ -134,6 +134,11 @@
 - Shared UI primitives now include `Button / Badge / LoadingSkeleton / Toast`; the current shell batch actually uses the first three, while `Toast` remains a local controlled component rather than a new global message bus.
 - `DashboardPage.tsx` dropped from 903 lines to 680 lines, but it still owns command handlers plus local `incident detail / dependency inspector` reads, so the remaining frontend follow-up is still CSS split, utils extraction, and another page-shell slimming pass rather than a new feature lane.
 - This shell still lacks `pytest` and `npm` on PATH, but the machine has working Python and Node installs behind explicit entrypoints: backend verification completed again at `py -m pytest tests -q` → `378 passed`, and frontend verification completed via `C:\Program Files\nodejs\npm.cmd` with `npm run build` passed and `npm run test:run` → `39 passed`.
+- Reconciled doc drift across `doc/TODO.md` and `doc/task-backlog.md`: `P0-WRK-009` is now explicitly marked complete, while `P0-CEO-009` and `P0-CEO-011` remain open and `P0-WRK-006` remains only partially complete.
+- Removed the stale TODO checkbox that still treated frontend verification as pending; the real situation is narrower: this shell still lacks `npm` on PATH, but machine-level frontend verification is reproducible through `C:\Program Files\nodejs\npm.cmd`.
+- The next active implementation batch is still unchanged after the doc sync: `P0-FE-020 / P0-FE-021 / P0-FE-022`.
+- Revalidated the current mainline after the doc-sync pass: backend still finishes at `378 passed`, while frontend still finishes at `npm run build` passed and `npm run test:run` → `39 passed`.
+- In this PowerShell host, bare `pytest` and `npm` are still not directly callable on PATH; backend verification remains reproducible through `py -m pytest`, and frontend verification remains reproducible through `C:\Program Files\nodejs\npm.cmd`.
 
 ### 2026-04-02 (docs compaction)
 

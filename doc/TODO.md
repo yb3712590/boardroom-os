@@ -89,7 +89,7 @@
 - 后端补了 provider 重试、pause、fallback、健康读面的最小测试；前端 mock / 类型也已对齐新契约
 - `frontend_engineer` 现在已经拆成独立 `frontend_engineer_primary` runtime worker；`BUILD / REVIEW / closeout` 改走独立 profile，scope 共识链仍保留 `ui_designer_primary` 并由调度兼容承接
 
-- [ ] 当前开发环境缺少 Node.js / npm，前端 `build` 与 `test:run` 还需要在可用环境里补一次真实复核
+- [x] 前端 `build` 与 `test:run` 已完成真实复核；当前 shell 仍缺 `node / npm` PATH，但机器上可通过显式调用 `C:\Program Files\nodejs\npm.cmd` 复现 `build passed` 与 `test:run -> 39 passed`
 
 主线关系：**只服务验证闭环**，不改变主链能力，但影响这条主线的前端交付是否完成最终验收。
 

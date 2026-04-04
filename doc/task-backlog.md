@@ -286,6 +286,8 @@
 
 #### P0-CEO-009：实现 CEO 定时唤醒
 
+**状态**：未开始（2026-04-04，文档校准确认）
+
 **描述**：在 scheduler_runner 中添加定时 CEO 唤醒，确保系统不会因为错过事件而停滞。
 
 **文件**：
@@ -304,6 +306,10 @@
 - 定时间隔可通过配置调整
 
 **风险**：低
+
+**当前补记**：
+- 当前 `backend/app/scheduler_runner.py` 只负责 scheduler tick、leased runtime 和 artifact cleanup，还没有接 CEO 定时唤醒
+- 现有 CEO 触发点仍只覆盖事件驱动入口：工单完成、工单失败、审批完成、incident 恢复
 
 ---
 
@@ -340,6 +346,8 @@
 
 #### P0-CEO-011：CEO 任务拆解能力
 
+**状态**：未完成（2026-04-04，当前只支持受限 preset 建票）
+
 **描述**：CEO 能根据 north_star_goal 和当前阶段，自主决定需要创建哪些工单。
 
 **文件**：
@@ -358,6 +366,10 @@
 - 工单类型和数量合理（不超过 5 个并行工单）
 
 **风险**：高（依赖提示工程质量）
+
+**当前补记**：
+- 当前有限接管首轮只支持受控 `CREATE_TICKET` 白名单 preset，并能把通过校验的建票动作落到现有 handler
+- 现在还没有做到 `project-init` 后由 CEO 基于 `north_star_goal` 自主拆出第一批工单，也没有让工单 spec 由 CEO 生成
 
 ---
 
@@ -613,6 +625,8 @@
 
 #### P0-WRK-006：LLM 输出 Schema 校验增强
 
+**状态**：部分完成（2026-04-04，当前只做到标准 schema 校验）
+
 **描述**：增强 schema 校验，处理真实 LLM 输出中常见的格式问题。
 
 **文件**：
@@ -631,6 +645,11 @@
 - 校验失败时产出结构化错误报告，包含具体字段和期望值
 
 **风险**：低
+
+**当前补记**：
+- `ticket_handlers.py` 现在已经对 schema version mismatch、schema validator failure 和 write-set violation 产出结构化失败详情
+- `runtime.py` live path 目前只会去掉 markdown code fence 后直接做 `json.loads`，还没有补尾逗号、单引号之类常见 JSON 修复逻辑
+- 因此这项只能算“标准校验已落地”，还不能写成“真实 LLM 脏输出鲁棒性已完成”
 
 ---
 
@@ -702,6 +721,8 @@
 
 #### P0-WRK-009：Worker 执行审计产物
 
+**状态**：已完成（2026-04-04，按当前三类审计产物验收口径校准）
+
 **描述**：每次 Worker 执行产出审计产物（编译上下文、渲染执行包、原始 LLM 响应）。
 
 **文件**：
@@ -720,6 +741,11 @@
 - 产物在 Review Room 的 Developer Inspector 中可查看
 
 **风险**：低
+
+**完成补记**：
+- runtime 每次执行前都会通过 Context Compiler 持久化 `compiled_context_bundle / compile_manifest / rendered_execution_payload`
+- Review Room 现在已经能通过 `developer_inspector_refs` 和 `DeveloperInspectorStore` 查看这三类审计产物
+- 原始 provider 响应当前没有作为第四类独立 inspector artifact 导出；本任务按现有验收标准继续以三类核心审计产物为准
 
 ---
 
