@@ -15,25 +15,27 @@ import {
   runtimeProviderUpsert,
 } from '../api/commands'
 import { getDependencyInspector, getIncidentDetail } from '../api/projections'
-import { EventTicker } from '../components/EventTicker'
-import { WorkforcePanel } from '../components/WorkforcePanel'
-import { WorkflowRiver } from '../components/WorkflowRiver'
+import { CompletionCard } from '../components/dashboard/CompletionCard'
+import { InboxWell } from '../components/dashboard/InboxWell'
+import { ProjectInitForm } from '../components/dashboard/ProjectInitForm'
+import { WorkflowRiver } from '../components/dashboard/WorkflowRiver'
+import { EventTicker } from '../components/events/EventTicker'
+import { AppShell } from '../components/layout/AppShell'
+import { ThreeColumnLayout } from '../components/layout/ThreeColumnLayout'
+import { TopChrome } from '../components/layout/TopChrome'
 import { DependencyInspectorDrawer } from '../components/overlays/DependencyInspectorDrawer'
 import { IncidentDrawer } from '../components/overlays/IncidentDrawer'
 import { ProviderSettingsDrawer } from '../components/overlays/ProviderSettingsDrawer'
 import { ReviewRoomDrawer } from '../components/overlays/ReviewRoomDrawer'
+import { Button } from '../components/shared/Button'
 import { ErrorBoundary } from '../components/shared/ErrorBoundary'
+import { WorkforcePanel } from '../components/workforce/WorkforcePanel'
 import { useSSE } from '../hooks/useSSE'
 import { useBoardroomStore } from '../stores/boardroom-store'
 import { useReviewStore } from '../stores/review-store'
 import { useUIStore } from '../stores/ui-store'
-import type {
-  CommandAck,
-  DependencyInspectorData,
-  IncidentDetailData,
-  RuntimeProviderData,
-} from '../types/api'
-import type { InboxItem, StaffingHireTemplate } from '../types/domain'
+import type { CommandAck, DependencyInspectorData, IncidentDetailData } from '../types/api'
+import type { StaffingHireTemplate } from '../types/domain'
 
 const DEFAULT_INCIDENT_OPERATOR = 'emp_ops_1'
 
@@ -42,10 +44,6 @@ function assertAcceptedCommand(ack: CommandAck, fallbackMessage: string) {
     return
   }
   throw new Error(ack.reason ?? fallbackMessage)
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-US').format(value)
 }
 
 function formatTimestamp(value: string | null | undefined) {
@@ -60,13 +58,6 @@ function formatTimestamp(value: string | null | undefined) {
   }).format(new Date(value))
 }
 
-function normalizeConstraints(value: string) {
-  return value
-    .split('\n')
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
 function runtimeModeLabel(value: string | null | undefined) {
   switch (value) {
     case 'OPENAI_COMPAT_LIVE':
@@ -79,132 +70,6 @@ function runtimeModeLabel(value: string | null | undefined) {
     default:
       return 'Local deterministic'
   }
-}
-
-function runtimeModeTone(value: string | null | undefined) {
-  switch (value) {
-    case 'OPENAI_COMPAT_LIVE':
-      return 'live'
-    case 'OPENAI_COMPAT_INCOMPLETE':
-    case 'OPENAI_COMPAT_PAUSED':
-      return 'warning'
-    case 'LOCAL_DETERMINISTIC':
-    default:
-      return 'local'
-  }
-}
-
-type ProjectInitFormProps = {
-  submitting: boolean
-  onSubmit: (payload: {
-    northStarGoal: string
-    hardConstraints: string[]
-    budgetCap: number
-  }) => Promise<void>
-}
-
-function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) {
-  const [goal, setGoal] = useState('Ship the thinnest governance shell from dashboard to review room.')
-  const [constraints, setConstraints] = useState(
-    'Keep governance explicit.\nDo not move workflow truth into the browser.',
-  )
-  const [budgetCap, setBudgetCap] = useState('500000')
-
-  return (
-    <section className="project-init-panel" aria-labelledby="project-init-title">
-      <div className="project-init-copy">
-        <p className="eyebrow">Workflow Init</p>
-        <h1 id="project-init-title">Launch workflow to first review</h1>
-        <p>
-          The backend still owns workflow truth. This entry now opens the next workflow, drafts the first scope
-          decision, and pushes it through to the first board review.
-        </p>
-      </div>
-      <form
-        className="project-init-form"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void onSubmit({
-            northStarGoal: goal.trim(),
-            hardConstraints: normalizeConstraints(constraints),
-            budgetCap: Number.parseInt(budgetCap, 10) || 0,
-          })
-        }}
-      >
-        <label>
-          <span className="field-label">North star goal</span>
-          <textarea value={goal} onChange={(event) => setGoal(event.target.value)} rows={4} />
-        </label>
-        <label>
-          <span className="field-label">Hard constraints</span>
-          <textarea value={constraints} onChange={(event) => setConstraints(event.target.value)} rows={5} />
-        </label>
-        <label>
-          <span className="field-label">Budget cap</span>
-          <input type="number" min="0" value={budgetCap} onChange={(event) => setBudgetCap(event.target.value)} />
-        </label>
-        <button type="submit" className="primary-button" disabled={submitting || goal.trim().length === 0}>
-          {submitting ? 'Advancing to first review...' : 'Launch to first review'}
-        </button>
-      </form>
-    </section>
-  )
-}
-
-type InboxWellProps = {
-  items: InboxItem[]
-  loading: boolean
-  onOpenReview: (reviewPackId: string) => void
-  onOpenIncident: (incidentId: string) => void
-}
-
-function InboxWell({ items, loading, onOpenReview, onOpenIncident }: InboxWellProps) {
-  return (
-    <aside className="inbox-well" aria-labelledby="inbox-title">
-      <div className="section-heading">
-        <p className="eyebrow">Inbox</p>
-        <h2 id="inbox-title">Board actions and governance pressure</h2>
-      </div>
-      {loading ? <p className="muted-copy">Loading current inbox...</p> : null}
-      {!loading && items.length === 0 ? <p className="muted-copy">No board escalations are waiting right now.</p> : null}
-      <div className="inbox-item-list">
-        {items.map((item) => {
-          const isReviewRoute = item.route_target.view === 'review_room' && item.route_target.review_pack_id
-          const isIncidentRoute = item.route_target.view === 'incident_detail' && item.route_target.incident_id != null
-          return isReviewRoute || isIncidentRoute ? (
-            <button
-              key={item.inbox_item_id}
-              type="button"
-              className={`inbox-item inbox-item-${item.priority}`}
-              onClick={() => {
-                if (isReviewRoute) {
-                  onOpenReview(item.route_target.review_pack_id as string)
-                  return
-                }
-                onOpenIncident(item.route_target.incident_id as string)
-              }}
-            >
-              <span className="inbox-item-ribbon" aria-hidden="true" />
-              <span className="inbox-item-copy">
-                <strong>{item.title}</strong>
-                <span>{item.summary}</span>
-              </span>
-              <span className="inbox-item-badges">{item.badges.join(' | ')}</span>
-            </button>
-          ) : (
-            <div key={item.inbox_item_id} className={`inbox-item inbox-item-${item.priority}`}>
-              <span className="inbox-item-ribbon" aria-hidden="true" />
-              <span className="inbox-item-copy">
-                <strong>{item.title}</strong>
-                <span>{item.summary}</span>
-              </span>
-              <span className="inbox-item-badges">{item.badges.join(' | ')}</span>
-            </div>
-          )
-        })}
-      </div>
-    </aside>
-  )
 }
 
 export function DashboardPage() {
@@ -254,6 +119,7 @@ export function DashboardPage() {
   const [dependencyInspectorLoading, setDependencyInspectorLoading] = useState(false)
   const [incidentError, setIncidentError] = useState<string | null>(null)
   const [dependencyInspectorError, setDependencyInspectorError] = useState<string | null>(null)
+
   const activeWorkflowId = dashboard?.active_workflow?.workflow_id ?? null
 
   const refreshSnapshot = useEffectEvent(async () => {
@@ -648,84 +514,42 @@ export function DashboardPage() {
     'Runtime is using the currently saved local execution settings.'
   const runtimeHealth =
     runtimeStatus?.provider_health_summary ??
-    (runtimeProvider as RuntimeProviderData | null)?.provider_health_summary ??
+    runtimeProvider?.provider_health_summary ??
     dashboard?.ops_strip.provider_health_summary ??
     'LOCAL_ONLY'
-  const finalReviewApprovedAt = completionSummary?.final_review_approved_at ?? completionSummary?.approved_at ?? null
 
   return (
     <ErrorBoundary>
-      <div className="boardroom-app">
-        <div className="boardroom-shell">
-          <header className="top-chrome">
-            <div>
-              <p className="eyebrow">Boardroom OS</p>
-              <h1>{activeWorkflow?.title ?? 'Boardroom governance shell'}</h1>
-              <p className="top-chrome-copy">
-                {activeWorkflow?.north_star_goal ?? 'The workflow shell is waiting for the next local directive.'}
-              </p>
-            </div>
-            <div className="top-chrome-meta">
-              <section className={`runtime-status-card runtime-status-${runtimeModeTone(effectiveRuntimeMode)}`}>
-                <div className="runtime-status-head">
-                  <div>
-                    <p className="eyebrow">Execution mode</p>
-                    <strong>{runtimeProviderLabel}</strong>
-                  </div>
-                  <button type="button" className="ghost-button" onClick={() => setProviderSettingsOpen(true)}>
-                    Runtime settings
-                  </button>
-                </div>
-                <p className="runtime-status-copy">{runtimeReason}</p>
-                <dl className="runtime-status-grid">
-                  <div>
-                    <dt>Model</dt>
-                    <dd>{runtimeModel ?? 'Deterministic local runtime'}</dd>
-                  </div>
-                  <div>
-                    <dt>Workers</dt>
-                    <dd>{runtimeWorkerCount}</dd>
-                  </div>
-                  <div>
-                    <dt>Health</dt>
-                    <dd>{runtimeHealth}</dd>
-                  </div>
-                </dl>
-              </section>
-              <div className={`board-chip ${approvalsPending > 0 ? 'is-armed' : 'is-clear'}`}>
-                <span className="board-chip-light" aria-hidden="true" />
-                <strong>{approvalsPending > 0 ? 'Board Gate armed' : 'Board Gate clear'}</strong>
-                <span>{approvalsPending > 0 ? `${approvalsPending} approvals pending` : 'No approvals pending'}</span>
-              </div>
-              <dl className="ops-strip">
-                <div>
-                  <dt>Budget</dt>
-                  <dd>{formatNumber(dashboard?.ops_strip.budget_remaining ?? 0)}</dd>
-                </div>
-                <div>
-                  <dt>Live tickets</dt>
-                  <dd>{dashboard?.ops_strip.active_tickets ?? 0}</dd>
-                </div>
-                <div>
-                  <dt>Blocked</dt>
-                  <dd>{dashboard?.ops_strip.blocked_nodes ?? 0}</dd>
-                </div>
-                <div>
-                  <dt>Deadline</dt>
-                  <dd>{formatTimestamp(activeWorkflow?.deadline_at)}</dd>
-                </div>
-              </dl>
-            </div>
-          </header>
+      <AppShell>
+        <TopChrome
+          title={activeWorkflow?.title ?? 'Boardroom governance shell'}
+          northStarGoal={
+            activeWorkflow?.north_star_goal ?? 'The workflow shell is waiting for the next local directive.'
+          }
+          effectiveRuntimeMode={effectiveRuntimeMode}
+          runtimeProviderLabel={runtimeProviderLabel}
+          runtimeModel={runtimeModel}
+          runtimeWorkerCount={runtimeWorkerCount}
+          runtimeHealth={runtimeHealth}
+          runtimeReason={runtimeReason}
+          approvalsPending={approvalsPending}
+          budgetRemaining={dashboard?.ops_strip.budget_remaining ?? 0}
+          activeTickets={dashboard?.ops_strip.active_tickets ?? 0}
+          blockedNodes={dashboard?.ops_strip.blocked_nodes ?? 0}
+          deadlineAt={activeWorkflow?.deadline_at}
+          onOpenRuntimeSettings={() => setProviderSettingsOpen(true)}
+        />
 
-          <div className="boardroom-main">
+        <ThreeColumnLayout
+          left={
             <InboxWell
               items={inbox?.items ?? []}
               loading={snapshotLoading}
               onOpenReview={handleOpenReview}
               onOpenIncident={handleOpenIncident}
             />
-
+          }
+          center={
             <section className="boardroom-center">
               {snapshotError ? <div className="shell-error">{snapshotError}</div> : null}
               {snapshotLoading && dashboard == null ? <div className="shell-loading">Loading boardroom snapshot...</div> : null}
@@ -745,13 +569,14 @@ export function DashboardPage() {
                       <p className="muted-copy">
                         Workspace {dashboard.workspace.workspace_name} · started {formatTimestamp(activeWorkflow.started_at)}
                       </p>
-                      <button
+                      <Button
                         type="button"
-                        className="secondary-button inspector-launch"
+                        variant="secondary"
+                        className="inspector-launch"
                         onClick={() => setDependencyInspectorOpen(true)}
                       >
                         Inspect dependency chain
-                      </button>
+                      </Button>
                     </div>
                     <div className="center-detail-list">
                       <div>
@@ -775,59 +600,11 @@ export function DashboardPage() {
                 </>
               ) : null}
               {completionSummary && !reviewPackId ? (
-                <section className="completion-card" aria-labelledby="completion-card-title">
-                  <div className="completion-card-copy">
-                    <p className="eyebrow">Workflow result</p>
-                    <h2 id="completion-card-title">Delivery completed</h2>
-                    <p className="muted-copy">
-                      Board approved {formatTimestamp(finalReviewApprovedAt)} and closeout completed{' '}
-                      {formatTimestamp(completionSummary.closeout_completed_at)} for workflow {completionSummary.workflow_id}.
-                    </p>
-                  </div>
-                  <div className="completion-card-grid">
-                    <div>
-                      <span>Final title</span>
-                      <strong>{completionSummary.title}</strong>
-                    </div>
-                    <div>
-                      <span>Board approved</span>
-                      <strong>{formatTimestamp(finalReviewApprovedAt)}</strong>
-                    </div>
-                    <div>
-                      <span>Closeout completed</span>
-                      <strong>{formatTimestamp(completionSummary.closeout_completed_at)}</strong>
-                    </div>
-                    <div>
-                      <span>Selected option</span>
-                      <strong>{completionSummary.selected_option_id ?? 'Board approved without option override'}</strong>
-                    </div>
-                    <div>
-                      <span>Board comment</span>
-                      <strong>{completionSummary.board_comment ?? 'No board comment recorded.'}</strong>
-                    </div>
-                    <div>
-                      <span>Evidence refs</span>
-                      <strong>{completionSummary.artifact_refs.length}</strong>
-                    </div>
-                    <div>
-                      <span>Closeout refs</span>
-                      <strong>{completionSummary.closeout_artifact_refs.length}</strong>
-                    </div>
-                  </div>
-                  <p className="completion-card-summary">{completionSummary.summary}</p>
-                  <div className="completion-card-actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => handleOpenReview(completionSummary.final_review_pack_id)}
-                    >
-                      Open final review evidence
-                    </button>
-                  </div>
-                </section>
+                <CompletionCard summary={completionSummary} onOpenReview={handleOpenReview} />
               ) : null}
             </section>
-
+          }
+          right={
             <aside className="boardroom-support">
               <WorkforcePanel
                 workforce={workforce}
@@ -840,9 +617,9 @@ export function DashboardPage() {
               />
               <EventTicker events={dashboard?.event_stream_preview ?? []} />
             </aside>
-          </div>
-        </div>
-      </div>
+          }
+        />
+      </AppShell>
 
       <ReviewRoomDrawer
         key={

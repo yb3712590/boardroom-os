@@ -130,6 +130,10 @@
 - `frontend/src/App.tsx` is now a pure router entry again; the old top-level drawer component files were removed after the overlay migration so there is only one active implementation path.
 - Added minimal frontend shared-component tests for drawer close behavior and ErrorBoundary retry behavior; backend verification for this batch still finished at `py -m pytest tests -q` → `378 passed`.
 - Current shell no longer has Node.js / npm on PATH, so this round’s frontend `build` and `test:run` could not be re-executed here; the remaining frontend verification gap is environmental again, not a deliberate skip.
+- Frontend page-shell closure continued in the same direction: `components/layout/`, `components/dashboard/`, `components/workforce/`, and `components/events/` now contain the live `AppShell / TopChrome / ThreeColumnLayout / InboxWell / WorkflowRiver / OpsStrip / RuntimeStatusCard / BoardGateIndicator / CompletionCard / ProjectInitForm / WorkforcePanel / StaffingActions / EventTicker` slices, and the old top-level `WorkflowRiver / WorkforcePanel / EventTicker` files were removed.
+- Shared UI primitives now include `Button / Badge / LoadingSkeleton / Toast`; the current shell batch actually uses the first three, while `Toast` remains a local controlled component rather than a new global message bus.
+- `DashboardPage.tsx` dropped from 903 lines to 680 lines, but it still owns command handlers plus local `incident detail / dependency inspector` reads, so the remaining frontend follow-up is still CSS split, utils extraction, and another page-shell slimming pass rather than a new feature lane.
+- This shell still lacks `pytest` and `npm` on PATH, but the machine has working Python and Node installs behind explicit entrypoints: backend verification completed again at `py -m pytest tests -q` → `378 passed`, and frontend verification completed via `C:\Program Files\nodejs\npm.cmd` with `npm run build` passed and `npm run test:run` → `39 passed`.
 
 ### 2026-04-02 (docs compaction)
 

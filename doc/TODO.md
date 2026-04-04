@@ -17,7 +17,7 @@
 ## 当前基线（2026-04-04 实测）
 
 - backend：`py -m pytest tests -q` → 378 passed
-- frontend：当前环境缺少 Node.js / npm，`npm run build` 与 `npm run test:run` 本轮无法复核
+- frontend：当前 shell 的 `node / npm` 仍不在 PATH；已通过显式调用 `C:\Program Files\nodejs\npm.cmd` 完成复核，`npm run build` → passed，`npm run test:run` → 39 passed
 
 ---
 
@@ -140,6 +140,10 @@
 
 - [x] 先拆数据层：类型、API 客户端、SSE 管理器、主 store、review store、UI store
 - [x] 再拆页面壳和抽屉壳：`DashboardPage`、各类 Drawer、错误边界
+- [x] `P0-FE-013` 已完成：共享基础组件 `Button / Badge / LoadingSkeleton / Toast` 已落地
+- [x] `P0-FE-014` 已完成：布局组件 `AppShell / TopChrome / ThreeColumnLayout` 已落地
+- [x] `P0-FE-015` 已完成：`InboxWell / WorkflowRiver / OpsStrip / RuntimeStatusCard / BoardGateIndicator / CompletionCard / ProjectInitForm` 已拆到 `components/dashboard/`
+- [x] `P0-FE-016` 已完成：`WorkforcePanel / StaffingActions / EventTicker` 已迁到新目录，旧顶层入口已移除
 - [x] 保持视觉和交互基本不变，不在这一阶段重新设计品牌风格
 - [x] 测试重点放在 store、API、关键交互和错误状态
 - [x] 把 `App.tsx` 缩到只剩路由和组装职责
@@ -147,17 +151,20 @@
 本轮产物：
 
 - 前端已完成 `P0-FE-001` 到 `P0-FE-010`：`zustand` 已接入，`src/api.ts` 已拆成 `types/ + api/ + stores/ + hooks/`，`App.tsx` 改为通过独立 API 模块、SSE hook 和 store 取数/提交
-- `frontend/src/pages/DashboardPage.tsx` 现在承接原 `App.tsx` 的页面组装、SSE 失效刷新、路由驱动的 review / incident 读取，以及 `incident detail / dependency inspector` 的本地读状态
+- `frontend/src/pages/DashboardPage.tsx` 现在继续承接页面组装、SSE 失效刷新、路由驱动的 review / incident 读取，以及 `incident detail / dependency inspector` 的本地读状态，但首页顶栏、左栏、中部主卡和右栏入口已经下沉到 `layout / dashboard / workforce / events` 目录
 - `frontend/src/components/shared/ErrorBoundary.tsx` 与 `frontend/src/components/shared/Drawer.tsx` 已落地；`ReviewRoomDrawer / IncidentDrawer / DependencyInspectorDrawer / ProviderSettingsDrawer` 已统一迁到 `components/overlays/` 并复用同一套抽屉壳
+- `frontend/src/components/shared/Button.tsx`、`Badge.tsx`、`LoadingSkeleton.tsx`、`Toast.tsx` 已新增；当前页面壳批次已真实接入前 3 个，`Toast` 先保持局部受控组件，不引入全局消息总线
+- `frontend/src/components/layout/`、`components/dashboard/`、`components/workforce/`、`components/events/` 现在都已有真实实现；旧的顶层 `WorkflowRiver / WorkforcePanel / EventTicker` 文件已删除，避免并行双入口
 - `frontend/src/App.tsx` 已缩到纯路由入口；旧的四个重复抽屉壳文件已移除，避免仓库里同时留两套实现
-- 前端补了 shared 组件最小测试：新增 `Drawer` 的 backdrop / Escape 关闭验证，以及 `ErrorBoundary` 的渲染兜底与重试恢复验证
-- 本轮前端真实命令级验证仍受环境限制：当前 shell 没有 Node.js / npm，`npm run build` 与 `npm run test:run` 无法复跑
+- `frontend/src/pages/DashboardPage.tsx` 已从 903 行降到 680 行；页面壳明显变薄，但命令回调和本地详情拉取仍留在页层
+- 前端本轮新增最小组件测试：`ProjectInitForm / InboxWell / StaffingActions / RuntimeStatusCard`，并顺手修正了 `ErrorBoundary` 测试以适配当前 React 19 恢复行为
+- 前端真实命令级验证已完成：`npm run build` passed，`npm run test:run` → 39 passed；当前 shell 只是 PATH 仍缺 `node / npm`
 - `frontend/src/api.ts` 目前保留为兼容出口，现有组件还没整体迁到新目录，这一层兼容先保留到页面壳和组件壳拆分完成
 
 新发现任务：
 
-- [ ] 把 `DashboardPage` 里仍偏多的命令回调、格式化 helper 和本地拉取细节继续下沉，尽量逼近设计文档里的轻页壳目标
-- [ ] 共享基础组件、CSS 拆分和工具函数模块（`P0-FE-013 / P0-FE-020 / P0-FE-021`）仍未做，留在前端拆壳下一批处理
+- [ ] 把 `DashboardPage` 里仍偏多的命令回调、格式化 helper 和本地拉取细节继续下沉；当前 680 行已比上一轮薄，但还没到设计文档里的轻页壳目标
+- [ ] 继续完成 `P0-FE-020 / P0-FE-021 / P0-FE-022`：CSS 拆分、工具函数模块、前端核心测试整包收口；这三项都只服务主线验证成本下降，不改变工作流真相
 
 主线关系：**间接服务主链验证**，降低前端后续演进和回归成本，不改变工作流真相。
 

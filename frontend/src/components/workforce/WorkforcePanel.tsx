@@ -1,6 +1,11 @@
 import { useState } from 'react'
 
-import type { StaffingHireTemplate, WorkforceData, WorkforceWorkerAction } from '../api'
+import { Badge } from '../shared/Badge'
+import { Button } from '../shared/Button'
+import { LoadingSkeleton } from '../shared/LoadingSkeleton'
+import { StaffingActions } from './StaffingActions'
+
+import type { WorkforceData } from '../../types/api'
 
 type WorkforcePanelProps = {
   workforce: WorkforceData | null
@@ -8,10 +13,10 @@ type WorkforcePanelProps = {
   submittingAction: string | null
   onFreeze: (employeeId: string) => Promise<void>
   onRestore: (employeeId: string) => Promise<void>
-  onRequestHire: (template: StaffingHireTemplate, employeeId: string) => Promise<void>
+  onRequestHire: (template: WorkforceData['hire_templates'][number], employeeId: string) => Promise<void>
   onRequestReplacement: (
     employeeId: string,
-    template: StaffingHireTemplate,
+    template: WorkforceData['hire_templates'][number],
     replacementEmployeeId: string,
   ) => Promise<void>
 }
@@ -20,8 +25,21 @@ function formatRole(roleType: string) {
   return roleType.replaceAll('_', ' ')
 }
 
-function findAction(actions: WorkforceWorkerAction[], actionType: string) {
+function findAction(actions: WorkforceData['role_lanes'][number]['workers'][number]['available_actions'], actionType: string) {
   return actions.find((action) => action.action_type === actionType) ?? null
+}
+
+function employmentVariant(state: string) {
+  switch (state) {
+    case 'ACTIVE':
+      return 'success'
+    case 'FROZEN':
+      return 'muted'
+    case 'REPLACED':
+      return 'critical'
+    default:
+      return 'info'
+  }
 }
 
 export function WorkforcePanel({
@@ -33,7 +51,6 @@ export function WorkforcePanel({
   onRequestHire,
   onRequestReplacement,
 }: WorkforcePanelProps) {
-  const [hireDrafts, setHireDrafts] = useState<Record<string, string>>({})
   const [replaceDrafts, setReplaceDrafts] = useState<Record<string, string>>({})
   const [replaceOpenFor, setReplaceOpenFor] = useState<string | null>(null)
 
@@ -45,7 +62,7 @@ export function WorkforcePanel({
         <p className="eyebrow">Workforce</p>
         <h2 id="workforce-panel-title">Live workforce</h2>
       </div>
-      {loading ? <p className="muted-copy">Loading workforce lanes...</p> : null}
+      {loading ? <LoadingSkeleton lines={6} /> : null}
       {!loading && workforce == null ? <p className="muted-copy">No workforce view is available.</p> : null}
       {workforce != null ? (
         <>
@@ -72,58 +89,11 @@ export function WorkforcePanel({
             </div>
           </div>
 
-          <section className="staffing-request-panel" aria-labelledby="staffing-request-title">
-            <div className="section-heading workforce-section-heading">
-              <p className="eyebrow">Staffing</p>
-              <h3 id="staffing-request-title">Request staffing</h3>
-            </div>
-            <div className="staffing-template-list">
-              {workforce.hire_templates.map((template) => {
-                const value = hireDrafts[template.template_id] ?? template.employee_id_hint
-                const isSubmitting = submittingAction === `hire:${template.template_id}`
-                return (
-                  <form
-                    key={template.template_id}
-                    className="staffing-template-card"
-                    onSubmit={(event) => {
-                      event.preventDefault()
-                      const trimmedValue = value.trim()
-                      if (!trimmedValue) {
-                        return
-                      }
-                      void onRequestHire(template, trimmedValue)
-                    }}
-                  >
-                    <div className="staffing-template-copy">
-                      <strong>{template.label}</strong>
-                      <span>{template.request_summary}</span>
-                    </div>
-                    <label className="staffing-inline-field">
-                      <span>{template.label} employee id</span>
-                      <input
-                        type="text"
-                        value={value}
-                        onChange={(event) =>
-                          setHireDrafts((current) => ({
-                            ...current,
-                            [template.template_id]: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <button
-                      type="submit"
-                      className="secondary-button"
-                      disabled={isSubmitting || value.trim().length === 0}
-                      aria-label={`Request hire for ${template.label}`}
-                    >
-                      {isSubmitting ? 'Requesting…' : 'Request hire'}
-                    </button>
-                  </form>
-                )
-              })}
-            </div>
-          </section>
+          <StaffingActions
+            templates={workforce.hire_templates}
+            submittingAction={submittingAction}
+            onRequestHire={onRequestHire}
+          />
 
           <div className="lane-list">
             {workforce.role_lanes.map((lane) => (
@@ -150,7 +120,7 @@ export function WorkforcePanel({
                       <div key={worker.employee_id} className="worker-card">
                         <div className="worker-card-main">
                           <strong>{worker.employee_id}</strong>
-                          <span>{worker.activity_state}</span>
+                          <Badge variant={employmentVariant(worker.employment_state)}>{worker.employment_state}</Badge>
                         </div>
                         <div className="worker-card-state">
                           <span>{`Employment ${worker.employment_state}`}</span>
@@ -163,41 +133,39 @@ export function WorkforcePanel({
                         </div>
                         <div className="worker-action-row">
                           {freezeAction?.enabled ? (
-                            <button
+                            <Button
                               type="button"
-                              className="danger-button"
+                              variant="danger"
                               onClick={() => void onFreeze(worker.employee_id)}
-                              disabled={submittingAction === `freeze:${worker.employee_id}`}
+                              loading={submittingAction === `freeze:${worker.employee_id}`}
                               aria-label={`Freeze ${worker.employee_id}`}
                             >
                               {submittingAction === `freeze:${worker.employee_id}` ? 'Freezing…' : 'Freeze'}
-                            </button>
+                            </Button>
                           ) : null}
                           {restoreAction?.enabled ? (
-                            <button
+                            <Button
                               type="button"
-                              className="secondary-button"
+                              variant="secondary"
                               onClick={() => void onRestore(worker.employee_id)}
-                              disabled={submittingAction === `restore:${worker.employee_id}`}
+                              loading={submittingAction === `restore:${worker.employee_id}`}
                               aria-label={`Restore ${worker.employee_id}`}
                             >
                               {submittingAction === `restore:${worker.employee_id}` ? 'Restoring…' : 'Restore'}
-                            </button>
+                            </Button>
                           ) : null}
                           {replaceAction?.enabled && replaceTemplate != null ? (
-                            <button
+                            <Button
                               type="button"
-                              className="ghost-button"
+                              variant="ghost"
                               onClick={() =>
-                                setReplaceOpenFor((current) =>
-                                  current === worker.employee_id ? null : worker.employee_id,
-                                )
+                                setReplaceOpenFor((current) => (current === worker.employee_id ? null : worker.employee_id))
                               }
                               disabled={submittingAction === `replace:${worker.employee_id}`}
                               aria-label={`Request replacement for ${worker.employee_id}`}
                             >
                               Request replacement
-                            </button>
+                            </Button>
                           ) : null}
                         </div>
                         {replaceOpenFor === worker.employee_id && replaceTemplate != null ? (
@@ -226,17 +194,15 @@ export function WorkforcePanel({
                                 }
                               />
                             </label>
-                            <button
+                            <Button
                               type="submit"
-                              className="secondary-button"
-                              disabled={
-                                replaceValue.trim().length === 0 ||
-                                submittingAction === `replace:${worker.employee_id}`
-                              }
+                              variant="secondary"
+                              loading={submittingAction === `replace:${worker.employee_id}`}
+                              disabled={replaceValue.trim().length === 0}
                               aria-label={`Submit replacement for ${worker.employee_id}`}
                             >
                               {submittingAction === `replace:${worker.employee_id}` ? 'Submitting…' : 'Submit replacement'}
-                            </button>
+                            </Button>
                           </form>
                         ) : null}
                         {freezeAction?.enabled !== true && freezeAction?.disabled_reason ? (

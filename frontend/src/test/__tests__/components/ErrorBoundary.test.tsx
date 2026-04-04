@@ -4,11 +4,8 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ErrorBoundary } from '../../../components/shared/ErrorBoundary'
 
-let shouldThrow = false
-
-function CrashOnce() {
+function Crashable({ shouldThrow }: { shouldThrow: boolean }) {
   if (shouldThrow) {
-    shouldThrow = false
     throw new Error('boom')
   }
   return <div>Recovered child</div>
@@ -22,22 +19,26 @@ describe('ErrorBoundary', () => {
   })
 
   afterEach(() => {
-    shouldThrow = false
     consoleErrorSpy.mockClear()
   })
 
   it('shows fallback on render error and recovers after retry', async () => {
-    shouldThrow = true
     const user = userEvent.setup()
 
-    render(
+    const { rerender } = render(
       <ErrorBoundary>
-        <CrashOnce />
+        <Crashable shouldThrow />
       </ErrorBoundary>,
     )
 
     expect(screen.getByRole('alert')).toBeInTheDocument()
     expect(screen.getByText('Boardroom page crashed.')).toBeInTheDocument()
+
+    rerender(
+      <ErrorBoundary>
+        <Crashable shouldThrow={false} />
+      </ErrorBoundary>,
+    )
 
     await user.click(screen.getByRole('button', { name: 'Retry' }))
 

@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 
-import type { PhaseSummary } from '../api'
+import type { PhaseSummary } from '../../types/domain'
 
 type WorkflowRiverProps = {
   phases: PhaseSummary[]
@@ -80,7 +80,9 @@ export function WorkflowRiver({ phases, approvalsPending }: WorkflowRiverProps) 
                 </div>
                 <div className="river-stage-meta">
                   <span>{total} node{total === 1 ? '' : 's'}</span>
-                  <span>{phase.node_counts.executing > 0 ? 'Live' : phase.node_counts.completed > 0 ? 'Settled' : 'Queued'}</span>
+                  <span>
+                    {phase.node_counts.executing > 0 ? 'Live' : phase.node_counts.completed > 0 ? 'Settled' : 'Queued'}
+                  </span>
                 </div>
               </div>
               <div className="river-stage-particles" aria-hidden="true">
@@ -88,9 +90,7 @@ export function WorkflowRiver({ phases, approvalsPending }: WorkflowRiverProps) 
                   <span
                     key={`${phase.phase_id}-${particleIndex}`}
                     className="river-particle"
-                    style={{
-                      animationDelay: `${index * 0.22 + particleIndex * 0.35}s`,
-                    }}
+                    style={{ animationDelay: `${index * 0.22 + particleIndex * 0.35}s` }}
                   />
                 ))}
               </div>

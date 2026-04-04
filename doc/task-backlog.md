@@ -1085,6 +1085,8 @@
 
 #### P0-FE-013：创建共享基础组件
 
+**状态**：已完成（2026-04-04，前端页面壳收口）
+
 **描述**：创建 Button、Badge、LoadingSkeleton、Toast 组件。
 
 **文件**：
@@ -1105,9 +1107,16 @@
 
 **风险**：低
 
+**完成补记**：
+- 已新增 `frontend/src/components/shared/Button.tsx`、`Badge.tsx`、`LoadingSkeleton.tsx`、`Toast.tsx`
+- 当前页面壳批次已真实接入 `Button / Badge / LoadingSkeleton`；`Toast` 先保持局部受控组件，不额外引入全局消息总线
+- 这轮只补当前拆壳所需的最小变体，不为未来交互预埋额外抽象
+
 ---
 
 #### P0-FE-014：创建布局组件
+
+**状态**：已完成（2026-04-04，前端页面壳收口）
 
 **描述**：创建 AppShell、TopChrome、ThreeColumnLayout。
 
@@ -1127,9 +1136,16 @@
 
 **风险**：低
 
+**完成补记**：
+- 已新增 `frontend/src/components/layout/AppShell.tsx`、`TopChrome.tsx`、`ThreeColumnLayout.tsx`
+- `TopChrome` 当前直接消费现有 dashboard/runtime 读面数据并组合 `RuntimeStatusCard / BoardGateIndicator / OpsStrip`，没有改 store 或后端契约
+- `DashboardPage` 现在不再直接展开顶栏和三栏壳 JSX
+
 ---
 
 #### P0-FE-015：提取仪表盘组件
+
+**状态**：已完成（2026-04-04，前端页面壳收口）
 
 **描述**：从 App.tsx 中提取 InboxWell、WorkflowRiver、OpsStrip、RuntimeStatusCard、BoardGateIndicator、CompletionCard、ProjectInitForm。
 
@@ -1153,9 +1169,16 @@
 
 **风险**：中（需要仔细拆分状态和事件处理）
 
+**完成补记**：
+- 已新增 `frontend/src/components/dashboard/InboxWell.tsx`、`OpsStrip.tsx`、`RuntimeStatusCard.tsx`、`BoardGateIndicator.tsx`、`CompletionCard.tsx`、`ProjectInitForm.tsx`
+- `WorkflowRiver` 已迁到 `frontend/src/components/dashboard/WorkflowRiver.tsx`
+- `DashboardPage` 当前已从 903 行降到 680 行；首页顶栏、左栏和中部主卡入口已下沉，但命令回调与本地详情拉取仍留在页层，后续继续收口
+
 ---
 
 #### P0-FE-016：提取 WorkforcePanel 和 EventTicker
+
+**状态**：已完成（2026-04-04，前端页面壳收口）
 
 **描述**：将 WorkforcePanel 移到新目录，提取 StaffingActions，移动 EventTicker。
 
@@ -1173,6 +1196,11 @@
 - StaffingActions 从 WorkforcePanel 中提取
 
 **风险**：低
+
+**完成补记**：
+- `frontend/src/components/workforce/WorkforcePanel.tsx`、`StaffingActions.tsx` 与 `frontend/src/components/events/EventTicker.tsx` 已落地
+- 招聘模板输入与提交现在由 `StaffingActions` 单独承接；替换表单仍保留在 `WorkforcePanel` 内，避免这一轮继续过拆
+- 旧的顶层 `frontend/src/components/WorkforcePanel.tsx` 与 `EventTicker.tsx` 已移除，仓库里不再保留两套活动入口
 
 ---
 
