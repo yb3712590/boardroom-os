@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { CompletionCard } from '../components/dashboard/CompletionCard'
@@ -8,11 +9,6 @@ import { EventTicker } from '../components/events/EventTicker'
 import { AppShell } from '../components/layout/AppShell'
 import { ThreeColumnLayout } from '../components/layout/ThreeColumnLayout'
 import { TopChrome } from '../components/layout/TopChrome'
-import { DependencyInspectorDrawer } from '../components/overlays/DependencyInspectorDrawer'
-import { IncidentDrawer } from '../components/overlays/IncidentDrawer'
-import { MeetingRoomDrawer } from '../components/overlays/MeetingRoomDrawer'
-import { ProviderSettingsDrawer } from '../components/overlays/ProviderSettingsDrawer'
-import { ReviewRoomDrawer } from '../components/overlays/ReviewRoomDrawer'
 import { Button } from '../components/shared/Button'
 import { ErrorBoundary } from '../components/shared/ErrorBoundary'
 import { LoadingSkeleton } from '../components/shared/LoadingSkeleton'
@@ -24,6 +20,24 @@ import { formatTimestamp } from '../utils/format'
 import { useDashboardPageActions } from './dashboard-page-actions'
 import { useDashboardPageDetailState } from './dashboard-page-detail-state'
 import { runtimeModeLabel } from './dashboard-page-helpers'
+
+const ReviewRoomDrawer = lazy(() =>
+  import('../components/overlays/ReviewRoomDrawer').then((module) => ({ default: module.ReviewRoomDrawer })),
+)
+const MeetingRoomDrawer = lazy(() =>
+  import('../components/overlays/MeetingRoomDrawer').then((module) => ({ default: module.MeetingRoomDrawer })),
+)
+const IncidentDrawer = lazy(() =>
+  import('../components/overlays/IncidentDrawer').then((module) => ({ default: module.IncidentDrawer })),
+)
+const DependencyInspectorDrawer = lazy(() =>
+  import('../components/overlays/DependencyInspectorDrawer').then((module) => ({
+    default: module.DependencyInspectorDrawer,
+  })),
+)
+const ProviderSettingsDrawer = lazy(() =>
+  import('../components/overlays/ProviderSettingsDrawer').then((module) => ({ default: module.ProviderSettingsDrawer })),
+)
 
 export function DashboardPage() {
   const navigate = useNavigate()
@@ -280,74 +294,76 @@ export function DashboardPage() {
         />
       </AppShell>
 
-      <ReviewRoomDrawer
-        key={
-          reviewRoom?.review_pack != null
-            ? `${reviewRoom.review_pack.meta.review_pack_id}:${reviewRoom.review_pack.meta.review_pack_version}`
-            : reviewPackId ?? 'review-room-closed'
-        }
-        isOpen={Boolean(reviewPackId)}
-        loading={reviewLoading}
-        reviewData={reviewRoom}
-        inspectorData={developerInspector}
-        inspectorLoading={inspectorLoading}
-        error={reviewError}
-        submittingAction={submittingAction}
-        onClose={closeReviewRoom}
-        onOpenInspector={handleOpenInspector}
-        onApprove={handleApprove}
-        onReject={handleReject}
-        onModifyConstraints={handleModifyConstraints}
-      />
+      <Suspense fallback={null}>
+        <ReviewRoomDrawer
+          key={
+            reviewRoom?.review_pack != null
+              ? `${reviewRoom.review_pack.meta.review_pack_id}:${reviewRoom.review_pack.meta.review_pack_version}`
+              : reviewPackId ?? 'review-room-closed'
+          }
+          isOpen={Boolean(reviewPackId)}
+          loading={reviewLoading}
+          reviewData={reviewRoom}
+          inspectorData={developerInspector}
+          inspectorLoading={inspectorLoading}
+          error={reviewError}
+          submittingAction={submittingAction}
+          onClose={closeReviewRoom}
+          onOpenInspector={handleOpenInspector}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          onModifyConstraints={handleModifyConstraints}
+        />
 
-      <MeetingRoomDrawer
-        key={
-          meetingDetail != null
-            ? `${meetingDetail.meeting_id}:${meetingDetail.updated_at}`
-            : meetingId ?? 'meeting-room-closed'
-        }
-        isOpen={Boolean(meetingId)}
-        loading={meetingLoading}
-        meetingData={meetingDetail}
-        error={meetingError}
-        onClose={closeMeeting}
-        onOpenReview={handleOpenReviewRoom}
-      />
+        <MeetingRoomDrawer
+          key={
+            meetingDetail != null
+              ? `${meetingDetail.meeting_id}:${meetingDetail.updated_at}`
+              : meetingId ?? 'meeting-room-closed'
+          }
+          isOpen={Boolean(meetingId)}
+          loading={meetingLoading}
+          meetingData={meetingDetail}
+          error={meetingError}
+          onClose={closeMeeting}
+          onOpenReview={handleOpenReviewRoom}
+        />
 
-      <IncidentDrawer
-        key={
-          incidentDetail != null
-            ? `${incidentDetail.incident.incident_id}:${incidentDetail.recommended_followup_action ?? 'none'}`
-            : incidentId ?? 'incident-closed'
-        }
-        isOpen={Boolean(incidentId)}
-        loading={incidentLoading}
-        incidentData={incidentDetail}
-        error={incidentError}
-        submitting={submittingIncidentAction}
-        onClose={closeIncident}
-        onResolve={handleIncidentResolve}
-      />
+        <IncidentDrawer
+          key={
+            incidentDetail != null
+              ? `${incidentDetail.incident.incident_id}:${incidentDetail.recommended_followup_action ?? 'none'}`
+              : incidentId ?? 'incident-closed'
+          }
+          isOpen={Boolean(incidentId)}
+          loading={incidentLoading}
+          incidentData={incidentDetail}
+          error={incidentError}
+          submitting={submittingIncidentAction}
+          onClose={closeIncident}
+          onResolve={handleIncidentResolve}
+        />
 
-      <DependencyInspectorDrawer
-        isOpen={dependencyInspectorOpen}
-        loading={dependencyInspectorLoading}
-        inspectorData={dependencyInspector}
-        error={dependencyInspectorError}
-        onClose={() => setDependencyInspectorOpen(false)}
-        onOpenReview={handleOpenReviewRoom}
-        onOpenIncident={handleOpenIncidentRoom}
-      />
+        <DependencyInspectorDrawer
+          isOpen={dependencyInspectorOpen}
+          loading={dependencyInspectorLoading}
+          inspectorData={dependencyInspector}
+          error={dependencyInspectorError}
+          onClose={() => setDependencyInspectorOpen(false)}
+          onOpenReview={handleOpenReviewRoom}
+          onOpenIncident={handleOpenIncidentRoom}
+        />
 
-      <ProviderSettingsDrawer
-        isOpen={providerSettingsOpen}
-        providerData={runtimeProvider}
-        loading={runtimeProviderLoading}
-        error={runtimeProviderError}
-        submitting={runtimeProviderSubmitting}
-        onClose={() => setProviderSettingsOpen(false)}
-        onSave={handleRuntimeProviderSave}
-      />
+        <ProviderSettingsDrawer
+          isOpen={providerSettingsOpen}
+          providerData={runtimeProvider}
+          loading={runtimeProviderLoading}
+          error={runtimeProviderError}
+          submitting={runtimeProviderSubmitting}
+          onClose={() => setProviderSettingsOpen(false)}
+          onSave={handleRuntimeProviderSave}
+        />
+      </Suspense>
     </ErrorBoundary>
   )
 }

@@ -1703,6 +1703,9 @@
 - `P2-UI-002`：首页河道分支与顶栏 `Board Gate` 指示器继续共用同一套 armed / clear 语义与呼吸节奏
 - `P2-UI-003`：`InboxWell`、`Workflow River`、`WorkforcePanel`、`EventTicker` 在初次加载时都改成真实骨架屏，不再只靠一条全局 loading 文案
 - `P2-UI-004`：窄屏下保留横向五阶段河道和主干语义，不再把五阶段直接打散成纵向卡片
+- `P2-UI-005`：前端全部可达路由补上键盘可访问性基础；`AppShell` 现在有 skip link，主布局改成 `main` landmark，`Drawer` 会处理初始焦点、焦点循环、`Escape` 关闭和关闭后回到触发元素
+- `P2-UI-006`：dark-glass 基线没有改主题方向，只补了 surface / divider / focus / disabled / board / incident token，并把首页、按钮、输入框和 overlay 的对比度统一到同一套样式语义
+- `P2-UI-007`：`ReviewRoomDrawer`、`MeetingRoomDrawer`、`IncidentDrawer`、`DependencyInspectorDrawer`、`ProviderSettingsDrawer` 改成按需懒加载；`useSSE` 对 clustered `boardroom-event` 失效通知默认做 `500ms` debounce
 - `P2-UI-008`：补了 `BoardGateIndicator`、`InboxWell`、`WorkflowRiver`、`WorkforcePanel`、`EventTicker` 的最小前端回归测试
 
 ### 4.5 文档 (P2-DOC-001 到 P2-DOC-005)

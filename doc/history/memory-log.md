@@ -69,6 +69,10 @@
 - `Workflow River` 这轮没有重做视觉语言，只在现有粒子和 Board Gate 提醒上补了两件事：窄屏保留横向河道表达，`prefers-reduced-motion` 下关闭漂移动画和呼吸动画。
 - 新增前端回归测试覆盖首页 loading / board gate 语义：`BoardGateIndicator`、`InboxWell`、`WorkflowRiver`、`WorkforcePanel`、`EventTicker` 现在都有对应断言。
 - 本轮完整验证结果更新为：后端先确认 `pytest tests/ -q` 在当前 shell 下仍报 `CommandNotFoundException`，再用 `py -m pytest tests/ -q` 实测 `414 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `59 passed`。
+- 前端当前全部可达路由这轮已补齐键盘可访问性基础：`AppShell` 新增 skip link，主布局改成 `main` landmark，`Drawer` 会处理初始焦点、焦点循环、`Escape` 关闭、关闭后回到触发元素，并在打开时锁住背景滚动。
+- 这轮暗色主题没有扩成 light theme；只把 surface / divider / focus / disabled / board / incident 语义收口到统一 token，并把首页、按钮、输入框和 overlay 的对比度补稳。
+- 当前性能收口只做了两件真实变更：`ReviewRoomDrawer`、`MeetingRoomDrawer`、`IncidentDrawer`、`DependencyInspectorDrawer`、`ProviderSettingsDrawer` 改成按需懒加载；`useSSE` 对 `boardroom-event` 失效通知默认做 `500ms` debounce。
+- 新增前端回归测试覆盖抽屉焦点管理、直接路由落到 review 抽屉时的初始焦点，以及 `useSSE` 的 clustered invalidation debounce；本轮前端验证结果更新为 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
 
 ## Current Working Set
 

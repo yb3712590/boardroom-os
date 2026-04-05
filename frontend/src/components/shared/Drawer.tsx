@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 
 import { AnimatePresence, motion } from 'framer-motion'
 
@@ -19,19 +19,93 @@ export function Drawer({
   width = '680px',
   children,
 }: DrawerProps) {
+  const panelRef = useRef<HTMLElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null)
+  const bodyOverflowRef = useRef<string>('')
+
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    lastFocusedElementRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    bodyOverflowRef.current = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeButtonRef.current?.focus()
+
+    return () => {
+      document.body.style.overflow = bodyOverflowRef.current
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    if (isOpen || lastFocusedElementRef.current == null) {
+      return
+    }
+
+    const timer = setTimeout(() => {
+      lastFocusedElementRef.current?.focus()
+    }, 0)
+
+    return () => clearTimeout(timer)
+  }, [isOpen])
+
   useEffect(() => {
     if (!isOpen) {
       return
     }
 
+    const getFocusableElements = () => {
+      if (!panelRef.current) {
+        return []
+      }
+
+      return Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => !element.hasAttribute('disabled'))
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         onClose()
+        return
+      }
+
+      if (event.key !== 'Tab') {
+        return
+      }
+
+      const focusableElements = getFocusableElements()
+      if (focusableElements.length === 0) {
+        event.preventDefault()
+        closeButtonRef.current?.focus()
+        return
+      }
+
+      const firstElement = focusableElements[0]
+      const lastElement = focusableElements[focusableElements.length - 1]
+      const activeElement = document.activeElement
+
+      if (event.shiftKey) {
+        if (activeElement === firstElement || !panelRef.current?.contains(activeElement)) {
+          event.preventDefault()
+          lastElement.focus()
+        }
+        return
+      }
+
+      if (activeElement === lastElement) {
+        event.preventDefault()
+        firstElement.focus()
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
 
   return (
@@ -51,6 +125,7 @@ export function Drawer({
           <motion.section
             className="review-room-panel drawer-panel"
             style={{ width }}
+            ref={panelRef}
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 18 }}
@@ -61,7 +136,13 @@ export function Drawer({
                 {subtitle ? <p className="eyebrow">{subtitle}</p> : null}
                 <h2>{title}</h2>
               </div>
-              <button type="button" className="ghost-button" onClick={onClose} aria-label={`Close ${title}`}>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={onClose}
+                aria-label={`Close ${title}`}
+                ref={closeButtonRef}
+              >
                 Close
               </button>
             </header>

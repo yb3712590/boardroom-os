@@ -8,7 +8,7 @@
   position: relative;
   min-height: calc(100vh - 56px);
   padding: 28px;
-  border: 1px solid rgba(199, 225, 255, 0.16);
+  border: 1px solid var(--divider-strong);
   border-radius: 34px;
   background:
     radial-gradient(circle at top left, rgba(61, 106, 160, 0.24), transparent 28%),
@@ -42,7 +42,7 @@
   gap: 32px;
   align-items: flex-start;
   padding-bottom: 26px;
-  border-bottom: 1px solid rgba(199, 225, 255, 0.12);
+  border-bottom: 1px solid var(--divider-soft);
 }
 
 .top-chrome h1 {
@@ -53,7 +53,7 @@
 
 .top-chrome-copy {
   max-width: 42rem;
-  color: var(--muted-label);
+  color: var(--text-subtle);
 }
 
 .top-chrome-meta {

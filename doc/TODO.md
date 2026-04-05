@@ -15,7 +15,7 @@
 ## 当前基线（2026-04-05 实测）
 
 - backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过 `py -m pytest tests/ -q` 完成全量复核，`414 passed`
-- frontend：`npm run build` → passed，`npm run test:run` → `59 passed`
+- frontend：`npm run build` → passed，`npm run test:run` → `64 passed`
 
 ## 现在先做什么
 
@@ -23,7 +23,7 @@
 |-------------|------|----------|------------|
 | `P2-B` | 进行中 | 已完成边界、依赖、测试归属和阻塞证据固化；下一步仍只在前置条件满足后评估物理迁移 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-C` | 未开始 | 只在证明当前主链不够用后，再补检索、Provider 路由和发布准备 | [task-backlog/active.md](task-backlog/active.md) |
-| `P2-D` | 进行中 | 已完成首页真实缺口第一轮收口；下一步只补剩余可访问性、性能和文档，不反过来破坏现有主链 | [task-backlog/active.md](task-backlog/active.md) |
+| `P2-D` | 进行中 | 首页 UI 收口已完成；下一步只补剩余文档，不反过来破坏现有主链 | [task-backlog/active.md](task-backlog/active.md) |
 
 ## 当前活跃批次
 
@@ -75,8 +75,10 @@
 - [x] `P2-UI-002`：统一首页河道与顶栏 `Board Gate` 的呼吸语义和节奏
 - [x] `P2-UI-003`：首页左中右区域改成真实骨架屏，不再只显示一条全局 loading 文案
 - [x] `P2-UI-004`：窄屏下 `Workflow River` 改为保留横向河道表达，不再碎成纵向五张卡
+- [x] `P2-UI-005`：当前前端全部可达路由补齐键盘可访问性，抽屉现在会处理初始焦点、焦点循环、`Escape` 关闭、关闭后回到触发点
+- [x] `P2-UI-006`：现有 dark-glass 基线已补齐更稳定的 surface / divider / focus / disabled token，对比度和状态语义收口到同一套样式变量
+- [x] `P2-UI-007`：`Review / Meeting / Incident / Dependency Inspector / Provider Settings` 抽屉已改为按需懒加载，`boardroom-event` 刷新现在走 `500ms` debounce
 - [x] `P2-UI-008`：补齐首页 loading / board gate 语义相关的最小前端测试
-- [ ] 键盘可访问性、暗色主题微调、性能优化
 - [x] `P2-DOC-002`：`TODO` 已同步成“补齐现有半落地实现并验证”的真实状态
 - [x] `P2-DOC-004`：`memory-log` 已追加这轮会影响后续判断的事实
 - [ ] README、运维指南、API 文档按真实状态继续收口
@@ -85,7 +87,10 @@
 
 - 首页 loading 现在按面板分区显示：`InboxWell`、`Workflow River`、`WorkforcePanel`、`EventTicker` 都有真实骨架屏
 - `Workflow River` 保留现有粒子与 Board Gate 提醒语义，但补了 reduced-motion 兼容，不把“正在加载”或“窄屏”写成第二套页面
-- 当前未新增主线任务；`P2-D` 下一步仍按 `P2-UI-005` 到 `P2-UI-007`、`P2-DOC-001` / `003` / `005` 继续收口
+- 当前前端路由已补上 skip link、main landmark、抽屉焦点管理和稳定的 `:focus-visible`，不再把键盘用户丢在 overlay 外面
+- 当前首页和抽屉仍保持既有 dark-glass 语言，只补了 token 和对比度，不新增 light theme，也没有重做首页主舞台
+- 当前前端性能收口只做了最小必要两件事：overlay 按需懒加载，SSE 失效通知按 `500ms` 合并刷新；没有新增缓存层，也没有改后端接口
+- 当前未新增主线任务；`P2-D` 下一步只剩 `P2-DOC-001` / `003` / `005`
 
 对应任务库：`P2-UI-*`、`P2-DOC-*`
 

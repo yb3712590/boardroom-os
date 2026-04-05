@@ -8,10 +8,10 @@ type ThreeColumnLayoutProps = {
 
 export function ThreeColumnLayout({ left, center, right }: ThreeColumnLayoutProps) {
   return (
-    <div className="boardroom-main">
+    <main className="boardroom-main" id="boardroom-main-content" tabIndex={-1}>
       {left}
       {center}
       {right}
-    </div>
+    </main>
   )
 }

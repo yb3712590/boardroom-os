@@ -1510,6 +1510,55 @@ describe('Boardroom UI', () => {
     expect(screen.getByText(/approve option a to unblock the main build path/i)).toBeInTheDocument()
   })
 
+  it('opens the review room from keyboard navigation and lands focus on the close action', async () => {
+    installBoardroomMock({
+      inbox: inboxData([
+        {
+          inbox_item_id: 'inbox_apr_001',
+          workflow_id: 'wf_001',
+          item_type: 'BOARD_APPROVAL',
+          priority: 'high',
+          status: 'OPEN',
+          created_at: '2026-04-01T23:05:00+08:00',
+          title: 'Review homepage visual milestone',
+          summary: 'Visual milestone is blocked for board review.',
+          source_ref: 'apr_001',
+          route_target: {
+            view: 'review_room',
+            review_pack_id: 'brp_001',
+          },
+          badges: ['visual', 'board_gate'],
+        },
+      ]),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    const reviewButton = await screen.findByRole('button', { name: /review homepage visual milestone/i })
+    for (let index = 0; index < 8; index += 1) {
+      if (reviewButton === document.activeElement) {
+        break
+      }
+      await user.tab()
+    }
+    expect(reviewButton).toHaveFocus()
+    await user.keyboard('{Enter}')
+
+    expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /close review homepage visual milestone/i })).toHaveFocus()
+  })
+
+  it('keeps direct review routes keyboard-ready by focusing the drawer close action on load', async () => {
+    window.history.replaceState({}, '', '/review/brp_001')
+    installBoardroomMock()
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /close review homepage visual milestone/i })).toHaveFocus()
+  })
+
   it('opens the meeting room route from inbox and can jump to the linked review room', async () => {
     installBoardroomMock({
       inbox: inboxData([

@@ -26,8 +26,8 @@
   box-sizing: border-box;
   background:
     linear-gradient(180deg, rgba(18, 29, 43, 0.96), rgba(10, 17, 27, 0.94)),
-    rgba(10, 17, 27, 0.94);
-  border-left: 1px solid rgba(199, 225, 255, 0.12);
+    var(--surface-overlay);
+  border-left: 1px solid var(--divider-strong);
   overflow-y: auto;
 }
 
@@ -41,8 +41,8 @@
   display: grid;
   place-items: center;
   border-radius: 28px;
-  background: rgba(16, 25, 39, 0.66);
-  border: 1px solid rgba(199, 225, 255, 0.12);
+  background: var(--surface-panel);
+  border: 1px solid var(--divider-soft);
   color: var(--text-strong);
 }
 
@@ -92,8 +92,8 @@
 .review-room-inspector-panel {
   padding: 18px;
   border-radius: 24px;
-  background: rgba(11, 19, 30, 0.82);
-  border: 1px solid rgba(199, 225, 255, 0.1);
+  background: var(--surface-elevated);
+  border: 1px solid var(--divider-soft);
 }
 
 .review-room-option-list,
@@ -108,7 +108,8 @@
   gap: 12px;
   padding: 14px;
   border-radius: 18px;
-  background: rgba(16, 25, 39, 0.76);
+  background: var(--surface-panel);
+  border: 1px solid var(--divider-soft);
 }
 
 .review-room-list {
@@ -187,8 +188,8 @@
   gap: 14px;
   padding: 18px;
   border-radius: 24px;
-  background: rgba(11, 19, 30, 0.82);
-  border: 1px solid rgba(199, 225, 255, 0.1);
+  background: var(--surface-elevated);
+  border: 1px solid var(--divider-soft);
 }
 
 .dependency-node.is-critical {
@@ -222,8 +223,8 @@
 .dependency-node-badges span {
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(16, 25, 39, 0.76);
-  border: 1px solid rgba(199, 225, 255, 0.08);
+  background: var(--surface-panel);
+  border: 1px solid var(--divider-soft);
   font-size: 0.78rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -240,7 +241,7 @@
 .dependency-node-grid div {
   padding: 12px 14px;
   border-radius: 18px;
-  background: rgba(16, 25, 39, 0.76);
+  background: var(--surface-panel);
 }
 
 .dependency-node-grid dt {
