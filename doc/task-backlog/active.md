@@ -6,7 +6,7 @@
 
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
-| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-001`、`P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-002` 到 `P1-CLN-004` 仍在进行中 |
+| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-001`、`P1-CLN-004`、`P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-002`、`P1-CLN-003` 仍在进行中 |
 | 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | 仍属后置增强 |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | 仍属后置增强 |
 | 治理模板与文档型角色 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | 仍属后置增强 |
@@ -15,13 +15,12 @@
 
 ### 3.3 代码清理
 
-> 当前状态补记：`P1-CLN-001`、`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 这轮已完成 shim 迁移：`worker-admin` 的真实实现已经迁到 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 文件只保留兼容壳。`P1-CLN-002` 已推进到主线 command 侧解耦：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票不再直接吃 `tenant_id/workspace_id`，而是统一从 workflow/default 解析 scope；命令 API 仍保留弃用兼容输入。`P1-CLN-004` 这轮也已推进到前置拆分阶段：`worker-runtime` projection 入口已拆到独立文件，管理读面改成复用 `worker_scope_ops.py` helper。
+> 当前状态补记：`P1-CLN-001`、`P1-CLN-004`、`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 已按 shim 迁移收口：`worker-admin` 的真实实现已经迁到 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 文件只保留兼容壳。`P1-CLN-004` 这轮也已按同口径收口：`worker-runtime` 的真实实现已经迁到 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 文件只保留兼容壳。`P1-CLN-002` 已推进到主线 command 侧解耦：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票不再直接吃 `tenant_id/workspace_id`，而是统一从 workflow/default 解析 scope；命令 API 仍保留弃用兼容输入。
 >
 > 当前挂起原因：
-> `P1-CLN-002` 到 `P1-CLN-004` 当前都还不能直接启动无壳物理迁移：
+> `P1-CLN-002`、`P1-CLN-003` 当前都还不能直接启动无壳物理迁移：
 > `P1-CLN-002`：主线 command 侧已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留 `tenant_id/workspace_id` shape。
 > `P1-CLN-003`：`ticket-result-submit` 已不再桥接 upload session；当前仍保留独立的 `ticket-artifact-import-upload` 导入入口和 upload session 存储，所以还不能直接做 `_frozen/` 物理迁移。
-> `P1-CLN-004`：独立 projection 入口和 helper 收口已完成，但 `worker-runtime` 路由、CLI 和 bootstrap/session/delivery-grant schema 仍需成组保留。
 
 > 本轮补记：
 > `P1-CLN-001` 这轮已真实关闭：`backend/app/_frozen/worker_admin/` 现在承接 `worker-admin` 的 API、auth、projection、core 和 CLI 实现，`app/api/worker_admin*.py`、`app/core/worker_admin.py`、`app/worker_admin_auth_cli.py` 只保留薄转发；`backend/tests/test_mainline_truth.py` 新增回归直接校验这层真相。
@@ -32,12 +31,14 @@
 > 本轮继续把 `P1-CLN-001` 到 `P1-CLN-004` 的“成组迁移单元”写实：`FrozenCapabilityBoundary` 新增 `api_surface_groups` 与 `storage_table_refs`，把 route family 和共享表锚点也固化进代码真相源；对应回归会直接校验这些组名和 `repository.py` 里的建表语句是否仍存在。
 > 这轮 `P1-CLN-001`、`P1-CLN-003`、`P1-CLN-004` 继续补的是“路由挂载边界”这层前置拆分：新增 `backend/app/api/router_registry.py`，把 `artifact-uploads`、`worker-admin`、`worker-admin-projections`、`worker-runtime`、`worker-runtime-projections` 收口成统一注册表，`main.py` 不再散着手工挂这些 frozen 兼容入口。
 > `backend/app/core/api_surface.py`、`backend/tests/test_api_surface.py`、`backend/tests/test_mainline_truth.py` 现在都直接复用这套路由组顺序，并会回归 frozen 组仍被注册、现有路径集合不变；这轮没有改任何 HTTP 路径、鉴权、命令契约或投影结构。
+> `P1-CLN-004` 本轮已真实关闭：`backend/app/_frozen/worker_runtime/` 现在承接 `worker-runtime` 的 API、projection、core 和 CLI 实现，`app/api/worker_runtime*.py`、`app/core/worker_runtime.py`、`app/worker_auth_cli.py` 只保留薄转发。
+> `backend/tests/conftest.py` 这轮已改成直接 monkeypatch `_frozen.worker_runtime.api.worker_runtime` 和 `_frozen.worker_runtime.core.worker_runtime`，避免 shim 导出层吞掉时间注入。
+> `backend/tests/test_mainline_truth.py` 这轮新增回归，直接校验 `external_worker_handoff.code_refs` 已切到 `_frozen/worker_runtime`，同时保留旧入口作为兼容壳；共享 `worker_bootstrap/session/delivery-grant` schema 仍按阻塞点保留。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
 | P1-CLN-002 | 移动多租户代码到 _frozen/ | 2h | 进行中 |
 | P1-CLN-003 | 移动对象存储代码到 _frozen/ | 2h | 进行中 |
-| P1-CLN-004 | 移动远程 handoff 代码到 _frozen/ | 2h | 进行中 |
 
 ## P2：增强
 

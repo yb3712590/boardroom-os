@@ -179,6 +179,12 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
         "backend/app/api/worker_runtime_projections.py",
         "backend/app/worker_auth_cli.py",
     )
+    assert boundaries_by_slug["external_worker_handoff"].code_refs == (
+        "backend/app/_frozen/worker_runtime/api/worker_runtime.py",
+        "backend/app/_frozen/worker_runtime/api/worker_runtime_projections.py",
+        "backend/app/_frozen/worker_runtime/core/worker_runtime.py",
+        "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py",
+    )
     assert boundaries_by_slug["external_worker_handoff"].mainline_dependency_refs == ()
     assert boundaries_by_slug["external_worker_handoff"].test_refs == (
         "backend/tests/test_api.py",
@@ -290,9 +296,13 @@ def test_worker_admin_boundary_uses_dedicated_projection_entrypoint() -> None:
 
 def test_worker_auth_cli_no_longer_imports_worker_admin_core_module() -> None:
     worker_auth_cli_source = _read_repo_text("backend/app/worker_auth_cli.py")
+    frozen_worker_auth_cli_source = _read_repo_text(
+        "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py"
+    )
 
     assert "from app.core.worker_admin import" not in worker_auth_cli_source
-    assert "from app.core.worker_scope_ops import" in worker_auth_cli_source
+    assert "from app._frozen.worker_runtime.cli.worker_auth_cli import main" in worker_auth_cli_source
+    assert "from app.core.worker_scope_ops import" in frozen_worker_auth_cli_source
 
 
 def test_multi_tenant_scope_blockers_now_live_in_runtime_and_frozen_contracts() -> None:
@@ -322,7 +332,7 @@ def test_artifact_upload_bridge_has_moved_out_of_result_submit_path() -> None:
     ticket_artifacts_source = _read_repo_text("backend/app/core/ticket_artifacts.py")
     commands_source = _read_repo_text("backend/app/contracts/commands.py")
     ticket_handlers_source = _read_repo_text("backend/app/core/ticket_handlers.py")
-    worker_runtime_source = _read_repo_text("backend/app/core/worker_runtime.py")
+    worker_runtime_source = _read_repo_text("backend/app/_frozen/worker_runtime/core/worker_runtime.py")
     repository_source = _read_repo_text("backend/app/db/repository.py")
     ticket_written_artifact_section = commands_source.split("class TicketWrittenArtifact", 1)[1].split(
         "class TicketResultSubmitCommand",
@@ -347,12 +357,18 @@ def test_external_worker_handoff_blockers_still_exist_as_one_runtime_unit() -> N
         entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
     }["external_worker_handoff"]
     worker_runtime_projection_api_source = _read_repo_text(
-        "backend/app/api/worker_runtime_projections.py"
+        "backend/app/_frozen/worker_runtime/api/worker_runtime_projections.py"
     )
-    worker_runtime_api_source = _read_repo_text("backend/app/api/worker_runtime.py")
+    worker_runtime_api_source = _read_repo_text("backend/app/_frozen/worker_runtime/api/worker_runtime.py")
     projections_api_source = _read_repo_text("backend/app/api/projections.py")
-    worker_runtime_core_source = _read_repo_text("backend/app/core/worker_runtime.py")
+    worker_runtime_core_source = _read_repo_text("backend/app/_frozen/worker_runtime/core/worker_runtime.py")
     worker_auth_cli_source = _read_repo_text("backend/app/worker_auth_cli.py")
+    frozen_worker_auth_cli_source = _read_repo_text(
+        "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py"
+    )
+    worker_runtime_api_shim_source = _read_repo_text("backend/app/api/worker_runtime.py")
+    worker_runtime_projection_shim_source = _read_repo_text("backend/app/api/worker_runtime_projections.py")
+    worker_runtime_core_shim_source = _read_repo_text("backend/app/core/worker_runtime.py")
     repository_source = _read_repo_text("backend/app/db/repository.py")
     main_source = _read_repo_text("backend/app/main.py")
     router_registry_source = _read_repo_text("backend/app/api/router_registry.py")
@@ -362,10 +378,17 @@ def test_external_worker_handoff_blockers_still_exist_as_one_runtime_unit() -> N
     assert "include_registered_routers(app)" in main_source
     assert '@router.get("/worker-runtime"' not in projections_api_source
     assert '@router.get("/worker-runtime"' in worker_runtime_projection_api_source
+    assert "from app._frozen.worker_runtime.api.worker_runtime import router" in worker_runtime_api_shim_source
+    assert (
+        "from app._frozen.worker_runtime.api.worker_runtime_projections import router"
+        in worker_runtime_projection_shim_source
+    )
+    assert "from app._frozen.worker_runtime.core.worker_runtime import (" in worker_runtime_core_shim_source
     assert 'group_name="worker-runtime"' in router_registry_source
     assert 'group_name="worker-runtime-projections"' in router_registry_source
     assert "def _create_or_refresh_worker_session(" in worker_runtime_core_source
-    assert 'prog="python -m app.worker_auth_cli"' in worker_auth_cli_source
+    assert "from app._frozen.worker_runtime.cli.worker_auth_cli import main" in worker_auth_cli_source
+    assert 'prog="python -m app.worker_auth_cli"' in frozen_worker_auth_cli_source
     assert "CREATE TABLE IF NOT EXISTS worker_bootstrap_state" in repository_source
     assert "CREATE TABLE IF NOT EXISTS worker_session" in repository_source
     assert "CREATE TABLE IF NOT EXISTS worker_delivery_grant" in repository_source

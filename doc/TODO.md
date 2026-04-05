@@ -51,7 +51,7 @@
 - [x] `P1-CLN-001`：已完成；`worker-admin` 真实实现已迁入 `backend/app/_frozen/worker_admin/`，现有 API / auth / projection / CLI / core 入口只保留兼容壳，不改 HTTP 路径、鉴权规则和 CLI 调用方式
 - [ ] `P1-CLN-002`：已进入进行中；主线 `project-init / ticket-create / CEO 建票 / 审批 follow-up 建票` 已改成统一从 workflow/default 解析 scope，API 入口仍保留弃用兼容；runtime、projection 和冻结 contracts 的多租户 shape 仍未拆
 - [ ] `P1-CLN-003`：已进入进行中；`ticket-result-submit` 已不再直接消费 upload session，当前改成“upload session -> ticket-artifact-import-upload -> artifact_ref -> ticket-result-submit”，但 upload 导入入口和 upload session 存储仍在，所以 `_frozen/` 物理迁移前置条件还没全满足
-- [ ] `P1-CLN-004`：已进入进行中；`/api/v1/projections/worker-runtime` 已从通用 `projections.py` 拆到独立入口，`worker-runtime` 管理读面已收口到 `worker_scope_ops.py` helper，但 `/api/v1/worker-runtime`、`worker_auth_cli.py` 和 `worker_bootstrap/session/delivery-grant` schema 仍需成组保留
+- [x] `P1-CLN-004`：已完成；`worker-runtime` 真实实现已迁入 `backend/app/_frozen/worker_runtime/`，现有 API / projection / core / CLI 入口只保留兼容壳，不改 HTTP 路径、CLI 调用方式和共享 schema
 - [ ] 如果后续启动物理迁移，仍以“不影响主线测试”为绝对前提
 
 本轮完成补记：
@@ -70,8 +70,11 @@
 - `P1-CLN-001` 到 `P1-CLN-004` 这轮继续补的是“成组迁移清单”而不是物理迁移：`FrozenCapabilityBoundary` 新增 `api_surface_groups` 和 `storage_table_refs`，把冻结边界对应的 route family 和共享表锚点也固化进代码真相源，并由 `backend/tests/test_mainline_truth.py` 直接回归
 - `P1-CLN-001`、`P1-CLN-003`、`P1-CLN-004` 这轮继续完成了“路由挂载边界收口”这层前置拆分：新增 `backend/app/api/router_registry.py`，把 `artifact-uploads`、`worker-admin`、`worker-runtime` 及其 projection 统一注册成 frozen 路由组，`main.py` 不再手工散挂这些入口
 - `backend/app/core/api_surface.py`、`backend/tests/test_api_surface.py`、`backend/tests/test_mainline_truth.py` 这轮已统一复用同一套路由组顺序，并直接回归 frozen 组仍被注册、仍按现有顺序挂载；这轮没有改任何 HTTP 路径和鉴权行为
+- `P1-CLN-004` 这轮已按 shim 迁移收口：`backend/app/_frozen/worker_runtime/` 现在承接 `worker-runtime` 的 API、projection、core 和 CLI 真实实现，旧 `app/api/worker_runtime*.py`、`app/core/worker_runtime.py`、`app/worker_auth_cli.py` 只保留薄转发
+- `backend/tests/conftest.py` 这轮改成直接 monkeypatch `_frozen.worker_runtime` 的 API / core 模块，避免测试时间注入仍落在兼容壳
+- `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：`external_worker_handoff.code_refs` 已切到 `_frozen/worker_runtime`，但 `/api/v1/worker-runtime`、`/api/v1/projections/worker-runtime`、`worker_auth_cli.py` 入口和 `worker_bootstrap/session/delivery-grant` schema 仍需成组保留
 
-对应任务库：已完成 `P1-CLN-001`、`P1-CLN-005`、`P1-CLN-006`；`P1-CLN-002`、`P1-CLN-003`、`P1-CLN-004` 进行中，且还没满足无壳物理迁移前置条件
+对应任务库：已完成 `P1-CLN-001`、`P1-CLN-004`、`P1-CLN-005`、`P1-CLN-006`；`P1-CLN-002`、`P1-CLN-003` 进行中，且还没满足无壳物理迁移前置条件
 
 ### `P2-C`：检索、Provider 路由、发布准备
 

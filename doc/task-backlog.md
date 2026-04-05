@@ -14,8 +14,8 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 总任务数 | 121 | 原始编号与任务名称保持不变 |
-| 已完成 / 已收口 | 99 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
-| 当前仍未关闭 | 22 | 当前工作集保存在 `task-backlog/active.md` |
+| 已完成 / 已收口 | 100 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 当前仍未关闭 | 21 | 当前工作集保存在 `task-backlog/active.md` |
 | 总预估工时 | 464h | 来自拆分前任务库原表 |
 
 ## 当前活跃区域
@@ -27,7 +27,7 @@
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 治理模板 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 
-当前补记：代码清理区仍维持“其余切片保守收口、只在条件满足时再评估无壳迁移”的状态；这轮已把 `P1-CLN-001` 真正推进到 shim 物理迁移完成，`worker-admin` 的真实实现现在位于 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 入口只保留兼容壳。`P1-CLN-002` 继续停在主线 command 侧已解耦、共享 contracts shape 未拆；`P1-CLN-003` 继续停在 upload 导入入口和 session 存储仍保留；`P1-CLN-004` 继续停在 handoff schema 仍成组保留。未关闭任务总数更新为 `22`，新增关闭任务为 `P1-CLN-001`。
+当前补记：代码清理区仍维持“其余切片保守收口、只在条件满足时再评估无壳迁移”的状态；这轮已把 `P1-CLN-004` 也推进到 shim 物理迁移完成，`worker-runtime` 的真实实现现在位于 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 入口只保留兼容壳。`P1-CLN-002` 继续停在主线 command 侧已解耦、共享 contracts shape 未拆；`P1-CLN-003` 继续停在 upload 导入入口和 session 存储仍保留。未关闭任务总数更新为 `21`，新增关闭任务为 `P1-CLN-004`。
 
 ## 读写约定
 

@@ -102,6 +102,9 @@
 - `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：`worker-admin` 的 `code_refs` 已切到 `_frozen/worker_admin`，但兼容壳仍保留，所以还不能把它写成“入口已删除”。
 - `backend/tests/conftest.py` 这轮改成直接 monkeypatch `_frozen.worker_admin.core.worker_admin`，避免 shim 导出层吞掉测试里的时间注入。
 - 本轮完整验证结果更新为：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用 `py -m pytest tests/ -q` 实测 `422 passed`；前端 `npm.cmd run build` -> passed，`npm.cmd run test:run` -> `64 passed`。
+- `P1-CLN-004` 这轮已按 shim 迁移收口：`backend/app/_frozen/worker_runtime/` 现在承接 `worker-runtime` 的 API、projection、core 和 CLI 真实实现，旧 `app/api/worker_runtime*.py`、`app/core/worker_runtime.py`、`app/worker_auth_cli.py` 只保留薄转发。
+- `backend/tests/conftest.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步改成新口径：时间注入直接命中 `_frozen.worker_runtime`，`external_worker_handoff.code_refs` 也已切到 `_frozen/worker_runtime`，但 `worker_bootstrap/session/delivery-grant` schema 仍是保留阻塞点。
+- 本轮完整验证结果是：后端先确认 `pytest tests/ -q` 在当前 shell 仍因未进入项目虚拟环境而失败，再用 `./.venv/bin/pytest tests/ -q` 实测 `422 passed`；前端在补装缺失依赖后 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
 
 ## Current Working Set
 

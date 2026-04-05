@@ -300,9 +300,10 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "worker_auth_rejection_log",
         ),
         code_refs=(
-            "backend/app/api/worker_runtime.py",
-            "backend/app/core/worker_runtime.py",
-            "backend/app/worker_auth_cli.py",
+            "backend/app/_frozen/worker_runtime/api/worker_runtime.py",
+            "backend/app/_frozen/worker_runtime/api/worker_runtime_projections.py",
+            "backend/app/_frozen/worker_runtime/core/worker_runtime.py",
+            "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py",
         ),
         entrypoint_refs=(
             "backend/app/api/worker_runtime.py",
