@@ -1632,7 +1632,10 @@
 
 ### 3.3 代码清理 (P1-CLN-001 到 P1-CLN-006)
 
-> 当前状态补记：这 6 个任务本轮**没有执行**。这轮只借用了它们的边界梳理思路来完成文档隔离，没有做 `_frozen/` 物理迁移。
+> 当前状态补记：这组任务现在拆成两段看。
+>
+> - `P1-CLN-005`、`P1-CLN-006` 已在 2026-04-05 收口：冻结能力的真实入口、主线依赖、测试归属和迁移前置条件已经写进 `backend/app/core/mainline_truth.py`，并由 `backend/tests/test_mainline_truth.py` 固化
+> - `P1-CLN-001` 到 `P1-CLN-004` 仍未开始：当前还不满足物理迁移条件，因为多租户 scope 仍是共享数据结构，`artifact_uploads` 还被主线 `ticket-result-submit` 桥接使用，外部 worker handoff 也还和现有投影与 schema 紧耦合
 
 | ID | 标题 | 预估 |
 |----|------|------|

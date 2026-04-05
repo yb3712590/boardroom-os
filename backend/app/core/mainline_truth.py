@@ -38,6 +38,10 @@ class FrozenCapabilityBoundary:
     boundary_status: str
     route_prefixes: tuple[str, ...]
     code_refs: tuple[str, ...]
+    entrypoint_refs: tuple[str, ...]
+    mainline_dependency_refs: tuple[str, ...]
+    test_refs: tuple[str, ...]
+    migration_preconditions: tuple[str, ...]
     notes: str
 
 
@@ -141,7 +145,22 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/api/worker_admin_auth.py",
             "backend/app/core/worker_admin.py",
         ),
-        notes="HTTP 管理面和操作人令牌链仍保留在仓库中，但当前默认不继续扩张。",
+        entrypoint_refs=(
+            "backend/app/api/worker_admin.py",
+            "backend/app/api/projections.py",
+            "backend/app/worker_admin_auth_cli.py",
+        ),
+        mainline_dependency_refs=(),
+        test_refs=(
+            "backend/tests/test_api.py",
+            "backend/tests/test_worker_admin_auth_cli.py",
+            "backend/tests/test_repository.py",
+        ),
+        migration_preconditions=(
+            "Worker-admin API, auth projection, and CLI entrypoints must either move together or stay in place.",
+            "No current mainline workflow path may import worker_admin modules directly before any physical migration starts.",
+        ),
+        notes="HTTP 管理面和操作人令牌链仍保留在仓库中，但当前默认不继续扩张。它现在是保留的运维面，不是主线业务依赖。",
     ),
     FrozenCapabilityBoundary(
         slug="multi_tenant_scope",
@@ -153,7 +172,31 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/contracts/worker_runtime.py",
             "backend/app/core/worker_runtime.py",
         ),
-        notes="tenant/workspace scope 仍真实存在于数据结构和 handoff 链上，但不属于当前 MVP 主线卖点。",
+        entrypoint_refs=(
+            "backend/app/api/projections.py",
+            "backend/app/contracts/commands.py",
+            "backend/app/contracts/runtime.py",
+            "backend/app/contracts/worker_admin.py",
+            "backend/app/contracts/worker_runtime.py",
+        ),
+        mainline_dependency_refs=(
+            "backend/app/core/ticket_handlers.py",
+            "backend/app/core/approval_handlers.py",
+            "backend/app/core/ceo_execution_presets.py",
+        ),
+        test_refs=(
+            "backend/tests/test_api.py",
+            "backend/tests/test_context_compiler.py",
+            "backend/tests/test_repository.py",
+        ),
+        migration_preconditions=(
+            "tenant_id/workspace_id must stay available in shared contracts and projections used by the current local MVP.",
+            "Physical migration is blocked until multi-tenant scope is decoupled from command, runtime, and projection data shapes.",
+        ),
+        notes=(
+            "tenant/workspace scope 仍真实存在于数据结构和 handoff 链上，但不属于当前 MVP 主线卖点。"
+            "这块是共享数据结构（shared data shape），不是可以独立搬走的冻结目录。"
+        ),
     ),
     FrozenCapabilityBoundary(
         slug="artifact_uploads_and_object_store",
@@ -165,7 +208,24 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/core/artifact_uploads.py",
             "backend/app/core/artifact_store.py",
         ),
-        notes="控制面上传和可选对象存储仍可运行，但当前只按最小解堵保留，不继续平台化。",
+        entrypoint_refs=(
+            "backend/app/api/artifact_uploads.py",
+            "backend/app/core/artifact_uploads.py",
+            "backend/app/core/artifact_store.py",
+        ),
+        mainline_dependency_refs=("backend/app/core/ticket_handlers.py",),
+        test_refs=(
+            "backend/tests/test_api.py",
+            "backend/tests/test_repository.py",
+        ),
+        migration_preconditions=(
+            "The ticket result-submit path must stop calling require_completed_artifact_upload_session before artifact upload code can move.",
+            "Object-store support must remain a minimal storage backend and must not be expanded during this cleanup round.",
+        ),
+        notes=(
+            "控制面上传和可选对象存储仍可运行，但当前只按最小解堵保留，不继续平台化。"
+            "其中 require_completed_artifact_upload_session 仍被主线 ticket-result-submit 桥接使用。"
+        ),
     ),
     FrozenCapabilityBoundary(
         slug="external_worker_handoff",
@@ -177,7 +237,25 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/core/worker_runtime.py",
             "backend/app/worker_auth_cli.py",
         ),
-        notes="外部 worker bootstrap、session 和 delivery grant 仍在仓库中，但当前默认不作为主线继续推进。",
+        entrypoint_refs=(
+            "backend/app/api/worker_runtime.py",
+            "backend/app/api/projections.py",
+            "backend/app/worker_auth_cli.py",
+        ),
+        mainline_dependency_refs=(),
+        test_refs=(
+            "backend/tests/test_api.py",
+            "backend/tests/test_worker_auth_cli.py",
+            "backend/tests/conftest.py",
+        ),
+        migration_preconditions=(
+            "Worker-runtime delivery routes and the worker-runtime projection must stay aligned until the handoff surface is retired together.",
+            "No physical migration should start while worker bootstrap, session, and delivery-grant storage still share the active repository schema.",
+        ),
+        notes=(
+            "外部 worker bootstrap、session 和 delivery grant 仍在仓库中，但当前默认不作为主线继续推进。"
+            "它现在是保留的交接面，不是当前 MVP 的主链卖点。"
+        ),
     ),
 )
 

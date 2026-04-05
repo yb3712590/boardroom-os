@@ -14,14 +14,14 @@
 
 ## 当前基线（2026-04-05 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`408 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`409 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `53 passed`
 
 ## 现在先做什么
 
 | 批次 / 任务 | 状态 | 现实目标 | 详细看哪里 |
 |-------------|------|----------|------------|
-| `P2-B` | 未开始 | 先把冻结能力的边界、依赖和迁移条件说清楚 | [task-backlog/active.md](task-backlog/active.md) |
+| `P2-B` | 进行中 | 已完成边界、依赖和测试归属澄清；下一步只继续评估哪些冻结模块满足迁移前置条件 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-C` | 未开始 | 只在证明当前主链不够用后，再补检索、Provider 路由和发布准备 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-D` | 未开始 | 做 UI 打磨和文档收口，但不反过来破坏现有主链 | [task-backlog/active.md](task-backlog/active.md) |
 
@@ -47,11 +47,12 @@
 
 主线关系：**后置收口**；当前阶段只做边界清楚、入口清楚、依赖清楚，不直接做 `_frozen/` 物理迁移。
 
-- [ ] 先做 import 依赖图和调用清单，再决定是否值得物理迁移冻结模块
-- [ ] 如果迁移，以“不影响主线测试”为绝对前提
-- [ ] 如果不迁移，也至少把入口、文档和目录注释补齐
+- [x] `P1-CLN-005`：已把冻结能力的真实入口、主线依赖、测试归属和迁移前置条件写进 `backend/app/core/mainline_truth.py`，并用 `backend/tests/test_mainline_truth.py` 固化
+- [x] `P1-CLN-006`：已把 frozen 相关测试边界收口成可执行断言，明确哪些测试属于冻结入口回归，哪些不是主链闭环测试
+- [ ] `P1-CLN-001` 到 `P1-CLN-004`：仍未开始；当前不适合物理迁移，因为多租户 scope 还是共享数据结构，`artifact_uploads` 还被主线 `ticket-result-submit` 桥接使用
+- [ ] 如果后续启动物理迁移，仍以“不影响主线测试”为绝对前提
 
-对应任务库：`P1-CLN-001` 到 `P1-CLN-006`
+对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；待继续评估 `P1-CLN-001` 到 `P1-CLN-004`
 
 ### `P2-C`：检索、Provider 路由、发布准备
 

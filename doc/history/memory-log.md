@@ -56,6 +56,9 @@
 - CEO now has a limited `REQUEST_MEETING` execution path: `ceo_shadow_snapshot` exposes auditable `meeting_candidates`, deterministic mode only opens a meeting when exactly one candidate is eligible, and live provider proposals are constrained to those snapshot candidates.
 - Automatic meetings stay narrow: they only cover decision-oriented ticket failure recovery or board `REJECT / MODIFY_CONSTRAINTS` realignment, they do not run in idle maintenance, and they do not recursively reopen `MEETING_ESCALATION`.
 - Full verification for the CEO auto-meeting round finished at `py -m pytest tests/ -q` -> `408 passed`, `npm run build` -> passed, and `npm run test:run` -> `53 passed`.
+- `P2-B` 的第一段保守收口已经落地：`FrozenCapabilityBoundary` 现在不只记路由和代码引用，还显式记录真实入口、主线依赖、测试归属和迁移前置条件。
+- 这轮把 `P1-CLN-005`、`P1-CLN-006` 真实关闭了，但没有启动 `_frozen/` 物理迁移；当前确认的原因有两个：多租户 scope 仍是共享数据结构，`artifact_uploads` 仍被主线 `ticket-result-submit` 桥接使用。
+- 这轮完整验证结果是：`py -m pytest tests/ -q` -> `409 passed`，`npm run build` -> passed，`npm run test:run` -> `53 passed`。
 
 ## Current Working Set
 

@@ -43,11 +43,16 @@
 
 下面这些能力在仓库里还在，部分路由也还挂着，但**默认不继续扩张**。只有直接解堵本地 MVP 时，才允许最小修改。
 
-| 能力 | 代码是否还在 | 路由是否还挂载 | 当前处理 |
-|------|--------------|----------------|----------|
-| `worker-admin` 管理面 | 是 | 是，`/api/v1/worker-admin` | 冻结，默认不继续扩 |
-| 多租户 scope / binding | 是 | 没有单独入口路由 | 冻结，保留兼容和现有数据结构 |
-| 控制面上传 / 可选对象存储 | 是 | 是，`/api/v1/artifact-uploads` | 冻结，只保留最小解堵 |
-| 外部 worker handoff | 是 | 是，`/api/v1/worker-runtime` | 冻结，不作为当前主线继续推进 |
+| 能力 | 真实入口 | 当前主线依赖 | 当前处理 | 迁移前置条件 |
+|------|----------|--------------|----------|--------------|
+| `worker-admin` 管理面 | `/api/v1/worker-admin`、`/api/v1/projections/worker-admin-audit`、`/api/v1/projections/worker-admin-auth-rejections`、`worker_admin_auth_cli.py` | 无 | 冻结，作为保留运维面存在，不继续扩张 | `worker-admin` API、认证投影和 CLI 必须一起迁；在主链不再直接 import `worker_admin` 前，不做物理迁移 |
+| 多租户 scope / binding | `commands/runtime/worker_admin/worker_runtime` 契约、`/api/v1/projections/worker-runtime` 等共享读面 | `ticket_handlers.py`、`approval_handlers.py`、`ceo_execution_presets.py` 仍直接依赖 `tenant_id/workspace_id` | 冻结，但保留兼容数据结构；这块是共享数据结构，不是可独立搬走的目录 | 在 `tenant_id/workspace_id` 脱离主线 command、runtime、projection 数据形状前，不做物理迁移 |
+| 控制面上传 / 可选对象存储 | `/api/v1/artifact-uploads`、`artifact_uploads.py`、`artifact_store.py` | `ticket_handlers.py` 仍通过 `require_completed_artifact_upload_session(...)` 借用上传会话校验 | 冻结，只保留最小解堵；对象存储不继续平台化 | 先把 `ticket-result-submit` 从上传会话校验里解耦，再谈物理迁移 |
+| 外部 worker handoff | `/api/v1/worker-runtime`、`/api/v1/projections/worker-runtime`、`worker_auth_cli.py` | 无 | 冻结，保留交接面和运维读面，但不作为当前主线继续推进 | `worker-runtime` 路由、投影和 bootstrap/session/delivery-grant 存储仍共用现有 schema，不能拆一半搬一半 |
 
 这张边界表的目的不是否认这些代码存在，而是避免再次把它们误写成当前 MVP 主线。
+
+当前补记：
+
+- `artifact_uploads_and_object_store` 不能误判成“整块冻结死代码”，因为主线 `ticket-result-submit` 还在借用它的已完成上传会话校验
+- `multi_tenant_scope` 当前也不能按目录整体搬走，因为它还是本地主链共享数据结构的一部分
