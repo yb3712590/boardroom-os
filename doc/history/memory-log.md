@@ -78,6 +78,14 @@
 - `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮已改成新的阻塞口径：主线 command 已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留多租户 shape，所以 `P1-CLN-002` 还不能收口成 `_frozen/` 物理迁移。
 - 这轮完整验证结果是：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用 `py -m pytest tests/ -q` 实测 `415 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
 
+### 2026-04-06
+
+- `P1-CLN-003` 已从阻塞评估推进到真实进行中：`TicketWrittenArtifact` 不再接受 `upload_session_id`，`ticket-result-submit` 现在只处理 inline 内容或已有 `artifact_ref`。
+- 新增了控制面 `POST /api/v1/commands/ticket-artifact-import-upload` 和 `worker-runtime` 同构命令；上传会话完成后先导入为普通 artifact，再进入结果提交。
+- `worker-runtime` 执行包的 `command_endpoints` 现在多了 `ticket_artifact_import_upload_url`，worker delivery token 也补了同名命令范围，外部 handoff 保持兼容。
+- `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：主线 result-submit 已与 upload session 解耦，但 upload 导入入口和 upload session 存储仍保留，所以 `P1-CLN-003` 还不能直接收口成 `_frozen/` 迁移。
+- 本轮完整验证结果是：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用重定向方式执行 `py -m pytest tests/ -q` 实测 `416 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
+
 ## Current Working Set
 
 - Prefer reading `README.md`, `doc/README.md`, `doc/mainline-truth.md`, `doc/roadmap-reset.md`, `doc/TODO.md`, `doc/history/context-baseline.md`, and then this file before touching the archive.

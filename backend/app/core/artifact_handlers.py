@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
 
 from app.contracts.commands import (
@@ -7,6 +8,7 @@ from app.contracts.commands import (
     ArtifactDeleteCommand,
     CommandAckEnvelope,
     CommandAckStatus,
+    TicketArtifactImportUploadCommand,
 )
 from app.core.artifact_store import ArtifactStore
 from app.core.artifacts import (
@@ -19,8 +21,17 @@ from app.core.constants import (
     EVENT_ARTIFACT_CLEANUP_COMPLETED,
     EVENT_ARTIFACT_DELETED,
     EVENT_ARTIFACT_EXPIRED,
+    EVENT_ARTIFACT_IMPORTED,
+    NODE_STATUS_EXECUTING,
+    TICKET_STATUS_EXECUTING,
 )
 from app.core.ids import new_prefixed_id
+from app.core.ticket_artifacts import (
+    cleanup_materialized_artifacts,
+    match_allowed_write_set,
+    prepare_imported_upload_artifact,
+    save_prepared_artifact_record,
+)
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -59,6 +70,209 @@ def _cleanup_ack(
         received_at=received_at,
         reason=reason,
         causation_hint="artifact:cleanup",
+    )
+
+
+def handle_ticket_artifact_import_upload(
+    repository: ControlPlaneRepository,
+    payload: TicketArtifactImportUploadCommand,
+    artifact_store: ArtifactStore | None = None,
+    *,
+    imported_by: str = "local_api",
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+    resolved_artifact_store = artifact_store or repository.artifact_store
+    materialized_artifacts = []
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.DUPLICATE,
+                artifact_ref=payload.artifact_ref,
+                reason="An identical ticket-artifact-import-upload command was already accepted.",
+            )
+
+        current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
+        current_node = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
+        if current_ticket is None or current_node is None:
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason="Ticket must exist before importing an uploaded artifact.",
+            )
+        if current_node.get("latest_ticket_id") != payload.ticket_id:
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason="Node projection no longer points at this ticket.",
+            )
+        if (
+            current_ticket.get("workflow_id") != payload.workflow_id
+            or current_ticket.get("node_id") != payload.node_id
+        ):
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason="Ticket projection does not match the requested workflow or node.",
+            )
+        if (
+            current_ticket.get("status") != TICKET_STATUS_EXECUTING
+            or current_node.get("status") != NODE_STATUS_EXECUTING
+        ):
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason=(
+                    f"Ticket {payload.ticket_id} can only import uploaded artifacts while ticket/node "
+                    f"status is EXECUTING/EXECUTING; current status is "
+                    f"{current_ticket.get('status')}/{current_node.get('status')}."
+                ),
+            )
+
+        created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
+        if created_spec is None:
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason="Ticket create spec is missing for uploaded artifact import.",
+            )
+        allowed_write_set = list(created_spec.get("allowed_write_set") or [])
+        if not match_allowed_write_set(payload.path, allowed_write_set):
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason="Uploaded artifact path is outside the allowed write set.",
+            )
+        if repository.get_artifact_by_ref(payload.artifact_ref, connection=connection) is not None:
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason=f"Artifact {payload.artifact_ref} already exists.",
+            )
+
+        try:
+            prepared_artifact, materialized_artifact = prepare_imported_upload_artifact(
+                repository=repository,
+                artifact_store=resolved_artifact_store,
+                artifact_ref=payload.artifact_ref,
+                path=payload.path,
+                kind=payload.kind,
+                media_type=payload.media_type,
+                upload_session_id=payload.upload_session_id,
+                retention_class=payload.retention_class,
+                retention_ttl_sec=payload.retention_ttl_sec,
+                created_at=received_at,
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+            )
+            materialized_artifacts.append(materialized_artifact)
+            consumed = repository.consume_artifact_upload_session(
+                connection,
+                session_id=payload.upload_session_id,
+                consumed_at=received_at,
+                consumed_by_artifact_ref=payload.artifact_ref,
+            )
+            if not consumed:
+                raise ValueError(
+                    f"Artifact upload session '{payload.upload_session_id}' is not available for consumption."
+                )
+            save_prepared_artifact_record(
+                repository,
+                connection,
+                prepared_artifact=prepared_artifact,
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                created_at=received_at,
+            )
+            event_row = repository.insert_event(
+                connection,
+                event_type=EVENT_ARTIFACT_IMPORTED,
+                actor_type="worker" if imported_by != "local_api" else "operator",
+                actor_id=imported_by,
+                workflow_id=payload.workflow_id,
+                idempotency_key=payload.idempotency_key,
+                causation_id=command_id,
+                correlation_id=payload.workflow_id,
+                payload={
+                    "ticket_id": payload.ticket_id,
+                    "node_id": payload.node_id,
+                    "artifact_ref": payload.artifact_ref,
+                    "logical_path": payload.path,
+                    "upload_session_id": payload.upload_session_id,
+                },
+                occurred_at=received_at,
+            )
+            if event_row is None:
+                return _artifact_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    status=CommandAckStatus.DUPLICATE,
+                    artifact_ref=payload.artifact_ref,
+                    reason="An identical ticket-artifact-import-upload command was already accepted.",
+                )
+            repository.refresh_projections(connection)
+        except ValueError as exc:
+            cleanup_materialized_artifacts(resolved_artifact_store, materialized_artifacts)
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason=str(exc),
+            )
+        except sqlite3.IntegrityError:
+            cleanup_materialized_artifacts(resolved_artifact_store, materialized_artifacts)
+            return _artifact_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                status=CommandAckStatus.REJECTED,
+                artifact_ref=payload.artifact_ref,
+                reason="Artifact ref already exists in artifact index.",
+            )
+        except Exception:
+            cleanup_materialized_artifacts(resolved_artifact_store, materialized_artifacts)
+            raise
+
+    return _artifact_ack(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        received_at=received_at,
+        status=CommandAckStatus.ACCEPTED,
+        artifact_ref=payload.artifact_ref,
     )
 
 

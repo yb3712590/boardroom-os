@@ -437,11 +437,11 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/commands/artifact-cleanup' \
 - `POST /api/v1/artifact-uploads/sessions/{session_id}/abort`
   - 终止会话并删除 staging 文件
 
-`ticket-result-submit` 里的二进制 `written_artifacts[*]` 现在支持：
+当前二进制 artifact 写回分成两条：
 
-- 小文件继续走 `content_base64`
-- 中大文件改走 `upload_session_id`
-- 两者不能同时提供
+- 小文件继续在 `ticket-result-submit` 的 `written_artifacts[*]` 里走 `content_base64`
+- 中大文件先走 upload session，再调用 `ticket-artifact-import-upload`
+- `ticket-result-submit` 现在只接 inline 内容或已存在的 `artifact_ref`，不再直接吃 `upload_session_id`
 
 ## 关键环境变量
 

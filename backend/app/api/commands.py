@@ -19,6 +19,7 @@ from app.contracts.commands import (
     ProjectInitCommand,
     RuntimeProviderUpsertCommand,
     SchedulerTickCommand,
+    TicketArtifactImportUploadCommand,
     TicketCancelCommand,
     TicketCompletedCommand,
     TicketBoardReviewRequest,
@@ -29,7 +30,11 @@ from app.contracts.commands import (
     TicketResultSubmitCommand,
     TicketStartCommand,
 )
-from app.core.artifact_handlers import handle_artifact_cleanup, handle_artifact_delete
+from app.core.artifact_handlers import (
+    handle_artifact_cleanup,
+    handle_artifact_delete,
+    handle_ticket_artifact_import_upload,
+)
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.approval_handlers import (
     handle_board_approve,
@@ -204,6 +209,16 @@ def artifact_cleanup(request: Request, payload: ArtifactCleanupCommand) -> Comma
     repository: ControlPlaneRepository = request.app.state.repository
     artifact_store: ArtifactStore = request.app.state.artifact_store
     return handle_artifact_cleanup(repository, payload, artifact_store)
+
+
+@router.post("/ticket-artifact-import-upload", response_model=CommandAckEnvelope)
+def ticket_artifact_import_upload(
+    request: Request,
+    payload: TicketArtifactImportUploadCommand,
+) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    artifact_store: ArtifactStore = request.app.state.artifact_store
+    return handle_ticket_artifact_import_upload(repository, payload, artifact_store)
 
 
 @router.post("/ticket-cancel", response_model=CommandAckEnvelope)

@@ -5313,7 +5313,7 @@ def test_worker_runtime_execution_package_signed_url_allows_token_only_access_an
     )
     assert _query_value(first_body["command_endpoints"]["ticket_start_url"], "access_token")
     grants = _list_worker_delivery_grants(client)
-    assert len(grants) >= 7
+    assert len(grants) >= 8
     assert any(grant["scope"] == "execution_package" for grant in grants)
     assert {
         grant["artifact_action"]
@@ -5718,11 +5718,42 @@ def test_worker_runtime_signed_command_urls_allow_token_only_writeback(
             "idempotency_key": "worker-runtime:heartbeat:tkt_worker_token_result",
         },
     )
+    create_upload_response = client.post(
+        "/api/v1/artifact-uploads/sessions",
+        json={
+            "filename": "runtime-bundle.zip",
+            "media_type": "application/zip",
+        },
+    )
+    upload_session_id = create_upload_response.json()["data"]["session_id"]
+    client.put(
+        f"/api/v1/artifact-uploads/sessions/{upload_session_id}/parts/1",
+        content=b"worker-runtime-bundle",
+        headers={"content-type": "application/octet-stream"},
+    )
+    client.post(f"/api/v1/artifact-uploads/sessions/{upload_session_id}/complete")
+    import_response = client.post(
+        _local_path_from_url(command_endpoints["ticket_artifact_import_upload_url"]),
+        json={
+            "workflow_id": "wf_worker_runtime",
+            "ticket_id": "tkt_worker_token_result",
+            "node_id": "node_worker_token_result",
+            "artifact_ref": "art://worker/runtime-bundle.zip",
+            "path": "artifacts/ui/homepage/runtime-bundle.zip",
+            "kind": "BINARY",
+            "media_type": "application/zip",
+            "upload_session_id": upload_session_id,
+            "idempotency_key": "worker-runtime:import-upload:tkt_worker_token_result",
+        },
+    )
     result_payload = _ticket_result_submit_payload(
         workflow_id="wf_worker_runtime",
         ticket_id="tkt_worker_token_result",
         node_id="node_worker_token_result",
-        artifact_refs=["art://worker/runtime-token-option-a.json"],
+        artifact_refs=[
+            "art://worker/runtime-token-option-a.json",
+            "art://worker/runtime-bundle.zip",
+        ],
         payload={
             "summary": "Worker runtime produced a structured result through signed command URLs.",
             "recommended_option_id": "option_a",
@@ -5731,7 +5762,10 @@ def test_worker_runtime_signed_command_urls_allow_token_only_writeback(
                     "option_id": "option_a",
                     "label": "Option A",
                     "summary": "Single structured worker option.",
-                    "artifact_refs": ["art://worker/runtime-token-option-a.json"],
+                    "artifact_refs": [
+                        "art://worker/runtime-token-option-a.json",
+                        "art://worker/runtime-bundle.zip",
+                    ],
                 }
             ],
         },
@@ -5757,13 +5791,18 @@ def test_worker_runtime_signed_command_urls_allow_token_only_writeback(
     repository = client.app.state.repository
     ticket_projection = repository.get_current_ticket_projection("tkt_worker_token_result")
     artifact_record = repository.get_artifact_by_ref("art://worker/runtime-token-option-a.json")
+    uploaded_artifact = repository.get_artifact_by_ref("art://worker/runtime-bundle.zip")
 
     assert start_response.status_code == 200
     assert heartbeat_response.status_code == 200
+    assert create_upload_response.status_code == 200
+    assert import_response.status_code == 200
     assert result_response.status_code == 200
     assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
     assert artifact_record is not None
     assert artifact_record["materialization_status"] == "MATERIALIZED"
+    assert uploaded_artifact is not None
+    assert uploaded_artifact["materialization_status"] == "MATERIALIZED"
 
 
 def test_worker_runtime_delivery_routes_reject_workspace_mismatch_and_log_it(
@@ -7039,12 +7078,12 @@ def test_artifact_upload_session_flow_materializes_local_binary_artifact_and_con
     db_path,
     set_ticket_time,
 ):
-        from app.main import create_app
+    from app.main import create_app
 
-        app = create_app()
-        with TestClient(app) as client:
-            set_ticket_time("2026-03-31T19:00:00+08:00")
-            _create_lease_and_start_ticket(client, allowed_write_set=["reports/ops/*"])
+    app = create_app()
+    with TestClient(app) as client:
+        set_ticket_time("2026-03-31T19:00:00+08:00")
+        _create_lease_and_start_ticket(client, allowed_write_set=["reports/ops/*"])
 
         create_response = client.post(
             "/api/v1/artifact-uploads/sessions",
@@ -7067,6 +7106,20 @@ def test_artifact_upload_session_flow_materializes_local_binary_artifact_and_con
         complete_response = client.post(f"/api/v1/artifact-uploads/sessions/{session_id}/complete")
 
         artifact_ref = "art://reports/ops/runtime-bundle.zip"
+        import_response = client.post(
+            "/api/v1/commands/ticket-artifact-import-upload",
+            json={
+                "workflow_id": "wf_seed",
+                "ticket_id": "tkt_visual_001",
+                "node_id": "node_homepage_visual",
+                "artifact_ref": artifact_ref,
+                "path": "reports/ops/runtime-bundle.zip",
+                "kind": "BINARY",
+                "media_type": "application/zip",
+                "upload_session_id": session_id,
+                "idempotency_key": "ticket-artifact-import-upload:wf_seed:tkt_visual_001:runtime-bundle",
+            },
+        )
         submit_response = client.post(
             "/api/v1/commands/ticket-result-submit",
             json=_ticket_result_submit_payload(
@@ -7083,15 +7136,7 @@ def test_artifact_upload_session_flow_materializes_local_binary_artifact_and_con
                         }
                     ],
                 },
-                written_artifacts=[
-                    {
-                        "path": "reports/ops/runtime-bundle.zip",
-                        "artifact_ref": artifact_ref,
-                        "kind": "BINARY",
-                        "media_type": "application/zip",
-                        "upload_session_id": session_id,
-                    }
-                ],
+                written_artifacts=[],
                 idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:uploaded-bundle",
             ),
         )
@@ -7111,6 +7156,7 @@ def test_artifact_upload_session_flow_materializes_local_binary_artifact_and_con
         assert part_two.status_code == 200
         assert complete_response.status_code == 200
         assert complete_response.json()["data"]["status"] == "COMPLETED"
+        assert import_response.status_code == 200
         assert submit_response.status_code == 200
         assert metadata_response.status_code == 200
         assert content_response.status_code == 200
@@ -7125,6 +7171,55 @@ def test_artifact_upload_session_flow_materializes_local_binary_artifact_and_con
         assert upload_session is not None
         assert upload_session["status"] == "CONSUMED"
         assert upload_session["consumed_by_artifact_ref"] == artifact_ref
+
+
+def test_ticket_artifact_import_upload_rejects_path_outside_allowed_write_set(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-31T19:05:00+08:00")
+    _create_lease_and_start_ticket(client, allowed_write_set=["reports/ops/*"])
+
+    create_response = client.post(
+        "/api/v1/artifact-uploads/sessions",
+        json={
+            "filename": "runtime-bundle.zip",
+            "media_type": "application/zip",
+        },
+    )
+    session_id = create_response.json()["data"]["session_id"]
+    client.put(
+        f"/api/v1/artifact-uploads/sessions/{session_id}/parts/1",
+        content=b"abcdefg",
+        headers={"content-type": "application/octet-stream"},
+    )
+    client.post(f"/api/v1/artifact-uploads/sessions/{session_id}/complete")
+
+    import_response = client.post(
+        "/api/v1/commands/ticket-artifact-import-upload",
+        json={
+            "workflow_id": "wf_seed",
+            "ticket_id": "tkt_visual_001",
+            "node_id": "node_homepage_visual",
+            "artifact_ref": "art://reports/ops/runtime-bundle.zip",
+            "path": "artifacts/ui/homepage/runtime-bundle.zip",
+            "kind": "BINARY",
+            "media_type": "application/zip",
+            "upload_session_id": session_id,
+            "idempotency_key": "ticket-artifact-import-upload:wf_seed:tkt_visual_001:outside-write-set",
+        },
+    )
+
+    repository = client.app.state.repository
+    upload_session = repository.get_artifact_upload_session(session_id)
+    stored_artifact = repository.get_artifact_by_ref("art://reports/ops/runtime-bundle.zip")
+
+    assert create_response.status_code == 200
+    assert import_response.status_code == 200
+    assert import_response.json()["status"] == "REJECTED"
+    assert stored_artifact is None
+    assert upload_session is not None
+    assert upload_session["status"] == "COMPLETED"
 
 
 def test_object_store_artifact_content_route_reads_remote_body(

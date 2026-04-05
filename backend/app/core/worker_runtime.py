@@ -1152,10 +1152,22 @@ def build_worker_command_endpoints(
         command_name="ticket-result-submit",
         issued_at=issued_at,
     )
+    ticket_artifact_import_upload_url, _ = _build_worker_command_url(
+        request,
+        worker_id=worker_id,
+        session_id=session_id,
+        credential_version=credential_version,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        ticket_id=ticket_id,
+        command_name="ticket-artifact-import-upload",
+        issued_at=issued_at,
+    )
     return {
         "ticket_start_url": ticket_start_url,
         "ticket_heartbeat_url": ticket_heartbeat_url,
         "ticket_result_submit_url": ticket_result_submit_url,
+        "ticket_artifact_import_upload_url": ticket_artifact_import_upload_url,
     }, expires_at
 
 

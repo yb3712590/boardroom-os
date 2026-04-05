@@ -459,7 +459,7 @@ Current minimal implementation status:
 - The current store uses safe relative-path normalization plus temporary-file write and atomic replace semantics.
 - Artifact lifecycle now distinguishes `ACTIVE`, `DELETED`, and `EXPIRED`.
 - Runtime exposes local artifact metadata / content / preview APIs keyed by `artifact_ref`.
-- Control-plane multipart upload is now available through `artifact_upload_session` + `artifact_upload_part`, so larger binary bodies can be uploaded first and then consumed by `ticket-result-submit` through `upload_session_id`.
+- Control-plane multipart upload is now available through `artifact_upload_session` + `artifact_upload_part`; larger binary bodies are uploaded first, then imported into the ticket as normal artifacts through `ticket-artifact-import-upload`.
 
 Recommended storage split:
 

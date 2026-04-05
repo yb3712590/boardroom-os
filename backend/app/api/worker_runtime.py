@@ -14,6 +14,7 @@ from app.contracts.artifacts import (
 from app.contracts.commands import (
     CommandAckEnvelope,
     TicketHeartbeatCommand,
+    TicketArtifactImportUploadCommand,
     TicketResultSubmitCommand,
     TicketStartCommand,
 )
@@ -23,6 +24,7 @@ from app.contracts.worker_runtime import (
     WorkerAssignmentsEnvelope,
     WorkerExecutionPackageData,
     WorkerExecutionPackageEnvelope,
+    WorkerTicketArtifactImportUploadCommand,
     WorkerTicketHeartbeatCommand,
     WorkerTicketResultSubmitCommand,
     WorkerTicketStartCommand,
@@ -40,6 +42,7 @@ from app.core.ticket_handlers import (
     handle_ticket_result_submit,
     handle_ticket_start,
 )
+from app.core.artifact_handlers import handle_ticket_artifact_import_upload
 from app.core.time import now_local
 from app.core.worker_runtime import (
     authenticate_worker_assignments_request,
@@ -444,4 +447,44 @@ def worker_ticket_result_submit(
         ),
         developer_inspector_store,
         artifact_store,
+    )
+
+
+@router.post("/commands/ticket-artifact-import-upload", response_model=CommandAckEnvelope)
+def worker_ticket_artifact_import_upload(
+    request: Request,
+    payload: WorkerTicketArtifactImportUploadCommand,
+    access_token: str | None = Query(default=None),
+) -> CommandAckEnvelope:
+    principal = authenticate_worker_request(
+        request,
+        access_token=access_token,
+        scope="command",
+        ticket_id=payload.ticket_id,
+        command_name="ticket-artifact-import-upload",
+    )
+    repository: ControlPlaneRepository = request.app.state.repository
+    artifact_store: ArtifactStore = request.app.state.artifact_store
+    require_worker_owned_ticket(
+        repository,
+        ticket_id=payload.ticket_id,
+        principal=principal,
+    )
+    return handle_ticket_artifact_import_upload(
+        repository,
+        TicketArtifactImportUploadCommand(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            node_id=payload.node_id,
+            artifact_ref=payload.artifact_ref,
+            path=payload.path,
+            kind=payload.kind,
+            media_type=payload.media_type,
+            upload_session_id=payload.upload_session_id,
+            retention_class=payload.retention_class,
+            retention_ttl_sec=payload.retention_ttl_sec,
+            idempotency_key=payload.idempotency_key,
+        ),
+        artifact_store,
+        imported_by=principal.worker_id,
     )

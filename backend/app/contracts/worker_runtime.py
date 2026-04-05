@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import Field, model_validator
 
 from app.contracts.commands import (
+    TicketArtifactImportUploadCommand,
     TicketBoardReviewRequest,
     TicketResultStatus,
     TicketWrittenArtifact,
@@ -42,6 +43,7 @@ class WorkerCommandEndpoints(StrictModel):
     ticket_start_url: str = Field(min_length=1)
     ticket_heartbeat_url: str = Field(min_length=1)
     ticket_result_submit_url: str = Field(min_length=1)
+    ticket_artifact_import_upload_url: str = Field(min_length=1)
 
 
 class WorkerExecutionPackageData(StrictModel):
@@ -109,3 +111,7 @@ class WorkerTicketResultSubmitCommand(StrictModel):
         if not self.failure_kind or not self.failure_message:
             raise ValueError("failed result submissions require failure_kind and failure_message.")
         return self
+
+
+class WorkerTicketArtifactImportUploadCommand(TicketArtifactImportUploadCommand):
+    pass

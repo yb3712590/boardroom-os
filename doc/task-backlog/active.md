@@ -6,7 +6,7 @@
 
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
-| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-001`、`P1-CLN-002` 已进入进行中，`P1-CLN-003`、`P1-CLN-004` 仍未开始迁移 |
+| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-001`、`P1-CLN-002`、`P1-CLN-003` 已进入进行中，`P1-CLN-004` 仍未开始迁移 |
 | 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | 仍属后置增强 |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | 仍属后置增强 |
 | 治理模板与文档型角色 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | 仍属后置增强 |
@@ -21,14 +21,18 @@
 > 当前挂起原因：
 > `P1-CLN-001` 还不能直接收口成物理迁移，因为 worker-admin 的 API、auth、projection、CLI 仍需成组移动。`P1-CLN-002` 到 `P1-CLN-004` 当前都还不能直接启动物理迁移：
 > `P1-CLN-002`：主线 command 侧已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留 `tenant_id/workspace_id` shape。
-> `P1-CLN-003`：`ticket-result-submit` 仍桥接 `upload_session_id` 和 artifact upload session 消费路径。
+> `P1-CLN-003`：`ticket-result-submit` 已不再桥接 upload session；当前仍保留独立的 `ticket-artifact-import-upload` 导入入口和 upload session 存储，所以还不能直接做 `_frozen/` 物理迁移。
 > `P1-CLN-004`：`worker-runtime` 路由、投影、CLI 和 bootstrap/session/delivery-grant schema 仍需成组保留。
+
+> 本轮补记：
+> `P1-CLN-003` 现在新增了控制面和 `worker-runtime` 两条 `ticket-artifact-import-upload` 写回链；上传会话完成后先导入为正常 artifact，再让 `ticket-result-submit` 只引用 `artifact_ref`。
+> `backend/tests/test_api.py` 已补回归，覆盖控制面导入、路径越界拒绝、worker-runtime 签名导入后再提交；`backend/tests/test_mainline_truth.py` 也已改成新阻塞口径。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
 | P1-CLN-001 | 移动 worker-admin 代码到 _frozen/ | 3h | 进行中 |
 | P1-CLN-002 | 移动多租户代码到 _frozen/ | 2h | 进行中 |
-| P1-CLN-003 | 移动对象存储代码到 _frozen/ | 2h | 未开始（阻塞评估已固化） |
+| P1-CLN-003 | 移动对象存储代码到 _frozen/ | 2h | 进行中 |
 | P1-CLN-004 | 移动远程 handoff 代码到 _frozen/ | 2h | 未开始（阻塞评估已固化） |
 
 ## P2：增强
