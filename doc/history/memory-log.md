@@ -105,6 +105,9 @@
 - `P1-CLN-004` 这轮已按 shim 迁移收口：`backend/app/_frozen/worker_runtime/` 现在承接 `worker-runtime` 的 API、projection、core 和 CLI 真实实现，旧 `app/api/worker_runtime*.py`、`app/core/worker_runtime.py`、`app/worker_auth_cli.py` 只保留薄转发。
 - `backend/tests/conftest.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步改成新口径：时间注入直接命中 `_frozen.worker_runtime`，`external_worker_handoff.code_refs` 也已切到 `_frozen/worker_runtime`，但 `worker_bootstrap/session/delivery-grant` schema 仍是保留阻塞点。
 - 本轮完整验证结果是：后端先确认 `pytest tests/ -q` 在当前 shell 仍因未进入项目虚拟环境而失败，再用 `./.venv/bin/pytest tests/ -q` 实测 `422 passed`；前端在补装缺失依赖后 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
+- `P1-CLN-003` 这轮继续做了保守收口：可选对象存储实现已拆到 `backend/app/_frozen/object_store.py`，而 `backend/app/core/artifact_store.py` 现在只保留主线必需的本地 artifact 存储、upload staging 和统一入口。
+- `backend/tests/test_api.py` 里的 object-store 回归这轮改成直接 patch `_frozen.object_store` builder；`backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 也同步成新口径：本地 artifact 存储仍属主线，冻结的只是可选对象存储分支。
+- 这轮验证时确认，当前 shell 的裸 `pytest` 不再是“命令不存在”，而是落到未进入项目虚拟环境的解释器并因缺少 `fastapi` 失败；当前真实全量后端验证命令是 `./.venv/bin/pytest tests/ -q`。
 
 ## Current Working Set
 

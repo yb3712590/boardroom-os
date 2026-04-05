@@ -89,10 +89,10 @@ def _create_client_with_fake_object_store(monkeypatch, *, fail_delete: bool = Fa
     monkeypatch.setenv("BOARDROOM_OS_ARTIFACT_OBJECT_STORE_SECRET_KEY", "local-secret")
     fake_client = _FakeObjectStoreClient(fail_delete=fail_delete)
 
-    import app.core.artifact_store as artifact_store_module
+    import app._frozen.object_store as object_store_module
 
     monkeypatch.setattr(
-        artifact_store_module,
+        object_store_module,
         "build_s3_compatible_object_store_client",
         lambda settings: fake_client,
     )

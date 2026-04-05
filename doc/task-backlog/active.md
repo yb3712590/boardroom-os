@@ -20,7 +20,7 @@
 > 当前挂起原因：
 > `P1-CLN-002`、`P1-CLN-003` 当前都还不能直接启动无壳物理迁移：
 > `P1-CLN-002`：主线 command 侧已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留 `tenant_id/workspace_id` shape。
-> `P1-CLN-003`：`ticket-result-submit` 已不再桥接 upload session；当前仍保留独立的 `ticket-artifact-import-upload` 导入入口和 upload session 存储，所以还不能直接做 `_frozen/` 物理迁移。
+> `P1-CLN-003`：`ticket-result-submit` 已不再桥接 upload session，且可选对象存储实现已迁入 `_frozen/object_store.py`；但当前仍保留独立的 `ticket-artifact-import-upload` 导入入口和 upload session 存储，所以还不能直接做 `_frozen/` 物理迁移。
 
 > 本轮补记：
 > `P1-CLN-001` 这轮已真实关闭：`backend/app/_frozen/worker_admin/` 现在承接 `worker-admin` 的 API、auth、projection、core 和 CLI 实现，`app/api/worker_admin*.py`、`app/core/worker_admin.py`、`app/worker_admin_auth_cli.py` 只保留薄转发；`backend/tests/test_mainline_truth.py` 新增回归直接校验这层真相。
@@ -34,6 +34,7 @@
 > `P1-CLN-004` 本轮已真实关闭：`backend/app/_frozen/worker_runtime/` 现在承接 `worker-runtime` 的 API、projection、core 和 CLI 实现，`app/api/worker_runtime*.py`、`app/core/worker_runtime.py`、`app/worker_auth_cli.py` 只保留薄转发。
 > `backend/tests/conftest.py` 这轮已改成直接 monkeypatch `_frozen.worker_runtime.api.worker_runtime` 和 `_frozen.worker_runtime.core.worker_runtime`，避免 shim 导出层吞掉时间注入。
 > `backend/tests/test_mainline_truth.py` 这轮新增回归，直接校验 `external_worker_handoff.code_refs` 已切到 `_frozen/worker_runtime`，同时保留旧入口作为兼容壳；共享 `worker_bootstrap/session/delivery-grant` schema 仍按阻塞点保留。
+> `P1-CLN-003` 这轮继续做了保守收口：可选对象存储实现现在位于 `backend/app/_frozen/object_store.py`，`backend/app/core/artifact_store.py` 只保留主线本地 artifact 存储、upload staging 和统一入口；object-store API 回归也已改成直接 patch `_frozen.object_store` builder。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|

@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-06 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过重定向方式执行 `py -m pytest tests/ -q` 完成全量复核，`422 passed`
+- backend：当前 shell 的裸 `pytest` 会落到未进入项目虚拟环境的解释器，并因缺少 `fastapi` 失败；本轮改用 `./.venv/bin/pytest tests/ -q` 完成全量复核，`422 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `64 passed`
 
 ## 现在先做什么
@@ -50,7 +50,7 @@
 - [x] `P1-CLN-006`：已把 frozen 相关测试边界收口成可执行断言，明确哪些测试属于冻结入口回归，哪些不是主链闭环测试
 - [x] `P1-CLN-001`：已完成；`worker-admin` 真实实现已迁入 `backend/app/_frozen/worker_admin/`，现有 API / auth / projection / CLI / core 入口只保留兼容壳，不改 HTTP 路径、鉴权规则和 CLI 调用方式
 - [ ] `P1-CLN-002`：已进入进行中；主线 `project-init / ticket-create / CEO 建票 / 审批 follow-up 建票` 已改成统一从 workflow/default 解析 scope，API 入口仍保留弃用兼容；runtime、projection 和冻结 contracts 的多租户 shape 仍未拆
-- [ ] `P1-CLN-003`：已进入进行中；`ticket-result-submit` 已不再直接消费 upload session，当前改成“upload session -> ticket-artifact-import-upload -> artifact_ref -> ticket-result-submit”，但 upload 导入入口和 upload session 存储仍在，所以 `_frozen/` 物理迁移前置条件还没全满足
+- [ ] `P1-CLN-003`：已进入进行中；`ticket-result-submit` 已不再直接消费 upload session，且可选对象存储实现已拆到 `_frozen/object_store.py`，但 upload 导入入口和 upload session 存储仍在，所以 `_frozen/` 物理迁移前置条件还没全满足
 - [x] `P1-CLN-004`：已完成；`worker-runtime` 真实实现已迁入 `backend/app/_frozen/worker_runtime/`，现有 API / projection / core / CLI 入口只保留兼容壳，不改 HTTP 路径、CLI 调用方式和共享 schema
 - [ ] 如果后续启动物理迁移，仍以“不影响主线测试”为绝对前提
 
@@ -65,6 +65,8 @@
 - `P1-CLN-003` 这轮已从“未开始”推进到“进行中”：`ticket-result-submit` 不再直接消费 `upload_session_id`，当前改成先走 `ticket-artifact-import-upload` 导入，再由结果提交只引用 `artifact_ref`
 - 控制面与 `worker-runtime` 现在都补了同构的 `ticket-artifact-import-upload` 命令，执行包也会下发新的签名命令 URL，外部 handoff 没有被顺手削弱
 - `artifact_uploads` 和 upload session 存储仍保留，所以 `_frozen/` 物理迁移前置条件还没完全满足；这轮目标只是拆掉主线桥接点
+- `P1-CLN-003` 这轮继续做了保守收口：可选对象存储实现已迁入 `backend/app/_frozen/object_store.py`，`backend/app/core/artifact_store.py` 只保留本地 artifact 存储、upload staging 和统一入口；现有 env、HTTP 路径和 artifact 元数据形状都没变
+- `backend/tests/test_api.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：object-store API 回归现在直接 patch `_frozen.object_store` builder，冻结真相也会区分“主线 local artifact store”和“冻结 object-store 分支”
 - `P1-CLN-004` 这轮已从“未开始”推进到“进行中”：`/api/v1/projections/worker-runtime` 已拆到独立 `worker_runtime_projections.py`，`build_worker_runtime_projection(...)` 也已改成复用 `worker_scope_ops.py` 的 binding/session/grant/rejection helper
 - `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：handoff 的独立 projection 入口前置拆分已经完成，但 runtime 路由、CLI 和三张 handoff schema 仍需成组保留，所以还不能启动 `_frozen/` 物理迁移
 - `P1-CLN-001` 到 `P1-CLN-004` 这轮继续补的是“成组迁移清单”而不是物理迁移：`FrozenCapabilityBoundary` 新增 `api_surface_groups` 和 `storage_table_refs`，把冻结边界对应的 route family 和共享表锚点也固化进代码真相源，并由 `backend/tests/test_mainline_truth.py` 直接回归

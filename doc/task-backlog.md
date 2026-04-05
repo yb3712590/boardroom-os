@@ -27,7 +27,7 @@
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 治理模板 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 
-当前补记：代码清理区仍维持“其余切片保守收口、只在条件满足时再评估无壳迁移”的状态；这轮已把 `P1-CLN-004` 也推进到 shim 物理迁移完成，`worker-runtime` 的真实实现现在位于 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 入口只保留兼容壳。`P1-CLN-002` 继续停在主线 command 侧已解耦、共享 contracts shape 未拆；`P1-CLN-003` 继续停在 upload 导入入口和 session 存储仍保留。未关闭任务总数更新为 `21`，新增关闭任务为 `P1-CLN-004`。
+当前补记：代码清理区仍维持“其余切片保守收口、只在条件满足时再评估无壳迁移”的状态；这轮已把 `P1-CLN-004` 也推进到 shim 物理迁移完成，`worker-runtime` 的真实实现现在位于 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 入口只保留兼容壳。`P1-CLN-002` 继续停在主线 command 侧已解耦、共享 contracts shape 未拆；`P1-CLN-003` 继续停在 upload 导入入口和 session 存储仍保留，但可选对象存储实现已先拆到 `backend/app/_frozen/object_store.py`，主线 `artifact_store.py` 只保留本地 artifact 存储和 upload staging。未关闭任务总数仍是 `21`。
 
 ## 读写约定
 

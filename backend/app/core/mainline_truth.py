@@ -253,9 +253,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         api_surface_groups=("artifact-uploads", "commands", "worker-runtime"),
         storage_table_refs=("artifact_upload_session", "artifact_upload_part"),
         code_refs=(
-            "backend/app/api/artifact_uploads.py",
-            "backend/app/core/artifact_uploads.py",
-            "backend/app/core/artifact_store.py",
+            "backend/app/_frozen/object_store.py",
         ),
         entrypoint_refs=(
             "backend/app/api/artifact_uploads.py",
@@ -263,6 +261,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/core/artifact_store.py",
         ),
         mainline_dependency_refs=(
+            "backend/app/core/artifact_store.py",
             "backend/app/core/artifact_handlers.py",
             "backend/app/core/worker_runtime.py",
         ),
@@ -280,10 +279,11 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/db/repository.py",
         ),
         migration_blocker_summary=(
-            "主线 result-submit 已与 upload session 解耦，但 upload 导入入口和 artifact upload session 存储仍需保留。"
+            "本地 artifact 存储仍是主线；冻结的只是可选对象存储分支，upload 导入入口和 artifact upload session 存储仍需保留。"
         ),
         notes=(
             "控制面上传和可选对象存储仍可运行，但当前只按最小解堵保留，不继续平台化。"
+            "本地 artifact 存储与 upload staging 仍是主线必需；冻结的只是可选对象存储实现。"
             "ticket-result-submit 已不再依赖 upload session；当前桥接只保留在独立的 artifact import-upload 命令。"
         ),
     ),

@@ -4,9 +4,9 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 from uuid import uuid4
 
+from app._frozen import object_store as frozen_object_store
 from app.contracts.common import JsonValue
 
 STORAGE_BACKEND_LOCAL_FILE = "LOCAL_FILE"
@@ -35,21 +35,6 @@ class CompletedUpload:
     content_hash: str
     size_bytes: int
     part_count: int
-
-
-class ObjectStoreClient(Protocol):
-    def put_object(
-        self,
-        *,
-        bucket: str,
-        key: str,
-        body: bytes,
-        media_type: str | None = None,
-    ) -> None: ...
-
-    def get_object(self, *, bucket: str, key: str) -> bytes: ...
-
-    def delete_object(self, *, bucket: str, key: str) -> None: ...
 
 
 def normalize_artifact_logical_path(logical_path: str) -> str:
@@ -124,103 +109,6 @@ class _LocalFileArtifactBackend:
         target_path.unlink(missing_ok=True)
 
 
-class _S3CompatibleObjectStoreBackend:
-    def __init__(self, *, bucket: str, client: ObjectStoreClient):
-        self.bucket = bucket
-        self.client = client
-
-    def materialize_bytes(
-        self,
-        *,
-        workflow_id: str,
-        ticket_id: str,
-        artifact_ref: str,
-        logical_path: str,
-        content: bytes,
-        media_type: str | None,
-    ) -> MaterializedArtifact:
-        object_key = build_artifact_object_key(
-            workflow_id=workflow_id,
-            ticket_id=ticket_id,
-            artifact_ref=artifact_ref,
-            logical_path=logical_path,
-        )
-        self.client.put_object(
-            bucket=self.bucket,
-            key=object_key,
-            body=content,
-            media_type=media_type,
-        )
-        return MaterializedArtifact(
-            logical_path=normalize_artifact_logical_path(logical_path),
-            storage_relpath=None,
-            storage_backend=STORAGE_BACKEND_OBJECT_STORE,
-            storage_object_key=object_key,
-            content_hash=hashlib.sha256(content).hexdigest(),
-            size_bytes=len(content),
-        )
-
-    def read_bytes(self, storage_object_key: str) -> bytes:
-        normalized = normalize_artifact_logical_path(storage_object_key)
-        return self.client.get_object(bucket=self.bucket, key=normalized)
-
-    def delete(self, storage_object_key: str) -> None:
-        normalized = normalize_artifact_logical_path(storage_object_key)
-        self.client.delete_object(bucket=self.bucket, key=normalized)
-
-
-class _Boto3S3CompatibleObjectStoreClient:
-    def __init__(self, *, endpoint: str, access_key: str, secret_key: str, region: str | None):
-        try:
-            import boto3
-        except ImportError as exc:
-            raise RuntimeError(
-                "S3-compatible object storage requires boto3 to be installed."
-            ) from exc
-
-        session = boto3.session.Session(
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name=region,
-        )
-        self._client = session.client("s3", endpoint_url=endpoint)
-
-    def put_object(
-        self,
-        *,
-        bucket: str,
-        key: str,
-        body: bytes,
-        media_type: str | None = None,
-    ) -> None:
-        kwargs: dict[str, object] = {"Bucket": bucket, "Key": key, "Body": body}
-        if media_type:
-            kwargs["ContentType"] = media_type
-        self._client.put_object(**kwargs)
-
-    def get_object(self, *, bucket: str, key: str) -> bytes:
-        response = self._client.get_object(Bucket=bucket, Key=key)
-        return response["Body"].read()
-
-    def delete_object(self, *, bucket: str, key: str) -> None:
-        self._client.delete_object(Bucket=bucket, Key=key)
-
-
-def build_s3_compatible_object_store_client(settings) -> ObjectStoreClient:
-    if not settings.artifact_object_store_endpoint:
-        raise RuntimeError("Object store endpoint is required when object storage is enabled.")
-    if not settings.artifact_object_store_access_key:
-        raise RuntimeError("Object store access key is required when object storage is enabled.")
-    if not settings.artifact_object_store_secret_key:
-        raise RuntimeError("Object store secret key is required when object storage is enabled.")
-    return _Boto3S3CompatibleObjectStoreClient(
-        endpoint=settings.artifact_object_store_endpoint,
-        access_key=settings.artifact_object_store_access_key,
-        secret_key=settings.artifact_object_store_secret_key,
-        region=settings.artifact_object_store_region,
-    )
-
-
 class ArtifactStore:
     def __init__(
         self,
@@ -231,7 +119,7 @@ class ArtifactStore:
         upload_max_size_bytes: int = 100 * 1024 * 1024,
         upload_max_part_count: int = 10_000,
         object_store_bucket: str | None = None,
-        object_store_client: ObjectStoreClient | None = None,
+        object_store_client: frozen_object_store.ObjectStoreClient | None = None,
     ):
         self.root = root
         self.upload_staging_root = upload_staging_root or root.parent / "artifact_uploads"
@@ -240,9 +128,13 @@ class ArtifactStore:
         self.upload_max_part_count = upload_max_part_count
         self._local_backend = _LocalFileArtifactBackend(root)
         self._object_store_backend = (
-            _S3CompatibleObjectStoreBackend(
+            frozen_object_store.S3CompatibleObjectStoreBackend(
                 bucket=object_store_bucket,
                 client=object_store_client,
+                object_key_builder=build_artifact_object_key,
+                logical_path_normalizer=normalize_artifact_logical_path,
+                materialized_artifact_factory=MaterializedArtifact,
+                storage_backend_label=STORAGE_BACKEND_OBJECT_STORE,
             )
             if object_store_bucket and object_store_client is not None
             else None
@@ -459,7 +351,7 @@ def build_artifact_store(settings) -> ArtifactStore:
     if settings.artifact_object_store_enabled:
         if not settings.artifact_object_store_bucket:
             raise RuntimeError("Object store bucket is required when object storage is enabled.")
-        object_store_client = build_s3_compatible_object_store_client(settings)
+        object_store_client = frozen_object_store.build_s3_compatible_object_store_client(settings)
         object_store_bucket = settings.artifact_object_store_bucket
     return ArtifactStore(
         settings.artifact_store_root,

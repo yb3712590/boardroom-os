@@ -161,7 +161,11 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
         "backend/app/core/artifact_uploads.py",
         "backend/app/core/artifact_store.py",
     )
+    assert boundaries_by_slug["artifact_uploads_and_object_store"].code_refs == (
+        "backend/app/_frozen/object_store.py",
+    )
     assert boundaries_by_slug["artifact_uploads_and_object_store"].mainline_dependency_refs == (
+        "backend/app/core/artifact_store.py",
         "backend/app/core/artifact_handlers.py",
         "backend/app/core/worker_runtime.py",
     )
@@ -213,7 +217,9 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     boundaries_by_slug = {entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES}
 
     artifact_boundary = boundaries_by_slug["artifact_uploads_and_object_store"]
+    assert artifact_boundary.code_refs == ("backend/app/_frozen/object_store.py",)
     assert artifact_boundary.mainline_dependency_refs == (
+        "backend/app/core/artifact_store.py",
         "backend/app/core/artifact_handlers.py",
         "backend/app/core/worker_runtime.py",
     )
@@ -224,7 +230,7 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
         "backend/app/db/repository.py",
     )
     assert artifact_boundary.migration_blocker_summary == (
-        "主线 result-submit 已与 upload session 解耦，但 upload 导入入口和 artifact upload session 存储仍需保留。"
+        "本地 artifact 存储仍是主线；冻结的只是可选对象存储分支，upload 导入入口和 artifact upload session 存储仍需保留。"
     )
     assert artifact_boundary.api_surface_groups == ("artifact-uploads", "commands", "worker-runtime")
     assert artifact_boundary.storage_table_refs == ("artifact_upload_session", "artifact_upload_part")
