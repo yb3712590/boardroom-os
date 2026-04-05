@@ -6,7 +6,7 @@
 
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
-| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-001` 已进入进行中，`P1-CLN-002` 到 `P1-CLN-004` 已完成阻塞评估收口但仍未开始迁移 |
+| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-001`、`P1-CLN-002` 已进入进行中，`P1-CLN-003`、`P1-CLN-004` 仍未开始迁移 |
 | 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | 仍属后置增强 |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | 仍属后置增强 |
 | 治理模板与文档型角色 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | 仍属后置增强 |
@@ -16,18 +16,18 @@
 
 ### 3.3 代码清理
 
-> 当前状态补记：`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 这轮已完成前置拆分：`worker-admin` 共用的 scope / bootstrap / session / grant helper 已移到 `worker_scope_ops.py`，`worker-admin` projection 入口已拆到独立文件，但仍没有启动 `_frozen/` 物理迁移。
+> 当前状态补记：`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 已完成前置拆分：`worker-admin` 共用的 scope / bootstrap / session / grant helper 已移到 `worker_scope_ops.py`，`worker-admin` projection 入口已拆到独立文件，但仍没有启动 `_frozen/` 物理迁移。`P1-CLN-002` 这轮已推进到主线 command 侧解耦：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票不再直接吃 `tenant_id/workspace_id`，而是统一从 workflow/default 解析 scope；命令 API 仍保留弃用兼容输入。
 >
 > 当前挂起原因：
-> `P1-CLN-001` 还不能直接收口成物理迁移，因为 worker-admin 的 API、auth、projection、CLI 仍需成组移动。`P1-CLN-002` 到 `P1-CLN-004` 这轮已完成阻塞评估收口，并把阻塞证据固化进 `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py`，但都还不能直接启动物理迁移：
-> `P1-CLN-002`：共享 contracts、审批恢复和 ticket 创建仍直接依赖 `tenant_id/workspace_id`。
+> `P1-CLN-001` 还不能直接收口成物理迁移，因为 worker-admin 的 API、auth、projection、CLI 仍需成组移动。`P1-CLN-002` 到 `P1-CLN-004` 当前都还不能直接启动物理迁移：
+> `P1-CLN-002`：主线 command 侧已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留 `tenant_id/workspace_id` shape。
 > `P1-CLN-003`：`ticket-result-submit` 仍桥接 `upload_session_id` 和 artifact upload session 消费路径。
 > `P1-CLN-004`：`worker-runtime` 路由、投影、CLI 和 bootstrap/session/delivery-grant schema 仍需成组保留。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
 | P1-CLN-001 | 移动 worker-admin 代码到 _frozen/ | 3h | 进行中 |
-| P1-CLN-002 | 移动多租户代码到 _frozen/ | 2h | 未开始（阻塞评估已固化） |
+| P1-CLN-002 | 移动多租户代码到 _frozen/ | 2h | 进行中 |
 | P1-CLN-003 | 移动对象存储代码到 _frozen/ | 2h | 未开始（阻塞评估已固化） |
 | P1-CLN-004 | 移动远程 handoff 代码到 _frozen/ | 2h | 未开始（阻塞评估已固化） |
 

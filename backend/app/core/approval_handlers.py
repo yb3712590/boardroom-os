@@ -18,8 +18,6 @@ from app.core.constants import (
     APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
     APPROVAL_STATUS_OPEN,
     APPROVAL_STATUS_REJECTED,
-    DEFAULT_TENANT_ID,
-    DEFAULT_WORKSPACE_ID,
     EMPLOYEE_STATE_ACTIVE,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
@@ -47,6 +45,7 @@ from app.core.persona_profiles import normalize_persona_profiles
 from app.core.staffing_containment import contain_employee_active_tickets
 from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
+from app.core.workflow_scope import with_workflow_scope
 from app.db.repository import ControlPlaneRepository
 
 SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS = 6
@@ -642,8 +641,6 @@ def _build_post_review_closeout_ticket_payload(
         priority="high",
         timeout_sla_sec=1800,
         deadline_at=logical_created_spec.get("deadline_at"),
-        tenant_id=logical_created_spec.get("tenant_id"),
-        workspace_id=logical_created_spec.get("workspace_id"),
         delivery_stage=DeliveryStage.CLOSEOUT,
         auto_review_request=_build_closeout_internal_review_request(closeout_summary),
         escalation_policy={
@@ -735,16 +732,6 @@ def _build_scope_followup_ticket_payloads(
         approval=approval,
     )
     workflow = repository.get_workflow_projection(approval["workflow_id"], connection=connection)
-    tenant_id = (
-        str(workflow.get("tenant_id") or DEFAULT_TENANT_ID)
-        if workflow is not None
-        else DEFAULT_TENANT_ID
-    )
-    workspace_id = (
-        str(workflow.get("workspace_id") or DEFAULT_WORKSPACE_ID)
-        if workflow is not None
-        else DEFAULT_WORKSPACE_ID
-    )
     input_artifact_refs = _dedupe_artifact_refs(
         [consensus_artifact_ref] + list(created_spec.get("input_artifact_refs") or [])
     )
@@ -814,8 +801,6 @@ def _build_scope_followup_ticket_payloads(
             priority=_scope_followup_priority(delivery_stage),
             timeout_sla_sec=1800,
             deadline_at=created_spec.get("deadline_at"),
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
             delivery_stage=delivery_stage,
             auto_review_request=(
                 _build_scope_followup_internal_delivery_review_request(followup_summary)
@@ -863,7 +848,10 @@ def _insert_scope_followup_ticket_created_event(
         idempotency_key=idempotency_key,
         causation_id=command_id,
         correlation_id=workflow_id,
-        payload=ticket_payload,
+        payload=with_workflow_scope(
+            ticket_payload,
+            repository.get_workflow_projection(workflow_id, connection=connection),
+        ),
         occurred_at=occurred_at,
     )
     if event_row is None:

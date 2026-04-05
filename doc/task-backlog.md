@@ -28,7 +28,7 @@
 | 治理模板 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 文档收口 | `P2-DOC-001` 到 `P2-DOC-005` | 进行中 | [task-backlog/active.md](task-backlog/active.md) |
 
-当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；这轮又把 `P2-UI-005` 到 `P2-UI-007` 真实关掉了，因此 UI 打磨区已从当前工作集移出，未关闭任务从 `29` 降到 `26`，详细补记看 `task-backlog/active.md`。
+当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；这轮把 `P1-CLN-002` 从“未开始”推进到“进行中”，但只完成了主线 command 侧去字段，runtime / projection / 冻结 contracts 仍未收口，所以未关闭任务总数仍是 `26`。UI 打磨区此前已移出当前工作集，详细补记看 `task-backlog/active.md`。
 
 ## 读写约定
 

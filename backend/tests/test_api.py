@@ -110,6 +110,45 @@ def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
     }
 
 
+def _ensure_scoped_workflow(
+    client,
+    *,
+    workflow_id: str,
+    tenant_id: str,
+    workspace_id: str,
+    goal: str | None = None,
+) -> None:
+    repository = client.app.state.repository
+    workflow = repository.get_workflow_projection(workflow_id)
+    if workflow is not None:
+        assert workflow["tenant_id"] == tenant_id
+        assert workflow["workspace_id"] == workspace_id
+        return
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_WORKFLOW_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-workflow-created:{workflow_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "north_star_goal": goal or f"Seed scoped workflow {workflow_id}",
+                "hard_constraints": ["Keep governance explicit."],
+                "budget_cap": 500000,
+                "deadline_at": None,
+                "title": goal or f"Seed scoped workflow {workflow_id}",
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+
 def _employee_hire_request_payload(
     workflow_id: str,
     *,
@@ -1706,6 +1745,13 @@ def _create_and_lease_ticket(
     workspace_id: str | None = None,
     delivery_stage: str | None = None,
 ) -> None:
+    if tenant_id is not None and workspace_id is not None:
+        _ensure_scoped_workflow(
+            client,
+            workflow_id=workflow_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     create_response = client.post(
         "/api/v1/commands/ticket-create",
         json=_ticket_create_payload(
@@ -1730,8 +1776,6 @@ def _create_and_lease_ticket(
             output_schema_version=output_schema_version,
             allowed_tools=allowed_tools,
             context_query_plan=context_query_plan,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
             delivery_stage=delivery_stage,
         ),
     )
@@ -2340,6 +2384,12 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
     assert build_created_spec["parent_ticket_id"] == f"tkt_{workflow_id}_scope_decision"
     assert check_created_spec["parent_ticket_id"] == "tkt_followup_scope_build"
     assert review_created_spec["parent_ticket_id"] == "tkt_followup_scope_check"
+    assert build_created_spec["tenant_id"] == "tenant_default"
+    assert build_created_spec["workspace_id"] == "ws_default"
+    assert check_created_spec["tenant_id"] == "tenant_default"
+    assert check_created_spec["workspace_id"] == "ws_default"
+    assert review_created_spec["tenant_id"] == "tenant_default"
+    assert review_created_spec["workspace_id"] == "ws_default"
     assert f"art://runtime/tkt_followup_scope_build/implementation-bundle.json" in check_created_spec[
         "input_artifact_refs"
     ]
@@ -3637,14 +3687,30 @@ def test_project_init_exposes_board_directive_ceo_shadow_run(client):
     assert any(run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED for run in runs)
 
 
-def test_ticket_create_persists_explicit_tenant_and_workspace_and_matches_workflow(client):
-    workflow_response = client.post(
+def test_project_init_ignores_legacy_scope_fields_and_uses_default_scope(client):
+    response = client.post(
         "/api/v1/commands/project-init",
         json={
             **_project_init_payload("Ship scoped MVP"),
             "tenant_id": "tenant_blue",
             "workspace_id": "ws_design",
         },
+    )
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+
+    workflow = client.app.state.repository.get_workflow_projection(workflow_id)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert workflow is not None
+    assert workflow["tenant_id"] == "tenant_default"
+    assert workflow["workspace_id"] == "ws_default"
+
+
+def test_ticket_create_ignores_legacy_scope_fields_and_uses_workflow_scope(client):
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Ship scoped MVP"),
     )
     workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
 
@@ -3663,8 +3729,8 @@ def test_ticket_create_persists_explicit_tenant_and_workspace_and_matches_workfl
 
     assert create_response.status_code == 200
     assert create_response.json()["status"] == "ACCEPTED"
-    assert ticket_projection["tenant_id"] == "tenant_blue"
-    assert ticket_projection["workspace_id"] == "ws_design"
+    assert ticket_projection["tenant_id"] == "tenant_default"
+    assert ticket_projection["workspace_id"] == "ws_default"
 
 
 def test_dashboard_returns_latest_active_workflow(client):
@@ -5708,15 +5774,14 @@ def test_worker_runtime_delivery_routes_reject_workspace_mismatch_and_log_it(
     monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_response = client.post(
-        "/api/v1/commands/project-init",
-        json={
-            **_project_init_payload("Delivery scope workflow"),
-            "tenant_id": "tenant_scope",
-            "workspace_id": "ws_scope",
-        },
+    workflow_id = "wf_delivery_scope"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_scope",
+        workspace_id="ws_scope",
+        goal="Delivery scope workflow",
     )
-    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
     _seed_input_artifact(client)
     _create_and_lease_ticket(
         client,

@@ -73,6 +73,10 @@
 - 这轮暗色主题没有扩成 light theme；只把 surface / divider / focus / disabled / board / incident 语义收口到统一 token，并把首页、按钮、输入框和 overlay 的对比度补稳。
 - 当前性能收口只做了两件真实变更：`ReviewRoomDrawer`、`MeetingRoomDrawer`、`IncidentDrawer`、`DependencyInspectorDrawer`、`ProviderSettingsDrawer` 改成按需懒加载；`useSSE` 对 `boardroom-event` 失效通知默认做 `500ms` debounce。
 - 新增前端回归测试覆盖抽屉焦点管理、直接路由落到 review 抽屉时的初始焦点，以及 `useSSE` 的 clustered invalidation debounce；本轮前端验证结果更新为 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
+- `P1-CLN-002` 这轮已把主线 command 侧的 `tenant_id/workspace_id` 收口掉：`ProjectInitCommand`、`TicketCreateCommand` 已不再暴露这两个字段，`project-init`、`ticket-create`、CEO 建票、审批 follow-up、closeout 和会议室建票都统一改成从 workflow/default 解析 scope。
+- `/api/v1/commands/project-init` 和 `/api/v1/commands/ticket-create` 当前仍保留弃用兼容输入，旧字段还能传，但不会再影响主线行为；冻结多租户链路相关测试改成显式 seed 带 scope 的 workflow，再让 ticket-create 继承 workflow scope。
+- `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮已改成新的阻塞口径：主线 command 已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留多租户 shape，所以 `P1-CLN-002` 还不能收口成 `_frozen/` 物理迁移。
+- 这轮完整验证结果是：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用 `py -m pytest tests/ -q` 实测 `415 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
 
 ## Current Working Set
 

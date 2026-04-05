@@ -17,14 +17,13 @@ from app.contracts.commands import (
     TicketReviewOption,
 )
 from app.core.constants import (
-    DEFAULT_TENANT_ID,
-    DEFAULT_WORKSPACE_ID,
     EVENT_MEETING_REQUESTED,
     EVENT_MEETING_STARTED,
     EVENT_TICKET_CREATED,
 )
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
+from app.core.workflow_scope import with_workflow_scope
 from app.db.repository import ControlPlaneRepository
 
 
@@ -258,8 +257,6 @@ def handle_meeting_request(
             priority="high",
             timeout_sla_sec=1800,
             deadline_at=workflow.get("deadline_at"),
-            tenant_id=str(workflow.get("tenant_id") or DEFAULT_TENANT_ID),
-            workspace_id=str(workflow.get("workspace_id") or DEFAULT_WORKSPACE_ID),
             excluded_employee_ids=[],
             auto_review_request=_build_meeting_review_request(topic=payload.topic, ticket_id=ticket_id),
             meeting_context={
@@ -341,7 +338,7 @@ def handle_meeting_request(
             idempotency_key=ticket_payload.idempotency_key,
             causation_id=command_id,
             correlation_id=payload.workflow_id,
-            payload=ticket_payload.model_dump(mode="json"),
+            payload=with_workflow_scope(ticket_payload.model_dump(mode="json"), workflow),
             occurred_at=received_at,
         )
         if ticket_event is None:

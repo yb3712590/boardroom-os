@@ -46,7 +46,7 @@
 | 能力 | 真实入口 | 当前主线依赖 | 当前处理 | 迁移前置条件 |
 |------|----------|--------------|----------|--------------|
 | `worker-admin` 管理面 | `/api/v1/worker-admin`、`/api/v1/projections/worker-admin-audit`、`/api/v1/projections/worker-admin-auth-rejections`、`worker_admin_auth_cli.py` | 无 | 冻结，作为保留运维面存在，不继续扩张 | `worker-admin` API、认证投影和 CLI 必须一起迁；在主链不再直接 import `worker_admin` 前，不做物理迁移 |
-| 多租户 scope / binding | `commands/runtime/worker_admin/worker_runtime` 契约、`/api/v1/projections/worker-runtime` 等共享读面 | `ticket_handlers.py`、`approval_handlers.py`、`ceo_execution_presets.py` 仍直接依赖 `tenant_id/workspace_id` | 冻结，但保留兼容数据结构；这块是共享数据结构，不是可独立搬走的目录 | 在 `tenant_id/workspace_id` 脱离主线 command、runtime、projection 数据形状前，不做物理迁移 |
+| 多租户 scope / binding | `commands/runtime/worker_admin/worker_runtime` 契约、`/api/v1/projections/worker-runtime` 等共享读面 | 主线 command handler 已不再直接依赖 `tenant_id/workspace_id`，但 runtime / worker-admin / worker-runtime contracts 与共享读面仍保留这组数据形状 | 冻结，但保留兼容数据结构；这块是共享数据结构，不是可独立搬走的目录 | 在 `tenant_id/workspace_id` 脱离 runtime、projection 和冻结 contracts 的数据形状前，不做物理迁移 |
 | 控制面上传 / 可选对象存储 | `/api/v1/artifact-uploads`、`artifact_uploads.py`、`artifact_store.py` | `ticket_handlers.py` 仍通过 `require_completed_artifact_upload_session(...)` 借用上传会话校验 | 冻结，只保留最小解堵；对象存储不继续平台化 | 先把 `ticket-result-submit` 从上传会话校验里解耦，再谈物理迁移 |
 | 外部 worker handoff | `/api/v1/worker-runtime`、`/api/v1/projections/worker-runtime`、`worker_auth_cli.py` | 无 | 冻结，保留交接面和运维读面，但不作为当前主线继续推进 | `worker-runtime` 路由、投影和 bootstrap/session/delivery-grant 存储仍共用现有 schema，不能拆一半搬一半 |
 
@@ -55,4 +55,6 @@
 当前补记：
 
 - `artifact_uploads_and_object_store` 不能误判成“整块冻结死代码”，因为主线 `ticket-result-submit` 还在借用它的已完成上传会话校验
-- `multi_tenant_scope` 当前也不能按目录整体搬走，因为它还是本地主链共享数据结构的一部分
+- `multi_tenant_scope` 这轮已从主线 command 侧去掉 `tenant_id/workspace_id`：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票现在统一从 workflow/default 解析 scope
+- 命令 API 为了兼容旧调用，当前仍接受 `tenant_id/workspace_id`，但这两个字段不再驱动主线路径，也不再作为主线 command 契约的一部分
+- `multi_tenant_scope` 当前仍不能按目录整体搬走，因为 runtime contracts、worker-admin / worker-runtime contracts 和共享读面还保留这组多租户数据形状

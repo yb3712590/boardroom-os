@@ -210,16 +210,12 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "Physical migration is blocked until multi-tenant scope is decoupled from command, runtime, and projection data shapes.",
         ),
         migration_blocker_refs=(
-            "backend/app/contracts/commands.py",
             "backend/app/contracts/runtime.py",
             "backend/app/contracts/worker_admin.py",
             "backend/app/contracts/worker_runtime.py",
-            "backend/app/core/approval_handlers.py",
-            "backend/app/core/ceo_execution_presets.py",
-            "backend/app/core/ticket_handlers.py",
         ),
         migration_blocker_summary=(
-            "tenant_id/workspace_id 仍是主线 contracts、审批恢复和 ticket 创建形状的一部分。"
+            "主线 command 侧已去掉 tenant_id/workspace_id，但 runtime 和冻结 contracts 仍保留多租户 shape。"
         ),
         notes=(
             "tenant/workspace scope 仍真实存在于数据结构和 handoff 链上，但不属于当前 MVP 主线卖点。"

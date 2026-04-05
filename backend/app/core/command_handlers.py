@@ -8,14 +8,7 @@ from app.contracts.commands import (
     CommandAckStatus,
     ProjectInitCommand,
 )
-from app.core.constants import (
-    DEFAULT_TENANT_ID,
-    DEFAULT_WORKSPACE_ID,
-    EVENT_BOARD_DIRECTIVE_RECEIVED,
-    EVENT_SYSTEM_INITIALIZED,
-    EVENT_WORKFLOW_CREATED,
-    SYSTEM_INITIALIZED_KEY,
-)
+from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_SYSTEM_INITIALIZED, EVENT_WORKFLOW_CREATED, SYSTEM_INITIALIZED_KEY
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_SCOPE_NODE_ID,
     build_project_init_scope_ticket_id,
@@ -23,6 +16,7 @@ from app.core.ceo_execution_presets import (
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
+from app.core.workflow_scope import default_workflow_scope
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.db.repository import ControlPlaneRepository
 
@@ -133,8 +127,7 @@ def handle_project_init(
     directive_event_key = f"{command_key}:board-directive"
 
     with repository.transaction() as connection:
-        tenant_id = payload.tenant_id or DEFAULT_TENANT_ID
-        workspace_id = payload.workspace_id or DEFAULT_WORKSPACE_ID
+        tenant_id, workspace_id = default_workflow_scope()
         repository.insert_event(
             connection,
             event_type=EVENT_SYSTEM_INITIALIZED,

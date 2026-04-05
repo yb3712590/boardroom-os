@@ -259,6 +259,8 @@ def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(cli
     assert created_spec is not None
     assert created_spec["node_id"] == PROJECT_INIT_SCOPE_NODE_ID
     assert created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert created_spec["tenant_id"] == "tenant_default"
+    assert created_spec["workspace_id"] == "ws_default"
     assert any(ref.endswith("/board-brief.md") for ref in created_spec["input_artifact_refs"])
 
 

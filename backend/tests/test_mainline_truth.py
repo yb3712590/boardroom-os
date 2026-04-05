@@ -171,16 +171,12 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     assert "shared data shape" in scope_boundary.notes
     assert any("Physical migration is blocked" in item for item in scope_boundary.migration_preconditions)
     assert scope_boundary.migration_blocker_refs == (
-        "backend/app/contracts/commands.py",
         "backend/app/contracts/runtime.py",
         "backend/app/contracts/worker_admin.py",
         "backend/app/contracts/worker_runtime.py",
-        "backend/app/core/approval_handlers.py",
-        "backend/app/core/ceo_execution_presets.py",
-        "backend/app/core/ticket_handlers.py",
     )
     assert scope_boundary.migration_blocker_summary == (
-        "tenant_id/workspace_id 仍是主线 contracts、审批恢复和 ticket 创建形状的一部分。"
+        "主线 command 侧已去掉 tenant_id/workspace_id，但 runtime 和冻结 contracts 仍保留多租户 shape。"
     )
 
     handoff_boundary = boundaries_by_slug["external_worker_handoff"]
@@ -209,30 +205,23 @@ def test_worker_auth_cli_no_longer_imports_worker_admin_core_module() -> None:
     assert "from app.core.worker_scope_ops import" in worker_auth_cli_source
 
 
-def test_multi_tenant_scope_blockers_still_exist_in_shared_contracts_and_handlers() -> None:
+def test_multi_tenant_scope_blockers_now_live_in_runtime_and_frozen_contracts() -> None:
     scope_boundary = {
         entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
     }["multi_tenant_scope"]
 
-    commands_source = _read_repo_text("backend/app/contracts/commands.py")
     runtime_source = _read_repo_text("backend/app/contracts/runtime.py")
     worker_admin_contract_source = _read_repo_text("backend/app/contracts/worker_admin.py")
     worker_runtime_contract_source = _read_repo_text("backend/app/contracts/worker_runtime.py")
-    approval_handlers_source = _read_repo_text("backend/app/core/approval_handlers.py")
-    ceo_presets_source = _read_repo_text("backend/app/core/ceo_execution_presets.py")
-    ticket_handlers_source = _read_repo_text("backend/app/core/ticket_handlers.py")
+    commands_source = _read_repo_text("backend/app/contracts/commands.py")
 
-    assert scope_boundary.migration_blocker_refs[0] == "backend/app/contracts/commands.py"
-    assert "tenant_id" in commands_source and "workspace_id" in commands_source
+    assert scope_boundary.migration_blocker_refs[0] == "backend/app/contracts/runtime.py"
+    assert "class ProjectInitCommand" in commands_source
+    assert "tenant_id: str | None" not in commands_source
+    assert "workspace_id: str | None" not in commands_source
     assert "scope_tenant_id" in runtime_source and "scope_workspace_id" in runtime_source
     assert "tenant_id" in worker_admin_contract_source and "workspace_id" in worker_admin_contract_source
     assert "tenant_id" in worker_runtime_contract_source and "workspace_id" in worker_runtime_contract_source
-    assert "tenant_id=logical_created_spec.get(\"tenant_id\")" in approval_handlers_source
-    assert "workspace_id=logical_created_spec.get(\"workspace_id\")" in approval_handlers_source
-    assert "tenant_id=workflow.get(\"tenant_id\")" in ceo_presets_source
-    assert "workspace_id=workflow.get(\"workspace_id\")" in ceo_presets_source
-    assert "tenant_id = payload.tenant_id or (" in ticket_handlers_source
-    assert "workspace_id = payload.workspace_id or (" in ticket_handlers_source
 
 
 def test_artifact_upload_bridge_blockers_still_exist_in_result_submit_path() -> None:

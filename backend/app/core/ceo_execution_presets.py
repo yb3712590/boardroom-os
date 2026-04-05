@@ -525,8 +525,6 @@ def build_ceo_create_ticket_command(
         priority=preset.priority,
         timeout_sla_sec=1800,
         deadline_at=workflow.get("deadline_at"),
-        tenant_id=workflow.get("tenant_id"),
-        workspace_id=workflow.get("workspace_id"),
         delivery_stage=preset.delivery_stage,
         auto_review_request=(
             _build_project_init_auto_review_request(ticket_id)

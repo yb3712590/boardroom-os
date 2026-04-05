@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-05 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过 `py -m pytest tests/ -q` 完成全量复核，`414 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过 `py -m pytest tests/ -q` 完成全量复核，`415 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `64 passed`
 
 ## 现在先做什么
@@ -50,12 +50,19 @@
 - [x] `P1-CLN-005`：已把冻结能力的真实入口、主线依赖、测试归属和迁移前置条件写进 `backend/app/core/mainline_truth.py`，并用 `backend/tests/test_mainline_truth.py` 固化
 - [x] `P1-CLN-006`：已把 frozen 相关测试边界收口成可执行断言，明确哪些测试属于冻结入口回归，哪些不是主链闭环测试
 - [ ] `P1-CLN-001`：已完成前置拆分，当前转为进行中；`worker-admin` 共用的 scope / bootstrap / session / grant helper 已抽到 `worker_scope_ops.py`，`worker-admin` 专属 projection 入口已从通用 `projections.py` 分离，但 `_frozen/` 物理迁移仍未启动
-- [ ] `P1-CLN-002`：仍未开始，但阻塞评估已收口；`mainline_truth.py` 和 `test_mainline_truth.py` 现已把共享 contracts、`approval_handlers.py`、`ceo_execution_presets.py`、`ticket_handlers.py` 对 `tenant_id/workspace_id` 的直接依赖固化成结构化证据
+- [ ] `P1-CLN-002`：已进入进行中；主线 `project-init / ticket-create / CEO 建票 / 审批 follow-up 建票` 已改成统一从 workflow/default 解析 scope，API 入口仍保留弃用兼容；runtime、projection 和冻结 contracts 的多租户 shape 仍未拆
 - [ ] `P1-CLN-003`：仍未开始，但阻塞评估已收口；`TicketResultSubmitCommand.upload_session_id`、`require_completed_artifact_upload_session(...)` 和上传会话消费路径仍是当前主链桥接点，暂不满足迁移前置条件
 - [ ] `P1-CLN-004`：仍未开始，但阻塞评估已收口；`/api/v1/worker-runtime`、`/api/v1/projections/worker-runtime`、`worker_auth_cli.py` 和 `worker_bootstrap/session/delivery-grant` schema 仍需成组保留
 - [ ] 如果后续启动物理迁移，仍以“不影响主线测试”为绝对前提
 
-对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001` 进行中；`P1-CLN-002` 到 `P1-CLN-004` 已完成阻塞评估收口，但仍未满足物理迁移前置条件
+本轮完成补记：
+
+- `P1-CLN-002` 这轮已从“未开始”推进到“进行中”：`ProjectInitCommand`、`TicketCreateCommand` 已不再暴露 `tenant_id/workspace_id`，主线 handler 改成统一从 workflow/default 解析 scope
+- `/api/v1/commands/project-init` 与 `/api/v1/commands/ticket-create` 当前仍保留弃用兼容输入，旧字段还能传，但不会再影响主线行为
+- 审批 follow-up、closeout 和会议室建票这轮也已补齐 workflow scope 注入，避免绕过 `handle_ticket_create(...)` 时把 scope 丢回默认值
+- 这轮没有推进 runtime contracts、`/api/v1/projections/worker-runtime`、`worker-admin / worker-runtime` 冻结 contracts 的形状收口，所以 `_frozen/` 物理迁移仍未满足前置条件
+
+对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001`、`P1-CLN-002` 进行中；`P1-CLN-003`、`P1-CLN-004` 仍未开始，且还没满足物理迁移前置条件
 
 ### `P2-C`：检索、Provider 路由、发布准备
 
