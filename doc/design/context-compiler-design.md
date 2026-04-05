@@ -1,5 +1,13 @@
 # Context Compiler Design
 
+## TL;DR
+
+- Positioning: the deterministic boundary that turns workflow evidence into a compiled execution package for workers.
+- Read this when: changing `CompileRequest`, budget rules, trust levels, compression strategy, or bundle/manifest shape.
+- Key contracts: `CompileRequest`, `CompiledContextBundle`, `CompileManifest`, task-type compression matrix, render preparation.
+- Current boundary: this doc covers evidence selection, instruction authority, budget enforcement, and audit artifacts; it is not the source of workflow state transitions.
+- Related docs: `message-bus-design.md`, `boardroom-data-contracts.md`.
+
 ## Status
 - Draft
 - Date: 2026-03-28

@@ -1,5 +1,13 @@
 # Boardroom Data Contracts
 
+## TL;DR
+
+- Positioning: the wire-level contracts for dashboard, inbox, review room, workforce, event stream, and command payloads.
+- Read this when: changing projection payloads, command request/ack shapes, review-room envelopes, or frontend/backend contract compatibility.
+- Key contracts: common envelope, dashboard/inbox/workforce/review projections, event stream envelope, command payloads and ack envelope.
+- Current boundary: this doc defines external read/write shapes; runtime business rules still belong in the backend core and message-bus design.
+- Related docs: `message-bus-design.md`, `boardroom-ui-design.md`.
+
 ## Status
 - Draft
 - Date: 2026-03-28

@@ -1,190 +1,63 @@
 # Memory Log
 
-> This file is intentionally compact. Detailed older round logs now live in:
+> This file is intentionally compact. Stable baseline context now lives in `doc/history/context-baseline.md`.
+> Detailed older round logs still live in:
 >
 > - `doc/history/archive/memory-log-detailed-2026-03-27_to_2026-03-30.md`
 > - `doc/history/archive/memory-log-detailed-2026-03-31_to_2026-04-02.md`
 
 ## How To Use This File
 
-- Read this file first for stable context and the latest mainline truth.
+- Read `doc/history/context-baseline.md` first for stable rules and architecture.
 - Read `doc/TODO.md` next for the current action list.
+- Use this file only for recent changes that still affect implementation decisions.
 - Open the archive only when exact historical rationale, raw verification commands, or old compatibility details are required.
-
-## Long-Term Memory
-
-### Product Model
-
-- Boardroom OS is an event-sourced agent delivery control plane, not a multi-agent chat shell.
-- The intended operating model remains: Board -> structured worker execution -> auditable deliverables -> explicit review gates.
-- Board involvement should stay limited to real approval points, not internal drafting chatter.
-- React Boardroom UI is a thin governance shell; workflow truth stays in backend events and projections.
-
-### Governance Rules
-
-- Ticket lifecycle, incidents, approvals, and review loops are the real control surface.
-- Maker-Checker is the default internal quality gate before CEO or Board escalation.
-- Important outputs must stay schema-checked, write-set-checked, and auditable.
-- Runtime should keep work moving autonomously and escalate only on defined blocking, risk, or approval conditions.
-
-### Stable Architecture
-
-- Backend remains the executable center: FastAPI + Pydantic v2 + SQLite.
-- Durable truth lives in the event log plus deterministic projections.
-- Worker input should come from a compiled execution package, not ad hoc payload stitching.
-- Context Compiler is the deterministic boundary for evidence selection, budget control, and audit artifacts.
-- Runtime output should flow back through the same structured `ticket-result-submit` ingress.
-
-### Frozen But Still Present
-
-- The repo still contains heavier infrastructure slices such as `worker-admin`, multi-scope worker binding, object-store support, and remote handoff.
-- Those paths are not current mainline. Unless they directly unblock local MVP, treat them as frozen.
 
 ## Current Mainline Truth
 
-- Local MVP chain is now real: `project-init -> scope review -> BUILD internal maker-checker -> CHECK -> final REVIEW -> closeout internal maker-checker`.
-- `BUILD` no longer feeds `CHECK` directly. `implementation_bundle@1` must pass an internal `maker -> checker -> fix / incident` loop first.
-- `CHECK` no longer feeds final board review directly either. `delivery_check_report@1` must now pass its own internal `maker -> checker -> fix / incident` loop before final `REVIEW` starts.
-- Final board approval no longer ends the workflow immediately. It now auto-creates a `delivery_closeout_package@1` ticket, and that package must pass its own internal `maker -> checker -> fix / incident` loop before completion is exposed.
-- Maker-Checker currently covers five real artifact families: `consensus_document@1`, `implementation_bundle@1`, `delivery_check_report@1`, `ui_milestone_review@1`, and `delivery_closeout_package@1`.
-- Employee governance is on the mainline: `hire / replace / freeze / restore`, staffing containment, and containment recovery all run through events and projections.
-- `dashboard / inbox / review room / incident / workforce / dependency inspector / completion` are live in the React shell.
-- `workforce` now exposes `rework loops`, so build/check-chain rework pressure is visible without reading raw events.
-- `workforce` now also exposes server-driven staffing templates and actions, so supported `freeze / restore / hire request / replace request` flows no longer require dropping to CLI.
-- Deterministic runtime remains the zero-config default; local `OpenAI Compat` config is optional and already wired into the UI.
-- Context Compiler already supports inline text, fragment fallback, preview fallback, media/download refs, local history summary cards, and deterministic `json_messages_v1` rendering.
-
-## Main Remaining Gaps
-
-- More ticket types still need the same staffing policy depth that build/visual/consensus/closeout now have.
-- Heavier publish / launch / deploy style post-closeout paths are still not yet on the MVP mainline.
-- UI is still intentionally thin: it shows current truth, but richer trend and analysis surfaces are still missing.
-- Provider routing, richer retrieval, public identity, and remote control-plane work remain post-MVP unless they directly unblock the local chain.
+- Current executable truth now lives in `doc/mainline-truth.md`.
+- This file no longer duplicates the stable product model, governance rules, or frozen-boundary notes.
+- Treat this file as compressed recent memory, not as a second truth source.
 
 ## Recent Memory
 
-### 2026-03-31
-
-- Closed the first real maker-checker loop for `ui_milestone_review@1`.
-- Moved employee lifecycle and staffing containment into the event-sourced mainline.
-- Kept heavier `worker-admin` and public-edge work in the repo, but those paths became explicitly non-mainline.
-
-### 2026-04-01
-
-- Brought the first real React Boardroom shell onto the MVP path.
-- Pushed Context Compiler from simple inline text support to budgeted fragments, previews, media refs, history summaries, rendered execution payloads, and optional local `OpenAI Compat` execution.
-- Added `dependency inspector`, runtime provider settings, and final completion card to the UI.
-
-### 2026-04-02
-
-- `project-init` now auto-advances to the first scope review instead of stopping at workflow creation.
-- `board-approve` now consumes approved scope follow-ups and continues the staged chain toward the next real governance stop.
-- The default local chain now runs `BUILD -> CHECK -> REVIEW` instead of stopping at a single early visual ticket.
-- `implementation_bundle@1` now has an internal build checker gate with real rework and incident handling before downstream `CHECK`.
-
 ### 2026-04-03
 
-- `delivery_check_report@1` now has its own internal checker gate with real `maker -> checker -> fix / incident` handling before final board review.
-- Scope follow-up `CHECK` tickets now carry a dedicated internal review type instead of reusing the build-bundle wording.
-- `workforce_summary.rework_loops` now reflects both build-chain and check-chain rework pressure.
-- Final board approval now auto-creates a `delivery_closeout_package@1` ticket, and that package also goes through internal maker-checker before the workflow is considered complete.
-- Dashboard completion now depends on closeout completion, not just final board approval; the React completion card shows both the final review approval time and the closeout completion time.
-- Staffing deblocking is now closed through the thin UI as well: supported hire/replace requests are validated against a tiny mainline staffing catalog, and `workforce` now provides server-driven `freeze / restore / hire request / replace request` controls instead of leaving operators on the CLI.
-- Added a dedicated `doc/mainline-truth.md` entrypoint so the current code truth, runtime support matrix, and frozen boundary list stop drifting across docs.
-- Locked the current reality in code as `backend/app/core/mainline_truth.py`, including the important gap that `frontend_engineer` still maps to `ui_designer_primary` instead of a separate worker role.
-- Re-aligned `README.md`, `doc/README.md`, `doc/TODO.md`, and `doc/backend-runtime-guide.md` around that truth source rather than the older mixed mainline-plus-frozen narrative.
-- Follow-up doc closure marked `P0-A` as done in `doc/TODO.md`, added explicit mainline-relation notes to the active TODO sections, and recorded one still-open decision: whether `frontend_engineer` should stay an owner-role alias or become a real runtime worker.
-- Updated `doc/task-backlog.md` to reflect current code truth: `P0-WRK-001 / 002 / 004 / 005` are already complete, while `P0-WRK-003` remains open because the repo still routes that work through `ui_designer_primary`.
-- OpenAI Compat live execution now retries `timeout / 429 / 5xx` with fixed backoff and `Retry-After` support, while `401/403 / bad response / schema mismatch` stop live execution immediately.
-- Pause-worthy provider failures now keep using the existing provider incident + breaker loop, but the current ticket no longer dies with them; runtime falls back to deterministic completion and carries the fallback evidence forward.
-- Dashboard and runtime-provider read models now use stable provider health labels: `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`; paused and incomplete reasons explicitly state that runtime is falling back to deterministic.
-- Already leased OpenAI Compat tickets can now continue through local fallback even when the provider is already paused, instead of getting stranded before execution.
-- Backend verification for this round finished at `365 passed`; frontend code was updated to match the new runtime-provider contract, but this machine still does not have Node.js / npm, so frontend build and test were not rerun here.
-- `frontend_engineer` now has an independent `frontend_engineer_primary` runtime profile for `implementation_bundle@1`, `ui_milestone_review@1`, and `delivery_closeout_package@1`; mainline staffing templates and the default roster now expose that profile instead of `ui_designer_primary`.
-- `project-init -> scope review` still stays on `ui_designer_primary`, so scheduler dispatch now carries a narrow compatibility alias from `frontend_engineer_primary` to that legacy scope-only ticket lane instead of rewriting the scope chain itself.
-- This round’s focused backend verification for the worker-role split finished at `344 passed`, and the follow-up API + scheduler sweep that exercises the mainline chain finished at `268 passed`.
+- `delivery_check_report@1` gained its own internal checker gate before final board review.
+- Final board approval now auto-creates a `delivery_closeout_package@1` ticket, and workflow completion depends on that closeout loop finishing.
+- Thin staffing deblocking became available in the React shell through `freeze / restore / hire request / replace request` controls.
+- Added `doc/mainline-truth.md` as the dedicated entrypoint for current code truth and runtime support.
+- OpenAI Compat live execution now retries `timeout / 429 / 5xx`, classifies non-retry failures cleanly, and falls back to deterministic execution without breaking the workflow.
+- Provider health is now surfaced through stable labels: `LOCAL_ONLY / HEALTHY / INCOMPLETE / PAUSED`.
+- `frontend_engineer` now has an independent runtime profile, while scope kickoff keeps a narrow compatibility alias to the legacy scope-only lane.
 
 ### 2026-04-04
 
-- Added mock-provider end-to-end coverage for the current mainline in `backend/tests/test_scheduler_runner.py`: one path now proves provider-backed `BUILD -> CHECK -> REVIEW -> closeout` reaches completion, and one path proves a `PROVIDER_BAD_RESPONSE` on final review still falls back cleanly and reaches closeout.
-- That verification exposed a real live-path gap: successful OpenAI Compat executions were not materializing the same default runtime artifacts as deterministic execution, which caused provider-backed scope approvals to miss the approved consensus artifact reference.
-- Runtime now writes the same default artifact refs and persisted artifact bodies for successful live-path structured outputs as it does for deterministic outputs, so scope approval, review evidence, and closeout completion all read from the same audit shape.
-- Full backend verification after this fix finished at `367 passed`.
-- Frontend `npm run build` and `npm run test:run` are still blocked on this machine because `npm` is not installed, so the remaining frontend verification gap is environmental rather than code-level.
-- Added the first real CEO shadow slice without changing mainline authority: `ceo_actions.py`, `ceo_snapshot.py`, `ceo_prompts.py`, `ceo_proposer.py`, `ceo_validator.py`, and `ceo_scheduler.py` now produce auditable CEO suggestions instead of free text.
-- CEO shadow runs are now triggered after ticket completion, ticket failure, approval resolution, and incident recovery; they persist to a dedicated `ceo_shadow_run` store instead of polluting the event log with unexecuted suggestions.
-- Added a new read path at `/api/v1/projections/workflows/{workflow_id}/ceo-shadow`, so later UI work can read shadow suggestions and accepted/rejected validation results without direct database inspection.
-- Backend verification after the CEO shadow batch finished at `372 passed`.
-- CEO shadow closure fixed one real wiring mistake: `ticket-create` no longer emits a bogus `TICKET_FAILED` shadow trigger, and `ticket-fail` now emits its audit trigger from the real failure success path; full backend verification still finished at `372 passed`.
-- This machine still does not have `npm`, and the bare `pytest` command is not on PATH; backend verification is reproducible via `py -m pytest tests -q`, while frontend build/test remain environment-blocked rather than code-blocked.
-- CEO has now moved past pure shadow mode into a limited-execution first slice: accepted `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE` actions are translated into the existing command handlers, while `ESCALATE_TO_BOARD` is intentionally left as `DEFERRED_SHADOW_ONLY`.
-- The `ceo_shadow_run` store and `/api/v1/projections/workflows/{workflow_id}/ceo-shadow` route now expose `executed_actions`, `execution_summary`, and `deterministic_fallback_*`, so later UI work can compare suggestion, validation, execution, and fallback without opening the database.
-- Retry execution now reuses the same ticket retry scheduling helper as the mainline failure path, so retry tickets keep the existing `attempt_no / retry_count / parent_ticket_id / timeout backoff` rules instead of inventing a second retry mechanism.
-- Full backend verification after the limited-execution batch finished at `378 passed`; frontend `npm run build` and `npm run test:run` are still blocked on this machine because `npm` is not installed.
-- This machine now has Node.js LTS available again, so frontend verification is no longer environment-blocked.
-- Frontend data-layer split is now real: `frontend/src/api.ts` has been reduced to a compatibility barrel, while the actual types, projection/command clients, SSE manager, `useSSE` hook, and three Zustand stores live under `frontend/src/types/`, `frontend/src/api/`, `frontend/src/hooks/`, and `frontend/src/stores/`.
-- `App.tsx` no longer owns inline fetch wiring or inline SSE setup; it now reads snapshot/review/UI state from stores and calls the split API modules, while `incident detail` and `dependency inspector` state intentionally remain local for the next page-shell batch.
-- Frontend verification for this round finished at `npm run build` passed and `npm run test:run` passed with `31 passed`; store resets were added in test setup so the existing long `App.test.tsx` regression suite still runs against clean state.
-- Frontend page-shell follow-up is now real: `frontend/src/pages/DashboardPage.tsx` owns route-driven page assembly, SSE invalidation, review/incident loading, and the local `incident detail / dependency inspector` reads that previously stayed in `App.tsx`.
-- `frontend/src/components/shared/ErrorBoundary.tsx` and `frontend/src/components/shared/Drawer.tsx` are now in place; the four governance overlays moved under `frontend/src/components/overlays/` and share the same drawer shell instead of each carrying duplicated motion/backdrop code.
-- `frontend/src/App.tsx` is now a pure router entry again; the old top-level drawer component files were removed after the overlay migration so there is only one active implementation path.
-- Added minimal frontend shared-component tests for drawer close behavior and ErrorBoundary retry behavior; backend verification for this batch still finished at `py -m pytest tests -q` → `378 passed`.
-- Current shell no longer has Node.js / npm on PATH, so this round’s frontend `build` and `test:run` could not be re-executed here; the remaining frontend verification gap is environmental again, not a deliberate skip.
-- Frontend page-shell closure continued in the same direction: `components/layout/`, `components/dashboard/`, `components/workforce/`, and `components/events/` now contain the live `AppShell / TopChrome / ThreeColumnLayout / InboxWell / WorkflowRiver / OpsStrip / RuntimeStatusCard / BoardGateIndicator / CompletionCard / ProjectInitForm / WorkforcePanel / StaffingActions / EventTicker` slices, and the old top-level `WorkflowRiver / WorkforcePanel / EventTicker` files were removed.
-- Shared UI primitives now include `Button / Badge / LoadingSkeleton / Toast`; the current shell batch actually uses the first three, while `Toast` remains a local controlled component rather than a new global message bus.
-- Frontend shell closure is now real through `P0-FE-020 / P0-FE-021 / P0-FE-022`: `frontend/src/styles/` now holds `tokens / global / layout / components / overlays`, `index.css` is back to a single aggregator entry, and the old `App.css` has been removed without changing the current visual shell.
-- Shared frontend helpers now live in `frontend/src/utils/format.ts` and `frontend/src/utils/ids.ts`; `DashboardPage`, `OpsStrip`, `CompletionCard`, `ProjectInitForm`, and `EventTicker` no longer each carry their own formatting helpers, and staffing forms now fall back to generated `emp_*` ids when a template hint is absent.
-- `DashboardPage.tsx` is now down to 629 lines after the helper pass, but it still owns command handlers plus local `incident detail / dependency inspector` reads, so the remaining frontend follow-up is page-shell slimming rather than CSS/helper/test closure.
-- This shell still lacks bare `pytest` and `npm` on PATH, but the machine has working Python and Node installs behind explicit entrypoints: backend verification completed at `py -m pytest tests -q` → `378 passed`, and frontend verification completed via `C:\Program Files\nodejs\npm.cmd` with `npm run build` passed and `npm run test:run` → `47 passed`.
-- Reconciled doc drift across `doc/TODO.md` and `doc/task-backlog.md`: `P0-WRK-009` is now explicitly marked complete, while `P0-CEO-009` and `P0-CEO-011` remain open and `P0-WRK-006` remains only partially complete.
-- Removed the stale TODO checkbox that still treated frontend verification as pending; the real situation is narrower: this shell still lacks `npm` on PATH, but machine-level frontend verification is reproducible through `C:\Program Files\nodejs\npm.cmd`.
-- Closed the last M4 frontend cleanup batch (`P0-FE-020 / P0-FE-021 / P0-FE-022`); the next reasonable frontend slice is to keep slimming `DashboardPage` without changing workflow truth or reopening shell architecture.
-- Revalidated the current mainline after the frontend cleanup closure: backend still finishes at `378 passed`, while frontend still finishes at `npm run build` passed and `npm run test:run` → `47 passed`.
-- In this PowerShell host, bare `pytest` and `npm` are still not directly callable on PATH; backend verification remains reproducible through `py -m pytest`, and frontend verification remains reproducible through `C:\Program Files\nodejs\npm.cmd`.
-- `project-init` no longer hardcodes the first scope ticket in `command_handlers.py`; it now writes the board brief, triggers a `BOARD_DIRECTIVE_RECEIVED` CEO shadow run, and lets CEO create the stable kickoff scope ticket (`node_scope_decision` / `tkt_<workflow_id>_scope_decision`) while still reusing `consensus_document@1 + MEETING_ESCALATION`.
-- Deterministic CEO fallback now covers that `project-init` kickoff path as well, so the zero-config local chain still reaches the first real scope review even when no live provider is configured or the proposal pipeline fails.
-- `scheduler_runner.py` now adds idle CEO maintenance after scheduler tick, leased runtime, and artifact cleanup; it only targets workflows with no open approval or incident, no leased/executing tickets, and a still-actionable signal (`no tickets yet`, `ready ticket`, or `failed ticket`), and records those runs as `SCHEDULER_IDLE_MAINTENANCE`.
-- Backend verification for this round finished at `385 passed`; frontend verification finished at `npm run build` passed and `npm run test:run` → `47 passed`. In this shell, bare `pytest` is still missing on PATH, but bare `npm` works again.
-- Added `backend/app/core/persona_profiles.py` as the new single truth source for persona data: the mainline now uses fixed `skill / personality / aesthetic` dimensions, four concrete persona templates, and read-time compatibility for older `style / preference / simplified primary_domain` payloads.
-- Default employees, `staffing_catalog`, CEO snapshot/prompting, and the Context Compiler now all consume the same normalized persona bundle; runtime execution packages expose `persona_summary` in system controls instead of carrying raw profile dicts without a readable summary.
-- Thin staffing governance now enforces a hard same-role diversity guard: `hire` and `replace` compare against `ACTIVE + board_approved` peers, reject high-overlap persona matches, and keep replacement checks scoped by excluding the employee being replaced.
-- `workforce` now exposes current worker persona fields plus `profile_summary`, and the React shell now renders the same persona shape in both Workforce and staffing Review Room instead of leaving persona data hidden in backend-only payloads.
-- Full verification after the persona slice finished at `py -m pytest tests/ -q` → `391 passed`, `npm run build` → passed, and `npm run test:run` → `49 passed`; in this shell, bare `pytest` is still missing on PATH, so backend validation remains reproducible through `py -m pytest`.
-- Closed `P0-WRK-006`: OpenAI Compat live runtime now does a conservative cleanup pass for markdown fences, BOM, JSON comments, trailing commas, and single-quoted JSON-like strings before declaring `PROVIDER_BAD_RESPONSE`.
-- Irreparable provider payloads now carry `parse_stage / repair_steps / parse_error`, and schema validation failures now carry `field_path / expected / actual` through `SCHEMA_ERROR.failure_detail`, which makes runtime triage readable without opening raw payloads.
-- Full verification after this slice finished at `py -m pytest tests/ -q` → `394 passed`, `npm run build` → passed, and `npm run test:run` → `49 passed`.
+- Successful live-path structured outputs now materialize the same default audit artifacts as deterministic execution, so scope approval, review evidence, and closeout read from one consistent shape.
+- CEO shadow mode became real through `ceo_actions.py`, `ceo_snapshot.py`, `ceo_prompts.py`, `ceo_proposer.py`, `ceo_validator.py`, and `ceo_scheduler.py`.
+- CEO then moved into a limited-execution first slice: accepted `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE` actions now execute through the existing command handlers, while `ESCALATE_TO_BOARD` stays `DEFERRED_SHADOW_ONLY`.
+- `project-init` now lets CEO create the first stable kickoff scope ticket instead of hardcoding that ticket in `command_handlers.py`.
+- `scheduler_runner.py` now runs idle CEO maintenance when a workflow has no active approval or incident, no leased/executing ticket, and still has a clear actionable signal.
+- Frontend data-layer split is now real: the live types, clients, SSE manager, hook, and Zustand stores moved under `frontend/src/types/`, `frontend/src/api/`, `frontend/src/hooks/`, and `frontend/src/stores/`.
+- `App.tsx` is back to a pure router entry, while layout, dashboard, workforce, events, overlays, shared UI primitives, styles, and utilities all moved into dedicated folders.
+- Persona data now has one source of truth in `backend/app/core/persona_profiles.py`; runtime execution packages carry `persona_summary`, and both Workforce and staffing review views expose that normalized persona shape.
+- Full verification by the end of this day had reached `py -m pytest tests/ -q` -> `394 passed`, `npm run build` -> passed, and `npm run test:run` -> `49 passed`.
 
 ### 2026-04-05
 
-- Expanded the old aggregated `P0-INT-*` placeholder in `doc/task-backlog.md` into eight explicit tasks, so integration-closure progress is now visible task by task instead of hiding behind one heading.
-- Added a new deterministic mainline integration proof in `backend/tests/test_scheduler_runner.py`: zero-config `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` now has an explicit regression test that asserts `completion_summary`, `closeout_ticket_id`, `closeout_artifact_refs`, and no open approvals or incidents.
-- Reclassified the existing provider-backed happy path and final-review `PROVIDER_BAD_RESPONSE` fallback closeout tests as the completed scope for `P0-INT-002`, instead of duplicating the same coverage under a new name.
-- Added a new incident recovery integration proof in `backend/tests/test_api.py`: the real `staffing containment -> incident resolve -> restore and retry -> maker -> checker -> board review` path is now covered end-to-end enough to prove `maker_checker_context` survives recovery and governance can reopen after the incident closes.
-- Added a frontend smoke test in `frontend/src/App.test.tsx` that strings together `project-init`, inbox review entry, board approve, completion card display, and reopening final evidence, so `P0-INT-004` is no longer implied only by several smaller UI tests.
-- Incident recovery follow-up actions no longer stop at exhausted retry budget: timeout, repeated failure, and provider incidents now accept manual `restore and retry` so the backend matches the existing incident drawer contract.
-- Recovery-generated retry chains now recreate pending delivery descendants and cancel the superseded pending tickets, which keeps node ownership on the new tickets and lets the recovered mainline reach `VISUAL_MILESTONE` and `closeout completion` without stale pending tickets blocking `completion_summary`.
-- Added three new recovery closure regressions in `backend/tests/test_scheduler_runner.py`: timeout incident recovery, repeated failure recovery, and provider incident recovery all now prove the mainline can recover and finish at `closeout completion`.
-- Added a dedicated frontend incident smoke path in `frontend/src/App.test.tsx`: `Inbox -> /incident/:incidentId -> Incident Drawer -> incident-resolve -> dashboard refresh` now has one explicit regression instead of two smaller disconnected assertions.
-- Full verification for this round finished at `py -m pytest tests/ -q` -> `399 passed`, `npm run build` -> passed, and `npm run test:run` -> `49 passed`; in this shell, bare `pytest` is still missing on PATH, so the exact required backend command remains environment-blocked rather than code-blocked.
-- Split a new long-term requirement into two tracks and kept it out of current mainline `doc/TODO.md`: framework capability and company governance.
+- Expanded the old aggregated `P0-INT-*` placeholder into eight explicit integration-closure tasks in `doc/task-backlog.md`.
+- Added explicit deterministic, provider fallback, staffing containment recovery, timeout recovery, repeated failure recovery, provider recovery, frontend smoke, and incident drawer regression proofs for the current mainline.
+- Full verification for the integration-closure round reached `py -m pytest tests/ -q` -> `399 passed`, `npm run build` -> passed, and `npm run test:run` -> `50 passed`.
+- Split long-term requirements into two tracks and kept them out of `doc/TODO.md`: framework capability and company governance.
 - `doc/feature-spec.md`, `doc/milestone-timeline.md`, and `doc/task-backlog.md` now explicitly cover multi-model coexistence, role-to-model binding, task-level override, preferred/actual model tracking, and high-cost low-frequency routing.
-- The same doc pass now also records CTO / 架构师这类低频文档型角色、其默认产物边界，以及 CEO 按治理模板决定何时拉起这些角色参与。
-- Frontend page-shell follow-up is now closed one step further: `DashboardPage.tsx` no longer owns the command-submit block or local detail-refresh block, and the page file is down from 629 lines to 298 through `dashboard-page-actions.ts`, `dashboard-page-detail-state.ts`, and `dashboard-page-helpers.ts`.
-- `StaffingActions` now shows the hire-template persona summary directly through the existing `ProfileSummary` component, so current worker personas, staffing review personas, and hire-template personas are visible in one consistent shape.
-- Full verification for this round finished at bare `pytest tests/ -q` failing because `pytest` is not on PATH, then `py -m pytest tests/ -q` -> `399 passed`, `npm run build` -> passed, and `npm run test:run` -> `50 passed`.
-- Added the first ticket-backed meeting room slice without rebuilding the runtime shell: backend now supports `meeting-request`, four auditable meeting event types, a persisted meeting projection, and a `TECHNICAL_DECISION` meeting state machine that runs `POSITION -> CHALLENGE -> PROPOSAL -> CONVERGENCE` over a `consensus_document` ticket.
-- Meeting execution stays on the main governance chain instead of creating a second chat system: successful meetings generate a real `consensus_document` plus `meeting-digest.json`, then continue through existing maker-checker and board review; failed convergence ends as `NO_CONSENSUS` and the source ticket fails with it.
-- The React shell now has a read-only meeting path at `/meeting/:meetingId`; inbox meeting items open `MeetingRoomDrawer`, the drawer shows topic, participants, round summaries, consensus or no-consensus outcome, and it can jump into the linked review room when a board review exists.
-- Full verification for the meeting-room round finished at bare `pytest tests/ -q` still blocked because `pytest` is not on PATH, then `py -m pytest tests/ -q` -> `404 passed`, `npm run build` -> passed, and `npm run test:run` -> `53 passed`.
-
-### 2026-04-02 (docs compaction)
-
-- Simplified the homepage `README.md` so first-time readers see the product definition, current real chain, quick start, and doc entrypoints without scrolling through round-by-round implementation history.
-- Moved the previous detailed `memory-log.md` snapshot into a new archive file and rewrote this file as a compact working-memory document.
+- `DashboardPage.tsx` was further slimmed from 629 lines to 298 through page-level helper files, and `StaffingActions` now shows hire-template persona summary through `ProfileSummary`.
+- Added the first ticket-backed meeting room slice without creating a second chat system: backend now supports `meeting-request`, four auditable meeting event types, a persisted meeting projection, and a `TECHNICAL_DECISION` meeting state machine that runs `POSITION -> CHALLENGE -> PROPOSAL -> CONVERGENCE` over a `consensus_document` ticket.
+- The React shell now has a read-only meeting path at `/meeting/:meetingId`, and inbox meeting items open `MeetingRoomDrawer` with topic, participants, round summaries, consensus state, and jump-through to review room.
+- Full verification for the meeting-room round finished at `py -m pytest tests/ -q` -> `404 passed`, `npm run build` -> passed, and `npm run test:run` -> `53 passed`.
 
 ## Current Working Set
 
-- Prefer reading `README.md`, `doc/README.md`, `doc/roadmap-reset.md`, and `doc/TODO.md` before touching the archive.
+- Prefer reading `README.md`, `doc/README.md`, `doc/mainline-truth.md`, `doc/roadmap-reset.md`, `doc/TODO.md`, `doc/history/context-baseline.md`, and then this file before touching the archive.
 - Treat this file as semantic memory plus compressed recent progress, not as a full transcript.
 - When adding new memory, keep only facts that still change implementation decisions; push raw logs and exhaustive verification into archive files.
 

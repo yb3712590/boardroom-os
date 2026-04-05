@@ -1,5 +1,13 @@
 # Meeting Room Protocol
 
+## TL;DR
+
+- Positioning: a bounded, auditable exception path for cross-role alignment problems that are too coupled for normal serial tickets.
+- Read this when: changing meeting entry conditions, meeting events, meeting state machine, consensus outputs, or how meetings return to the main workflow.
+- Key contracts: `MEETING_ROOM_REQUESTED` and related events, bounded participant/input set, round execution model, `Consensus_Document`, and reopen policy.
+- Current boundary: meeting room is not a persistent chat system, not a board bypass, and not a second source of workflow truth.
+- Related docs: `message-bus-design.md`, `boardroom-data-contracts.md`.
+
 ## Status
 - Draft
 - Date: 2026-03-28

@@ -1,5 +1,13 @@
 # Boardroom OS 前端架构指南
 
+## TL;DR
+
+- 定位：前端目录、类型、状态管理、API、样式和测试分层的总纲。
+- 什么时候读：要改目录结构、store、SSE、API 客户端、样式分层或测试策略时。
+- 关键接口：`types/`、`api/`、`hooks/`、`stores/`、`pages/`、`components/`、`styles/` 的职责边界。
+- 当前边界：这份文档管架构分层和实现约束，不负责具体视觉品牌和逐组件交互细节。
+- 关联文档：`frontend-component-spec.md`、`boardroom-ui-visual-spec.md`。
+
 > 版本：1.0
 > 日期：2026-04-03
 > 作者：CTO

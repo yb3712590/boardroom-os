@@ -1,5 +1,13 @@
 # Message Mechanism Design
 
+## TL;DR
+
+- Positioning: the control-plane design for events, projections, tickets, approvals, incidents, and breaker rules.
+- Read this when: changing event types, ticket lifecycle, approval gates, incident handling, or reducer-facing invariants.
+- Key contracts: event envelope, control-plane ticket spec, compiled execution package boundary, board approval gate, concurrency and lease rules.
+- Current boundary: this doc defines governance flow and state transitions; detailed context-compilation contracts live in `context-compiler-design.md`.
+- Related docs: `boardroom-data-contracts.md`, `context-compiler-design.md`.
+
 ## Status
 - Draft
 - Date: 2026-03-28

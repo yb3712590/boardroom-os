@@ -1,5 +1,13 @@
 # Boardroom OS 前端组件规格说明书
 
+## TL;DR
+
+- 定位：当前前端壳各个页面、布局、卡片、抽屉和共享组件的职责与接口说明。
+- 什么时候读：要改组件 props、结构、职责分工、测试覆盖边界时。
+- 关键接口：`DashboardPage`、布局组件、仪表盘组件、员工面板、事件流、覆盖层、共享组件、工具函数。
+- 当前边界：这份文档管组件职责和结构，不展开事件总线或后端业务规则；视觉细节看视觉规范。
+- 关联文档：`frontend-architecture-guide.md`、`boardroom-ui-visual-spec.md`、`boardroom-data-contracts.md`。
+
 > 版本：1.0
 > 日期：2026-04-03
 > 作者：CTO
