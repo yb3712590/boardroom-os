@@ -27,7 +27,7 @@
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 治理模板 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 
-当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；最近三轮依次把 `P1-CLN-002` 推进到主线 command 侧解耦，把 `P1-CLN-003` 推进到“主线 result-submit 已与 upload session 解耦，但 upload 导入入口仍保留”，再把 `P1-CLN-004` 推进到“worker-runtime projection 已独立出通用入口、管理读面已收口到 helper，但 handoff schema 仍成组保留”的状态。本轮 `P2-DOC-001`、`P2-DOC-003`、`P2-DOC-005` 已真实关闭，所以未关闭任务总数降到 `23`，文档收口区已移出当前工作集。当前再补一层：四类冻结边界的 `api_surface_groups` 与 `storage_table_refs` 已进入 `backend/app/core/mainline_truth.py`，后续要不要迁、能不能迁，不再只靠人工 grep 判断。
+当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；最近几轮依次把 `P1-CLN-002` 推进到主线 command 侧解耦，把 `P1-CLN-003` 推进到“主线 result-submit 已与 upload session 解耦，但 upload 导入入口仍保留”，把 `P1-CLN-004` 推进到“worker-runtime projection 已独立出通用入口、管理读面已收口到 helper，但 handoff schema 仍成组保留”，这轮再把 `P1-CLN-001`、`P1-CLN-003`、`P1-CLN-004` 的路由挂载边界收口到统一注册层。当前 frozen 兼容面的 route group、挂载顺序和主线真相测试已经共用 `backend/app/api/router_registry.py` 这一个入口；未关闭任务总数仍是 `23`，没有新增关闭任务。
 
 ## 读写约定
 

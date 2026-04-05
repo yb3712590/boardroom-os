@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.api.router_registry import ALL_ROUTE_GROUPS, FROZEN_ROUTE_GROUPS
 from app.core.api_surface import API_SURFACE_GROUP_ORDER, collect_api_surface_groups
 from app.core.approval_handlers import FOLLOWUP_OWNER_ROLE_TO_PROFILE
 from app.core.mainline_truth import (
@@ -271,6 +272,14 @@ def test_frozen_capability_api_surface_groups_stay_within_documented_group_order
         for entry in FROZEN_CAPABILITY_BOUNDARIES
         for group_name in entry.api_surface_groups
     }
+    assert API_SURFACE_GROUP_ORDER == ALL_ROUTE_GROUPS
+    assert set(FROZEN_ROUTE_GROUPS) == {
+        "artifact-uploads",
+        "worker-runtime",
+        "worker-admin",
+        "worker-admin-projections",
+        "worker-runtime-projections",
+    }
 
 
 def test_worker_admin_boundary_uses_dedicated_projection_entrypoint() -> None:
@@ -346,12 +355,15 @@ def test_external_worker_handoff_blockers_still_exist_as_one_runtime_unit() -> N
     worker_auth_cli_source = _read_repo_text("backend/app/worker_auth_cli.py")
     repository_source = _read_repo_text("backend/app/db/repository.py")
     main_source = _read_repo_text("backend/app/main.py")
+    router_registry_source = _read_repo_text("backend/app/api/router_registry.py")
 
     assert 'APIRouter(prefix="/api/v1/worker-runtime"' in worker_runtime_api_source
-    assert 'from app.api.worker_runtime_projections import router as worker_runtime_projections_router' in main_source
-    assert "app.include_router(worker_runtime_projections_router)" in main_source
+    assert "from app.api.router_registry import include_registered_routers" in main_source
+    assert "include_registered_routers(app)" in main_source
     assert '@router.get("/worker-runtime"' not in projections_api_source
     assert '@router.get("/worker-runtime"' in worker_runtime_projection_api_source
+    assert 'group_name="worker-runtime"' in router_registry_source
+    assert 'group_name="worker-runtime-projections"' in router_registry_source
     assert "def _create_or_refresh_worker_session(" in worker_runtime_core_source
     assert 'prog="python -m app.worker_auth_cli"' in worker_auth_cli_source
     assert "CREATE TABLE IF NOT EXISTS worker_bootstrap_state" in repository_source

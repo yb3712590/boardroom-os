@@ -29,6 +29,8 @@
 > `P1-CLN-004` 这轮已从“未开始（阻塞评估已固化）”推进到“进行中”：`/api/v1/projections/worker-runtime` 已拆到独立 `worker_runtime_projections.py`，`build_worker_runtime_projection(...)` 已改成复用 `worker_scope_ops.py` 的 `list_binding_admin_views / list_sessions / list_delivery_grants / list_auth_rejections`。
 > `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新阻塞口径：独立 projection 入口前置拆分已经完成，但 `/api/v1/worker-runtime`、`worker_auth_cli.py` 和三张 handoff schema 仍是成组阻塞点。
 > 本轮继续把 `P1-CLN-001` 到 `P1-CLN-004` 的“成组迁移单元”写实：`FrozenCapabilityBoundary` 新增 `api_surface_groups` 与 `storage_table_refs`，把 route family 和共享表锚点也固化进代码真相源；对应回归会直接校验这些组名和 `repository.py` 里的建表语句是否仍存在。
+> 这轮 `P1-CLN-001`、`P1-CLN-003`、`P1-CLN-004` 继续补的是“路由挂载边界”这层前置拆分：新增 `backend/app/api/router_registry.py`，把 `artifact-uploads`、`worker-admin`、`worker-admin-projections`、`worker-runtime`、`worker-runtime-projections` 收口成统一注册表，`main.py` 不再散着手工挂这些 frozen 兼容入口。
+> `backend/app/core/api_surface.py`、`backend/tests/test_api_surface.py`、`backend/tests/test_mainline_truth.py` 现在都直接复用这套路由组顺序，并会回归 frozen 组仍被注册、现有路径集合不变；这轮没有改任何 HTTP 路径、鉴权、命令契约或投影结构。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|

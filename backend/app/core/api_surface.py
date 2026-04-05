@@ -5,18 +5,9 @@ from typing import DefaultDict
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
+from app.api.router_registry import ALL_ROUTE_GROUPS
 
-API_SURFACE_GROUP_ORDER = (
-    "commands",
-    "projections",
-    "artifacts",
-    "artifact-uploads",
-    "events",
-    "worker-runtime",
-    "worker-admin",
-    "worker-admin-projections",
-    "worker-runtime-projections",
-)
+API_SURFACE_GROUP_ORDER = ALL_ROUTE_GROUPS
 
 _METHOD_ORDER = {
     "GET": 0,

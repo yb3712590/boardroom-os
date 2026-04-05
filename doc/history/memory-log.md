@@ -94,6 +94,10 @@
 - `README.md`、`doc/backend-runtime-guide.md`、`doc/api-reference.md`、`doc/README.md` 这轮已同步到当前代码现实：文档现在会把主线和冻结兼容面分开写，并显式记录当前 Windows shell 下 `pytest` 不在 PATH 的事实。
 - 为了防止接口文档再次和代码漂移，本轮新增了 `backend/app/core/api_surface.py` 与 `backend/tests/test_api_surface.py`，把当前 FastAPI 路由分组固定成最小回归测试。
 - 这轮最终验证结果更新为：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用重定向方式执行 `py -m pytest tests/ -q` 实测 `418 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
+- `P1-CLN-001`、`P1-CLN-003`、`P1-CLN-004` 这轮继续停在前置拆分，没有启动 `_frozen/` 物理迁移；新增的是 `backend/app/api/router_registry.py`，把 frozen 兼容路由的挂载边界收口成统一注册表。
+- `backend/app/main.py` 现在只通过 `include_registered_routers(app)` 挂载路由；`backend/app/core/api_surface.py`、`backend/tests/test_api_surface.py`、`backend/tests/test_mainline_truth.py` 已改成直接复用这份组顺序并回归 frozen 组仍被注册。
+- 这轮没有改任何 HTTP 路径、鉴权、命令契约或投影结构；变化只在内部挂载边界和对应测试。
+- 本轮验证结果更新为：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用重定向方式执行 `py -m pytest tests/ -q` 实测 `420 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
 
 ## Current Working Set
 

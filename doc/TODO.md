@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-06 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过 `py -m pytest tests/ -q` 完成全量复核，`418 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过重定向方式执行 `py -m pytest tests/ -q` 完成全量复核，`420 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `64 passed`
 
 ## 现在先做什么
@@ -65,6 +65,8 @@
 - `P1-CLN-004` 这轮已从“未开始”推进到“进行中”：`/api/v1/projections/worker-runtime` 已拆到独立 `worker_runtime_projections.py`，`build_worker_runtime_projection(...)` 也已改成复用 `worker_scope_ops.py` 的 binding/session/grant/rejection helper
 - `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：handoff 的独立 projection 入口前置拆分已经完成，但 runtime 路由、CLI 和三张 handoff schema 仍需成组保留，所以还不能启动 `_frozen/` 物理迁移
 - `P1-CLN-001` 到 `P1-CLN-004` 这轮继续补的是“成组迁移清单”而不是物理迁移：`FrozenCapabilityBoundary` 新增 `api_surface_groups` 和 `storage_table_refs`，把冻结边界对应的 route family 和共享表锚点也固化进代码真相源，并由 `backend/tests/test_mainline_truth.py` 直接回归
+- `P1-CLN-001`、`P1-CLN-003`、`P1-CLN-004` 这轮继续完成了“路由挂载边界收口”这层前置拆分：新增 `backend/app/api/router_registry.py`，把 `artifact-uploads`、`worker-admin`、`worker-runtime` 及其 projection 统一注册成 frozen 路由组，`main.py` 不再手工散挂这些入口
+- `backend/app/core/api_surface.py`、`backend/tests/test_api_surface.py`、`backend/tests/test_mainline_truth.py` 这轮已统一复用同一套路由组顺序，并直接回归 frozen 组仍被注册、仍按现有顺序挂载；这轮没有改任何 HTTP 路径和鉴权行为
 
 对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001`、`P1-CLN-002`、`P1-CLN-003`、`P1-CLN-004` 进行中，且还没满足物理迁移前置条件
 

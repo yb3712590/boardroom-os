@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from app.api.router_registry import (
+    ALL_ROUTE_GROUPS,
+    FROZEN_ROUTE_GROUPS,
+    MAINLINE_ROUTE_GROUPS,
+)
 from app.main import create_app
 from app.core.api_surface import collect_api_surface_groups
 
@@ -108,3 +113,30 @@ def test_collect_api_surface_groups_matches_current_route_families():
     assert set(groups["worker-runtime-projections"]) == {
         "GET /api/v1/projections/worker-runtime",
     }
+
+
+def test_router_registry_declares_stable_mainline_and_frozen_group_order():
+    assert ALL_ROUTE_GROUPS == (
+        "commands",
+        "projections",
+        "artifacts",
+        "artifact-uploads",
+        "events",
+        "worker-runtime",
+        "worker-admin",
+        "worker-admin-projections",
+        "worker-runtime-projections",
+    )
+    assert FROZEN_ROUTE_GROUPS == (
+        "artifact-uploads",
+        "worker-runtime",
+        "worker-admin",
+        "worker-admin-projections",
+        "worker-runtime-projections",
+    )
+    assert MAINLINE_ROUTE_GROUPS == (
+        "commands",
+        "projections",
+        "artifacts",
+        "events",
+    )

@@ -4,15 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.artifacts import router as artifacts_router
-from app.api.artifact_uploads import router as artifact_uploads_router
-from app.api.commands import router as commands_router
-from app.api.events import router as events_router
-from app.api.projections import router as projections_router
-from app.api.worker_admin import router as worker_admin_router
-from app.api.worker_admin_projections import router as worker_admin_projections_router
-from app.api.worker_runtime_projections import router as worker_runtime_projections_router
-from app.api.worker_runtime import router as worker_runtime_router
+from app.api.router_registry import include_registered_routers
 from app.config import get_settings
 from app.core.artifact_store import build_artifact_store
 from app.core.developer_inspector import DeveloperInspectorStore
@@ -59,15 +51,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
-    app.include_router(artifacts_router)
-    app.include_router(artifact_uploads_router)
-    app.include_router(commands_router)
-    app.include_router(projections_router)
-    app.include_router(events_router)
-    app.include_router(worker_admin_router)
-    app.include_router(worker_admin_projections_router)
-    app.include_router(worker_runtime_projections_router)
-    app.include_router(worker_runtime_router)
+    include_registered_routers(app)
     return app
 
 
