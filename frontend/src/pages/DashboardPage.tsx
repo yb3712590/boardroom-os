@@ -15,6 +15,7 @@ import { ProviderSettingsDrawer } from '../components/overlays/ProviderSettingsD
 import { ReviewRoomDrawer } from '../components/overlays/ReviewRoomDrawer'
 import { Button } from '../components/shared/Button'
 import { ErrorBoundary } from '../components/shared/ErrorBoundary'
+import { LoadingSkeleton } from '../components/shared/LoadingSkeleton'
 import { WorkforcePanel } from '../components/workforce/WorkforcePanel'
 import { useBoardroomStore } from '../stores/boardroom-store'
 import { useReviewStore } from '../stores/review-store'
@@ -201,7 +202,15 @@ export function DashboardPage() {
           center={
             <section className="boardroom-center">
               {snapshotError ? <div className="shell-error">{snapshotError}</div> : null}
-              {snapshotLoading && dashboard == null ? <div className="shell-loading">Loading boardroom snapshot...</div> : null}
+              {snapshotLoading && dashboard == null ? (
+                <>
+                  <WorkflowRiver phases={[]} approvalsPending={0} loading={true} />
+                  <section className="center-detail-grid center-detail-grid-loading" aria-label="Current workflow loading" aria-busy="true">
+                    <LoadingSkeleton lines={4} className="center-detail-skeleton" />
+                    <LoadingSkeleton lines={4} className="center-detail-skeleton" />
+                  </section>
+                </>
+              ) : null}
               {!snapshotLoading && activeWorkflow == null ? (
                 <ProjectInitForm submitting={projectInitPending} onSubmit={handleProjectInit} />
               ) : null}
@@ -265,7 +274,7 @@ export function DashboardPage() {
                 onRequestHire={handleEmployeeHireRequest}
                 onRequestReplacement={handleEmployeeReplaceRequest}
               />
-              <EventTicker events={dashboard?.event_stream_preview ?? []} />
+              <EventTicker events={dashboard?.event_stream_preview ?? []} loading={snapshotLoading && dashboard == null} />
             </aside>
           }
         />

@@ -1,20 +1,24 @@
 import type { DashboardData } from '../../types/api'
+import { LoadingSkeleton } from '../shared/LoadingSkeleton'
 import { formatRelativeTime } from '../../utils/format'
 
 type EventTickerProps = {
   events: DashboardData['event_stream_preview']
+  loading?: boolean
 }
 
-export function EventTicker({ events }: EventTickerProps) {
+export function EventTicker({ events, loading = false }: EventTickerProps) {
   return (
     <section className="support-panel" aria-labelledby="event-ticker-title">
       <div className="section-heading">
         <p className="eyebrow">Events</p>
         <h2 id="event-ticker-title">Recent event pulse</h2>
       </div>
-      {events.length === 0 ? <p className="muted-copy">No recent events were emitted.</p> : null}
+      {loading ? <LoadingSkeleton lines={4} /> : null}
+      {!loading && events.length === 0 ? <p className="muted-copy">No recent events were emitted.</p> : null}
       <div className="event-list">
-        {events.map((event) => (
+        {!loading &&
+          events.map((event) => (
           <article key={event.event_id} className={`event-card severity-${event.severity.toLowerCase()}`}>
             <div className="event-card-main">
               <strong>{event.message}</strong>
@@ -25,7 +29,7 @@ export function EventTicker({ events }: EventTickerProps) {
               <span>{formatRelativeTime(event.occurred_at)}</span>
             </div>
           </article>
-        ))}
+          ))}
       </div>
     </section>
   )

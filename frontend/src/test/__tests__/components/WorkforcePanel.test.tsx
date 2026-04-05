@@ -4,6 +4,23 @@ import { describe, expect, it, vi } from 'vitest'
 import { WorkforcePanel } from '../../../components/workforce/WorkforcePanel'
 
 describe('WorkforcePanel', () => {
+  it('renders a loading skeleton while the workforce projection is pending', () => {
+    const { container } = render(
+      <WorkforcePanel
+        workforce={null}
+        loading={true}
+        submittingAction={null}
+        onFreeze={vi.fn().mockResolvedValue(undefined)}
+        onRestore={vi.fn().mockResolvedValue(undefined)}
+        onRequestHire={vi.fn().mockResolvedValue(undefined)}
+        onRequestReplacement={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(container.querySelector('.loading-skeleton')).not.toBeNull()
+    expect(screen.queryByText('No workforce view is available.')).not.toBeInTheDocument()
+  })
+
   it('renders the current worker profile summary', () => {
     render(
       <WorkforcePanel

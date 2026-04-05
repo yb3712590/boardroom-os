@@ -555,6 +555,26 @@
   border: 1px solid rgba(199, 225, 255, 0.12);
 }
 
+.workflow-river-loading-copy {
+  display: grid;
+  gap: 18px;
+}
+
+.workflow-river-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(199, 225, 255, 0.22) transparent;
+}
+
+.workflow-river-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.workflow-river-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(199, 225, 255, 0.18);
+}
+
 .river-header {
   display: flex;
   justify-content: space-between;
@@ -684,6 +704,14 @@
   border-radius: 24px;
   background: rgba(11, 19, 30, 0.6);
   border: 1px solid rgba(199, 225, 255, 0.1);
+}
+
+.center-detail-grid-loading {
+  align-items: start;
+}
+
+.center-detail-skeleton {
+  padding: 6px 0;
 }
 
 .center-detail-list {
@@ -891,6 +919,29 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .board-chip.is-armed .board-chip-light,
+  .board-gate-status.is-armed .board-gate-light,
+  .loading-skeleton-line,
+  .river-particle {
+    animation: none;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .danger-button,
+  .ghost-button {
+    transition: none;
+  }
+
+  .primary-button:hover,
+  .secondary-button:hover,
+  .danger-button:hover,
+  .ghost-button:hover {
+    transform: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .runtime-status-grid,
   .completion-card-grid,
@@ -911,13 +962,16 @@
 }
 
 @media (max-width: 900px) {
-  .river-stage-strip {
-    grid-template-columns: 1fr;
-    padding-top: 0;
+  .workflow-river {
+    padding-inline: 22px;
   }
 
-  .river-mainline,
-  .river-board-branch {
-    display: none;
+  .workflow-river-scroll {
+    margin-inline: -6px;
+    padding-inline: 6px;
+  }
+
+  .river-stage-strip {
+    min-width: 860px;
   }
 }

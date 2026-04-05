@@ -38,6 +38,13 @@ const phases: PhaseSummary[] = [
 ]
 
 describe('WorkflowRiver', () => {
+  it('renders a loading skeleton while the workflow river snapshot is pending', () => {
+    const { container } = render(<WorkflowRiver phases={[]} approvalsPending={0} loading={true} />)
+
+    expect(screen.queryByRole('heading', { name: /board to review, in one governance surface/i })).not.toBeInTheDocument()
+    expect(container.querySelector('.loading-skeleton')).not.toBeNull()
+  })
+
   it('renders the current five-stage pipeline with armed board gate state', () => {
     render(<WorkflowRiver phases={phases} approvalsPending={2} />)
 

@@ -14,8 +14,8 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 总任务数 | 121 | 原始编号与任务名称保持不变 |
-| 已完成 / 已收口 | 85 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
-| 当前仍未关闭 | 36 | 当前工作集保存在 `task-backlog/active.md` |
+| 已完成 / 已收口 | 92 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 当前仍未关闭 | 29 | 当前工作集保存在 `task-backlog/active.md` |
 | 总预估工时 | 464h | 来自拆分前任务库原表 |
 
 ## 当前活跃区域
@@ -26,10 +26,10 @@
 | 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 治理模板 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
-| UI 打磨 | `P2-UI-001` 到 `P2-UI-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
-| 文档收口 | `P2-DOC-001` 到 `P2-DOC-005` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
+| UI 打磨 | `P2-UI-001` 到 `P2-UI-008` | 进行中 | [task-backlog/active.md](task-backlog/active.md) |
+| 文档收口 | `P2-DOC-001` 到 `P2-DOC-005` | 进行中 | [task-backlog/active.md](task-backlog/active.md) |
 
-当前补记：代码清理区这轮在保持 `P1-CLN-001`“前置拆分已完成、物理迁移未启动”的同时，也把 `P1-CLN-002` 到 `P1-CLN-004` 的阻塞证据固化进真相模型和测试，但三项任务都仍未启动物理迁移；未关闭任务总量不变，详细补记看 `task-backlog/active.md`。
+当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；这轮把首页 UI 真实缺口第一批任务关掉了：`P2-UI-001` 到 `P2-UI-004`、`P2-UI-008`、`P2-DOC-002`、`P2-DOC-004` 已完成，因此未关闭任务从 `36` 降到 `29`，详细补记看 `task-backlog/active.md`。
 
 ## 读写约定
 

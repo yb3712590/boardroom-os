@@ -5,6 +5,21 @@ import { describe, expect, it, vi } from 'vitest'
 import { InboxWell } from '../../../components/dashboard/InboxWell'
 
 describe('InboxWell', () => {
+  it('shows a skeleton state instead of loading copy while inbox data is pending', () => {
+    const { container } = render(
+      <InboxWell
+        loading={true}
+        onOpenReview={vi.fn()}
+        onOpenMeeting={vi.fn()}
+        onOpenIncident={vi.fn()}
+        items={[]}
+      />,
+    )
+
+    expect(screen.queryByText('Loading current inbox...')).not.toBeInTheDocument()
+    expect(container.querySelector('.loading-skeleton')).not.toBeNull()
+  })
+
   it('routes review, meeting, and incident items to their matching callbacks', async () => {
     const user = userEvent.setup()
     const onOpenReview = vi.fn()

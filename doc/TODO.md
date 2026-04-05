@@ -14,8 +14,8 @@
 
 ## 当前基线（2026-04-05 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`414 passed`
-- frontend：`npm run build` → passed，`npm run test:run` → `53 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过 `py -m pytest tests/ -q` 完成全量复核，`414 passed`
+- frontend：`npm run build` → passed，`npm run test:run` → `59 passed`
 
 ## 现在先做什么
 
@@ -23,7 +23,7 @@
 |-------------|------|----------|------------|
 | `P2-B` | 进行中 | 已完成边界、依赖、测试归属和阻塞证据固化；下一步仍只在前置条件满足后评估物理迁移 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-C` | 未开始 | 只在证明当前主链不够用后，再补检索、Provider 路由和发布准备 | [task-backlog/active.md](task-backlog/active.md) |
-| `P2-D` | 未开始 | 做 UI 打磨和文档收口，但不反过来破坏现有主链 | [task-backlog/active.md](task-backlog/active.md) |
+| `P2-D` | 进行中 | 已完成首页真实缺口第一轮收口；下一步只补剩余可访问性、性能和文档，不反过来破坏现有主链 | [task-backlog/active.md](task-backlog/active.md) |
 
 ## 当前活跃批次
 
@@ -71,9 +71,21 @@
 
 主线关系：**后置打磨**，不阻塞当前本地单机 MVP 闭环。
 
-- [ ] Workflow River 粒子动画、Board Gate 呼吸动画、加载骨架屏、响应式布局
+- [x] `P2-UI-001`：保留现有 `Workflow River` 粒子方向，并补上 `prefers-reduced-motion` 降级
+- [x] `P2-UI-002`：统一首页河道与顶栏 `Board Gate` 的呼吸语义和节奏
+- [x] `P2-UI-003`：首页左中右区域改成真实骨架屏，不再只显示一条全局 loading 文案
+- [x] `P2-UI-004`：窄屏下 `Workflow River` 改为保留横向河道表达，不再碎成纵向五张卡
+- [x] `P2-UI-008`：补齐首页 loading / board gate 语义相关的最小前端测试
 - [ ] 键盘可访问性、暗色主题微调、性能优化
+- [x] `P2-DOC-002`：`TODO` 已同步成“补齐现有半落地实现并验证”的真实状态
+- [x] `P2-DOC-004`：`memory-log` 已追加这轮会影响后续判断的事实
 - [ ] README、运维指南、API 文档按真实状态继续收口
+
+本轮完成补记：
+
+- 首页 loading 现在按面板分区显示：`InboxWell`、`Workflow River`、`WorkforcePanel`、`EventTicker` 都有真实骨架屏
+- `Workflow River` 保留现有粒子与 Board Gate 提醒语义，但补了 reduced-motion 兼容，不把“正在加载”或“窄屏”写成第二套页面
+- 当前未新增主线任务；`P2-D` 下一步仍按 `P2-UI-005` 到 `P2-UI-007`、`P2-DOC-001` / `003` / `005` 继续收口
 
 对应任务库：`P2-UI-*`、`P2-DOC-*`
 
