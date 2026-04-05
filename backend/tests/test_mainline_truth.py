@@ -23,6 +23,10 @@ from app.main import create_app
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _read_repo_text(ref: str) -> str:
+    return (REPO_ROOT / ref).read_text(encoding="utf-8")
+
+
 def test_mainline_runtime_support_matrix_matches_runtime_constants() -> None:
     expected_role_profiles = {entry.role_profile_ref for entry in MAINLINE_RUNTIME_SUPPORT_MATRIX}
     expected_output_schemas = {entry.output_schema_ref for entry in MAINLINE_RUNTIME_SUPPORT_MATRIX}
@@ -154,10 +158,42 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     artifact_boundary = boundaries_by_slug["artifact_uploads_and_object_store"]
     assert artifact_boundary.mainline_dependency_refs == ("backend/app/core/ticket_handlers.py",)
     assert "require_completed_artifact_upload_session" in artifact_boundary.notes
+    assert artifact_boundary.migration_blocker_refs == (
+        "backend/app/contracts/commands.py",
+        "backend/app/core/ticket_handlers.py",
+        "backend/app/db/repository.py",
+    )
+    assert artifact_boundary.migration_blocker_summary == (
+        "ticket-result-submit 仍接受 upload_session_id，并且提交与消费路径仍依赖 artifact upload session。"
+    )
 
     scope_boundary = boundaries_by_slug["multi_tenant_scope"]
     assert "shared data shape" in scope_boundary.notes
     assert any("Physical migration is blocked" in item for item in scope_boundary.migration_preconditions)
+    assert scope_boundary.migration_blocker_refs == (
+        "backend/app/contracts/commands.py",
+        "backend/app/contracts/runtime.py",
+        "backend/app/contracts/worker_admin.py",
+        "backend/app/contracts/worker_runtime.py",
+        "backend/app/core/approval_handlers.py",
+        "backend/app/core/ceo_execution_presets.py",
+        "backend/app/core/ticket_handlers.py",
+    )
+    assert scope_boundary.migration_blocker_summary == (
+        "tenant_id/workspace_id 仍是主线 contracts、审批恢复和 ticket 创建形状的一部分。"
+    )
+
+    handoff_boundary = boundaries_by_slug["external_worker_handoff"]
+    assert handoff_boundary.migration_blocker_refs == (
+        "backend/app/api/projections.py",
+        "backend/app/api/worker_runtime.py",
+        "backend/app/core/worker_runtime.py",
+        "backend/app/db/repository.py",
+        "backend/app/worker_auth_cli.py",
+    )
+    assert handoff_boundary.migration_blocker_summary == (
+        "worker-runtime 路由、投影、CLI 和 worker bootstrap/session/delivery-grant schema 仍需成组保留。"
+    )
 
 
 def test_worker_admin_boundary_uses_dedicated_projection_entrypoint() -> None:
@@ -167,7 +203,69 @@ def test_worker_admin_boundary_uses_dedicated_projection_entrypoint() -> None:
 
 
 def test_worker_auth_cli_no_longer_imports_worker_admin_core_module() -> None:
-    worker_auth_cli_source = (REPO_ROOT / "backend/app/worker_auth_cli.py").read_text(encoding="utf-8")
+    worker_auth_cli_source = _read_repo_text("backend/app/worker_auth_cli.py")
 
     assert "from app.core.worker_admin import" not in worker_auth_cli_source
     assert "from app.core.worker_scope_ops import" in worker_auth_cli_source
+
+
+def test_multi_tenant_scope_blockers_still_exist_in_shared_contracts_and_handlers() -> None:
+    scope_boundary = {
+        entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
+    }["multi_tenant_scope"]
+
+    commands_source = _read_repo_text("backend/app/contracts/commands.py")
+    runtime_source = _read_repo_text("backend/app/contracts/runtime.py")
+    worker_admin_contract_source = _read_repo_text("backend/app/contracts/worker_admin.py")
+    worker_runtime_contract_source = _read_repo_text("backend/app/contracts/worker_runtime.py")
+    approval_handlers_source = _read_repo_text("backend/app/core/approval_handlers.py")
+    ceo_presets_source = _read_repo_text("backend/app/core/ceo_execution_presets.py")
+    ticket_handlers_source = _read_repo_text("backend/app/core/ticket_handlers.py")
+
+    assert scope_boundary.migration_blocker_refs[0] == "backend/app/contracts/commands.py"
+    assert "tenant_id" in commands_source and "workspace_id" in commands_source
+    assert "scope_tenant_id" in runtime_source and "scope_workspace_id" in runtime_source
+    assert "tenant_id" in worker_admin_contract_source and "workspace_id" in worker_admin_contract_source
+    assert "tenant_id" in worker_runtime_contract_source and "workspace_id" in worker_runtime_contract_source
+    assert "tenant_id=logical_created_spec.get(\"tenant_id\")" in approval_handlers_source
+    assert "workspace_id=logical_created_spec.get(\"workspace_id\")" in approval_handlers_source
+    assert "tenant_id=workflow.get(\"tenant_id\")" in ceo_presets_source
+    assert "workspace_id=workflow.get(\"workspace_id\")" in ceo_presets_source
+    assert "tenant_id = payload.tenant_id or (" in ticket_handlers_source
+    assert "workspace_id = payload.workspace_id or (" in ticket_handlers_source
+
+
+def test_artifact_upload_bridge_blockers_still_exist_in_result_submit_path() -> None:
+    artifact_boundary = {
+        entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
+    }["artifact_uploads_and_object_store"]
+    commands_source = _read_repo_text("backend/app/contracts/commands.py")
+    ticket_handlers_source = _read_repo_text("backend/app/core/ticket_handlers.py")
+    repository_source = _read_repo_text("backend/app/db/repository.py")
+
+    assert "upload_session_id: str | None = None" in commands_source
+    assert "from app.core.artifact_uploads import require_completed_artifact_upload_session" in ticket_handlers_source
+    assert "session = require_completed_artifact_upload_session(" in ticket_handlers_source
+    assert "repository.consume_artifact_upload_session(" in ticket_handlers_source
+    assert "def consume_artifact_upload_session(" in repository_source
+    assert artifact_boundary.migration_blocker_summary.endswith("artifact upload session。")
+
+
+def test_external_worker_handoff_blockers_still_exist_as_one_runtime_unit() -> None:
+    handoff_boundary = {
+        entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
+    }["external_worker_handoff"]
+    worker_runtime_api_source = _read_repo_text("backend/app/api/worker_runtime.py")
+    projections_api_source = _read_repo_text("backend/app/api/projections.py")
+    worker_runtime_core_source = _read_repo_text("backend/app/core/worker_runtime.py")
+    worker_auth_cli_source = _read_repo_text("backend/app/worker_auth_cli.py")
+    repository_source = _read_repo_text("backend/app/db/repository.py")
+
+    assert 'APIRouter(prefix="/api/v1/worker-runtime"' in worker_runtime_api_source
+    assert '@router.get("/worker-runtime"' in projections_api_source
+    assert "def _create_or_refresh_worker_session(" in worker_runtime_core_source
+    assert 'prog="python -m app.worker_auth_cli"' in worker_auth_cli_source
+    assert "CREATE TABLE IF NOT EXISTS worker_bootstrap_state" in repository_source
+    assert "CREATE TABLE IF NOT EXISTS worker_session" in repository_source
+    assert "CREATE TABLE IF NOT EXISTS worker_delivery_grant" in repository_source
+    assert handoff_boundary.migration_blocker_summary.endswith("schema 仍需成组保留。")

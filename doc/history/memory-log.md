@@ -62,6 +62,9 @@
 - `P1-CLN-001` 这轮已从“未开始”推进到“进行中”：`worker-admin` 共用的 scope / bootstrap / session / grant helper 已抽到 `worker_scope_ops.py`，`worker-admin` 专属 projection 入口已从通用 `projections.py` 中拆出到独立文件。
 - 这次拆分没有启动 `_frozen/` 物理迁移；当前仍保持 worker-admin API、auth、projection、CLI 一起移动的前置条件，不提前碰 `P1-CLN-002` 到 `P1-CLN-004`。
 - 这轮完整验证结果更新为：`py -m pytest tests/ -q` -> `411 passed`，`npm run build` -> passed，`npm run test:run` -> `53 passed`。
+- `P1-CLN-002` 到 `P1-CLN-004` 这轮没有转入物理迁移，只做了阻塞评估收口：`FrozenCapabilityBoundary` 现在额外保存 `migration_blocker_refs` 和 `migration_blocker_summary`，把“为什么现在还不能迁”写成结构化真相。
+- `backend/tests/test_mainline_truth.py` 现在会直接扫描共享 contracts、`ticket-result-submit` 上传桥接点，以及 `worker-runtime` API / 投影 / CLI / repository schema 的源码锚点，避免后续把阻塞原因又写回口头判断。
+- 这轮最终验证结果是：`py -m pytest tests/ -q` -> `414 passed`，`npm run build` -> passed，`npm run test:run` -> `53 passed`；其中后端仍需用 `py -m pytest`，因为当前 shell 下裸 `pytest` 不在 PATH。
 
 ## Current Working Set
 

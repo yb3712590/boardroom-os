@@ -42,6 +42,8 @@ class FrozenCapabilityBoundary:
     mainline_dependency_refs: tuple[str, ...]
     test_refs: tuple[str, ...]
     migration_preconditions: tuple[str, ...]
+    migration_blocker_refs: tuple[str, ...]
+    migration_blocker_summary: str
     notes: str
 
 
@@ -160,6 +162,16 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "Worker-admin API, auth projection, and CLI entrypoints must either move together or stay in place.",
             "No current mainline workflow path may import worker_admin modules directly before any physical migration starts.",
         ),
+        migration_blocker_refs=(
+            "backend/app/api/worker_admin.py",
+            "backend/app/api/worker_admin_auth.py",
+            "backend/app/api/worker_admin_projections.py",
+            "backend/app/main.py",
+            "backend/app/worker_admin_auth_cli.py",
+        ),
+        migration_blocker_summary=(
+            "worker-admin 仍要把 API、auth、projection 和 CLI 作为同一组入口一起迁，当前只完成了前置拆分。"
+        ),
         notes=(
             "HTTP 管理面和操作人令牌链仍保留在仓库中，但当前默认不继续扩张。"
             "它现在是保留的运维面，不是主线业务依赖。"
@@ -197,6 +209,18 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "tenant_id/workspace_id must stay available in shared contracts and projections used by the current local MVP.",
             "Physical migration is blocked until multi-tenant scope is decoupled from command, runtime, and projection data shapes.",
         ),
+        migration_blocker_refs=(
+            "backend/app/contracts/commands.py",
+            "backend/app/contracts/runtime.py",
+            "backend/app/contracts/worker_admin.py",
+            "backend/app/contracts/worker_runtime.py",
+            "backend/app/core/approval_handlers.py",
+            "backend/app/core/ceo_execution_presets.py",
+            "backend/app/core/ticket_handlers.py",
+        ),
+        migration_blocker_summary=(
+            "tenant_id/workspace_id 仍是主线 contracts、审批恢复和 ticket 创建形状的一部分。"
+        ),
         notes=(
             "tenant/workspace scope 仍真实存在于数据结构和 handoff 链上，但不属于当前 MVP 主线卖点。"
             "这块是共享数据结构（shared data shape），不是可以独立搬走的冻结目录。"
@@ -225,6 +249,14 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         migration_preconditions=(
             "The ticket result-submit path must stop calling require_completed_artifact_upload_session before artifact upload code can move.",
             "Object-store support must remain a minimal storage backend and must not be expanded during this cleanup round.",
+        ),
+        migration_blocker_refs=(
+            "backend/app/contracts/commands.py",
+            "backend/app/core/ticket_handlers.py",
+            "backend/app/db/repository.py",
+        ),
+        migration_blocker_summary=(
+            "ticket-result-submit 仍接受 upload_session_id，并且提交与消费路径仍依赖 artifact upload session。"
         ),
         notes=(
             "控制面上传和可选对象存储仍可运行，但当前只按最小解堵保留，不继续平台化。"
@@ -255,6 +287,16 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         migration_preconditions=(
             "Worker-runtime delivery routes and the worker-runtime projection must stay aligned until the handoff surface is retired together.",
             "No physical migration should start while worker bootstrap, session, and delivery-grant storage still share the active repository schema.",
+        ),
+        migration_blocker_refs=(
+            "backend/app/api/projections.py",
+            "backend/app/api/worker_runtime.py",
+            "backend/app/core/worker_runtime.py",
+            "backend/app/db/repository.py",
+            "backend/app/worker_auth_cli.py",
+        ),
+        migration_blocker_summary=(
+            "worker-runtime 路由、投影、CLI 和 worker bootstrap/session/delivery-grant schema 仍需成组保留。"
         ),
         notes=(
             "外部 worker bootstrap、session 和 delivery grant 仍在仓库中，但当前默认不作为主线继续推进。"

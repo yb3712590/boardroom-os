@@ -14,14 +14,14 @@
 
 ## 当前基线（2026-04-05 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`411 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`414 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `53 passed`
 
 ## 现在先做什么
 
 | 批次 / 任务 | 状态 | 现实目标 | 详细看哪里 |
 |-------------|------|----------|------------|
-| `P2-B` | 进行中 | 已完成边界、依赖和测试归属澄清；下一步只继续评估哪些冻结模块满足迁移前置条件 | [task-backlog/active.md](task-backlog/active.md) |
+| `P2-B` | 进行中 | 已完成边界、依赖、测试归属和阻塞证据固化；下一步仍只在前置条件满足后评估物理迁移 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-C` | 未开始 | 只在证明当前主链不够用后，再补检索、Provider 路由和发布准备 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-D` | 未开始 | 做 UI 打磨和文档收口，但不反过来破坏现有主链 | [task-backlog/active.md](task-backlog/active.md) |
 
@@ -50,10 +50,12 @@
 - [x] `P1-CLN-005`：已把冻结能力的真实入口、主线依赖、测试归属和迁移前置条件写进 `backend/app/core/mainline_truth.py`，并用 `backend/tests/test_mainline_truth.py` 固化
 - [x] `P1-CLN-006`：已把 frozen 相关测试边界收口成可执行断言，明确哪些测试属于冻结入口回归，哪些不是主链闭环测试
 - [ ] `P1-CLN-001`：已完成前置拆分，当前转为进行中；`worker-admin` 共用的 scope / bootstrap / session / grant helper 已抽到 `worker_scope_ops.py`，`worker-admin` 专属 projection 入口已从通用 `projections.py` 分离，但 `_frozen/` 物理迁移仍未启动
-- [ ] `P1-CLN-002` 到 `P1-CLN-004`：仍未开始；当前不适合物理迁移，因为多租户 scope 还是共享数据结构，`artifact_uploads` 还被主线 `ticket-result-submit` 桥接使用
+- [ ] `P1-CLN-002`：仍未开始，但阻塞评估已收口；`mainline_truth.py` 和 `test_mainline_truth.py` 现已把共享 contracts、`approval_handlers.py`、`ceo_execution_presets.py`、`ticket_handlers.py` 对 `tenant_id/workspace_id` 的直接依赖固化成结构化证据
+- [ ] `P1-CLN-003`：仍未开始，但阻塞评估已收口；`TicketResultSubmitCommand.upload_session_id`、`require_completed_artifact_upload_session(...)` 和上传会话消费路径仍是当前主链桥接点，暂不满足迁移前置条件
+- [ ] `P1-CLN-004`：仍未开始，但阻塞评估已收口；`/api/v1/worker-runtime`、`/api/v1/projections/worker-runtime`、`worker_auth_cli.py` 和 `worker_bootstrap/session/delivery-grant` schema 仍需成组保留
 - [ ] 如果后续启动物理迁移，仍以“不影响主线测试”为绝对前提
 
-对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001` 进行中；`P1-CLN-002` 到 `P1-CLN-004` 待继续评估
+对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001` 进行中；`P1-CLN-002` 到 `P1-CLN-004` 已完成阻塞评估收口，但仍未满足物理迁移前置条件
 
 ### `P2-C`：检索、Provider 路由、发布准备
 
