@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from app.contracts.ceo_actions import CEOActionBatch, CEOActionType
-from app.contracts.commands import EmployeeHireRequestCommand
+from app.contracts.commands import EmployeeHireRequestCommand, MeetingRequestCommand
 from app.core.ceo_execution_presets import build_ceo_create_ticket_command
 from app.core.staffing_catalog import resolve_mainline_staffing_combo
 from app.db.repository import ControlPlaneRepository
@@ -170,6 +170,43 @@ def execute_ceo_action_batch(
                     payload={**payload, "employee_id": employee_id},
                     execution_status=("EXECUTED" if ack.status.value == "ACCEPTED" else "DUPLICATE" if ack.status.value == "DUPLICATE" else "FAILED"),
                     reason=ack.reason or f"Limited CEO hire request returned {ack.status.value}.",
+                    command_status=ack.status.value,
+                    causation_hint=ack.causation_hint,
+                )
+            )
+            continue
+
+        if action.action_type == CEOActionType.REQUEST_MEETING:
+            from app.core.meeting_handlers import handle_meeting_request
+
+            ack = handle_meeting_request(
+                repository,
+                MeetingRequestCommand(
+                    workflow_id=action.payload.workflow_id,
+                    meeting_type=action.payload.meeting_type,
+                    topic=action.payload.topic,
+                    participant_employee_ids=list(action.payload.participant_employee_ids),
+                    recorder_employee_id=action.payload.recorder_employee_id,
+                    input_artifact_refs=list(action.payload.input_artifact_refs),
+                    max_rounds=4,
+                    idempotency_key=(
+                        f"ceo-meeting-request:{action.payload.workflow_id}:"
+                        f"{action.payload.source_node_id}:{action.payload.source_ticket_id}"
+                    ),
+                ),
+            )
+            executed_actions.append(
+                _executed_entry(
+                    action_type=action_type,
+                    payload=payload,
+                    execution_status=(
+                        "EXECUTED"
+                        if ack.status.value == "ACCEPTED"
+                        else "DUPLICATE"
+                        if ack.status.value == "DUPLICATE"
+                        else "FAILED"
+                    ),
+                    reason=ack.reason or f"Limited CEO meeting request returned {ack.status.value}.",
                     command_status=ack.status.value,
                     causation_hint=ack.causation_hint,
                 )

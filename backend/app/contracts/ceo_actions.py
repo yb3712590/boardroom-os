@@ -6,12 +6,14 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from app.contracts.common import StrictModel
+from app.contracts.commands import MeetingType
 
 
 class CEOActionType(StrEnum):
     CREATE_TICKET = "CREATE_TICKET"
     RETRY_TICKET = "RETRY_TICKET"
     HIRE_EMPLOYEE = "HIRE_EMPLOYEE"
+    REQUEST_MEETING = "REQUEST_MEETING"
     ESCALATE_TO_BOARD = "ESCALATE_TO_BOARD"
     NO_ACTION = "NO_ACTION"
 
@@ -41,6 +43,18 @@ class CEOHireEmployeePayload(StrictModel):
     provider_id: str | None = None
 
 
+class CEORequestMeetingPayload(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    meeting_type: Literal[MeetingType.TECHNICAL_DECISION]
+    source_node_id: str = Field(min_length=1)
+    source_ticket_id: str = Field(min_length=1)
+    topic: str = Field(min_length=1)
+    participant_employee_ids: list[str] = Field(min_length=2, max_length=4)
+    recorder_employee_id: str = Field(min_length=1)
+    input_artifact_refs: list[str] = Field(default_factory=list)
+    reason: str = Field(min_length=1)
+
+
 class CEOEscalateToBoardPayload(StrictModel):
     workflow_id: str = Field(min_length=1)
     reason: str = Field(min_length=1)
@@ -67,6 +81,11 @@ class CEOHireEmployeeAction(StrictModel):
     payload: CEOHireEmployeePayload
 
 
+class CEORequestMeetingAction(StrictModel):
+    action_type: Literal[CEOActionType.REQUEST_MEETING]
+    payload: CEORequestMeetingPayload
+
+
 class CEOEscalateToBoardAction(StrictModel):
     action_type: Literal[CEOActionType.ESCALATE_TO_BOARD]
     payload: CEOEscalateToBoardPayload
@@ -81,6 +100,7 @@ CEOAction = Annotated[
     CEOCreateTicketAction
     | CEORetryTicketAction
     | CEOHireEmployeeAction
+    | CEORequestMeetingAction
     | CEOEscalateToBoardAction
     | CEONoAction,
     Field(discriminator="action_type"),

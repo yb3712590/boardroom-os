@@ -178,7 +178,7 @@ def run_ceo_shadow_for_trigger(
             snapshot=snapshot,
             runtime_provider_store=runtime_provider_store,
         )
-        validation = validate_ceo_action_batch(repository, action_batch=proposal.action_batch)
+        validation = validate_ceo_action_batch(repository, action_batch=proposal.action_batch, snapshot=snapshot)
         accepted_actions = validation["accepted_actions"]
         rejected_actions = validation["rejected_actions"]
         execution_result = execute_ceo_action_batch(
@@ -207,7 +207,11 @@ def run_ceo_shadow_for_trigger(
         fallback_reason = f"CEO shadow snapshot/proposal pipeline failed: {exc}"
         fallback_action_batch = build_deterministic_fallback_batch(snapshot, fallback_reason)
         try:
-            validation = validate_ceo_action_batch(repository, action_batch=fallback_action_batch)
+            validation = validate_ceo_action_batch(
+                repository,
+                action_batch=fallback_action_batch,
+                snapshot=snapshot,
+            )
             accepted_actions = validation["accepted_actions"]
             rejected_actions = validation["rejected_actions"]
             execution_result = execute_ceo_action_batch(

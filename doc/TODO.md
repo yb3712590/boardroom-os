@@ -14,27 +14,32 @@
 
 ## 当前基线（2026-04-05 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`404 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`408 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `53 passed`
 
 ## 现在先做什么
 
 | 批次 / 任务 | 状态 | 现实目标 | 详细看哪里 |
 |-------------|------|----------|------------|
-| `P1-MTG-008` | 未开始 | 让 CEO 能在需要时自动触发会议决策 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-B` | 未开始 | 先把冻结能力的边界、依赖和迁移条件说清楚 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-C` | 未开始 | 只在证明当前主链不够用后，再补检索、Provider 路由和发布准备 | [task-backlog/active.md](task-backlog/active.md) |
 | `P2-D` | 未开始 | 做 UI 打磨和文档收口，但不反过来破坏现有主链 | [task-backlog/active.md](task-backlog/active.md) |
 
 ## 当前活跃批次
 
-### `P1-MTG-008`：CEO 触发会议决策
+### `P1-MTG-008`：CEO 触发会议决策（已完成）
 
 主线关系：**主链增强**，建立在现有会议室最小闭环已稳定的前提上。
 
-- [ ] 让 CEO 在明确需要跨角色对齐时，能创建 `TECHNICAL_DECISION` 会议请求
-- [ ] 仍保持会议是受控例外，不变成常驻聊天系统
-- [ ] 触发条件、输入工件和回主线方式都要可审计
+- [x] 让 CEO 在明确需要跨角色对齐时，能创建 `TECHNICAL_DECISION` 会议请求
+- [x] 仍保持会议是受控例外，不变成常驻聊天系统
+- [x] 触发条件、输入工件和回主线方式都要可审计
+
+本轮完成补记：
+
+- 新增了 `REQUEST_MEETING` 这条 CEO 有限执行动作，并继续沿用现有 `ceo_shadow_run` 审计，不另起第二套状态存储
+- CEO snapshot 现在会暴露 `meeting_candidates`，候选来自当前员工投影派生的最小能力/角色匹配，而不是新建持久化 Capability Registry
+- 自动会议只在窄触发下开启：决策/评审型票失败且串行重试已不划算，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后需要重对齐；不会在 idle maintenance 里泛化开会，也不会对 `MEETING_ESCALATION` 递归开会
 
 对应任务库：`P1-MTG-008`
 

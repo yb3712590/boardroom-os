@@ -34,6 +34,7 @@ def validate_ceo_action_batch(
     repository: ControlPlaneRepository,
     *,
     action_batch: CEOActionBatch,
+    snapshot: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     accepted_actions: list[dict[str, Any]] = []
     rejected_actions: list[dict[str, Any]] = []
@@ -107,6 +108,73 @@ def validate_ceo_action_batch(
                 )
                 continue
             accepted_actions.append(_action_entry(action, "Ticket is on a retryable terminal state."))
+            continue
+
+        if action.action_type == CEOActionType.REQUEST_MEETING:
+            if snapshot is None:
+                rejected_actions.append(
+                    _action_entry(action, "Meeting requests require the current CEO snapshot for validation.")
+                )
+                continue
+            candidate = next(
+                (
+                    item
+                    for item in snapshot.get("meeting_candidates") or []
+                    if str(item.get("source_ticket_id") or "") == action.payload.source_ticket_id
+                    and str(item.get("source_node_id") or "") == action.payload.source_node_id
+                ),
+                None,
+            )
+            if candidate is None:
+                rejected_actions.append(
+                    _action_entry(action, "Requested meeting does not match any snapshot meeting candidate.")
+                )
+                continue
+            if not bool(candidate.get("eligible")):
+                rejected_actions.append(
+                    _action_entry(
+                        action,
+                        str(candidate.get("eligibility_reason") or "Snapshot candidate is not eligible."),
+                    )
+                )
+                continue
+            if action.payload.meeting_type != "TECHNICAL_DECISION":
+                rejected_actions.append(
+                    _action_entry(action, "Only TECHNICAL_DECISION meetings are on the current limited CEO path.")
+                )
+                continue
+            if action.payload.topic != str(candidate.get("topic") or ""):
+                rejected_actions.append(
+                    _action_entry(action, "Meeting topic must match the snapshot candidate exactly.")
+                )
+                continue
+            if list(action.payload.participant_employee_ids) != list(candidate.get("participant_employee_ids") or []):
+                rejected_actions.append(
+                    _action_entry(action, "Meeting participants must match the snapshot candidate exactly.")
+                )
+                continue
+            if action.payload.recorder_employee_id != str(candidate.get("recorder_employee_id") or ""):
+                rejected_actions.append(
+                    _action_entry(action, "Meeting recorder must match the snapshot candidate exactly.")
+                )
+                continue
+            if list(action.payload.input_artifact_refs) != list(candidate.get("input_artifact_refs") or []):
+                rejected_actions.append(
+                    _action_entry(action, "Meeting input_artifact_refs must match the snapshot candidate exactly.")
+                )
+                continue
+            if repository.get_current_ticket_projection(action.payload.source_ticket_id) is None:
+                rejected_actions.append(_action_entry(action, "Source ticket does not exist anymore."))
+                continue
+            if (
+                repository.get_current_node_projection(action.payload.workflow_id, action.payload.source_node_id)
+                is None
+            ):
+                rejected_actions.append(_action_entry(action, "Source node does not exist anymore."))
+                continue
+            accepted_actions.append(
+                _action_entry(action, "Meeting request matches one eligible snapshot candidate.")
+            )
             continue
 
         if action.action_type == CEOActionType.CREATE_TICKET:

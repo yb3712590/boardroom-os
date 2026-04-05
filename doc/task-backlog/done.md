@@ -1615,7 +1615,7 @@
 | P1-MTG-005 | 实现质疑轮执行 | 4h | 已完成（2026-04-05） |
 | P1-MTG-006 | 实现收敛轮执行 | 4h | 已完成（2026-04-05） |
 | P1-MTG-007 | 共识文档生成 | 3h | 已完成（2026-04-05） |
-| P1-MTG-008 | CEO 触发会议决策 | 4h | 未开始 |
+| P1-MTG-008 | CEO 触发会议决策 | 4h | 已完成（2026-04-05） |
 | P1-MTG-009 | 会议事件投影 | 3h | 已完成（2026-04-05） |
 | P1-MTG-010 | 会议室测试 | 6h | 已完成（2026-04-05） |
 
@@ -1626,6 +1626,9 @@
 - 当前会议只保留轮次摘要、最终共识摘要和 `meeting-digest.json`，不把 transcript 长期留存做成隐性聊天系统。
 - 前端已新增 `Inbox -> /meeting/:meetingId -> MeetingRoomDrawer` 的只读读面，并支持从会议跳到现有 `review room`。
 - `doc/TODO.md` 写的是四轮；原任务库标题里只有 `立场 / 质疑 / 收敛` 三段执行项。本轮按 `TODO` 为准补齐四轮，`P1-MTG-006` 实际承担了 `PROPOSAL + CONVERGENCE` 两段收敛逻辑。
+- 本轮补上了 `P1-MTG-008`：CEO 现在能在窄触发条件下真实执行 `REQUEST_MEETING`，自动创建 `TECHNICAL_DECISION` 会议请求，并继续复用现有 `meeting-request -> 四轮会议 -> checker / board review` 主链。
+- 当前自动会议候选来自 `ceo_shadow_snapshot.meeting_candidates`，基于现有员工投影派生最小能力/角色匹配，不新建持久化 Capability Registry；deterministic 只会在 snapshot 中恰好存在一个合格候选时触发。
+- 自动会议只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会。
 
 ### 3.3 代码清理 (P1-CLN-001 到 P1-CLN-006)
 

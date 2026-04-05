@@ -12,7 +12,7 @@
 | `P0-INT-001` 到 `P0-INT-008` | 8 | 已完成 | `done.md` |
 | `P0-REL-001` 到 `P0-REL-008` | 8 | 计划保留，未进入当前工作集 | `active.md` |
 | `P1-PER-001` 到 `P1-PER-008` | 8 | 已完成 | `done.md` |
-| `P1-MTG-001` 到 `P1-MTG-010` | 10 | 仅 `P1-MTG-008` 未开始 | `active.md` |
+| `P1-MTG-001` 到 `P1-MTG-010` | 10 | 已完成 | `done.md` |
 | `P1-CLN-001` 到 `P1-CLN-006` | 6 | 未开始 | `active.md` |
 | `P2-RET-001` 到 `P2-RET-005` | 5 | 未开始 | `active.md` |
 | `P2-PRV-001` 到 `P2-PRV-008` | 8 | 未开始 | `active.md` |

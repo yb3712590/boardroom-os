@@ -1,6 +1,6 @@
 # 主线真相表
 
-> 最后更新：2026-04-04
+> 最后更新：2026-04-05
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
@@ -18,6 +18,7 @@
 - `project-init -> scope review` 这条共识链仍保留 `ui_designer_primary`，但首个 scope kickoff 票已经不再由命令处理器硬编码创建，而是由 `BOARD_DIRECTIVE_RECEIVED` 的 CEO shadow run 发起
 - 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
 - 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
+- 当前 CEO 也能在窄触发条件下自动创建 `TECHNICAL_DECISION` 会议请求：只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重新对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会
 
 ## 2. Runtime 支持矩阵
 
@@ -36,6 +37,7 @@
 
 - `OpenAI Compat` live path **不只** 支持 `ui_milestone_review` 和 `maker_checker_verdict`
 - 当前主线真实覆盖的 role profile 已经是三类：`ui_designer_primary`、`frontend_engineer_primary`、`checker_primary`
+- CEO 的 `REQUEST_MEETING` 当前也同时支持 deterministic 和 OpenAI Compat live，但 deterministic 只会在 snapshot 里恰好存在一个合格会议候选时触发
 
 ## 3. 冻结边界清单
 

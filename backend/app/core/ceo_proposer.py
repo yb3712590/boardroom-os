@@ -8,6 +8,8 @@ from app.contracts.ceo_actions import (
     CEOActionType,
     CEOCreateTicketAction,
     CEOCreateTicketPayload,
+    CEORequestMeetingAction,
+    CEORequestMeetingPayload,
     CEONoAction,
     CEONoActionPayload,
 )
@@ -86,9 +88,51 @@ def _build_project_init_scope_kickoff_batch(snapshot: dict, reason: str) -> CEOA
     )
 
 
+def _eligible_meeting_candidates(snapshot: dict) -> list[dict]:
+    return [
+        item
+        for item in snapshot.get("meeting_candidates") or []
+        if bool(item.get("eligible"))
+    ]
+
+
+def _build_request_meeting_batch(candidate: dict, reason: str) -> CEOActionBatch:
+    return CEOActionBatch(
+        summary=reason,
+        actions=[
+            CEORequestMeetingAction(
+                action_type=CEOActionType.REQUEST_MEETING,
+                payload=CEORequestMeetingPayload(
+                    workflow_id=str(candidate["workflow_id"]),
+                    meeting_type="TECHNICAL_DECISION",
+                    source_node_id=str(candidate["source_node_id"]),
+                    source_ticket_id=str(candidate["source_ticket_id"]),
+                    topic=str(candidate["topic"]),
+                    participant_employee_ids=list(candidate.get("participant_employee_ids") or []),
+                    recorder_employee_id=str(candidate["recorder_employee_id"]),
+                    input_artifact_refs=list(candidate.get("input_artifact_refs") or []),
+                    reason=str(candidate["reason"]),
+                ),
+            )
+        ],
+    )
+
+
 def build_deterministic_fallback_batch(snapshot: dict, reason: str) -> CEOActionBatch:
     if _should_fallback_to_project_init_scope_kickoff(snapshot):
         return _build_project_init_scope_kickoff_batch(snapshot, reason)
+    eligible_meeting_candidates = _eligible_meeting_candidates(snapshot)
+    if len(eligible_meeting_candidates) == 1:
+        candidate = {
+            **eligible_meeting_candidates[0],
+            "workflow_id": str((snapshot.get("workflow") or {}).get("workflow_id") or ""),
+        }
+        return _build_request_meeting_batch(
+            candidate,
+            reason=(
+                "Open one bounded technical decision meeting because the snapshot exposes a single eligible candidate."
+            ),
+        )
     return build_no_action_batch(reason)
 
 

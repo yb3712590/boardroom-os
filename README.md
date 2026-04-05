@@ -22,6 +22,7 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 当前这条链的现实状态：
 
 - `project-init` 会先由 CEO 发起首个 kickoff scope 共识票，再自动推进到首个 scope review
+- 当决策/评审型票明确需要跨角色重新对齐，或董事会驳回/改约束后需要重开技术决策时，CEO 现在也会按窄规则自动发起 `TECHNICAL_DECISION` 会议
 - scope 通过后，`BUILD` 会先产出 `implementation_bundle@1`，再走内部 `maker -> checker -> fix / incident`
 - `CHECK` 产出的 `delivery_check_report@1` 现在也会先走内部 `maker -> checker -> fix / incident`
 - 只有 build 和 check 两段内审都通过后，系统才会放行最终董事会 `REVIEW`
@@ -34,8 +35,8 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 - FastAPI + SQLite 后端，事件流、投影、ticket 生命周期、approval / incident / breaker 都已可用
 - Maker-Checker 已覆盖 `consensus_document@1`、`implementation_bundle@1`、`delivery_check_report@1`、`ui_milestone_review@1`、`delivery_closeout_package@1`
 - employee 生命周期已进入主线：`hire / replace / freeze / restore` 与 staffing containment 都是事件驱动，且当前已带最小人格模型（`skill / personality / aesthetic` 三组画像）与同岗高重合招聘约束
-- CEO 已从纯影子进入有限接管首轮：当前会真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`，其中 `project-init` 后的首个 scope kickoff 票已由 CEO 发起；scheduler 也会在 workflow 空转但仍有待推进信号时补打一轮 CEO idle maintenance 审计；`ESCALATE_TO_BOARD` 仍保持 shadow-only
-- 会议室协议最小版已落地：当前可手动发起 `TECHNICAL_DECISION` 会议，后端会以 ticket-backed 方式执行四轮结构化会议，并在前端提供只读 `meeting room`
+- CEO 已从纯影子进入有限接管首轮：当前会真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`，其中 `project-init` 后的首个 scope kickoff 票已由 CEO 发起；scheduler 也会在 workflow 空转但仍有待推进信号时补打一轮 CEO idle maintenance 审计；`ESCALATE_TO_BOARD` 仍保持 shadow-only
+- 会议室协议最小版已落地：当前既可手动发起 `TECHNICAL_DECISION` 会议，也支持 CEO 在窄触发条件下自动发起；后端会以 ticket-backed 方式执行四轮结构化会议，并在前端提供只读 `meeting room`
 - Context Compiler 已能处理常见文本、媒体、下载型附件和本地历史摘要，并产出可审计执行包；当前 worker 执行包会显式携带标准化员工画像与 `persona_summary`
 - runtime 默认走本地 deterministic；也支持本地保存的 `OpenAI Compat` provider 配置，并会在 provider 暂停、限流、超时或坏响应时按现有 incident 规则留痕后自动回退到 deterministic
 - React 壳里的 `workforce` 与 staffing `Review Room` 现在都能直接看到当前员工/候选员工画像，不需要翻事件或数据库

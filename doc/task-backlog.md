@@ -14,15 +14,14 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 总任务数 | 121 | 原始编号与任务名称保持不变 |
-| 已完成 / 已收口 | 82 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
-| 当前仍未关闭 | 39 | 当前工作集保存在 `task-backlog/active.md` |
+| 已完成 / 已收口 | 83 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 当前仍未关闭 | 38 | 当前工作集保存在 `task-backlog/active.md` |
 | 总预估工时 | 464h | 来自拆分前任务库原表 |
 
 ## 当前活跃区域
 
 | 区域 | 任务范围 | 当前状态 | 默认看哪里 |
 |------|----------|----------|------------|
-| 会议室后续 | `P1-MTG-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 代码清理 | `P1-CLN-001` 到 `P1-CLN-006` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |

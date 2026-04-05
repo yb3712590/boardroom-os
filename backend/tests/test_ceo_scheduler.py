@@ -17,10 +17,12 @@ from app.core.ceo_scheduler import (
     run_due_ceo_maintenance,
 )
 from app.core.constants import (
+    EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_EMPLOYEE_HIRED,
     EVENT_INCIDENT_OPENED,
+    EVENT_WORKFLOW_CREATED,
 )
 from app.core.persona_profiles import clone_persona_template, get_hire_persona_template_id
 from app.core.provider_openai_compat import OpenAICompatProviderResult
@@ -40,6 +42,33 @@ def _project_init(client, goal: str = "CEO shadow test") -> str:
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     return response.json()["causation_hint"].split(":", 1)[1]
+
+
+def _seed_workflow(client, workflow_id: str, goal: str = "Seeded CEO workflow") -> str:
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_WORKFLOW_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"workflow-created:{workflow_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "north_star_goal": goal,
+                "hard_constraints": ["Keep governance explicit."],
+                "budget_cap": 500000,
+                "deadline_at": None,
+                "title": goal,
+                "tenant_id": "tenant_default",
+                "workspace_id": "ws_default",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-05T10:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+    return workflow_id
 
 
 def _set_deterministic_mode(client) -> None:
@@ -250,6 +279,36 @@ def test_ceo_shadow_snapshot_includes_normalized_profiles_and_summary(client):
     assert frontend_employee["skill_profile"]["system_scope"] == "delivery_slice"
     assert frontend_employee["personality_profile"]["risk_posture"] == "assertive"
     assert frontend_employee["profile_summary"].startswith("Skill frontend")
+
+
+def test_ceo_shadow_snapshot_includes_failed_ticket_meeting_candidate(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_meeting_candidate")
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_meeting_candidate",
+        node_id="node_ceo_meeting_candidate",
+        retry_budget=0,
+    )
+
+    snapshot = next(
+        run["snapshot"]
+        for run in client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+        if run["trigger_type"] == "TICKET_FAILED"
+    )
+
+    assert "meeting_candidates" in snapshot
+    assert snapshot["meeting_candidates"]
+    candidate = next(
+        item
+        for item in snapshot["meeting_candidates"]
+        if item["source_ticket_id"] == "tkt_ceo_meeting_candidate"
+    )
+    assert candidate["eligible"] is True
+    assert candidate["participant_employee_ids"] == ["emp_frontend_2", "emp_checker_1"]
+    assert candidate["recorder_employee_id"] == "emp_frontend_2"
+    assert "failed" in candidate["reason"].lower()
 
 
 def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_already_active(client):
@@ -678,6 +737,210 @@ def test_ticket_fail_triggers_ceo_shadow_audit(client):
     assert runs
     assert any(run["trigger_type"] == "TICKET_FAILED" for run in runs)
     assert client.app.state.repository.get_current_ticket_projection("tkt_ceo_shadow_fail")["status"] == "FAILED"
+
+
+def test_ticket_fail_can_trigger_ceo_meeting_request_in_deterministic_mode(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_meeting_auto")
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_meeting_auto",
+        node_id="node_ceo_meeting_auto",
+        retry_budget=0,
+    )
+
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+    ticket_fail_run = next(run for run in runs if run["trigger_type"] == "TICKET_FAILED")
+    executed_meeting = next(
+        item for item in ticket_fail_run["executed_actions"] if item["action_type"] == "REQUEST_MEETING"
+    )
+    meeting_id = executed_meeting["causation_hint"].split(":", 1)[1]
+    meeting = client.app.state.repository.get_meeting_projection(meeting_id)
+
+    assert ticket_fail_run["accepted_actions"][0]["action_type"] == "REQUEST_MEETING"
+    assert executed_meeting["execution_status"] == "EXECUTED"
+    assert meeting is not None
+    assert meeting["meeting_type"] == "TECHNICAL_DECISION"
+    assert meeting["source_ticket_id"].startswith("tkt_meeting_")
+
+
+def test_live_provider_can_request_meeting_from_snapshot_candidate(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_live_meeting")
+    import app.core.ticket_handlers as ticket_handlers
+
+    monkeypatch.setattr(ticket_handlers, "run_ceo_shadow_for_trigger", lambda *args, **kwargs: None)
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_live_meeting_source",
+        node_id="node_ceo_live_meeting_source",
+        retry_budget=0,
+    )
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, rendered_payload):
+        snapshot = rendered_payload.messages[2].content_payload
+        candidate = next(
+            item
+            for item in snapshot["meeting_candidates"]
+            if item["source_ticket_id"] == "tkt_ceo_live_meeting_source"
+        )
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Open a bounded technical decision meeting before more serial retries.",
+                    "actions": [
+                        {
+                            "action_type": "REQUEST_MEETING",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "meeting_type": "TECHNICAL_DECISION",
+                                "source_node_id": candidate["source_node_id"],
+                                "source_ticket_id": candidate["source_ticket_id"],
+                                "topic": candidate["topic"],
+                                "participant_employee_ids": candidate["participant_employee_ids"],
+                                "recorder_employee_id": candidate["recorder_employee_id"],
+                                "input_artifact_refs": candidate["input_artifact_refs"],
+                                "reason": candidate["reason"],
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_request_meeting_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_FAILED",
+        trigger_ref="tkt_ceo_live_meeting_source",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["provider_response_id"] == "resp_ceo_request_meeting_1"
+    assert run["accepted_actions"][0]["action_type"] == "REQUEST_MEETING"
+    assert run["executed_actions"][0]["action_type"] == "REQUEST_MEETING"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+
+def test_meeting_escalation_reject_does_not_trigger_recursive_ceo_meeting(client, set_ticket_time):
+    set_ticket_time("2026-04-05T11:00:00+08:00")
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_no_recursion")
+
+    request_response = client.post(
+        "/api/v1/commands/meeting-request",
+        json={
+            "workflow_id": workflow_id,
+            "meeting_type": "TECHNICAL_DECISION",
+            "topic": "Lock the runtime contract once",
+            "participant_employee_ids": ["emp_frontend_2", "emp_checker_1"],
+            "recorder_employee_id": "emp_frontend_2",
+            "input_artifact_refs": ["art://inputs/brief.md"],
+            "max_rounds": 4,
+            "idempotency_key": "meeting-request:ceo-no-recursion",
+        },
+    )
+    meeting_id = request_response.json()["causation_hint"].split(":", 1)[1]
+
+    from app.scheduler_runner import run_scheduler_once
+
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:ceo-no-recursion",
+        max_dispatches=10,
+    )
+    meeting = client.app.state.repository.get_meeting_projection(meeting_id)
+    checker_ticket_id = client.app.state.repository.get_current_node_projection(
+        workflow_id,
+        meeting["source_node_id"],
+    )["latest_ticket_id"]
+
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": meeting["source_node_id"],
+            "leased_by": "emp_checker_1",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:checker",
+        },
+    )
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": meeting["source_node_id"],
+            "started_by": "emp_checker_1",
+            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:checker",
+        },
+    )
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": meeting["source_node_id"],
+            "submitted_by": "emp_checker_1",
+            "result_status": "completed",
+            "schema_version": "maker_checker_verdict_v1",
+            "payload": {
+                "summary": "Checker approved the meeting output.",
+                "review_status": "APPROVED_WITH_NOTES",
+                "findings": [],
+            },
+            "artifact_refs": [],
+            "written_artifacts": [],
+            "assumptions": [],
+            "issues": [],
+            "confidence": 0.9,
+            "needs_escalation": False,
+            "summary": "Checker verdict submitted.",
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved",
+        },
+    )
+
+    approval = next(
+        item for item in client.app.state.repository.list_open_approvals() if item["workflow_id"] == workflow_id
+    )
+    reject_response = client.post(
+        "/api/v1/commands/board-reject",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "board_comment": "Reject the current meeting output.",
+            "rejection_reasons": ["Need another governance decision."],
+            "idempotency_key": f"board-reject:{approval['approval_id']}:ceo-no-recursion",
+        },
+    )
+
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+    approval_run = next(run for run in runs if run["trigger_type"] == "APPROVAL_RESOLVED")
+
+    assert lease_response.status_code == 200
+    assert start_response.status_code == 200
+    assert submit_response.status_code == 200
+    assert reject_response.status_code == 200
+    assert approval["approval_type"] == "MEETING_ESCALATION"
+    assert approval_run["trigger_ref"] == approval["approval_id"]
+    assert approval_run["accepted_actions"][0]["action_type"] == "NO_ACTION"
+    assert all(item["action_type"] != "REQUEST_MEETING" for item in approval_run["accepted_actions"])
+    assert any(
+        event["event_type"] == EVENT_BOARD_REVIEW_REJECTED
+        for event in client.app.state.repository.list_events_for_testing()
+        if (event.get("payload") or {}).get("approval_id") == approval["approval_id"]
+    )
 
 
 def test_board_approve_triggers_ceo_shadow_projection_route(client):

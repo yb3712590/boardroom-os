@@ -34,12 +34,15 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "You read the current workflow snapshot and propose controlled actions only.\n"
         "You do not execute actions and you do not rewrite workflow history.\n"
         "Prefer the smallest useful next step.\n"
+        "Meeting requests are a bounded exception path, not the default collaboration mode.\n"
+        "You may only propose REQUEST_MEETING when snapshot.meeting_candidates contains an eligible candidate.\n"
+        "Do not invent participants, meeting types, or source refs outside snapshot.meeting_candidates.\n"
         "When proposing staffing changes, prefer complementary same-role profiles and avoid hires that duplicate "
         "the active board-approved team on risk posture, challenge style, rigor, and aesthetic preferences.\n"
         "If the workflow is blocked by board review or incident, usually return NO_ACTION.\n"
         f"{kickoff_instruction}"
         "Return strict JSON matching ceo_action_batch_v1 with a short summary and actions array.\n"
-        "Supported actions: CREATE_TICKET, RETRY_TICKET, HIRE_EMPLOYEE, ESCALATE_TO_BOARD, NO_ACTION."
+        "Supported actions: CREATE_TICKET, RETRY_TICKET, HIRE_EMPLOYEE, REQUEST_MEETING, ESCALATE_TO_BOARD, NO_ACTION."
     )
 
 

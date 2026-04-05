@@ -53,7 +53,9 @@
 - `DashboardPage.tsx` was further slimmed from 629 lines to 298 through page-level helper files, and `StaffingActions` now shows hire-template persona summary through `ProfileSummary`.
 - Added the first ticket-backed meeting room slice without creating a second chat system: backend now supports `meeting-request`, four auditable meeting event types, a persisted meeting projection, and a `TECHNICAL_DECISION` meeting state machine that runs `POSITION -> CHALLENGE -> PROPOSAL -> CONVERGENCE` over a `consensus_document` ticket.
 - The React shell now has a read-only meeting path at `/meeting/:meetingId`, and inbox meeting items open `MeetingRoomDrawer` with topic, participants, round summaries, consensus state, and jump-through to review room.
-- Full verification for the meeting-room round finished at `py -m pytest tests/ -q` -> `404 passed`, `npm run build` -> passed, and `npm run test:run` -> `53 passed`.
+- CEO now has a limited `REQUEST_MEETING` execution path: `ceo_shadow_snapshot` exposes auditable `meeting_candidates`, deterministic mode only opens a meeting when exactly one candidate is eligible, and live provider proposals are constrained to those snapshot candidates.
+- Automatic meetings stay narrow: they only cover decision-oriented ticket failure recovery or board `REJECT / MODIFY_CONSTRAINTS` realignment, they do not run in idle maintenance, and they do not recursively reopen `MEETING_ESCALATION`.
+- Full verification for the CEO auto-meeting round finished at `py -m pytest tests/ -q` -> `408 passed`, `npm run build` -> passed, and `npm run test:run` -> `53 passed`.
 
 ## Current Working Set
 

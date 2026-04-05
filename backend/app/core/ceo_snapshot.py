@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.core.ceo_meeting_policy import build_ceo_meeting_candidates
 from app.core.persona_profiles import normalize_persona_profiles
 from app.db.repository import ControlPlaneRepository
 
@@ -76,6 +77,14 @@ def build_ceo_shadow_snapshot(
     nodes = [repository._convert_node_projection_row(row) for row in node_rows]
     employees = repository.list_employee_projections()
     ready_tickets = [ticket for ticket in tickets if ticket["status"] == "PENDING"]
+    meeting_candidates = build_ceo_meeting_candidates(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=trigger_type,
+        trigger_ref=trigger_ref,
+        approvals=open_approvals,
+        incidents=open_incidents,
+    )
 
     return {
         "trigger": {
@@ -181,4 +190,5 @@ def build_ceo_shadow_snapshot(
             }
             for preview in repository.get_recent_event_previews()
         ],
+        "meeting_candidates": meeting_candidates,
     }
