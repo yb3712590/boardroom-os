@@ -25,7 +25,11 @@ from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     compile_and_persist_execution_artifacts,
 )
-from app.core.constants import PROVIDER_PAUSE_FAILURE_KINDS
+from app.core.constants import (
+    EVENT_MEETING_CONCLUDED,
+    EVENT_MEETING_ROUND_COMPLETED,
+    PROVIDER_PAUSE_FAILURE_KINDS,
+)
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
@@ -240,6 +244,244 @@ def _build_runtime_default_artifacts(
         },
     ]
     return artifact_refs, written_artifacts
+
+
+def _build_meeting_round_notes(round_type: str, topic: str, participant_ids: list[str]) -> list[str]:
+    if round_type == "POSITION":
+        return [f"{employee_id} stated the main constraint for {topic}." for employee_id in participant_ids]
+    if round_type == "CHALLENGE":
+        return [f"{employee_id} questioned the hidden risk in the current direction." for employee_id in participant_ids]
+    if round_type == "PROPOSAL":
+        return [f"{employee_id} proposed one concrete convergence option." for employee_id in participant_ids]
+    return [f"{employee_id} confirmed the final technical decision summary." for employee_id in participant_ids]
+
+
+def _build_meeting_consensus_payload(
+    execution_package: CompiledExecutionPackage,
+    meeting_context: dict[str, Any],
+    rounds: list[dict[str, Any]],
+) -> dict[str, Any]:
+    participant_ids = list(meeting_context.get("participant_employee_ids") or [])
+    ticket_id = execution_package.meta.ticket_id
+    topic = str(meeting_context.get("topic") or f"Consensus for ticket {ticket_id}")
+    owner_role = execution_package.compiled_role.employee_role_type
+    return {
+        "topic": topic,
+        "participants": participant_ids,
+        "input_artifact_refs": [
+            block.source_ref
+            for block in execution_package.atomic_context_bundle.context_blocks
+            if block.source_kind == "ARTIFACT"
+        ],
+        "consensus_summary": (
+            f"Meeting converged on one technical direction after {len(rounds)} structured rounds for {topic}."
+        ),
+        "rejected_options": ["Carry multiple conflicting technical paths into the same delivery round."],
+        "open_questions": ["Whether the deferred alternative should return as a later governance ticket."],
+        "followup_tickets": [
+            {
+                "ticket_id": f"{ticket_id}_followup_build",
+                "owner_role": owner_role,
+                "summary": "Implement the converged technical direction without widening the MVP boundary.",
+                "delivery_stage": DeliveryStage.BUILD.value,
+            },
+            {
+                "ticket_id": f"{ticket_id}_followup_check",
+                "owner_role": "checker",
+                "summary": "Check the implementation against the converged technical decision before board review.",
+                "delivery_stage": DeliveryStage.CHECK.value,
+            },
+            {
+                "ticket_id": f"{ticket_id}_followup_review",
+                "owner_role": owner_role,
+                "summary": "Prepare the final board-facing review package from the converged technical decision.",
+                "delivery_stage": DeliveryStage.REVIEW.value,
+            },
+        ],
+    }
+
+
+def _build_meeting_digest_artifact(
+    execution_package: CompiledExecutionPackage,
+    meeting_context: dict[str, Any],
+    rounds: list[dict[str, Any]],
+) -> dict[str, Any]:
+    meeting_id = str(meeting_context.get("meeting_id") or execution_package.meta.ticket_id)
+    path = _resolve_runtime_write_path(
+        execution_package.execution.allowed_write_set[0],
+        "meeting-digest.json",
+    )
+    artifact_ref = f"art://runtime/{execution_package.meta.ticket_id}/meeting-digest.json"
+    return {
+        "path": path,
+        "artifact_ref": artifact_ref,
+        "kind": "JSON",
+        "retention_class": "REVIEW_EVIDENCE",
+        "content_json": {
+            "meeting_id": meeting_id,
+            "topic": meeting_context.get("topic"),
+            "rounds": rounds,
+            "recorder_employee_id": meeting_context.get("recorder_employee_id"),
+        },
+    }
+
+
+def _execute_meeting_runtime(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    execution_package: CompiledExecutionPackage,
+    created_spec: dict[str, Any],
+) -> RuntimeExecutionResult:
+    meeting_context = dict(created_spec.get("meeting_context") or {})
+    meeting_id = str(meeting_context.get("meeting_id") or "").strip()
+    if not meeting_id:
+        return RuntimeExecutionResult(
+            result_status="failed",
+            failure_kind="RUNTIME_INPUT_ERROR",
+            failure_message="Meeting-backed ticket is missing meeting_id in meeting_context.",
+        )
+
+    meeting = repository.get_meeting_projection(meeting_id)
+    if meeting is None:
+        return RuntimeExecutionResult(
+            result_status="failed",
+            failure_kind="RUNTIME_INPUT_ERROR",
+            failure_message=f"Meeting projection {meeting_id} does not exist.",
+        )
+
+    topic = str(meeting_context.get("topic") or meeting.get("topic") or execution_package.meta.ticket_id)
+    participant_ids = list(meeting_context.get("participant_employee_ids") or [])
+    ordered_rounds = ["POSITION", "CHALLENGE", "PROPOSAL", "CONVERGENCE"]
+    max_rounds = int(meeting_context.get("max_rounds") or len(ordered_rounds))
+    runtime_rounds: list[dict[str, Any]] = []
+    round_timestamp = now_local()
+
+    with repository.transaction() as connection:
+        repository.update_meeting_projection(
+            connection,
+            meeting_id,
+            status="IN_ROUND",
+            current_round=ordered_rounds[0],
+            updated_at=round_timestamp,
+        )
+        for index, round_type in enumerate(ordered_rounds[:max_rounds]):
+            completed_at = now_local()
+            round_payload = {
+                "round_type": round_type,
+                "round_index": index + 1,
+                "summary": f"{round_type.title()} round closed on {topic}.",
+                "notes": _build_meeting_round_notes(round_type, topic, participant_ids),
+                "completed_at": completed_at.isoformat(),
+            }
+            runtime_rounds.append(round_payload)
+            repository.insert_event(
+                connection,
+                event_type=EVENT_MEETING_ROUND_COMPLETED,
+                actor_type="runtime",
+                actor_id=str(ticket.get("lease_owner") or "runtime"),
+                workflow_id=str(ticket["workflow_id"]),
+                idempotency_key=f"meeting-round:{meeting_id}:{index + 1}:{ticket['ticket_id']}",
+                causation_id=None,
+                correlation_id=str(ticket["workflow_id"]),
+                payload={
+                    "meeting_id": meeting_id,
+                    "round_type": round_type,
+                    "round_index": index + 1,
+                    "summary": round_payload["summary"],
+                },
+                occurred_at=completed_at,
+            )
+
+        if max_rounds < len(ordered_rounds):
+            no_consensus_reason = "Round budget exhausted before convergence."
+            repository.update_meeting_projection(
+                connection,
+                meeting_id,
+                status="NO_CONSENSUS",
+                current_round=runtime_rounds[-1]["round_type"] if runtime_rounds else None,
+                rounds=runtime_rounds,
+                updated_at=now_local(),
+                closed_at=None,
+                no_consensus_reason=no_consensus_reason,
+                consensus_summary=None,
+                review_status=None,
+            )
+            repository.insert_event(
+                connection,
+                event_type=EVENT_MEETING_CONCLUDED,
+                actor_type="runtime",
+                actor_id=str(ticket.get("lease_owner") or "runtime"),
+                workflow_id=str(ticket["workflow_id"]),
+                idempotency_key=f"meeting-concluded:{meeting_id}:{ticket['ticket_id']}:no-consensus",
+                causation_id=None,
+                correlation_id=str(ticket["workflow_id"]),
+                payload={
+                    "meeting_id": meeting_id,
+                    "outcome_status": "NO_CONSENSUS",
+                    "reason": no_consensus_reason,
+                },
+                occurred_at=now_local(),
+            )
+            return RuntimeExecutionResult(
+                result_status="failed",
+                completion_summary="Meeting exhausted its round budget before convergence.",
+                failure_kind="MEETING_NO_CONSENSUS",
+                failure_message=no_consensus_reason,
+                failure_detail={
+                    "meeting_id": meeting_id,
+                    "rounds_completed": len(runtime_rounds),
+                    "max_rounds": max_rounds,
+                },
+            )
+
+        result_payload = _build_meeting_consensus_payload(execution_package, meeting_context, runtime_rounds)
+        artifact_refs, written_artifacts = _build_runtime_default_artifacts(execution_package, result_payload)
+        written_artifacts.append(
+            _build_meeting_digest_artifact(execution_package, meeting_context, runtime_rounds)
+        )
+        artifact_refs.append(str(written_artifacts[-1]["artifact_ref"]))
+        consensus_summary = str(result_payload.get("consensus_summary") or "")
+        repository.update_meeting_projection(
+            connection,
+            meeting_id,
+            status="CLOSED",
+            current_round="CONVERGENCE",
+            rounds=runtime_rounds,
+            updated_at=now_local(),
+            closed_at=now_local(),
+            no_consensus_reason=None,
+            consensus_summary=consensus_summary,
+            review_status="CHECKER_PENDING",
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_MEETING_CONCLUDED,
+            actor_type="runtime",
+            actor_id=str(ticket.get("lease_owner") or "runtime"),
+            workflow_id=str(ticket["workflow_id"]),
+            idempotency_key=f"meeting-concluded:{meeting_id}:{ticket['ticket_id']}:consensus",
+            causation_id=None,
+            correlation_id=str(ticket["workflow_id"]),
+            payload={
+                "meeting_id": meeting_id,
+                "outcome_status": "CONSENSUS_SUBMITTED",
+                "consensus_summary": consensus_summary,
+            },
+            occurred_at=now_local(),
+        )
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary=f"Runtime completed meeting {meeting_id} and submitted the consensus document.",
+            artifact_refs=artifact_refs,
+            result_payload=result_payload,
+            written_artifacts=written_artifacts,
+            assumptions=[
+                f"meeting_id={meeting_id}",
+                f"meeting_round_count={len(runtime_rounds)}",
+            ],
+            issues=[],
+            confidence=0.74,
+        )
 
 
 def _build_runtime_success_payload(
@@ -922,7 +1164,15 @@ def _execute_runtime_with_provider_if_configured(
     repository: ControlPlaneRepository,
     ticket: dict[str, Any],
     execution_package: CompiledExecutionPackage,
+    created_spec: dict[str, Any] | None,
 ) -> RuntimeExecutionResult:
+    if (
+        created_spec is not None
+        and isinstance(created_spec.get("meeting_context"), dict)
+        and execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF
+    ):
+        return _execute_meeting_runtime(repository, ticket, execution_package, created_spec)
+
     provider_id = _resolve_ticket_provider_id(repository, ticket)
     runtime_config = resolve_runtime_provider_config()
     runtime_mode = getattr(runtime_config.mode, "value", runtime_config.mode)
@@ -1154,6 +1404,7 @@ def run_leased_ticket_runtime(
                 repository,
                 ticket,
                 execution_package,
+                created_spec,
             )
         except (ValidationError, ValueError) as exc:
             final_ack = handle_ticket_result_submit(

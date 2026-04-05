@@ -5,15 +5,17 @@ import { describe, expect, it, vi } from 'vitest'
 import { InboxWell } from '../../../components/dashboard/InboxWell'
 
 describe('InboxWell', () => {
-  it('routes review and incident items to their matching callbacks', async () => {
+  it('routes review, meeting, and incident items to their matching callbacks', async () => {
     const user = userEvent.setup()
     const onOpenReview = vi.fn()
+    const onOpenMeeting = vi.fn()
     const onOpenIncident = vi.fn()
 
     render(
       <InboxWell
         loading={false}
         onOpenReview={onOpenReview}
+        onOpenMeeting={onOpenMeeting}
         onOpenIncident={onOpenIncident}
         items={[
           {
@@ -31,6 +33,22 @@ describe('InboxWell', () => {
               review_pack_id: 'brp_001',
             },
             badges: ['Review'],
+          },
+          {
+            inbox_item_id: 'inbox_meeting',
+            workflow_id: 'wf_001',
+            item_type: 'meeting',
+            priority: 'high',
+            status: 'OPEN',
+            created_at: '2026-04-04T12:00:30+08:00',
+            title: 'Technical decision meeting',
+            summary: 'Open the meeting room.',
+            source_ref: 'mtg_001',
+            route_target: {
+              view: 'meeting_room',
+              meeting_id: 'mtg_001',
+            },
+            badges: ['Meeting'],
           },
           {
             inbox_item_id: 'inbox_incident',
@@ -53,9 +71,11 @@ describe('InboxWell', () => {
     )
 
     await user.click(screen.getByRole('button', { name: /Board review ready/i }))
+    await user.click(screen.getByRole('button', { name: /Technical decision meeting/i }))
     await user.click(screen.getByRole('button', { name: /Incident open/i }))
 
     expect(onOpenReview).toHaveBeenCalledWith('brp_001')
+    expect(onOpenMeeting).toHaveBeenCalledWith('mtg_001')
     expect(onOpenIncident).toHaveBeenCalledWith('inc_001')
   })
 })

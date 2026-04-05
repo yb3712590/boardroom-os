@@ -39,6 +39,7 @@ export type InboxItem = {
     view: string
     review_pack_id?: string | null
     incident_id?: string | null
+    meeting_id?: string | null
   }
   badges: string[]
 }

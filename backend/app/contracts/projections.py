@@ -242,6 +242,7 @@ class RouteTarget(StrictModel):
     view: str
     review_pack_id: str | None = None
     incident_id: str | None = None
+    meeting_id: str | None = None
 
 
 class InboxItemProjection(StrictModel):
@@ -265,6 +266,46 @@ class InboxProjectionData(StrictModel):
 
 class InboxProjectionEnvelope(ProjectionEnvelopeBase):
     data: InboxProjectionData
+
+
+class MeetingParticipantProjection(StrictModel):
+    employee_id: str
+    role_type: str
+    meeting_responsibility: str
+    is_recorder: bool = False
+
+
+class MeetingRoundProjection(StrictModel):
+    round_type: str
+    round_index: int
+    summary: str
+    notes: list[str] = Field(default_factory=list)
+    completed_at: datetime
+
+
+class MeetingDetailProjectionData(StrictModel):
+    meeting_id: str
+    workflow_id: str
+    meeting_type: str
+    topic: str
+    status: str
+    review_status: str | None = None
+    source_ticket_id: str
+    source_node_id: str
+    review_pack_id: str | None = None
+    opened_at: datetime
+    updated_at: datetime
+    closed_at: datetime | None = None
+    current_round: str | None = None
+    recorder_employee_id: str
+    participants: list[MeetingParticipantProjection]
+    rounds: list[MeetingRoundProjection]
+    consensus_summary: str | None = None
+    no_consensus_reason: str | None = None
+
+
+class MeetingDetailProjectionEnvelope(ProjectionEnvelopeBase):
+    data: MeetingDetailProjectionData
 
 
 class DependencyInspectorWorkflowProjection(StrictModel):

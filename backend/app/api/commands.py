@@ -13,6 +13,7 @@ from app.contracts.commands import (
     EmployeeReplaceRequestCommand,
     EmployeeRestoreCommand,
     IncidentResolveCommand,
+    MeetingRequestCommand,
     ModifyConstraintsCommand,
     ProjectInitCommand,
     RuntimeProviderUpsertCommand,
@@ -42,6 +43,7 @@ from app.core.employee_handlers import (
     handle_employee_replace_request,
     handle_employee_restore,
 )
+from app.core.meeting_handlers import handle_meeting_request
 from app.core.ticket_handlers import (
     handle_incident_resolve,
     handle_ticket_cancel,
@@ -99,6 +101,12 @@ def employee_freeze(request: Request, payload: EmployeeFreezeCommand) -> Command
 def employee_restore(request: Request, payload: EmployeeRestoreCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_employee_restore(repository, payload)
+
+
+@router.post("/meeting-request", response_model=CommandAckEnvelope)
+def meeting_request(request: Request, payload: MeetingRequestCommand) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_meeting_request(repository, payload)
 
 
 @router.post("/ticket-create", response_model=CommandAckEnvelope)

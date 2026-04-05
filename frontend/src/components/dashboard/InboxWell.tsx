@@ -4,10 +4,11 @@ type InboxWellProps = {
   items: InboxItem[]
   loading: boolean
   onOpenReview: (reviewPackId: string) => void
+  onOpenMeeting: (meetingId: string) => void
   onOpenIncident: (incidentId: string) => void
 }
 
-export function InboxWell({ items, loading, onOpenReview, onOpenIncident }: InboxWellProps) {
+export function InboxWell({ items, loading, onOpenReview, onOpenMeeting, onOpenIncident }: InboxWellProps) {
   return (
     <aside className="inbox-well" aria-labelledby="inbox-title">
       <div className="section-heading">
@@ -19,6 +20,7 @@ export function InboxWell({ items, loading, onOpenReview, onOpenIncident }: Inbo
       <div className="inbox-item-list">
         {items.map((item) => {
           const isReviewRoute = item.route_target.view === 'review_room' && item.route_target.review_pack_id
+          const isMeetingRoute = item.route_target.view === 'meeting_room' && item.route_target.meeting_id
           const isIncidentRoute = item.route_target.view === 'incident_detail' && item.route_target.incident_id != null
           const content = (
             <>
@@ -31,7 +33,7 @@ export function InboxWell({ items, loading, onOpenReview, onOpenIncident }: Inbo
             </>
           )
 
-          return isReviewRoute || isIncidentRoute ? (
+          return isReviewRoute || isMeetingRoute || isIncidentRoute ? (
             <button
               key={item.inbox_item_id}
               type="button"
@@ -39,6 +41,10 @@ export function InboxWell({ items, loading, onOpenReview, onOpenIncident }: Inbo
               onClick={() => {
                 if (isReviewRoute) {
                   onOpenReview(item.route_target.review_pack_id as string)
+                  return
+                }
+                if (isMeetingRoute) {
+                  onOpenMeeting(item.route_target.meeting_id as string)
                   return
                 }
                 onOpenIncident(item.route_target.incident_id as string)

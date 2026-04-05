@@ -1606,18 +1606,26 @@
 
 ### 3.2 会议室协议 (P1-MTG-001 到 P1-MTG-010)
 
-| ID | 标题 | 预估 |
-|----|------|------|
-| P1-MTG-001 | 定义会议事件类型 | 3h |
-| P1-MTG-002 | 定义会议请求契约 | 3h |
-| P1-MTG-003 | 实现会议状态机 | 6h |
-| P1-MTG-004 | 实现立场轮执行 | 4h |
-| P1-MTG-005 | 实现质疑轮执行 | 4h |
-| P1-MTG-006 | 实现收敛轮执行 | 4h |
-| P1-MTG-007 | 共识文档生成 | 3h |
-| P1-MTG-008 | CEO 触发会议决策 | 4h |
-| P1-MTG-009 | 会议事件投影 | 3h |
-| P1-MTG-010 | 会议室测试 | 6h |
+| ID | 标题 | 预估 | 状态 |
+|----|------|------|------|
+| P1-MTG-001 | 定义会议事件类型 | 3h | 已完成（2026-04-05） |
+| P1-MTG-002 | 定义会议请求契约 | 3h | 已完成（2026-04-05） |
+| P1-MTG-003 | 实现会议状态机 | 6h | 已完成（2026-04-05） |
+| P1-MTG-004 | 实现立场轮执行 | 4h | 已完成（2026-04-05） |
+| P1-MTG-005 | 实现质疑轮执行 | 4h | 已完成（2026-04-05） |
+| P1-MTG-006 | 实现收敛轮执行 | 4h | 已完成（2026-04-05） |
+| P1-MTG-007 | 共识文档生成 | 3h | 已完成（2026-04-05） |
+| P1-MTG-008 | CEO 触发会议决策 | 4h | 未开始 |
+| P1-MTG-009 | 会议事件投影 | 3h | 已完成（2026-04-05） |
+| P1-MTG-010 | 会议室测试 | 6h | 已完成（2026-04-05） |
+
+完成补记：
+
+- 本轮按 `ticket-backed meeting room` 实现了最小会议闭环，只开放 `TECHNICAL_DECISION`，不做 `SCOPE_ALIGNMENT` 和 CEO 自动触发。
+- `meeting-request` 会创建真实会议投影，并创建带 `meeting_context` 的 `consensus_document` ticket；runtime 会依次跑 `POSITION -> CHALLENGE -> PROPOSAL -> CONVERGENCE` 四轮，再回到现有 maker-checker / board review。
+- 当前会议只保留轮次摘要、最终共识摘要和 `meeting-digest.json`，不把 transcript 长期留存做成隐性聊天系统。
+- 前端已新增 `Inbox -> /meeting/:meetingId -> MeetingRoomDrawer` 的只读读面，并支持从会议跳到现有 `review room`。
+- `doc/TODO.md` 写的是四轮；原任务库标题里只有 `立场 / 质疑 / 收敛` 三段执行项。本轮按 `TODO` 为准补齐四轮，`P1-MTG-006` 实际承担了 `PROPOSAL + CONVERGENCE` 两段收敛逻辑。
 
 ### 3.3 代码清理 (P1-CLN-001 到 P1-CLN-006)
 

@@ -170,6 +170,28 @@ CREATE TABLE IF NOT EXISTS incident_projection (
     version INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS meeting_projection (
+    meeting_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    meeting_type TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    normalized_topic TEXT NOT NULL,
+    status TEXT NOT NULL,
+    review_status TEXT,
+    source_ticket_id TEXT NOT NULL,
+    source_node_id TEXT NOT NULL,
+    review_pack_id TEXT,
+    opened_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    closed_at TEXT,
+    current_round TEXT,
+    recorder_employee_id TEXT NOT NULL,
+    participants_json TEXT NOT NULL,
+    rounds_json TEXT NOT NULL,
+    consensus_summary TEXT,
+    no_consensus_reason TEXT
+);
+
 CREATE TABLE IF NOT EXISTS compiled_context_bundle (
     bundle_id TEXT PRIMARY KEY,
     compile_request_id TEXT NOT NULL,
@@ -292,6 +314,15 @@ ON incident_projection(provider_id);
 
 CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint
 ON incident_projection(fingerprint);
+
+CREATE INDEX IF NOT EXISTS idx_meeting_projection_workflow_id
+ON meeting_projection(workflow_id);
+
+CREATE INDEX IF NOT EXISTS idx_meeting_projection_status
+ON meeting_projection(status);
+
+CREATE INDEX IF NOT EXISTS idx_meeting_projection_normalized_topic
+ON meeting_projection(workflow_id, normalized_topic);
 
 CREATE INDEX IF NOT EXISTS idx_worker_session_worker_id
 ON worker_session(worker_id);

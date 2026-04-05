@@ -148,6 +148,57 @@ function reviewRoomData() {
   }
 }
 
+function meetingRoomData() {
+  return {
+    meeting_id: 'mtg_001',
+    workflow_id: 'wf_001',
+    meeting_type: 'TECHNICAL_DECISION',
+    topic: 'Decide the homepage runtime contract',
+    status: 'CLOSED',
+    review_status: 'BOARD_REVIEW_PENDING',
+    source_ticket_id: 'tkt_meeting_001',
+    source_node_id: 'node_meeting_001',
+    review_pack_id: 'brp_001',
+    opened_at: '2026-04-05T10:00:00+08:00',
+    updated_at: '2026-04-05T10:08:00+08:00',
+    closed_at: '2026-04-05T10:08:00+08:00',
+    current_round: 'CONVERGENCE',
+    recorder_employee_id: 'emp_frontend_2',
+    participants: [
+      {
+        employee_id: 'emp_frontend_2',
+        role_type: 'frontend_engineer',
+        meeting_responsibility: 'implementation feasibility',
+        is_recorder: true,
+      },
+      {
+        employee_id: 'emp_checker_1',
+        role_type: 'checker',
+        meeting_responsibility: 'validation pressure',
+        is_recorder: false,
+      },
+    ],
+    rounds: [
+      {
+        round_type: 'POSITION',
+        round_index: 1,
+        summary: 'Position round closed.',
+        notes: ['emp_frontend_2 stated the main constraint.'],
+        completed_at: '2026-04-05T10:02:00+08:00',
+      },
+      {
+        round_type: 'CONVERGENCE',
+        round_index: 4,
+        summary: 'Convergence round closed.',
+        notes: ['emp_checker_1 confirmed the final technical decision summary.'],
+        completed_at: '2026-04-05T10:08:00+08:00',
+      },
+    ],
+    consensus_summary: 'The meeting converged on one runtime contract.',
+    no_consensus_reason: null,
+  }
+}
+
 function workforceAction(
   actionType: string,
   enabled: boolean,
@@ -728,6 +779,7 @@ function installBoardroomMock(options?: {
   inbox?: JsonRecord
   workforce?: JsonRecord
   reviewRoom?: JsonRecord
+  meetingRoom?: JsonRecord
   inspector?: JsonRecord
   dependencyInspector?: JsonRecord
   incidentDetail?: JsonRecord
@@ -739,6 +791,7 @@ function installBoardroomMock(options?: {
     inbox: options?.inbox ?? inboxData(),
     workforce: options?.workforce ?? workforceData(),
     reviewRoom: options?.reviewRoom ?? reviewRoomData(),
+    meetingRoom: options?.meetingRoom ?? meetingRoomData(),
     inspector: options?.inspector ?? inspectorData(),
     dependencyInspector: options?.dependencyInspector ?? dependencyInspectorData(),
     incidentDetail: options?.incidentDetail ?? incidentDetailData(),
@@ -763,6 +816,9 @@ function installBoardroomMock(options?: {
     }
     if (method === 'GET' && url.endsWith('/api/v1/projections/review-room/brp_001')) {
       return jsonResponse(envelope(state.reviewRoom))
+    }
+    if (method === 'GET' && url.endsWith('/api/v1/projections/meetings/mtg_001')) {
+      return jsonResponse(envelope(state.meetingRoom))
     }
     if (method === 'GET' && url.endsWith('/api/v1/projections/workflows/wf_001/dependency-inspector')) {
       return jsonResponse(envelope(state.dependencyInspector))
@@ -1452,6 +1508,85 @@ describe('Boardroom UI', () => {
 
     expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
     expect(screen.getByText(/approve option a to unblock the main build path/i)).toBeInTheDocument()
+  })
+
+  it('opens the meeting room route from inbox and can jump to the linked review room', async () => {
+    installBoardroomMock({
+      inbox: inboxData([
+        {
+          inbox_item_id: 'inbox_mtg_001',
+          workflow_id: 'wf_001',
+          item_type: 'MEETING_ROOM',
+          priority: 'high',
+          status: 'OPEN',
+          created_at: '2026-04-05T10:00:00+08:00',
+          title: 'Technical decision meeting: Decide the homepage runtime contract',
+          summary: 'Open the meeting room to inspect the current technical decision.',
+          source_ref: 'mtg_001',
+          route_target: {
+            view: 'meeting_room',
+            meeting_id: 'mtg_001',
+          },
+          badges: ['meeting', 'technical_decision'],
+        },
+      ]),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /technical decision meeting/i }))
+
+    expect(window.location.pathname).toBe('/meeting/mtg_001')
+    expect(await screen.findByRole('heading', { name: /decide the homepage runtime contract/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open linked review room/i }))
+
+    expect(window.location.pathname).toBe('/review/brp_001')
+    expect(await screen.findByRole('heading', { name: /review homepage visual milestone/i })).toBeInTheDocument()
+  })
+
+  it('shows a clear error when the meeting detail request fails', async () => {
+    const { fetchMock } = installBoardroomMock({
+      inbox: inboxData([
+        {
+          inbox_item_id: 'inbox_mtg_001',
+          workflow_id: 'wf_001',
+          item_type: 'MEETING_ROOM',
+          priority: 'high',
+          status: 'OPEN',
+          created_at: '2026-04-05T10:00:00+08:00',
+          title: 'Technical decision meeting: Decide the homepage runtime contract',
+          summary: 'Open the meeting room to inspect the current technical decision.',
+          source_ref: 'mtg_001',
+          route_target: {
+            view: 'meeting_room',
+            meeting_id: 'mtg_001',
+          },
+          badges: ['meeting', 'technical_decision'],
+        },
+      ]),
+    })
+    const originalImplementation = fetchMock.getMockImplementation()
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (method === 'GET' && url.endsWith('/api/v1/projections/meetings/mtg_001')) {
+        return new Response('Meeting detail unavailable.', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      }
+      return originalImplementation!(input, init)
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /technical decision meeting/i }))
+
+    expect(window.location.pathname).toBe('/meeting/mtg_001')
+    expect(await screen.findByText(/meeting detail unavailable\./i)).toBeInTheDocument()
   })
 
   it('runs the incident inbox to drawer to resolve to snapshot refresh smoke path', async () => {

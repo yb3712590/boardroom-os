@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from app.contracts.events import EventSeverity
@@ -44,6 +45,10 @@ from app.contracts.projections import (
     WorkerAdminAuthRejectionProjectionSummary,
     InboxProjectionData,
     InboxProjectionEnvelope,
+    MeetingDetailProjectionData,
+    MeetingDetailProjectionEnvelope,
+    MeetingParticipantProjection,
+    MeetingRoundProjection,
     OpsStripProjection,
     PhaseSummaryProjection,
     PipelineSummaryProjection,
@@ -1334,6 +1339,28 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
                 badges=payload.get("badges", []),
             )
         )
+    for meeting in repository.list_open_meeting_projections():
+        items.append(
+            InboxItemProjection(
+                inbox_item_id=f"inbox_{meeting['meeting_id']}",
+                workflow_id=str(meeting["workflow_id"]),
+                item_type="MEETING_ROOM",
+                priority="high",
+                status=str(meeting["status"]),
+                created_at=meeting["opened_at"],
+                sla_due_at=None,
+                title=f"Technical decision meeting: {meeting['topic']}",
+                summary=(
+                    "Open the meeting room to inspect the current topic, participants, and round-by-round summary."
+                ),
+                source_ref=str(meeting["meeting_id"]),
+                route_target=RouteTarget(
+                    view="meeting_room",
+                    meeting_id=str(meeting["meeting_id"]),
+                ),
+                badges=["meeting", "technical_decision"],
+            )
+        )
     for incident in repository.list_open_incidents():
         if incident.get("provider_id") is not None:
             provider_id = str(incident["provider_id"])
@@ -1472,6 +1499,75 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
         projection_version=projection_version,
         cursor=cursor,
         data=InboxProjectionData(items=items),
+    )
+
+
+def build_meeting_projection(
+    repository: ControlPlaneRepository,
+    meeting_id: str,
+) -> MeetingDetailProjectionEnvelope | None:
+    repository.initialize()
+    meeting = repository.get_meeting_projection(meeting_id)
+    if meeting is None:
+        return None
+
+    cursor, projection_version = repository.get_cursor_and_version()
+    rounds = [
+        MeetingRoundProjection(
+            round_type=str(item.get("round_type") or ""),
+            round_index=int(item.get("round_index") or 0),
+            summary=str(item.get("summary") or ""),
+            notes=list(item.get("notes") or []),
+            completed_at=(
+                datetime.fromisoformat(str(item["completed_at"]))
+                if not isinstance(item.get("completed_at"), datetime)
+                else item["completed_at"]
+            ),
+        )
+        for item in meeting.get("rounds") or []
+    ]
+    participants = [
+        MeetingParticipantProjection(
+            employee_id=str(item.get("employee_id") or ""),
+            role_type=str(item.get("role_type") or ""),
+            meeting_responsibility=str(item.get("meeting_responsibility") or ""),
+            is_recorder=bool(item.get("is_recorder")),
+        )
+        for item in meeting.get("participants") or []
+    ]
+    return MeetingDetailProjectionEnvelope(
+        schema_version=SCHEMA_VERSION,
+        generated_at=now_local(),
+        projection_version=projection_version,
+        cursor=cursor,
+        data=MeetingDetailProjectionData(
+            meeting_id=str(meeting["meeting_id"]),
+            workflow_id=str(meeting["workflow_id"]),
+            meeting_type=str(meeting["meeting_type"]),
+            topic=str(meeting["topic"]),
+            status=str(meeting["status"]),
+            review_status=(
+                str(meeting["review_status"]) if meeting.get("review_status") is not None else None
+            ),
+            source_ticket_id=str(meeting["source_ticket_id"]),
+            source_node_id=str(meeting["source_node_id"]),
+            review_pack_id=(
+                str(meeting["review_pack_id"]) if meeting.get("review_pack_id") is not None else None
+            ),
+            opened_at=meeting["opened_at"],
+            updated_at=meeting["updated_at"],
+            closed_at=meeting.get("closed_at"),
+            current_round=(str(meeting["current_round"]) if meeting.get("current_round") else None),
+            recorder_employee_id=str(meeting["recorder_employee_id"]),
+            participants=participants,
+            rounds=rounds,
+            consensus_summary=(
+                str(meeting["consensus_summary"]) if meeting.get("consensus_summary") is not None else None
+            ),
+            no_consensus_reason=(
+                str(meeting["no_consensus_reason"]) if meeting.get("no_consensus_reason") is not None else None
+            ),
+        ),
     )
 
 

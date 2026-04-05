@@ -16,8 +16,8 @@
 
 ## 当前基线（2026-04-05 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 399 passed
-- frontend：`npm run build` → passed，`npm run test:run` → 50 passed
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，→ 404 passed
+- frontend：`npm run build` → passed，`npm run test:run` → 53 passed
 
 ---
 
@@ -255,11 +255,23 @@
 
 主线关系：**后置增强**，不影响当前本地 MVP 主闭环成立。
 
-- [ ] 只实现 1 个会议类型（建议先做 `TECHNICAL_DECISION`）
-- [ ] 只支持最小轮次：立场、质疑、方案、收敛
-- [ ] 输出必须还是结构化文档，并能回到现有审查/审批链
+- [x] 只实现 1 个会议类型：`TECHNICAL_DECISION`
+- [x] 只支持最小轮次：立场、质疑、方案、收敛
+- [x] 输出仍为结构化文档，并已回到现有 maker-checker / board review 链
 
 对应任务库：`P1-MTG-001` 到 `P1-MTG-010`。
+
+本轮产物：
+
+- 后端已新增 `meeting-request` 命令、会议事件类型、会议投影表和 `TECHNICAL_DECISION` 最小状态机；会议状态现在真实落在 `REQUESTED -> OPEN -> IN_ROUND -> CLOSED / NO_CONSENSUS`
+- 会议执行不新起聊天系统，而是复用现有 runtime 和 `consensus_document` 链；当前固定执行 `POSITION -> CHALLENGE -> PROPOSAL -> CONVERGENCE` 四轮，并把每轮摘要写入会议投影
+- 会议成功时会生成真实 `consensus_document` 与 `meeting-digest.json`，再继续走现有 maker-checker 和 board review；无法收敛时只会记成 `NO_CONSENSUS`，不会伪装成完成
+- 前端已新增 `/meeting/:meetingId` 和只读 `MeetingRoomDrawer`；当前能从 Inbox 打开会议详情，查看 topic、参与者、轮次摘要、状态、共识结果，并跳转到关联 review room
+- 这轮按 `doc/TODO.md` 的四轮定义落地；`doc/task-backlog.md` 原表只有三段执行任务描述，这个差异已在任务库里补明，当前以 `P1-MTG-006` 承担 `PROPOSAL + CONVERGENCE`
+
+新发现任务：
+
+- 无。主线关系：本轮只完成 `P2-A` 最小闭环，没有额外打开 CEO 自动触发、会议编辑或 transcript 留存方向。
 
 ### P2-B：代码瘦身与冻结能力隔离
 

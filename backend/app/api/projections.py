@@ -14,6 +14,7 @@ from app.contracts.projections import (
     DependencyInspectorProjectionEnvelope,
     IncidentDetailProjectionEnvelope,
     InboxProjectionEnvelope,
+    MeetingDetailProjectionEnvelope,
     RuntimeProviderProjectionEnvelope,
     ReviewRoomDeveloperInspectorProjectionEnvelope,
     ReviewRoomProjectionEnvelope,
@@ -31,6 +32,7 @@ from app.core.projections import (
     build_dependency_inspector_projection,
     build_incident_detail_projection,
     build_inbox_projection,
+    build_meeting_projection,
     build_runtime_provider_projection,
     build_worker_admin_auth_rejection_projection,
     build_worker_admin_audit_projection,
@@ -120,6 +122,21 @@ def get_artifact_cleanup_candidates(
 def get_inbox(request: Request) -> InboxProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return build_inbox_projection(repository)
+
+
+@router.get("/meetings/{meeting_id}", response_model=MeetingDetailProjectionEnvelope)
+def get_meeting_detail_projection(
+    request: Request,
+    meeting_id: str,
+) -> MeetingDetailProjectionEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    projection = build_meeting_projection(repository, meeting_id)
+    if projection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Meeting '{meeting_id}' was not found.",
+        )
+    return projection
 
 
 @router.get("/workforce", response_model=WorkforceProjectionEnvelope)

@@ -10,6 +10,7 @@ import { ThreeColumnLayout } from '../components/layout/ThreeColumnLayout'
 import { TopChrome } from '../components/layout/TopChrome'
 import { DependencyInspectorDrawer } from '../components/overlays/DependencyInspectorDrawer'
 import { IncidentDrawer } from '../components/overlays/IncidentDrawer'
+import { MeetingRoomDrawer } from '../components/overlays/MeetingRoomDrawer'
 import { ProviderSettingsDrawer } from '../components/overlays/ProviderSettingsDrawer'
 import { ReviewRoomDrawer } from '../components/overlays/ReviewRoomDrawer'
 import { Button } from '../components/shared/Button'
@@ -25,7 +26,7 @@ import { runtimeModeLabel } from './dashboard-page-helpers'
 
 export function DashboardPage() {
   const navigate = useNavigate()
-  const { reviewPackId, incidentId } = useParams()
+  const { reviewPackId, meetingId, incidentId } = useParams()
 
   const dashboard = useBoardroomStore((state) => state.dashboard)
   const inbox = useBoardroomStore((state) => state.inbox)
@@ -69,14 +70,18 @@ export function DashboardPage() {
 
   const {
     incidentDetail,
+    meetingDetail,
     dependencyInspector,
     incidentLoading,
+    meetingLoading,
     dependencyInspectorLoading,
     incidentError,
+    meetingError,
     dependencyInspectorError,
     setIncidentError,
   } = useDashboardPageDetailState({
     reviewPackId,
+    meetingId,
     incidentId,
     dependencyInspectorOpen,
     activeWorkflowId,
@@ -87,6 +92,7 @@ export function DashboardPage() {
 
   const {
     handleOpenReview,
+    handleOpenMeeting,
     handleOpenIncident,
     handleProjectInit,
     handleRuntimeProviderSave,
@@ -99,11 +105,13 @@ export function DashboardPage() {
     handleReject,
     handleModifyConstraints,
     closeReviewRoom,
+    closeMeeting,
     closeIncident,
     openInspectorForReview,
   } = useDashboardPageActions({
     activeWorkflowId,
     reviewPackId,
+    meetingId,
     navigate,
     loadSnapshot,
     reviewPack,
@@ -123,6 +131,11 @@ export function DashboardPage() {
   const handleOpenReviewRoom = (packId: string) => {
     setDependencyInspectorOpen(false)
     handleOpenReview(packId)
+  }
+
+  const handleOpenMeetingRoom = (nextMeetingId: string) => {
+    setDependencyInspectorOpen(false)
+    handleOpenMeeting(nextMeetingId)
   }
 
   const handleOpenIncidentRoom = (nextIncidentId: string) => {
@@ -181,6 +194,7 @@ export function DashboardPage() {
               items={inbox?.items ?? []}
               loading={snapshotLoading}
               onOpenReview={handleOpenReviewRoom}
+              onOpenMeeting={handleOpenMeetingRoom}
               onOpenIncident={handleOpenIncidentRoom}
             />
           }
@@ -275,6 +289,20 @@ export function DashboardPage() {
         onApprove={handleApprove}
         onReject={handleReject}
         onModifyConstraints={handleModifyConstraints}
+      />
+
+      <MeetingRoomDrawer
+        key={
+          meetingDetail != null
+            ? `${meetingDetail.meeting_id}:${meetingDetail.updated_at}`
+            : meetingId ?? 'meeting-room-closed'
+        }
+        isOpen={Boolean(meetingId)}
+        loading={meetingLoading}
+        meetingData={meetingDetail}
+        error={meetingError}
+        onClose={closeMeeting}
+        onOpenReview={handleOpenReviewRoom}
       />
 
       <IncidentDrawer

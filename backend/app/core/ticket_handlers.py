@@ -960,6 +960,9 @@ def _build_maker_checker_ticket_payload(
         "tenant_id": created_spec.get("tenant_id"),
         "workspace_id": created_spec.get("workspace_id"),
         "excluded_employee_ids": list(created_spec.get("excluded_employee_ids") or []),
+        "meeting_context": dict(created_spec.get("meeting_context") or {})
+        if isinstance(created_spec.get("meeting_context"), dict)
+        else None,
         "escalation_policy": dict(created_spec.get("escalation_policy") or {}),
     }
     input_artifact_refs = _build_maker_checker_input_artifact_refs(
@@ -4488,6 +4491,27 @@ def _complete_ticket_locked(
                 occurred_at=received_at,
                 idempotency_key=f"{payload.idempotency_key}:approval-request",
             )
+            meeting_context = None
+            direct_meeting_context = created_spec.get("meeting_context") if isinstance(created_spec, dict) else None
+            if isinstance(direct_meeting_context, dict):
+                meeting_context = direct_meeting_context
+            maker_checker_context = (
+                created_spec.get("maker_checker_context") if isinstance(created_spec, dict) else None
+            )
+            if meeting_context is None and isinstance(maker_checker_context, dict):
+                maker_ticket_spec = maker_checker_context.get("maker_ticket_spec")
+                if isinstance(maker_ticket_spec, dict) and isinstance(maker_ticket_spec.get("meeting_context"), dict):
+                    meeting_context = maker_ticket_spec.get("meeting_context")
+            if isinstance(meeting_context, dict):
+                meeting_id = str(meeting_context.get("meeting_id") or "").strip()
+                if meeting_id and repository.get_meeting_projection(meeting_id, connection=connection) is not None:
+                    repository.update_meeting_projection(
+                        connection,
+                        meeting_id,
+                        review_pack_id=str(approval["review_pack_id"]),
+                        review_status="BOARD_REVIEW_PENDING",
+                        updated_at=received_at,
+                    )
             causation_hint = f"approval:{approval['approval_id']}"
 
     _auto_close_recovering_incidents_for_completed_ticket(

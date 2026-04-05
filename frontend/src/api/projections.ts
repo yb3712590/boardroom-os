@@ -5,6 +5,7 @@ import type {
   DeveloperInspectorData,
   InboxData,
   IncidentDetailData,
+  MeetingDetailData,
   ProjectionEnvelope,
   ReviewRoomData,
   RuntimeProviderData,
@@ -48,6 +49,13 @@ export async function getDependencyInspector(workflowId: string): Promise<Depend
 export async function getIncidentDetail(incidentId: string): Promise<IncidentDetailData> {
   const payload = await getJson<ProjectionEnvelope<IncidentDetailData>>(
     `/api/v1/projections/incidents/${incidentId}`,
+  )
+  return payload.data
+}
+
+export async function getMeetingDetail(meetingId: string): Promise<MeetingDetailData> {
+  const payload = await getJson<ProjectionEnvelope<MeetingDetailData>>(
+    `/api/v1/projections/meetings/${meetingId}`,
   )
   return payload.data
 }

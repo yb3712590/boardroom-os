@@ -193,6 +193,42 @@ export type IncidentDetailData = {
   recommended_followup_action: string | null
 }
 
+export type MeetingParticipantData = {
+  employee_id: string
+  role_type: string
+  meeting_responsibility: string
+  is_recorder: boolean
+}
+
+export type MeetingRoundData = {
+  round_type: string
+  round_index: number
+  summary: string
+  notes: string[]
+  completed_at: string
+}
+
+export type MeetingDetailData = {
+  meeting_id: string
+  workflow_id: string
+  meeting_type: string
+  topic: string
+  status: string
+  review_status: string | null
+  source_ticket_id: string
+  source_node_id: string
+  review_pack_id: string | null
+  opened_at: string
+  updated_at: string
+  closed_at: string | null
+  current_round: string | null
+  recorder_employee_id: string
+  participants: MeetingParticipantData[]
+  rounds: MeetingRoundData[]
+  consensus_summary: string | null
+  no_consensus_reason: string | null
+}
+
 export type CommandAck = {
   command_id: string
   idempotency_key: string

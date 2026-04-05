@@ -8,6 +8,7 @@ function App() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/review/:reviewPackId" element={<DashboardPage />} />
+        <Route path="/meeting/:meetingId" element={<DashboardPage />} />
         <Route path="/incident/:incidentId" element={<DashboardPage />} />
       </Routes>
     </BrowserRouter>

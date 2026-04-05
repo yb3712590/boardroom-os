@@ -40,6 +40,10 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_MEETING_CONCLUDED,
+    EVENT_MEETING_REQUESTED,
+    EVENT_MEETING_ROUND_COMPLETED,
+    EVENT_MEETING_STARTED,
     EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
@@ -113,6 +117,7 @@ class ControlPlaneRepository:
             self._ensure_worker_admin_auth_rejection_log_shape(connection)
             self._ensure_worker_admin_action_log_shape(connection)
             self._ensure_incident_projection_shape(connection)
+            self._ensure_meeting_projection_shape(connection)
             self._ensure_compiled_context_bundle_shape(connection)
             self._ensure_compile_manifest_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
@@ -3697,6 +3702,183 @@ class ControlPlaneRepository:
             ).fetchall()
             return [str(row["node_id"]) for row in rows]
 
+    def create_meeting_projection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        meeting_id: str,
+        workflow_id: str,
+        meeting_type: str,
+        topic: str,
+        normalized_topic: str,
+        status: str,
+        source_ticket_id: str,
+        source_node_id: str,
+        opened_at: datetime,
+        updated_at: datetime,
+        recorder_employee_id: str,
+        participants: list[dict[str, Any]],
+        rounds: list[dict[str, Any]] | None = None,
+        current_round: str | None = None,
+        review_status: str | None = None,
+        review_pack_id: str | None = None,
+        closed_at: datetime | None = None,
+        consensus_summary: str | None = None,
+        no_consensus_reason: str | None = None,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO meeting_projection (
+                meeting_id,
+                workflow_id,
+                meeting_type,
+                topic,
+                normalized_topic,
+                status,
+                review_status,
+                source_ticket_id,
+                source_node_id,
+                review_pack_id,
+                opened_at,
+                updated_at,
+                closed_at,
+                current_round,
+                recorder_employee_id,
+                participants_json,
+                rounds_json,
+                consensus_summary,
+                no_consensus_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                meeting_id,
+                workflow_id,
+                meeting_type,
+                topic,
+                normalized_topic,
+                status,
+                review_status,
+                source_ticket_id,
+                source_node_id,
+                review_pack_id,
+                opened_at.isoformat(),
+                updated_at.isoformat(),
+                None if closed_at is None else closed_at.isoformat(),
+                current_round,
+                recorder_employee_id,
+                json.dumps(participants, sort_keys=True),
+                json.dumps(rounds or [], sort_keys=True),
+                consensus_summary,
+                no_consensus_reason,
+            ),
+        )
+
+    def update_meeting_projection(
+        self,
+        connection: sqlite3.Connection,
+        meeting_id: str,
+        **updates: Any,
+    ) -> None:
+        if not updates:
+            return
+
+        normalized_updates = dict(updates)
+        if "participants" in normalized_updates:
+            normalized_updates["participants_json"] = json.dumps(
+                normalized_updates.pop("participants"),
+                sort_keys=True,
+            )
+        if "rounds" in normalized_updates:
+            normalized_updates["rounds_json"] = json.dumps(
+                normalized_updates.pop("rounds"),
+                sort_keys=True,
+            )
+        if isinstance(normalized_updates.get("opened_at"), datetime):
+            normalized_updates["opened_at"] = normalized_updates["opened_at"].isoformat()
+        if isinstance(normalized_updates.get("updated_at"), datetime):
+            normalized_updates["updated_at"] = normalized_updates["updated_at"].isoformat()
+        if isinstance(normalized_updates.get("closed_at"), datetime):
+            normalized_updates["closed_at"] = normalized_updates["closed_at"].isoformat()
+
+        assignments = ", ".join(f"{column} = ?" for column in normalized_updates)
+        params = list(normalized_updates.values()) + [meeting_id]
+        connection.execute(
+            f"UPDATE meeting_projection SET {assignments} WHERE meeting_id = ?",
+            params,
+        )
+
+    def get_meeting_projection(
+        self,
+        meeting_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = "SELECT * FROM meeting_projection WHERE meeting_id = ?"
+        params = (meeting_id,)
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_meeting_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_meeting_projection_row(row)
+
+    def list_open_meeting_projections(
+        self,
+        workflow_id: str | None = None,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM meeting_projection
+            WHERE status IN (?, ?, ?, ?)
+        """
+        params: list[Any] = ["REQUESTED", "OPEN", "IN_ROUND", "CONSENSUS_SUBMITTED"]
+        if workflow_id is not None:
+            query += " AND workflow_id = ?"
+            params.append(workflow_id)
+        query += " ORDER BY opened_at DESC, meeting_id DESC"
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_meeting_projection_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_meeting_projection_row(row) for row in rows]
+
+    def find_open_meeting_by_normalized_topic(
+        self,
+        workflow_id: str,
+        normalized_topic: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM meeting_projection
+            WHERE workflow_id = ? AND normalized_topic = ?
+              AND status IN (?, ?, ?, ?)
+            ORDER BY opened_at DESC, meeting_id DESC
+            LIMIT 1
+        """
+        params = (
+            workflow_id,
+            normalized_topic,
+            "REQUESTED",
+            "OPEN",
+            "IN_ROUND",
+            "CONSENSUS_SUBMITTED",
+        )
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_meeting_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_meeting_projection_row(row)
+
     def list_open_approvals(self) -> list[dict[str, Any]]:
         self.initialize()
         with self.connection() as connection:
@@ -3912,6 +4094,15 @@ class ControlPlaneRepository:
         converted["review_pack_version"] = int(converted.get("review_pack_version") or 1)
         converted["command_target_version"] = int(converted.get("command_target_version") or 0)
         converted["payload"] = json.loads(converted["payload_json"])
+        return converted
+
+    def _convert_meeting_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("opened_at", "updated_at", "closed_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["participants"] = json.loads(converted.get("participants_json") or "[]")
+        converted["rounds"] = json.loads(converted.get("rounds_json") or "[]")
         return converted
 
     def _convert_compiled_context_bundle_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -5179,6 +5370,72 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint ON incident_projection(fingerprint)"
+        )
+
+    def _ensure_meeting_projection_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS meeting_projection (
+                meeting_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                meeting_type TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                normalized_topic TEXT NOT NULL,
+                status TEXT NOT NULL,
+                review_status TEXT,
+                source_ticket_id TEXT NOT NULL,
+                source_node_id TEXT NOT NULL,
+                review_pack_id TEXT,
+                opened_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                closed_at TEXT,
+                current_round TEXT,
+                recorder_employee_id TEXT NOT NULL,
+                participants_json TEXT NOT NULL,
+                rounds_json TEXT NOT NULL,
+                consensus_summary TEXT,
+                no_consensus_reason TEXT
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(meeting_projection)").fetchall()
+        }
+        required_columns = {
+            "meeting_id": "TEXT",
+            "workflow_id": "TEXT",
+            "meeting_type": "TEXT",
+            "topic": "TEXT",
+            "normalized_topic": "TEXT",
+            "status": "TEXT",
+            "review_status": "TEXT",
+            "source_ticket_id": "TEXT",
+            "source_node_id": "TEXT",
+            "review_pack_id": "TEXT",
+            "opened_at": "TEXT",
+            "updated_at": "TEXT",
+            "closed_at": "TEXT",
+            "current_round": "TEXT",
+            "recorder_employee_id": "TEXT",
+            "participants_json": "TEXT",
+            "rounds_json": "TEXT",
+            "consensus_summary": "TEXT",
+            "no_consensus_reason": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE meeting_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_meeting_projection_workflow_id ON meeting_projection(workflow_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_meeting_projection_status ON meeting_projection(status)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_meeting_projection_normalized_topic ON meeting_projection(workflow_id, normalized_topic)"
         )
 
     def _ensure_compiled_context_bundle_shape(self, connection: sqlite3.Connection) -> None:

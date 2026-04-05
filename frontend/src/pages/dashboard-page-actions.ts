@@ -18,6 +18,7 @@ import { assertAcceptedCommand, DEFAULT_INCIDENT_OPERATOR } from './dashboard-pa
 type DashboardPageActionsArgs = {
   activeWorkflowId: string | null
   reviewPackId: string | undefined
+  meetingId: string | undefined
   navigate: (path: string) => void
   loadSnapshot: () => Promise<void>
   reviewPack:
@@ -49,6 +50,7 @@ type DashboardPageActionsArgs = {
 export function useDashboardPageActions({
   activeWorkflowId,
   reviewPackId,
+  meetingId,
   navigate,
   loadSnapshot,
   reviewPack,
@@ -70,6 +72,10 @@ export function useDashboardPageActions({
 
   const handleOpenIncident = (nextIncidentId: string) => {
     navigate(`/incident/${nextIncidentId}`)
+  }
+
+  const handleOpenMeeting = (nextMeetingId: string) => {
+    navigate(`/meeting/${nextMeetingId}`)
   }
 
   const handleProjectInit = async (payload: {
@@ -342,6 +348,7 @@ export function useDashboardPageActions({
 
   return {
     handleOpenReview,
+    handleOpenMeeting,
     handleOpenIncident,
     handleProjectInit,
     handleRuntimeProviderSave,
@@ -354,6 +361,13 @@ export function useDashboardPageActions({
     handleReject,
     handleModifyConstraints,
     closeReviewRoom: () => navigate('/'),
+    closeMeeting: () => {
+      if (!meetingId) {
+        navigate('/')
+        return
+      }
+      navigate('/')
+    },
     closeIncident: () => navigate('/'),
     openInspectorForReview: async (
       loadDeveloperInspector: (packId: string) => Promise<void>,

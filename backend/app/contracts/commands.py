@@ -84,6 +84,26 @@ class RuntimeProviderMode(StrEnum):
     OPENAI_COMPAT = "OPENAI_COMPAT"
 
 
+class MeetingType(StrEnum):
+    TECHNICAL_DECISION = "TECHNICAL_DECISION"
+
+
+class MeetingStatus(StrEnum):
+    REQUESTED = "REQUESTED"
+    OPEN = "OPEN"
+    IN_ROUND = "IN_ROUND"
+    CONSENSUS_SUBMITTED = "CONSENSUS_SUBMITTED"
+    NO_CONSENSUS = "NO_CONSENSUS"
+    CLOSED = "CLOSED"
+
+
+class MeetingRound(StrEnum):
+    POSITION = "POSITION"
+    CHALLENGE = "CHALLENGE"
+    PROPOSAL = "PROPOSAL"
+    CONVERGENCE = "CONVERGENCE"
+
+
 class ProjectInitCommand(StrictModel):
     north_star_goal: str = Field(min_length=1)
     hard_constraints: list[str]
@@ -122,6 +142,26 @@ class TicketEscalationPolicy(StrictModel):
     )
 
 
+class MeetingRequestCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    meeting_type: MeetingType
+    topic: str = Field(min_length=1)
+    participant_employee_ids: list[str] = Field(min_length=2)
+    recorder_employee_id: str = Field(min_length=1)
+    input_artifact_refs: list[str] = Field(default_factory=list)
+    max_rounds: int = Field(default=4, ge=1, le=4)
+    idempotency_key: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_meeting_request(self) -> "MeetingRequestCommand":
+        deduped = {item for item in self.participant_employee_ids if item}
+        if len(deduped) != len(self.participant_employee_ids):
+            raise ValueError("participant_employee_ids must not contain duplicates.")
+        if self.recorder_employee_id not in deduped:
+            raise ValueError("recorder_employee_id must be included in participant_employee_ids.")
+        return self
+
+
 class TicketCreateCommand(StrictModel):
     ticket_id: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
@@ -147,6 +187,7 @@ class TicketCreateCommand(StrictModel):
     delivery_stage: DeliveryStage | None = None
     excluded_employee_ids: list[str] = Field(default_factory=list)
     auto_review_request: TicketBoardReviewRequest | None = None
+    meeting_context: dict | None = None
     escalation_policy: TicketEscalationPolicy
     idempotency_key: str = Field(min_length=1)
 

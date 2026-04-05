@@ -172,6 +172,10 @@
 - Frontend page-shell follow-up is now closed one step further: `DashboardPage.tsx` no longer owns the command-submit block or local detail-refresh block, and the page file is down from 629 lines to 298 through `dashboard-page-actions.ts`, `dashboard-page-detail-state.ts`, and `dashboard-page-helpers.ts`.
 - `StaffingActions` now shows the hire-template persona summary directly through the existing `ProfileSummary` component, so current worker personas, staffing review personas, and hire-template personas are visible in one consistent shape.
 - Full verification for this round finished at bare `pytest tests/ -q` failing because `pytest` is not on PATH, then `py -m pytest tests/ -q` -> `399 passed`, `npm run build` -> passed, and `npm run test:run` -> `50 passed`.
+- Added the first ticket-backed meeting room slice without rebuilding the runtime shell: backend now supports `meeting-request`, four auditable meeting event types, a persisted meeting projection, and a `TECHNICAL_DECISION` meeting state machine that runs `POSITION -> CHALLENGE -> PROPOSAL -> CONVERGENCE` over a `consensus_document` ticket.
+- Meeting execution stays on the main governance chain instead of creating a second chat system: successful meetings generate a real `consensus_document` plus `meeting-digest.json`, then continue through existing maker-checker and board review; failed convergence ends as `NO_CONSENSUS` and the source ticket fails with it.
+- The React shell now has a read-only meeting path at `/meeting/:meetingId`; inbox meeting items open `MeetingRoomDrawer`, the drawer shows topic, participants, round summaries, consensus or no-consensus outcome, and it can jump into the linked review room when a board review exists.
+- Full verification for the meeting-room round finished at bare `pytest tests/ -q` still blocked because `pytest` is not on PATH, then `py -m pytest tests/ -q` -> `404 passed`, `npm run build` -> passed, and `npm run test:run` -> `53 passed`.
 
 ### 2026-04-02 (docs compaction)
 
