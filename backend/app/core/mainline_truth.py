@@ -147,7 +147,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         ),
         entrypoint_refs=(
             "backend/app/api/worker_admin.py",
-            "backend/app/api/projections.py",
+            "backend/app/api/worker_admin_projections.py",
             "backend/app/worker_admin_auth_cli.py",
         ),
         mainline_dependency_refs=(),
@@ -160,7 +160,11 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "Worker-admin API, auth projection, and CLI entrypoints must either move together or stay in place.",
             "No current mainline workflow path may import worker_admin modules directly before any physical migration starts.",
         ),
-        notes="HTTP 管理面和操作人令牌链仍保留在仓库中，但当前默认不继续扩张。它现在是保留的运维面，不是主线业务依赖。",
+        notes=(
+            "HTTP 管理面和操作人令牌链仍保留在仓库中，但当前默认不继续扩张。"
+            "它现在是保留的运维面，不是主线业务依赖。"
+            "P1-CLN-001 的前置拆分已完成，但 `_frozen/` 物理迁移仍未启动。"
+        ),
     ),
     FrozenCapabilityBoundary(
         slug="multi_tenant_scope",

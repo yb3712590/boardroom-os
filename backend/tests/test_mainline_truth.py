@@ -72,7 +72,7 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
 
     assert boundaries_by_slug["worker_admin"].entrypoint_refs == (
         "backend/app/api/worker_admin.py",
-        "backend/app/api/projections.py",
+        "backend/app/api/worker_admin_projections.py",
         "backend/app/worker_admin_auth_cli.py",
     )
     assert boundaries_by_slug["worker_admin"].mainline_dependency_refs == ()
@@ -158,3 +158,16 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     scope_boundary = boundaries_by_slug["multi_tenant_scope"]
     assert "shared data shape" in scope_boundary.notes
     assert any("Physical migration is blocked" in item for item in scope_boundary.migration_preconditions)
+
+
+def test_worker_admin_boundary_uses_dedicated_projection_entrypoint() -> None:
+    projection_entrypoint = REPO_ROOT / "backend/app/api/worker_admin_projections.py"
+
+    assert projection_entrypoint.exists()
+
+
+def test_worker_auth_cli_no_longer_imports_worker_admin_core_module() -> None:
+    worker_auth_cli_source = (REPO_ROOT / "backend/app/worker_auth_cli.py").read_text(encoding="utf-8")
+
+    assert "from app.core.worker_admin import" not in worker_auth_cli_source
+    assert "from app.core.worker_scope_ops import" in worker_auth_cli_source

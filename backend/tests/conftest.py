@@ -41,6 +41,7 @@ def set_ticket_time(monkeypatch):
     import app.core.artifact_handlers as artifact_handlers
     import app.api.worker_runtime as worker_runtime_api
     import app.core.worker_admin as worker_admin
+    import app.core.worker_scope_ops as worker_scope_ops
     import app.core.worker_runtime as worker_runtime_core
     import app.core.ticket_handlers as ticket_handlers
     import app.core.runtime as runtime
@@ -61,6 +62,7 @@ def set_ticket_time(monkeypatch):
     monkeypatch.setattr(runtime, "now_local", lambda: state["value"])
     monkeypatch.setattr(projections, "now_local", lambda: state["value"])
     monkeypatch.setattr(worker_admin, "now_local", lambda: state["value"])
+    monkeypatch.setattr(worker_scope_ops, "now_local", lambda: state["value"])
     monkeypatch.setattr(worker_runtime_api, "now_local", lambda: state["value"])
     monkeypatch.setattr(worker_runtime_core, "now_local", lambda: state["value"])
     monkeypatch.setattr(scheduler_runner, "now_local", lambda: state["value"])

@@ -59,6 +59,9 @@
 - `P2-B` 的第一段保守收口已经落地：`FrozenCapabilityBoundary` 现在不只记路由和代码引用，还显式记录真实入口、主线依赖、测试归属和迁移前置条件。
 - 这轮把 `P1-CLN-005`、`P1-CLN-006` 真实关闭了，但没有启动 `_frozen/` 物理迁移；当前确认的原因有两个：多租户 scope 仍是共享数据结构，`artifact_uploads` 仍被主线 `ticket-result-submit` 桥接使用。
 - 这轮完整验证结果是：`py -m pytest tests/ -q` -> `409 passed`，`npm run build` -> passed，`npm run test:run` -> `53 passed`。
+- `P1-CLN-001` 这轮已从“未开始”推进到“进行中”：`worker-admin` 共用的 scope / bootstrap / session / grant helper 已抽到 `worker_scope_ops.py`，`worker-admin` 专属 projection 入口已从通用 `projections.py` 中拆出到独立文件。
+- 这次拆分没有启动 `_frozen/` 物理迁移；当前仍保持 worker-admin API、auth、projection、CLI 一起移动的前置条件，不提前碰 `P1-CLN-002` 到 `P1-CLN-004`。
+- 这轮完整验证结果更新为：`py -m pytest tests/ -q` -> `411 passed`，`npm run build` -> passed，`npm run test:run` -> `53 passed`。
 
 ## Current Working Set
 

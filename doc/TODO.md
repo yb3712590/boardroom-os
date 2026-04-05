@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-05 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`409 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；已通过 `py -m pytest tests -q` 完成全量复核，`411 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `53 passed`
 
 ## 现在先做什么
@@ -49,10 +49,11 @@
 
 - [x] `P1-CLN-005`：已把冻结能力的真实入口、主线依赖、测试归属和迁移前置条件写进 `backend/app/core/mainline_truth.py`，并用 `backend/tests/test_mainline_truth.py` 固化
 - [x] `P1-CLN-006`：已把 frozen 相关测试边界收口成可执行断言，明确哪些测试属于冻结入口回归，哪些不是主链闭环测试
-- [ ] `P1-CLN-001` 到 `P1-CLN-004`：仍未开始；当前不适合物理迁移，因为多租户 scope 还是共享数据结构，`artifact_uploads` 还被主线 `ticket-result-submit` 桥接使用
+- [ ] `P1-CLN-001`：已完成前置拆分，当前转为进行中；`worker-admin` 共用的 scope / bootstrap / session / grant helper 已抽到 `worker_scope_ops.py`，`worker-admin` 专属 projection 入口已从通用 `projections.py` 分离，但 `_frozen/` 物理迁移仍未启动
+- [ ] `P1-CLN-002` 到 `P1-CLN-004`：仍未开始；当前不适合物理迁移，因为多租户 scope 还是共享数据结构，`artifact_uploads` 还被主线 `ticket-result-submit` 桥接使用
 - [ ] 如果后续启动物理迁移，仍以“不影响主线测试”为绝对前提
 
-对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；待继续评估 `P1-CLN-001` 到 `P1-CLN-004`
+对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001` 进行中；`P1-CLN-002` 到 `P1-CLN-004` 待继续评估
 
 ### `P2-C`：检索、Provider 路由、发布准备
 

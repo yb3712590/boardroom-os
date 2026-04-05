@@ -29,6 +29,8 @@
 | UI 打磨 | `P2-UI-001` 到 `P2-UI-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 文档收口 | `P2-DOC-001` 到 `P2-DOC-005` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 
+当前补记：代码清理区这轮已把 `P1-CLN-001` 推进到“前置拆分已完成、物理迁移未启动”的进行中状态；未关闭任务总量不变，详细补记看 `task-backlog/active.md`。
+
 ## 读写约定
 
 - 新任务如果进入当前主线，先更新 [TODO.md](TODO.md)，再把任务 ID 和状态同步到 [task-backlog/active.md](task-backlog/active.md)

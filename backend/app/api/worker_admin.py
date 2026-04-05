@@ -39,25 +39,27 @@ from app.contracts.worker_admin import (
     WorkerAdminSessionsResponse,
 )
 from app.core.worker_admin import (
-    WORKER_ADMIN_API_VIA,
     DEFAULT_OPERATOR_TOKEN_REVOKE_REASON,
     WorkerAdminConflictError,
     build_scope_summary,
-    cleanup_bindings,
     contain_scope,
-    create_binding,
-    list_auth_rejections,
-    list_delivery_grants,
     list_operator_tokens,
-    revoke_delivery_grant,
     revoke_operator_token,
-    revoke_session,
+)
+from app.core.worker_scope_ops import (
+    WORKER_ADMIN_API_VIA,
+    cleanup_bindings,
+    create_binding,
+    issue_bootstrap,
+    list_auth_rejections,
     list_binding_admin_views,
     list_bootstrap_issues,
+    list_delivery_grants,
     list_sessions,
-    revoke_bootstrap,
     resolve_scope_args,
-    issue_bootstrap,
+    revoke_bootstrap,
+    revoke_delivery_grant,
+    revoke_session,
 )
 from app.db.repository import ControlPlaneRepository
 from app.core.time import now_local

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Sequence
 
 from app.config import get_settings
-from app.core.worker_admin import (
+from app.core.worker_scope_ops import (
     DEFAULT_DELIVERY_GRANT_REVOKE_REASON,
     DEFAULT_SESSION_REVOKE_REASON,
     ISSUED_VIA_WORKER_AUTH_CLI,

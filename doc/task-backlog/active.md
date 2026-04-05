@@ -6,7 +6,7 @@
 
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
-| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-001` 到 `P1-CLN-004` 仍未开始 |
+| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-001` 已进入进行中，`P1-CLN-002` 到 `P1-CLN-004` 仍未开始 |
 | 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | 仍属后置增强 |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | 仍属后置增强 |
 | 治理模板与文档型角色 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | 仍属后置增强 |
@@ -17,14 +17,14 @@
 
 ### 3.3 代码清理
 
-> 当前状态补记：本轮已完成 `P1-CLN-005` 和 `P1-CLN-006`。现在已经把冻结能力的入口、主线依赖、测试归属和迁移前置条件写成代码真相与文档真相，但仍没有做 `_frozen/` 物理迁移。
+> 当前状态补记：`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 这轮已完成前置拆分：`worker-admin` 共用的 scope / bootstrap / session / grant helper 已移到 `worker_scope_ops.py`，`worker-admin` projection 入口已拆到独立文件，但仍没有启动 `_frozen/` 物理迁移。
 >
 > 当前挂起原因：
-> `P1-CLN-001` 到 `P1-CLN-004` 还不能直接做。多租户 scope 仍是主线共享数据结构，`artifact_uploads` 仍被 `ticket-result-submit` 桥接使用，外部 worker handoff 也还和现有投影与 schema 紧耦合。
+> `P1-CLN-001` 还不能直接收口成物理迁移，因为 worker-admin 的 API、auth、projection、CLI 仍需成组移动。`P1-CLN-002` 到 `P1-CLN-004` 也还不能直接做：多租户 scope 仍是主线共享数据结构，`artifact_uploads` 仍被 `ticket-result-submit` 桥接使用，外部 worker handoff 也还和现有投影与 schema 紧耦合。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
-| P1-CLN-001 | 移动 worker-admin 代码到 _frozen/ | 3h | 未开始 |
+| P1-CLN-001 | 移动 worker-admin 代码到 _frozen/ | 3h | 进行中 |
 | P1-CLN-002 | 移动多租户代码到 _frozen/ | 2h | 未开始 |
 | P1-CLN-003 | 移动对象存储代码到 _frozen/ | 2h | 未开始 |
 | P1-CLN-004 | 移动远程 handoff 代码到 _frozen/ | 2h | 未开始 |
