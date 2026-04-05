@@ -6,7 +6,7 @@
 
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
-| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-001`、`P1-CLN-002`、`P1-CLN-003` 已进入进行中，`P1-CLN-004` 仍未开始迁移 |
+| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-001` 到 `P1-CLN-004` 已进入进行中，但物理迁移都还没启动 |
 | 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | 仍属后置增强 |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | 仍属后置增强 |
 | 治理模板与文档型角色 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | 仍属后置增强 |
@@ -16,24 +16,26 @@
 
 ### 3.3 代码清理
 
-> 当前状态补记：`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 已完成前置拆分：`worker-admin` 共用的 scope / bootstrap / session / grant helper 已移到 `worker_scope_ops.py`，`worker-admin` projection 入口已拆到独立文件，但仍没有启动 `_frozen/` 物理迁移。`P1-CLN-002` 这轮已推进到主线 command 侧解耦：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票不再直接吃 `tenant_id/workspace_id`，而是统一从 workflow/default 解析 scope；命令 API 仍保留弃用兼容输入。
+> 当前状态补记：`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 已完成前置拆分：`worker-admin` 共用的 scope / bootstrap / session / grant helper 已移到 `worker_scope_ops.py`，`worker-admin` projection 入口已拆到独立文件，但仍没有启动 `_frozen/` 物理迁移。`P1-CLN-002` 已推进到主线 command 侧解耦：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票不再直接吃 `tenant_id/workspace_id`，而是统一从 workflow/default 解析 scope；命令 API 仍保留弃用兼容输入。`P1-CLN-004` 这轮也已推进到前置拆分阶段：`worker-runtime` projection 入口已拆到独立文件，管理读面改成复用 `worker_scope_ops.py` helper。
 >
 > 当前挂起原因：
 > `P1-CLN-001` 还不能直接收口成物理迁移，因为 worker-admin 的 API、auth、projection、CLI 仍需成组移动。`P1-CLN-002` 到 `P1-CLN-004` 当前都还不能直接启动物理迁移：
 > `P1-CLN-002`：主线 command 侧已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留 `tenant_id/workspace_id` shape。
 > `P1-CLN-003`：`ticket-result-submit` 已不再桥接 upload session；当前仍保留独立的 `ticket-artifact-import-upload` 导入入口和 upload session 存储，所以还不能直接做 `_frozen/` 物理迁移。
-> `P1-CLN-004`：`worker-runtime` 路由、投影、CLI 和 bootstrap/session/delivery-grant schema 仍需成组保留。
+> `P1-CLN-004`：独立 projection 入口和 helper 收口已完成，但 `worker-runtime` 路由、CLI 和 bootstrap/session/delivery-grant schema 仍需成组保留。
 
 > 本轮补记：
 > `P1-CLN-003` 现在新增了控制面和 `worker-runtime` 两条 `ticket-artifact-import-upload` 写回链；上传会话完成后先导入为正常 artifact，再让 `ticket-result-submit` 只引用 `artifact_ref`。
 > `backend/tests/test_api.py` 已补回归，覆盖控制面导入、路径越界拒绝、worker-runtime 签名导入后再提交；`backend/tests/test_mainline_truth.py` 也已改成新阻塞口径。
+> `P1-CLN-004` 这轮已从“未开始（阻塞评估已固化）”推进到“进行中”：`/api/v1/projections/worker-runtime` 已拆到独立 `worker_runtime_projections.py`，`build_worker_runtime_projection(...)` 已改成复用 `worker_scope_ops.py` 的 `list_binding_admin_views / list_sessions / list_delivery_grants / list_auth_rejections`。
+> `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新阻塞口径：独立 projection 入口前置拆分已经完成，但 `/api/v1/worker-runtime`、`worker_auth_cli.py` 和三张 handoff schema 仍是成组阻塞点。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
 | P1-CLN-001 | 移动 worker-admin 代码到 _frozen/ | 3h | 进行中 |
 | P1-CLN-002 | 移动多租户代码到 _frozen/ | 2h | 进行中 |
 | P1-CLN-003 | 移动对象存储代码到 _frozen/ | 2h | 进行中 |
-| P1-CLN-004 | 移动远程 handoff 代码到 _frozen/ | 2h | 未开始（阻塞评估已固化） |
+| P1-CLN-004 | 移动远程 handoff 代码到 _frozen/ | 2h | 进行中 |
 
 ## P2：增强
 

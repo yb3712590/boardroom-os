@@ -125,18 +125,13 @@ from app.core.runtime_provider_config import (
     runtime_provider_health_summary,
 )
 from app.core.time import now_local
+from app.core.worker_scope_ops import (
+    list_auth_rejections,
+    list_binding_admin_views,
+    list_delivery_grants,
+    list_sessions,
+)
 from app.db.repository import ControlPlaneRepository
-
-
-def _is_worker_session_active(session: dict[str, object], *, at) -> bool:
-    expires_at = session.get("expires_at")
-    return bool(session.get("revoked_at") is None and expires_at is not None and expires_at > at)
-
-
-def _is_worker_delivery_grant_active(grant: dict[str, object], *, at) -> bool:
-    expires_at = grant.get("expires_at")
-    return bool(grant.get("revoked_at") is None and expires_at is not None and expires_at > at)
-
 
 def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSummaryProjection:
     employees = repository.list_employee_projections(board_approved_only=True)
@@ -1987,17 +1982,18 @@ def build_worker_runtime_projection(
     repository.initialize()
     generated_at = now_local()
     cursor, projection_version = repository.get_cursor_and_version()
-    bindings = repository.list_worker_binding_admin_views(
+    bindings = list_binding_admin_views(
         worker_id=worker_id,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
-        at=generated_at,
+        repository=repository,
     )
-    sessions = repository.list_worker_sessions(
+    sessions = list_sessions(
+        repository=repository,
         worker_id=worker_id,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
-        active_only=False,
+        active_only=active_only,
     )
     session_items = [
         WorkerSessionAdminProjection(
@@ -2013,22 +2009,17 @@ def build_worker_runtime_projection(
             revoke_reason=session.get("revoke_reason"),
             revoked_via=session.get("revoked_via"),
             revoked_by=session.get("revoked_by"),
-            is_active=_is_worker_session_active(session, at=generated_at),
+            is_active=bool(session.get("is_active")),
         )
-        for session in sorted(
-            sessions,
-            key=lambda item: (item["issued_at"], str(item["session_id"])),
-            reverse=True,
-        )
+        for session in sessions
     ]
-    if active_only:
-        session_items = [item for item in session_items if item.is_active]
 
-    grants = repository.list_worker_delivery_grants(
+    grants = list_delivery_grants(
+        repository=repository,
         worker_id=worker_id,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
-        active_only=False,
+        active_only=active_only,
     )
     grant_items = [
         WorkerDeliveryGrantAdminProjection(
@@ -2049,19 +2040,14 @@ def build_worker_runtime_projection(
             revoke_reason=grant.get("revoke_reason"),
             revoked_via=grant.get("revoked_via"),
             revoked_by=grant.get("revoked_by"),
-            is_active=_is_worker_delivery_grant_active(grant, at=generated_at),
+            is_active=bool(grant.get("is_active")),
         )
-        for grant in sorted(
-            grants,
-            key=lambda item: (item["issued_at"], str(item["grant_id"])),
-            reverse=True,
-        )
+        for grant in grants
     ]
-    if active_only:
-        grant_items = [item for item in grant_items if item.is_active]
     grant_items = grant_items[:grant_limit]
 
-    rejections = repository.list_worker_auth_rejection_logs(
+    rejections = list_auth_rejections(
+        repository=repository,
         worker_id=worker_id,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
@@ -2078,11 +2064,7 @@ def build_worker_runtime_projection(
             tenant_id=rejection.get("tenant_id"),
             workspace_id=rejection.get("workspace_id"),
         )
-        for rejection in sorted(
-            rejections,
-            key=lambda item: (item["occurred_at"], str(item.get("rejection_id") or "")),
-            reverse=True,
-        )[:rejection_limit]
+        for rejection in rejections[:rejection_limit]
     ]
 
     return WorkerRuntimeProjectionEnvelope(

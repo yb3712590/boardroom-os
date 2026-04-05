@@ -85,6 +85,9 @@
 - `worker-runtime` 执行包的 `command_endpoints` 现在多了 `ticket_artifact_import_upload_url`，worker delivery token 也补了同名命令范围，外部 handoff 保持兼容。
 - `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：主线 result-submit 已与 upload session 解耦，但 upload 导入入口和 upload session 存储仍保留，所以 `P1-CLN-003` 还不能直接收口成 `_frozen/` 迁移。
 - 本轮完整验证结果是：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用重定向方式执行 `py -m pytest tests/ -q` 实测 `416 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
+- `P1-CLN-004` 这轮已从阻塞评估推进到真实进行中：`/api/v1/projections/worker-runtime` 已从通用 `projections.py` 拆到独立 `worker_runtime_projections.py`，`worker-runtime` 的投影入口边界先收清了。
+- `build_worker_runtime_projection(...)` 这轮不再直接散读 repository 的 binding/session/grant/rejection 查询，当前统一改成复用 `worker_scope_ops.py` 里的现成 helper，避免 handoff 管理读面继续有两套活跃态判定。
+- 本轮完整验证结果更新为：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用 `py -m pytest tests/ -q` 实测 `417 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
 
 ## Current Working Set
 

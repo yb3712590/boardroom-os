@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-06 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过 `py -m pytest tests/ -q` 完成全量复核，`416 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过 `py -m pytest tests/ -q` 完成全量复核，`417 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `64 passed`
 
 ## 现在先做什么
@@ -52,7 +52,7 @@
 - [ ] `P1-CLN-001`：已完成前置拆分，当前转为进行中；`worker-admin` 共用的 scope / bootstrap / session / grant helper 已抽到 `worker_scope_ops.py`，`worker-admin` 专属 projection 入口已从通用 `projections.py` 分离，但 `_frozen/` 物理迁移仍未启动
 - [ ] `P1-CLN-002`：已进入进行中；主线 `project-init / ticket-create / CEO 建票 / 审批 follow-up 建票` 已改成统一从 workflow/default 解析 scope，API 入口仍保留弃用兼容；runtime、projection 和冻结 contracts 的多租户 shape 仍未拆
 - [ ] `P1-CLN-003`：已进入进行中；`ticket-result-submit` 已不再直接消费 upload session，当前改成“upload session -> ticket-artifact-import-upload -> artifact_ref -> ticket-result-submit”，但 upload 导入入口和 upload session 存储仍在，所以 `_frozen/` 物理迁移前置条件还没全满足
-- [ ] `P1-CLN-004`：仍未开始，但阻塞评估已收口；`/api/v1/worker-runtime`、`/api/v1/projections/worker-runtime`、`worker_auth_cli.py` 和 `worker_bootstrap/session/delivery-grant` schema 仍需成组保留
+- [ ] `P1-CLN-004`：已进入进行中；`/api/v1/projections/worker-runtime` 已从通用 `projections.py` 拆到独立入口，`worker-runtime` 管理读面已收口到 `worker_scope_ops.py` helper，但 `/api/v1/worker-runtime`、`worker_auth_cli.py` 和 `worker_bootstrap/session/delivery-grant` schema 仍需成组保留
 - [ ] 如果后续启动物理迁移，仍以“不影响主线测试”为绝对前提
 
 本轮完成补记：
@@ -63,8 +63,10 @@
 - `P1-CLN-003` 这轮已从“未开始”推进到“进行中”：`ticket-result-submit` 不再直接消费 `upload_session_id`，当前改成先走 `ticket-artifact-import-upload` 导入，再由结果提交只引用 `artifact_ref`
 - 控制面与 `worker-runtime` 现在都补了同构的 `ticket-artifact-import-upload` 命令，执行包也会下发新的签名命令 URL，外部 handoff 没有被顺手削弱
 - `artifact_uploads` 和 upload session 存储仍保留，所以 `_frozen/` 物理迁移前置条件还没完全满足；这轮目标只是拆掉主线桥接点
+- `P1-CLN-004` 这轮已从“未开始”推进到“进行中”：`/api/v1/projections/worker-runtime` 已拆到独立 `worker_runtime_projections.py`，`build_worker_runtime_projection(...)` 也已改成复用 `worker_scope_ops.py` 的 binding/session/grant/rejection helper
+- `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：handoff 的独立 projection 入口前置拆分已经完成，但 runtime 路由、CLI 和三张 handoff schema 仍需成组保留，所以还不能启动 `_frozen/` 物理迁移
 
-对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001`、`P1-CLN-002`、`P1-CLN-003` 进行中；`P1-CLN-004` 仍未开始，且还没满足物理迁移前置条件
+对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001`、`P1-CLN-002`、`P1-CLN-003`、`P1-CLN-004` 进行中，且还没满足物理迁移前置条件
 
 ### `P2-C`：检索、Provider 路由、发布准备
 

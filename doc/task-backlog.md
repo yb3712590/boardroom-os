@@ -28,7 +28,7 @@
 | 治理模板 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 文档收口 | `P2-DOC-001` 到 `P2-DOC-005` | 进行中 | [task-backlog/active.md](task-backlog/active.md) |
 
-当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；最近两轮先把 `P1-CLN-002` 推进到主线 command 侧解耦，再把 `P1-CLN-003` 推进到“主线 result-submit 已与 upload session 解耦，但 upload 导入入口仍保留”的状态，所以未关闭任务总数仍是 `26`。UI 打磨区此前已移出当前工作集，详细补记看 `task-backlog/active.md`。
+当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；最近三轮依次把 `P1-CLN-002` 推进到主线 command 侧解耦，把 `P1-CLN-003` 推进到“主线 result-submit 已与 upload session 解耦，但 upload 导入入口仍保留”，再把 `P1-CLN-004` 推进到“worker-runtime projection 已独立出通用入口、管理读面已收口到 helper，但 handoff schema 仍成组保留”的状态，所以未关闭任务总数仍是 `26`。UI 打磨区此前已移出当前工作集，详细补记看 `task-backlog/active.md`。
 
 ## 读写约定
 

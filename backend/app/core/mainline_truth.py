@@ -274,7 +274,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         ),
         entrypoint_refs=(
             "backend/app/api/worker_runtime.py",
-            "backend/app/api/projections.py",
+            "backend/app/api/worker_runtime_projections.py",
             "backend/app/worker_auth_cli.py",
         ),
         mainline_dependency_refs=(),
@@ -288,7 +288,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "No physical migration should start while worker bootstrap, session, and delivery-grant storage still share the active repository schema.",
         ),
         migration_blocker_refs=(
-            "backend/app/api/projections.py",
+            "backend/app/api/worker_runtime_projections.py",
             "backend/app/api/worker_runtime.py",
             "backend/app/core/worker_runtime.py",
             "backend/app/db/repository.py",
@@ -300,6 +300,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         notes=(
             "外部 worker bootstrap、session 和 delivery grant 仍在仓库中，但当前默认不作为主线继续推进。"
             "它现在是保留的交接面，不是当前 MVP 的主链卖点。"
+            "P1-CLN-004 这轮已完成独立 projection 入口前置拆分，但 schema 仍需成组保留。"
         ),
     ),
 )

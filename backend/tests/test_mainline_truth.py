@@ -132,7 +132,7 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
 
     assert boundaries_by_slug["external_worker_handoff"].entrypoint_refs == (
         "backend/app/api/worker_runtime.py",
-        "backend/app/api/projections.py",
+        "backend/app/api/worker_runtime_projections.py",
         "backend/app/worker_auth_cli.py",
     )
     assert boundaries_by_slug["external_worker_handoff"].mainline_dependency_refs == ()
@@ -185,7 +185,7 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
 
     handoff_boundary = boundaries_by_slug["external_worker_handoff"]
     assert handoff_boundary.migration_blocker_refs == (
-        "backend/app/api/projections.py",
+        "backend/app/api/worker_runtime_projections.py",
         "backend/app/api/worker_runtime.py",
         "backend/app/core/worker_runtime.py",
         "backend/app/db/repository.py",
@@ -260,17 +260,47 @@ def test_external_worker_handoff_blockers_still_exist_as_one_runtime_unit() -> N
     handoff_boundary = {
         entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
     }["external_worker_handoff"]
+    worker_runtime_projection_api_source = _read_repo_text(
+        "backend/app/api/worker_runtime_projections.py"
+    )
     worker_runtime_api_source = _read_repo_text("backend/app/api/worker_runtime.py")
     projections_api_source = _read_repo_text("backend/app/api/projections.py")
     worker_runtime_core_source = _read_repo_text("backend/app/core/worker_runtime.py")
     worker_auth_cli_source = _read_repo_text("backend/app/worker_auth_cli.py")
     repository_source = _read_repo_text("backend/app/db/repository.py")
+    main_source = _read_repo_text("backend/app/main.py")
 
     assert 'APIRouter(prefix="/api/v1/worker-runtime"' in worker_runtime_api_source
-    assert '@router.get("/worker-runtime"' in projections_api_source
+    assert 'from app.api.worker_runtime_projections import router as worker_runtime_projections_router' in main_source
+    assert "app.include_router(worker_runtime_projections_router)" in main_source
+    assert '@router.get("/worker-runtime"' not in projections_api_source
+    assert '@router.get("/worker-runtime"' in worker_runtime_projection_api_source
     assert "def _create_or_refresh_worker_session(" in worker_runtime_core_source
     assert 'prog="python -m app.worker_auth_cli"' in worker_auth_cli_source
     assert "CREATE TABLE IF NOT EXISTS worker_bootstrap_state" in repository_source
     assert "CREATE TABLE IF NOT EXISTS worker_session" in repository_source
     assert "CREATE TABLE IF NOT EXISTS worker_delivery_grant" in repository_source
     assert handoff_boundary.migration_blocker_summary.endswith("schema 仍需成组保留。")
+
+
+def test_external_worker_handoff_projection_builder_uses_worker_scope_helpers() -> None:
+    projections_source = _read_repo_text("backend/app/core/projections.py")
+
+    assert "from app.core.worker_scope_ops import (" in projections_source
+    assert "list_auth_rejections" in projections_source
+    assert "list_binding_admin_views" in projections_source
+    assert "list_delivery_grants" in projections_source
+    assert "list_sessions" in projections_source
+
+    worker_runtime_section = projections_source.split("def build_worker_runtime_projection(", 1)[1].split(
+        "def build_worker_admin_audit_projection(",
+        1,
+    )[0]
+    assert "repository.list_worker_binding_admin_views(" not in worker_runtime_section
+    assert "repository.list_worker_sessions(" not in worker_runtime_section
+    assert "repository.list_worker_delivery_grants(" not in worker_runtime_section
+    assert "repository.list_worker_auth_rejection_logs(" not in worker_runtime_section
+    assert "list_binding_admin_views(" in worker_runtime_section
+    assert "list_sessions(" in worker_runtime_section
+    assert "list_delivery_grants(" in worker_runtime_section
+    assert "list_auth_rejections(" in worker_runtime_section
