@@ -32,6 +32,7 @@ from app.core.constants import (
     EVENT_ARTIFACT_CLEANUP_COMPLETED,
     EVENT_ARTIFACT_DELETED,
     EVENT_ARTIFACT_EXPIRED,
+    EVENT_ARTIFACT_IMPORTED,
     EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
@@ -4429,6 +4430,7 @@ class ControlPlaneRepository:
 
     def _event_severity(self, event_type: str) -> str:
         if event_type in {
+            EVENT_ARTIFACT_IMPORTED,
             EVENT_ARTIFACT_CLEANUP_COMPLETED,
             EVENT_ARTIFACT_DELETED,
             EVENT_ARTIFACT_EXPIRED,
@@ -4488,6 +4490,8 @@ class ControlPlaneRepository:
             return f"TICKET_TIMED_OUT for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_RETRY_SCHEDULED:
             return f"TICKET_RETRY_SCHEDULED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_ARTIFACT_IMPORTED:
+            return f"ARTIFACT_IMPORTED for {event.get('artifact_ref') or event['workflow_id']}"
         if event["event_type"] == EVENT_ARTIFACT_DELETED:
             return f"ARTIFACT_DELETED for {event.get('artifact_ref') or event['workflow_id']}"
         if event["event_type"] == EVENT_ARTIFACT_EXPIRED:

@@ -13,7 +13,12 @@ from fastapi import HTTPException
 
 
 WorkerDeliveryScope = Literal["execution_package", "artifact_read", "command"]
-WorkerCommandName = Literal["ticket-start", "ticket-heartbeat", "ticket-result-submit"]
+WorkerCommandName = Literal[
+    "ticket-start",
+    "ticket-heartbeat",
+    "ticket-result-submit",
+    "ticket-artifact-import-upload",
+]
 WorkerArtifactAction = Literal["content_inline", "content_attachment", "preview"]
 
 TOKEN_VERSION = "v1"

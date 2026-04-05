@@ -4,7 +4,6 @@ import fnmatch
 import hashlib
 import json
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -28,17 +27,10 @@ from app.contracts.commands import (
     TicketStartCommand,
 )
 from app.core.artifact_store import ArtifactStore, MaterializedArtifact, normalize_artifact_logical_path
-from app.core.artifact_uploads import require_completed_artifact_upload_session
 from app.core.artifacts import (
     ARTIFACT_LIFECYCLE_ACTIVE,
     ARTIFACT_RETENTION_PERSISTENT,
-    ARTIFACT_STATUS_MATERIALIZED,
-    ARTIFACT_STATUS_REGISTERED_ONLY,
-    decode_artifact_base64,
     is_binary_artifact_kind,
-    normalize_retention_class,
-    resolve_artifact_retention,
-    resolve_artifact_media_type,
 )
 from app.core.constants import (
     CIRCUIT_BREAKER_STATE_CLOSED,
@@ -113,35 +105,16 @@ from app.core.output_schemas import (
     validate_output_payload,
 )
 from app.core.runtime_provider_config import OPENAI_COMPAT_PROVIDER_ID, resolve_runtime_provider_config
+from app.core.ticket_artifacts import (
+    PreparedTicketArtifact,
+    cleanup_materialized_artifacts,
+    match_allowed_write_set,
+    prepare_written_artifacts,
+    save_prepared_artifact_record,
+)
 from app.core.time import now_local
 from app.core.workflow_scope import resolve_workflow_scope
 from app.db.repository import ControlPlaneRepository
-
-
-@dataclass(frozen=True)
-class PreparedTicketArtifact:
-    artifact_ref: str
-    logical_path: str
-    kind: str
-    media_type: str | None
-    materialization_status: str
-    lifecycle_status: str
-    storage_backend: str
-    storage_relpath: str | None
-    storage_object_key: str | None
-    storage_delete_status: str
-    storage_delete_error: str | None
-    content_hash: str | None
-    size_bytes: int | None
-    retention_class: str
-    retention_class_source: str
-    retention_ttl_sec: int | None
-    retention_policy_source: str
-    expires_at: datetime | None
-    deleted_at: datetime | None
-    deleted_by: str | None
-    delete_reason: str | None
-    upload_session_id: str | None = None
 
 
 MAKER_CHECKER_REVIEW_TICKET_KIND = "MAKER_CHECKER_REVIEW"
@@ -169,6 +142,10 @@ MAKER_CHECKER_SUPPORTED_TARGETS = {
         DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     ),
 }
+
+
+def _match_allowed_write_set(path: str, allowed_write_set: list[str]) -> bool:
+    return match_allowed_write_set(path, allowed_write_set)
 
 
 def _trigger_ceo_shadow_safely(
@@ -293,292 +270,21 @@ def _cancel_duplicate_ack(
     )
 
 
-def _match_allowed_write_set(path: str, allowed_write_set: list[str]) -> bool:
-    return any(fnmatch.fnmatchcase(path, pattern) for pattern in allowed_write_set)
-
-
-def _validate_written_artifacts(
-    written_artifacts: list,
-) -> list[tuple]:
-    seen_refs: set[str] = set()
-    seen_paths: set[str] = set()
-    validated: list[tuple] = []
-
-    for item in written_artifacts:
-        if item.artifact_ref in seen_refs:
-            raise ValueError("Structured result contains a duplicate artifact_ref.")
-        seen_refs.add(item.artifact_ref)
-
-        logical_path = normalize_artifact_logical_path(item.path)
-        if logical_path in seen_paths:
-            raise ValueError("Structured result contains a duplicate artifact path.")
-        seen_paths.add(logical_path)
-
-        normalized_kind = item.kind.upper()
-        explicit_retention_class = (
-            item.retention_class.value if hasattr(item.retention_class, "value") else item.retention_class
-        )
-        if explicit_retention_class is not None:
-            normalize_retention_class(explicit_retention_class)
-        if normalized_kind == "JSON":
-            if item.content_json is None:
-                raise ValueError("JSON artifacts require content_json.")
-            if item.content_text is not None:
-                raise ValueError("JSON artifacts must not include content_text.")
-            if item.content_base64 is not None:
-                raise ValueError("JSON artifacts must not include content_base64.")
-            if item.upload_session_id is not None:
-                raise ValueError("JSON artifacts must not include upload_session_id.")
-        elif normalized_kind in {"TEXT", "MARKDOWN"}:
-            if item.content_text is None:
-                raise ValueError(f"{normalized_kind} artifacts require content_text.")
-            if item.content_json is not None:
-                raise ValueError(f"{normalized_kind} artifacts must not include content_json.")
-            if item.content_base64 is not None:
-                raise ValueError(f"{normalized_kind} artifacts must not include content_base64.")
-            if item.upload_session_id is not None:
-                raise ValueError(f"{normalized_kind} artifacts must not include upload_session_id.")
-        else:
-            if item.content_json is not None or item.content_text is not None:
-                raise ValueError(
-                    f"{normalized_kind} artifacts cannot include inline structured content in the current MVP."
-                )
-            if item.content_base64 is not None and item.upload_session_id is not None:
-                raise ValueError(
-                    f"{normalized_kind} artifacts must use content_base64 or upload_session_id, not both."
-                )
-            if item.content_base64 is not None:
-                decode_artifact_base64(item.content_base64)
-
-        validated.append(
-            (
-                item,
-                logical_path,
-                resolve_artifact_media_type(normalized_kind, logical_path, item.media_type),
-                explicit_retention_class,
-                item.upload_session_id,
-            )
-        )
-
-    return validated
-
-
 def _prepare_ticket_artifacts(
     *,
-    repository: ControlPlaneRepository,
     artifact_store: ArtifactStore | None,
     written_artifacts: list,
     created_at: datetime,
     workflow_id: str,
     ticket_id: str,
 ) -> tuple[list[PreparedTicketArtifact], list[MaterializedArtifact]]:
-    validated_items = _validate_written_artifacts(written_artifacts)
-    prepared: list[PreparedTicketArtifact] = []
-    materialized_artifacts: list[MaterializedArtifact] = []
-    settings = get_settings()
-
-    for item, logical_path, media_type, explicit_retention_class, upload_session_id in validated_items:
-        normalized_kind = item.kind.upper()
-        retention = resolve_artifact_retention(
-            created_at=created_at,
-            logical_path=logical_path,
-            retention_class=explicit_retention_class,
-            retention_ttl_sec=item.retention_ttl_sec,
-            default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
-            default_operational_evidence_ttl_sec=(
-                settings.artifact_operational_evidence_default_ttl_sec
-            ),
-            default_review_evidence_ttl_sec=settings.artifact_review_evidence_default_ttl_sec,
-        )
-        if normalized_kind == "JSON":
-            if artifact_store is None:
-                raise RuntimeError("Artifact store is required to materialize JSON artifacts.")
-            materialized = artifact_store.materialize_json(
-                logical_path,
-                item.content_json,
-                workflow_id=workflow_id,
-                ticket_id=ticket_id,
-                artifact_ref=item.artifact_ref,
-            )
-            materialized_artifacts.append(materialized)
-            prepared.append(
-                PreparedTicketArtifact(
-                    artifact_ref=item.artifact_ref,
-                    logical_path=logical_path,
-                    kind=normalized_kind,
-                    media_type=media_type,
-                    materialization_status=ARTIFACT_STATUS_MATERIALIZED,
-                    lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
-                    storage_backend=materialized.storage_backend,
-                    storage_relpath=materialized.storage_relpath,
-                    storage_object_key=materialized.storage_object_key,
-                    storage_delete_status=materialized.storage_delete_status,
-                    storage_delete_error=None,
-                    content_hash=materialized.content_hash,
-                    size_bytes=materialized.size_bytes,
-                    retention_class=retention.retention_class,
-                    retention_class_source=retention.retention_class_source,
-                    retention_ttl_sec=retention.retention_ttl_sec,
-                    retention_policy_source=retention.retention_policy_source,
-                    expires_at=retention.expires_at,
-                    deleted_at=None,
-                    deleted_by=None,
-                    delete_reason=None,
-                )
-            )
-            continue
-        if normalized_kind in {"TEXT", "MARKDOWN"}:
-            if artifact_store is None:
-                raise RuntimeError(f"Artifact store is required to materialize {normalized_kind} artifacts.")
-            materialized = artifact_store.materialize_text(
-                logical_path,
-                item.content_text or "",
-                workflow_id=workflow_id,
-                ticket_id=ticket_id,
-                artifact_ref=item.artifact_ref,
-                media_type=media_type,
-            )
-            materialized_artifacts.append(materialized)
-            prepared.append(
-                PreparedTicketArtifact(
-                    artifact_ref=item.artifact_ref,
-                    logical_path=logical_path,
-                    kind=normalized_kind,
-                    media_type=media_type,
-                    materialization_status=ARTIFACT_STATUS_MATERIALIZED,
-                    lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
-                    storage_backend=materialized.storage_backend,
-                    storage_relpath=materialized.storage_relpath,
-                    storage_object_key=materialized.storage_object_key,
-                    storage_delete_status=materialized.storage_delete_status,
-                    storage_delete_error=None,
-                    content_hash=materialized.content_hash,
-                    size_bytes=materialized.size_bytes,
-                    retention_class=retention.retention_class,
-                    retention_class_source=retention.retention_class_source,
-                    retention_ttl_sec=retention.retention_ttl_sec,
-                    retention_policy_source=retention.retention_policy_source,
-                    expires_at=retention.expires_at,
-                    deleted_at=None,
-                    deleted_by=None,
-                    delete_reason=None,
-                )
-            )
-            continue
-        if item.content_base64 is not None:
-            if artifact_store is None:
-                raise RuntimeError(
-                    f"Artifact store is required to materialize {normalized_kind} artifacts."
-                )
-            materialized = artifact_store.materialize_bytes(
-                logical_path,
-                decode_artifact_base64(item.content_base64),
-                workflow_id=workflow_id,
-                ticket_id=ticket_id,
-                artifact_ref=item.artifact_ref,
-                media_type=media_type,
-            )
-            materialized_artifacts.append(materialized)
-            prepared.append(
-                PreparedTicketArtifact(
-                    artifact_ref=item.artifact_ref,
-                    logical_path=logical_path,
-                    kind=normalized_kind,
-                    media_type=media_type,
-                    materialization_status=ARTIFACT_STATUS_MATERIALIZED,
-                    lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
-                    storage_backend=materialized.storage_backend,
-                    storage_relpath=materialized.storage_relpath,
-                    storage_object_key=materialized.storage_object_key,
-                    storage_delete_status=materialized.storage_delete_status,
-                    storage_delete_error=None,
-                    content_hash=materialized.content_hash,
-                    size_bytes=materialized.size_bytes,
-                    retention_class=retention.retention_class,
-                    retention_class_source=retention.retention_class_source,
-                    retention_ttl_sec=retention.retention_ttl_sec,
-                    retention_policy_source=retention.retention_policy_source,
-                    expires_at=retention.expires_at,
-                    deleted_at=None,
-                    deleted_by=None,
-                    delete_reason=None,
-                )
-            )
-            continue
-        if upload_session_id is not None:
-            if artifact_store is None:
-                raise RuntimeError(
-                    f"Artifact store is required to materialize {normalized_kind} artifacts."
-                )
-            session = require_completed_artifact_upload_session(
-                repository,
-                session_id=upload_session_id,
-            )
-            materialized = artifact_store.materialize_staged_upload(
-                logical_path,
-                str(session["assembled_staging_relpath"]),
-                workflow_id=workflow_id,
-                ticket_id=ticket_id,
-                artifact_ref=item.artifact_ref,
-                media_type=media_type,
-            )
-            materialized_artifacts.append(materialized)
-            prepared.append(
-                PreparedTicketArtifact(
-                    artifact_ref=item.artifact_ref,
-                    logical_path=logical_path,
-                    kind=normalized_kind,
-                    media_type=media_type,
-                    materialization_status=ARTIFACT_STATUS_MATERIALIZED,
-                    lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
-                    storage_backend=materialized.storage_backend,
-                    storage_relpath=materialized.storage_relpath,
-                    storage_object_key=materialized.storage_object_key,
-                    storage_delete_status=materialized.storage_delete_status,
-                    storage_delete_error=None,
-                    content_hash=materialized.content_hash,
-                    size_bytes=materialized.size_bytes,
-                    retention_class=retention.retention_class,
-                    retention_class_source=retention.retention_class_source,
-                    retention_ttl_sec=retention.retention_ttl_sec,
-                    retention_policy_source=retention.retention_policy_source,
-                    expires_at=retention.expires_at,
-                    deleted_at=None,
-                    deleted_by=None,
-                    delete_reason=None,
-                    upload_session_id=upload_session_id,
-                )
-            )
-            continue
-
-        prepared.append(
-            PreparedTicketArtifact(
-                artifact_ref=item.artifact_ref,
-                logical_path=logical_path,
-                kind=normalized_kind,
-                media_type=media_type,
-                materialization_status=ARTIFACT_STATUS_REGISTERED_ONLY,
-                lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
-                storage_backend="LOCAL_FILE",
-                storage_relpath=None,
-                storage_object_key=None,
-                storage_delete_status="DELETED",
-                storage_delete_error=None,
-                content_hash=None,
-                size_bytes=None,
-                retention_class=retention.retention_class,
-                retention_class_source=retention.retention_class_source,
-                retention_ttl_sec=retention.retention_ttl_sec,
-                retention_policy_source=retention.retention_policy_source,
-                expires_at=retention.expires_at,
-                deleted_at=None,
-                deleted_by=None,
-                delete_reason=None,
-                upload_session_id=None,
-            )
-        )
-
-    return prepared, materialized_artifacts
+    return prepare_written_artifacts(
+        artifact_store=artifact_store,
+        written_artifacts=written_artifacts,
+        created_at=created_at,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+    )
 
 
 def _insert_ticket_cancelled_event(
@@ -4047,7 +3753,6 @@ def handle_ticket_result_submit(
     materialized_artifacts: list[MaterializedArtifact] = []
     try:
         prepared_artifacts, materialized_artifacts = _prepare_ticket_artifacts(
-            repository=repository,
             artifact_store=resolved_artifact_store,
             written_artifacts=payload.written_artifacts,
             created_at=received_at,
@@ -4097,43 +3802,13 @@ def handle_ticket_result_submit(
                 )
 
             for artifact in prepared_artifacts:
-                if artifact.upload_session_id is not None:
-                    consumed = repository.consume_artifact_upload_session(
-                        connection,
-                        session_id=artifact.upload_session_id,
-                        consumed_at=received_at,
-                        consumed_by_artifact_ref=artifact.artifact_ref,
-                    )
-                    if not consumed:
-                        raise ValueError(
-                            f"Artifact upload session '{artifact.upload_session_id}' is not available for consumption."
-                        )
-                repository.save_artifact_record(
+                save_prepared_artifact_record(
+                    repository,
                     connection,
-                    artifact_ref=artifact.artifact_ref,
+                    prepared_artifact=artifact,
                     workflow_id=payload.workflow_id,
                     ticket_id=payload.ticket_id,
                     node_id=payload.node_id,
-                    logical_path=artifact.logical_path,
-                    kind=artifact.kind,
-                    media_type=artifact.media_type,
-                    materialization_status=artifact.materialization_status,
-                    lifecycle_status=artifact.lifecycle_status,
-                    storage_backend=artifact.storage_backend,
-                    storage_relpath=artifact.storage_relpath,
-                    storage_object_key=artifact.storage_object_key,
-                    storage_delete_status=artifact.storage_delete_status,
-                    storage_delete_error=artifact.storage_delete_error,
-                    content_hash=artifact.content_hash,
-                    size_bytes=artifact.size_bytes,
-                    retention_class=artifact.retention_class,
-                    retention_class_source=artifact.retention_class_source,
-                    retention_ttl_sec=artifact.retention_ttl_sec,
-                    retention_policy_source=artifact.retention_policy_source,
-                    expires_at=artifact.expires_at,
-                    deleted_at=artifact.deleted_at,
-                    deleted_by=artifact.deleted_by,
-                    delete_reason=artifact.delete_reason,
                     created_at=received_at,
                 )
 
@@ -4160,12 +3835,7 @@ def handle_ticket_result_submit(
                 persisted_artifacts=persisted_inspector_artifacts,
             )
     except ValueError as exc:
-        if resolved_artifact_store is not None:
-            for artifact in materialized_artifacts:
-                resolved_artifact_store.delete(
-                    artifact.storage_relpath,
-                    storage_object_key=artifact.storage_object_key,
-                )
+        cleanup_materialized_artifacts(resolved_artifact_store, materialized_artifacts)
         if developer_inspector_store is not None:
             for artifact in persisted_inspector_artifacts:
                 developer_inspector_store.delete_ref(artifact.ref)
@@ -4183,12 +3853,7 @@ def handle_ticket_result_submit(
             ),
         )
     except sqlite3.IntegrityError:
-        if resolved_artifact_store is not None:
-            for artifact in materialized_artifacts:
-                resolved_artifact_store.delete(
-                    artifact.storage_relpath,
-                    storage_object_key=artifact.storage_object_key,
-                )
+        cleanup_materialized_artifacts(resolved_artifact_store, materialized_artifacts)
         return handle_ticket_fail(
             repository,
             TicketFailCommand(
@@ -4203,12 +3868,7 @@ def handle_ticket_result_submit(
             ),
         )
     except Exception:
-        if resolved_artifact_store is not None:
-            for artifact in materialized_artifacts:
-                resolved_artifact_store.delete(
-                    artifact.storage_relpath,
-                    storage_object_key=artifact.storage_object_key,
-                )
+        cleanup_materialized_artifacts(resolved_artifact_store, materialized_artifacts)
         if developer_inspector_store is not None:
             for artifact in persisted_inspector_artifacts:
                 developer_inspector_store.delete_ref(artifact.ref)

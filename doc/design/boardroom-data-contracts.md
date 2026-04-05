@@ -1408,11 +1408,10 @@ Implementation rules:
 - `JSON` requires `content_json`
 - `TEXT` and `MARKDOWN` require `content_text`
 - binary artifact kinds may provide `content_base64` plus optional `media_type` to trigger real materialization
-- binary artifact kinds may also provide `upload_session_id` to consume one already-completed control-plane multipart upload session
-- `content_base64` and `upload_session_id` must not appear together on the same artifact
 - binary artifact kinds may still omit inline body and remain `REGISTERED_ONLY` for compatibility
 - each written artifact may carry `retention_class` and optional `retention_ttl_sec`
 - artifact validation and materialization happen before the ticket is marked completed; failures are converted into the controlled governance paths `SCHEMA_ERROR`, `WRITE_SET_VIOLATION`, `ARTIFACT_VALIDATION_ERROR`, or `ARTIFACT_PERSIST_ERROR`
+- medium and large binaries now use a separate `ticket-artifact-import-upload` command after the upload session is completed; `ticket-result-submit` only references the imported `artifact_ref`
 
 ### 10.1.7 Scheduler Tick
 
@@ -1457,6 +1456,7 @@ Current minimal authenticated worker handoff:
 - `GET /api/v1/worker-runtime/artifacts/preview?artifact_ref=...`
 - `POST /api/v1/worker-runtime/commands/ticket-start`
 - `POST /api/v1/worker-runtime/commands/ticket-heartbeat`
+- `POST /api/v1/worker-runtime/commands/ticket-artifact-import-upload`
 - `POST /api/v1/worker-runtime/commands/ticket-result-submit`
 
 Assignment authentication headers:
@@ -1467,6 +1467,7 @@ Assignment authentication headers:
 Behavior rules:
 
 - assignment list includes only the current worker's `LEASED`, `EXECUTING`, and `CANCEL_REQUESTED` tickets
+- command endpoints now include `ticket_artifact_import_upload_url`, so external workers can import a completed upload session before calling `ticket-result-submit`
 - one worker may now keep multiple bootstrap bindings keyed by `worker_id + tenant_id + workspace_id`
 - each active session and each persisted delivery grant still stay bound to exactly one worker `tenant_id/workspace_id` scope
 - `GET /api/v1/worker-runtime/assignments` remains the bootstrap call and now returns:

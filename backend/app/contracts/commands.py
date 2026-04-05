@@ -241,7 +241,6 @@ class TicketWrittenArtifact(StrictModel):
     content_json: JsonValue | None = None
     content_text: str | None = None
     content_base64: str | None = None
-    upload_session_id: str | None = None
     retention_class: ArtifactRetentionClass | None = None
     retention_ttl_sec: int | None = Field(default=None, ge=1)
 
@@ -306,6 +305,20 @@ class ArtifactDeleteCommand(StrictModel):
 
 class ArtifactCleanupCommand(StrictModel):
     cleaned_by: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class TicketArtifactImportUploadCommand(StrictModel):
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    artifact_ref: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    media_type: str | None = None
+    upload_session_id: str = Field(min_length=1)
+    retention_class: ArtifactRetentionClass | None = None
+    retention_ttl_sec: int | None = Field(default=None, ge=1)
     idempotency_key: str = Field(min_length=1)
 
 

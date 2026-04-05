@@ -118,14 +118,15 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
         "backend/app/core/artifact_store.py",
     )
     assert boundaries_by_slug["artifact_uploads_and_object_store"].mainline_dependency_refs == (
-        "backend/app/core/ticket_handlers.py",
+        "backend/app/core/artifact_handlers.py",
+        "backend/app/core/worker_runtime.py",
     )
     assert boundaries_by_slug["artifact_uploads_and_object_store"].test_refs == (
         "backend/tests/test_api.py",
         "backend/tests/test_repository.py",
     )
     assert boundaries_by_slug["artifact_uploads_and_object_store"].migration_preconditions == (
-        "The ticket result-submit path must stop calling require_completed_artifact_upload_session before artifact upload code can move.",
+        "The ticket result-submit path has already been decoupled from upload-session consumption and must stay that way.",
         "Object-store support must remain a minimal storage backend and must not be expanded during this cleanup round.",
     )
 
@@ -156,15 +157,18 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     boundaries_by_slug = {entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES}
 
     artifact_boundary = boundaries_by_slug["artifact_uploads_and_object_store"]
-    assert artifact_boundary.mainline_dependency_refs == ("backend/app/core/ticket_handlers.py",)
-    assert "require_completed_artifact_upload_session" in artifact_boundary.notes
+    assert artifact_boundary.mainline_dependency_refs == (
+        "backend/app/core/artifact_handlers.py",
+        "backend/app/core/worker_runtime.py",
+    )
+    assert "ticket-result-submit 已不再依赖 upload session" in artifact_boundary.notes
     assert artifact_boundary.migration_blocker_refs == (
-        "backend/app/contracts/commands.py",
-        "backend/app/core/ticket_handlers.py",
+        "backend/app/api/artifact_uploads.py",
+        "backend/app/core/artifact_handlers.py",
         "backend/app/db/repository.py",
     )
     assert artifact_boundary.migration_blocker_summary == (
-        "ticket-result-submit 仍接受 upload_session_id，并且提交与消费路径仍依赖 artifact upload session。"
+        "主线 result-submit 已与 upload session 解耦，但 upload 导入入口和 artifact upload session 存储仍需保留。"
     )
 
     scope_boundary = boundaries_by_slug["multi_tenant_scope"]
@@ -224,20 +228,32 @@ def test_multi_tenant_scope_blockers_now_live_in_runtime_and_frozen_contracts() 
     assert "tenant_id" in worker_runtime_contract_source and "workspace_id" in worker_runtime_contract_source
 
 
-def test_artifact_upload_bridge_blockers_still_exist_in_result_submit_path() -> None:
+def test_artifact_upload_bridge_has_moved_out_of_result_submit_path() -> None:
     artifact_boundary = {
         entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
     }["artifact_uploads_and_object_store"]
+    artifact_handlers_source = _read_repo_text("backend/app/core/artifact_handlers.py")
+    ticket_artifacts_source = _read_repo_text("backend/app/core/ticket_artifacts.py")
     commands_source = _read_repo_text("backend/app/contracts/commands.py")
     ticket_handlers_source = _read_repo_text("backend/app/core/ticket_handlers.py")
+    worker_runtime_source = _read_repo_text("backend/app/core/worker_runtime.py")
     repository_source = _read_repo_text("backend/app/db/repository.py")
+    ticket_written_artifact_section = commands_source.split("class TicketWrittenArtifact", 1)[1].split(
+        "class TicketResultSubmitCommand",
+        1,
+    )[0]
 
-    assert "upload_session_id: str | None = None" in commands_source
-    assert "from app.core.artifact_uploads import require_completed_artifact_upload_session" in ticket_handlers_source
-    assert "session = require_completed_artifact_upload_session(" in ticket_handlers_source
-    assert "repository.consume_artifact_upload_session(" in ticket_handlers_source
+    assert "upload_session_id" not in ticket_written_artifact_section
+    assert "class TicketArtifactImportUploadCommand" in commands_source
+    assert "from app.core.artifact_uploads import require_completed_artifact_upload_session" not in ticket_handlers_source
+    assert "session = require_completed_artifact_upload_session(" not in ticket_handlers_source
+    assert "repository.consume_artifact_upload_session(" not in ticket_handlers_source
+    assert "require_completed_artifact_upload_session" in ticket_artifacts_source
+    assert "handle_ticket_artifact_import_upload" in artifact_handlers_source
+    assert "consume_artifact_upload_session" in artifact_handlers_source
+    assert "ticket-artifact-import-upload" in worker_runtime_source
     assert "def consume_artifact_upload_session(" in repository_source
-    assert artifact_boundary.migration_blocker_summary.endswith("artifact upload session。")
+    assert artifact_boundary.migration_blocker_summary.endswith("仍需保留。")
 
 
 def test_external_worker_handoff_blockers_still_exist_as_one_runtime_unit() -> None:
