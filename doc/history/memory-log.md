@@ -65,6 +65,10 @@
 - `P1-CLN-002` 到 `P1-CLN-004` 这轮没有转入物理迁移，只做了阻塞评估收口：`FrozenCapabilityBoundary` 现在额外保存 `migration_blocker_refs` 和 `migration_blocker_summary`，把“为什么现在还不能迁”写成结构化真相。
 - `backend/tests/test_mainline_truth.py` 现在会直接扫描共享 contracts、`ticket-result-submit` 上传桥接点，以及 `worker-runtime` API / 投影 / CLI / repository schema 的源码锚点，避免后续把阻塞原因又写回口头判断。
 - 这轮最终验证结果是：`py -m pytest tests/ -q` -> `414 passed`，`npm run build` -> passed，`npm run test:run` -> `53 passed`；其中后端仍需用 `py -m pytest`，因为当前 shell 下裸 `pytest` 不在 PATH。
+- 首页 UI 真实缺口第一轮已经收口：`InboxWell`、`Workflow River`、`WorkforcePanel`、`EventTicker` 在初次加载时都改成真实骨架屏，不再只靠一条全局 loading 文案占位。
+- `Workflow River` 这轮没有重做视觉语言，只在现有粒子和 Board Gate 提醒上补了两件事：窄屏保留横向河道表达，`prefers-reduced-motion` 下关闭漂移动画和呼吸动画。
+- 新增前端回归测试覆盖首页 loading / board gate 语义：`BoardGateIndicator`、`InboxWell`、`WorkflowRiver`、`WorkforcePanel`、`EventTicker` 现在都有对应断言。
+- 本轮完整验证结果更新为：后端先确认 `pytest tests/ -q` 在当前 shell 下仍报 `CommandNotFoundException`，再用 `py -m pytest tests/ -q` 实测 `414 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `59 passed`。
 
 ## Current Working Set
 

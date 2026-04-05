@@ -1,4 +1,5 @@
 import type { InboxItem } from '../../types/domain'
+import { LoadingSkeleton } from '../shared/LoadingSkeleton'
 
 type InboxWellProps = {
   items: InboxItem[]
@@ -15,7 +16,7 @@ export function InboxWell({ items, loading, onOpenReview, onOpenMeeting, onOpenI
         <p className="eyebrow">Inbox</p>
         <h2 id="inbox-title">Board actions and governance pressure</h2>
       </div>
-      {loading ? <p className="muted-copy">Loading current inbox...</p> : null}
+      {loading ? <LoadingSkeleton lines={5} /> : null}
       {!loading && items.length === 0 ? <p className="muted-copy">No board escalations are waiting right now.</p> : null}
       <div className="inbox-item-list">
         {items.map((item) => {

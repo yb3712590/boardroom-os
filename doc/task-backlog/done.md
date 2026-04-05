@@ -1697,6 +1697,14 @@
 | P2-UI-007 | 性能优化（懒加载、debounce） | 3h |
 | P2-UI-008 | UI 打磨测试 | 3h |
 
+完成补记（2026-04-05）：
+
+- `P2-UI-001`：保留现有 `Workflow River` 粒子表达，只补 `prefers-reduced-motion` 降级和更稳定的滚动容器，不重做视觉语言
+- `P2-UI-002`：首页河道分支与顶栏 `Board Gate` 指示器继续共用同一套 armed / clear 语义与呼吸节奏
+- `P2-UI-003`：`InboxWell`、`Workflow River`、`WorkforcePanel`、`EventTicker` 在初次加载时都改成真实骨架屏，不再只靠一条全局 loading 文案
+- `P2-UI-004`：窄屏下保留横向五阶段河道和主干语义，不再把五阶段直接打散成纵向卡片
+- `P2-UI-008`：补了 `BoardGateIndicator`、`InboxWell`、`WorkflowRiver`、`WorkforcePanel`、`EventTicker` 的最小前端回归测试
+
 ### 4.5 文档 (P2-DOC-001 到 P2-DOC-005)
 
 | ID | 标题 | 预估 |
@@ -1706,6 +1714,11 @@
 | P2-DOC-003 | 编写运维指南 | 3h |
 | P2-DOC-004 | 更新 memory-log.md | 2h |
 | P2-DOC-005 | 编写 API 文档 | 3h |
+
+完成补记（2026-04-05）：
+
+- `P2-DOC-002`：`doc/TODO.md` 现已把 `P2-D` 改成“第一轮真实缺口收口已完成、剩余任务继续后置推进”的真实状态
+- `P2-DOC-004`：`doc/history/memory-log.md` 已追加这轮会影响后续判断的事实，包括分区骨架屏、窄屏河道保留和 reduced-motion 兼容
 
 ---
 
