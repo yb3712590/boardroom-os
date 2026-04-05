@@ -155,9 +155,11 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "worker_admin_action_log",
         ),
         code_refs=(
-            "backend/app/api/worker_admin.py",
-            "backend/app/api/worker_admin_auth.py",
-            "backend/app/core/worker_admin.py",
+            "backend/app/_frozen/worker_admin/api/worker_admin.py",
+            "backend/app/_frozen/worker_admin/api/worker_admin_auth.py",
+            "backend/app/_frozen/worker_admin/api/worker_admin_projections.py",
+            "backend/app/_frozen/worker_admin/core/worker_admin.py",
+            "backend/app/_frozen/worker_admin/cli/worker_admin_auth_cli.py",
         ),
         entrypoint_refs=(
             "backend/app/api/worker_admin.py",
@@ -182,12 +184,12 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/worker_admin_auth_cli.py",
         ),
         migration_blocker_summary=(
-            "worker-admin 仍要把 API、auth、projection 和 CLI 作为同一组入口一起迁，当前只完成了前置拆分。"
+            "worker-admin 实现已迁入 `_frozen/worker_admin`，但 API、auth、projection 和 CLI 兼容壳仍需成组保留。"
         ),
         notes=(
             "HTTP 管理面和操作人令牌链仍保留在仓库中，但当前默认不继续扩张。"
             "它现在是保留的运维面，不是主线业务依赖。"
-            "P1-CLN-001 的前置拆分已完成，但 `_frozen/` 物理迁移仍未启动。"
+            "P1-CLN-001 这轮已把真实实现迁入 `_frozen/worker_admin`，旧入口当前只保留兼容壳。"
         ),
     ),
     FrozenCapabilityBoundary(

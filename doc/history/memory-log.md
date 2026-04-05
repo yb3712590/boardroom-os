@@ -98,6 +98,10 @@
 - `backend/app/main.py` 现在只通过 `include_registered_routers(app)` 挂载路由；`backend/app/core/api_surface.py`、`backend/tests/test_api_surface.py`、`backend/tests/test_mainline_truth.py` 已改成直接复用这份组顺序并回归 frozen 组仍被注册。
 - 这轮没有改任何 HTTP 路径、鉴权、命令契约或投影结构；变化只在内部挂载边界和对应测试。
 - 本轮验证结果更新为：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用重定向方式执行 `py -m pytest tests/ -q` 实测 `420 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
+- `P1-CLN-001` 这轮已真实完成 shim 迁移：`worker-admin` 的 API、auth、projection、core 和 CLI 实现都迁入了 `backend/app/_frozen/worker_admin/`，旧入口只保留薄转发。
+- `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：`worker-admin` 的 `code_refs` 已切到 `_frozen/worker_admin`，但兼容壳仍保留，所以还不能把它写成“入口已删除”。
+- `backend/tests/conftest.py` 这轮改成直接 monkeypatch `_frozen.worker_admin.core.worker_admin`，避免 shim 导出层吞掉测试里的时间注入。
+- 本轮完整验证结果更新为：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用 `py -m pytest tests/ -q` 实测 `422 passed`；前端 `npm.cmd run build` -> passed，`npm.cmd run test:run` -> `64 passed`。
 
 ## Current Working Set
 

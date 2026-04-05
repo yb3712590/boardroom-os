@@ -393,3 +393,37 @@ def test_external_worker_handoff_projection_builder_uses_worker_scope_helpers() 
     assert "list_sessions(" in worker_runtime_section
     assert "list_delivery_grants(" in worker_runtime_section
     assert "list_auth_rejections(" in worker_runtime_section
+
+
+def test_worker_admin_boundary_points_to_frozen_implementation_files() -> None:
+    worker_admin_boundary = {entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES}["worker_admin"]
+
+    assert worker_admin_boundary.code_refs == (
+        "backend/app/_frozen/worker_admin/api/worker_admin.py",
+        "backend/app/_frozen/worker_admin/api/worker_admin_auth.py",
+        "backend/app/_frozen/worker_admin/api/worker_admin_projections.py",
+        "backend/app/_frozen/worker_admin/core/worker_admin.py",
+        "backend/app/_frozen/worker_admin/cli/worker_admin_auth_cli.py",
+    )
+    assert worker_admin_boundary.entrypoint_refs == (
+        "backend/app/api/worker_admin.py",
+        "backend/app/api/worker_admin_projections.py",
+        "backend/app/worker_admin_auth_cli.py",
+    )
+    assert "兼容壳" in worker_admin_boundary.notes
+
+
+def test_worker_admin_legacy_entrypoints_are_thin_shims() -> None:
+    worker_admin_api_source = _read_repo_text("backend/app/api/worker_admin.py")
+    worker_admin_auth_source = _read_repo_text("backend/app/api/worker_admin_auth.py")
+    worker_admin_projection_source = _read_repo_text("backend/app/api/worker_admin_projections.py")
+    worker_admin_core_source = _read_repo_text("backend/app/core/worker_admin.py")
+    worker_admin_cli_source = _read_repo_text("backend/app/worker_admin_auth_cli.py")
+
+    assert "from app._frozen.worker_admin.api.worker_admin import router" in worker_admin_api_source
+    assert "from app._frozen.worker_admin.api.worker_admin_auth import (" in worker_admin_auth_source
+    assert "from app._frozen.worker_admin.api.worker_admin_projections import router" in (
+        worker_admin_projection_source
+    )
+    assert "from app._frozen.worker_admin.core.worker_admin import (" in worker_admin_core_source
+    assert "from app._frozen.worker_admin.cli.worker_admin_auth_cli import main" in worker_admin_cli_source

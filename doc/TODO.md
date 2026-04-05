@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-06 实测）
 
-- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过重定向方式执行 `py -m pytest tests/ -q` 完成全量复核，`420 passed`
+- backend：当前 shell 的裸 `pytest` 仍不在 PATH；本轮先确认 `pytest tests/ -q` 直接报 `CommandNotFoundException`，再通过重定向方式执行 `py -m pytest tests/ -q` 完成全量复核，`422 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `64 passed`
 
 ## 现在先做什么
@@ -44,11 +44,11 @@
 
 ### `P2-B`：代码瘦身与冻结能力隔离
 
-主线关系：**后置收口**；当前阶段只做边界清楚、入口清楚、依赖清楚，不直接做 `_frozen/` 物理迁移。
+主线关系：**后置收口**；当前阶段仍以边界清楚、入口清楚、依赖清楚为主，但 `worker-admin` 已完成带兼容壳的 shim 物理迁移，其余冻结切片暂不直接做无壳迁移。
 
 - [x] `P1-CLN-005`：已把冻结能力的真实入口、主线依赖、测试归属和迁移前置条件写进 `backend/app/core/mainline_truth.py`，并用 `backend/tests/test_mainline_truth.py` 固化
 - [x] `P1-CLN-006`：已把 frozen 相关测试边界收口成可执行断言，明确哪些测试属于冻结入口回归，哪些不是主链闭环测试
-- [ ] `P1-CLN-001`：已完成前置拆分，当前转为进行中；`worker-admin` 共用的 scope / bootstrap / session / grant helper 已抽到 `worker_scope_ops.py`，`worker-admin` 专属 projection 入口已从通用 `projections.py` 分离，但 `_frozen/` 物理迁移仍未启动
+- [x] `P1-CLN-001`：已完成；`worker-admin` 真实实现已迁入 `backend/app/_frozen/worker_admin/`，现有 API / auth / projection / CLI / core 入口只保留兼容壳，不改 HTTP 路径、鉴权规则和 CLI 调用方式
 - [ ] `P1-CLN-002`：已进入进行中；主线 `project-init / ticket-create / CEO 建票 / 审批 follow-up 建票` 已改成统一从 workflow/default 解析 scope，API 入口仍保留弃用兼容；runtime、projection 和冻结 contracts 的多租户 shape 仍未拆
 - [ ] `P1-CLN-003`：已进入进行中；`ticket-result-submit` 已不再直接消费 upload session，当前改成“upload session -> ticket-artifact-import-upload -> artifact_ref -> ticket-result-submit”，但 upload 导入入口和 upload session 存储仍在，所以 `_frozen/` 物理迁移前置条件还没全满足
 - [ ] `P1-CLN-004`：已进入进行中；`/api/v1/projections/worker-runtime` 已从通用 `projections.py` 拆到独立入口，`worker-runtime` 管理读面已收口到 `worker_scope_ops.py` helper，但 `/api/v1/worker-runtime`、`worker_auth_cli.py` 和 `worker_bootstrap/session/delivery-grant` schema 仍需成组保留
@@ -56,6 +56,9 @@
 
 本轮完成补记：
 
+- `P1-CLN-001` 这轮已真实进入 shim 迁移：`backend/app/_frozen/worker_admin/` 现在承接 `worker-admin` 的 API、auth、projection、core 和 CLI 实现，旧入口只做薄转发
+- `backend/tests/test_mainline_truth.py` 这轮新增回归，直接断言 `worker-admin` 的 `code_refs` 已切到 `_frozen/worker_admin`，同时保留旧入口作为兼容壳
+- `backend/tests/conftest.py` 这轮同步改成直接 monkeypatch `_frozen.worker_admin.core.worker_admin`，避免测试仍盯着旧 shim 模块
 - `P1-CLN-002` 这轮已从“未开始”推进到“进行中”：`ProjectInitCommand`、`TicketCreateCommand` 已不再暴露 `tenant_id/workspace_id`，主线 handler 改成统一从 workflow/default 解析 scope
 - `/api/v1/commands/project-init` 与 `/api/v1/commands/ticket-create` 当前仍保留弃用兼容输入，旧字段还能传，但不会再影响主线行为
 - 审批 follow-up、closeout 和会议室建票这轮也已补齐 workflow scope 注入，避免绕过 `handle_ticket_create(...)` 时把 scope 丢回默认值
@@ -68,7 +71,7 @@
 - `P1-CLN-001`、`P1-CLN-003`、`P1-CLN-004` 这轮继续完成了“路由挂载边界收口”这层前置拆分：新增 `backend/app/api/router_registry.py`，把 `artifact-uploads`、`worker-admin`、`worker-runtime` 及其 projection 统一注册成 frozen 路由组，`main.py` 不再手工散挂这些入口
 - `backend/app/core/api_surface.py`、`backend/tests/test_api_surface.py`、`backend/tests/test_mainline_truth.py` 这轮已统一复用同一套路由组顺序，并直接回归 frozen 组仍被注册、仍按现有顺序挂载；这轮没有改任何 HTTP 路径和鉴权行为
 
-对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001`、`P1-CLN-002`、`P1-CLN-003`、`P1-CLN-004` 进行中，且还没满足物理迁移前置条件
+对应任务库：已完成 `P1-CLN-001`、`P1-CLN-005`、`P1-CLN-006`；`P1-CLN-002`、`P1-CLN-003`、`P1-CLN-004` 进行中，且还没满足无壳物理迁移前置条件
 
 ### `P2-C`：检索、Provider 路由、发布准备
 

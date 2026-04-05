@@ -40,7 +40,7 @@ def client(db_path):
 def set_ticket_time(monkeypatch):
     import app.core.artifact_handlers as artifact_handlers
     import app.api.worker_runtime as worker_runtime_api
-    import app.core.worker_admin as worker_admin
+    import app._frozen.worker_admin.core.worker_admin as worker_admin
     import app.core.worker_scope_ops as worker_scope_ops
     import app.core.worker_runtime as worker_runtime_core
     import app.core.ticket_handlers as ticket_handlers

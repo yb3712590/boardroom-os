@@ -1635,7 +1635,8 @@
 > 当前状态补记：这组任务现在拆成两段看。
 >
 > - `P1-CLN-005`、`P1-CLN-006` 已在 2026-04-05 收口：冻结能力的真实入口、主线依赖、测试归属和迁移前置条件已经写进 `backend/app/core/mainline_truth.py`，并由 `backend/tests/test_mainline_truth.py` 固化
-> - `P1-CLN-001` 到 `P1-CLN-004` 当前仍未关闭，且还没进入 `_frozen/` 物理迁移：多租户 scope 仍是共享数据结构，upload 导入入口和 session 存储仍保留，外部 worker handoff 也还和现有投影与 schema 紧耦合；最新前置拆分进展以 `task-backlog/active.md` 为准
+> - `P1-CLN-001` 已在 2026-04-06 收口为 shim 迁移完成：`worker-admin` 真实实现已迁入 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 入口只保留兼容壳
+> - `P1-CLN-002` 到 `P1-CLN-004` 当前仍未关闭，也还没进入无壳物理迁移：多租户 scope 仍是共享数据结构，upload 导入入口和 session 存储仍保留，外部 worker handoff 也还和现有投影与 schema 紧耦合；最新前置拆分进展以 `task-backlog/active.md` 为准
 
 | ID | 标题 | 预估 |
 |----|------|------|
@@ -1645,6 +1646,12 @@
 | P1-CLN-004 | 移动远程 handoff 代码到 _frozen/ | 2h |
 | P1-CLN-005 | 更新 import 路径 | 3h |
 | P1-CLN-006 | 标记或移除 frozen 测试 | 4h |
+
+完成补记（2026-04-06）：
+
+- `P1-CLN-001` 本轮已按 shim 迁移收口：新增 `backend/app/_frozen/worker_admin/`，承接 API、auth、projection、core 和 CLI 的真实实现
+- `app/api/worker_admin.py`、`app/api/worker_admin_auth.py`、`app/api/worker_admin_projections.py`、`app/core/worker_admin.py`、`app/worker_admin_auth_cli.py` 当前只保留兼容导出，不改 HTTP 路径、鉴权语义或 CLI 调用方式
+- `backend/app/core/mainline_truth.py`、`backend/tests/test_mainline_truth.py`、`backend/tests/conftest.py` 已同步成新口径：代码真相已切到 `_frozen/worker_admin`，测试时间注入也改为命中新实现
 
 ---
 
