@@ -58,3 +58,4 @@
 - `multi_tenant_scope` 这轮已从主线 command 侧去掉 `tenant_id/workspace_id`：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票现在统一从 workflow/default 解析 scope
 - 命令 API 为了兼容旧调用，当前仍接受 `tenant_id/workspace_id`，但这两个字段不再驱动主线路径，也不再作为主线 command 契约的一部分
 - `multi_tenant_scope` 当前仍不能按目录整体搬走，因为 runtime contracts、worker-admin / worker-runtime contracts 和共享读面还保留这组多租户数据形状
+- 冻结边界当前不只记录入口和阻塞摘要；`backend/app/core/mainline_truth.py` 已把对应 `api_surface_groups` 和共享存储表锚点也固化成代码真相，并由 `backend/tests/test_mainline_truth.py` 持续回归

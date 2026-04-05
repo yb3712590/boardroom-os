@@ -80,6 +80,9 @@
 
 ### 2026-04-06
 
+- `P2-B` 这轮继续停在保守收口，没有启动 `_frozen/` 物理迁移；新增的是“成组迁移清单”这层代码真相，而不是功能变更。
+- `backend/app/core/mainline_truth.py` 里的 `FrozenCapabilityBoundary` 现在会显式记录每个冻结切片对应的 `api_surface_groups` 和 `storage_table_refs`，把 route family 与共享存储锚点收口成机器可读事实。
+- `backend/tests/test_mainline_truth.py` 这轮新增回归：不仅检查入口文件和阻塞摘要，还会直接校验冻结边界引用的 API 分组名仍在 `api_surface.py` 中受支持、共享表名仍能在 `repository.py` 的建表语句里找到。
 - `P1-CLN-003` 已从阻塞评估推进到真实进行中：`TicketWrittenArtifact` 不再接受 `upload_session_id`，`ticket-result-submit` 现在只处理 inline 内容或已有 `artifact_ref`。
 - 新增了控制面 `POST /api/v1/commands/ticket-artifact-import-upload` 和 `worker-runtime` 同构命令；上传会话完成后先导入为普通 artifact，再进入结果提交。
 - `worker-runtime` 执行包的 `command_endpoints` 现在多了 `ticket_artifact_import_upload_url`，worker delivery token 也补了同名命令范围，外部 handoff 保持兼容。

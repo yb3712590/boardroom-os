@@ -64,6 +64,7 @@
 - `artifact_uploads` 和 upload session 存储仍保留，所以 `_frozen/` 物理迁移前置条件还没完全满足；这轮目标只是拆掉主线桥接点
 - `P1-CLN-004` 这轮已从“未开始”推进到“进行中”：`/api/v1/projections/worker-runtime` 已拆到独立 `worker_runtime_projections.py`，`build_worker_runtime_projection(...)` 也已改成复用 `worker_scope_ops.py` 的 binding/session/grant/rejection helper
 - `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：handoff 的独立 projection 入口前置拆分已经完成，但 runtime 路由、CLI 和三张 handoff schema 仍需成组保留，所以还不能启动 `_frozen/` 物理迁移
+- `P1-CLN-001` 到 `P1-CLN-004` 这轮继续补的是“成组迁移清单”而不是物理迁移：`FrozenCapabilityBoundary` 新增 `api_surface_groups` 和 `storage_table_refs`，把冻结边界对应的 route family 和共享表锚点也固化进代码真相源，并由 `backend/tests/test_mainline_truth.py` 直接回归
 
 对应任务库：已完成 `P1-CLN-005`、`P1-CLN-006`；`P1-CLN-001`、`P1-CLN-002`、`P1-CLN-003`、`P1-CLN-004` 进行中，且还没满足物理迁移前置条件
 

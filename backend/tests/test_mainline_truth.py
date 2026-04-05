@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.core.api_surface import API_SURFACE_GROUP_ORDER, collect_api_surface_groups
 from app.core.approval_handlers import FOLLOWUP_OWNER_ROLE_TO_PROFILE
 from app.core.mainline_truth import (
     FROZEN_CAPABILITY_BOUNDARIES,
@@ -59,6 +60,7 @@ def test_mainline_truth_records_frontend_followup_mapping_as_current_reality() -
 def test_frozen_capability_boundaries_match_current_mounted_routes_and_documented_refs() -> None:
     app = create_app()
     route_paths = {route.path for route in app.routes}
+    api_surface_groups = collect_api_surface_groups(app)
     boundaries_by_slug = {entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES}
 
     assert set(boundaries_by_slug) == {
@@ -68,11 +70,52 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
         "external_worker_handoff",
     }
     assert boundaries_by_slug["worker_admin"].route_prefixes == ("/api/v1/worker-admin",)
+    assert boundaries_by_slug["worker_admin"].api_surface_groups == (
+        "worker-admin",
+        "worker-admin-projections",
+    )
+    assert boundaries_by_slug["worker_admin"].storage_table_refs == (
+        "worker_bootstrap_state",
+        "worker_bootstrap_issue",
+        "worker_session",
+        "worker_delivery_grant",
+        "worker_admin_token_issue",
+        "worker_admin_auth_rejection_log",
+        "worker_admin_action_log",
+    )
     assert boundaries_by_slug["artifact_uploads_and_object_store"].route_prefixes == (
         "/api/v1/artifact-uploads",
     )
+    assert boundaries_by_slug["artifact_uploads_and_object_store"].api_surface_groups == (
+        "artifact-uploads",
+        "commands",
+        "worker-runtime",
+    )
+    assert boundaries_by_slug["artifact_uploads_and_object_store"].storage_table_refs == (
+        "artifact_upload_session",
+        "artifact_upload_part",
+    )
     assert boundaries_by_slug["external_worker_handoff"].route_prefixes == ("/api/v1/worker-runtime",)
+    assert boundaries_by_slug["external_worker_handoff"].api_surface_groups == (
+        "worker-runtime",
+        "worker-runtime-projections",
+    )
+    assert boundaries_by_slug["external_worker_handoff"].storage_table_refs == (
+        "worker_bootstrap_state",
+        "worker_session",
+        "worker_delivery_grant",
+        "worker_auth_rejection_log",
+    )
     assert boundaries_by_slug["multi_tenant_scope"].route_prefixes == ()
+    assert boundaries_by_slug["multi_tenant_scope"].api_surface_groups == (
+        "commands",
+        "projections",
+        "worker-admin",
+        "worker-admin-projections",
+        "worker-runtime",
+        "worker-runtime-projections",
+    )
+    assert boundaries_by_slug["multi_tenant_scope"].storage_table_refs == ()
 
     assert boundaries_by_slug["worker_admin"].entrypoint_refs == (
         "backend/app/api/worker_admin.py",
@@ -149,6 +192,12 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
     for entry in FROZEN_CAPABILITY_BOUNDARIES:
         for route_prefix in entry.route_prefixes:
             assert any(path.startswith(route_prefix) for path in route_paths)
+        for group_name in entry.api_surface_groups:
+            assert group_name in api_surface_groups
+        for table_name in entry.storage_table_refs:
+            assert f"CREATE TABLE IF NOT EXISTS {table_name}" in _read_repo_text(
+                "backend/app/db/repository.py"
+            )
         for ref in entry.code_refs + entry.entrypoint_refs + entry.mainline_dependency_refs + entry.test_refs:
             assert (REPO_ROOT / ref).exists(), ref
 
@@ -170,6 +219,8 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     assert artifact_boundary.migration_blocker_summary == (
         "主线 result-submit 已与 upload session 解耦，但 upload 导入入口和 artifact upload session 存储仍需保留。"
     )
+    assert artifact_boundary.api_surface_groups == ("artifact-uploads", "commands", "worker-runtime")
+    assert artifact_boundary.storage_table_refs == ("artifact_upload_session", "artifact_upload_part")
 
     scope_boundary = boundaries_by_slug["multi_tenant_scope"]
     assert "shared data shape" in scope_boundary.notes
@@ -182,6 +233,15 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     assert scope_boundary.migration_blocker_summary == (
         "主线 command 侧已去掉 tenant_id/workspace_id，但 runtime 和冻结 contracts 仍保留多租户 shape。"
     )
+    assert scope_boundary.api_surface_groups == (
+        "commands",
+        "projections",
+        "worker-admin",
+        "worker-admin-projections",
+        "worker-runtime",
+        "worker-runtime-projections",
+    )
+    assert scope_boundary.storage_table_refs == ()
 
     handoff_boundary = boundaries_by_slug["external_worker_handoff"]
     assert handoff_boundary.migration_blocker_refs == (
@@ -194,6 +254,23 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     assert handoff_boundary.migration_blocker_summary == (
         "worker-runtime 路由、投影、CLI 和 worker bootstrap/session/delivery-grant schema 仍需成组保留。"
     )
+    assert handoff_boundary.api_surface_groups == ("worker-runtime", "worker-runtime-projections")
+    assert handoff_boundary.storage_table_refs == (
+        "worker_bootstrap_state",
+        "worker_session",
+        "worker_delivery_grant",
+        "worker_auth_rejection_log",
+    )
+
+
+def test_frozen_capability_api_surface_groups_stay_within_documented_group_order() -> None:
+    allowed_group_names = set(API_SURFACE_GROUP_ORDER)
+
+    assert allowed_group_names >= {
+        group_name
+        for entry in FROZEN_CAPABILITY_BOUNDARIES
+        for group_name in entry.api_surface_groups
+    }
 
 
 def test_worker_admin_boundary_uses_dedicated_projection_entrypoint() -> None:

@@ -28,6 +28,7 @@
 > `backend/tests/test_api.py` 已补回归，覆盖控制面导入、路径越界拒绝、worker-runtime 签名导入后再提交；`backend/tests/test_mainline_truth.py` 也已改成新阻塞口径。
 > `P1-CLN-004` 这轮已从“未开始（阻塞评估已固化）”推进到“进行中”：`/api/v1/projections/worker-runtime` 已拆到独立 `worker_runtime_projections.py`，`build_worker_runtime_projection(...)` 已改成复用 `worker_scope_ops.py` 的 `list_binding_admin_views / list_sessions / list_delivery_grants / list_auth_rejections`。
 > `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新阻塞口径：独立 projection 入口前置拆分已经完成，但 `/api/v1/worker-runtime`、`worker_auth_cli.py` 和三张 handoff schema 仍是成组阻塞点。
+> 本轮继续把 `P1-CLN-001` 到 `P1-CLN-004` 的“成组迁移单元”写实：`FrozenCapabilityBoundary` 新增 `api_surface_groups` 与 `storage_table_refs`，把 route family 和共享表锚点也固化进代码真相源；对应回归会直接校验这些组名和 `repository.py` 里的建表语句是否仍存在。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|

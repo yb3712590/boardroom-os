@@ -37,6 +37,8 @@ class FrozenCapabilityBoundary:
     label: str
     boundary_status: str
     route_prefixes: tuple[str, ...]
+    api_surface_groups: tuple[str, ...]
+    storage_table_refs: tuple[str, ...]
     code_refs: tuple[str, ...]
     entrypoint_refs: tuple[str, ...]
     mainline_dependency_refs: tuple[str, ...]
@@ -142,6 +144,16 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         label="Worker admin control plane",
         boundary_status="FROZEN_PRESENT",
         route_prefixes=("/api/v1/worker-admin",),
+        api_surface_groups=("worker-admin", "worker-admin-projections"),
+        storage_table_refs=(
+            "worker_bootstrap_state",
+            "worker_bootstrap_issue",
+            "worker_session",
+            "worker_delivery_grant",
+            "worker_admin_token_issue",
+            "worker_admin_auth_rejection_log",
+            "worker_admin_action_log",
+        ),
         code_refs=(
             "backend/app/api/worker_admin.py",
             "backend/app/api/worker_admin_auth.py",
@@ -183,6 +195,15 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         label="Multi-tenant scope binding",
         boundary_status="FROZEN_PRESENT",
         route_prefixes=(),
+        api_surface_groups=(
+            "commands",
+            "projections",
+            "worker-admin",
+            "worker-admin-projections",
+            "worker-runtime",
+            "worker-runtime-projections",
+        ),
+        storage_table_refs=(),
         code_refs=(
             "backend/app/contracts/worker_admin.py",
             "backend/app/contracts/worker_runtime.py",
@@ -227,6 +248,8 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         label="Artifact uploads and object store",
         boundary_status="FROZEN_PRESENT",
         route_prefixes=("/api/v1/artifact-uploads",),
+        api_surface_groups=("artifact-uploads", "commands", "worker-runtime"),
+        storage_table_refs=("artifact_upload_session", "artifact_upload_part"),
         code_refs=(
             "backend/app/api/artifact_uploads.py",
             "backend/app/core/artifact_uploads.py",
@@ -267,6 +290,13 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         label="External worker handoff",
         boundary_status="FROZEN_PRESENT",
         route_prefixes=("/api/v1/worker-runtime",),
+        api_surface_groups=("worker-runtime", "worker-runtime-projections"),
+        storage_table_refs=(
+            "worker_bootstrap_state",
+            "worker_session",
+            "worker_delivery_grant",
+            "worker_auth_rejection_log",
+        ),
         code_refs=(
             "backend/app/api/worker_runtime.py",
             "backend/app/core/worker_runtime.py",
