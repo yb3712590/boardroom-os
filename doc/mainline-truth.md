@@ -55,9 +55,9 @@
 当前补记：
 
 - `artifact_uploads_and_object_store` 不能误判成“整块冻结死代码”，因为主线虽然已经不再让 `ticket-result-submit` 直接消费 upload session，但当前仍保留独立的 `ticket-artifact-import-upload` 导入入口
-- 这轮已把可选对象存储实现拆到 `backend/app/_frozen/object_store.py`；`backend/app/core/artifact_store.py` 现在只保留主线必需的本地 artifact 存储、upload staging 和统一入口
+- 这轮已把可选对象存储实现拆到 `backend/app/_frozen/object_store.py`；`backend/app/core/artifact_store.py` 现在只保留主线必需的本地 artifact 存储、upload staging 和统一入口，这轮又进一步把 object-store backend 的建链细节也收进了 `_frozen/object_store.py`
 - `worker-admin` 这轮已完成 shim 物理迁移：真实实现现在位于 `backend/app/_frozen/worker_admin/`，但 `app/api/worker_admin*.py`、`app/core/worker_admin.py` 和 `app/worker_admin_auth_cli.py` 仍保留兼容入口
 - `multi_tenant_scope` 这轮已从主线 command 侧去掉 `tenant_id/workspace_id`：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票现在统一从 workflow/default 解析 scope
 - 命令 API 为了兼容旧调用，当前仍接受 `tenant_id/workspace_id`，但这两个字段不再驱动主线路径，也不再作为主线 command 契约的一部分
-- `multi_tenant_scope` 当前仍不能按目录整体搬走，因为 runtime contracts、worker-admin / worker-runtime contracts 和共享读面还保留这组多租户数据形状
+- `multi_tenant_scope` 当前仍不能按目录整体搬走，因为 runtime contracts、worker-admin / worker-runtime contracts 和共享读面还保留这组多租户数据形状；这轮只是在 `backend/app/contracts/scope.py` 里把这组 shared scope shape 收成了单点 contract
 - 冻结边界当前不只记录入口和阻塞摘要；`backend/app/core/mainline_truth.py` 已把对应 `api_surface_groups` 和共享存储表锚点也固化成代码真相，并由 `backend/tests/test_mainline_truth.py` 持续回归

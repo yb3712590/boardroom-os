@@ -6,17 +6,16 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.contracts.common import StrictModel
+from app.contracts.scope import TenantWorkspaceScope
 from app.contracts.commands import TicketEscalationPolicy
 
 
-class CompileRequestMeta(StrictModel):
+class CompileRequestMeta(TenantWorkspaceScope):
     compile_request_id: str = Field(min_length=1)
     ticket_id: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
-    tenant_id: str = Field(min_length=1)
-    workspace_id: str = Field(min_length=1)
 
 
 class CompileRequestControlRefs(StrictModel):
@@ -26,12 +25,10 @@ class CompileRequestControlRefs(StrictModel):
     output_schema_version: int = Field(ge=1)
 
 
-class CompileRequestWorkerBinding(StrictModel):
+class CompileRequestWorkerBinding(TenantWorkspaceScope):
     lease_owner: str = Field(min_length=1)
     employee_id: str = Field(min_length=1)
     employee_role_type: str = Field(min_length=1)
-    tenant_id: str = Field(min_length=1)
-    workspace_id: str = Field(min_length=1)
     skill_profile: dict[str, Any] = Field(default_factory=dict)
     personality_profile: dict[str, Any] = Field(default_factory=dict)
     aesthetic_profile: dict[str, Any] = Field(default_factory=dict)
@@ -320,15 +317,13 @@ class CompileManifest(StrictModel):
     final_bundle_stats: CompileManifestFinalBundleStats
 
 
-class CompiledExecutionPackageMeta(StrictModel):
+class CompiledExecutionPackageMeta(TenantWorkspaceScope):
     compile_request_id: str = Field(min_length=1)
     ticket_id: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
     lease_owner: str = Field(min_length=1)
-    tenant_id: str = Field(min_length=1)
-    workspace_id: str = Field(min_length=1)
     compiler_version: str = Field(min_length=1)
 
 

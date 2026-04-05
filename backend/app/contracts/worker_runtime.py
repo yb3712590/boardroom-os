@@ -13,6 +13,7 @@ from app.contracts.commands import (
 )
 from app.contracts.common import StrictModel
 from app.contracts.runtime import RenderedExecutionPayload
+from app.contracts.scope import TenantWorkspaceScope
 
 
 class WorkerAssignmentItem(StrictModel):
@@ -25,10 +26,8 @@ class WorkerAssignmentItem(StrictModel):
     delivery_expires_at: datetime
 
 
-class WorkerAssignmentsData(StrictModel):
+class WorkerAssignmentsData(TenantWorkspaceScope):
     worker_id: str = Field(min_length=1)
-    tenant_id: str = Field(min_length=1)
-    workspace_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     session_token: str = Field(min_length=1)
     session_expires_at: datetime
@@ -46,10 +45,8 @@ class WorkerCommandEndpoints(StrictModel):
     ticket_artifact_import_upload_url: str = Field(min_length=1)
 
 
-class WorkerExecutionPackageData(StrictModel):
+class WorkerExecutionPackageData(TenantWorkspaceScope):
     worker_id: str = Field(min_length=1)
-    tenant_id: str = Field(min_length=1)
-    workspace_id: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
     ticket_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)

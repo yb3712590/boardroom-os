@@ -118,8 +118,7 @@ class ArtifactStore:
         upload_part_size_limit_bytes: int = 5 * 1024 * 1024,
         upload_max_size_bytes: int = 100 * 1024 * 1024,
         upload_max_part_count: int = 10_000,
-        object_store_bucket: str | None = None,
-        object_store_client: frozen_object_store.ObjectStoreClient | None = None,
+        object_store_backend: frozen_object_store.S3CompatibleObjectStoreBackend | None = None,
     ):
         self.root = root
         self.upload_staging_root = upload_staging_root or root.parent / "artifact_uploads"
@@ -127,18 +126,7 @@ class ArtifactStore:
         self.upload_max_size_bytes = upload_max_size_bytes
         self.upload_max_part_count = upload_max_part_count
         self._local_backend = _LocalFileArtifactBackend(root)
-        self._object_store_backend = (
-            frozen_object_store.S3CompatibleObjectStoreBackend(
-                bucket=object_store_bucket,
-                client=object_store_client,
-                object_key_builder=build_artifact_object_key,
-                logical_path_normalizer=normalize_artifact_logical_path,
-                materialized_artifact_factory=MaterializedArtifact,
-                storage_backend_label=STORAGE_BACKEND_OBJECT_STORE,
-            )
-            if object_store_bucket and object_store_client is not None
-            else None
-        )
+        self._object_store_backend = object_store_backend
 
     @property
     def storage_backend(self) -> str:
@@ -346,19 +334,18 @@ class ArtifactStore:
 
 
 def build_artifact_store(settings) -> ArtifactStore:
-    object_store_client = None
-    object_store_bucket = None
-    if settings.artifact_object_store_enabled:
-        if not settings.artifact_object_store_bucket:
-            raise RuntimeError("Object store bucket is required when object storage is enabled.")
-        object_store_client = frozen_object_store.build_s3_compatible_object_store_client(settings)
-        object_store_bucket = settings.artifact_object_store_bucket
+    object_store_backend = frozen_object_store.build_optional_artifact_store_backend(
+        settings=settings,
+        object_key_builder=build_artifact_object_key,
+        logical_path_normalizer=normalize_artifact_logical_path,
+        materialized_artifact_factory=MaterializedArtifact,
+        storage_backend_label=STORAGE_BACKEND_OBJECT_STORE,
+    )
     return ArtifactStore(
         settings.artifact_store_root,
         upload_staging_root=settings.artifact_upload_staging_root,
         upload_part_size_limit_bytes=settings.artifact_upload_part_size_limit_bytes,
         upload_max_size_bytes=settings.artifact_upload_max_size_bytes,
         upload_max_part_count=settings.artifact_upload_max_part_count,
-        object_store_bucket=object_store_bucket,
-        object_store_client=object_store_client,
+        object_store_backend=object_store_backend,
     )

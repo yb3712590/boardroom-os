@@ -19,6 +19,8 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 from app.core.runtime import SUPPORTED_RUNTIME_OUTPUT_SCHEMAS, SUPPORTED_RUNTIME_ROLE_PROFILES
+from app.contracts.worker_admin import WorkerAdminBindingItem, WorkerAdminIssueBootstrapRequest
+from app.contracts.worker_runtime import WorkerAssignmentsData
 from app.main import create_app
 
 
@@ -239,6 +241,7 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     assert "shared data shape" in scope_boundary.notes
     assert any("Physical migration is blocked" in item for item in scope_boundary.migration_preconditions)
     assert scope_boundary.migration_blocker_refs == (
+        "backend/app/contracts/scope.py",
         "backend/app/contracts/runtime.py",
         "backend/app/contracts/worker_admin.py",
         "backend/app/contracts/worker_runtime.py",
@@ -316,18 +319,30 @@ def test_multi_tenant_scope_blockers_now_live_in_runtime_and_frozen_contracts() 
         entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
     }["multi_tenant_scope"]
 
+    scope_contract_source = _read_repo_text("backend/app/contracts/scope.py")
     runtime_source = _read_repo_text("backend/app/contracts/runtime.py")
     worker_admin_contract_source = _read_repo_text("backend/app/contracts/worker_admin.py")
     worker_runtime_contract_source = _read_repo_text("backend/app/contracts/worker_runtime.py")
     commands_source = _read_repo_text("backend/app/contracts/commands.py")
 
-    assert scope_boundary.migration_blocker_refs[0] == "backend/app/contracts/runtime.py"
+    assert scope_boundary.migration_blocker_refs[0] == "backend/app/contracts/scope.py"
+    assert "class TenantWorkspaceScope" in scope_contract_source
+    assert "class OptionalTenantWorkspaceScope" in scope_contract_source
     assert "class ProjectInitCommand" in commands_source
     assert "tenant_id: str | None" not in commands_source
     assert "workspace_id: str | None" not in commands_source
     assert "scope_tenant_id" in runtime_source and "scope_workspace_id" in runtime_source
-    assert "tenant_id" in worker_admin_contract_source and "workspace_id" in worker_admin_contract_source
-    assert "tenant_id" in worker_runtime_contract_source and "workspace_id" in worker_runtime_contract_source
+    assert "from app.contracts.scope import TenantWorkspaceScope" in runtime_source
+    assert "from app.contracts.scope import OptionalTenantWorkspaceScope, TenantWorkspaceScope" in (
+        worker_admin_contract_source
+    )
+    assert "from app.contracts.scope import TenantWorkspaceScope" in worker_runtime_contract_source
+    assert "tenant_id" in WorkerAdminBindingItem.model_fields
+    assert "workspace_id" in WorkerAdminBindingItem.model_fields
+    assert "tenant_id" in WorkerAdminIssueBootstrapRequest.model_fields
+    assert "workspace_id" in WorkerAdminIssueBootstrapRequest.model_fields
+    assert "tenant_id" in WorkerAssignmentsData.model_fields
+    assert "workspace_id" in WorkerAssignmentsData.model_fields
 
 
 def test_artifact_upload_bridge_has_moved_out_of_result_submit_path() -> None:
@@ -339,6 +354,8 @@ def test_artifact_upload_bridge_has_moved_out_of_result_submit_path() -> None:
     commands_source = _read_repo_text("backend/app/contracts/commands.py")
     ticket_handlers_source = _read_repo_text("backend/app/core/ticket_handlers.py")
     worker_runtime_source = _read_repo_text("backend/app/_frozen/worker_runtime/core/worker_runtime.py")
+    artifact_store_source = _read_repo_text("backend/app/core/artifact_store.py")
+    frozen_object_store_source = _read_repo_text("backend/app/_frozen/object_store.py")
     repository_source = _read_repo_text("backend/app/db/repository.py")
     ticket_written_artifact_section = commands_source.split("class TicketWrittenArtifact", 1)[1].split(
         "class TicketResultSubmitCommand",
@@ -354,6 +371,9 @@ def test_artifact_upload_bridge_has_moved_out_of_result_submit_path() -> None:
     assert "handle_ticket_artifact_import_upload" in artifact_handlers_source
     assert "consume_artifact_upload_session" in artifact_handlers_source
     assert "ticket-artifact-import-upload" in worker_runtime_source
+    assert "build_optional_artifact_store_backend" in artifact_store_source
+    assert "build_optional_artifact_store_backend" in frozen_object_store_source
+    assert "build_s3_compatible_object_store_client(settings)" not in artifact_store_source
     assert "def consume_artifact_upload_session(" in repository_source
     assert artifact_boundary.migration_blocker_summary.endswith("仍需保留。")
 

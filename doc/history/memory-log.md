@@ -108,6 +108,9 @@
 - `P1-CLN-003` 这轮继续做了保守收口：可选对象存储实现已拆到 `backend/app/_frozen/object_store.py`，而 `backend/app/core/artifact_store.py` 现在只保留主线必需的本地 artifact 存储、upload staging 和统一入口。
 - `backend/tests/test_api.py` 里的 object-store 回归这轮改成直接 patch `_frozen.object_store` builder；`backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 也同步成新口径：本地 artifact 存储仍属主线，冻结的只是可选对象存储分支。
 - 这轮验证时确认，当前 shell 的裸 `pytest` 不再是“命令不存在”，而是落到未进入项目虚拟环境的解释器并因缺少 `fastapi` 失败；当前真实全量后端验证命令是 `./.venv/bin/pytest tests/ -q`。
+- `P1-CLN-003` 这轮又往前收了一层：`backend/app/_frozen/object_store.py` 现在不只放 S3-compatible 实现，还负责按 settings 构建可选 object-store backend；`backend/app/core/artifact_store.py` 不再自己拼 frozen client/bucket，只接收一个可选 backend。
+- `P1-CLN-002` 这轮把多租户共享 shape 收成单点 contract：新增 `backend/app/contracts/scope.py`，`runtime / worker-admin / worker-runtime` 现在复用同一套 `tenant_id/workspace_id` 字段定义，但字段本身仍保留在现有 payload / response 里，阻塞判断没有被误写成“已移除”。
+- 本轮新增了 `backend/tests/test_artifact_store.py` 与 `backend/tests/test_scope_contracts.py`，并把 `backend/tests/test_mainline_truth.py` 同步到新口径；完整验证结果是：后端先确认 `pytest tests/ -q` 仍因未进入项目虚拟环境而报 `ModuleNotFoundError: fastapi`，再用 `./.venv/bin/pytest tests/ -q` 实测 `426 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
 
 ## Current Working Set
 

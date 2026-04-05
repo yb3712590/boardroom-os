@@ -128,3 +128,25 @@ def build_s3_compatible_object_store_client(settings) -> ObjectStoreClient:
         secret_key=settings.artifact_object_store_secret_key,
         region=settings.artifact_object_store_region,
     )
+
+
+def build_optional_artifact_store_backend(
+    *,
+    settings,
+    object_key_builder: Callable[..., str],
+    logical_path_normalizer: Callable[[str], str],
+    materialized_artifact_factory: Callable[..., Any],
+    storage_backend_label: str,
+) -> S3CompatibleObjectStoreBackend | None:
+    if not settings.artifact_object_store_enabled:
+        return None
+    if not settings.artifact_object_store_bucket:
+        raise RuntimeError("Object store bucket is required when object storage is enabled.")
+    return S3CompatibleObjectStoreBackend(
+        bucket=settings.artifact_object_store_bucket,
+        client=build_s3_compatible_object_store_client(settings),
+        object_key_builder=object_key_builder,
+        logical_path_normalizer=logical_path_normalizer,
+        materialized_artifact_factory=materialized_artifact_factory,
+        storage_backend_label=storage_backend_label,
+    )

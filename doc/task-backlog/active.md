@@ -15,7 +15,7 @@
 
 ### 3.3 代码清理
 
-> 当前状态补记：`P1-CLN-001`、`P1-CLN-004`、`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 已按 shim 迁移收口：`worker-admin` 的真实实现已经迁到 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 文件只保留兼容壳。`P1-CLN-004` 这轮也已按同口径收口：`worker-runtime` 的真实实现已经迁到 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 文件只保留兼容壳。`P1-CLN-002` 已推进到主线 command 侧解耦：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票不再直接吃 `tenant_id/workspace_id`，而是统一从 workflow/default 解析 scope；命令 API 仍保留弃用兼容输入。
+> 当前状态补记：`P1-CLN-001`、`P1-CLN-004`、`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 已按 shim 迁移收口：`worker-admin` 的真实实现已经迁到 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 文件只保留兼容壳。`P1-CLN-004` 这轮也已按同口径收口：`worker-runtime` 的真实实现已经迁到 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 文件只保留兼容壳。`P1-CLN-002` 已推进到主线 command 侧解耦：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票不再直接吃 `tenant_id/workspace_id`，而是统一从 workflow/default 解析 scope；当前又新增了 `backend/app/contracts/scope.py` 作为 runtime / worker-admin / worker-runtime 复用的单点 scope contract。 
 >
 > 当前挂起原因：
 > `P1-CLN-002`、`P1-CLN-003` 当前都还不能直接启动无壳物理迁移：
@@ -35,6 +35,8 @@
 > `backend/tests/conftest.py` 这轮已改成直接 monkeypatch `_frozen.worker_runtime.api.worker_runtime` 和 `_frozen.worker_runtime.core.worker_runtime`，避免 shim 导出层吞掉时间注入。
 > `backend/tests/test_mainline_truth.py` 这轮新增回归，直接校验 `external_worker_handoff.code_refs` 已切到 `_frozen/worker_runtime`，同时保留旧入口作为兼容壳；共享 `worker_bootstrap/session/delivery-grant` schema 仍按阻塞点保留。
 > `P1-CLN-003` 这轮继续做了保守收口：可选对象存储实现现在位于 `backend/app/_frozen/object_store.py`，`backend/app/core/artifact_store.py` 只保留主线本地 artifact 存储、upload staging 和统一入口；object-store API 回归也已改成直接 patch `_frozen.object_store` builder。
+> `P1-CLN-003` 这轮继续把 object-store 的建链细节往 frozen 边界后移：`backend/app/_frozen/object_store.py` 新增可选 backend builder，`backend/app/core/artifact_store.py` 不再自己拼 S3-compatible client/bucket，只接收 frozen helper 构建出来的可选 backend；这轮没有改任何 object-store 环境变量、HTTP 路径或 artifact 元数据形状。
+> `backend/tests/test_artifact_store.py` 与 `backend/tests/test_scope_contracts.py` 这轮新增最小回归：前者卡住“主线只调 frozen object-store helper、默认仍走本地存储”，后者卡住“runtime / worker-admin / worker-runtime 复用 shared scope contract 但仍暴露原有字段名”。
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|

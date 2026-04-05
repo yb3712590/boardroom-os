@@ -5,13 +5,12 @@ from datetime import datetime
 from pydantic import Field
 
 from app.contracts.common import StrictModel
+from app.contracts.scope import OptionalTenantWorkspaceScope, TenantWorkspaceScope
 
 
-class WorkerAdminBindingItem(StrictModel):
+class WorkerAdminBindingItem(TenantWorkspaceScope):
     worker_id: str
     credential_version: int
-    tenant_id: str
-    workspace_id: str
     revoked_before: datetime | None = None
     rotated_at: datetime | None = None
     updated_at: datetime
@@ -24,12 +23,10 @@ class WorkerAdminBindingItem(StrictModel):
     cleanup_eligible: bool
 
 
-class WorkerAdminOperatorTokenItem(StrictModel):
+class WorkerAdminOperatorTokenItem(OptionalTenantWorkspaceScope):
     token_id: str
     operator_id: str
     role: str
-    tenant_id: str | None = None
-    workspace_id: str | None = None
     issued_at: datetime
     expires_at: datetime
     issued_via: str
@@ -50,11 +47,9 @@ class WorkerAdminBindingsResponse(StrictModel):
     count: int
 
 
-class WorkerAdminBootstrapIssueItem(StrictModel):
+class WorkerAdminBootstrapIssueItem(TenantWorkspaceScope):
     issue_id: str
     worker_id: str
-    tenant_id: str
-    workspace_id: str
     credential_version: int
     issued_at: datetime
     expires_at: datetime
@@ -69,11 +64,9 @@ class WorkerAdminBootstrapIssuesResponse(StrictModel):
     count: int
 
 
-class WorkerAdminSessionItem(StrictModel):
+class WorkerAdminSessionItem(TenantWorkspaceScope):
     session_id: str
     worker_id: str
-    tenant_id: str
-    workspace_id: str
     issued_at: datetime
     expires_at: datetime
     last_seen_at: datetime
@@ -90,14 +83,12 @@ class WorkerAdminSessionsResponse(StrictModel):
     count: int
 
 
-class WorkerAdminDeliveryGrantItem(StrictModel):
+class WorkerAdminDeliveryGrantItem(TenantWorkspaceScope):
     grant_id: str
     scope: str
     worker_id: str
     session_id: str
     credential_version: int
-    tenant_id: str
-    workspace_id: str
     ticket_id: str
     artifact_ref: str | None = None
     artifact_action: str | None = None
@@ -116,7 +107,7 @@ class WorkerAdminDeliveryGrantsResponse(StrictModel):
     count: int
 
 
-class WorkerAdminAuthRejectionItem(StrictModel):
+class WorkerAdminAuthRejectionItem(OptionalTenantWorkspaceScope):
     occurred_at: datetime
     route_family: str
     reason_code: str
@@ -124,8 +115,6 @@ class WorkerAdminAuthRejectionItem(StrictModel):
     session_id: str | None = None
     grant_id: str | None = None
     ticket_id: str | None = None
-    tenant_id: str | None = None
-    workspace_id: str | None = None
 
 
 class WorkerAdminAuthRejectionsResponse(StrictModel):
@@ -133,9 +122,7 @@ class WorkerAdminAuthRejectionsResponse(StrictModel):
     count: int
 
 
-class WorkerAdminScopeSummaryFilters(StrictModel):
-    tenant_id: str
-    workspace_id: str
+class WorkerAdminScopeSummaryFilters(TenantWorkspaceScope):
     worker_id: str | None = None
 
 
@@ -168,9 +155,7 @@ class WorkerAdminScopeSummaryResponse(StrictModel):
     workers: list[WorkerAdminScopeWorkerSummaryItem]
 
 
-class WorkerAdminContainScopeFilters(StrictModel):
-    tenant_id: str
-    workspace_id: str
+class WorkerAdminContainScopeFilters(TenantWorkspaceScope):
     worker_id: str | None = None
 
 
@@ -201,9 +186,7 @@ class WorkerAdminContainScopeResult(StrictModel):
     revoke_reason: str
 
 
-class WorkerAdminContainScopeRequest(StrictModel):
-    tenant_id: str = Field(min_length=1)
-    workspace_id: str = Field(min_length=1)
+class WorkerAdminContainScopeRequest(TenantWorkspaceScope):
     worker_id: str | None = None
     dry_run: bool = False
     revoke_bootstrap_issues: bool = True
@@ -225,37 +208,29 @@ class WorkerAdminContainScopeResponse(StrictModel):
     result: WorkerAdminContainScopeResult | None = None
 
 
-class WorkerAdminCreateBindingRequest(StrictModel):
+class WorkerAdminCreateBindingRequest(TenantWorkspaceScope):
     worker_id: str = Field(min_length=1)
-    tenant_id: str = Field(min_length=1)
-    workspace_id: str = Field(min_length=1)
 
 
-class WorkerAdminCreateBindingResponse(StrictModel):
+class WorkerAdminCreateBindingResponse(TenantWorkspaceScope):
     worker_id: str
     credential_version: int
-    tenant_id: str
-    workspace_id: str
     revoked_before: datetime | None = None
     rotated_at: datetime | None = None
     updated_at: datetime
 
 
-class WorkerAdminIssueBootstrapRequest(StrictModel):
+class WorkerAdminIssueBootstrapRequest(OptionalTenantWorkspaceScope):
     worker_id: str = Field(min_length=1)
     ttl_sec: int | None = Field(default=None, gt=0)
-    tenant_id: str | None = None
-    workspace_id: str | None = None
     issued_by: str | None = None
     reason: str | None = None
 
 
-class WorkerAdminIssueBootstrapResponse(StrictModel):
+class WorkerAdminIssueBootstrapResponse(TenantWorkspaceScope):
     issue_id: str
     worker_id: str
     credential_version: int
-    tenant_id: str
-    workspace_id: str
     issued_via: str
     issued_by: str | None = None
     reason: str | None = None
@@ -264,34 +239,26 @@ class WorkerAdminIssueBootstrapResponse(StrictModel):
     expires_at: datetime
 
 
-class WorkerAdminRevokeBootstrapRequest(StrictModel):
+class WorkerAdminRevokeBootstrapRequest(OptionalTenantWorkspaceScope):
     worker_id: str = Field(min_length=1)
-    tenant_id: str | None = None
-    workspace_id: str | None = None
 
 
-class WorkerAdminRevokeBootstrapResponse(StrictModel):
+class WorkerAdminRevokeBootstrapResponse(TenantWorkspaceScope):
     worker_id: str
     credential_version: int
-    tenant_id: str
-    workspace_id: str
     revoked_before: datetime
 
 
-class WorkerAdminRevokeSessionRequest(StrictModel):
+class WorkerAdminRevokeSessionRequest(OptionalTenantWorkspaceScope):
     session_id: str | None = None
     worker_id: str | None = None
-    tenant_id: str | None = None
-    workspace_id: str | None = None
     revoked_by: str | None = None
     reason: str | None = None
 
 
-class WorkerAdminRevokeSessionResponse(StrictModel):
+class WorkerAdminRevokeSessionResponse(TenantWorkspaceScope):
     session_id: str | None = None
     worker_id: str
-    tenant_id: str
-    workspace_id: str
     revoked_count: int
     revoked_delivery_grant_count: int
     revoked_at: datetime
@@ -306,12 +273,10 @@ class WorkerAdminRevokeDeliveryGrantRequest(StrictModel):
     reason: str | None = None
 
 
-class WorkerAdminRevokeDeliveryGrantResponse(StrictModel):
+class WorkerAdminRevokeDeliveryGrantResponse(TenantWorkspaceScope):
     grant_id: str
     session_id: str
     worker_id: str
-    tenant_id: str
-    workspace_id: str
     revoked_count: int
     revoked_at: datetime
     revoked_via: str
@@ -319,10 +284,8 @@ class WorkerAdminRevokeDeliveryGrantResponse(StrictModel):
     revoke_reason: str
 
 
-class WorkerAdminCleanupBindingsRequest(StrictModel):
+class WorkerAdminCleanupBindingsRequest(OptionalTenantWorkspaceScope):
     worker_id: str = Field(min_length=1)
-    tenant_id: str | None = None
-    workspace_id: str | None = None
     dry_run: bool = False
 
 
@@ -340,12 +303,10 @@ class WorkerAdminRevokeOperatorTokenRequest(StrictModel):
     reason: str | None = None
 
 
-class WorkerAdminRevokeOperatorTokenResponse(StrictModel):
+class WorkerAdminRevokeOperatorTokenResponse(OptionalTenantWorkspaceScope):
     token_id: str
     operator_id: str
     role: str
-    tenant_id: str | None = None
-    workspace_id: str | None = None
     issued_at: datetime
     expires_at: datetime
     issued_via: str

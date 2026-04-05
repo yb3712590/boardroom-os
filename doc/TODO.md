@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-06 实测）
 
-- backend：当前 shell 的裸 `pytest` 会落到未进入项目虚拟环境的解释器，并因缺少 `fastapi` 失败；本轮改用 `./.venv/bin/pytest tests/ -q` 完成全量复核，`422 passed`
+- backend：当前 shell 的裸 `pytest` 会落到未进入项目虚拟环境的解释器，并因缺少 `fastapi` 失败；本轮改用 `./.venv/bin/pytest tests/ -q` 完成全量复核，`426 passed`
 - frontend：`npm run build` → passed，`npm run test:run` → `64 passed`
 
 ## 现在先做什么
@@ -75,6 +75,10 @@
 - `P1-CLN-004` 这轮已按 shim 迁移收口：`backend/app/_frozen/worker_runtime/` 现在承接 `worker-runtime` 的 API、projection、core 和 CLI 真实实现，旧 `app/api/worker_runtime*.py`、`app/core/worker_runtime.py`、`app/worker_auth_cli.py` 只保留薄转发
 - `backend/tests/conftest.py` 这轮改成直接 monkeypatch `_frozen.worker_runtime` 的 API / core 模块，避免测试时间注入仍落在兼容壳
 - `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新口径：`external_worker_handoff.code_refs` 已切到 `_frozen/worker_runtime`，但 `/api/v1/worker-runtime`、`/api/v1/projections/worker-runtime`、`worker_auth_cli.py` 入口和 `worker_bootstrap/session/delivery-grant` schema 仍需成组保留
+- `P1-CLN-003` 这轮继续把 object-store 的建链细节往 frozen 边界里推：`backend/app/_frozen/object_store.py` 新增了可选 backend builder，`backend/app/core/artifact_store.py` 现在只负责本地 artifact 存储、upload staging 和接收一个可选 frozen backend，不再自己拼 S3-compatible client/bucket
+- `backend/tests/test_artifact_store.py`、`backend/tests/test_mainline_truth.py` 这轮新增回归，直接卡住“主线只调 frozen helper、默认本地存储仍可跑”这层事实；object-store 对外 HTTP 路径和 artifact 元数据形状没有变化
+- `P1-CLN-002` 这轮把多租户共享 shape 收成了单点 contract：新增 `backend/app/contracts/scope.py`，`runtime / worker-admin / worker-runtime` 现在复用同一套 `tenant_id/workspace_id` 字段定义，但字段本身仍保留在现有 payload / response 里，没有把它们误写成已移除
+- `backend/tests/test_scope_contracts.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步补回归：既断言 shared scope contract 已进入冻结阻塞口径，也断言 runtime / worker-admin / worker-runtime 仍真实暴露 `tenant_id/workspace_id`
 
 对应任务库：已完成 `P1-CLN-001`、`P1-CLN-004`、`P1-CLN-005`、`P1-CLN-006`；`P1-CLN-002`、`P1-CLN-003` 进行中，且还没满足无壳物理迁移前置条件
 

@@ -207,6 +207,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         ),
         storage_table_refs=(),
         code_refs=(
+            "backend/app/contracts/scope.py",
             "backend/app/contracts/worker_admin.py",
             "backend/app/contracts/worker_runtime.py",
             "backend/app/core/worker_runtime.py",
@@ -233,6 +234,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "Physical migration is blocked until multi-tenant scope is decoupled from command, runtime, and projection data shapes.",
         ),
         migration_blocker_refs=(
+            "backend/app/contracts/scope.py",
             "backend/app/contracts/runtime.py",
             "backend/app/contracts/worker_admin.py",
             "backend/app/contracts/worker_runtime.py",
@@ -285,6 +287,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "控制面上传和可选对象存储仍可运行，但当前只按最小解堵保留，不继续平台化。"
             "本地 artifact 存储与 upload staging 仍是主线必需；冻结的只是可选对象存储实现。"
             "ticket-result-submit 已不再依赖 upload session；当前桥接只保留在独立的 artifact import-upload 命令。"
+            "对象存储 backend 的建链细节这轮已进一步收进 `_frozen/object_store.py`。"
         ),
     ),
     FrozenCapabilityBoundary(

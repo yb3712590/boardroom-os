@@ -1637,7 +1637,7 @@
 > - `P1-CLN-005`、`P1-CLN-006` 已在 2026-04-05 收口：冻结能力的真实入口、主线依赖、测试归属和迁移前置条件已经写进 `backend/app/core/mainline_truth.py`，并由 `backend/tests/test_mainline_truth.py` 固化
 > - `P1-CLN-001` 已在 2026-04-06 收口为 shim 迁移完成：`worker-admin` 真实实现已迁入 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 入口只保留兼容壳
 > - `P1-CLN-004` 已在 2026-04-06 收口为 shim 迁移完成：`worker-runtime` 真实实现已迁入 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 入口只保留兼容壳
-> - `P1-CLN-002`、`P1-CLN-003` 当前仍未关闭，也还没进入无壳物理迁移：多租户 scope 仍是共享数据结构，upload 导入入口和 session 存储仍保留；其中 `P1-CLN-003` 的可选对象存储实现已先拆到 `_frozen/object_store.py`，最新前置拆分进展以 `task-backlog/active.md` 为准
+> - `P1-CLN-002`、`P1-CLN-003` 当前仍未关闭，也还没进入无壳物理迁移：多租户 scope 仍是共享数据结构，upload 导入入口和 session 存储仍保留；其中 `P1-CLN-002` 这轮已新增 `backend/app/contracts/scope.py` 作为共享 scope contract，`P1-CLN-003` 的 object-store backend 建链细节也已进一步收进 `_frozen/object_store.py`，最新前置拆分进展以 `task-backlog/active.md` 为准
 
 | ID | 标题 | 预估 |
 |----|------|------|
