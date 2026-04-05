@@ -1723,6 +1723,13 @@
 - `P2-DOC-002`：`doc/TODO.md` 现已把 `P2-D` 改成“第一轮真实缺口收口已完成、剩余任务继续后置推进”的真实状态
 - `P2-DOC-004`：`doc/history/memory-log.md` 已追加这轮会影响后续判断的事实，包括分区骨架屏、窄屏河道保留和 reduced-motion 兼容
 
+完成补记（2026-04-06）：
+
+- `P2-DOC-001`：根目录 `README.md` 已按当前主链现实重写，补齐了 closeout、CEO 自动会议、runtime provider 和当前 Windows shell 下 `pytest` 不在 PATH 的验证口径
+- `P2-DOC-003`：`doc/backend-runtime-guide.md` 已收口成真实运维指南，按“当前主线 / 冻结兼容面 / 当前限制”重排，避免再把保留代码写成推荐路径
+- `P2-DOC-005`：新增 `doc/api-reference.md`，把当前全部 HTTP 接口按真实路由分组平铺，并显式标注主线 / 冻结边界 / 默认是否建议使用
+- 为了防止 API 文档再次和代码漂移，本轮新增了 `backend/app/core/api_surface.py` 与 `backend/tests/test_api_surface.py`，用最小回归测试固定当前路由分组
+
 ---
 
 ## 五、关键依赖图

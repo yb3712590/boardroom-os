@@ -88,6 +88,9 @@
 - `P1-CLN-004` 这轮已从阻塞评估推进到真实进行中：`/api/v1/projections/worker-runtime` 已从通用 `projections.py` 拆到独立 `worker_runtime_projections.py`，`worker-runtime` 的投影入口边界先收清了。
 - `build_worker_runtime_projection(...)` 这轮不再直接散读 repository 的 binding/session/grant/rejection 查询，当前统一改成复用 `worker_scope_ops.py` 里的现成 helper，避免 handoff 管理读面继续有两套活跃态判定。
 - 本轮完整验证结果更新为：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用 `py -m pytest tests/ -q` 实测 `417 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
+- `README.md`、`doc/backend-runtime-guide.md`、`doc/api-reference.md`、`doc/README.md` 这轮已同步到当前代码现实：文档现在会把主线和冻结兼容面分开写，并显式记录当前 Windows shell 下 `pytest` 不在 PATH 的事实。
+- 为了防止接口文档再次和代码漂移，本轮新增了 `backend/app/core/api_surface.py` 与 `backend/tests/test_api_surface.py`，把当前 FastAPI 路由分组固定成最小回归测试。
+- 这轮最终验证结果更新为：后端先确认 `pytest tests/ -q` 仍报 `CommandNotFoundException`，再用重定向方式执行 `py -m pytest tests/ -q` 实测 `418 passed`；前端 `npm run build` -> passed，`npm run test:run` -> `64 passed`。
 
 ## Current Working Set
 

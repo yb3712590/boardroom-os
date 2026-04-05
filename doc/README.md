@@ -18,6 +18,11 @@
 - [milestone-timeline.md](milestone-timeline.md)：中长期里程碑时间线；当前真相仍以 `TODO.md` 为准
 - [cto-assessment-report.md](cto-assessment-report.md)：CTO 技术评审报告（诊断、差距分析、优先级建议）
 
+## 运行与接口
+
+- [backend-runtime-guide.md](backend-runtime-guide.md)：当前后端运行、运维和排障指南
+- [api-reference.md](api-reference.md)：当前全部 HTTP 接口参考，已标注主线 / 冻结边界 / 默认是否建议使用
+
 ## 设计文档
 
 - [design/message-bus-design.md](design/message-bus-design.md)：事件溯源控制面、Ticket 生命周期、审批门、恢复与熔断治理

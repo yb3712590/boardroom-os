@@ -14,8 +14,8 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 总任务数 | 121 | 原始编号与任务名称保持不变 |
-| 已完成 / 已收口 | 95 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
-| 当前仍未关闭 | 26 | 当前工作集保存在 `task-backlog/active.md` |
+| 已完成 / 已收口 | 98 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 当前仍未关闭 | 23 | 当前工作集保存在 `task-backlog/active.md` |
 | 总预估工时 | 464h | 来自拆分前任务库原表 |
 
 ## 当前活跃区域
@@ -26,9 +26,8 @@
 | 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
 | 治理模板 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | [task-backlog/active.md](task-backlog/active.md) |
-| 文档收口 | `P2-DOC-001` 到 `P2-DOC-005` | 进行中 | [task-backlog/active.md](task-backlog/active.md) |
 
-当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；最近三轮依次把 `P1-CLN-002` 推进到主线 command 侧解耦，把 `P1-CLN-003` 推进到“主线 result-submit 已与 upload session 解耦，但 upload 导入入口仍保留”，再把 `P1-CLN-004` 推进到“worker-runtime projection 已独立出通用入口、管理读面已收口到 helper，但 handoff schema 仍成组保留”的状态，所以未关闭任务总数仍是 `26`。UI 打磨区此前已移出当前工作集，详细补记看 `task-backlog/active.md`。
+当前补记：代码清理区仍维持“前置拆分已完成、物理迁移未启动”的保守状态；最近三轮依次把 `P1-CLN-002` 推进到主线 command 侧解耦，把 `P1-CLN-003` 推进到“主线 result-submit 已与 upload session 解耦，但 upload 导入入口仍保留”，再把 `P1-CLN-004` 推进到“worker-runtime projection 已独立出通用入口、管理读面已收口到 helper，但 handoff schema 仍成组保留”的状态。本轮 `P2-DOC-001`、`P2-DOC-003`、`P2-DOC-005` 已真实关闭，所以未关闭任务总数降到 `23`，文档收口区已移出当前工作集。
 
 ## 读写约定
 
