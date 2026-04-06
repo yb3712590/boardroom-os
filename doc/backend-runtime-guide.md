@@ -10,7 +10,7 @@
 
 - durable truth 在事件日志和确定性投影里
 - React 只读投影、提交治理命令，不持有工作流真相
-- runtime 默认走本地 deterministic，可选走 `OpenAI Compat`
+- runtime 默认走本地 deterministic；当前 registry 首版可选走 `OpenAI Compat` 或 `Claude Code CLI`
 - maker-checker、incident、review room、closeout 都已经在主链里真实生效
 
 ## 2. 当前主线与冻结边界
@@ -114,13 +114,33 @@ npm run test:run
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=INPROCESS` 是默认值，runner / in-process scheduler 会在 `LEASED` 后直接执行当前最小 runtime
 - `BOARDROOM_OS_RUNTIME_EXECUTION_MODE=EXTERNAL` 时，runner / in-process scheduler 只负责 dispatch / lease，不再自动 `start / execute / result-submit`
 
+当前 `runtime-provider-config.json` 已经切到 registry 结构：
+
+- `default_provider_id`
+- `providers[]`
+- `role_bindings[]`
+
+当前 provider 选择顺序：
+
+- 先看 `ceo_shadow` 或 ticket `role_profile` 的角色绑定
+- 再回退员工投影里的 `provider_id` 兼容字段
+- 最后才回退 `default_provider_id`
+- 没有命中或配置不完整时，回退本地 deterministic
+
 `OpenAI Compat` live path 的真实规则：
 
-- 只在 `provider_id == prov_openai_compat` 且 `BASE_URL / API_KEY / MODEL` 三项都存在时启用
+- 只在 registry 里启用 `prov_openai_compat`，且 `BASE_URL / API_KEY / MODEL` 三项都存在时启用
 - `base_url` 可以直接带 `/v1`，运行时会调用 `POST {base_url}/responses`
-- 如果配置了 `BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT`，运行时会透传 `reasoning.effort`
+- 如果配置了 `reasoning_effort`，运行时会透传 `reasoning.effort`
 - 请求输入直接来自编译后的 `rendered_execution_payload.messages`
 - 返回结果会在本地做 JSON 解析和现有 output schema 校验，不把 provider 端 schema 当唯一真相
+
+`Claude Code CLI` live path 的真实规则：
+
+- 只在 registry 里启用 `prov_claude_code`，且显式配置 `command_path / model` 时启用
+- 当前通过 `claude --print --output-format text --permission-mode bypassPermissions --json-schema '{"type":"object"}'` 走非交互调用
+- 请求输入当前按编译后的 `rendered_execution_payload.messages` 逐条转成结构化文本 prompt
+- CLI 返回结果同样会在本地做 JSON 解析和现有 output schema 校验，不把 CLI 输出当唯一真相
 
 当前 live path 已覆盖主线需要的 6 组 role / schema 组合：
 
@@ -138,7 +158,7 @@ npm run test:run
 - `401/403 -> PROVIDER_AUTH_FAILED`
 - 其他 `4xx` / 空响应 / 非 JSON / 结构不匹配 -> `PROVIDER_BAD_RESPONSE`
 
-只有 `PROVIDER_RATE_LIMITED` 和 `UPSTREAM_UNAVAILABLE` 会进入既有 provider incident / breaker 暂停链。
+只有 `PROVIDER_RATE_LIMITED` 和 `UPSTREAM_UNAVAILABLE` 会进入既有 provider incident / breaker 暂停链；`Claude Code CLI` 首版不会走额外重试策略，失败后直接回退现有 deterministic 路径。
 
 ## 6. 主线运维面
 

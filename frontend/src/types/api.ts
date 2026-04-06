@@ -166,11 +166,41 @@ export type DependencyInspectorData = {
   nodes: DependencyInspectorNode[]
 }
 
+export type RuntimeProviderEntry = {
+  provider_id: string
+  adapter_kind: string
+  label: string
+  enabled: boolean
+  base_url: string | null
+  api_key_configured: boolean
+  api_key_masked: string | null
+  model: string | null
+  timeout_sec: number
+  reasoning_effort: string | null
+  command_path: string | null
+  configured_worker_count: number
+  is_default: boolean
+}
+
+export type RuntimeProviderRoleBinding = {
+  target_ref: string
+  target_label: string
+  provider_id: string
+  model: string | null
+}
+
+export type RuntimeProviderFutureBindingSlot = {
+  target_ref: string
+  label: string
+  status: string
+  reason: string
+}
+
 export type RuntimeProviderData = {
   mode: string
   effective_mode: string
   provider_health_summary: string
-  provider_id: string
+  provider_id: string | null
   base_url: string | null
   model: string | null
   timeout_sec: number
@@ -179,6 +209,10 @@ export type RuntimeProviderData = {
   api_key_masked: string | null
   configured_worker_count: number
   effective_reason: string
+  default_provider_id: string | null
+  providers: RuntimeProviderEntry[]
+  role_bindings: RuntimeProviderRoleBinding[]
+  future_binding_slots: RuntimeProviderFutureBindingSlot[]
 }
 
 export type IncidentDetailData = {
@@ -270,13 +304,29 @@ export type ElicitationAnswerRequest = {
   text: string
 }
 
-export type RuntimeProviderUpsertRequest = {
-  mode: string
+export type RuntimeProviderConfigRequest = {
+  provider_id: string
+  adapter_kind: string
+  label: string
+  enabled: boolean
   base_url: string | null
   api_key: string | null
   model: string | null
   timeout_sec: number
   reasoning_effort: string | null
+  command_path: string | null
+}
+
+export type RuntimeProviderRoleBindingRequest = {
+  target_ref: string
+  provider_id: string
+  model: string | null
+}
+
+export type RuntimeProviderUpsertRequest = {
+  default_provider_id: string | null
+  providers: RuntimeProviderConfigRequest[]
+  role_bindings: RuntimeProviderRoleBindingRequest[]
   idempotency_key: string
 }
 

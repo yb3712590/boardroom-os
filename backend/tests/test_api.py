@@ -307,21 +307,49 @@ def _employee_restore_payload(
 
 def _runtime_provider_upsert_payload(
     *,
-    mode: str = "OPENAI_COMPAT",
-    base_url: str | None = "https://api.example.test/v1",
-    api_key: str | None = "sk-test-secret",
-    model: str | None = "gpt-5.3-codex",
-    timeout_sec: float = 45.0,
-    reasoning_effort: str | None = "high",
+    default_provider_id: str | None = "prov_openai_compat",
+    openai_enabled: bool = True,
+    openai_base_url: str | None = "https://api.example.test/v1",
+    openai_api_key: str | None = "sk-test-secret",
+    openai_model: str | None = "gpt-5.3-codex",
+    openai_timeout_sec: float = 45.0,
+    openai_reasoning_effort: str | None = "high",
+    claude_enabled: bool = False,
+    claude_command_path: str | None = "/Users/bill/.local/bin/claude",
+    claude_model: str | None = "claude-sonnet-4-6",
+    claude_timeout_sec: float = 45.0,
+    role_bindings: list[dict] | None = None,
     idempotency_key: str = "runtime-provider-upsert:test",
 ) -> dict:
     return {
-        "mode": mode,
-        "base_url": base_url,
-        "api_key": api_key,
-        "model": model,
-        "timeout_sec": timeout_sec,
-        "reasoning_effort": reasoning_effort,
+        "default_provider_id": default_provider_id,
+        "providers": [
+            {
+                "provider_id": "prov_openai_compat",
+                "adapter_kind": "openai_compat",
+                "label": "OpenAI Compat",
+                "enabled": openai_enabled,
+                "base_url": openai_base_url,
+                "api_key": openai_api_key,
+                "model": openai_model,
+                "timeout_sec": openai_timeout_sec,
+                "reasoning_effort": openai_reasoning_effort,
+                "command_path": None,
+            },
+            {
+                "provider_id": "prov_claude_code",
+                "adapter_kind": "claude_code_cli",
+                "label": "Claude Code CLI",
+                "enabled": claude_enabled,
+                "base_url": None,
+                "api_key": None,
+                "model": claude_model,
+                "timeout_sec": claude_timeout_sec,
+                "reasoning_effort": None,
+                "command_path": claude_command_path,
+            },
+        ],
+        "role_bindings": list(role_bindings or []),
         "idempotency_key": idempotency_key,
     }
 
@@ -3978,10 +4006,15 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert projection_data["model"] == "gpt-5.3-codex"
         assert projection_data["timeout_sec"] == 45.0
         assert projection_data["reasoning_effort"] == "high"
+        assert projection_data["default_provider_id"] == "prov_openai_compat"
         assert projection_data["api_key_configured"] is True
         assert projection_data["api_key_masked"] != "sk-test-secret"
         assert "secret" not in projection_data["api_key_masked"]
         assert projection_data["configured_worker_count"] >= 1
+        assert len(projection_data["providers"]) == 2
+        assert projection_data["providers"][0]["provider_id"] == "prov_openai_compat"
+        assert projection_data["providers"][1]["provider_id"] == "prov_claude_code"
+        assert projection_data["future_binding_slots"][0]["status"] == "NOT_ENABLED"
         assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
         assert dashboard_data["runtime_status"]["provider_health_summary"] == "HEALTHY"
         assert dashboard_data["runtime_status"]["provider_label"] == "OpenAI Compat"
@@ -3991,12 +4024,13 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         switch_response = client.post(
             "/api/v1/commands/runtime-provider-upsert",
             json=_runtime_provider_upsert_payload(
-                mode="DETERMINISTIC",
-                base_url=None,
-                api_key=None,
-                model=None,
-                timeout_sec=30.0,
-                reasoning_effort=None,
+                default_provider_id=None,
+                openai_enabled=False,
+                openai_base_url=None,
+                openai_api_key=None,
+                openai_model=None,
+                openai_timeout_sec=30.0,
+                openai_reasoning_effort=None,
                 idempotency_key="runtime-provider-upsert:deterministic",
             ),
         )
@@ -4008,6 +4042,7 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert switched_projection.json()["data"]["mode"] == "DETERMINISTIC"
         assert switched_projection.json()["data"]["effective_mode"] == "LOCAL_DETERMINISTIC"
         assert switched_projection.json()["data"]["provider_health_summary"] == "LOCAL_ONLY"
+        assert switched_projection.json()["data"]["default_provider_id"] is None
         assert switched_dashboard.json()["data"]["runtime_status"]["effective_mode"] == (
             "LOCAL_DETERMINISTIC"
         )

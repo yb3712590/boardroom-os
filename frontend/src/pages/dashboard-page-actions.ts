@@ -103,23 +103,32 @@ export function useDashboardPageActions({
   }
 
   const handleRuntimeProviderSave = async (input: {
-    mode: string
-    baseUrl: string | null
-    apiKey: string | null
-    model: string | null
-    timeoutSec: number
-    reasoningEffort: string | null
+    defaultProviderId: string | null
+    providers: Array<{
+      provider_id: string
+      adapter_kind: string
+      label: string
+      enabled: boolean
+      base_url: string | null
+      api_key: string | null
+      model: string | null
+      timeout_sec: number
+      reasoning_effort: string | null
+      command_path: string | null
+    }>
+    roleBindings: Array<{
+      target_ref: string
+      provider_id: string
+      model: string | null
+    }>
   }) => {
     setRuntimeProviderSubmitting(true)
     setRuntimeProviderError(null)
     try {
       await runtimeProviderUpsert({
-        mode: input.mode,
-        base_url: input.baseUrl,
-        api_key: input.apiKey,
-        model: input.model,
-        timeout_sec: input.timeoutSec,
-        reasoning_effort: input.reasoningEffort,
+        default_provider_id: input.defaultProviderId,
+        providers: input.providers,
+        role_bindings: input.roleBindings,
         idempotency_key: newPrefixedId('runtime-provider-upsert'),
       })
       await loadSnapshot()

@@ -64,7 +64,10 @@
 
 - `P2-CEO-002` 已完成：CEO shadow snapshot 现在会暴露当前 workflow 内 `reuse_candidates.recent_completed_tickets / recent_closed_meetings`，OpenAI Compat live prompt 会先检查这些复用候选，再决定是否 `NO_ACTION`、`RETRY_TICKET`、`REQUEST_MEETING` 或 `HIRE_EMPLOYEE`
 - 这轮保持保守边界：deterministic fallback 完全不变，不新增 `CEOAction` 字段，也不把 artifact/ADR refs 直接注入新建 ticket；当前 completed ticket 摘要因普通 `TICKET_CREATED` payload 无 `summary`，回退到完成态 `completion_summary`
-- 当前验证基线更新为 backend `446 passed`、frontend build passed、frontend `72 passed`
+- `P2-PRV-001 / P2-PRV-005 / P2-PRV-006` 已完成：runtime provider 配置已从单一 OpenAI 开关切到最小 registry，首版真实支持 `OpenAI Compat` 与 `Claude Code CLI` 两个 adapter，并开放 `ceo_shadow / ui_designer_primary / frontend_engineer_primary / checker_primary` 的角色绑定
+- 这轮保持保守边界：Gemini 原生 adapter、任务级模型 override、复杂 fallback 路由、成本分层和后台健康探测都未开启；现有员工投影里的 `provider_id` 仍保留为兼容字段和展示字段
+- `runtime-provider` 投影与前端设置抽屉现在都会暴露 `default_provider_id / providers / role_bindings / future_binding_slots`；未来治理角色只做只读占位，不写成已启用能力
+- 当前验证基线更新为 backend `453 passed`、frontend build passed、frontend `73 passed`；前端回归额外覆盖了 provider center 里的未来治理角色只读占位
 
 ## Current Working Set
 

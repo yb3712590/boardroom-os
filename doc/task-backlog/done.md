@@ -1708,6 +1708,15 @@
 | P2-PRV-007 | 任务级模型覆盖与 preferred/actual model 追踪 | 4h |
 | P2-PRV-008 | 成本分层与高价模型低频路由 | 4h |
 
+完成补记（2026-04-07）：
+
+- `P2-PRV-001`：`runtime-provider-config.json` 已从单一 `mode/base_url/api_key/model` 表单切到最小 registry，固定暴露 `default_provider_id / providers[] / role_bindings[]`；旧配置会在读取时自动迁移
+- `P2-PRV-001`：当前真实 adapter 只开放 `prov_openai_compat` 与 `prov_claude_code`；`runtime-provider` 投影和前端设置抽屉都会暴露 provider 列表、默认 provider、当前角色绑定和未来治理角色只读占位
+- `P2-PRV-006`：运行时与 CEO shadow 现在都先解析角色绑定，再回退员工 `provider_id` 兼容字段和默认 provider；当前只开放 `ceo_shadow / ui_designer_primary / frontend_engineer_primary / checker_primary`
+- `P2-PRV-006`：provider 执行与 fallback 已补最小审计字段：`preferred_provider_id / preferred_model / actual_provider_id / actual_model / adapter_kind`；本轮未开启任务级 override、复杂 fallback 路由或成本分层
+- `P2-PRV-005`：新增后端回归覆盖旧配置迁移、角色路由优先级、Claude CLI adapter、CEO/Worker 角色绑定和 provider pause 兼容路径；前端回归覆盖 provider center 保存流程与未来治理角色只读占位
+- 本轮整体验证结果更新为 backend `453 passed`、frontend build passed、frontend `73 passed`
+
 ### 4.3 治理模板与文档型角色 (P2-GOV-001 到 P2-GOV-006)
 
 | ID | 标题 | 预估 |

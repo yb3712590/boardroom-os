@@ -48,7 +48,13 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderUnavailableError,
     invoke_openai_compat_response,
 )
-from app.core.runtime_provider_config import resolve_runtime_provider_config
+from app.core.provider_claude_code import ClaudeCodeProviderConfig, ClaudeCodeProviderError, invoke_claude_code_response
+from app.core.runtime_provider_config import (
+    RuntimeProviderAdapterKind,
+    RuntimeProviderSelection,
+    resolve_provider_selection,
+    resolve_runtime_provider_config,
+)
 from app.core.ticket_handlers import (
     _open_provider_incident,
     handle_ticket_result_submit,
@@ -938,26 +944,23 @@ def _load_provider_payload(output_text: str) -> dict[str, Any]:
     return payload
 
 
-def _openai_compat_provider_is_configured() -> bool:
-    config = resolve_runtime_provider_config()
-    return all(
-        (
-            config.mode == "OPENAI_COMPAT",
-            config.base_url,
-            config.api_key,
-            config.model,
-        )
+def _build_openai_compat_provider_config(selection: RuntimeProviderSelection) -> OpenAICompatProviderConfig:
+    provider = selection.provider
+    return OpenAICompatProviderConfig(
+        base_url=str(provider.base_url or ""),
+        api_key=str(provider.api_key or ""),
+        model=str(selection.preferred_model or provider.model or ""),
+        timeout_sec=float(provider.timeout_sec),
+        reasoning_effort=provider.reasoning_effort,
     )
 
 
-def _build_openai_compat_provider_config() -> OpenAICompatProviderConfig:
-    config = resolve_runtime_provider_config()
-    return OpenAICompatProviderConfig(
-        base_url=str(config.base_url or ""),
-        api_key=str(config.api_key or ""),
-        model=str(config.model or ""),
-        timeout_sec=float(config.timeout_sec),
-        reasoning_effort=config.reasoning_effort,
+def _build_claude_code_provider_config(selection: RuntimeProviderSelection) -> ClaudeCodeProviderConfig:
+    provider = selection.provider
+    return ClaudeCodeProviderConfig(
+        command_path=str(provider.command_path or ""),
+        model=str(selection.preferred_model or provider.model or ""),
+        timeout_sec=float(provider.timeout_sec),
     )
 
 
@@ -976,6 +979,7 @@ def _provider_retry_delay_sec(failure_kind: str, failure_detail: dict[str, Any],
 def _normalize_provider_failure_detail(
     failure_detail: dict[str, Any] | None,
     *,
+    selection: RuntimeProviderSelection | None,
     attempt_count: int,
     fallback_applied: bool,
     fallback_mode: str | None = None,
@@ -983,7 +987,15 @@ def _normalize_provider_failure_detail(
     incident_id: str | None = None,
 ) -> dict[str, Any]:
     normalized = dict(failure_detail or {})
-    normalized.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
+    if selection is not None:
+        normalized.setdefault("provider_id", selection.provider.provider_id)
+        normalized.setdefault("preferred_provider_id", selection.preferred_provider_id)
+        normalized.setdefault("preferred_model", selection.preferred_model)
+        normalized.setdefault("actual_provider_id", selection.provider.provider_id)
+        normalized.setdefault("actual_model", selection.preferred_model or selection.provider.model)
+        normalized.setdefault("adapter_kind", selection.provider.adapter_kind)
+    else:
+        normalized.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
     normalized["attempt_count"] = attempt_count
     normalized["fallback_applied"] = fallback_applied
     if fallback_mode is not None:
@@ -1002,26 +1014,36 @@ def _build_provider_fallback_evidence(execution_result: RuntimeExecutionResult) 
     provider_id = str(failure_detail.get("provider_id") or OPENAI_COMPAT_PROVIDER_ID)
     failure_kind = str(failure_detail.get("provider_failure_kind") or "PROVIDER_FAILURE")
     incident_id = failure_detail.get("incident_id")
+    adapter_kind = str(failure_detail.get("adapter_kind") or "openai_compat")
+    provider_label = "Claude Code CLI" if adapter_kind == "claude_code_cli" else "OpenAI Compat"
     return TicketReviewEvidence(
         evidence_id="provider_fallback",
         source_type="RUNTIME_FALLBACK",
         headline=f"Provider fallback on {provider_id}",
-        summary=f"OpenAI Compat hit {failure_kind} and this result fell back to the local deterministic path.",
+        summary=f"{provider_label} hit {failure_kind} and this result fell back to the local deterministic path.",
         source_ref=(f"incident:{incident_id}" if incident_id is not None else provider_id),
     )
 
 
 def _execute_openai_compat_provider(
     execution_package: CompiledExecutionPackage,
+    selection: RuntimeProviderSelection,
     *,
     sleep_fn=None,
 ) -> RuntimeExecutionResult:
     if sleep_fn is None:
         sleep_fn = _sleep
-    config = _build_openai_compat_provider_config()
+    config = _build_openai_compat_provider_config(selection)
     last_failure_kind = "PROVIDER_BAD_RESPONSE"
     last_failure_message = "Provider execution failed."
-    last_failure_detail: dict[str, Any] = {"provider_id": OPENAI_COMPAT_PROVIDER_ID}
+    last_failure_detail: dict[str, Any] = {
+        "provider_id": selection.provider.provider_id,
+        "preferred_provider_id": selection.preferred_provider_id,
+        "preferred_model": selection.preferred_model,
+        "actual_provider_id": selection.provider.provider_id,
+        "actual_model": selection.preferred_model or selection.provider.model,
+        "adapter_kind": selection.provider.adapter_kind,
+    }
 
     for attempt_no in range(1, PROVIDER_MAX_ATTEMPTS + 1):
         try:
@@ -1056,7 +1078,11 @@ def _execute_openai_compat_provider(
                 assumptions=[
                     f"compiler_version={execution_package.meta.compiler_version}",
                     f"compile_request_id={execution_package.meta.compile_request_id}",
-                    f"provider_id={OPENAI_COMPAT_PROVIDER_ID}",
+                    f"preferred_provider_id={selection.preferred_provider_id}",
+                    f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
+                    f"actual_provider_id={selection.provider.provider_id}",
+                    f"actual_model={selection.preferred_model or selection.provider.model or 'unknown'}",
+                    f"adapter_kind={selection.provider.adapter_kind}",
                     f"provider_response_id={provider_result.response_id or 'unknown'}",
                     f"provider_attempt_count={attempt_no}",
                 ],
@@ -1100,6 +1126,7 @@ def _execute_openai_compat_provider(
             last_failure_message = str(exc)
             last_failure_detail = _normalize_provider_failure_detail(
                 failure_detail,
+                selection=selection,
                 attempt_count=attempt_no,
                 fallback_applied=False,
             )
@@ -1121,10 +1148,77 @@ def _execute_openai_compat_provider(
     )
 
 
+def _execute_claude_code_provider(
+    execution_package: CompiledExecutionPackage,
+    selection: RuntimeProviderSelection,
+) -> RuntimeExecutionResult:
+    try:
+        provider_result = invoke_claude_code_response(
+            _build_claude_code_provider_config(selection),
+            execution_package.rendered_execution_payload,
+        )
+        result_payload = _load_provider_payload(provider_result.output_text)
+        validate_output_payload(
+            schema_ref=execution_package.execution.output_schema_ref,
+            schema_version=execution_package.execution.output_schema_version,
+            submitted_schema_version=_schema_version_for_execution_package(execution_package),
+            payload=result_payload,
+        )
+        if execution_package.execution.output_schema_ref == "maker_checker_verdict":
+            artifact_refs: list[str] = []
+            written_artifacts: list[dict[str, Any]] = []
+        else:
+            artifact_refs, written_artifacts = _build_runtime_default_artifacts(
+                execution_package,
+                result_payload,
+            )
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary=(
+                f"Provider-backed runtime executed ticket {execution_package.meta.ticket_id} via "
+                f"{execution_package.meta.compiler_version}."
+            ),
+            artifact_refs=artifact_refs,
+            result_payload=result_payload,
+            written_artifacts=written_artifacts,
+            assumptions=[
+                f"compiler_version={execution_package.meta.compiler_version}",
+                f"compile_request_id={execution_package.meta.compile_request_id}",
+                f"preferred_provider_id={selection.preferred_provider_id}",
+                f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
+                f"actual_provider_id={selection.provider.provider_id}",
+                f"actual_model={selection.preferred_model or selection.provider.model or 'unknown'}",
+                f"adapter_kind={selection.provider.adapter_kind}",
+                "provider_response_id=unknown",
+                "provider_attempt_count=1",
+            ],
+            issues=[],
+            confidence=0.82,
+        )
+    except (ClaudeCodeProviderError, ValueError) as exc:
+        failure_detail = (
+            dict(exc.failure_detail)
+            if isinstance(exc, ClaudeCodeProviderError)
+            else {}
+        )
+        return RuntimeExecutionResult(
+            result_status="failed",
+            failure_kind=(exc.failure_kind if isinstance(exc, ClaudeCodeProviderError) else "PROVIDER_BAD_RESPONSE"),
+            failure_message=str(exc),
+            failure_detail=_normalize_provider_failure_detail(
+                failure_detail,
+                selection=selection,
+                attempt_count=1,
+                fallback_applied=False,
+            ),
+        )
+
+
 def _build_provider_fallback_execution_result(
     execution_package: CompiledExecutionPackage,
     provider_failure: RuntimeExecutionResult,
     *,
+    selection: RuntimeProviderSelection | None,
     fallback_reason: str,
     incident_id: str | None = None,
 ) -> RuntimeExecutionResult:
@@ -1134,6 +1228,7 @@ def _build_provider_fallback_execution_result(
 
     failure_detail = _normalize_provider_failure_detail(
         provider_failure.failure_detail,
+        selection=selection,
         attempt_count=int((provider_failure.failure_detail or {}).get("attempt_count") or 0),
         fallback_applied=True,
         fallback_mode="LOCAL_DETERMINISTIC",
@@ -1145,8 +1240,9 @@ def _build_provider_fallback_execution_result(
 
     provider_id = str(failure_detail.get("provider_id") or OPENAI_COMPAT_PROVIDER_ID)
     failure_kind = str(failure_detail["provider_failure_kind"])
+    provider_label = "Claude Code CLI" if str(failure_detail.get("adapter_kind") or "") == "claude_code_cli" else "OpenAI Compat"
     fallback_issue = (
-        f"OpenAI Compat provider {provider_id} hit {failure_kind}; runtime fell back to the local "
+        f"{provider_label} provider {provider_id} hit {failure_kind}; runtime fell back to the local "
         "deterministic path for this result."
     )
     return RuntimeExecutionResult(
@@ -1211,6 +1307,7 @@ def _open_runtime_provider_incident(
 def _build_preemptive_provider_fallback_result(
     execution_package: CompiledExecutionPackage,
     *,
+    selection: RuntimeProviderSelection | None,
     failure_kind: str,
     failure_message: str,
     fallback_reason: str,
@@ -1222,11 +1319,37 @@ def _build_preemptive_provider_fallback_result(
             failure_kind=failure_kind,
             failure_message=failure_message,
             failure_detail={
-                "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+                "provider_id": selection.provider.provider_id if selection is not None else OPENAI_COMPAT_PROVIDER_ID,
                 "attempt_count": 0,
             },
         ),
+        selection=selection,
         fallback_reason=fallback_reason,
+    )
+
+
+def _resolve_ticket_target_ref(created_spec: dict[str, Any] | None) -> str | None:
+    if not isinstance(created_spec, dict):
+        return None
+    role_profile_ref = str(created_spec.get("role_profile_ref") or "").strip()
+    if not role_profile_ref:
+        return None
+    return f"role_profile:{role_profile_ref}"
+
+
+def _resolve_provider_selection_for_ticket(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    created_spec: dict[str, Any] | None,
+) -> RuntimeProviderSelection | None:
+    config = resolve_runtime_provider_config()
+    target_ref = _resolve_ticket_target_ref(created_spec)
+    if target_ref is None:
+        return None
+    return resolve_provider_selection(
+        config,
+        target_ref=target_ref,
+        employee_provider_id=_resolve_ticket_provider_id(repository, ticket),
     )
 
 
@@ -1243,25 +1366,41 @@ def _execute_runtime_with_provider_if_configured(
     ):
         return _execute_meeting_runtime(repository, ticket, execution_package, created_spec)
 
-    provider_id = _resolve_ticket_provider_id(repository, ticket)
-    runtime_config = resolve_runtime_provider_config()
-    runtime_mode = getattr(runtime_config.mode, "value", runtime_config.mode)
-    if provider_id == OPENAI_COMPAT_PROVIDER_ID and runtime_mode == "OPENAI_COMPAT":
-        if _is_provider_paused_for_ticket(repository, ticket):
+    selection = _resolve_provider_selection_for_ticket(repository, ticket, created_spec)
+    if selection is not None:
+        if repository.has_open_circuit_breaker_for_provider(selection.provider.provider_id):
             return _build_preemptive_provider_fallback_result(
                 execution_package,
+                selection=selection,
                 failure_kind="UPSTREAM_UNAVAILABLE",
                 failure_message="Provider execution is currently paused by an open incident.",
                 fallback_reason="provider execution is paused",
             )
-        if not all((runtime_config.base_url, runtime_config.api_key, runtime_config.model)):
+        if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT and not all(
+            (selection.provider.base_url, selection.provider.api_key, selection.preferred_model or selection.provider.model)
+        ):
             return _build_preemptive_provider_fallback_result(
                 execution_package,
+                selection=selection,
                 failure_kind="PROVIDER_CONFIG_INCOMPLETE",
                 failure_message="Provider config is incomplete for OpenAI Compat execution.",
                 fallback_reason="provider configuration is incomplete",
             )
-        provider_result = _execute_openai_compat_provider(execution_package)
+        if selection.provider.adapter_kind == RuntimeProviderAdapterKind.CLAUDE_CODE_CLI and not all(
+            (selection.provider.command_path, selection.preferred_model or selection.provider.model)
+        ):
+            return _build_preemptive_provider_fallback_result(
+                execution_package,
+                selection=selection,
+                failure_kind="PROVIDER_CONFIG_INCOMPLETE",
+                failure_message="Provider config is incomplete for Claude Code execution.",
+                fallback_reason="provider configuration is incomplete",
+            )
+        provider_result = (
+            _execute_openai_compat_provider(execution_package, selection)
+            if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
+            else _execute_claude_code_provider(execution_package, selection)
+        )
         if provider_result.result_status == "completed":
             return provider_result
         if provider_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
@@ -1269,13 +1408,15 @@ def _execute_runtime_with_provider_if_configured(
             return _build_provider_fallback_execution_result(
                 execution_package,
                 provider_result,
+                selection=selection,
                 fallback_reason="provider execution is paused after retry exhaustion",
                 incident_id=incident_id,
             )
-        if provider_result.failure_kind in {"PROVIDER_AUTH_FAILED", "PROVIDER_BAD_RESPONSE"}:
+        if provider_result.failure_kind in {"PROVIDER_AUTH_FAILED", "PROVIDER_BAD_RESPONSE", "UPSTREAM_UNAVAILABLE"}:
             return _build_provider_fallback_execution_result(
                 execution_package,
                 provider_result,
+                selection=selection,
                 fallback_reason="provider returned a non-retryable error",
             )
         return provider_result

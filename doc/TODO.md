@@ -14,8 +14,8 @@
 
 ## 当前基线（2026-04-07）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `446 passed`
-- frontend：`npm run build` -> passed，`npm run test:run` -> `72 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `453 passed`
+- frontend：`npm run build` -> passed，`npm run test:run` -> `73 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
 ## 当前批次
@@ -57,6 +57,17 @@
 - OpenAI Compat live CEO prompt 现在会显式先检查 `reuse_candidates`，优先 `NO_ACTION`、`RETRY_TICKET` 或等待现有工作继续，而不是默认新建平行 ticket、额外开会或补招人
 - 当前按最保守口径实现 completed ticket 摘要：继续从 `TICKET_CREATED` 取 `output_schema_ref`，但因普通 `TICKET_CREATED` payload 没有 `summary`，当前回退到完成态 `completion_summary`；会议复用候选只读 `meeting_projection`，不读 artifact 正文
 - 当前回归已覆盖 snapshot `reuse_candidates`、live prompt 复用优先文案和 provider 渲染路径；验证基线更新为 backend `446 passed`、frontend build passed、frontend `72 passed`
+
+### `P2-PRV-001 / P2-PRV-005 / P2-PRV-006`：多协议 provider registry 与角色路由首版
+
+状态：`已完成（2026-04-07，本轮手动纳入；与主线关系：把 runtime provider 从单一 OpenAI 开关收口成最小可用的多协议配置中心，并让 CEO / Worker 都能按角色绑定选 provider）`
+
+- `P2-PRV-001` 已完成：`runtime-provider-config.json` 现在改成 registry 结构，固定暴露 `default_provider_id / providers[] / role_bindings[]`；旧版单 provider JSON 会自动迁移到新结构
+- 当前 registry 首版真实支持两个 adapter：`prov_openai_compat` 和 `prov_claude_code`；Gemini 原生 adapter 仍未纳入，后续如果需要，先走 OpenAI-compatible 地址
+- `P2-PRV-006` 已完成：运行时和 CEO shadow 都会先解析角色绑定，再回退员工 `provider_id` 兼容字段，最后才回退默认 provider 或本地 deterministic；当前真实 target 只开放 `ceo_shadow / ui_designer_primary / frontend_engineer_primary / checker_primary`
+- `runtime-provider` 投影和前端 `ProviderSettingsDrawer` 现在都升级为最小 provider center：可编辑 OpenAI / Claude 配置、默认 provider 和当前真实角色绑定；未来治理角色只展示只读占位，不写成已启用能力
+- 当前实现只补最小审计字段：runtime provider 执行与 fallback 现在会显式记录 `preferred_provider_id / preferred_model / actual_provider_id / actual_model / adapter_kind`；未开启任务级 override、复杂 fallback 路由、成本分层或独立健康探测器
+- `P2-PRV-005` 已完成：新增后端回归覆盖旧配置迁移、角色路由优先级、Claude CLI adapter、CEO/Worker 路由与 provider pause 兼容路径；前端回归补上 provider center 的未来治理角色只读占位；当前验证基线更新为 backend `453 passed`、frontend build passed、frontend `73 passed`
 
 本轮完成后，当前剩余未关闭项仍都属于冻结后置或后置增强；当前再次回到“没有可直接开启的默认主线任务”状态。
 

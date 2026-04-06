@@ -122,10 +122,13 @@ from app.core.staffing_catalog import (
     mainline_staffing_template_id_for_role,
 )
 from app.core.runtime_provider_config import (
+    FUTURE_ROLE_BINDING_SLOTS,
     RuntimeProviderConfigStore,
     count_configured_workers,
+    find_provider_entry,
     mask_api_key,
     resolve_runtime_provider_config,
+    runtime_target_label,
     runtime_provider_effective_mode,
     runtime_provider_health_summary,
 )
@@ -222,19 +225,61 @@ def _build_runtime_provider_projection_data(
     config = resolve_runtime_provider_config(runtime_provider_store)
     effective_mode, effective_reason = runtime_provider_effective_mode(config, repository)
     health_summary = runtime_provider_health_summary(config, repository)
+    default_provider = find_provider_entry(config, config.default_provider_id)
     return RuntimeProviderProjectionData(
-        mode=config.mode,
+        mode=(
+            "DETERMINISTIC"
+            if default_provider is None
+            else (
+                "OPENAI_COMPAT"
+                if default_provider.adapter_kind == "openai_compat"
+                else "CLAUDE_CODE_CLI"
+            )
+        ),
         effective_mode=effective_mode,
         provider_health_summary=health_summary,
-        provider_id=config.provider_id,
-        base_url=config.base_url,
-        model=config.model,
-        timeout_sec=config.timeout_sec,
-        reasoning_effort=config.reasoning_effort,
-        api_key_configured=bool(config.api_key),
-        api_key_masked=mask_api_key(config.api_key),
-        configured_worker_count=count_configured_workers(repository, provider_id=config.provider_id),
+        provider_id=default_provider.provider_id if default_provider is not None else None,
+        base_url=default_provider.base_url if default_provider is not None else None,
+        model=default_provider.model if default_provider is not None else None,
+        timeout_sec=default_provider.timeout_sec if default_provider is not None else 30.0,
+        reasoning_effort=default_provider.reasoning_effort if default_provider is not None else None,
+        api_key_configured=bool(default_provider.api_key) if default_provider is not None else False,
+        api_key_masked=mask_api_key(default_provider.api_key) if default_provider is not None else None,
+        configured_worker_count=(
+            count_configured_workers(repository, provider_id=default_provider.provider_id)
+            if default_provider is not None
+            else 0
+        ),
         effective_reason=effective_reason,
+        default_provider_id=config.default_provider_id,
+        providers=[
+            {
+                "provider_id": provider.provider_id,
+                "adapter_kind": provider.adapter_kind,
+                "label": provider.label,
+                "enabled": provider.enabled,
+                "base_url": provider.base_url,
+                "api_key_configured": bool(provider.api_key),
+                "api_key_masked": mask_api_key(provider.api_key),
+                "model": provider.model,
+                "timeout_sec": provider.timeout_sec,
+                "reasoning_effort": provider.reasoning_effort,
+                "command_path": provider.command_path,
+                "configured_worker_count": count_configured_workers(repository, provider_id=provider.provider_id),
+                "is_default": provider.provider_id == config.default_provider_id,
+            }
+            for provider in config.providers
+        ],
+        role_bindings=[
+            {
+                "target_ref": binding.target_ref,
+                "target_label": runtime_target_label(binding.target_ref),
+                "provider_id": binding.provider_id,
+                "model": binding.model,
+            }
+            for binding in config.role_bindings
+        ],
+        future_binding_slots=list(FUTURE_ROLE_BINDING_SLOTS),
     )
 
 
@@ -1208,7 +1253,7 @@ def build_dashboard_projection(
                 provider_label=(
                     "OpenAI Compat"
                     if runtime_provider.mode == "OPENAI_COMPAT"
-                    else "Local Deterministic"
+                    else ("Claude Code CLI" if runtime_provider.mode == "CLAUDE_CODE_CLI" else "Local Deterministic")
                 ),
                 model=runtime_provider.model,
                 configured_worker_count=runtime_provider.configured_worker_count,

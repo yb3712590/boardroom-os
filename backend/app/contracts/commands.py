@@ -83,6 +83,7 @@ class DeliveryStage(StrEnum):
 class RuntimeProviderMode(StrEnum):
     DETERMINISTIC = "DETERMINISTIC"
     OPENAI_COMPAT = "OPENAI_COMPAT"
+    CLAUDE_CODE_CLI = "CLAUDE_CODE_CLI"
 
 
 class MeetingType(StrEnum):
@@ -139,13 +140,29 @@ class ProjectInitCommand(StrictModel):
     force_requirement_elicitation: bool = False
 
 
-class RuntimeProviderUpsertCommand(StrictModel):
-    mode: RuntimeProviderMode
+class RuntimeProviderConfigInput(StrictModel):
+    provider_id: str = Field(min_length=1)
+    adapter_kind: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    enabled: bool = False
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
     timeout_sec: float = Field(default=30.0, gt=0)
     reasoning_effort: str | None = None
+    command_path: str | None = None
+
+
+class RuntimeProviderRoleBindingInput(StrictModel):
+    target_ref: str = Field(min_length=1)
+    provider_id: str = Field(min_length=1)
+    model: str | None = None
+
+
+class RuntimeProviderUpsertCommand(StrictModel):
+    default_provider_id: str | None = None
+    providers: list[RuntimeProviderConfigInput] = Field(default_factory=list)
+    role_bindings: list[RuntimeProviderRoleBindingInput] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1)
 
 

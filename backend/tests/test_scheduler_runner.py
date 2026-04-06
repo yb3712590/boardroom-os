@@ -20,6 +20,14 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderResult,
     OpenAICompatProviderUnavailableError,
 )
+from app.core.runtime_provider_config import (
+    CLAUDE_CODE_PROVIDER_ID,
+    OPENAI_COMPAT_PROVIDER_ID,
+    ROLE_BINDING_FRONTEND_ENGINEER,
+    RuntimeProviderConfigEntry,
+    RuntimeProviderRoleBinding,
+    RuntimeProviderStoredConfig,
+)
 from app.scheduler_runner import run_scheduler_loop, run_scheduler_once
 
 
@@ -1252,7 +1260,7 @@ def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_
 
     called_ticket_ids: list[str] = []
 
-    def _fake_provider_execute(execution_package):
+    def _fake_provider_execute(execution_package, *args, **kwargs):
         called_ticket_ids.append(execution_package.meta.ticket_id)
         return RuntimeExecutionResult(
             result_status="completed",
@@ -1339,7 +1347,7 @@ def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
 
     called_ticket_ids: list[str] = []
 
-    def _fake_provider_execute(execution_package):
+    def _fake_provider_execute(execution_package, *args, **kwargs):
         called_ticket_ids.append(execution_package.meta.ticket_id)
         return RuntimeExecutionResult(
             result_status="completed",
@@ -1372,6 +1380,91 @@ def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_saved"]
     assert called_ticket_ids == ["tkt_runner_provider_saved"]
+    assert ticket_projection["status"] == "COMPLETED"
+
+
+def test_runtime_prefers_role_binding_over_employee_provider(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    repository = client.app.state.repository
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                ),
+                RuntimeProviderConfigEntry(
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    adapter_kind="claude_code_cli",
+                    label="Claude Code CLI",
+                    enabled=True,
+                    command_path="/Users/bill/.local/bin/claude",
+                    model="claude-sonnet-4-6",
+                    timeout_sec=30.0,
+                ),
+            ],
+            role_bindings=[
+                RuntimeProviderRoleBinding(
+                    target_ref=ROLE_BINDING_FRONTEND_ENGINEER,
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    model="claude-opus-4-1",
+                )
+            ],
+        )
+    )
+    _seed_worker(repository, employee_id="emp_frontend_bound", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_binding",
+            ticket_id="tkt_runner_provider_binding",
+            node_id="node_runner_provider_binding",
+            role_profile_ref="frontend_engineer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_binding",
+            "ticket_id": "tkt_runner_provider_binding",
+            "node_id": "node_runner_provider_binding",
+            "leased_by": "emp_frontend_bound",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_binding:tkt_runner_provider_binding",
+        },
+    )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "invoke_openai_compat_response",
+        lambda *args, **kwargs: pytest.fail("runtime should not pick OpenAI when a role binding points to Claude"),
+    )
+
+    def _fake_claude(*args, **kwargs):
+        return type(
+            "ClaudeResult",
+            (),
+            {
+                "output_text": '{"summary":"Claude handled the runtime ticket.","recommended_option_id":"option_a","options":[{"option_id":"option_a","label":"Option A","summary":"Claude-backed option.","artifact_refs":["art://runtime/provider-claude/option-a.json"]}]}',
+                "response_id": None,
+            },
+        )()
+
+    monkeypatch.setattr(runtime_module, "invoke_claude_code_response", _fake_claude)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_binding")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_binding"]
     assert ticket_projection["status"] == "COMPLETED"
 
 
@@ -2118,7 +2211,7 @@ def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, s
         },
     )
 
-    def _fake_provider_execute(execution_package):
+    def _fake_provider_execute(execution_package, *args, **kwargs):
         return RuntimeExecutionResult(
             result_status="failed",
             failure_kind="PROVIDER_AUTH_FAILED",

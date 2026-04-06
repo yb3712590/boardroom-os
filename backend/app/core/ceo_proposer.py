@@ -24,7 +24,13 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderError,
     invoke_openai_compat_response,
 )
+from app.core.provider_claude_code import ClaudeCodeProviderConfig, ClaudeCodeProviderError, invoke_claude_code_response
 from app.core.runtime_provider_config import (
+    RuntimeProviderAdapterKind,
+    ROLE_BINDING_CEO_SHADOW,
+    find_provider_entry,
+    provider_effective_mode,
+    resolve_provider_selection,
     RuntimeProviderConfigStore,
     resolve_runtime_provider_config,
     runtime_provider_effective_mode,
@@ -145,51 +151,63 @@ def propose_ceo_action_batch(
     config = resolve_runtime_provider_config(runtime_provider_store)
     effective_mode, effective_reason = runtime_provider_effective_mode(config, repository)
     provider_health_summary = runtime_provider_health_summary(config, repository)
-    if effective_mode != "OPENAI_COMPAT_LIVE":
+    selection = resolve_provider_selection(config, target_ref=ROLE_BINDING_CEO_SHADOW, employee_provider_id=None)
+    if selection is None:
         return CEOProposalResult(
             action_batch=build_deterministic_fallback_batch(snapshot, effective_reason),
             effective_mode=effective_mode,
             provider_health_summary=provider_health_summary,
-            model=config.model,
+            model=(find_provider_entry(config, config.default_provider_id).model if find_provider_entry(config, config.default_provider_id) is not None else None),
             fallback_reason=effective_reason,
         )
-
-    if config.base_url is None or config.api_key is None or config.model is None:
-        fallback_reason = "OpenAI-compatible provider config is incomplete for CEO shadow mode."
+    provider_mode, provider_reason = provider_effective_mode(selection.provider, repository)
+    if not provider_mode.endswith("_LIVE"):
         return CEOProposalResult(
-            action_batch=build_deterministic_fallback_batch(snapshot, fallback_reason),
-            effective_mode=effective_mode,
+            action_batch=build_deterministic_fallback_batch(snapshot, provider_reason),
+            effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
-            model=config.model,
-            fallback_reason=fallback_reason,
+            model=selection.preferred_model or selection.provider.model,
+            fallback_reason=provider_reason,
         )
 
     try:
-        provider_result = invoke_openai_compat_response(
-            OpenAICompatProviderConfig(
-                base_url=config.base_url,
-                api_key=config.api_key,
-                model=config.model,
-                timeout_sec=config.timeout_sec,
-                reasoning_effort=config.reasoning_effort,
-            ),
-            build_ceo_shadow_rendered_payload(snapshot),
+        rendered_payload = build_ceo_shadow_rendered_payload(snapshot)
+        provider_result = (
+            invoke_openai_compat_response(
+                OpenAICompatProviderConfig(
+                    base_url=str(selection.provider.base_url or ""),
+                    api_key=str(selection.provider.api_key or ""),
+                    model=str(selection.preferred_model or selection.provider.model or ""),
+                    timeout_sec=selection.provider.timeout_sec,
+                    reasoning_effort=selection.provider.reasoning_effort,
+                ),
+                rendered_payload,
+            )
+            if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
+            else invoke_claude_code_response(
+                ClaudeCodeProviderConfig(
+                    command_path=str(selection.provider.command_path or ""),
+                    model=str(selection.preferred_model or selection.provider.model or ""),
+                    timeout_sec=selection.provider.timeout_sec,
+                ),
+                rendered_payload,
+            )
         )
         payload = json.loads(provider_result.output_text)
         action_batch = CEOActionBatch.model_validate(payload)
         return CEOProposalResult(
             action_batch=action_batch,
-            effective_mode=effective_mode,
+            effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
-            model=config.model,
+            model=selection.preferred_model or selection.provider.model,
             provider_response_id=provider_result.response_id,
         )
-    except (OpenAICompatProviderError, ValueError, TypeError, json.JSONDecodeError) as exc:
+    except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as exc:
         fallback_reason = str(exc)
         return CEOProposalResult(
             action_batch=build_deterministic_fallback_batch(snapshot, fallback_reason),
-            effective_mode=effective_mode,
+            effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
-            model=config.model,
+            model=selection.preferred_model or selection.provider.model,
             fallback_reason=fallback_reason,
         )

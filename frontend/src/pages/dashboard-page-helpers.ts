@@ -17,6 +17,12 @@ export function runtimeModeLabel(value: string | null | undefined) {
       return 'OpenAI Compat incomplete'
     case 'OPENAI_COMPAT_PAUSED':
       return 'OpenAI Compat paused'
+    case 'CLAUDE_CODE_CLI_LIVE':
+      return 'Claude Code CLI'
+    case 'CLAUDE_CODE_CLI_INCOMPLETE':
+      return 'Claude Code CLI incomplete'
+    case 'CLAUDE_CODE_CLI_PAUSED':
+      return 'Claude Code CLI paused'
     case 'LOCAL_DETERMINISTIC':
     default:
       return 'Local deterministic'

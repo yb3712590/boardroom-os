@@ -104,7 +104,7 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
     validate_output_payload,
 )
-from app.core.runtime_provider_config import OPENAI_COMPAT_PROVIDER_ID, resolve_runtime_provider_config
+from app.core.runtime_provider_config import find_provider_entry, resolve_runtime_provider_config
 from app.core.ticket_artifacts import (
     PreparedTicketArtifact,
     cleanup_materialized_artifacts,
@@ -1055,10 +1055,11 @@ def _is_provider_paused(
 
 
 def _allow_paused_provider_start(provider_id: str | None) -> bool:
-    if provider_id != OPENAI_COMPAT_PROVIDER_ID:
+    if provider_id is None:
         return False
     config = resolve_runtime_provider_config()
-    return getattr(config.mode, "value", config.mode) == "OPENAI_COMPAT"
+    provider = find_provider_entry(config, provider_id)
+    return provider is not None and provider.enabled
 
 
 def _resolve_timeout_root_created_spec(

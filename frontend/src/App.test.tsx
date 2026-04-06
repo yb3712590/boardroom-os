@@ -599,7 +599,7 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
     mode: 'DETERMINISTIC',
     effective_mode: 'LOCAL_DETERMINISTIC',
     provider_health_summary: 'LOCAL_ONLY',
-    provider_id: 'prov_openai_compat',
+    provider_id: null,
     base_url: null,
     model: null,
     timeout_sec: 30,
@@ -608,6 +608,48 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
     api_key_masked: null,
     configured_worker_count: 1,
     effective_reason: 'Runtime is using the local deterministic path.',
+    default_provider_id: null,
+    providers: [
+      {
+        provider_id: 'prov_openai_compat',
+        adapter_kind: 'openai_compat',
+        label: 'OpenAI Compat',
+        enabled: false,
+        base_url: null,
+        api_key_configured: false,
+        api_key_masked: null,
+        model: null,
+        timeout_sec: 30,
+        reasoning_effort: null,
+        command_path: null,
+        configured_worker_count: 1,
+        is_default: false,
+      },
+      {
+        provider_id: 'prov_claude_code',
+        adapter_kind: 'claude_code_cli',
+        label: 'Claude Code CLI',
+        enabled: false,
+        base_url: null,
+        api_key_configured: false,
+        api_key_masked: null,
+        model: null,
+        timeout_sec: 30,
+        reasoning_effort: null,
+        command_path: null,
+        configured_worker_count: 0,
+        is_default: false,
+      },
+    ],
+    role_bindings: [],
+    future_binding_slots: [
+      {
+        target_ref: 'role_profile:cto_primary',
+        label: 'CTO / 架构治理',
+        status: 'NOT_ENABLED',
+        reason: '治理模板角色尚未纳入当前主线。',
+      },
+    ],
     ...overrides,
   }
 }
@@ -1090,26 +1132,61 @@ function installBoardroomMock(options?: {
       url.endsWith('/api/v1/commands/runtime-provider-upsert')
     ) {
       const payload = JSON.parse(String(init?.body ?? '{}')) as JsonRecord
-      const mode = String(payload.mode ?? 'DETERMINISTIC')
-      const model = typeof payload.model === 'string' ? payload.model : null
-      const baseUrl = typeof payload.base_url === 'string' ? payload.base_url : null
-      const reasoningEffort =
-        typeof payload.reasoning_effort === 'string' ? payload.reasoning_effort : null
-      const timeoutSec = typeof payload.timeout_sec === 'number' ? payload.timeout_sec : 30
-      const apiKey = typeof payload.api_key === 'string' ? payload.api_key : null
+      const defaultProviderId =
+        typeof payload.default_provider_id === 'string' ? payload.default_provider_id : null
+      const providers = Array.isArray(payload.providers) ? payload.providers : []
+      const roleBindings = Array.isArray(payload.role_bindings) ? payload.role_bindings : []
+      const openai = providers.find(
+        (provider): provider is JsonRecord =>
+          typeof provider === 'object' && provider !== null && provider.provider_id === 'prov_openai_compat',
+      )
+      const claude = providers.find(
+        (provider): provider is JsonRecord =>
+          typeof provider === 'object' && provider !== null && provider.provider_id === 'prov_claude_code',
+      )
+      const activeProvider = defaultProviderId === 'prov_claude_code' ? claude : openai
+      const effectiveMode =
+        defaultProviderId === 'prov_openai_compat'
+          ? 'OPENAI_COMPAT_LIVE'
+          : defaultProviderId === 'prov_claude_code'
+            ? 'CLAUDE_CODE_CLI_LIVE'
+            : 'LOCAL_DETERMINISTIC'
       state.runtimeProvider = runtimeProviderData({
-        mode,
-        effective_mode: mode === 'OPENAI_COMPAT' ? 'OPENAI_COMPAT_LIVE' : 'LOCAL_DETERMINISTIC',
-        provider_health_summary: mode === 'OPENAI_COMPAT' ? 'HEALTHY' : 'LOCAL_ONLY',
-        base_url: baseUrl,
-        model,
-        timeout_sec: timeoutSec,
-        reasoning_effort: reasoningEffort,
-        api_key_configured: Boolean(apiKey),
-        api_key_masked: apiKey ? 'sk-***cret' : null,
+        mode:
+          defaultProviderId === 'prov_openai_compat'
+            ? 'OPENAI_COMPAT'
+            : defaultProviderId === 'prov_claude_code'
+              ? 'CLAUDE_CODE_CLI'
+              : 'DETERMINISTIC',
+        effective_mode: effectiveMode,
+        provider_health_summary: defaultProviderId ? 'HEALTHY' : 'LOCAL_ONLY',
+        provider_id: defaultProviderId,
+        default_provider_id: defaultProviderId,
+        base_url: typeof activeProvider?.base_url === 'string' ? activeProvider.base_url : null,
+        model: typeof activeProvider?.model === 'string' ? activeProvider.model : null,
+        timeout_sec: typeof activeProvider?.timeout_sec === 'number' ? activeProvider.timeout_sec : 30,
+        reasoning_effort:
+          typeof activeProvider?.reasoning_effort === 'string' ? activeProvider.reasoning_effort : null,
+        api_key_configured: Boolean(openai?.api_key),
+        api_key_masked: typeof openai?.api_key === 'string' ? 'sk-***cret' : null,
+        providers: providers.map((provider) => ({
+          ...provider,
+          api_key_configured: Boolean((provider as JsonRecord).api_key),
+          api_key_masked: typeof (provider as JsonRecord).api_key === 'string' ? 'sk-***cret' : null,
+          is_default: (provider as JsonRecord).provider_id === defaultProviderId,
+          configured_worker_count:
+            typeof (provider as JsonRecord).configured_worker_count === 'number'
+              ? (provider as JsonRecord).configured_worker_count
+              : (provider as JsonRecord).provider_id === 'prov_openai_compat'
+                ? 1
+                : 0,
+        })),
+        role_bindings: roleBindings,
         effective_reason:
-          mode === 'OPENAI_COMPAT'
+          defaultProviderId === 'prov_openai_compat'
             ? 'Runtime is using the saved OpenAI-compatible provider config.'
+            : defaultProviderId === 'prov_claude_code'
+              ? 'Runtime is using the saved Claude Code CLI provider config.'
             : 'Runtime is using the local deterministic path.',
       })
       state.dashboard = {
@@ -1119,6 +1196,8 @@ function installBoardroomMock(options?: {
           provider_label:
             state.runtimeProvider.effective_mode === 'OPENAI_COMPAT_LIVE'
               ? 'OpenAI Compat'
+              : state.runtimeProvider.effective_mode === 'CLAUDE_CODE_CLI_LIVE'
+                ? 'Claude Code CLI'
               : 'Local Deterministic',
           model: state.runtimeProvider.model,
           configured_worker_count: Number(state.runtimeProvider.configured_worker_count),
@@ -1311,22 +1390,38 @@ describe('Boardroom UI', () => {
     expect(await screen.findByRole('heading', { name: /runtime provider/i })).toBeInTheDocument()
 
     await user.selectOptions(screen.getByLabelText(/provider mode/i), 'OPENAI_COMPAT')
-    await user.clear(screen.getByLabelText(/base url/i))
-    await user.type(screen.getByLabelText(/base url/i), 'https://api.example.test/v1')
-    await user.clear(screen.getByLabelText(/api key/i))
-    await user.type(screen.getByLabelText(/api key/i), 'sk-test-secret')
-    await user.clear(screen.getByLabelText(/model/i))
-    await user.type(screen.getByLabelText(/model/i), 'gpt-5.3-codex')
+    await user.clear(screen.getByLabelText(/openai base url/i))
+    await user.type(screen.getByLabelText(/openai base url/i), 'https://api.example.test/v1')
+    await user.clear(screen.getByLabelText(/openai api key/i))
+    await user.type(screen.getByLabelText(/openai api key/i), 'sk-test-secret')
+    await user.clear(screen.getByLabelText(/openai model/i))
+    await user.type(screen.getByLabelText(/openai model/i), 'gpt-5.3-codex')
     await user.click(screen.getByRole('button', { name: /save runtime settings/i }))
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         '/api/v1/commands/runtime-provider-upsert',
-        expect.objectContaining({ method: 'POST' }),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"default_provider_id":"prov_openai_compat"'),
+        }),
       ),
     )
     expect(await screen.findByText(/openai compat/i)).toBeInTheDocument()
     expect(screen.getByText(/gpt-5.3-codex/i)).toBeInTheDocument()
+  })
+
+  it('shows future governance role slots as read-only in runtime provider settings', async () => {
+    installBoardroomMock({
+      runtimeProvider: runtimeProviderData(),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /runtime settings/i }))
+
+    expect(await screen.findByDisplayValue(/not_enabled: 治理模板角色尚未纳入当前主线。/i)).toBeDisabled()
   })
 
   it('launches project init and refreshes into the first review state', async () => {

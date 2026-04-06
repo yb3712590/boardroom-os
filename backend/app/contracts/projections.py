@@ -381,7 +381,7 @@ class RuntimeProviderProjectionData(StrictModel):
     mode: str
     effective_mode: str
     provider_health_summary: str
-    provider_id: str
+    provider_id: str | None = None
     base_url: str | None = None
     model: str | None = None
     timeout_sec: float
@@ -390,6 +390,10 @@ class RuntimeProviderProjectionData(StrictModel):
     api_key_masked: str | None = None
     configured_worker_count: int
     effective_reason: str
+    default_provider_id: str | None = None
+    providers: list[dict[str, object]] = Field(default_factory=list)
+    role_bindings: list[dict[str, object]] = Field(default_factory=list)
+    future_binding_slots: list[dict[str, object]] = Field(default_factory=list)
 
 
 class RuntimeProviderProjectionEnvelope(ProjectionEnvelopeBase):

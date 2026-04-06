@@ -27,7 +27,14 @@ from app.core.constants import (
 )
 from app.core.persona_profiles import clone_persona_template, get_hire_persona_template_id
 from app.core.provider_openai_compat import OpenAICompatProviderResult
-from app.core.runtime_provider_config import RuntimeProviderMode, RuntimeProviderStoredConfig
+from app.core.runtime_provider_config import (
+    CLAUDE_CODE_PROVIDER_ID,
+    OPENAI_COMPAT_PROVIDER_ID,
+    ROLE_BINDING_CEO_SHADOW,
+    RuntimeProviderConfigEntry,
+    RuntimeProviderRoleBinding,
+    RuntimeProviderStoredConfig,
+)
 
 
 def _project_init(client, goal: str = "CEO shadow test") -> str:
@@ -78,12 +85,9 @@ def _seed_workflow(client, workflow_id: str, goal: str = "Seeded CEO workflow") 
 def _set_deterministic_mode(client) -> None:
     client.app.state.runtime_provider_store.save_config(
         RuntimeProviderStoredConfig(
-            mode=RuntimeProviderMode.DETERMINISTIC,
-            base_url=None,
-            api_key=None,
-            model=None,
-            timeout_sec=30.0,
-            reasoning_effort=None,
+            default_provider_id=None,
+            providers=[],
+            role_bindings=[],
         )
     )
 
@@ -91,12 +95,30 @@ def _set_deterministic_mode(client) -> None:
 def _set_live_provider(client) -> None:
     client.app.state.runtime_provider_store.save_config(
         RuntimeProviderStoredConfig(
-            mode=RuntimeProviderMode.OPENAI_COMPAT,
-            base_url="https://api.example.test/v1",
-            api_key="sk-test-secret",
-            model="gpt-5.3-codex",
-            timeout_sec=30.0,
-            reasoning_effort="medium",
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                ),
+                RuntimeProviderConfigEntry(
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    adapter_kind="claude_code_cli",
+                    label="Claude Code CLI",
+                    enabled=False,
+                    command_path="/Users/bill/.local/bin/claude",
+                    model="claude-sonnet-4-6",
+                    timeout_sec=30.0,
+                ),
+            ],
+            role_bindings=[],
         )
     )
 
@@ -569,6 +591,86 @@ def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(cl
     assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
     assert run["executed_actions"][0]["execution_status"] == "PASSTHROUGH"
     assert run["deterministic_fallback_used"] is False
+
+
+def test_ceo_shadow_prefers_role_binding_over_default_provider(client, monkeypatch):
+    workflow_id = _project_init(client, "CEO shadow provider binding")
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                ),
+                RuntimeProviderConfigEntry(
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    adapter_kind="claude_code_cli",
+                    label="Claude Code CLI",
+                    enabled=True,
+                    command_path="/Users/bill/.local/bin/claude",
+                    model="claude-sonnet-4-6",
+                    timeout_sec=30.0,
+                ),
+            ],
+            role_bindings=[
+                RuntimeProviderRoleBinding(
+                    target_ref=ROLE_BINDING_CEO_SHADOW,
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    model="claude-opus-4-1",
+                )
+            ],
+        )
+    )
+
+    from app.core import ceo_proposer
+
+    monkeypatch.setattr(
+        ceo_proposer,
+        "invoke_openai_compat_response",
+        lambda *args, **kwargs: pytest.fail("CEO shadow should not pick OpenAI when ceo_shadow is bound to Claude"),
+    )
+
+    def _fake_claude(_config, _rendered_payload):
+        return type(
+            "ClaudeResult",
+            (),
+            {
+                "output_text": json.dumps(
+                    {
+                        "summary": "Use Claude for the CEO proposal.",
+                        "actions": [
+                            {
+                                "action_type": "NO_ACTION",
+                                "payload": {"reason": "Claude decided the current workflow should wait."},
+                            }
+                        ],
+                    }
+                ),
+                "response_id": None,
+            },
+        )()
+
+    monkeypatch.setattr(ceo_proposer, "invoke_claude_code_response", _fake_claude)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:ceo-binding",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["effective_mode"] == "CLAUDE_CODE_CLI_LIVE"
+    assert run["model"] == "claude-opus-4-1"
+    assert run["proposed_action_batch"]["summary"] == "Use Claude for the CEO proposal."
 
 
 def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_already_active(client):
