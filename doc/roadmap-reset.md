@@ -81,10 +81,26 @@ Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 - 如果设计与代码不一致，先说明差异，再做最保守、最接近现状的处理
 - 汇报和文档只能写已实现、已验证、已暴露的真实状态，不能把计划或 placeholder 写成已完成
 
+## 新愿景吸收规则
+
+`feature-spec` 第 `58–75` 条的吸收方式固定按下面四类处理：
+
+- `已在规划内`：写回 `milestone-timeline.md` 和 `task-backlog/active.md`，不把远期愿景直接抬进 `TODO.md`
+- `条件纳入`：只在触发条件成立时进入 `TODO.md` 的 `C1` 条件批次，并在任务库里保持未开启或条件开启状态
+- `远期储备`：统一写入 `milestone-timeline.md` 的 `R1` 和 `todo/postponed.md`，不默认插入当前关键路径
+- `治理原则`：只记到本文件和 `history/context-baseline.md`，不写成近期待建子系统
+
+当前阶段还要额外遵守这几条：
+
+- 不为 `#70` 新建静态项目地图真相文件
+- 不把 `#65 SPIKE_TICKET` 默认插进当前关键路径
+- 不把 `#74` 写成系统化文档治理引擎
+- 不把 `#75` 写成已经存在的硬状态机门禁
+
 ## 文档约束与默认阅读顺序
 
 - `README.md` 必须把“本地无状态 agent team + 最薄 Web 壳”写成第一叙事
-- `doc/TODO.md` 只保留当前主线待办
+- `doc/TODO.md` 只保留当前批次与条件批次
 - `doc/history/context-baseline.md` 保留稳定不常变的规则和架构基线
 - `doc/history/memory-log.md` 只保留最近几天仍会影响实现判断的事实
 

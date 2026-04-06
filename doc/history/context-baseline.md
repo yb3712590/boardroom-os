@@ -22,6 +22,9 @@
 - Maker-Checker is the default internal quality gate before CEO or Board escalation.
 - Important outputs must stay schema-checked, write-set-checked, and auditable.
 - Runtime should keep work moving autonomously and escalate only on defined blocking, risk, or approval conditions.
+- Parallel implementation / serial closeout is a governance preference, not current runtime scheduling policy.
+- Documentation governance currently lives in the maintained doc stack (`README` / `mainline-truth` / `roadmap-reset` / `TODO` / `task-backlog` / `history`), not in a separate system engine.
+- Completion currently means code, config, UI, tests, evidence, and affected docs should be aligned before downstream claims; for now this is a checker / closeout expectation, not a hard state-machine gate.
 
 ## Stable Architecture
 
@@ -35,6 +38,7 @@
 
 - The repo still contains heavier infrastructure slices such as `worker-admin`, multi-scope worker binding, object-store support, and remote handoff.
 - Those paths are not current mainline. Unless they directly unblock local MVP, treat them as frozen.
+- Higher-impact future capabilities such as `SPIKE_TICKET`, project maps, process-asset systems, and organization learning remain postponed unless the roadmap boundary changes.
 
 ## Current Entry Points
 

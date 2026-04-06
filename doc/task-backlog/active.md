@@ -6,37 +6,21 @@
 
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
-| 冻结能力隔离 | `P1-CLN-001` 到 `P1-CLN-006` | 进行中 | `P1-CLN-001`、`P1-CLN-004`、`P1-CLN-005`、`P1-CLN-006` 已完成；`P1-CLN-002`、`P1-CLN-003` 仍在进行中 |
-| 检索层 | `P2-RET-001` 到 `P2-RET-005` | 未开始 | 仍属后置增强 |
-| Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 未开始 | 仍属后置增强 |
-| 治理模板与文档型角色 | `P2-GOV-001` 到 `P2-GOV-006` | 未开始 | 仍属后置增强 |
+| 冻结能力隔离 | `P1-CLN-002` 到 `P1-CLN-003` | 进行中 | blocker 已确认，等待前置条件变化 |
+| 检索层 | `P2-RET-001` 到 `P2-RET-006` | 后置增强 / 条件纳入 | `P2-RET-006` 只在条件成立时打开 |
+| Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 后置增强 | 继续保持未开启 |
+| 治理模板与交付口径 | `P2-GOV-001` 到 `P2-GOV-007` | 后置增强 / 条件纳入 | `P2-GOV-007` 只写 soft rule |
+| CEO 策略增强 | `P2-CEO-001` 到 `P2-CEO-002` | 条件纳入 / 后置增强 | `P2-CEO-001` 与初始化阶段有关 |
+| 会议增强 | `P2-MTG-011` | 条件纳入 | 只在共识默认消费面不清时打开 |
 
 ## P1：重要
 
 ### 3.3 代码清理
 
-> 当前状态补记：`P1-CLN-001`、`P1-CLN-004`、`P1-CLN-005` 和 `P1-CLN-006` 已完成。`P1-CLN-001` 已按 shim 迁移收口：`worker-admin` 的真实实现已经迁到 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 文件只保留兼容壳。`P1-CLN-004` 这轮也已按同口径收口：`worker-runtime` 的真实实现已经迁到 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 文件只保留兼容壳。`P1-CLN-002` 已推进到主线 command 侧解耦：`project-init`、`ticket-create`、CEO 建票和审批 follow-up 建票不再直接吃 `tenant_id/workspace_id`，而是统一从 workflow/default 解析 scope；当前又新增了 `backend/app/contracts/scope.py` 作为 runtime / worker-admin / worker-runtime 复用的单点 scope contract。 
->
-> 当前挂起原因：
-> `P1-CLN-002`、`P1-CLN-003` 当前都还不能直接启动无壳物理迁移：
-> `P1-CLN-002`：主线 command 侧已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留 `tenant_id/workspace_id` shape。
-> `P1-CLN-003`：`ticket-result-submit` 已不再桥接 upload session，且可选对象存储实现已迁入 `_frozen/object_store.py`；但当前仍保留独立的 `ticket-artifact-import-upload` 导入入口和 upload session 存储，所以还不能直接做 `_frozen/` 物理迁移。
+当前只保留两条未关闭任务：
 
-> 本轮补记：
-> `P1-CLN-001` 这轮已真实关闭：`backend/app/_frozen/worker_admin/` 现在承接 `worker-admin` 的 API、auth、projection、core 和 CLI 实现，`app/api/worker_admin*.py`、`app/core/worker_admin.py`、`app/worker_admin_auth_cli.py` 只保留薄转发；`backend/tests/test_mainline_truth.py` 新增回归直接校验这层真相。
-> `P1-CLN-003` 现在新增了控制面和 `worker-runtime` 两条 `ticket-artifact-import-upload` 写回链；上传会话完成后先导入为正常 artifact，再让 `ticket-result-submit` 只引用 `artifact_ref`。
-> `backend/tests/test_api.py` 已补回归，覆盖控制面导入、路径越界拒绝、worker-runtime 签名导入后再提交；`backend/tests/test_mainline_truth.py` 也已改成新阻塞口径。
-> `P1-CLN-004` 这轮已从“未开始（阻塞评估已固化）”推进到“进行中”：`/api/v1/projections/worker-runtime` 已拆到独立 `worker_runtime_projections.py`，`build_worker_runtime_projection(...)` 已改成复用 `worker_scope_ops.py` 的 `list_binding_admin_views / list_sessions / list_delivery_grants / list_auth_rejections`。
-> `backend/app/core/mainline_truth.py` 与 `backend/tests/test_mainline_truth.py` 这轮同步成新阻塞口径：独立 projection 入口前置拆分已经完成，但 `/api/v1/worker-runtime`、`worker_auth_cli.py` 和三张 handoff schema 仍是成组阻塞点。
-> 本轮继续把 `P1-CLN-001` 到 `P1-CLN-004` 的“成组迁移单元”写实：`FrozenCapabilityBoundary` 新增 `api_surface_groups` 与 `storage_table_refs`，把 route family 和共享表锚点也固化进代码真相源；对应回归会直接校验这些组名和 `repository.py` 里的建表语句是否仍存在。
-> 这轮 `P1-CLN-001`、`P1-CLN-003`、`P1-CLN-004` 继续补的是“路由挂载边界”这层前置拆分：新增 `backend/app/api/router_registry.py`，把 `artifact-uploads`、`worker-admin`、`worker-admin-projections`、`worker-runtime`、`worker-runtime-projections` 收口成统一注册表，`main.py` 不再散着手工挂这些 frozen 兼容入口。
-> `backend/app/core/api_surface.py`、`backend/tests/test_api_surface.py`、`backend/tests/test_mainline_truth.py` 现在都直接复用这套路由组顺序，并会回归 frozen 组仍被注册、现有路径集合不变；这轮没有改任何 HTTP 路径、鉴权、命令契约或投影结构。
-> `P1-CLN-004` 本轮已真实关闭：`backend/app/_frozen/worker_runtime/` 现在承接 `worker-runtime` 的 API、projection、core 和 CLI 实现，`app/api/worker_runtime*.py`、`app/core/worker_runtime.py`、`app/worker_auth_cli.py` 只保留薄转发。
-> `backend/tests/conftest.py` 这轮已改成直接 monkeypatch `_frozen.worker_runtime.api.worker_runtime` 和 `_frozen.worker_runtime.core.worker_runtime`，避免 shim 导出层吞掉时间注入。
-> `backend/tests/test_mainline_truth.py` 这轮新增回归，直接校验 `external_worker_handoff.code_refs` 已切到 `_frozen/worker_runtime`，同时保留旧入口作为兼容壳；共享 `worker_bootstrap/session/delivery-grant` schema 仍按阻塞点保留。
-> `P1-CLN-003` 这轮继续做了保守收口：可选对象存储实现现在位于 `backend/app/_frozen/object_store.py`，`backend/app/core/artifact_store.py` 只保留主线本地 artifact 存储、upload staging 和统一入口；object-store API 回归也已改成直接 patch `_frozen.object_store` builder。
-> `P1-CLN-003` 这轮继续把 object-store 的建链细节往 frozen 边界后移：`backend/app/_frozen/object_store.py` 新增可选 backend builder，`backend/app/core/artifact_store.py` 不再自己拼 S3-compatible client/bucket，只接收 frozen helper 构建出来的可选 backend；这轮没有改任何 object-store 环境变量、HTTP 路径或 artifact 元数据形状。
-> `backend/tests/test_artifact_store.py` 与 `backend/tests/test_scope_contracts.py` 这轮新增最小回归：前者卡住“主线只调 frozen object-store helper、默认仍走本地存储”，后者卡住“runtime / worker-admin / worker-runtime 复用 shared scope contract 但仍暴露原有字段名”。
+- `P1-CLN-002`：主线 command 已经不再直接依赖 `tenant_id/workspace_id`，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留这组 data shape
+- `P1-CLN-003`：主线结果提交已与 upload session 解耦，但 upload 导入入口和 upload session 存储仍保留
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
@@ -49,37 +33,53 @@
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
-| P2-RET-001 | 创建 FTS5 虚拟表 | 4h | 未开始 |
-| P2-RET-002 | 索引工单结果和审查摘要 | 4h | 未开始 |
-| P2-RET-003 | Context Compiler 集成 FTS5 查询 | 4h | 未开始 |
-| P2-RET-004 | 检索结果排序和去重 | 4h | 未开始 |
-| P2-RET-005 | 检索层测试 | 4h | 未开始 |
+| P2-RET-001 | 创建 FTS5 虚拟表 | 4h | 后置增强 |
+| P2-RET-002 | 索引工单结果和审查摘要 | 4h | 后置增强 |
+| P2-RET-003 | Context Compiler 集成 FTS5 查询 | 4h | 后置增强 |
+| P2-RET-004 | 检索结果排序和去重 | 4h | 后置增强 |
+| P2-RET-005 | 检索层测试 | 4h | 后置增强 |
+| P2-RET-006 | 执行包最小组织上下文与 L1 收口 | 3h | 条件纳入 |
 
 ### 4.2 Provider 增强
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
-| P2-PRV-001 | 多 Provider 配置支持 | 4h | 未开始 |
-| P2-PRV-002 | 能力标签定义 | 3h | 未开始 |
-| P2-PRV-003 | 基础健康检查 | 3h | 未开始 |
-| P2-PRV-004 | 简单 fallback 路由 | 4h | 未开始 |
-| P2-PRV-005 | Provider 增强测试 | 6h | 未开始 |
-| P2-PRV-006 | 角色级默认模型绑定 | 4h | 未开始 |
-| P2-PRV-007 | 任务级模型覆盖与 preferred/actual model 追踪 | 4h | 未开始 |
-| P2-PRV-008 | 成本分层与高价模型低频路由 | 4h | 未开始 |
+| P2-PRV-001 | 多 Provider 配置支持 | 4h | 后置增强 |
+| P2-PRV-002 | 能力标签定义 | 3h | 后置增强 |
+| P2-PRV-003 | 基础健康检查 | 3h | 后置增强 |
+| P2-PRV-004 | 简单 fallback 路由 | 4h | 后置增强 |
+| P2-PRV-005 | Provider 增强测试 | 6h | 后置增强 |
+| P2-PRV-006 | 角色级默认模型绑定 | 4h | 后置增强 |
+| P2-PRV-007 | 任务级模型覆盖与 preferred/actual model 追踪 | 4h | 后置增强 |
+| P2-PRV-008 | 成本分层与高价模型低频路由 | 4h | 后置增强 |
 
-### 4.3 治理模板与文档型角色
+### 4.3 治理模板与交付口径
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
-| P2-GOV-001 | 定义治理模板数据结构 | 4h | 未开始 |
-| P2-GOV-002 | 定义 CTO / 架构师低频角色模板 | 4h | 未开始 |
-| P2-GOV-003 | 定义架构 / 选型 / 里程碑 / 详细设计 / TODO 文档产物契约 | 4h | 未开始 |
-| P2-GOV-004 | CEO 按治理模板触发文档型任务 | 4h | 未开始 |
-| P2-GOV-005 | 文档型角色默认不参与日常编码 / 测试执行约束 | 3h | 未开始 |
-| P2-GOV-006 | 治理模板与文档型角色测试和文档 | 5h | 未开始 |
+| P2-GOV-001 | 定义治理模板数据结构 | 4h | 后置增强 |
+| P2-GOV-002 | 定义 CTO / 架构师低频角色模板 | 4h | 后置增强 |
+| P2-GOV-003 | 治理文档产物契约与可编译输入 | 4h | 后置增强 |
+| P2-GOV-004 | CEO 按治理模板触发文档型任务 | 4h | 后置增强 |
+| P2-GOV-005 | 文档型角色默认不参与日常编码 / 测试执行约束 | 3h | 后置增强 |
+| P2-GOV-006 | 治理模板与文档型角色测试和文档 | 5h | 后置增强 |
+| P2-GOV-007 | closeout 证据与文档同步软约束 | 3h | 条件纳入 |
+
+### 4.4 CEO 策略增强
+
+| ID | 标题 | 预估 | 状态 |
+|----|------|------|------|
+| P2-CEO-001 | 初始化需求澄清板审协议 | 4h | 条件纳入 |
+| P2-CEO-002 | CEO 复用优先决策策略 | 3h | 后置增强 |
+
+### 4.5 会议增强
+
+| ID | 标题 | 预估 | 状态 |
+|----|------|------|------|
+| P2-MTG-011 | ADR 化共识文档与决策视图 | 3h | 条件纳入 |
 
 ## 依赖提醒
 
-- `P1-CLN-*` 如果真正启动，应先做依赖图和调用清单，不要直接搬目录
-- `P2-RET-*`、`P2-PRV-*`、`P2-GOV-*` 目前都属于后置增强；只有在本地 MVP 主链已经证明需要时，才值得打开
+- `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
+- `P2-RET-*`、`P2-PRV-*`、`P2-GOV-*`、`P2-CEO-*`、`P2-MTG-*` 目前都不是默认主线
+- 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`

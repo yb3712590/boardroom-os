@@ -4,42 +4,31 @@
 
 ## 当前是什么
 
-Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 Agent Delivery OS MVP：
+Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 
 - 用户像董事会，只给目标、约束和验收标准
 - 后端按 `Board -> Worker -> Review` 的治理链推进工作
-- 事件流和投影是真相源，前端只读现有治理状态
-- `Inbox -> Review Room` 和 Maker-Checker 是真实闭环，不是演示页面
+- 事件流和投影是真相源，前端只读当前治理状态
+- Maker-Checker、Review Room 和最小 Meeting Room 都是主线治理，不是演示壳
 
-路线纠偏决议见 [doc/roadmap-reset.md](doc/roadmap-reset.md)。
+路线边界见 [doc/roadmap-reset.md](doc/roadmap-reset.md)。
 
 ## 当前真实闭环
 
-默认本地小项目已经能跑通这条链：
+- `project-init -> scope review -> BUILD -> CHECK -> REVIEW -> closeout` 已真实跑通
+- `BUILD`、`CHECK`、`closeout` 都带内部 maker-checker；最终董事会只看真正的 board-facing `REVIEW`
+- CEO 已真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
+- `ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
+- React 壳当前可看 `dashboard / inbox / review room / meeting room / incident / workforce / dependency inspector / completion`
 
-`project-init -> scope review -> BUILD 内部 maker-checker -> CHECK -> final REVIEW -> closeout 内部 maker-checker`
+更细代码真相统一看 [doc/mainline-truth.md](doc/mainline-truth.md)。
 
-当前这条链的现实状态：
+## 当前主线边界
 
-- `project-init` 会先由 CEO 发起首个 kickoff scope 共识票，再自动推进到首个 scope review
-- 当决策 / 评审型票明确需要跨角色重新对齐，或董事会驳回 / 改约束后需要重开技术决策时，CEO 会按窄规则自动发起 `TECHNICAL_DECISION` 会议
-- scope 通过后，`BUILD` 会先产出 `implementation_bundle@1`，再走内部 `maker -> checker -> fix / incident`
-- `CHECK` 产出的 `delivery_check_report@1` 也会先走内部 `maker -> checker -> fix / incident`
-- 只有 build 和 check 两段内审都通过后，系统才会放行最终董事会 `REVIEW`
-- 最终董事会只在真正的 board-facing `REVIEW` 进入 `Inbox -> Review Room`
-- 最终董事会通过后，系统会自动补一张 `delivery_closeout_package@1` 收口票，再走内部 `maker -> checker -> fix / incident`
-- React 壳已经能看 `dashboard / inbox / review room / meeting room / incident / workforce / dependency inspector / completion`，并且能在 `workforce` 上直接做最小 staffing 解堵：`freeze / restore / hire request / replace request`
-
-## 当前主线能力
-
-- FastAPI + SQLite 后端已经覆盖事件流、投影、ticket 生命周期、approval / incident / breaker
-- Maker-Checker 已覆盖 `consensus_document@1`、`implementation_bundle@1`、`delivery_check_report@1`、`ui_milestone_review@1`、`delivery_closeout_package@1`
-- employee 生命周期已进入主线：`hire / replace / freeze / restore` 与 staffing containment 都是事件驱动，并且当前带最小人格模型
-- CEO 已从纯影子进入有限接管首轮：当前会真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
-- 会议室最小版已落地：既可手动发起 `TECHNICAL_DECISION`，也支持 CEO 在窄触发条件下自动发起
-- Context Compiler 已能处理文本、媒体、下载型附件和本地历史摘要，并产出可审计执行包
-- runtime 默认走本地 deterministic，也支持本地保存的 `OpenAI Compat` provider 配置；provider 失败时会按现有 incident 规则留痕后回退
-- React 壳里的 `workforce` 与 staffing `Review Room` 现在都能直接看到当前员工 / 候选员工画像
+- 本地单机优先，不按公网多租户平台推进
+- Ticket 驱动无状态执行器，不按聊天式 Agent shell 推进
+- Context Compiler 负责受控执行包，不给 Worker 任意全局记忆
+- Web UI 继续做最薄治理壳，不接管工作流真相
 
 ## 快速开始
 
@@ -48,14 +37,6 @@ Boardroom OS 当前阶段不是公网多租户平台，而是一个本地单机 
 ```bash
 cd backend
 source .venv/bin/activate
-uvicorn app.main:app --reload
-```
-
-当前 Windows PowerShell 也可这样启动：
-
-```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload
 ```
 
@@ -71,14 +52,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest tests/ -q
-```
-
-如果当前 shell 下 `pytest` 不在 PATH，按当前 Windows 环境的实际情况改用：
-
-```powershell
-cd backend
-py -m pytest tests/ -q
+./.venv/bin/pytest tests/ -q
 ```
 
 运行前端验证：
@@ -89,34 +63,23 @@ npm run build
 npm run test:run
 ```
 
-补充说明：
+## 默认先读
 
-- 前端通过 Vite dev proxy 直连本地 FastAPI
-- runtime provider 配置默认保存在 `backend/data/runtime-provider-config.json`
-- scope 通过后，如果没有可派单员工或途中出现 incident，链路会停在真实 `pending / incident`
-- completion card 只会在最终 review 之后的 closeout 内审也收口后出现
+1. [doc/README.md](doc/README.md)
+2. [doc/mainline-truth.md](doc/mainline-truth.md)
+3. [doc/roadmap-reset.md](doc/roadmap-reset.md)
+4. [doc/TODO.md](doc/TODO.md)
+5. [doc/history/context-baseline.md](doc/history/context-baseline.md)
+6. [doc/history/memory-log.md](doc/history/memory-log.md)
+7. [doc/task-backlog.md](doc/task-backlog.md)
 
-## 建议先读
+## 当前不主动扩张
 
-- [doc/mainline-truth.md](doc/mainline-truth.md)：当前代码真相表，先看主链现实、runtime 支持矩阵和冻结边界
-- [doc/roadmap-reset.md](doc/roadmap-reset.md)：当前阶段边界和判断规则
-- [doc/TODO.md](doc/TODO.md)：当前主线待办
-- [doc/backend-runtime-guide.md](doc/backend-runtime-guide.md)：后端运行、运维和排障指南
-- [doc/api-reference.md](doc/api-reference.md)：当前全部 HTTP 接口参考，已标注主线 / 冻结边界
-- [doc/history/context-baseline.md](doc/history/context-baseline.md)：稳定不常变的产品模型、治理规则和架构基线
-- [doc/history/memory-log.md](doc/history/memory-log.md)：只保留最近几天的关键进展
-- [doc/task-backlog.md](doc/task-backlog.md)：任务库入口；当前未完成任务看 `doc/task-backlog/active.md`
-- [frontend/README.md](frontend/README.md)：前端壳的边界和运行方式
-
-## 当前不优先
-
-这些能力还保留在仓库里，但默认冻结，除非直接解堵本地 MVP：
-
-- `worker-admin`
-- 多租户 scope
-- 对象存储和上传平台化
+- `worker-admin` 与更细的多租户运维面
+- 对象存储平台化与上传链路扩张
 - 远程 handoff / 远程控制面
-- Search / Retrieval 扩张
+- 在没有明确证据前继续扩检索层、Provider 路由和发布复杂度
+- 任何不直接缩短本地 MVP 路径的远期愿景系统化能力
 
 ## 项目原则
 

@@ -1585,7 +1585,16 @@
 
 #### P0-REL-001 到 P0-REL-008：回归测试、安全审查、Docker 打包、文档更新等
 
-**预估**：共 24h
+| ID | 标题 | 预估 |
+|----|------|------|
+| P0-REL-001 | 全量回归测试 | 3h |
+| P0-REL-002 | 安全审查 | 3h |
+| P0-REL-003 | 环境变量与配置复核 | 3h |
+| P0-REL-004 | Docker Compose 打包 | 3h |
+| P0-REL-005 | 一键启动脚本 | 3h |
+| P0-REL-006 | 新环境启动验证 | 3h |
+| P0-REL-007 | 发布说明整理 | 3h |
+| P0-REL-008 | 发布候选收口检查 | 3h |
 
 ---
 
@@ -1637,7 +1646,7 @@
 > - `P1-CLN-005`、`P1-CLN-006` 已在 2026-04-05 收口：冻结能力的真实入口、主线依赖、测试归属和迁移前置条件已经写进 `backend/app/core/mainline_truth.py`，并由 `backend/tests/test_mainline_truth.py` 固化
 > - `P1-CLN-001` 已在 2026-04-06 收口为 shim 迁移完成：`worker-admin` 真实实现已迁入 `backend/app/_frozen/worker_admin/`，旧 API / auth / projection / core / CLI 入口只保留兼容壳
 > - `P1-CLN-004` 已在 2026-04-06 收口为 shim 迁移完成：`worker-runtime` 真实实现已迁入 `backend/app/_frozen/worker_runtime/`，旧 API / projection / core / CLI 入口只保留兼容壳
-> - `P1-CLN-002`、`P1-CLN-003` 当前仍未关闭，也还没进入无壳物理迁移：多租户 scope 仍是共享数据结构，upload 导入入口和 session 存储仍保留；其中 `P1-CLN-002` 这轮已新增 `backend/app/contracts/scope.py` 作为共享 scope contract，`P1-CLN-003` 的 object-store backend 建链细节也已进一步收进 `_frozen/object_store.py`，最新前置拆分进展以 `task-backlog/active.md` 为准
+> - `P1-CLN-002`、`P1-CLN-003` 当前仍未关闭，也还没进入无壳物理迁移：多租户 scope 仍是共享数据结构，upload 导入入口和 session 存储仍保留
 
 | ID | 标题 | 预估 |
 |----|------|------|
@@ -1656,6 +1665,9 @@
 - `P1-CLN-004` 本轮已按 shim 迁移收口：新增 `backend/app/_frozen/worker_runtime/`，承接 API、projection、core 和 CLI 的真实实现
 - `app/api/worker_runtime.py`、`app/api/worker_runtime_projections.py`、`app/core/worker_runtime.py`、`app/worker_auth_cli.py` 当前只保留兼容导出，不改 HTTP 路径、签名鉴权语义或 CLI 调用方式
 - `backend/app/core/mainline_truth.py`、`backend/tests/test_mainline_truth.py`、`backend/tests/conftest.py` 已同步成新口径：`external_worker_handoff.code_refs` 已切到 `_frozen/worker_runtime`，测试时间注入也改为命中新实现；`worker_bootstrap/session/delivery-grant` schema 仍保留为成组阻塞点
+- `P1-CLN-002` 本轮继续停在前置拆分阶段：主线 command 侧已经统一从 workflow/default 解析 scope，`backend/app/contracts/scope.py` 已成为 runtime / worker-admin / worker-runtime 复用的单点 contract，但 runtime、共享读面和冻结 contracts 仍保留 `tenant_id/workspace_id` shape
+- `P1-CLN-003` 本轮继续停在前置拆分阶段：`ticket-result-submit` 已只消费 inline 内容或 `artifact_ref`，控制面与 `worker-runtime` 都已有 `ticket-artifact-import-upload` 命令；但 upload 导入入口和 upload session 存储仍保留，所以还不能写成 `_frozen/` 物理迁移已具备条件
+- `FrozenCapabilityBoundary` 这轮继续收口为机器可读真相：当前除了真实入口和 `code_refs`，还会显式记录 `api_surface_groups`、`storage_table_refs`、`migration_blocker_refs` 和阻塞摘要，并由 `backend/tests/test_mainline_truth.py` 直接回归
 
 ---
 
@@ -1719,7 +1731,7 @@
 - `P2-UI-007`：`ReviewRoomDrawer`、`MeetingRoomDrawer`、`IncidentDrawer`、`DependencyInspectorDrawer`、`ProviderSettingsDrawer` 改成按需懒加载；`useSSE` 对 clustered `boardroom-event` 失效通知默认做 `500ms` debounce
 - `P2-UI-008`：补了 `BoardGateIndicator`、`InboxWell`、`WorkflowRiver`、`WorkforcePanel`、`EventTicker` 的最小前端回归测试
 
-### 4.5 文档 (P2-DOC-001 到 P2-DOC-005)
+### 4.5 文档 (P2-DOC-001 到 P2-DOC-010)
 
 | ID | 标题 | 预估 |
 |----|------|------|
@@ -1728,6 +1740,11 @@
 | P2-DOC-003 | 编写运维指南 | 3h |
 | P2-DOC-004 | 更新 memory-log.md | 2h |
 | P2-DOC-005 | 编写 API 文档 | 3h |
+| P2-DOC-006 | 编写新愿景文档更新与路线重整计划 | 2h |
+| P2-DOC-007 | 收口高频入口文档 | 2h |
+| P2-DOC-008 | 重整任务库与状态分层 | 2h |
+| P2-DOC-009 | 重写里程碑时间线与后置说明 | 2h |
+| P2-DOC-010 | 压缩 memory-log 并归档详细日志 | 2h |
 
 完成补记（2026-04-05）：
 
@@ -1740,6 +1757,11 @@
 - `P2-DOC-003`：`doc/backend-runtime-guide.md` 已收口成真实运维指南，按“当前主线 / 冻结兼容面 / 当前限制”重排，避免再把保留代码写成推荐路径
 - `P2-DOC-005`：新增 `doc/api-reference.md`，把当前全部 HTTP 接口按真实路由分组平铺，并显式标注主线 / 冻结边界 / 默认是否建议使用
 - 为了防止 API 文档再次和代码漂移，本轮新增了 `backend/app/core/api_surface.py` 与 `backend/tests/test_api_surface.py`，用最小回归测试固定当前路由分组
+- `P2-DOC-006`：新增 `doc/新愿景文档更新与路线重整计划.md`，把这轮路线重整的判断、文件落点和执行顺序固化成一次性 handoff 文档，并明确它不是新的真相源
+- `P2-DOC-007`：`README.md`、`doc/README.md`、`doc/roadmap-reset.md`、`doc/history/context-baseline.md` 已按新分层重写，把“当前该看什么、当前该做什么”和“治理规则 / 远期储备”拆开
+- `P2-DOC-008`：`doc/TODO.md`、`doc/task-backlog.md`、`doc/task-backlog/active.md`、`doc/todo/postponed.md` 已按“当前批次 / 条件批次 / 远期储备”重排，并补入 `P2-RET-006`、`P2-CEO-001`、`P2-CEO-002`、`P2-MTG-011`、`P2-GOV-007`
+- `P2-DOC-009`：`doc/milestone-timeline.md` 已从旧周历重写为“当前状态 + 后续顺序 + C1 条件批次 + R1 远期储备”
+- `P2-DOC-010`：`doc/history/memory-log.md` 已压缩成短事实日志，`doc/history/archive/memory-log-detailed-2026-04-03_to_2026-04-06.md` 负责承接本轮移出的详细实现流水账
 
 ---
 
