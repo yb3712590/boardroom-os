@@ -5300,6 +5300,17 @@ def test_worker_runtime_execution_package_signed_url_allows_token_only_access_an
         "recommended_option_id",
         "options",
     ]
+    assert first_body["compiled_execution_package"]["org_context"]["upstream_provider"] is None
+    assert (
+        first_body["compiled_execution_package"]["org_context"]["downstream_reviewer"]["role_profile_ref"]
+        == "checker_primary"
+    )
+    assert (
+        first_body["compiled_execution_package"]["rendered_execution_payload"]["messages"][0]["content_payload"][
+            "organization_context"
+        ]
+        == first_body["compiled_execution_package"]["org_context"]
+    )
     assert (
         first_body["compiled_execution_package"]["execution"]["output_schema_ref"]
         == "ui_milestone_review"

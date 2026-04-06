@@ -37,6 +37,7 @@ worker-runtime 是单独一套受限接口：
 
 - `assignments` 走 `X-Boardroom-Worker-Bootstrap` 或 `X-Boardroom-Worker-Session`
 - execution package、artifact、command 路径走 signed URL + `access_token`
+- 当前 execution package 会在 `compiled_role.persona_summary` 之外，再携带结构化 `org_context / organization_context`，用于暴露最小组织关系和职责边界
 
 ## 3. 路由分组总览
 

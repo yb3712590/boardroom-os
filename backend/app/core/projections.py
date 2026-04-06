@@ -107,10 +107,12 @@ from app.core.constants import (
     TICKET_STATUS_COMPLETED,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
-from app.core.output_schemas import (
-    CONSENSUS_DOCUMENT_SCHEMA_REF,
-    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
-    MAKER_CHECKER_VERDICT_SCHEMA_REF,
+from app.core.output_schemas import DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
+from app.core.workflow_relationships import (
+    list_workflow_ticket_snapshots,
+    resolve_display_ticket_spec as _shared_resolve_display_ticket_spec,
+    resolve_logical_ticket_id as _shared_resolve_logical_ticket_id,
+    resolve_phase_label as _shared_resolve_phase_label,
 )
 from app.core.staffing_catalog import (
     list_mainline_staffing_hire_templates,
@@ -537,38 +539,11 @@ def _derive_phase_status(counts: dict[str, int]) -> str:
 
 
 def _resolve_phase_label(created_spec: dict[str, Any] | None) -> str:
-    if created_spec is None:
-        return "Build"
-    delivery_stage = str(created_spec.get("delivery_stage") or "").strip().upper()
-    maker_checker_context = created_spec.get("maker_checker_context") or {}
-    maker_ticket_spec = maker_checker_context.get("maker_ticket_spec") or {}
-    maker_delivery_stage = str(maker_ticket_spec.get("delivery_stage") or "").strip().upper()
-    original_review_request = maker_checker_context.get("original_review_request") or {}
-    review_type = str(original_review_request.get("review_type") or "")
-    output_schema_ref = str(created_spec.get("output_schema_ref") or "")
-    if output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF or review_type == "MEETING_ESCALATION":
-        return "Plan"
-    if delivery_stage == "BUILD":
-        return "Build"
-    if delivery_stage == "CHECK":
-        return "Check"
-    if delivery_stage in {"REVIEW", "CLOSEOUT"} or maker_delivery_stage in {"REVIEW", "CLOSEOUT"} or review_type == "VISUAL_MILESTONE":
-        return "Review"
-    return "Build"
+    return _shared_resolve_phase_label(created_spec)
 
 
 def _resolve_display_ticket_spec(created_spec: dict[str, Any] | None) -> dict[str, Any] | None:
-    if created_spec is None:
-        return None
-    maker_checker_context = created_spec.get("maker_checker_context") or {}
-    maker_ticket_spec = maker_checker_context.get("maker_ticket_spec")
-    if (
-        str(created_spec.get("output_schema_ref") or "") == MAKER_CHECKER_VERDICT_SCHEMA_REF
-        and isinstance(maker_ticket_spec, dict)
-        and maker_ticket_spec
-    ):
-        return maker_ticket_spec
-    return created_spec
+    return _shared_resolve_display_ticket_spec(created_spec)
 
 
 def _resolve_logical_ticket_id(
@@ -576,16 +551,7 @@ def _resolve_logical_ticket_id(
     display_spec: dict[str, Any] | None,
     latest_ticket_id: str,
 ) -> str:
-    if display_spec is not None:
-        logical_ticket_id = str(display_spec.get("ticket_id") or "").strip()
-        if logical_ticket_id:
-            return logical_ticket_id
-    maker_checker_context = created_spec.get("maker_checker_context") if created_spec is not None else None
-    if isinstance(maker_checker_context, dict):
-        maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
-        if maker_ticket_id:
-            return maker_ticket_id
-    return latest_ticket_id
+    return _shared_resolve_logical_ticket_id(created_spec, display_spec, latest_ticket_id)
 
 
 def _build_pipeline_summary(
@@ -764,86 +730,32 @@ def build_dependency_inspector_projection(
 
         raw_nodes: list[dict[str, Any]] = []
         current_ticket_status_by_logical_id: dict[str, str] = {}
-        for row in node_rows:
-            node = repository._convert_node_projection_row(row)
-            node_id = str(node["node_id"])
-            latest_ticket_id = str(node.get("latest_ticket_id") or "").strip()
-            current_ticket = (
-                repository.get_current_ticket_projection(latest_ticket_id, connection=connection)
-                if latest_ticket_id
-                else None
-            )
-            created_spec = (
-                repository.get_latest_ticket_created_payload(connection, latest_ticket_id)
-                if latest_ticket_id
-                else None
-            )
-            display_spec = _resolve_display_ticket_spec(created_spec)
-            maker_checker_context = created_spec.get("maker_checker_context") if created_spec is not None else None
-            if (
-                created_spec is not None
-                and str(created_spec.get("output_schema_ref") or "") == MAKER_CHECKER_VERDICT_SCHEMA_REF
-                and isinstance(maker_checker_context, dict)
-            ):
-                maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
-                if maker_ticket_id:
-                    maker_created_spec = repository.get_latest_ticket_created_payload(connection, maker_ticket_id)
-                    if maker_created_spec is not None:
-                        display_spec = maker_created_spec
-            logical_ticket_id = _resolve_logical_ticket_id(created_spec, display_spec, latest_ticket_id)
-            parent_ticket_id = (
-                str(display_spec.get("parent_ticket_id") or "").strip()
-                if display_spec is not None
-                else ""
-            )
-            phase = _resolve_phase_label(created_spec)
-            delivery_stage = (
-                str(display_spec.get("delivery_stage") or "").strip().upper() or None
-                if display_spec is not None
-                else None
-            )
-            approval = approval_by_node_id.get(node_id)
-            incident = incident_by_node_id.get(node_id)
-            ticket_status = str(current_ticket.get("status") or "").strip() if current_ticket is not None else None
+        for snapshot in list_workflow_ticket_snapshots(repository, workflow_id, connection=connection):
+            approval = approval_by_node_id.get(snapshot.node_id)
+            incident = incident_by_node_id.get(snapshot.node_id)
             raw_nodes.append(
                 {
-                    "node_id": node_id,
-                    "ticket_id": logical_ticket_id or None,
-                    "parent_ticket_id": parent_ticket_id or None,
-                    "phase": phase,
-                    "delivery_stage": delivery_stage,
-                    "node_status": str(node["status"]),
-                    "ticket_status": ticket_status or None,
-                    "role_profile_ref": (
-                        str(display_spec.get("role_profile_ref") or "").strip() or None
-                        if display_spec is not None
-                        else None
-                    ),
-                    "output_schema_ref": (
-                        str(display_spec.get("output_schema_ref") or "").strip() or None
-                        if display_spec is not None
-                        else None
-                    ),
-                    "lease_owner": (
-                        str(current_ticket.get("lease_owner") or "").strip() or None
-                        if current_ticket is not None
-                        else None
-                    ),
-                    "expected_artifact_scope": (
-                        list(display_spec.get("allowed_write_set") or [])
-                        if display_spec is not None
-                        else []
-                    ),
+                    "node_id": snapshot.node_id,
+                    "ticket_id": snapshot.ticket_id,
+                    "parent_ticket_id": snapshot.parent_ticket_id,
+                    "phase": snapshot.phase,
+                    "delivery_stage": snapshot.delivery_stage,
+                    "node_status": snapshot.node_status,
+                    "ticket_status": snapshot.ticket_status,
+                    "role_profile_ref": snapshot.role_profile_ref,
+                    "output_schema_ref": snapshot.output_schema_ref,
+                    "lease_owner": snapshot.lease_owner,
+                    "expected_artifact_scope": list(snapshot.expected_artifact_scope),
                     "open_review_pack_id": approval.get("review_pack_id") if approval is not None else None,
                     "open_incident_id": incident.get("incident_id") if incident is not None else None,
                     "sort_key": (
-                        current_ticket.get("updated_at") if current_ticket is not None else node.get("updated_at"),
-                        logical_ticket_id or node_id,
+                        snapshot.sort_updated_at,
+                        snapshot.ticket_id or snapshot.node_id,
                     ),
                 }
             )
-            if logical_ticket_id and ticket_status:
-                current_ticket_status_by_logical_id[logical_ticket_id] = ticket_status
+            if snapshot.ticket_id and snapshot.ticket_status:
+                current_ticket_status_by_logical_id[snapshot.ticket_id] = snapshot.ticket_status
 
     for item in raw_nodes:
         parent_ticket_id = item["parent_ticket_id"]

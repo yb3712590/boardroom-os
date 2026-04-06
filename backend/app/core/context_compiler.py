@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,9 +46,13 @@ from app.contracts.runtime import (
     CompileRequestExplicitSource,
     CompileRequestGovernance,
     CompileRequestMeta,
+    CompileRequestOrgContext,
+    CompileRequestOrgRelation,
+    CompileRequestResponsibilityBoundary,
     CompileRequestRetrievedSummary,
     CompileRequestRetrievalPlan,
     CompileRequestWorkerBinding,
+    CompileRequestEscalationPath,
     RenderedExecutionMessage,
     RenderedExecutionPayload,
     RenderedExecutionPayloadMeta,
@@ -58,11 +63,17 @@ from app.core.artifacts import (
     is_artifact_readable,
     normalize_artifact_kind,
 )
-from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID
+from app.core.constants import (
+    BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
+    DEFAULT_TENANT_ID,
+    DEFAULT_WORKSPACE_ID,
+    TICKET_STATUS_COMPLETED,
+)
 from app.core.ids import new_prefixed_id
-from app.core.output_schemas import get_output_schema_body
+from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, get_output_schema_body
 from app.core.persona_profiles import normalize_persona_profiles
 from app.core.time import now_local
+from app.core.workflow_relationships import WorkflowTicketSnapshot, list_workflow_ticket_snapshots
 from app.core.developer_inspector import (
     DeveloperInspectorStore,
     PersistedDeveloperInspectorArtifact,
@@ -337,6 +348,202 @@ def _build_compiled_constraints(compile_request: CompileRequest) -> CompiledCons
         global_rules=[],
         board_constraints=[],
         budget_constraints={},
+    )
+
+
+_ROLE_PROFILE_TO_ROLE_TYPE = {
+    "ui_designer_primary": "frontend_engineer",
+    "frontend_engineer_primary": "frontend_engineer",
+    "checker_primary": "checker",
+}
+
+
+def _role_type_for_profile(role_profile_ref: str | None, *, fallback: str | None = None) -> str:
+    normalized_profile = str(role_profile_ref or "").strip()
+    if normalized_profile in _ROLE_PROFILE_TO_ROLE_TYPE:
+        return _ROLE_PROFILE_TO_ROLE_TYPE[normalized_profile]
+    normalized_fallback = str(fallback or "").strip()
+    return normalized_fallback or "unknown"
+
+
+def _build_org_relation(
+    snapshot: WorkflowTicketSnapshot,
+    *,
+    relation_reason: str,
+    fallback_role_type: str | None = None,
+) -> CompileRequestOrgRelation | None:
+    if snapshot.ticket_id is None:
+        return None
+    return CompileRequestOrgRelation(
+        ticket_id=snapshot.ticket_id,
+        node_id=snapshot.node_id,
+        role_profile_ref=str(snapshot.role_profile_ref or "unknown"),
+        role_type=_role_type_for_profile(snapshot.role_profile_ref, fallback=fallback_role_type),
+        employee_id=snapshot.lease_owner,
+        status=snapshot.ticket_status,
+        relation_reason=relation_reason,
+    )
+
+
+def _build_expected_downstream_reviewer(
+    ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+    *,
+    fallback_role_type: str,
+) -> CompileRequestOrgRelation:
+    role_profile_ref = str(created_spec.get("role_profile_ref") or "").strip()
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    if output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF or role_profile_ref == "ui_designer_primary":
+        expected_role_profile = "frontend_engineer_primary"
+    elif role_profile_ref == "checker_primary":
+        expected_role_profile = "frontend_engineer_primary"
+    else:
+        expected_role_profile = "checker_primary"
+    return CompileRequestOrgRelation(
+        ticket_id=str(ticket["ticket_id"]),
+        node_id=str(ticket["node_id"]),
+        role_profile_ref=expected_role_profile,
+        role_type=_role_type_for_profile(expected_role_profile, fallback=fallback_role_type),
+        employee_id=None,
+        status="EXPECTED",
+        relation_reason="EXPECTED_DOWNSTREAM_REVIEWER",
+    )
+
+
+def _build_org_context(
+    repository: ControlPlaneRepository,
+    *,
+    ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+    employee_role_type: str,
+    connection: sqlite3.Connection | None = None,
+) -> CompileRequestOrgContext:
+    with repository.connection() if connection is None else nullcontext(connection) as active_connection:
+        snapshots = list_workflow_ticket_snapshots(
+            repository,
+            str(ticket["workflow_id"]),
+            connection=active_connection,
+        )
+
+    snapshot_by_ticket_id = {
+        str(snapshot.ticket_id): snapshot
+        for snapshot in snapshots
+        if snapshot.ticket_id is not None
+    }
+    current_snapshot = snapshot_by_ticket_id.get(str(ticket["ticket_id"]))
+    parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip() or None
+    upstream_provider = (
+        _build_org_relation(
+            snapshot_by_ticket_id[parent_ticket_id],
+            relation_reason="PARENT_TICKET",
+        )
+        if parent_ticket_id and parent_ticket_id in snapshot_by_ticket_id
+        else None
+    )
+
+    dependent_snapshots = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.parent_ticket_id == str(ticket["ticket_id"]) and snapshot.ticket_id is not None
+    ]
+    dependent_snapshots.sort(
+        key=lambda snapshot: (
+            0 if _role_type_for_profile(snapshot.role_profile_ref) == "checker" else 1,
+            snapshot.sort_updated_at or now_local(),
+            snapshot.ticket_id or "",
+        )
+    )
+    downstream_reviewer = None
+    if dependent_snapshots:
+        downstream_reviewer = _build_org_relation(
+            dependent_snapshots[0],
+            relation_reason="DIRECT_DEPENDENT_TICKET",
+        )
+    if downstream_reviewer is None:
+        downstream_reviewer = _build_expected_downstream_reviewer(
+            ticket,
+            created_spec,
+            fallback_role_type=employee_role_type,
+        )
+
+    excluded_ticket_ids = {
+        str(ticket["ticket_id"]),
+        str(upstream_provider.ticket_id) if upstream_provider is not None else "",
+        str(downstream_reviewer.ticket_id) if downstream_reviewer is not None else "",
+    }
+    collaborators: list[CompileRequestOrgRelation] = []
+    if parent_ticket_id:
+        for snapshot in snapshots:
+            if (
+                snapshot.parent_ticket_id != parent_ticket_id
+                or snapshot.ticket_id is None
+                or snapshot.ticket_id in excluded_ticket_ids
+                or snapshot.ticket_status == TICKET_STATUS_COMPLETED
+            ):
+                continue
+            relation = _build_org_relation(snapshot, relation_reason="ACTIVE_SIBLING_TICKET")
+            if relation is not None:
+                collaborators.append(relation)
+
+    current_node_id = str(ticket["node_id"])
+    current_ticket_id = str(ticket["ticket_id"])
+    open_review_pack_id = None
+    for approval in repository.list_open_approvals():
+        if str(approval.get("workflow_id") or "") != str(ticket["workflow_id"]):
+            continue
+        subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
+        if (
+            str(subject.get("source_node_id") or "").strip() == current_node_id
+            or str(subject.get("source_ticket_id") or "").strip() == current_ticket_id
+        ):
+            open_review_pack_id = str(approval["review_pack_id"])
+            break
+
+    open_incident_id = None
+    for incident in repository.list_open_incidents():
+        if str(incident.get("workflow_id") or "") != str(ticket["workflow_id"]):
+            continue
+        if (
+            str(incident.get("node_id") or "").strip() == current_node_id
+            or str(incident.get("ticket_id") or "").strip() == current_ticket_id
+        ):
+            open_incident_id = str(incident["incident_id"])
+            break
+
+    escalation_policy = TicketEscalationPolicy.model_validate(created_spec.get("escalation_policy") or {})
+    current_blocking_reason = str(ticket.get("blocking_reason_code") or "").strip() or None
+    responsibility_boundary = CompileRequestResponsibilityBoundary(
+        delivery_stage=(
+            current_snapshot.delivery_stage
+            if current_snapshot is not None and current_snapshot.delivery_stage is not None
+            else (str(created_spec.get("delivery_stage") or "").strip().upper() or None)
+        ),
+        output_schema_ref=str(created_spec.get("output_schema_ref") or ""),
+        allowed_write_set=list(created_spec.get("allowed_write_set") or []),
+        board_review_possible=(
+            current_blocking_reason == BLOCKING_REASON_BOARD_REVIEW_REQUIRED
+            or open_review_pack_id is not None
+        ),
+        incident_path_possible=True,
+    )
+    return CompileRequestOrgContext(
+        upstream_provider=upstream_provider,
+        downstream_reviewer=downstream_reviewer,
+        collaborators=collaborators,
+        escalation_path=CompileRequestEscalationPath(
+            current_blocking_reason=current_blocking_reason,
+            open_review_pack_id=open_review_pack_id,
+            open_incident_id=open_incident_id,
+            path=[
+                str(action)
+                for action in (
+                    escalation_policy.on_timeout,
+                    escalation_policy.on_schema_error,
+                    escalation_policy.on_repeat_failure,
+                )
+            ],
+        ),
+        responsibility_boundary=responsibility_boundary,
     )
 
 
@@ -1430,6 +1637,13 @@ def build_compile_request(
         personality_profile=employee.get("personality_profile_json"),
         aesthetic_profile=employee.get("aesthetic_profile_json"),
     )
+    org_context = _build_org_context(
+        repository,
+        ticket=ticket,
+        created_spec=created_spec,
+        employee_role_type=str(employee.get("role_type") or "unknown"),
+        connection=connection,
+    )
 
     return CompileRequest(
         meta=CompileRequestMeta(
@@ -1461,6 +1675,7 @@ def build_compile_request(
             max_input_tokens=max_input_tokens,
             overflow_policy="FAIL_CLOSED",
         ),
+        org_context=org_context,
         retrieval_plan=retrieval_plan,
         explicit_sources=explicit_sources,
         retrieved_summaries=_build_retrieved_summaries(
@@ -1615,6 +1830,7 @@ def compile_audit_artifacts(
         ),
         system_controls=CompiledSystemControls(
             role_profile=compiled_role.model_dump(mode="json"),
+            organization_context=compile_request.org_context,
             hard_rules=[],
             board_constraints=[],
             output_contract=CompiledOutputContract(
@@ -1750,6 +1966,7 @@ def compile_audit_artifacts(
         meta=_build_execution_package_meta(compile_request),
         compiled_role=compiled_role,
         compiled_constraints=compiled_constraints,
+        org_context=compile_request.org_context,
         atomic_context_bundle=_build_atomic_context_bundle(
             context_blocks,
             compile_request.budget_policy.max_input_tokens,

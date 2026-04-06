@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-06）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `436 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `437 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `70 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -32,7 +32,15 @@
 
 后续顺序统一看 [milestone-timeline.md](milestone-timeline.md)。
 
-本轮无新增任务。当前剩余未关闭项都属于冻结后置、条件纳入或后置增强；在没有新任务纳入当前批次、且触发条件未成立前，没有可直接开启的主线任务。
+### `P2-RET-006`：执行包最小组织上下文与 L1 收口
+
+状态：`已完成（2026-04-06，本轮显式纳入；与主线关系：继续收紧 worker 执行包，避免只靠 persona_summary 推进主链执行）`
+
+- `P2-RET-006` 已完成：`compiled_execution_package` 与 rendered `SYSTEM_CONTROLS` 现在都会携带结构化 `org_context`，最小暴露 `upstream_provider / downstream_reviewer / collaborators / escalation_path / responsibility_boundary`
+- 当前组织上下文按“动态关系版、角色优先”收口：优先复用现有 workflow `parent / dependent / sibling` 关系；缺失时才回退到当前 ticket 的预期下游 reviewer，不新建持久化或 retrieval 通道
+- 当前回归已覆盖 root ticket、parent/dependent/sibling 关系和 worker-runtime execution package 读面；验证基线更新为 backend `437 passed`、frontend build passed、frontend `70 passed`
+
+本轮完成后，当前剩余未关闭项仍都属于冻结后置、条件纳入或后置增强；现在再次回到“没有可直接开启的默认主线任务”状态。
 
 ## 已降级出当前主线（冻结后置）
 
@@ -47,7 +55,7 @@
 | 任务 | 状态 | 触发条件 | 说明 |
 |---|---|---|---|
 | `P2-CEO-001` | 条件纳入 | 初始化输入反复低于最小可执行阈值 | 建立初始化需求澄清板审协议，不依赖 live `ESCALATE_TO_BOARD` |
-| `P2-RET-006` | 条件纳入 | Worker 输出反复暴露缺少最小组织上下文，或执行包需要进一步收紧 | 只收口执行包最小组织上下文与 `L1` 纪律 |
+| `P2-RET-006` | 已完成（2026-04-06，本轮显式纳入） | 已满足：本轮手动提升为当前批次，收紧执行包最小组织上下文与 `L1` | 已在 execution package / rendered `SYSTEM_CONTROLS` 补入结构化 `org_context`，不新增 `L2/L3` 或新存储 |
 | `P2-MTG-011` | 条件纳入 | 会议共识文档反复过长，默认消费面不清 | 把会议共识压成 ADR 化决策视图，不改当前 artifact 类型 |
 | `P2-GOV-007` | 已完成（2026-04-06） | 已触发：closeout / review 反复出现“代码已改但证据或文档没同步” | 已在 `delivery_closeout_package@1`、closeout checker 文案和 runtime review 摘要补入结构化 `documentation_updates`，保持 soft rule，不加硬状态机门禁 |
 

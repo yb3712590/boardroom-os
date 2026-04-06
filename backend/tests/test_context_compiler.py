@@ -23,6 +23,11 @@ def _ticket_create_payload(
     ticket_id: str = "tkt_compile_001",
     node_id: str = "node_compile_001",
     input_artifact_refs: list[str] | None = None,
+    role_profile_ref: str = "frontend_engineer_primary",
+    output_schema_ref: str = "ui_milestone_review",
+    allowed_write_set: list[str] | None = None,
+    delivery_stage: str | None = None,
+    parent_ticket_id: str | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict:
@@ -30,9 +35,9 @@ def _ticket_create_payload(
         "ticket_id": ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
-        "parent_ticket_id": None,
+        "parent_ticket_id": parent_ticket_id,
         "attempt_no": 1,
-        "role_profile_ref": "frontend_engineer_primary",
+        "role_profile_ref": role_profile_ref,
         "constraints_ref": "global_constraints_v3",
         "input_artifact_refs": input_artifact_refs if input_artifact_refs is not None else [
             "art://inputs/brief.md",
@@ -44,10 +49,10 @@ def _ticket_create_payload(
             "max_context_tokens": 3000,
         },
         "acceptance_criteria": ["Must produce a structured result"],
-        "output_schema_ref": "ui_milestone_review",
+        "output_schema_ref": output_schema_ref,
         "output_schema_version": 1,
         "allowed_tools": ["read_artifact", "write_artifact"],
-        "allowed_write_set": ["artifacts/ui/homepage/*"],
+        "allowed_write_set": allowed_write_set or ["artifacts/ui/homepage/*"],
         "retry_budget": 1,
         "priority": "high",
         "timeout_sla_sec": 1800,
@@ -63,6 +68,8 @@ def _ticket_create_payload(
         payload["tenant_id"] = tenant_id
     if workspace_id is not None:
         payload["workspace_id"] = workspace_id
+    if delivery_stage is not None:
+        payload["delivery_stage"] = delivery_stage
     return payload
 
 
@@ -390,6 +397,20 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
     assert compiled_package.compiled_role.persona_summary.startswith("Skill frontend")
     assert compiled_package.compiled_constraints.constraints_ref == "global_constraints_v3"
     assert compiled_package.compiled_constraints.global_rules == []
+    assert compiled_package.org_context.upstream_provider is None
+    assert compiled_package.org_context.downstream_reviewer is not None
+    assert compiled_package.org_context.downstream_reviewer.ticket_id == "tkt_compile_001"
+    assert compiled_package.org_context.downstream_reviewer.role_profile_ref == "checker_primary"
+    assert compiled_package.org_context.downstream_reviewer.role_type == "checker"
+    assert compiled_package.org_context.collaborators == []
+    assert compiled_package.org_context.escalation_path.current_blocking_reason is None
+    assert compiled_package.org_context.responsibility_boundary.delivery_stage is None
+    assert compiled_package.org_context.responsibility_boundary.output_schema_ref == "ui_milestone_review"
+    assert compiled_package.org_context.responsibility_boundary.allowed_write_set == [
+        "artifacts/ui/homepage/*"
+    ]
+    assert compiled_package.org_context.responsibility_boundary.board_review_possible is False
+    assert compiled_package.org_context.responsibility_boundary.incident_path_possible is True
     assert compiled_package.execution.output_schema_ref == "ui_milestone_review"
     assert compiled_package.execution.allowed_tools == ["read_artifact", "write_artifact"]
     assert compiled_package.governance.retry_budget == 1
@@ -405,6 +426,82 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
     assert compiled_package.rendered_execution_payload.messages[0].content_payload["role_profile"]["persona_summary"].startswith(
         "Skill frontend"
     )
+    assert (
+        compiled_package.rendered_execution_payload.messages[0].content_payload["organization_context"]
+        == compiled_package.org_context.model_dump(mode="json")
+    )
+
+
+def test_compile_execution_package_builds_dynamic_org_context_for_parent_child_and_siblings(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_parent_001",
+            node_id="node_parent_001",
+            role_profile_ref="ui_designer_primary",
+            output_schema_ref="consensus_document",
+            allowed_write_set=["artifacts/ui/scope/*"],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_compile_001",
+            node_id="node_compile_001",
+            parent_ticket_id="tkt_parent_001",
+            delivery_stage="BUILD",
+        ),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_check_001",
+            node_id="node_check_001",
+            parent_ticket_id="tkt_compile_001",
+            role_profile_ref="checker_primary",
+            output_schema_ref="delivery_check_report",
+            delivery_stage="CHECK",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_sibling_001",
+            node_id="node_sibling_001",
+            parent_ticket_id="tkt_parent_001",
+            role_profile_ref="checker_primary",
+            output_schema_ref="delivery_check_report",
+            delivery_stage="CHECK",
+        ),
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+    compiled_package = compile_execution_package(compile_request)
+    org_context = compiled_package.org_context
+
+    assert org_context.upstream_provider is not None
+    assert org_context.upstream_provider.ticket_id == "tkt_parent_001"
+    assert org_context.upstream_provider.node_id == "node_parent_001"
+    assert org_context.upstream_provider.role_profile_ref == "ui_designer_primary"
+    assert org_context.upstream_provider.role_type == "frontend_engineer"
+    assert org_context.downstream_reviewer is not None
+    assert org_context.downstream_reviewer.ticket_id == "tkt_check_001"
+    assert org_context.downstream_reviewer.node_id == "node_check_001"
+    assert org_context.downstream_reviewer.role_profile_ref == "checker_primary"
+    assert org_context.downstream_reviewer.role_type == "checker"
+    assert [item.ticket_id for item in org_context.collaborators] == ["tkt_sibling_001"]
+    assert org_context.collaborators[0].node_id == "node_sibling_001"
+    assert org_context.collaborators[0].relation_reason == "ACTIVE_SIBLING_TICKET"
+    assert org_context.escalation_path.path == ["retry", "retry", "escalate_ceo"]
+    assert org_context.responsibility_boundary.delivery_stage == "BUILD"
+    assert org_context.responsibility_boundary.allowed_write_set == ["artifacts/ui/homepage/*"]
 
 
 def test_compile_execution_package_includes_indexed_artifact_access_descriptors(client, set_ticket_time):

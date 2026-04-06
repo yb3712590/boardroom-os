@@ -1673,7 +1673,7 @@
 
 ## 四、P2：增强
 
-### 4.1 检索层 (P2-RET-001 到 P2-RET-005)
+### 4.1 检索层 (P2-RET-001 到 P2-RET-006)
 
 | ID | 标题 | 预估 |
 |----|------|------|
@@ -1682,6 +1682,7 @@
 | P2-RET-003 | Context Compiler 集成 FTS5 查询 | 4h |
 | P2-RET-004 | 检索结果排序和去重 | 4h |
 | P2-RET-005 | 检索层测试 | 4h |
+| P2-RET-006 | 执行包最小组织上下文与 L1 收口 | 3h |
 
 完成补记（2026-04-06）：
 
@@ -1690,6 +1691,9 @@
 - `P2-RET-003`：`Context Compiler` 没有改 retrieval summary 契约，仍消费 `review_summaries / incident_summaries / artifact_summaries` 三通道，但候选来源已经切到 repository 的 FTS 查询
 - `P2-RET-004`：repository 检索结果现在按“命中词数 -> FTS rank -> 最近更新时间 -> 稳定键”排序，并对同一 `source_ref` 去重；artifact 检索仍保留“先粗匹配路径 / kind / media_type，再接受正文命中”的原边界
 - `P2-RET-005`：新增 repository 回归，覆盖 FTS 表创建、旧数据回填、排序去重、失效 artifact 过滤；全量验证结果更新为 backend `435 passed`、frontend build passed、frontend `64 passed`
+- `P2-RET-006`：`CompileRequest / CompiledExecutionPackage / CompiledSystemControls` 现在都会携带结构化 `org_context`；当前按“动态关系版、角色优先”暴露 `upstream_provider / downstream_reviewer / collaborators / escalation_path / responsibility_boundary`，关系来源只复用现有 workflow `parent / dependent / sibling` 与 open approval / incident 读面，不新建持久化或 retrieval 通道
+- `P2-RET-006`：当前 execution package 在没有 direct dependent 时会回退到预期下游 reviewer，避免串行主线里因为 child 尚未物化而丢失最小组织认知；rendered `SYSTEM_CONTROLS` 会同步写出同一份 `organization_context`
+- `P2-RET-006`：新增回归覆盖 root ticket、parent/dependent/sibling 关系和 worker-runtime execution package signed URL 读面；本轮全量验证结果更新为 backend `437 passed`、frontend build passed、frontend `70 passed`
 
 ### 4.2 Provider 增强 (P2-PRV-001 到 P2-PRV-008)
 

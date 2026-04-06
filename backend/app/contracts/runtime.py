@@ -103,6 +103,39 @@ class CompileRequestExplicitSource(StrictModel):
     fragment_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CompileRequestOrgRelation(StrictModel):
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    role_profile_ref: str = Field(min_length=1)
+    role_type: str = Field(min_length=1)
+    employee_id: str | None = None
+    status: str | None = None
+    relation_reason: str = Field(min_length=1)
+
+
+class CompileRequestEscalationPath(StrictModel):
+    current_blocking_reason: str | None = None
+    open_review_pack_id: str | None = None
+    open_incident_id: str | None = None
+    path: list[str] = Field(default_factory=list)
+
+
+class CompileRequestResponsibilityBoundary(StrictModel):
+    delivery_stage: str | None = None
+    output_schema_ref: str = Field(min_length=1)
+    allowed_write_set: list[str] = Field(default_factory=list)
+    board_review_possible: bool = False
+    incident_path_possible: bool = False
+
+
+class CompileRequestOrgContext(StrictModel):
+    upstream_provider: CompileRequestOrgRelation | None = None
+    downstream_reviewer: CompileRequestOrgRelation | None = None
+    collaborators: list[CompileRequestOrgRelation] = Field(default_factory=list)
+    escalation_path: CompileRequestEscalationPath
+    responsibility_boundary: CompileRequestResponsibilityBoundary
+
+
 class CompileRequestExecution(StrictModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
@@ -120,6 +153,7 @@ class CompileRequest(StrictModel):
     control_refs: CompileRequestControlRefs
     worker_binding: CompileRequestWorkerBinding
     budget_policy: CompileRequestBudgetPolicy
+    org_context: CompileRequestOrgContext
     retrieval_plan: CompileRequestRetrievalPlan
     explicit_sources: list[CompileRequestExplicitSource]
     retrieved_summaries: list[CompileRequestRetrievedSummary] = Field(default_factory=list)
@@ -149,6 +183,7 @@ class CompiledOutputContract(StrictModel):
 
 class CompiledSystemControls(StrictModel):
     role_profile: dict[str, Any] = Field(default_factory=dict)
+    organization_context: CompileRequestOrgContext
     hard_rules: list[str] = Field(default_factory=list)
     board_constraints: list[str] = Field(default_factory=list)
     output_contract: CompiledOutputContract
@@ -420,6 +455,7 @@ class CompiledExecutionPackage(StrictModel):
     meta: CompiledExecutionPackageMeta
     compiled_role: CompiledRole
     compiled_constraints: CompiledConstraints
+    org_context: CompileRequestOrgContext
     atomic_context_bundle: AtomicContextBundle
     rendered_execution_payload: RenderedExecutionPayload
     execution: CompiledExecution
