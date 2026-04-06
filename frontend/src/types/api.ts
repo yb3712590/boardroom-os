@@ -178,6 +178,10 @@ export type RuntimeProviderEntry = {
   timeout_sec: number
   reasoning_effort: string | null
   command_path: string | null
+  capability_tags: string[]
+  fallback_provider_ids: string[]
+  health_status: string
+  health_reason: string
   configured_worker_count: number
   is_default: boolean
 }
@@ -315,6 +319,8 @@ export type RuntimeProviderConfigRequest = {
   timeout_sec: number
   reasoning_effort: string | null
   command_path: string | null
+  capability_tags: string[]
+  fallback_provider_ids: string[]
 }
 
 export type RuntimeProviderRoleBindingRequest = {

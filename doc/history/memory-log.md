@@ -67,7 +67,10 @@
 - `P2-PRV-001 / P2-PRV-005 / P2-PRV-006` 已完成：runtime provider 配置已从单一 OpenAI 开关切到最小 registry，首版真实支持 `OpenAI Compat` 与 `Claude Code CLI` 两个 adapter，并开放 `ceo_shadow / ui_designer_primary / frontend_engineer_primary / checker_primary` 的角色绑定
 - 这轮保持保守边界：Gemini 原生 adapter、任务级模型 override、复杂 fallback 路由、成本分层和后台健康探测都未开启；现有员工投影里的 `provider_id` 仍保留为兼容字段和展示字段
 - `runtime-provider` 投影与前端设置抽屉现在都会暴露 `default_provider_id / providers / role_bindings / future_binding_slots`；未来治理角色只做只读占位，不写成已启用能力
-- 当前验证基线更新为 backend `453 passed`、frontend build passed、frontend `73 passed`；前端回归额外覆盖了 provider center 里的未来治理角色只读占位
+- `P2-PRV-002 / P2-PRV-003 / P2-PRV-004` 已完成：provider registry 现在会暴露结构化 `capability_tags[]`、每个 provider 的 `health_status / health_reason` 和最小 `fallback_provider_ids[]`
+- provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
+- provider-to-provider failover 现在只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径，board-facing evidence 也继续只突出 deterministic fallback
+- 当前验证基线更新为 backend `461 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 

@@ -86,6 +86,13 @@ class RuntimeProviderMode(StrEnum):
     CLAUDE_CODE_CLI = "CLAUDE_CODE_CLI"
 
 
+class RuntimeProviderCapabilityTag(StrEnum):
+    STRUCTURED_OUTPUT = "structured_output"
+    PLANNING = "planning"
+    IMPLEMENTATION = "implementation"
+    REVIEW = "review"
+
+
 class MeetingType(StrEnum):
     TECHNICAL_DECISION = "TECHNICAL_DECISION"
 
@@ -151,6 +158,8 @@ class RuntimeProviderConfigInput(StrictModel):
     timeout_sec: float = Field(default=30.0, gt=0)
     reasoning_effort: str | None = None
     command_path: str | None = None
+    capability_tags: list[RuntimeProviderCapabilityTag] = Field(default_factory=list)
+    fallback_provider_ids: list[str] = Field(default_factory=list)
 
 
 class RuntimeProviderRoleBindingInput(StrictModel):
@@ -164,6 +173,31 @@ class RuntimeProviderUpsertCommand(StrictModel):
     providers: list[RuntimeProviderConfigInput] = Field(default_factory=list)
     role_bindings: list[RuntimeProviderRoleBindingInput] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_provider_registry_shape(self) -> "RuntimeProviderUpsertCommand":
+        provider_ids = [provider.provider_id for provider in self.providers]
+        if len(provider_ids) != len(set(provider_ids)):
+            raise ValueError("providers must not contain duplicate provider_id values.")
+
+        valid_provider_ids = set(provider_ids)
+        for provider in self.providers:
+            capability_values = [tag.value for tag in provider.capability_tags]
+            if len(capability_values) != len(set(capability_values)):
+                raise ValueError(f"{provider.provider_id} capability_tags must not contain duplicates.")
+
+            fallback_ids = list(provider.fallback_provider_ids)
+            if len(fallback_ids) != len(set(fallback_ids)):
+                raise ValueError(f"{provider.provider_id} fallback_provider_ids must not contain duplicates.")
+            if provider.provider_id in fallback_ids:
+                raise ValueError(f"{provider.provider_id} cannot list itself as a fallback provider.")
+
+            unknown_fallback_ids = [provider_id for provider_id in fallback_ids if provider_id not in valid_provider_ids]
+            if unknown_fallback_ids:
+                raise ValueError(
+                    f"{provider.provider_id} references unknown fallback providers: {', '.join(unknown_fallback_ids)}."
+                )
+        return self
 
 
 class ContextQueryPlan(StrictModel):

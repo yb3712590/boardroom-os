@@ -26,7 +26,7 @@ from app.core.constants import (
     EVENT_WORKFLOW_CREATED,
 )
 from app.core.persona_profiles import clone_persona_template, get_hire_persona_template_id
-from app.core.provider_openai_compat import OpenAICompatProviderResult
+from app.core.provider_openai_compat import OpenAICompatProviderResult, OpenAICompatProviderUnavailableError
 from app.core.runtime_provider_config import (
     CLAUDE_CODE_PROVIDER_ID,
     OPENAI_COMPAT_PROVIDER_ID,
@@ -671,6 +671,92 @@ def test_ceo_shadow_prefers_role_binding_over_default_provider(client, monkeypat
     assert run["effective_mode"] == "CLAUDE_CODE_CLI_LIVE"
     assert run["model"] == "claude-opus-4-1"
     assert run["proposed_action_batch"]["summary"] == "Use Claude for the CEO proposal."
+
+
+def test_ceo_shadow_failover_uses_fallback_provider_when_primary_is_unavailable(client, monkeypatch):
+    workflow_id = _project_init(client, "CEO shadow provider failover")
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                    capability_tags=["structured_output", "planning"],
+                    fallback_provider_ids=[CLAUDE_CODE_PROVIDER_ID],
+                ),
+                RuntimeProviderConfigEntry(
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    adapter_kind="claude_code_cli",
+                    label="Claude Code CLI",
+                    enabled=True,
+                    command_path="/Users/bill/.local/bin/claude",
+                    model="claude-sonnet-4-6",
+                    timeout_sec=30.0,
+                    capability_tags=["structured_output", "planning", "implementation", "review"],
+                ),
+            ],
+            role_bindings=[],
+        )
+    )
+
+    from app.core import ceo_proposer
+
+    openai_attempts = {"value": 0}
+
+    def _raise_unavailable(*_args, **_kwargs):
+        openai_attempts["value"] += 1
+        raise OpenAICompatProviderUnavailableError(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            message="Provider returned 503.",
+            failure_detail={
+                "provider_status_code": 503,
+                "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+            },
+        )
+
+    def _fake_claude(_config, _rendered_payload):
+        return type(
+            "ClaudeResult",
+            (),
+            {
+                "output_text": json.dumps(
+                    {
+                        "summary": "Claude handled the CEO failover proposal.",
+                        "actions": [
+                            {
+                                "action_type": "NO_ACTION",
+                                "payload": {"reason": "Claude fallback says to wait."},
+                            }
+                        ],
+                    }
+                ),
+                "response_id": None,
+            },
+        )()
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _raise_unavailable)
+    monkeypatch.setattr(ceo_proposer, "invoke_claude_code_response", _fake_claude)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:ceo-failover",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert openai_attempts["value"] == 1
+    assert run["effective_mode"] == "CLAUDE_CODE_CLI_LIVE"
+    assert run["deterministic_fallback_used"] is False
+    assert run["proposed_action_batch"]["summary"] == "Claude handled the CEO failover proposal."
 
 
 def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_already_active(client):

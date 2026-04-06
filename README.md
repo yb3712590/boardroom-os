@@ -20,7 +20,7 @@ Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 - `BUILD`、`CHECK`、`closeout` 都带内部 maker-checker；最终董事会只看真正的 board-facing `REVIEW`
 - CEO 已真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
 - `ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
-- runtime provider 设置现在已升级为最小 registry：首版真实支持 `OpenAI Compat` 与 `Claude Code CLI`，并可给当前真实角色保存默认 provider / model 绑定
+- runtime provider 设置现在已升级为最小 registry：首版真实支持 `OpenAI Compat` 与 `Claude Code CLI`，并可给当前真实角色保存默认 provider / model 绑定、能力标签、健康明细和最小 fallback provider 链
 - React 壳当前可看 `dashboard / inbox / review room / meeting room / incident / workforce / dependency inspector / completion`
 
 更细代码真相统一看 [doc/mainline-truth.md](doc/mainline-truth.md)。

@@ -1712,10 +1712,14 @@
 
 - `P2-PRV-001`：`runtime-provider-config.json` 已从单一 `mode/base_url/api_key/model` 表单切到最小 registry，固定暴露 `default_provider_id / providers[] / role_bindings[]`；旧配置会在读取时自动迁移
 - `P2-PRV-001`：当前真实 adapter 只开放 `prov_openai_compat` 与 `prov_claude_code`；`runtime-provider` 投影和前端设置抽屉都会暴露 provider 列表、默认 provider、当前角色绑定和未来治理角色只读占位
+- `P2-PRV-002`：provider 配置、投影和前端设置抽屉现在都会暴露结构化 `capability_tags[]`；当前只开放 `structured_output / planning / implementation / review` 四个封闭标签，并按运行目标固定能力底线
+- `P2-PRV-003`：`runtime-provider` 投影里的每个 provider 现在都会暴露 `health_status / health_reason`；当前健康明细只基于启停、配置完整度、provider incident pause 和 Claude 命令可解析性，不加主动探活
+- `P2-PRV-004`：provider 现在支持最小 `fallback_provider_ids[]`；运行时与 CEO live proposal 只会在 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE` 时按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退 deterministic 路径
+- `P2-PRV-004`：provider-to-provider failover 成功时不会新增新的 board-facing evidence 卡片，只会把 preferred/actual provider 审计和 failover issue 写进现有 runtime 结果；primary provider 的 incident 语义保持不变
 - `P2-PRV-006`：运行时与 CEO shadow 现在都先解析角色绑定，再回退员工 `provider_id` 兼容字段和默认 provider；当前只开放 `ceo_shadow / ui_designer_primary / frontend_engineer_primary / checker_primary`
 - `P2-PRV-006`：provider 执行与 fallback 已补最小审计字段：`preferred_provider_id / preferred_model / actual_provider_id / actual_model / adapter_kind`；本轮未开启任务级 override、复杂 fallback 路由或成本分层
 - `P2-PRV-005`：新增后端回归覆盖旧配置迁移、角色路由优先级、Claude CLI adapter、CEO/Worker 角色绑定和 provider pause 兼容路径；前端回归覆盖 provider center 保存流程与未来治理角色只读占位
-- 本轮整体验证结果更新为 backend `453 passed`、frontend build passed、frontend `73 passed`
+- 本轮整体验证结果更新为 backend `461 passed`、frontend build passed、frontend `73 passed`
 
 ### 4.3 治理模板与文档型角色 (P2-GOV-001 到 P2-GOV-006)
 

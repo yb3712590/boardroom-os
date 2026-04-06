@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-07）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `453 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `461 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `73 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -68,6 +68,16 @@
 - `runtime-provider` 投影和前端 `ProviderSettingsDrawer` 现在都升级为最小 provider center：可编辑 OpenAI / Claude 配置、默认 provider 和当前真实角色绑定；未来治理角色只展示只读占位，不写成已启用能力
 - 当前实现只补最小审计字段：runtime provider 执行与 fallback 现在会显式记录 `preferred_provider_id / preferred_model / actual_provider_id / actual_model / adapter_kind`；未开启任务级 override、复杂 fallback 路由、成本分层或独立健康探测器
 - `P2-PRV-005` 已完成：新增后端回归覆盖旧配置迁移、角色路由优先级、Claude CLI adapter、CEO/Worker 路由与 provider pause 兼容路径；前端回归补上 provider center 的未来治理角色只读占位；当前验证基线更新为 backend `453 passed`、frontend build passed、frontend `73 passed`
+
+### `P2-PRV-002 / P2-PRV-003 / P2-PRV-004`：provider 能力标签、基础健康明细与简单 fallback 路由
+
+状态：`已完成（2026-04-07，本轮手动纳入；与主线关系：把 provider center 从“能配置”收口到“能表达能力、能看清健康、能在窄失败场景下切到合格备选 provider”）`
+
+- `P2-PRV-002` 已完成：`RuntimeProvider` 配置、投影和前端设置抽屉现在都会暴露结构化 `capability_tags[]`；当前只开放 `structured_output / planning / implementation / review` 四个封闭标签
+- `P2-PRV-003` 已完成：`runtime-provider` 投影里的每个 provider 现在都会暴露 `health_status / health_reason`；当前健康明细只基于启停、配置完整度、provider incident pause 和 Claude 命令可解析性，不加主动探活
+- `P2-PRV-004` 已完成：provider 现在支持最小 `fallback_provider_ids[]`；运行时与 CEO live proposal 只会在 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE` 时按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径
+- 当前能力底线固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
+- `runtime-provider-upsert` 现在会拒绝未知能力标签、重复标签、未知 fallback provider、自引用和重复 fallback 项；当前验证基线更新为 backend `461 passed`、frontend build passed、frontend `73 passed`
 
 本轮完成后，当前剩余未关闭项仍都属于冻结后置或后置增强；当前再次回到“没有可直接开启的默认主线任务”状态。
 

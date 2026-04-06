@@ -120,12 +120,18 @@ npm run test:run
 - `providers[]`
 - `role_bindings[]`
 
+当前 `providers[]` 里最小还会带：
+
+- `capability_tags[]`
+- `fallback_provider_ids[]`
+
 当前 provider 选择顺序：
 
 - 先看 `ceo_shadow` 或 ticket `role_profile` 的角色绑定
 - 再回退员工投影里的 `provider_id` 兼容字段
 - 最后才回退 `default_provider_id`
 - 没有命中或配置不完整时，回退本地 deterministic
+- 命中 live provider 后，只有在 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE` 时，才会按当前 provider 的 `fallback_provider_ids[]` 顺序尝试满足目标能力底线的备选 provider
 
 `OpenAI Compat` live path 的真实规则：
 
@@ -138,6 +144,7 @@ npm run test:run
 `Claude Code CLI` live path 的真实规则：
 
 - 只在 registry 里启用 `prov_claude_code`，且显式配置 `command_path / model` 时启用
+- provider 健康明细不会做主动探活；当前只看启停、配置完整度、provider incident pause 和 Claude 命令可解析性
 - 当前通过 `claude --print --output-format text --permission-mode bypassPermissions --json-schema '{"type":"object"}'` 走非交互调用
 - 请求输入当前按编译后的 `rendered_execution_payload.messages` 逐条转成结构化文本 prompt
 - CLI 返回结果同样会在本地做 JSON 解析和现有 output schema 校验，不把 CLI 输出当唯一真相

@@ -318,6 +318,10 @@ def _runtime_provider_upsert_payload(
     claude_command_path: str | None = "/Users/bill/.local/bin/claude",
     claude_model: str | None = "claude-sonnet-4-6",
     claude_timeout_sec: float = 45.0,
+    openai_capability_tags: list[str] | None = None,
+    claude_capability_tags: list[str] | None = None,
+    openai_fallback_provider_ids: list[str] | None = None,
+    claude_fallback_provider_ids: list[str] | None = None,
     role_bindings: list[dict] | None = None,
     idempotency_key: str = "runtime-provider-upsert:test",
 ) -> dict:
@@ -335,6 +339,10 @@ def _runtime_provider_upsert_payload(
                 "timeout_sec": openai_timeout_sec,
                 "reasoning_effort": openai_reasoning_effort,
                 "command_path": None,
+                "capability_tags": list(
+                    openai_capability_tags or ["structured_output", "planning", "implementation"]
+                ),
+                "fallback_provider_ids": list(openai_fallback_provider_ids or []),
             },
             {
                 "provider_id": "prov_claude_code",
@@ -347,6 +355,10 @@ def _runtime_provider_upsert_payload(
                 "timeout_sec": claude_timeout_sec,
                 "reasoning_effort": None,
                 "command_path": claude_command_path,
+                "capability_tags": list(
+                    claude_capability_tags or ["structured_output", "planning", "implementation", "review"]
+                ),
+                "fallback_provider_ids": list(claude_fallback_provider_ids or []),
             },
         ],
         "role_bindings": list(role_bindings or []),
@@ -4014,6 +4026,14 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert len(projection_data["providers"]) == 2
         assert projection_data["providers"][0]["provider_id"] == "prov_openai_compat"
         assert projection_data["providers"][1]["provider_id"] == "prov_claude_code"
+        assert projection_data["providers"][0]["capability_tags"] == [
+            "structured_output",
+            "planning",
+            "implementation",
+        ]
+        assert projection_data["providers"][0]["fallback_provider_ids"] == []
+        assert projection_data["providers"][0]["health_status"] == "HEALTHY"
+        assert "saved OpenAI-compatible provider config" in projection_data["providers"][0]["health_reason"]
         assert projection_data["future_binding_slots"][0]["status"] == "NOT_ENABLED"
         assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
         assert dashboard_data["runtime_status"]["provider_health_summary"] == "HEALTHY"
@@ -4097,6 +4117,27 @@ def test_dashboard_runtime_status_shows_provider_paused_when_provider_incident_i
         assert dashboard_response.json()["data"]["runtime_status"]["provider_health_summary"] == "PAUSED"
         assert provider_response.json()["data"]["effective_mode"] == "OPENAI_COMPAT_PAUSED"
         assert provider_response.json()["data"]["provider_health_summary"] == "PAUSED"
+        assert provider_response.json()["data"]["providers"][0]["health_status"] == "PAUSED"
+        assert "paused by an open provider incident" in provider_response.json()["data"]["providers"][0]["health_reason"]
+
+
+def test_runtime_provider_upsert_rejects_unknown_capability_and_invalid_fallback(db_path, monkeypatch):
+    config_path = db_path.parent / "runtime-provider-config-invalid.json"
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH", str(config_path))
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                openai_capability_tags=["structured_output", "unknown_capability"],
+                openai_fallback_provider_ids=["prov_openai_compat", "prov_missing"],
+                idempotency_key="runtime-provider-upsert:invalid",
+            ),
+        )
+
+        assert response.status_code == 422
 
 
 def test_dashboard_pipeline_summary_shows_review_stage_after_project_init_auto_advance(client):

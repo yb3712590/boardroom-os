@@ -130,6 +130,7 @@ from app.core.runtime_provider_config import (
     resolve_runtime_provider_config,
     runtime_target_label,
     runtime_provider_effective_mode,
+    runtime_provider_health_details,
     runtime_provider_health_summary,
 )
 from app.core.time import now_local
@@ -265,6 +266,10 @@ def _build_runtime_provider_projection_data(
                 "timeout_sec": provider.timeout_sec,
                 "reasoning_effort": provider.reasoning_effort,
                 "command_path": provider.command_path,
+                "capability_tags": [tag.value for tag in provider.capability_tags],
+                "fallback_provider_ids": list(provider.fallback_provider_ids),
+                "health_status": runtime_provider_health_details(provider, repository)[0],
+                "health_reason": runtime_provider_health_details(provider, repository)[1],
                 "configured_worker_count": count_configured_workers(repository, provider_id=provider.provider_id),
                 "is_default": provider.provider_id == config.default_provider_id,
             }

@@ -7,7 +7,7 @@
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | blocker 仍在，但不再占用当前主线 |
-| Provider 增强 | `P2-PRV-002` 到 `P2-PRV-004`、`P2-PRV-007` 到 `P2-PRV-008` | 后置增强 | `P2-PRV-001/005/006` 已于 2026-04-07 手动纳入并收口 |
+| Provider 增强 | `P2-PRV-007` 到 `P2-PRV-008` | 后置增强 | `P2-PRV-001/002/003/004/005/006` 已于 2026-04-07 手动纳入并收口 |
 | 治理模板与交付口径 | `P2-GOV-001` 到 `P2-GOV-006` | 后置增强 | `P2-GOV-007` 已在 2026-04-06 收口 |
 
 ## 当前判断
@@ -18,6 +18,7 @@
 - `P2-MTG-011` 已于 2026-04-07 手动纳入并收口：会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`，Meeting Room 默认先看决策视图，会议来源 follow-up ticket 会额外带 ADR 摘要
 - `P2-CEO-002` 已于 2026-04-07 手动纳入并收口：OpenAI Compat live CEO 现在会先消费当前 workflow 内 `reuse_candidates`，优先复用已有完成交付、已关闭会议或恢复现有工作；deterministic fallback 保持不变
 - `P2-PRV-001 / P2-PRV-005 / P2-PRV-006` 已于 2026-04-07 手动纳入并收口：runtime provider 已从单一 OpenAI 表单升级为最小 registry，当前真实支持 `OpenAI Compat / Claude Code CLI`，并开放现有真实角色的默认 provider / model 绑定
+- `P2-PRV-002 / P2-PRV-003 / P2-PRV-004` 已于 2026-04-07 手动纳入并收口：provider registry 现在会暴露结构化 `capability_tags[]`、每个 provider 的 `health_status / health_reason`，并支持最小 `fallback_provider_ids[]`；运行时与 CEO 只在 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE` 时尝试满足目标能力底线的备选 provider
 - 当前未关闭任务里，没有可以直接开启的默认主线任务；剩余项都属于冻结后置或后置增强
 - 如果没有新任务被纳入当前批次、且条件任务也未触发，本轮应明确判定为“无可直接开启任务”
 
@@ -41,9 +42,6 @@
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
-| P2-PRV-002 | 能力标签定义 | 3h | 后置增强 |
-| P2-PRV-003 | 基础健康检查 | 3h | 后置增强 |
-| P2-PRV-004 | 简单 fallback 路由 | 4h | 后置增强 |
 | P2-PRV-007 | 任务级模型覆盖与 preferred/actual model 追踪 | 4h | 后置增强 |
 | P2-PRV-008 | 成本分层与高价模型低频路由 | 4h | 后置增强 |
 

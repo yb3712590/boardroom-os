@@ -87,7 +87,8 @@ worker-runtime 是单独一套受限接口：
 
 - `project-init` 和 `ticket-create` 当前仍接受弃用兼容输入 `tenant_id / workspace_id`，但它们已不再驱动主线行为
 - `project-init` 当前新增可选 `force_requirement_elicitation`；开启后会先进入一次 `REQUIREMENT_ELICITATION` 板审，而不是直接 kickoff scope review
-- `runtime-provider-upsert` 当前已从单一表单切到 registry 快照；`providers[]` 首版只开放 `prov_openai_compat` 与 `prov_claude_code`，`role_bindings[]` 当前只建议写现有真实角色
+- `runtime-provider-upsert` 当前已从单一表单切到 registry 快照；`providers[]` 首版只开放 `prov_openai_compat` 与 `prov_claude_code`，并额外支持 `capability_tags[]` 与 `fallback_provider_ids[]`；`role_bindings[]` 当前只建议写现有真实角色
+- `runtime-provider-upsert` 当前会拒绝未知能力标签、重复标签、未知 fallback provider、自引用和重复 fallback 项
 - `ticket-result-submit` 现在不再直接消费 `upload_session_id`；中大文件必须先走 `ticket-artifact-import-upload`
 
 ## 5. Projections
@@ -97,7 +98,7 @@ worker-runtime 是单独一套受限接口：
 | 接口 | 边界标签 | 默认是否建议使用 | 用途 | 关键查询参数 |
 |------|----------|------------------|------|--------------|
 | `GET /api/v1/projections/dashboard` | 当前主线 | 是 | 首页聚合快照 | 无 |
-| `GET /api/v1/projections/runtime-provider` | 当前主线 | 是 | 读取当前 provider registry、默认 provider、角色绑定与健康态 | 无 |
+| `GET /api/v1/projections/runtime-provider` | 当前主线 | 是 | 读取当前 provider registry、默认 provider、角色绑定、每个 provider 的能力标签、fallback 链与健康明细 | 无 |
 | `GET /api/v1/projections/workflows/{workflow_id}/dependency-inspector` | 当前主线 | 是 | 查看当前 workflow 链路依赖和停点原因 | `workflow_id` |
 | `GET /api/v1/projections/workflows/{workflow_id}/ceo-shadow` | 当前主线 | 按需 | 查看 CEO 审计提议与执行摘要 | `workflow_id`、`limit` |
 | `GET /api/v1/projections/artifact-cleanup-candidates` | 当前主线 | 按需 | 查看 cleanup 候选明细 | `ticket_id`、`retention_class`、`limit` |

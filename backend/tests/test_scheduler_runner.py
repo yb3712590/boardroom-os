@@ -15,6 +15,7 @@ from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
+    OpenAICompatProviderAuthError,
     OpenAICompatProviderBadResponseError,
     OpenAICompatProviderRateLimitedError,
     OpenAICompatProviderResult,
@@ -2379,6 +2380,135 @@ def test_runtime_provider_rate_limited_response_opens_provider_incident(client, 
     assert open_incidents[0]["provider_id"] == "prov_openai_compat"
 
 
+def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    repository = client.app.state.repository
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                    capability_tags=["structured_output", "planning", "implementation"],
+                    fallback_provider_ids=[CLAUDE_CODE_PROVIDER_ID],
+                ),
+                RuntimeProviderConfigEntry(
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    adapter_kind="claude_code_cli",
+                    label="Claude Code CLI",
+                    enabled=True,
+                    command_path="/Users/bill/.local/bin/claude",
+                    model="claude-sonnet-4-6",
+                    timeout_sec=30.0,
+                    capability_tags=["structured_output", "planning", "implementation", "review"],
+                ),
+            ],
+            role_bindings=[],
+        )
+    )
+    _seed_worker(repository, employee_id="emp_frontend_failover", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_failover",
+            ticket_id="tkt_runner_provider_failover",
+            node_id="node_runner_provider_failover",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_failover",
+            "ticket_id": "tkt_runner_provider_failover",
+            "node_id": "node_runner_provider_failover",
+            "leased_by": "emp_frontend_failover",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_failover:tkt_runner_provider_failover",
+        },
+    )
+
+    openai_attempts = {"value": 0}
+    monkeypatch.setattr(runtime_module, "_sleep", lambda _delay: None)
+
+    def _raise_rate_limited(config, rendered_payload):
+        openai_attempts["value"] += 1
+        raise OpenAICompatProviderRateLimitedError(
+            failure_kind="PROVIDER_RATE_LIMITED",
+            message="Provider quota exhausted.",
+            failure_detail={
+                "provider_status_code": 429,
+                "provider_id": "prov_openai_compat",
+            },
+        )
+
+    def _fake_claude(config, rendered_payload):
+        return type(
+            "ClaudeResult",
+            (),
+            {
+                "output_text": json.dumps(
+                    {
+                        "summary": "Claude failover completed the ticket.",
+                        "recommended_option_id": "option_a",
+                        "options": [
+                            {
+                                "option_id": "option_a",
+                                "label": "Option A",
+                                "summary": "Failover option from Claude.",
+                                "artifact_refs": [],
+                            }
+                        ],
+                    }
+                ),
+                "response_id": None,
+            },
+        )()
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_rate_limited)
+    monkeypatch.setattr(runtime_module, "invoke_claude_code_response", _fake_claude)
+    recorded_submit: dict[str, object] = {}
+    original_submit = runtime_module.handle_ticket_result_submit
+
+    def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
+        recorded_submit["assumptions"] = list(payload.assumptions)
+        recorded_submit["issues"] = list(payload.issues)
+        return original_submit(
+            repository_arg,
+            payload,
+            developer_inspector_store=developer_inspector_store,
+            artifact_store=artifact_store,
+        )
+
+    monkeypatch.setattr(runtime_module, "handle_ticket_result_submit", _record_submit)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_failover")
+    open_incidents = repository.list_open_incidents()
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_failover"]
+    assert ticket_projection["status"] == "COMPLETED"
+    assert openai_attempts["value"] == 3
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert "preferred_provider_id=prov_openai_compat" in recorded_submit["assumptions"]
+    assert "actual_provider_id=prov_claude_code" in recorded_submit["assumptions"]
+    assert any("failover" in issue.lower() for issue in recorded_submit["issues"])
+
+
 def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
@@ -2451,6 +2581,111 @@ def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeyp
     assert attempt_count["value"] == 3
     assert sleep_calls == [1.0, 2.0]
     assert repository.list_open_incidents() == []
+
+
+def test_runtime_provider_auth_failure_does_not_attempt_provider_failover(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    repository = client.app.state.repository
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                    capability_tags=["structured_output", "planning", "implementation"],
+                    fallback_provider_ids=[CLAUDE_CODE_PROVIDER_ID],
+                ),
+                RuntimeProviderConfigEntry(
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    adapter_kind="claude_code_cli",
+                    label="Claude Code CLI",
+                    enabled=True,
+                    command_path="/Users/bill/.local/bin/claude",
+                    model="claude-sonnet-4-6",
+                    timeout_sec=30.0,
+                    capability_tags=["structured_output", "planning", "implementation", "review"],
+                ),
+            ],
+            role_bindings=[],
+        )
+    )
+    _seed_worker(repository, employee_id="emp_frontend_auth_no_failover", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_auth_no_failover",
+            ticket_id="tkt_runner_provider_auth_no_failover",
+            node_id="node_runner_provider_auth_no_failover",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_auth_no_failover",
+            "ticket_id": "tkt_runner_provider_auth_no_failover",
+            "node_id": "node_runner_provider_auth_no_failover",
+            "leased_by": "emp_frontend_auth_no_failover",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_auth_no_failover:tkt_runner_provider_auth_no_failover",
+        },
+    )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "invoke_openai_compat_response",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OpenAICompatProviderAuthError(
+                failure_kind="PROVIDER_AUTH_FAILED",
+                message="Provider rejected the configured API key.",
+                failure_detail={
+                    "provider_status_code": 401,
+                    "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "invoke_claude_code_response",
+        lambda *args, **kwargs: pytest.fail("Claude fallback should not run for provider auth failures"),
+    )
+    recorded_submit: dict[str, object] = {}
+    original_submit = runtime_module.handle_ticket_result_submit
+
+    def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
+        recorded_submit["assumptions"] = list(payload.assumptions)
+        return original_submit(
+            repository_arg,
+            payload,
+            developer_inspector_store=developer_inspector_store,
+            artifact_store=artifact_store,
+        )
+
+    monkeypatch.setattr(runtime_module, "handle_ticket_result_submit", _record_submit)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_auth_no_failover")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_auth_no_failover"]
+    assert ticket_projection["status"] == "COMPLETED"
+    assert repository.list_open_incidents() == []
+    assert "provider_id=prov_openai_compat" in recorded_submit["assumptions"]
+    assert "provider_failure_kind=PROVIDER_AUTH_FAILED" in recorded_submit["assumptions"]
+    assert not any("prov_claude_code" in assumption for assumption in recorded_submit["assumptions"])
 
 
 def test_runtime_provider_paused_ticket_falls_back_to_deterministic_completion(

@@ -115,6 +115,8 @@ export function useDashboardPageActions({
       timeout_sec: number
       reasoning_effort: string | null
       command_path: string | null
+      capability_tags: string[]
+      fallback_provider_ids: string[]
     }>
     roleBindings: Array<{
       target_ref: string

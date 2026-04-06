@@ -6,7 +6,9 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from app.contracts.commands import RuntimeProviderUpsertCommand
 from app.contracts.runtime import (
     RenderedExecutionMessage,
     RenderedExecutionPayload,
@@ -25,6 +27,8 @@ from app.core.runtime_provider_config import (
     RuntimeProviderConfigStore,
     RuntimeProviderRoleBinding,
     RuntimeProviderStoredConfig,
+    provider_meets_target_capability_floor,
+    runtime_provider_health_details,
     resolve_provider_selection,
 )
 
@@ -103,6 +107,94 @@ def test_runtime_provider_store_migrates_legacy_openai_config_to_registry_shape(
     claude_provider = next(provider for provider in loaded.providers if provider.provider_id == CLAUDE_CODE_PROVIDER_ID)
     assert claude_provider.adapter_kind == "claude_code_cli"
     assert claude_provider.enabled is False
+    assert [tag.value for tag in openai_provider.capability_tags] == [
+        "structured_output",
+        "planning",
+        "implementation",
+        "review",
+    ]
+    assert openai_provider.fallback_provider_ids == []
+    assert [tag.value for tag in claude_provider.capability_tags] == [
+        "structured_output",
+        "planning",
+        "implementation",
+        "review",
+    ]
+    assert claude_provider.fallback_provider_ids == []
+
+
+def test_runtime_provider_store_round_trips_capabilities_and_fallback_ids(tmp_path: Path) -> None:
+    config_path = tmp_path / "runtime-provider-config.json"
+    store = RuntimeProviderConfigStore(config_path)
+    store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="high",
+                    capability_tags=["structured_output", "planning", "implementation"],
+                    fallback_provider_ids=[CLAUDE_CODE_PROVIDER_ID],
+                ),
+                RuntimeProviderConfigEntry(
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    adapter_kind="claude_code_cli",
+                    label="Claude Code CLI",
+                    enabled=True,
+                    command_path="/Users/bill/.local/bin/claude",
+                    model="claude-sonnet-4-6",
+                    timeout_sec=45.0,
+                    capability_tags=["structured_output", "planning", "review"],
+                    fallback_provider_ids=[],
+                ),
+            ],
+            role_bindings=[],
+        )
+    )
+
+    loaded = store.load_saved_config()
+
+    assert loaded is not None
+    openai_provider = next(provider for provider in loaded.providers if provider.provider_id == OPENAI_COMPAT_PROVIDER_ID)
+    claude_provider = next(provider for provider in loaded.providers if provider.provider_id == CLAUDE_CODE_PROVIDER_ID)
+    assert openai_provider.capability_tags == ["structured_output", "planning", "implementation"]
+    assert openai_provider.fallback_provider_ids == [CLAUDE_CODE_PROVIDER_ID]
+    assert claude_provider.capability_tags == ["structured_output", "planning", "review"]
+    assert claude_provider.fallback_provider_ids == []
+
+
+def test_runtime_provider_upsert_rejects_invalid_capability_and_fallback_config() -> None:
+    with pytest.raises(ValidationError):
+        RuntimeProviderUpsertCommand.model_validate(
+            {
+                "default_provider_id": OPENAI_COMPAT_PROVIDER_ID,
+                "providers": [
+                    {
+                        "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+                        "adapter_kind": "openai_compat",
+                        "label": "OpenAI Compat",
+                        "enabled": True,
+                        "base_url": "https://api.example.test/v1",
+                        "api_key": "sk-test-secret",
+                        "model": "gpt-5.3-codex",
+                        "timeout_sec": 30.0,
+                        "reasoning_effort": "high",
+                        "command_path": None,
+                        "capability_tags": ["structured_output", "structured_output", "unknown_capability"],
+                        "fallback_provider_ids": [OPENAI_COMPAT_PROVIDER_ID, "prov_missing", OPENAI_COMPAT_PROVIDER_ID],
+                    }
+                ],
+                "role_bindings": [],
+                "idempotency_key": "runtime-provider-upsert:invalid",
+            }
+        )
 
 
 def test_resolve_provider_selection_prefers_role_binding_over_employee_provider() -> None:
@@ -119,6 +211,7 @@ def test_resolve_provider_selection_prefers_role_binding_over_employee_provider(
                 model="gpt-5.3-codex",
                 timeout_sec=30.0,
                 reasoning_effort="medium",
+                capability_tags=["structured_output", "planning"],
             ),
             RuntimeProviderConfigEntry(
                 provider_id=CLAUDE_CODE_PROVIDER_ID,
@@ -128,6 +221,7 @@ def test_resolve_provider_selection_prefers_role_binding_over_employee_provider(
                 command_path="/Users/bill/.local/bin/claude",
                 model="claude-sonnet-4-6",
                 timeout_sec=45.0,
+                capability_tags=["structured_output", "planning", "implementation"],
             ),
         ],
         role_bindings=[
@@ -166,6 +260,7 @@ def test_resolve_provider_selection_falls_back_to_employee_provider_and_default_
                 model="gpt-5.3-codex",
                 timeout_sec=30.0,
                 reasoning_effort="medium",
+                capability_tags=["structured_output", "planning", "review"],
             ),
             RuntimeProviderConfigEntry(
                 provider_id=CLAUDE_CODE_PROVIDER_ID,
@@ -175,6 +270,7 @@ def test_resolve_provider_selection_falls_back_to_employee_provider_and_default_
                 command_path="/Users/bill/.local/bin/claude",
                 model="claude-sonnet-4-6",
                 timeout_sec=45.0,
+                capability_tags=["structured_output", "planning", "review"],
             ),
         ],
         role_bindings=[],
@@ -197,6 +293,71 @@ def test_resolve_provider_selection_falls_back_to_employee_provider_and_default_
     assert default_selection is not None
     assert default_selection.provider.provider_id == OPENAI_COMPAT_PROVIDER_ID
     assert default_selection.preferred_model == "gpt-5.3-codex"
+
+
+def test_resolve_provider_selection_skips_provider_that_misses_target_capability_floor() -> None:
+    config = RuntimeProviderStoredConfig(
+        default_provider_id=CLAUDE_CODE_PROVIDER_ID,
+        providers=[
+            RuntimeProviderConfigEntry(
+                provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                adapter_kind="openai_compat",
+                label="OpenAI Compat",
+                enabled=True,
+                base_url="https://api.example.test/v1",
+                api_key="sk-test-secret",
+                model="gpt-5.3-codex",
+                timeout_sec=30.0,
+                reasoning_effort="medium",
+                capability_tags=["structured_output", "implementation"],
+            ),
+            RuntimeProviderConfigEntry(
+                provider_id=CLAUDE_CODE_PROVIDER_ID,
+                adapter_kind="claude_code_cli",
+                label="Claude Code",
+                enabled=True,
+                command_path="/Users/bill/.local/bin/claude",
+                model="claude-sonnet-4-6",
+                timeout_sec=45.0,
+                capability_tags=["structured_output", "planning"],
+            ),
+        ],
+        role_bindings=[
+            RuntimeProviderRoleBinding(
+                target_ref="ceo_shadow",
+                provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                model="gpt-5.3-codex",
+            )
+        ],
+    )
+
+    selection = resolve_provider_selection(config, target_ref="ceo_shadow", employee_provider_id=None)
+
+    assert selection is not None
+    assert selection.provider.provider_id == CLAUDE_CODE_PROVIDER_ID
+    assert selection.preferred_provider_id == CLAUDE_CODE_PROVIDER_ID
+    assert selection.preferred_model == "claude-sonnet-4-6"
+    assert provider_meets_target_capability_floor(selection.provider, "ceo_shadow") is True
+
+
+def test_runtime_provider_health_details_reports_command_not_found_for_claude(client) -> None:
+    repository = client.app.state.repository
+    health_status, health_reason = runtime_provider_health_details(
+        RuntimeProviderConfigEntry(
+            provider_id=CLAUDE_CODE_PROVIDER_ID,
+            adapter_kind="claude_code_cli",
+            label="Claude Code",
+            enabled=True,
+            command_path="/path/that/does/not/exist/claude",
+            model="claude-sonnet-4-6",
+            timeout_sec=45.0,
+            capability_tags=["structured_output", "planning", "implementation", "review"],
+        ),
+        repository,
+    )
+
+    assert health_status == "COMMAND_NOT_FOUND"
+    assert "could not be resolved" in health_reason
 
 
 def test_invoke_claude_code_response_uses_print_mode_and_json_schema(monkeypatch: pytest.MonkeyPatch) -> None:

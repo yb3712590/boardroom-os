@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
 from pydantic import Field
 
-from app.contracts.commands import CommandAckEnvelope, CommandAckStatus, RuntimeProviderMode, RuntimeProviderUpsertCommand
+from app.contracts.commands import (
+    CommandAckEnvelope,
+    CommandAckStatus,
+    RuntimeProviderCapabilityTag,
+    RuntimeProviderMode,
+    RuntimeProviderUpsertCommand,
+)
 from app.contracts.common import StrictModel
 from app.config import get_settings
 from app.core.ids import new_prefixed_id
@@ -68,6 +75,8 @@ class RuntimeProviderConfigEntry(StrictModel):
     timeout_sec: float = Field(default=30.0, gt=0)
     reasoning_effort: str | None = None
     command_path: str | None = None
+    capability_tags: list[RuntimeProviderCapabilityTag] = Field(default_factory=list)
+    fallback_provider_ids: list[str] = Field(default_factory=list)
 
 
 class RuntimeProviderRoleBinding(StrictModel):
@@ -87,7 +96,35 @@ class RuntimeProviderSelection:
     provider: RuntimeProviderConfigEntry
     preferred_provider_id: str
     preferred_model: str | None
+    actual_model: str | None
     binding_target_ref: str | None = None
+
+
+DEFAULT_PROVIDER_CAPABILITY_TAGS = (
+    RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+    RuntimeProviderCapabilityTag.PLANNING,
+    RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    RuntimeProviderCapabilityTag.REVIEW,
+)
+
+RUNTIME_TARGET_CAPABILITY_FLOORS: dict[str, tuple[RuntimeProviderCapabilityTag, ...]] = {
+    ROLE_BINDING_CEO_SHADOW: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
+    ROLE_BINDING_UI_DESIGNER: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
+    ROLE_BINDING_FRONTEND_ENGINEER: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    ROLE_BINDING_CHECKER: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.REVIEW,
+    ),
+}
 
 
 class RuntimeProviderConfigStore:
@@ -128,6 +165,8 @@ def _default_provider_entries(
             model=openai_model,
             timeout_sec=openai_timeout_sec,
             reasoning_effort=openai_reasoning_effort,
+            capability_tags=list(DEFAULT_PROVIDER_CAPABILITY_TAGS),
+            fallback_provider_ids=[],
         ),
         RuntimeProviderConfigEntry(
             provider_id=CLAUDE_CODE_PROVIDER_ID,
@@ -137,6 +176,8 @@ def _default_provider_entries(
             command_path=None,
             model=None,
             timeout_sec=30.0,
+            capability_tags=list(DEFAULT_PROVIDER_CAPABILITY_TAGS),
+            fallback_provider_ids=[],
         ),
     ]
 
@@ -180,6 +221,8 @@ def _migrate_legacy_provider_payload(payload: dict) -> dict:
                 "model": payload.get("model"),
                 "timeout_sec": payload.get("timeout_sec") or 30.0,
                 "reasoning_effort": payload.get("reasoning_effort"),
+                "capability_tags": [tag.value for tag in DEFAULT_PROVIDER_CAPABILITY_TAGS],
+                "fallback_provider_ids": [],
             },
             {
                 "provider_id": CLAUDE_CODE_PROVIDER_ID,
@@ -189,6 +232,8 @@ def _migrate_legacy_provider_payload(payload: dict) -> dict:
                 "command_path": None,
                 "model": None,
                 "timeout_sec": 30.0,
+                "capability_tags": [tag.value for tag in DEFAULT_PROVIDER_CAPABILITY_TAGS],
+                "fallback_provider_ids": [],
             },
         ],
         "role_bindings": [],
@@ -196,9 +241,27 @@ def _migrate_legacy_provider_payload(payload: dict) -> dict:
 
 
 def _normalize_provider_store_payload(payload: dict) -> dict:
-    if "providers" in payload or "role_bindings" in payload or "default_provider_id" in payload:
-        return payload
-    return _migrate_legacy_provider_payload(payload)
+    if "providers" not in payload and "role_bindings" not in payload and "default_provider_id" not in payload:
+        payload = _migrate_legacy_provider_payload(payload)
+
+    providers = []
+    for raw_provider in list(payload.get("providers") or []):
+        if not isinstance(raw_provider, dict):
+            providers.append(raw_provider)
+            continue
+        normalized_provider = dict(raw_provider)
+        normalized_provider.setdefault(
+            "capability_tags",
+            [tag.value for tag in DEFAULT_PROVIDER_CAPABILITY_TAGS],
+        )
+        normalized_provider.setdefault("fallback_provider_ids", [])
+        providers.append(normalized_provider)
+
+    return {
+        **payload,
+        "providers": providers,
+        "role_bindings": list(payload.get("role_bindings") or []),
+    }
 
 
 def build_runtime_provider_store() -> RuntimeProviderConfigStore:
@@ -217,7 +280,7 @@ def resolve_runtime_provider_config(
 
 def _ensure_provider_defaults(config: RuntimeProviderStoredConfig) -> RuntimeProviderStoredConfig:
     provider_by_id = {provider.provider_id: provider for provider in config.providers}
-    providers = list(config.providers)
+    providers = [_normalized_provider_entry(provider) for provider in config.providers]
     defaults = _default_provider_entries()
     for provider in defaults:
         if provider.provider_id not in provider_by_id:
@@ -240,8 +303,27 @@ def find_provider_entry(
         return None
     for provider in config.providers:
         if provider.provider_id == normalized:
-            return provider
+            return _normalized_provider_entry(provider)
     return None
+
+
+def _normalized_provider_entry(provider: RuntimeProviderConfigEntry) -> RuntimeProviderConfigEntry:
+    if provider.capability_tags:
+        return provider
+    return provider.model_copy(update={"capability_tags": list(DEFAULT_PROVIDER_CAPABILITY_TAGS)})
+
+
+def _provider_capability_tag_values(provider: RuntimeProviderConfigEntry) -> set[str]:
+    normalized_provider = _normalized_provider_entry(provider)
+    return {tag.value for tag in normalized_provider.capability_tags}
+
+
+def provider_meets_target_capability_floor(provider: RuntimeProviderConfigEntry, target_ref: str) -> bool:
+    required_tags = RUNTIME_TARGET_CAPABILITY_FLOORS.get(target_ref)
+    if not required_tags:
+        return True
+    capability_values = _provider_capability_tag_values(provider)
+    return all(required_tag.value in capability_values for required_tag in required_tags)
 
 
 def resolve_provider_selection(
@@ -254,36 +336,77 @@ def resolve_provider_selection(
         if binding.target_ref != target_ref:
             continue
         provider = find_provider_entry(config, binding.provider_id)
-        if provider is None or not provider.enabled:
+        if provider is None or not provider.enabled or not provider_meets_target_capability_floor(provider, target_ref):
             continue
         return RuntimeProviderSelection(
             provider=provider,
             preferred_provider_id=provider.provider_id,
             preferred_model=binding.model or provider.model,
+            actual_model=binding.model or provider.model,
             binding_target_ref=binding.target_ref,
         )
 
     employee_provider = find_provider_entry(config, employee_provider_id)
-    if employee_provider is not None and employee_provider.enabled:
+    if (
+        employee_provider is not None
+        and employee_provider.enabled
+        and provider_meets_target_capability_floor(employee_provider, target_ref)
+    ):
         return RuntimeProviderSelection(
             provider=employee_provider,
             preferred_provider_id=employee_provider.provider_id,
             preferred_model=employee_provider.model,
+            actual_model=employee_provider.model,
             binding_target_ref=None,
         )
 
     default_provider = find_provider_entry(config, config.default_provider_id)
-    if default_provider is not None and default_provider.enabled:
+    if default_provider is not None and default_provider.enabled and provider_meets_target_capability_floor(default_provider, target_ref):
         return RuntimeProviderSelection(
             provider=default_provider,
             preferred_provider_id=default_provider.provider_id,
             preferred_model=default_provider.model,
+            actual_model=default_provider.model,
             binding_target_ref=None,
         )
     return None
 
 
+def resolve_provider_failover_selections(
+    config: RuntimeProviderStoredConfig,
+    repository: ControlPlaneRepository,
+    *,
+    target_ref: str,
+    primary_selection: RuntimeProviderSelection,
+) -> list[RuntimeProviderSelection]:
+    selections: list[RuntimeProviderSelection] = []
+    attempted_provider_ids = {primary_selection.provider.provider_id}
+    for fallback_provider_id in primary_selection.provider.fallback_provider_ids:
+        fallback_provider = find_provider_entry(config, fallback_provider_id)
+        if fallback_provider is None:
+            continue
+        if fallback_provider.provider_id in attempted_provider_ids:
+            continue
+        if not fallback_provider.enabled or not provider_meets_target_capability_floor(fallback_provider, target_ref):
+            continue
+        health_status, _ = runtime_provider_health_details(fallback_provider, repository)
+        if health_status != "HEALTHY":
+            continue
+        selections.append(
+            RuntimeProviderSelection(
+                provider=fallback_provider,
+                preferred_provider_id=primary_selection.preferred_provider_id,
+                preferred_model=primary_selection.preferred_model,
+                actual_model=fallback_provider.model,
+                binding_target_ref=primary_selection.binding_target_ref,
+            )
+        )
+        attempted_provider_ids.add(fallback_provider.provider_id)
+    return selections
+
+
 def provider_is_configured(provider: RuntimeProviderConfigEntry) -> bool:
+    provider = _normalized_provider_entry(provider)
     if provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
         return bool(provider.base_url and provider.api_key and provider.model)
     if provider.adapter_kind == RuntimeProviderAdapterKind.CLAUDE_CODE_CLI:
@@ -291,30 +414,69 @@ def provider_is_configured(provider: RuntimeProviderConfigEntry) -> bool:
     return False
 
 
+def _resolve_claude_command_path(command_path: str | None) -> str | None:
+    normalized_command = str(command_path or "").strip()
+    if not normalized_command:
+        return None
+    resolved = shutil.which(normalized_command)
+    if resolved:
+        return resolved
+    candidate = Path(normalized_command).expanduser()
+    if candidate.is_file():
+        return str(candidate)
+    return None
+
+
+def runtime_provider_health_details(
+    provider: RuntimeProviderConfigEntry,
+    repository: ControlPlaneRepository,
+) -> tuple[str, str]:
+    normalized_provider = _normalized_provider_entry(provider)
+    if normalized_provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
+        provider_label = "OpenAI-compatible provider"
+    else:
+        provider_label = "Claude Code CLI provider"
+
+    if not normalized_provider.enabled:
+        return ("DISABLED", f"{provider_label} is disabled.")
+    if not provider_is_configured(normalized_provider):
+        return ("INCOMPLETE", f"{provider_label} configuration is incomplete.")
+    if (
+        normalized_provider.adapter_kind == RuntimeProviderAdapterKind.CLAUDE_CODE_CLI
+        and _resolve_claude_command_path(normalized_provider.command_path) is None
+    ):
+        return (
+            "COMMAND_NOT_FOUND",
+            f"{provider_label} command path could not be resolved on this machine.",
+        )
+    if repository.has_open_circuit_breaker_for_provider(normalized_provider.provider_id):
+        return (
+            "PAUSED",
+            f"{provider_label} is paused by an open provider incident.",
+        )
+    if normalized_provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
+        return ("HEALTHY", "Runtime is using the saved OpenAI-compatible provider config.")
+    return ("HEALTHY", "Runtime is using the saved Claude Code CLI provider config.")
+
+
 def provider_effective_mode(
     provider: RuntimeProviderConfigEntry,
     repository: ControlPlaneRepository,
 ) -> tuple[str, str]:
+    provider = _normalized_provider_entry(provider)
     if provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
         prefix = "OPENAI_COMPAT"
-        label = "OpenAI-compatible provider"
     else:
         prefix = "CLAUDE_CODE_CLI"
-        label = "Claude Code CLI provider"
+    health_status, health_reason = runtime_provider_health_details(provider, repository)
 
-    if not provider.enabled:
-        return ("LOCAL_DETERMINISTIC", f"{label} is disabled, so runtime falls back to the local deterministic path.")
-    if not provider_is_configured(provider):
-        return (
-            f"{prefix}_INCOMPLETE",
-            f"{label} is selected but configuration is incomplete, so runtime falls back to the local deterministic path.",
-        )
-    if repository.has_open_circuit_breaker_for_provider(provider.provider_id):
-        return (
-            f"{prefix}_PAUSED",
-            f"{label} is paused by an open provider incident, so runtime falls back to the local deterministic path.",
-        )
-    return (f"{prefix}_LIVE", f"Runtime is using the saved {label.lower()} config.")
+    if health_status == "DISABLED":
+        return ("LOCAL_DETERMINISTIC", f"{health_reason} Runtime falls back to the local deterministic path.")
+    if health_status in {"INCOMPLETE", "COMMAND_NOT_FOUND"}:
+        return (f"{prefix}_INCOMPLETE", f"{health_reason} Runtime falls back to the local deterministic path.")
+    if health_status == "PAUSED":
+        return (f"{prefix}_PAUSED", f"{health_reason} Runtime falls back to the local deterministic path.")
+    return (f"{prefix}_LIVE", health_reason)
 
 
 def runtime_provider_effective_mode(

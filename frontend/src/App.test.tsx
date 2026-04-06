@@ -622,6 +622,10 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
         timeout_sec: 30,
         reasoning_effort: null,
         command_path: null,
+        capability_tags: ['structured_output', 'planning', 'implementation'],
+        fallback_provider_ids: [],
+        health_status: 'DISABLED',
+        health_reason: 'OpenAI-compatible provider is disabled.',
         configured_worker_count: 1,
         is_default: false,
       },
@@ -637,6 +641,10 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
         timeout_sec: 30,
         reasoning_effort: null,
         command_path: null,
+        capability_tags: ['structured_output', 'planning', 'implementation', 'review'],
+        fallback_provider_ids: [],
+        health_status: 'DISABLED',
+        health_reason: 'Claude Code CLI provider is disabled.',
         configured_worker_count: 0,
         is_default: false,
       },
@@ -1173,6 +1181,24 @@ function installBoardroomMock(options?: {
           ...provider,
           api_key_configured: Boolean((provider as JsonRecord).api_key),
           api_key_masked: typeof (provider as JsonRecord).api_key === 'string' ? 'sk-***cret' : null,
+          capability_tags: Array.isArray((provider as JsonRecord).capability_tags)
+            ? (provider as JsonRecord).capability_tags
+            : [],
+          fallback_provider_ids: Array.isArray((provider as JsonRecord).fallback_provider_ids)
+            ? (provider as JsonRecord).fallback_provider_ids
+            : [],
+          health_status:
+            typeof (provider as JsonRecord).health_status === 'string'
+              ? (provider as JsonRecord).health_status
+              : defaultProviderId && (provider as JsonRecord).provider_id === defaultProviderId
+                ? 'HEALTHY'
+                : 'DISABLED',
+          health_reason:
+            typeof (provider as JsonRecord).health_reason === 'string'
+              ? (provider as JsonRecord).health_reason
+              : defaultProviderId && (provider as JsonRecord).provider_id === defaultProviderId
+                ? 'Provider is ready for live execution.'
+                : 'Provider is disabled.',
           is_default: (provider as JsonRecord).provider_id === defaultProviderId,
           configured_worker_count:
             typeof (provider as JsonRecord).configured_worker_count === 'number'
@@ -1396,6 +1422,8 @@ describe('Boardroom UI', () => {
     await user.type(screen.getByLabelText(/openai api key/i), 'sk-test-secret')
     await user.clear(screen.getByLabelText(/openai model/i))
     await user.type(screen.getByLabelText(/openai model/i), 'gpt-5.3-codex')
+    await user.click(screen.getByLabelText(/openai compat capability planning/i))
+    await user.selectOptions(screen.getByLabelText(/openai compat fallback provider/i), 'prov_claude_code')
     await user.click(screen.getByRole('button', { name: /save runtime settings/i }))
 
     await waitFor(() =>
@@ -1406,6 +1434,20 @@ describe('Boardroom UI', () => {
           body: expect.stringContaining('"default_provider_id":"prov_openai_compat"'),
         }),
       ),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/commands/runtime-provider-upsert',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"capability_tags":["structured_output","implementation"]'),
+      }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/commands/runtime-provider-upsert',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"fallback_provider_ids":["prov_claude_code"]'),
+      }),
     )
     expect(await screen.findByText(/openai compat/i)).toBeInTheDocument()
     expect(screen.getByText(/gpt-5.3-codex/i)).toBeInTheDocument()

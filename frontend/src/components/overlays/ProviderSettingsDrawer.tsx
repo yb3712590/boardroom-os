@@ -13,6 +13,13 @@ const CURRENT_ROLE_TARGETS = [
   { target_ref: 'role_profile:checker_primary', target_label: 'Checker' },
 ]
 
+const PROVIDER_CAPABILITY_OPTIONS = [
+  { value: 'structured_output', label: 'Structured output' },
+  { value: 'planning', label: 'Planning' },
+  { value: 'implementation', label: 'Implementation' },
+  { value: 'review', label: 'Review' },
+] as const
+
 type EditableRoleBinding = {
   target_ref: string
   target_label: string
@@ -40,6 +47,8 @@ type ProviderSettingsDrawerProps = {
       timeout_sec: number
       reasoning_effort: string | null
       command_path: string | null
+      capability_tags: string[]
+      fallback_provider_ids: string[]
     }>
     roleBindings: Array<{
       target_ref: string
@@ -84,9 +93,17 @@ export function ProviderSettingsDrawer({
   const [openaiModel, setOpenaiModel] = useState(openaiProvider?.model ?? '')
   const [openaiTimeoutSec, setOpenaiTimeoutSec] = useState(String(openaiProvider?.timeout_sec ?? 30))
   const [openaiReasoningEffort, setOpenaiReasoningEffort] = useState(openaiProvider?.reasoning_effort ?? '')
+  const [openaiCapabilityTags, setOpenaiCapabilityTags] = useState<string[]>(openaiProvider?.capability_tags ?? [])
+  const [openaiFallbackProviderId, setOpenaiFallbackProviderId] = useState(
+    openaiProvider?.fallback_provider_ids?.[0] ?? '',
+  )
   const [claudeCommandPath, setClaudeCommandPath] = useState(claudeProvider?.command_path ?? '')
   const [claudeModel, setClaudeModel] = useState(claudeProvider?.model ?? '')
   const [claudeTimeoutSec, setClaudeTimeoutSec] = useState(String(claudeProvider?.timeout_sec ?? 30))
+  const [claudeCapabilityTags, setClaudeCapabilityTags] = useState<string[]>(claudeProvider?.capability_tags ?? [])
+  const [claudeFallbackProviderId, setClaudeFallbackProviderId] = useState(
+    claudeProvider?.fallback_provider_ids?.[0] ?? '',
+  )
   const [roleBindings, setRoleBindings] = useState<EditableRoleBinding[]>(buildEditableBindings(providerData))
 
   useEffect(() => {
@@ -101,9 +118,13 @@ export function ProviderSettingsDrawer({
     setOpenaiModel(nextOpenaiProvider?.model ?? '')
     setOpenaiTimeoutSec(String(nextOpenaiProvider?.timeout_sec ?? 30))
     setOpenaiReasoningEffort(nextOpenaiProvider?.reasoning_effort ?? '')
+    setOpenaiCapabilityTags(nextOpenaiProvider?.capability_tags ?? [])
+    setOpenaiFallbackProviderId(nextOpenaiProvider?.fallback_provider_ids?.[0] ?? '')
     setClaudeCommandPath(nextClaudeProvider?.command_path ?? '')
     setClaudeModel(nextClaudeProvider?.model ?? '')
     setClaudeTimeoutSec(String(nextClaudeProvider?.timeout_sec ?? 30))
+    setClaudeCapabilityTags(nextClaudeProvider?.capability_tags ?? [])
+    setClaudeFallbackProviderId(nextClaudeProvider?.fallback_provider_ids?.[0] ?? '')
     setRoleBindings(buildEditableBindings(providerData))
   }, [isOpen, providerData])
 
@@ -111,6 +132,21 @@ export function ProviderSettingsDrawer({
     setRoleBindings((current) =>
       current.map((binding) => (binding.target_ref === targetRef ? { ...binding, ...patch } : binding)),
     )
+  }
+
+  const toggleCapability = (
+    currentTags: string[],
+    nextTag: string,
+    setTags: (value: string[] | ((current: string[]) => string[])) => void,
+  ) => {
+    if (currentTags.includes(nextTag)) {
+      setTags(currentTags.filter((tag) => tag !== nextTag))
+      return
+    }
+    const ordered = PROVIDER_CAPABILITY_OPTIONS.map((option) => option.value).filter(
+      (option) => option === nextTag || currentTags.includes(option),
+    )
+    setTags(ordered)
   }
 
   const handleSave = () => {
@@ -139,6 +175,8 @@ export function ProviderSettingsDrawer({
           timeout_sec: Number.parseFloat(openaiTimeoutSec) || 30,
           reasoning_effort: openaiReasoningEffort || null,
           command_path: null,
+          capability_tags: openaiCapabilityTags,
+          fallback_provider_ids: openaiFallbackProviderId ? [openaiFallbackProviderId] : [],
         },
         {
           provider_id: CLAUDE_PROVIDER_ID,
@@ -152,6 +190,8 @@ export function ProviderSettingsDrawer({
           timeout_sec: Number.parseFloat(claudeTimeoutSec) || 30,
           reasoning_effort: null,
           command_path: claudeCommandPath.trim() || null,
+          capability_tags: claudeCapabilityTags,
+          fallback_provider_ids: claudeFallbackProviderId ? [claudeFallbackProviderId] : [],
         },
       ],
       roleBindings: roleBindings
@@ -229,7 +269,17 @@ export function ProviderSettingsDrawer({
                 <span className="eyebrow">Claude workers</span>
                 <p>{claudeProvider?.configured_worker_count ?? 0}</p>
               </div>
+              <div>
+                <span className="eyebrow">OpenAI health</span>
+                <p>{openaiProvider?.health_status ?? 'Unknown'}</p>
+              </div>
+              <div>
+                <span className="eyebrow">Claude health</span>
+                <p>{claudeProvider?.health_status ?? 'Unknown'}</p>
+              </div>
             </section>
+            <p className="muted-copy">{openaiProvider?.health_reason ?? 'OpenAI provider health is unavailable.'}</p>
+            <p className="muted-copy">{claudeProvider?.health_reason ?? 'Claude provider health is unavailable.'}</p>
 
             <label>
               <span className="field-label">OpenAI Base URL</span>
@@ -284,6 +334,35 @@ export function ProviderSettingsDrawer({
               </label>
             </div>
 
+            <div>
+              <span className="field-label">OpenAI capabilities</span>
+              <div className="provider-settings-grid">
+                {PROVIDER_CAPABILITY_OPTIONS.map((option) => (
+                  <label key={`openai-capability-${option.value}`}>
+                    <input
+                      aria-label={`OpenAI Compat capability ${option.value}`}
+                      type="checkbox"
+                      checked={openaiCapabilityTags.includes(option.value)}
+                      onChange={() => toggleCapability(openaiCapabilityTags, option.value, setOpenaiCapabilityTags)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <label>
+              <span className="field-label">OpenAI fallback provider</span>
+              <select
+                aria-label="OpenAI Compat fallback provider"
+                value={openaiFallbackProviderId}
+                onChange={(event) => setOpenaiFallbackProviderId(event.target.value)}
+              >
+                <option value="">No fallback</option>
+                <option value={CLAUDE_PROVIDER_ID}>Claude Code CLI</option>
+              </select>
+            </label>
+
             <label>
               <span className="field-label">Claude command path</span>
               <input
@@ -309,6 +388,35 @@ export function ProviderSettingsDrawer({
                 value={claudeTimeoutSec}
                 onChange={(event) => setClaudeTimeoutSec(event.target.value)}
               />
+            </label>
+
+            <div>
+              <span className="field-label">Claude capabilities</span>
+              <div className="provider-settings-grid">
+                {PROVIDER_CAPABILITY_OPTIONS.map((option) => (
+                  <label key={`claude-capability-${option.value}`}>
+                    <input
+                      aria-label={`Claude Code CLI capability ${option.value}`}
+                      type="checkbox"
+                      checked={claudeCapabilityTags.includes(option.value)}
+                      onChange={() => toggleCapability(claudeCapabilityTags, option.value, setClaudeCapabilityTags)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <label>
+              <span className="field-label">Claude fallback provider</span>
+              <select
+                aria-label="Claude Code CLI fallback provider"
+                value={claudeFallbackProviderId}
+                onChange={(event) => setClaudeFallbackProviderId(event.target.value)}
+              >
+                <option value="">No fallback</option>
+                <option value={OPENAI_PROVIDER_ID}>OpenAI Compat</option>
+              </select>
             </label>
 
             <div>

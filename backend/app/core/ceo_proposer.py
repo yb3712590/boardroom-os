@@ -30,6 +30,7 @@ from app.core.runtime_provider_config import (
     ROLE_BINDING_CEO_SHADOW,
     find_provider_entry,
     provider_effective_mode,
+    resolve_provider_failover_selections,
     resolve_provider_selection,
     RuntimeProviderConfigStore,
     resolve_runtime_provider_config,
@@ -47,6 +48,9 @@ class CEOProposalResult:
     model: str | None
     provider_response_id: str | None = None
     fallback_reason: str | None = None
+
+
+PROVIDER_FAILOVER_FAILURE_KINDS = {"PROVIDER_RATE_LIMITED", "UPSTREAM_UNAVAILABLE"}
 
 
 def build_no_action_batch(reason: str) -> CEOActionBatch:
@@ -166,48 +170,80 @@ def propose_ceo_action_batch(
             action_batch=build_deterministic_fallback_batch(snapshot, provider_reason),
             effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
-            model=selection.preferred_model or selection.provider.model,
+            model=selection.actual_model or selection.provider.model,
             fallback_reason=provider_reason,
         )
 
-    try:
+    def _invoke_selection(current_selection):
         rendered_payload = build_ceo_shadow_rendered_payload(snapshot)
         provider_result = (
             invoke_openai_compat_response(
                 OpenAICompatProviderConfig(
-                    base_url=str(selection.provider.base_url or ""),
-                    api_key=str(selection.provider.api_key or ""),
-                    model=str(selection.preferred_model or selection.provider.model or ""),
-                    timeout_sec=selection.provider.timeout_sec,
-                    reasoning_effort=selection.provider.reasoning_effort,
+                    base_url=str(current_selection.provider.base_url or ""),
+                    api_key=str(current_selection.provider.api_key or ""),
+                    model=str(current_selection.actual_model or current_selection.provider.model or ""),
+                    timeout_sec=current_selection.provider.timeout_sec,
+                    reasoning_effort=current_selection.provider.reasoning_effort,
                 ),
                 rendered_payload,
             )
-            if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
+            if current_selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
             else invoke_claude_code_response(
                 ClaudeCodeProviderConfig(
-                    command_path=str(selection.provider.command_path or ""),
-                    model=str(selection.preferred_model or selection.provider.model or ""),
-                    timeout_sec=selection.provider.timeout_sec,
+                    command_path=str(current_selection.provider.command_path or ""),
+                    model=str(current_selection.actual_model or current_selection.provider.model or ""),
+                    timeout_sec=current_selection.provider.timeout_sec,
                 ),
                 rendered_payload,
             )
         )
         payload = json.loads(provider_result.output_text)
-        action_batch = CEOActionBatch.model_validate(payload)
+        return CEOActionBatch.model_validate(payload), provider_result
+
+    try:
+        action_batch, provider_result = _invoke_selection(selection)
         return CEOProposalResult(
             action_batch=action_batch,
             effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
-            model=selection.preferred_model or selection.provider.model,
+            model=selection.actual_model or selection.provider.model,
             provider_response_id=provider_result.response_id,
         )
     except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        failure_kind = (
+            exc.failure_kind if isinstance(exc, (OpenAICompatProviderError, ClaudeCodeProviderError)) else None
+        )
+        if failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
+            for failover_selection in resolve_provider_failover_selections(
+                config,
+                repository,
+                target_ref=ROLE_BINDING_CEO_SHADOW,
+                primary_selection=selection,
+            ):
+                failover_mode, _ = provider_effective_mode(failover_selection.provider, repository)
+                try:
+                    action_batch, provider_result = _invoke_selection(failover_selection)
+                    return CEOProposalResult(
+                        action_batch=action_batch,
+                        effective_mode=failover_mode,
+                        provider_health_summary=provider_health_summary,
+                        model=failover_selection.actual_model or failover_selection.provider.model,
+                        provider_response_id=provider_result.response_id,
+                    )
+                except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as failover_exc:
+                    failover_failure_kind = (
+                        failover_exc.failure_kind
+                        if isinstance(failover_exc, (OpenAICompatProviderError, ClaudeCodeProviderError))
+                        else None
+                    )
+                    if failover_failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
+                        continue
+                    break
         fallback_reason = str(exc)
         return CEOProposalResult(
             action_batch=build_deterministic_fallback_batch(snapshot, fallback_reason),
             effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
-            model=selection.preferred_model or selection.provider.model,
+            model=selection.actual_model or selection.provider.model,
             fallback_reason=fallback_reason,
         )

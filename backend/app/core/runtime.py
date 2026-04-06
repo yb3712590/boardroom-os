@@ -52,6 +52,7 @@ from app.core.provider_claude_code import ClaudeCodeProviderConfig, ClaudeCodePr
 from app.core.runtime_provider_config import (
     RuntimeProviderAdapterKind,
     RuntimeProviderSelection,
+    resolve_provider_failover_selections,
     resolve_provider_selection,
     resolve_runtime_provider_config,
 )
@@ -104,6 +105,7 @@ OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
 PROVIDER_MAX_ATTEMPTS = 3
 PROVIDER_RETRY_BACKOFF_BASE_SEC = 1.0
 PROVIDER_RETRY_BACKOFF_MAX_SEC = 8.0
+PROVIDER_FAILOVER_FAILURE_KINDS = {"PROVIDER_RATE_LIMITED", "UPSTREAM_UNAVAILABLE"}
 _sleep = time.sleep
 
 
@@ -949,7 +951,7 @@ def _build_openai_compat_provider_config(selection: RuntimeProviderSelection) ->
     return OpenAICompatProviderConfig(
         base_url=str(provider.base_url or ""),
         api_key=str(provider.api_key or ""),
-        model=str(selection.preferred_model or provider.model or ""),
+        model=str(selection.actual_model or provider.model or ""),
         timeout_sec=float(provider.timeout_sec),
         reasoning_effort=provider.reasoning_effort,
     )
@@ -959,7 +961,7 @@ def _build_claude_code_provider_config(selection: RuntimeProviderSelection) -> C
     provider = selection.provider
     return ClaudeCodeProviderConfig(
         command_path=str(provider.command_path or ""),
-        model=str(selection.preferred_model or provider.model or ""),
+        model=str(selection.actual_model or provider.model or ""),
         timeout_sec=float(provider.timeout_sec),
     )
 
@@ -992,7 +994,7 @@ def _normalize_provider_failure_detail(
         normalized.setdefault("preferred_provider_id", selection.preferred_provider_id)
         normalized.setdefault("preferred_model", selection.preferred_model)
         normalized.setdefault("actual_provider_id", selection.provider.provider_id)
-        normalized.setdefault("actual_model", selection.preferred_model or selection.provider.model)
+        normalized.setdefault("actual_model", selection.actual_model or selection.provider.model)
         normalized.setdefault("adapter_kind", selection.provider.adapter_kind)
     else:
         normalized.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
@@ -1041,7 +1043,7 @@ def _execute_openai_compat_provider(
         "preferred_provider_id": selection.preferred_provider_id,
         "preferred_model": selection.preferred_model,
         "actual_provider_id": selection.provider.provider_id,
-        "actual_model": selection.preferred_model or selection.provider.model,
+        "actual_model": selection.actual_model or selection.provider.model,
         "adapter_kind": selection.provider.adapter_kind,
     }
 
@@ -1081,7 +1083,7 @@ def _execute_openai_compat_provider(
                     f"preferred_provider_id={selection.preferred_provider_id}",
                     f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
                     f"actual_provider_id={selection.provider.provider_id}",
-                    f"actual_model={selection.preferred_model or selection.provider.model or 'unknown'}",
+                    f"actual_model={selection.actual_model or selection.provider.model or 'unknown'}",
                     f"adapter_kind={selection.provider.adapter_kind}",
                     f"provider_response_id={provider_result.response_id or 'unknown'}",
                     f"provider_attempt_count={attempt_no}",
@@ -1187,7 +1189,7 @@ def _execute_claude_code_provider(
                 f"preferred_provider_id={selection.preferred_provider_id}",
                 f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
                 f"actual_provider_id={selection.provider.provider_id}",
-                f"actual_model={selection.preferred_model or selection.provider.model or 'unknown'}",
+                f"actual_model={selection.actual_model or selection.provider.model or 'unknown'}",
                 f"adapter_kind={selection.provider.adapter_kind}",
                 "provider_response_id=unknown",
                 "provider_attempt_count=1",
@@ -1264,6 +1266,82 @@ def _build_provider_fallback_execution_result(
         confidence=deterministic_result.confidence,
         failure_detail=failure_detail,
     )
+
+
+def _execute_provider_selection(
+    execution_package: CompiledExecutionPackage,
+    selection: RuntimeProviderSelection,
+) -> RuntimeExecutionResult:
+    if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
+        return _execute_openai_compat_provider(execution_package, selection)
+    return _execute_claude_code_provider(execution_package, selection)
+
+
+def _annotate_provider_failover_success(
+    provider_result: RuntimeExecutionResult,
+    *,
+    failed_selection: RuntimeProviderSelection,
+    failover_selection: RuntimeProviderSelection,
+    failure_kind: str,
+) -> RuntimeExecutionResult:
+    return RuntimeExecutionResult(
+        result_status=provider_result.result_status,
+        completion_summary=provider_result.completion_summary,
+        artifact_refs=list(provider_result.artifact_refs),
+        result_payload=dict(provider_result.result_payload),
+        written_artifacts=list(provider_result.written_artifacts),
+        assumptions=[
+            *provider_result.assumptions,
+            f"provider_failover_from={failed_selection.provider.provider_id}",
+            f"provider_failover_to={failover_selection.provider.provider_id}",
+            f"provider_failover_failure_kind={failure_kind}",
+        ],
+        issues=[
+            (
+                f"Provider failover switched execution from {failed_selection.provider.provider_id} "
+                f"to {failover_selection.provider.provider_id} after {failure_kind}."
+            ),
+            *provider_result.issues,
+        ],
+        confidence=provider_result.confidence,
+        failure_kind=provider_result.failure_kind,
+        failure_message=provider_result.failure_message,
+        failure_detail=dict(provider_result.failure_detail or {}),
+    )
+
+
+def _attempt_provider_failover(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    execution_package: CompiledExecutionPackage,
+    created_spec: dict[str, Any] | None,
+    *,
+    primary_selection: RuntimeProviderSelection,
+    primary_failure: RuntimeExecutionResult,
+) -> RuntimeExecutionResult | None:
+    target_ref = _resolve_ticket_target_ref(created_spec)
+    if target_ref is None:
+        return None
+    config = resolve_runtime_provider_config()
+    for failover_selection in resolve_provider_failover_selections(
+        config,
+        repository,
+        target_ref=target_ref,
+        primary_selection=primary_selection,
+    ):
+        failover_result = _execute_provider_selection(execution_package, failover_selection)
+        if failover_result.result_status == "completed":
+            return _annotate_provider_failover_success(
+                failover_result,
+                failed_selection=primary_selection,
+                failover_selection=failover_selection,
+                failure_kind=primary_failure.failure_kind or "PROVIDER_FAILURE",
+            )
+        if failover_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
+            _open_runtime_provider_incident(repository, ticket, failover_result)
+            continue
+        return None
+    return None
 
 
 def _open_runtime_provider_incident(
@@ -1377,7 +1455,7 @@ def _execute_runtime_with_provider_if_configured(
                 fallback_reason="provider execution is paused",
             )
         if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT and not all(
-            (selection.provider.base_url, selection.provider.api_key, selection.preferred_model or selection.provider.model)
+            (selection.provider.base_url, selection.provider.api_key, selection.actual_model or selection.provider.model)
         ):
             return _build_preemptive_provider_fallback_result(
                 execution_package,
@@ -1387,7 +1465,7 @@ def _execute_runtime_with_provider_if_configured(
                 fallback_reason="provider configuration is incomplete",
             )
         if selection.provider.adapter_kind == RuntimeProviderAdapterKind.CLAUDE_CODE_CLI and not all(
-            (selection.provider.command_path, selection.preferred_model or selection.provider.model)
+            (selection.provider.command_path, selection.actual_model or selection.provider.model)
         ):
             return _build_preemptive_provider_fallback_result(
                 execution_package,
@@ -1396,15 +1474,22 @@ def _execute_runtime_with_provider_if_configured(
                 failure_message="Provider config is incomplete for Claude Code execution.",
                 fallback_reason="provider configuration is incomplete",
             )
-        provider_result = (
-            _execute_openai_compat_provider(execution_package, selection)
-            if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
-            else _execute_claude_code_provider(execution_package, selection)
-        )
+        provider_result = _execute_provider_selection(execution_package, selection)
         if provider_result.result_status == "completed":
             return provider_result
         if provider_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
             incident_id = _open_runtime_provider_incident(repository, ticket, provider_result)
+            if provider_result.failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
+                failover_result = _attempt_provider_failover(
+                    repository,
+                    ticket,
+                    execution_package,
+                    created_spec,
+                    primary_selection=selection,
+                    primary_failure=provider_result,
+                )
+                if failover_result is not None:
+                    return failover_result
             return _build_provider_fallback_execution_result(
                 execution_package,
                 provider_result,
