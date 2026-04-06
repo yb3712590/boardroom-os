@@ -24,6 +24,7 @@ MAKER_CHECKER_VERDICT_SCHEMA_REF = "maker_checker_verdict"
 MAKER_CHECKER_VERDICT_SCHEMA_VERSION = 1
 CEO_ACTION_BATCH_SCHEMA_REF = "ceo_action_batch"
 CEO_ACTION_BATCH_SCHEMA_VERSION = 1
+DOCUMENTATION_UPDATE_STATUSES = {"UPDATED", "NO_CHANGE_REQUIRED", "FOLLOW_UP_REQUIRED"}
 
 OutputSchemaValidator = Callable[[dict[str, Any]], None]
 _MISSING = object()
@@ -145,6 +146,61 @@ def _require_enum(payload: dict[str, Any], key: str, *, expected_values: set[str
             message=f"{label} must be {', '.join(sorted(expected_values))}.",
         )
     return value
+
+
+def _validate_documentation_updates(
+    payload: dict[str, Any],
+    *,
+    key: str = "documentation_updates",
+    label: str = "Delivery closeout package payload.documentation_updates",
+) -> None:
+    value = payload.get(key, _MISSING)
+    if value is _MISSING:
+        return
+    if not isinstance(value, list):
+        _raise_schema_validation_error(
+            field_path=key,
+            expected="array",
+            actual_value=value,
+            message=f"{label} must be an array.",
+        )
+    for index, item in enumerate(value):
+        field_prefix = f"{key}[{index}]"
+        if not isinstance(item, dict):
+            _raise_schema_validation_error(
+                field_path=field_prefix,
+                expected="object",
+                actual_value=item,
+                message=f"{label} items must be objects.",
+            )
+
+        doc_ref = item.get("doc_ref", _MISSING)
+        if not isinstance(doc_ref, str) or not doc_ref.strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.doc_ref",
+                expected="non-empty string",
+                actual_value=doc_ref,
+                message="Each documentation update requires a non-empty doc_ref.",
+            )
+
+        status = item.get("status", _MISSING)
+        if not isinstance(status, str) or status not in DOCUMENTATION_UPDATE_STATUSES:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.status",
+                expected=f"one of {', '.join(sorted(DOCUMENTATION_UPDATE_STATUSES))}",
+                actual_value=status,
+                message="Each documentation update status must be one of "
+                f"{', '.join(sorted(DOCUMENTATION_UPDATE_STATUSES))}.",
+            )
+
+        summary = item.get("summary", _MISSING)
+        if not isinstance(summary, str) or not summary.strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.summary",
+                expected="non-empty string",
+                actual_value=summary,
+                message="Each documentation update requires a non-empty summary.",
+            )
 
 
 def schema_id(schema_ref: str, schema_version: int) -> str:
@@ -283,6 +339,21 @@ def _delivery_closeout_package_schema_body() -> dict[str, Any]:
             "handoff_notes": {
                 "type": "array",
                 "items": {"type": "string"},
+            },
+            "documentation_updates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["doc_ref", "status", "summary"],
+                    "properties": {
+                        "doc_ref": {"type": "string"},
+                        "status": {
+                            "type": "string",
+                            "enum": sorted(DOCUMENTATION_UPDATE_STATUSES),
+                        },
+                        "summary": {"type": "string"},
+                    },
+                },
             },
         },
     }
@@ -544,6 +615,7 @@ def _validate_delivery_closeout_package_payload(payload: dict[str, Any]) -> None
         "handoff_notes",
         label="Delivery closeout package payload.handoff_notes",
     )
+    _validate_documentation_updates(payload)
 
 
 def _validate_maker_checker_verdict_payload(payload: dict[str, Any]) -> None:

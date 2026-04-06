@@ -1462,6 +1462,7 @@ def _delivery_closeout_package_result_submit_payload(
     include_review_request: bool = False,
     review_request: dict | None = None,
     artifact_refs: list[str] | None = None,
+    documentation_updates: list[dict] | None = None,
     written_artifact_path: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
@@ -1472,6 +1473,19 @@ def _delivery_closeout_package_result_submit_payload(
         "handoff_notes": [
             "Board-approved final option is captured in this closeout package.",
             "Final evidence remains linked back to the board review pack.",
+        ],
+        "documentation_updates": documentation_updates
+        or [
+            {
+                "doc_ref": "doc/TODO.md",
+                "status": "UPDATED",
+                "summary": "Marked P2-GOV-007 as completed after closeout evidence sync landed.",
+            },
+            {
+                "doc_ref": "README.md",
+                "status": "NO_CHANGE_REQUIRED",
+                "summary": "No public capability or runtime flow changed in this round.",
+            },
         ],
     }
     result = {
@@ -11237,6 +11251,10 @@ def test_final_review_approval_creates_closeout_ticket_and_completion_summary_us
     assert closeout_created_spec["ticket_id"] == closeout_ticket_id
     assert closeout_created_spec["parent_ticket_id"] == logical_review_ticket_id
     assert closeout_created_spec["auto_review_request"]["review_type"] == "INTERNAL_CLOSEOUT_REVIEW"
+    assert any(
+        "documentation updates" in criterion.lower() for criterion in closeout_created_spec["acceptance_criteria"]
+    )
+    assert "documentation sync" in closeout_created_spec["auto_review_request"]["why_now"].lower()
     assert closeout_ticket["status"] == TICKET_STATUS_COMPLETED
     assert checker_created_spec["output_schema_ref"] == "maker_checker_verdict"
     assert checker_created_spec["maker_checker_context"]["maker_ticket_id"] == closeout_ticket_id
@@ -11286,6 +11304,118 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
     assert completion_summary["closeout_artifact_refs"] == [
         f"art://runtime/{expected_closeout_ticket_id}/delivery-closeout-package.json"
     ]
+    stored_artifact = repository.get_artifact_by_ref(
+        f"art://runtime/{expected_closeout_ticket_id}/delivery-closeout-package.json"
+    )
+    assert stored_artifact is not None
+    assert stored_artifact["storage_relpath"] is not None
+    artifact_path = client.app.state.artifact_store.root / stored_artifact["storage_relpath"]
+    closeout_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert closeout_payload["documentation_updates"] == [
+        {
+            "doc_ref": "doc/TODO.md",
+            "status": "UPDATED",
+            "summary": "Marked P2-GOV-007 as completed after closeout evidence sync landed.",
+        },
+        {
+            "doc_ref": "README.md",
+            "status": "NO_CHANGE_REQUIRED",
+            "summary": "No public capability or runtime flow changed in this round.",
+        },
+    ]
+
+
+def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_handoff_is_complete(client):
+    workflow_id = "wf_closeout_doc_notes"
+    closeout_node_id = "node_closeout_doc_notes"
+    closeout_ticket_id = "tkt_closeout_doc_notes"
+    repository = client.app.state.repository
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=closeout_ticket_id,
+        node_id=closeout_node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="delivery_closeout_package",
+        allowed_write_set=[f"reports/closeout/{closeout_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must capture the approved final delivery choice.",
+            "Must produce a structured delivery closeout package.",
+        ],
+        input_artifact_refs=["art://runtime/tkt_review_final/option-a.json"],
+        delivery_stage="CLOSEOUT",
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_delivery_closeout_package_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+            include_review_request=True,
+            documentation_updates=[
+                {
+                    "doc_ref": "README.md",
+                    "status": "FOLLOW_UP_REQUIRED",
+                    "summary": "Public wording still needs one final copy pass after closeout.",
+                }
+            ],
+        ),
+    )
+
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, closeout_node_id)["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=closeout_node_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=closeout_node_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=closeout_node_id,
+            review_status="APPROVED_WITH_NOTES",
+            findings=[
+                {
+                    "finding_id": "finding_doc_follow_up_required",
+                    "severity": "medium",
+                    "category": "DOCUMENTATION_SYNC",
+                    "headline": "One affected document still needs a follow-up pass.",
+                    "summary": "README wording is still marked FOLLOW_UP_REQUIRED, but final evidence and handoff notes are complete.",
+                    "required_action": "Finish the public wording follow-up outside the current closeout path.",
+                    "blocking": False,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:doc-follow-up-notes",
+        ),
+    )
+
+    node_projection = repository.get_current_node_projection(workflow_id, closeout_node_id)
+    current_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+    assert checker_response.status_code == 200
+    assert checker_response.json()["status"] == "ACCEPTED"
+    assert node_projection["status"] == "COMPLETED"
+    assert current_ticket is not None
+    assert current_ticket["ticket_id"] == checker_ticket_id
+    assert current_ticket["status"] == TICKET_STATUS_COMPLETED
 
 
 def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_blocks_completion(client):
@@ -11320,6 +11450,13 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
             ticket_id=closeout_ticket_id,
             node_id=closeout_node_id,
             include_review_request=True,
+            documentation_updates=[
+                {
+                    "doc_ref": "README.md",
+                    "status": "FOLLOW_UP_REQUIRED",
+                    "summary": "Public wording still needs one final copy pass after closeout.",
+                }
+            ],
         ),
     )
 
@@ -11353,10 +11490,10 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
                 {
                     "finding_id": "finding_closeout_missing_handoff",
                     "severity": "high",
-                    "category": "HANDOFF_QUALITY",
-                    "headline": "Closeout package is missing grounded handoff notes.",
-                    "summary": "Final delivery package does not explain how the approved board choice should be handed off.",
-                    "required_action": "Rewrite the closeout package with explicit handoff notes and final evidence links.",
+                    "category": "DOCUMENTATION_SYNC",
+                    "headline": "Closeout package still has blocking documentation follow-up and weak handoff notes.",
+                    "summary": "Final delivery package leaves README marked FOLLOW_UP_REQUIRED and does not explain how the approved board choice should be handed off.",
+                    "required_action": "Rewrite the closeout package with explicit handoff notes, final evidence links, and updated documentation sync status.",
                     "blocking": True,
                 }
             ],

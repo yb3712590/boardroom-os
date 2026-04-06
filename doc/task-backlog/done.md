@@ -1707,6 +1707,14 @@
 | P2-GOV-005 | 文档型角色默认不参与日常编码 / 测试执行约束 | 3h |
 | P2-GOV-006 | 治理模板与文档型角色测试和文档 | 5h |
 
+完成补记（2026-04-06）：
+
+- `P2-GOV-007`：closeout 证据与文档同步软约束已按最小边界收口，不改状态机，也不新增前端默认读面
+- `delivery_closeout_package@1` 现在可选携带 `documentation_updates[{ doc_ref, status, summary }]`，其中 `status` 只接受 `UPDATED / NO_CHANGE_REQUIRED / FOLLOW_UP_REQUIRED`
+- deterministic runtime 默认 closeout 产物会补最小 `documentation_updates` 示例，runtime 生成的 internal closeout review 也会把文档同步摘要写进 `recommendation_summary` 和额外 evidence 卡片
+- closeout 票创建与 internal closeout review 文案现在明确要求 checker 同时看 final evidence、handoff notes 和文档同步说明；`FOLLOW_UP_REQUIRED` 仍按 soft rule 处理，只有在它已经影响交付完整性时才应转成 blocking finding
+- 本轮新增后端测试覆盖了 closeout schema 校验、runtime review 摘要注入，以及 closeout checker 在 `FOLLOW_UP_REQUIRED` 下的 `APPROVED_WITH_NOTES / CHANGES_REQUIRED` 两条主路径
+
 ### 4.4 UI 打磨 (P2-UI-001 到 P2-UI-008)
 
 | ID | 标题 | 预估 |

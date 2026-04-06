@@ -360,6 +360,87 @@ def _assert_workflow_reaches_closeout_completion(client, *, workflow_id: str, fi
     ]
 
 
+def test_build_runtime_closeout_review_request_adds_documentation_sync_evidence() -> None:
+    created_spec = {
+        "auto_review_request": {
+            "review_type": "INTERNAL_CLOSEOUT_REVIEW",
+            "priority": "high",
+            "title": "Check delivery closeout package",
+            "subtitle": "Internal checker should validate the final handoff package before the workflow closes.",
+            "blocking_scope": "NODE_ONLY",
+            "trigger_reason": "Final delivery package reached the closeout checker gate.",
+            "why_now": "Workflow completion should only happen after the final handoff package is internally checked.",
+            "recommended_action": "APPROVE",
+            "recommended_option_id": "internal_closeout_ok",
+            "recommendation_summary": "Delivery closeout package is ready for final internal review.",
+            "options": [
+                {
+                    "option_id": "internal_closeout_ok",
+                    "label": "Pass closeout package",
+                    "summary": "Delivery closeout package is ready for final internal review.",
+                    "artifact_refs": [],
+                }
+            ],
+            "evidence_summary": [
+                {
+                    "evidence_id": "ev_delivery_closeout_package",
+                    "source_type": "DELIVERY_CLOSEOUT_PACKAGE",
+                    "headline": "Delivery closeout package is ready for internal review",
+                    "summary": "Delivery closeout package is ready for final internal review.",
+                    "source_ref": None,
+                }
+            ],
+            "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+            "draft_selected_option_id": "internal_closeout_ok",
+            "comment_template": "",
+            "badges": ["internal_closeout", "closeout_gate"],
+        },
+        "output_schema_ref": "delivery_closeout_package",
+    }
+    execution_result = RuntimeExecutionResult(
+        result_status="completed",
+        completion_summary="Closeout package completed with documentation sync notes.",
+        artifact_refs=["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
+        result_payload={
+            "summary": "Closeout package completed with documentation sync notes.",
+            "final_artifact_refs": ["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
+            "handoff_notes": [
+                "Board-approved final option is captured in the closeout package.",
+                "Final evidence remains linked back to the board review pack.",
+            ],
+            "documentation_updates": [
+                {
+                    "doc_ref": "doc/TODO.md",
+                    "status": "UPDATED",
+                    "summary": "Marked P2-GOV-007 as completed.",
+                },
+                {
+                    "doc_ref": "README.md",
+                    "status": "FOLLOW_UP_REQUIRED",
+                    "summary": "Public quick-start wording still needs one closeout follow-up pass.",
+                },
+            ],
+        },
+    )
+
+    review_request = runtime_module._build_runtime_review_request(
+        ticket={"ticket_id": "tkt_closeout_001"},
+        execution_result=execution_result,
+        created_spec=created_spec,
+    )
+
+    assert review_request is not None
+    assert "documentation sync" in review_request.recommendation_summary.lower()
+    documentation_evidence = next(
+        evidence
+        for evidence in review_request.evidence_summary
+        if evidence.evidence_id == "ev_closeout_documentation_sync"
+    )
+    assert documentation_evidence.source_type == "DOCUMENTATION_SYNC"
+    assert "FOLLOW_UP_REQUIRED" in documentation_evidence.summary
+    assert "doc/TODO.md" in documentation_evidence.summary
+
+
 def _followup_ticket_from_scope_approval(client, repository, approval: dict, *, delivery_stage: str) -> dict:
     consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
     artifact = repository.get_artifact_by_ref(consensus_artifact_ref)

@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-06）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `426 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `432 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `64 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -47,7 +47,7 @@
 | `P2-CEO-001` | 条件纳入 | 初始化输入反复低于最小可执行阈值 | 建立初始化需求澄清板审协议，不依赖 live `ESCALATE_TO_BOARD` |
 | `P2-RET-006` | 条件纳入 | Worker 输出反复暴露缺少最小组织上下文，或执行包需要进一步收紧 | 只收口执行包最小组织上下文与 `L1` 纪律 |
 | `P2-MTG-011` | 条件纳入 | 会议共识文档反复过长，默认消费面不清 | 把会议共识压成 ADR 化决策视图，不改当前 artifact 类型 |
-| `P2-GOV-007` | 条件纳入 | closeout / review 反复出现“代码已改但证据或文档没同步” | 只加 soft review / checker rule，不加硬状态机门禁 |
+| `P2-GOV-007` | 已完成（2026-04-06） | 已触发：closeout / review 反复出现“代码已改但证据或文档没同步” | 已在 `delivery_closeout_package@1`、closeout checker 文案和 runtime review 摘要补入结构化 `documentation_updates`，保持 soft rule，不加硬状态机门禁 |
 
 ## 当前入口
 

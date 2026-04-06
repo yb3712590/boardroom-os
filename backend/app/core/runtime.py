@@ -554,6 +554,18 @@ def _build_runtime_success_payload(
                 "Board-approved final option is captured in the closeout package.",
                 "Final evidence remains linked back to the board review pack for audit.",
             ],
+            "documentation_updates": [
+                {
+                    "doc_ref": "doc/TODO.md",
+                    "status": "UPDATED",
+                    "summary": "Marked P2-GOV-007 as completed after closeout evidence sync landed.",
+                },
+                {
+                    "doc_ref": "README.md",
+                    "status": "NO_CHANGE_REQUIRED",
+                    "summary": "No public capability or runtime flow changed in this round.",
+                },
+            ],
         }
 
     return {
@@ -613,12 +625,19 @@ def _build_runtime_review_request(
     review_request = TicketBoardReviewRequest.model_validate(template_payload)
     artifact_refs = list(execution_result.artifact_refs)
     result_payload = execution_result.result_payload if isinstance(execution_result.result_payload, dict) else {}
+    documentation_sync_summary = _build_closeout_documentation_sync_summary(
+        result_payload.get("documentation_updates")
+        if created_spec.get("output_schema_ref") == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
+        else None
+    )
     review_summary = str(
         result_payload.get("consensus_summary")
         or result_payload.get("summary")
         or execution_result.completion_summary
         or review_request.recommendation_summary
     )
+    if documentation_sync_summary is not None:
+        review_summary = f"{review_summary} Documentation sync: {documentation_sync_summary}"
 
     updated_options = []
     for index, option in enumerate(review_request.options):
@@ -645,6 +664,16 @@ def _build_runtime_review_request(
     fallback_evidence = _build_provider_fallback_evidence(execution_result)
     if fallback_evidence is not None:
         updated_evidence.append(fallback_evidence)
+    if documentation_sync_summary is not None:
+        updated_evidence.append(
+            TicketReviewEvidence(
+                evidence_id="ev_closeout_documentation_sync",
+                source_type="DOCUMENTATION_SYNC",
+                headline="Closeout documentation sync status",
+                summary=documentation_sync_summary,
+                source_ref=artifact_refs[0] if artifact_refs else None,
+            )
+        )
 
     return review_request.model_copy(
         update={
@@ -656,6 +685,26 @@ def _build_runtime_review_request(
             or _build_runtime_developer_inspector_refs(str(ticket["ticket_id"])),
         }
     )
+
+
+def _build_closeout_documentation_sync_summary(documentation_updates: Any) -> str | None:
+    if not isinstance(documentation_updates, list) or not documentation_updates:
+        return None
+
+    summary_parts: list[str] = []
+    for item in documentation_updates:
+        if not isinstance(item, dict):
+            continue
+        doc_ref = str(item.get("doc_ref") or "").strip()
+        status = str(item.get("status") or "").strip()
+        summary = str(item.get("summary") or "").strip()
+        if not doc_ref or not status or not summary:
+            continue
+        summary_parts.append(f"{doc_ref}={status} ({summary})")
+
+    if not summary_parts:
+        return None
+    return "; ".join(summary_parts)
 
 
 def _schema_version_for_execution_package(execution_package: CompiledExecutionPackage) -> str:
@@ -1285,8 +1334,12 @@ def _execute_compiled_execution_package(
             result_payload,
         )
     else:
-        artifact_refs, written_artifacts = _build_runtime_default_artifacts(execution_package, {})
+        artifact_refs, _ = _build_runtime_default_artifacts(execution_package, {})
         result_payload = _build_runtime_success_payload(execution_package, artifact_refs)
+        artifact_refs, written_artifacts = _build_runtime_default_artifacts(
+            execution_package,
+            result_payload,
+        )
     return RuntimeExecutionResult(
         result_status="completed",
         completion_summary=(

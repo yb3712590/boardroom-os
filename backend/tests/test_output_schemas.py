@@ -178,6 +178,89 @@ def test_output_schema_registry_accepts_valid_delivery_check_report_payload() ->
     )
 
 
+def test_output_schema_registry_accepts_valid_delivery_closeout_package_payload_with_documentation_updates() -> None:
+    validate_output_payload(
+        schema_ref="delivery_closeout_package",
+        schema_version=1,
+        submitted_schema_version="delivery_closeout_package_v1",
+        payload={
+            "summary": "Delivery closeout package is ready for internal review.",
+            "final_artifact_refs": ["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
+            "handoff_notes": [
+                "Board-approved final option is captured in this closeout package.",
+                "Final evidence remains linked back to the board review pack.",
+            ],
+            "documentation_updates": [
+                {
+                    "doc_ref": "doc/TODO.md",
+                    "status": "UPDATED",
+                    "summary": "Marked P2-GOV-007 as completed after closeout evidence sync landed.",
+                },
+                {
+                    "doc_ref": "README.md",
+                    "status": "NO_CHANGE_REQUIRED",
+                    "summary": "No public capability or runtime flow changed in this round.",
+                },
+            ],
+        },
+    )
+
+
+def test_output_schema_registry_rejects_delivery_closeout_package_invalid_documentation_update_status() -> None:
+    with pytest.raises(Exception) as exc_info:
+        validate_output_payload(
+            schema_ref="delivery_closeout_package",
+            schema_version=1,
+            submitted_schema_version="delivery_closeout_package_v1",
+            payload={
+                "summary": "Delivery closeout package is ready for internal review.",
+                "final_artifact_refs": ["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
+                "handoff_notes": ["Final evidence remains linked back to the board review pack."],
+                "documentation_updates": [
+                    {
+                        "doc_ref": "doc/TODO.md",
+                        "status": "PENDING",
+                        "summary": "This should be rejected.",
+                    }
+                ],
+            },
+        )
+    assert getattr(exc_info.value, "field_path", None) == "documentation_updates[0].status"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("doc_ref", ""),
+        ("summary", ""),
+    ],
+)
+def test_output_schema_registry_rejects_delivery_closeout_package_documentation_update_missing_required_text(
+    field_name: str,
+    field_value: str,
+) -> None:
+    documentation_update = {
+        "doc_ref": "doc/TODO.md",
+        "status": "UPDATED",
+        "summary": "Marked P2-GOV-007 as completed after closeout evidence sync landed.",
+    }
+    documentation_update[field_name] = field_value
+
+    with pytest.raises(Exception) as exc_info:
+        validate_output_payload(
+            schema_ref="delivery_closeout_package",
+            schema_version=1,
+            submitted_schema_version="delivery_closeout_package_v1",
+            payload={
+                "summary": "Delivery closeout package is ready for internal review.",
+                "final_artifact_refs": ["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
+                "handoff_notes": ["Final evidence remains linked back to the board review pack."],
+                "documentation_updates": [documentation_update],
+            },
+        )
+    assert getattr(exc_info.value, "field_path", None) == f"documentation_updates[0].{field_name}"
+
+
 def test_output_schema_registry_exposes_structured_failure_detail_for_missing_required_field() -> None:
     with pytest.raises(Exception) as exc_info:
         validate_output_payload(

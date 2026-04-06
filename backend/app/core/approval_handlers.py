@@ -410,10 +410,10 @@ def _build_closeout_internal_review_request(summary: str) -> dict[str, Any]:
         "review_type": "INTERNAL_CLOSEOUT_REVIEW",
         "priority": "high",
         "title": "Check delivery closeout package",
-        "subtitle": "Internal checker should validate the final handoff package before the workflow closes.",
+        "subtitle": "Internal checker should validate final evidence, handoff notes, and documentation sync before the workflow closes.",
         "blocking_scope": "NODE_ONLY",
         "trigger_reason": "Final board-approved delivery package reached the closeout checker gate.",
-        "why_now": "Workflow completion should only happen after the final handoff package is internally checked.",
+        "why_now": "Workflow completion should only happen after the final handoff package, evidence links, and documentation sync notes are internally checked.",
         "recommended_action": "APPROVE",
         "recommended_option_id": "internal_closeout_ok",
         "recommendation_summary": clean_summary,
@@ -425,7 +425,9 @@ def _build_closeout_internal_review_request(summary: str) -> dict[str, Any]:
                 "artifact_refs": [],
                 "pros": ["Lets the workflow close on a checked final delivery package."],
                 "cons": ["Leaves only non-blocking polish outside the current MVP closeout path."],
-                "risks": ["Thin handoff notes would need one more rework pass before completion."],
+                "risks": [
+                    "FOLLOW_UP_REQUIRED documentation notes should stay non-blocking only when handoff and evidence are still complete."
+                ],
             }
         ],
         "evidence_summary": [
@@ -631,6 +633,7 @@ def _build_post_review_closeout_ticket_payload(
             f"Must capture the approved final delivery choice: {closeout_summary}",
             "Must gather the final delivery artifact references chosen in board review.",
             "Must provide minimal handoff notes for the approved delivery package.",
+            "Must report documentation updates, or explicitly mark affected docs as no change required.",
             "Must stay inside the already approved scope.",
         ],
         output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,

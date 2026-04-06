@@ -46,6 +46,8 @@
 - `P1-CLN-002` 与 `P1-CLN-003` 的 blocker 已进一步收口：共享 scope data shape 仍保留，upload 导入入口与 session 存储仍保留
 - `FrozenCapabilityBoundary` 现在还会记录 `api_surface_groups` 与 `storage_table_refs`，接口分组也有 `api_surface.py` 回归保护
 - 高频文档入口这轮已按新愿景重整：`README`、`TODO`、`task-backlog`、`milestone-timeline` 和 `postponed` 已重新分层，不再把当前批次、已完成补记和远期储备混写
+- `P2-GOV-007` 已按 soft rule 收口：`delivery_closeout_package@1` 可选携带 `documentation_updates`，closeout checker / runtime review 会显式总结文档同步状态，但不会把 `FOLLOW_UP_REQUIRED` 自动升级成硬门禁
+- runtime 生成 structured artifact 的写回顺序已收正：`implementation_bundle`、`delivery_check_report`、`delivery_closeout_package` 的默认 artifact 现在会持久化最终 payload，而不是先写空壳再补内存结果
 
 ## Current Working Set
 
