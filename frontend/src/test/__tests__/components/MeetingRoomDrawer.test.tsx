@@ -60,7 +60,21 @@ describe('MeetingRoomDrawer', () => {
           ],
           consensus_summary: 'The meeting converged on one runtime contract.',
           no_consensus_reason: null,
-        }}
+          decision_record: {
+            format: 'ADR_V1',
+            context: 'Homepage contract alignment is blocking implementation.',
+            decision: 'Use the narrower runtime contract for MVP.',
+            rationale: [
+              'It keeps board-approved scope stable.',
+              'It avoids reopening remote handoff this round.',
+            ],
+            consequences: [
+              'Implementation must stay inside the narrowed contract.',
+              'Deferred alternatives require a later governance ticket.',
+            ],
+            archived_context_refs: ['art://runtime/tkt_meeting_001/meeting-digest.json'],
+          },
+        } as any}
         error={null}
         onClose={vi.fn()}
         onOpenReview={onOpenReview}
@@ -69,6 +83,10 @@ describe('MeetingRoomDrawer', () => {
 
     expect(screen.getByRole('heading', { name: /decide the homepage runtime contract/i })).toBeInTheDocument()
     expect(screen.getByText(/technical_decision/i)).toBeInTheDocument()
+    expect(screen.getByText(/use the narrower runtime contract for mvp/i)).toBeInTheDocument()
+    expect(screen.getByText(/homepage contract alignment is blocking implementation/i)).toBeInTheDocument()
+    expect(screen.getByText(/art:\/\/runtime\/tkt_meeting_001\/meeting-digest\.json/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /audit trail/i })).toBeInTheDocument()
     expect(screen.getByText(/position round closed/i)).toBeInTheDocument()
     expect(screen.getByText(/the meeting converged on one runtime contract/i)).toBeInTheDocument()
 

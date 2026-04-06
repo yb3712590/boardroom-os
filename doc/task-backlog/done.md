@@ -1839,6 +1839,44 @@
 - `board-approve / modify-constraints` 新增结构化 `elicitation_answers`；前端 `ProjectInitForm` 也新增“先走需求澄清”显式开关
 - 本轮验证基线更新为 backend `441 passed`、frontend build passed、frontend `72 passed`
 
+#### P2-MTG-011：ADR 化共识文档与决策视图
+
+**状态**：已完成（2026-04-07，本轮手动纳入）
+
+**描述**：把会议正式共识压成 ADR 化决策视图，并让会议来源的后续票默认带上这份压缩决策；会议 round 过程继续保留为审计材料，不再作为默认消费面。
+
+**文件**：
+- 修改：`backend/app/core/output_schemas.py`
+- 修改：`backend/app/core/runtime.py`
+- 修改：`backend/app/core/projections.py`
+- 修改：`backend/app/api/projections.py`
+- 修改：`backend/app/contracts/projections.py`
+- 修改：`backend/app/core/approval_handlers.py`
+- 修改：`frontend/src/types/api.ts`
+- 修改：`frontend/src/components/overlays/MeetingRoomDrawer.tsx`
+
+**依赖**：现有 `meeting-request -> consensus_document@1 -> checker / board review -> follow-up ticket` 主链
+
+**预估**：3h
+
+**feature-spec**：条目 68
+
+**验收标准**：
+- 会议 `consensus_document@1` 可选携带结构化 `decision_record`
+- `GET /api/v1/projections/meetings/{meeting_id}` 能透传 ADR 决策视图
+- Meeting Room 默认先展示 ADR 决策视图，再展示轮次审计轨迹
+- 只有 `MEETING_ESCALATION` 批准后的 follow-up ticket 会额外注入 ADR `decision + consequences`
+- 非会议来源的 `consensus_document` 路径保持不变
+
+**风险**：低
+
+**完成补记（2026-04-07）**：
+- 这轮保持保守边界：不新增 artifact 类型，继续复用 `consensus_document@1`；`decision_record` 只是它的可选结构化扩展
+- `archived_context_refs` 当前默认只指向 `meeting-digest.json`，把会议 round 细节明确降为 audit trail，不做 transcript 系统
+- `build_meeting_projection` 按“读 artifact 组装决策视图”实现，没有改 `meeting_projection` 表结构
+- meeting follow-up ADR 注入只限定在 `MEETING_ESCALATION` 路径；scope kickoff / project-init 等其他共识来源的 follow-up 组装逻辑不变
+- 本轮验证基线更新为 backend `444 passed`、frontend build passed、frontend `72 passed`
+
 ---
 
 ## 五、关键依赖图

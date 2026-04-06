@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -46,6 +47,7 @@ from app.contracts.projections import (
     InboxProjectionData,
     InboxProjectionEnvelope,
     MeetingDetailProjectionData,
+    MeetingDecisionRecordProjection,
     MeetingDetailProjectionEnvelope,
     MeetingParticipantProjection,
     MeetingRoundProjection,
@@ -84,6 +86,7 @@ from app.contracts.projections import (
 from app.contracts.runtime import RenderedExecutionPayloadSummary
 from app.contracts.commands import IncidentFollowupAction
 from app.config import get_settings
+from app.core.artifact_store import ArtifactStore
 from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
@@ -1447,9 +1450,45 @@ def build_inbox_projection(repository: ControlPlaneRepository) -> InboxProjectio
     )
 
 
+def _load_meeting_decision_record(
+    repository: ControlPlaneRepository,
+    *,
+    source_ticket_id: str,
+    artifact_store: ArtifactStore | None,
+) -> MeetingDecisionRecordProjection | None:
+    if artifact_store is None:
+        return None
+
+    artifact_ref = f"art://runtime/{source_ticket_id}/consensus-document.json"
+    artifact = repository.get_artifact_by_ref(artifact_ref)
+    if artifact is None:
+        return None
+
+    storage_relpath = artifact.get("storage_relpath")
+    if not isinstance(storage_relpath, str) or not storage_relpath.strip():
+        return None
+
+    try:
+        payload = json.loads(artifact_store.read_bytes(storage_relpath).decode("utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    raw_record = payload.get("decision_record")
+    if not isinstance(raw_record, dict):
+        return None
+
+    try:
+        return MeetingDecisionRecordProjection.model_validate(raw_record)
+    except Exception:
+        return None
+
+
 def build_meeting_projection(
     repository: ControlPlaneRepository,
     meeting_id: str,
+    artifact_store: ArtifactStore | None = None,
 ) -> MeetingDetailProjectionEnvelope | None:
     repository.initialize()
     meeting = repository.get_meeting_projection(meeting_id)
@@ -1480,6 +1519,11 @@ def build_meeting_projection(
         )
         for item in meeting.get("participants") or []
     ]
+    decision_record = _load_meeting_decision_record(
+        repository,
+        source_ticket_id=str(meeting["source_ticket_id"]),
+        artifact_store=artifact_store,
+    )
     return MeetingDetailProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
         generated_at=now_local(),
@@ -1512,6 +1556,7 @@ def build_meeting_projection(
             no_consensus_reason=(
                 str(meeting["no_consensus_reason"]) if meeting.get("no_consensus_reason") is not None else None
             ),
+            decision_record=decision_record,
         ),
     )
 

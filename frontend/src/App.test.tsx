@@ -196,6 +196,7 @@ function meetingRoomData() {
     ],
     consensus_summary: 'The meeting converged on one runtime contract.',
     no_consensus_reason: null,
+    decision_record: null,
   }
 }
 

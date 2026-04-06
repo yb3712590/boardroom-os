@@ -1202,8 +1202,9 @@ def _consensus_document_payload(
     topic: str = "Boardroom OS scope convergence",
     followup_ticket_id: str = "tkt_followup_scope_lock",
     followup_tickets: list[dict] | None = None,
+    decision_record: dict | None = None,
 ) -> dict:
-    return {
+    payload = {
         "topic": topic,
         "participants": ["emp_frontend_2", "emp_checker_1"],
         "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
@@ -1213,6 +1214,9 @@ def _consensus_document_payload(
         "followup_tickets": followup_tickets
         or _staged_scope_followup_tickets(followup_ticket_id.removesuffix("_review")),
     }
+    if decision_record is not None:
+        payload["decision_record"] = decision_record
+    return payload
 
 
 def _staged_scope_followup_tickets(ticket_id_prefix: str = "tkt_followup_scope_lock") -> list[dict]:
@@ -11265,6 +11269,132 @@ def test_staffing_containment_recovery_followup_can_reenter_checker_and_board_re
         "APPROVED_WITH_NOTES"
     )
     assert repository.list_open_incidents() == []
+
+
+def test_meeting_escalation_followup_tickets_include_decision_record_guidance(client, set_ticket_time):
+    set_ticket_time("2026-04-06T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Carry ADR guidance into meeting follow-up tickets"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scope_adr_001",
+        node_id="node_scope_adr",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_scope_adr_001",
+            node_id="node_scope_adr",
+            include_review_request=True,
+            review_request=_meeting_escalation_review_request(),
+            payload=_consensus_document_payload(
+                followup_ticket_id="tkt_scope_adr",
+                decision_record={
+                    "format": "ADR_V1",
+                    "context": "Homepage contract alignment is blocking implementation.",
+                    "decision": "Use the narrower runtime contract for MVP.",
+                    "rationale": [
+                        "It keeps board-approved scope stable.",
+                        "It avoids reopening remote handoff this round.",
+                    ],
+                    "consequences": [
+                        "Implementation must stay inside the narrowed contract.",
+                        "Deferred alternatives require a later governance ticket.",
+                    ],
+                    "archived_context_refs": ["art://meeting/meeting-digest.json"],
+                },
+            ),
+            artifact_refs=["art://meeting/consensus-document.json"],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:tkt_scope_adr_001:consensus",
+        ),
+    )
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_adr")["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_adr",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_adr",
+            started_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_adr",
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved-with-notes",
+        ),
+    )
+
+    approval = next(
+        item for item in repository.list_open_approvals() if item["approval_type"] == "MEETING_ESCALATION"
+    )
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Lock the meeting ADR and continue.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:meeting-adr-followup",
+        },
+    )
+
+    assert approve_response.status_code == 200
+    followup_node = repository.get_current_node_projection(workflow_id, "node_followup_scope_adr_build")
+    assert followup_node is not None
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            followup_node["latest_ticket_id"],
+        )
+
+    assert created_spec is not None
+    assert any(
+        artifact_ref.endswith("/consensus-document.json")
+        for artifact_ref in created_spec["input_artifact_refs"]
+    )
+    assert any(
+        "Use the narrower runtime contract for MVP." in query
+        for query in created_spec["context_query_plan"]["semantic_queries"]
+    )
+    assert any(
+        "Implementation must stay inside the narrowed contract." in criterion
+        for criterion in created_spec["acceptance_criteria"]
+    )
 
 
 def test_staffing_containment_incident_projection_exposes_retry_followup_actions(client):

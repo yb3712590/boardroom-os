@@ -728,6 +728,24 @@ def _scope_followup_acceptance_criteria(summary: str, delivery_stage: DeliverySt
     ]
 
 
+def _meeting_decision_guidance(consensus_payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+    decision_record = consensus_payload.get("decision_record")
+    if not isinstance(decision_record, dict):
+        return [], []
+
+    decision = str(decision_record.get("decision") or "").strip()
+    consequences = [
+        str(item).strip()
+        for item in (decision_record.get("consequences") or [])
+        if str(item).strip()
+    ]
+    semantic_queries = [item for item in [decision, *consequences] if item]
+    acceptance_criteria = (
+        [f"Must follow the locked meeting ADR decision: {decision}"] if decision else []
+    ) + [f"Must respect this locked meeting ADR consequence: {item}" for item in consequences]
+    return semantic_queries, acceptance_criteria
+
+
 def _resolve_approval_source_ticket_specs(
     repository: ControlPlaneRepository,
     connection,
@@ -959,6 +977,10 @@ def _build_scope_followup_ticket_payloads(
     ticket_payloads: list[dict[str, Any]] = []
     prior_ticket_id = source_ticket_id
     chained_artifact_refs: list[str] = []
+    extra_semantic_queries: list[str] = []
+    extra_acceptance_criteria: list[str] = []
+    if approval["approval_type"] == "MEETING_ESCALATION":
+        extra_semantic_queries, extra_acceptance_criteria = _meeting_decision_guidance(consensus_payload)
 
     for raw_followup in followup_items:
         followup = dict(raw_followup)
@@ -1004,10 +1026,13 @@ def _build_scope_followup_ticket_payloads(
             input_artifact_refs=_dedupe_artifact_refs(input_artifact_refs + chained_artifact_refs),
             context_query_plan={
                 "keywords": _scope_followup_context_keywords(delivery_stage),
-                "semantic_queries": [followup_summary],
+                "semantic_queries": [followup_summary, *extra_semantic_queries],
                 "max_context_tokens": 3000,
             },
-            acceptance_criteria=_scope_followup_acceptance_criteria(followup_summary, delivery_stage),
+            acceptance_criteria=[
+                *_scope_followup_acceptance_criteria(followup_summary, delivery_stage),
+                *extra_acceptance_criteria,
+            ],
             output_schema_ref=output_schema_ref,
             output_schema_version=output_schema_version,
             allowed_tools=_scope_followup_allowed_tools(delivery_stage),

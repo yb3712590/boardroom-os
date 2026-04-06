@@ -89,8 +89,75 @@ export function MeetingRoomDrawer({
             </div>
           </section>
 
+          {meetingData.decision_record ? (
+            <section className="review-room-columns">
+              <div className="review-room-column">
+                <h3>Decision record</h3>
+                <ul className="review-room-list">
+                  <li>
+                    <strong>Format</strong>
+                    <span>{meetingData.decision_record.format}</span>
+                  </li>
+                  <li>
+                    <strong>Context</strong>
+                    <span>{meetingData.decision_record.context}</span>
+                  </li>
+                  <li>
+                    <strong>Decision</strong>
+                    <span>{meetingData.decision_record.decision}</span>
+                  </li>
+                  <li>
+                    <strong>Consensus summary</strong>
+                    <span>{meetingData.consensus_summary ?? 'No consensus summary has been generated yet.'}</span>
+                  </li>
+                </ul>
+              </div>
+              <div className="review-room-column">
+                <h3>Implementation basis</h3>
+                <ul className="review-room-list">
+                  {meetingData.decision_record.rationale.map((item) => (
+                    <li key={`rationale:${item}`}>
+                      <strong>Rationale</strong>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                  {meetingData.decision_record.consequences.map((item) => (
+                    <li key={`consequence:${item}`}>
+                      <strong>Consequence</strong>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                  {meetingData.decision_record.archived_context_refs.map((item) => (
+                    <li key={`archive:${item}`}>
+                      <strong>Archived context</strong>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+          ) : (
+            <section className="review-room-columns">
+              <div className="review-room-column">
+                <h3>Consensus</h3>
+                <p className="muted-copy">
+                  {meetingData.consensus_summary ?? 'No consensus summary has been generated yet.'}
+                </p>
+              </div>
+              <div className="review-room-column">
+                <h3>No-consensus reason</h3>
+                <p className="muted-copy">
+                  {meetingData.no_consensus_reason ?? 'The meeting closed with a candidate conclusion.'}
+                </p>
+              </div>
+            </section>
+          )}
+
           <section className="review-room-column">
-            <h3>Round timeline</h3>
+            <h3>Audit trail</h3>
+            <p className="muted-copy">
+              Structured rounds stay available as audit material; implementation should follow the decision record above.
+            </p>
             <ul className="review-room-list">
               {meetingData.rounds.map((round) => (
                 <li key={`${round.round_type}:${round.round_index}`}>
@@ -111,21 +178,6 @@ export function MeetingRoomDrawer({
                 </li>
               ) : null}
             </ul>
-          </section>
-
-          <section className="review-room-columns">
-            <div className="review-room-column">
-              <h3>Consensus</h3>
-              <p className="muted-copy">
-                {meetingData.consensus_summary ?? 'No consensus summary has been generated yet.'}
-              </p>
-            </div>
-            <div className="review-room-column">
-              <h3>No-consensus reason</h3>
-              <p className="muted-copy">
-                {meetingData.no_consensus_reason ?? 'The meeting closed with a candidate conclusion.'}
-              </p>
-            </div>
           </section>
 
           <section className="review-room-action-panel">

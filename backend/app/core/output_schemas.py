@@ -259,6 +259,37 @@ def _consensus_document_schema_body() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
             },
+            "decision_record": {
+                "type": "object",
+                "required": [
+                    "format",
+                    "context",
+                    "decision",
+                    "rationale",
+                    "consequences",
+                    "archived_context_refs",
+                ],
+                "properties": {
+                    "format": {"type": "string", "enum": ["ADR_V1"]},
+                    "context": {"type": "string"},
+                    "decision": {"type": "string"},
+                    "rationale": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                    },
+                    "consequences": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                    },
+                    "archived_context_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                    },
+                },
+            },
             "followup_tickets": {
                 "type": "array",
                 "minItems": 1,
@@ -278,6 +309,41 @@ def _consensus_document_schema_body() -> dict[str, Any]:
             },
         },
     }
+
+
+def _validate_consensus_decision_record(payload: dict[str, Any]) -> None:
+    decision_record = payload.get("decision_record", _MISSING)
+    if decision_record is _MISSING:
+        return
+
+    decision_record = _require_object(
+        decision_record,
+        field_path="decision_record",
+        label="Consensus document payload.decision_record",
+    )
+    record_format = decision_record.get("format", _MISSING)
+    if record_format != "ADR_V1":
+        _raise_schema_validation_error(
+            field_path="decision_record.format",
+            expected="literal 'ADR_V1'",
+            actual_value=record_format,
+            message="Consensus document payload.decision_record.format must be ADR_V1.",
+        )
+
+    for key in ("context", "decision"):
+        _require_non_empty_string(
+            decision_record,
+            key,
+            label=f"Consensus document payload.decision_record.{key}",
+        )
+
+    for key in ("rationale", "consequences", "archived_context_refs"):
+        _require_string_array(
+            decision_record,
+            key,
+            label=f"Consensus document payload.decision_record.{key}",
+            non_empty=True,
+        )
 
 
 def _implementation_bundle_schema_body() -> dict[str, Any]:
@@ -482,6 +548,7 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
         label="Consensus document payload.participants",
         non_empty=True,
     )
+    _validate_consensus_decision_record(payload)
     followup_tickets = _require_array(
         payload,
         "followup_tickets",

@@ -216,6 +216,11 @@ def test_scheduler_runner_executes_meeting_rounds_and_routes_to_checker(client, 
     ]
     assert any(event["event_type"] == "MEETING_ROUND_COMPLETED" for event in meeting_events)
     assert meeting["consensus_summary"]
+    assert meeting["decision_record"]["format"] == "ADR_V1"
+    assert meeting["decision_record"]["decision"]
+    assert meeting["decision_record"]["archived_context_refs"] == [
+        f"art://runtime/{meeting['source_ticket_id']}/meeting-digest.json"
+    ]
 
 
 def test_meeting_projection_backfills_review_pack_after_checker_approval(client, set_ticket_time):
@@ -268,6 +273,34 @@ def test_meeting_projection_backfills_review_pack_after_checker_approval(client,
     assert linked_approval is not None
     assert linked_approval["workflow_id"] == workflow_id
     assert refreshed["review_status"] == "BOARD_REVIEW_PENDING"
+
+
+def test_meeting_projection_reads_decision_record_from_consensus_artifact(client, set_ticket_time):
+    set_ticket_time("2026-04-05T10:25:00+08:00")
+    workflow_id = _create_workflow(client, goal="Expose meeting ADR view")
+    request_response = client.post(
+        "/api/v1/commands/meeting-request",
+        json=_meeting_request_payload(
+            workflow_id,
+            idempotency_key="meeting-request:decision-record-projection",
+        ),
+    )
+    meeting_id = request_response.json()["causation_hint"].split(":", 1)[1]
+
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:meeting-room-decision-record",
+        max_dispatches=10,
+    )
+
+    meeting = client.get(f"/api/v1/projections/meetings/{meeting_id}").json()["data"]
+
+    assert meeting["decision_record"] is not None
+    assert meeting["decision_record"]["format"] == "ADR_V1"
+    assert "runtime contract" in meeting["decision_record"]["context"].lower()
+    assert meeting["decision_record"]["archived_context_refs"] == [
+        f"art://runtime/{meeting['source_ticket_id']}/meeting-digest.json"
+    ]
 
 
 def test_meeting_request_with_too_small_round_budget_fails_without_fake_completion(client, set_ticket_time):

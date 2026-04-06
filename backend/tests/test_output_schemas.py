@@ -26,6 +26,20 @@ def test_output_schema_registry_accepts_valid_consensus_document_payload() -> No
             "consensus_summary": "Use the stronger hierarchy with a simplified motion pass.",
             "rejected_options": ["full-motion-hero"],
             "open_questions": [],
+            "decision_record": {
+                "format": "ADR_V1",
+                "context": "Homepage contract choice is blocking the next implementation round.",
+                "decision": "Lock the narrower runtime contract for MVP delivery.",
+                "rationale": [
+                    "It keeps the current board review scope stable.",
+                    "It avoids reopening remote handoff in the MVP path.",
+                ],
+                "consequences": [
+                    "Implementation tickets must stay inside the narrowed contract.",
+                    "Deferred alternatives can return through a later governance ticket.",
+                ],
+                "archived_context_refs": ["art://runtime/tkt_meeting_001/meeting-digest.json"],
+            },
             "followup_tickets": [
                 {
                     "ticket_id": "tkt_followup_001",
@@ -48,6 +62,35 @@ def test_output_schema_registry_rejects_invalid_consensus_document_payload() -> 
                 "topic": "Resolve homepage interaction conflict",
                 "participants": [],
                 "followup_tickets": [],
+            },
+        )
+
+
+def test_output_schema_registry_rejects_invalid_consensus_document_decision_record() -> None:
+    with pytest.raises(ValueError, match="decision_record"):
+        validate_output_payload(
+            schema_ref="consensus_document",
+            schema_version=1,
+            submitted_schema_version="consensus_document_v1",
+            payload={
+                "topic": "Resolve homepage interaction conflict",
+                "participants": ["emp_frontend_2", "emp_checker_1"],
+                "decision_record": {
+                    "format": "ADR_V1",
+                    "context": "",
+                    "decision": "Use the narrowed runtime contract.",
+                    "rationale": ["Reduce scope drift."],
+                    "consequences": ["Implementation follows the locked contract."],
+                    "archived_context_refs": ["art://runtime/tkt_meeting_001/meeting-digest.json"],
+                },
+                "followup_tickets": [
+                    {
+                        "ticket_id": "tkt_followup_001",
+                        "owner_role": "frontend_engineer",
+                        "summary": "Implement approved homepage direction",
+                        "delivery_stage": "BUILD",
+                    }
+                ],
             },
         )
 

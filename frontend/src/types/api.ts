@@ -216,6 +216,15 @@ export type MeetingRoundData = {
   completed_at: string
 }
 
+export type MeetingDecisionRecordData = {
+  format: string
+  context: string
+  decision: string
+  rationale: string[]
+  consequences: string[]
+  archived_context_refs: string[]
+}
+
 export type MeetingDetailData = {
   meeting_id: string
   workflow_id: string
@@ -235,6 +244,7 @@ export type MeetingDetailData = {
   rounds: MeetingRoundData[]
   consensus_summary: string | null
   no_consensus_reason: string | null
+  decision_record: MeetingDecisionRecordData | null
 }
 
 export type CommandAck = {

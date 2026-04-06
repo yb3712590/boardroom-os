@@ -260,6 +260,7 @@ def _build_meeting_consensus_payload(
     execution_package: CompiledExecutionPackage,
     meeting_context: dict[str, Any],
     rounds: list[dict[str, Any]],
+    archived_context_refs: list[str],
 ) -> dict[str, Any]:
     participant_ids = list(meeting_context.get("participant_employee_ids") or [])
     ticket_id = execution_package.meta.ticket_id
@@ -276,6 +277,20 @@ def _build_meeting_consensus_payload(
         "consensus_summary": (
             f"Meeting converged on one technical direction after {len(rounds)} structured rounds for {topic}."
         ),
+        "decision_record": {
+            "format": "ADR_V1",
+            "context": f"{topic} required a bounded technical decision before downstream delivery could continue.",
+            "decision": "Use the narrowest technical direction that keeps the current MVP delivery moving.",
+            "rationale": [
+                "The converged path keeps implementation and validation aligned on one contract.",
+                "It avoids widening the current MVP boundary with deferred alternatives.",
+            ],
+            "consequences": [
+                "Follow-up implementation must stay inside the converged technical direction.",
+                "Deferred alternatives should return through a later governance ticket if needed.",
+            ],
+            "archived_context_refs": list(archived_context_refs),
+        },
         "rejected_options": ["Carry multiple conflicting technical paths into the same delivery round."],
         "open_questions": ["Whether the deferred alternative should return as a later governance ticket."],
         "followup_tickets": [
@@ -434,7 +449,13 @@ def _execute_meeting_runtime(
                 },
             )
 
-        result_payload = _build_meeting_consensus_payload(execution_package, meeting_context, runtime_rounds)
+        meeting_digest_artifact_ref = f"art://runtime/{execution_package.meta.ticket_id}/meeting-digest.json"
+        result_payload = _build_meeting_consensus_payload(
+            execution_package,
+            meeting_context,
+            runtime_rounds,
+            [meeting_digest_artifact_ref],
+        )
         artifact_refs, written_artifacts = _build_runtime_default_artifacts(execution_package, result_payload)
         written_artifacts.append(
             _build_meeting_digest_artifact(execution_package, meeting_context, runtime_rounds)

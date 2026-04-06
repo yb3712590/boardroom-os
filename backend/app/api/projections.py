@@ -119,7 +119,8 @@ def get_meeting_detail_projection(
     meeting_id: str,
 ) -> MeetingDetailProjectionEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
-    projection = build_meeting_projection(repository, meeting_id)
+    artifact_store = request.app.state.artifact_store
+    projection = build_meeting_projection(repository, meeting_id, artifact_store)
     if projection is None:
         raise HTTPException(
             status_code=404,

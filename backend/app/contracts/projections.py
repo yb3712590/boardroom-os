@@ -287,6 +287,15 @@ class MeetingRoundProjection(StrictModel):
     completed_at: datetime
 
 
+class MeetingDecisionRecordProjection(StrictModel):
+    format: str
+    context: str
+    decision: str
+    rationale: list[str] = Field(default_factory=list)
+    consequences: list[str] = Field(default_factory=list)
+    archived_context_refs: list[str] = Field(default_factory=list)
+
+
 class MeetingDetailProjectionData(StrictModel):
     meeting_id: str
     workflow_id: str
@@ -306,6 +315,7 @@ class MeetingDetailProjectionData(StrictModel):
     rounds: list[MeetingRoundProjection]
     consensus_summary: str | None = None
     no_consensus_reason: str | None = None
+    decision_record: MeetingDecisionRecordProjection | None = None
 
 
 class MeetingDetailProjectionEnvelope(ProjectionEnvelopeBase):
