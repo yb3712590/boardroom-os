@@ -93,6 +93,30 @@ export type StaffingHireTemplate = {
   aesthetic_profile: Record<string, string>
 }
 
+export type GovernanceDocumentKind = {
+  kind_ref: string
+  label: string
+  summary: string
+}
+
+export type GovernanceRoleTemplate = {
+  template_id: string
+  label: string
+  role_type: string
+  role_profile_ref: string
+  provider_target_ref: string
+  participation_mode: string
+  execution_boundary: string
+  status: string
+  default_document_kind_refs: string[]
+  summary: string
+}
+
+export type GovernanceTemplates = {
+  role_templates: GovernanceRoleTemplate[]
+  document_kinds: GovernanceDocumentKind[]
+}
+
 export type ReviewPackEmployeeChange = {
   change_kind: string
   employee_id?: string | null

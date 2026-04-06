@@ -17,6 +17,7 @@ from app.contracts.commands import (
 )
 from app.contracts.common import StrictModel
 from app.config import get_settings
+from app.core.governance_templates import list_runtime_provider_future_binding_slots
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -43,20 +44,7 @@ RUNTIME_TARGET_LABELS = {
     ROLE_BINDING_CHECKER: "Checker",
 }
 
-FUTURE_ROLE_BINDING_SLOTS = (
-    {
-        "target_ref": "role_profile:cto_primary",
-        "label": "CTO / 架构治理",
-        "status": "NOT_ENABLED",
-        "reason": "治理模板角色尚未纳入当前主线。",
-    },
-    {
-        "target_ref": "role_profile:architect_primary",
-        "label": "架构师 / 设计评审",
-        "status": "NOT_ENABLED",
-        "reason": "治理模板角色尚未纳入当前主线。",
-    },
-)
+FUTURE_ROLE_BINDING_SLOTS = tuple(list_runtime_provider_future_binding_slots())
 
 
 class RuntimeProviderAdapterKind(StrEnum):

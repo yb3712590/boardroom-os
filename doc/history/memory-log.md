@@ -70,7 +70,9 @@
 - `P2-PRV-002 / P2-PRV-003 / P2-PRV-004` 已完成：provider registry 现在会暴露结构化 `capability_tags[]`、每个 provider 的 `health_status / health_reason` 和最小 `fallback_provider_ids[]`
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
 - provider-to-provider failover 现在只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径，board-facing evidence 也继续只突出 deterministic fallback
-- 当前验证基线更新为 backend `461 passed`、frontend build passed、frontend `73 passed`
+- `P2-GOV-001` 已完成：后端新增单点 `governance_templates` catalog，固定暴露 `cto_governance / architect_governance` 两组只读 role template 和五类文档 metadata ref；`workforce` 投影与 `runtime-provider.future_binding_slots` 现在都从同一 catalog 派生
+- 这轮保持保守边界：治理模板当前只做只读数据结构与前端可见性，不启用 `cto_primary / architect_primary` runtime 执行、不扩 staffing 动作，也不提前定义文档型输出 schema
+- 当前验证基线更新为 backend `463 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 

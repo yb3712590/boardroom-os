@@ -34,6 +34,34 @@ describe('WorkforcePanel', () => {
             workers_in_staffing_containment: 0,
           },
           hire_templates: [],
+          governance_templates: {
+            role_templates: [
+              {
+                template_id: 'cto_governance',
+                label: 'CTO / 架构治理',
+                role_type: 'governance_cto',
+                role_profile_ref: 'cto_primary',
+                provider_target_ref: 'role_profile:cto_primary',
+                participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
+                execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
+                status: 'NOT_ENABLED',
+                default_document_kind_refs: ['architecture_brief', 'technology_decision'],
+                summary: 'Own high-leverage architecture and governance decisions.',
+              },
+            ],
+            document_kinds: [
+              {
+                kind_ref: 'architecture_brief',
+                label: '架构方案',
+                summary: 'Frame the target architecture and tradeoffs.',
+              },
+              {
+                kind_ref: 'technology_decision',
+                label: '技术选型',
+                summary: 'Capture option comparisons and final decisions.',
+              },
+            ],
+          },
           role_lanes: [
             {
               role_type: 'frontend_engineer',
@@ -86,5 +114,9 @@ describe('WorkforcePanel', () => {
     expect(screen.getByText('Current profile')).toBeInTheDocument()
     expect(screen.getByText(/Skill frontend, delivery slice, balanced/i)).toBeInTheDocument()
     expect(screen.getByText(/risk posture: assertive/i)).toBeInTheDocument()
+    expect(screen.getByText('Governance templates')).toBeInTheDocument()
+    expect(screen.getByText(/CTO \/ 架构治理/i)).toBeInTheDocument()
+    expect(screen.getByText(/architecture_brief/i)).toBeInTheDocument()
+    expect(screen.getByText(/not_enabled/i)).toBeInTheDocument()
   })
 })

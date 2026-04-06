@@ -110,6 +110,10 @@ from app.core.constants import (
     TICKET_STATUS_COMPLETED,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
+from app.core.governance_templates import (
+    list_governance_document_kinds,
+    list_governance_role_templates,
+)
 from app.core.output_schemas import DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
 from app.core.workflow_relationships import (
     list_workflow_ticket_snapshots,
@@ -304,6 +308,34 @@ def _build_workforce_hire_templates() -> list[StaffingHireTemplateProjection]:
         )
         for template in list_mainline_staffing_hire_templates()
     ]
+
+
+def _build_governance_templates_projection() -> dict[str, Any]:
+    return {
+        "role_templates": [
+            {
+                "template_id": str(template["template_id"]),
+                "label": str(template["label"]),
+                "role_type": str(template["role_type"]),
+                "role_profile_ref": str(template["role_profile_ref"]),
+                "provider_target_ref": str(template["provider_target_ref"]),
+                "participation_mode": str(template["participation_mode"]),
+                "execution_boundary": str(template["execution_boundary"]),
+                "status": str(template["status"]),
+                "default_document_kind_refs": list(template.get("default_document_kind_refs") or []),
+                "summary": str(template["summary"]),
+            }
+            for template in list_governance_role_templates()
+        ],
+        "document_kinds": [
+            {
+                "kind_ref": str(kind["kind_ref"]),
+                "label": str(kind["label"]),
+                "summary": str(kind["summary"]),
+            }
+            for kind in list_governance_document_kinds()
+        ],
+    }
 
 
 def _build_workforce_available_actions(employee: dict[str, Any]) -> list[WorkforceActionProjection]:
@@ -1049,6 +1081,7 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
         data=WorkforceProjectionData(
             summary=summary,
             hire_templates=_build_workforce_hire_templates(),
+            governance_templates=_build_governance_templates_projection(),
             role_lanes=role_lanes,
         ),
     )

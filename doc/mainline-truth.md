@@ -22,6 +22,7 @@
 - CEO shadow snapshot 现在会暴露当前 workflow 内的 `reuse_candidates`：只读最近已完成 ticket 和已关闭会议的最小摘要；OpenAI Compat live prompt 会先检查这些复用候选，优先 `NO_ACTION / RETRY_TICKET / WAIT`，再考虑新建平行 ticket、额外会议或补招人；deterministic fallback 保持不变
 - runtime provider 配置现在已从单一 OpenAI 表单切成最小 registry：固定暴露 `default_provider_id / providers[] / role_bindings[]`，旧配置文件会自动迁移
 - 当前 registry 首版真实支持两个 adapter：`prov_openai_compat` 与 `prov_claude_code`；`runtime-provider` 投影和前端设置抽屉都会暴露 provider 列表、`capability_tags[]`、`fallback_provider_ids[]`、每个 provider 的 `health_status / health_reason`、当前真实角色绑定和未来治理角色只读占位
+- 当前已新增只读 `governance_templates` catalog：后端固定暴露 `cto_governance / architect_governance` 两组 role template 和五类文档 metadata ref；`workforce` 投影与 `runtime-provider.future_binding_slots` 现在都从这份 catalog 派生，但治理角色仍未进入 runtime 支持矩阵或 staffing 主线
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
 - provider-to-provider failover 当前只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；运行时与 CEO live path 会按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径
 - 会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`；`MeetingRoom` 默认先展示压缩后的决策视图，再把 round timeline 留作 audit trail

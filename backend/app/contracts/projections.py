@@ -138,6 +138,30 @@ class StaffingHireTemplateProjection(StrictModel):
     aesthetic_profile: dict[str, str] = Field(default_factory=dict)
 
 
+class GovernanceDocumentKindProjection(StrictModel):
+    kind_ref: str
+    label: str
+    summary: str
+
+
+class GovernanceRoleTemplateProjection(StrictModel):
+    template_id: str
+    label: str
+    role_type: str
+    role_profile_ref: str
+    provider_target_ref: str
+    participation_mode: str
+    execution_boundary: str
+    status: str
+    default_document_kind_refs: list[str] = Field(default_factory=list)
+    summary: str
+
+
+class GovernanceTemplatesProjection(StrictModel):
+    role_templates: list[GovernanceRoleTemplateProjection] = Field(default_factory=list)
+    document_kinds: list[GovernanceDocumentKindProjection] = Field(default_factory=list)
+
+
 class WorkforceWorkerProjection(StrictModel):
     employee_id: str
     role_type: str
@@ -164,6 +188,7 @@ class WorkforceRoleLaneProjection(StrictModel):
 class WorkforceProjectionData(StrictModel):
     summary: WorkforceSummaryProjection
     hire_templates: list[StaffingHireTemplateProjection] = Field(default_factory=list)
+    governance_templates: GovernanceTemplatesProjection = Field(default_factory=GovernanceTemplatesProjection)
     role_lanes: list[WorkforceRoleLaneProjection]
 
 
@@ -393,7 +418,7 @@ class RuntimeProviderProjectionData(StrictModel):
     default_provider_id: str | None = None
     providers: list[dict[str, object]] = Field(default_factory=list)
     role_bindings: list[dict[str, object]] = Field(default_factory=list)
-    future_binding_slots: list[dict[str, object]] = Field(default_factory=list)
+    future_binding_slots: list[dict[str, str]] = Field(default_factory=list)
 
 
 class RuntimeProviderProjectionEnvelope(ProjectionEnvelopeBase):

@@ -282,6 +282,66 @@ function workforceData() {
       workers_in_staffing_containment: 0,
     },
     hire_templates: hireTemplates(),
+    governance_templates: {
+      role_templates: [
+        {
+          template_id: 'cto_governance',
+          label: 'CTO / 架构治理',
+          role_type: 'governance_cto',
+          role_profile_ref: 'cto_primary',
+          provider_target_ref: 'role_profile:cto_primary',
+          participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
+          execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
+          status: 'NOT_ENABLED',
+          default_document_kind_refs: [
+            'architecture_brief',
+            'technology_decision',
+            'milestone_plan',
+            'backlog_recommendation',
+          ],
+          summary: 'Shape architecture, major decisions, and backlog direction.',
+        },
+        {
+          template_id: 'architect_governance',
+          label: '架构师 / 设计评审',
+          role_type: 'governance_architect',
+          role_profile_ref: 'architect_primary',
+          provider_target_ref: 'role_profile:architect_primary',
+          participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
+          execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
+          status: 'NOT_ENABLED',
+          default_document_kind_refs: ['architecture_brief', 'technology_decision', 'detailed_design'],
+          summary: 'Review design detail and keep implementation aligned to architecture.',
+        },
+      ],
+      document_kinds: [
+        {
+          kind_ref: 'architecture_brief',
+          label: '架构方案',
+          summary: 'Frame the target architecture and major tradeoffs.',
+        },
+        {
+          kind_ref: 'technology_decision',
+          label: '技术选型',
+          summary: 'Capture option comparisons and final decisions.',
+        },
+        {
+          kind_ref: 'milestone_plan',
+          label: '里程碑拆解',
+          summary: 'Outline milestone sequence and delivery checkpoints.',
+        },
+        {
+          kind_ref: 'detailed_design',
+          label: '详细设计',
+          summary: 'Explain implementation boundaries and interface decisions.',
+        },
+        {
+          kind_ref: 'backlog_recommendation',
+          label: 'TODO / Backlog 建议',
+          summary: 'Recommend next execution slices without opening runtime support.',
+        },
+      ],
+    },
     role_lanes: [
       {
         role_type: 'frontend_engineer',
@@ -654,6 +714,12 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
       {
         target_ref: 'role_profile:cto_primary',
         label: 'CTO / 架构治理',
+        status: 'NOT_ENABLED',
+        reason: '治理模板角色尚未纳入当前主线。',
+      },
+      {
+        target_ref: 'role_profile:architect_primary',
+        label: '架构师 / 设计评审',
         status: 'NOT_ENABLED',
         reason: '治理模板角色尚未纳入当前主线。',
       },
@@ -1463,7 +1529,12 @@ describe('Boardroom UI', () => {
 
     await user.click(await screen.findByRole('button', { name: /runtime settings/i }))
 
-    expect(await screen.findByDisplayValue(/not_enabled: 治理模板角色尚未纳入当前主线。/i)).toBeDisabled()
+    const futureSlots = await screen.findAllByDisplayValue(/not_enabled: 治理模板角色尚未纳入当前主线。/i)
+
+    expect(futureSlots).toHaveLength(2)
+    for (const slot of futureSlots) {
+      expect(slot).toBeDisabled()
+    }
   })
 
   it('launches project init and refreshes into the first review state', async () => {

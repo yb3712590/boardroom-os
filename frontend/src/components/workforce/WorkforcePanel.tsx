@@ -27,6 +27,13 @@ function formatRole(roleType: string) {
   return roleType.replaceAll('_', ' ')
 }
 
+function formatDocumentKindRefs(
+  refs: string[],
+  byRef: Map<string, string>,
+) {
+  return refs.map((ref) => `${ref}${byRef.get(ref) ? ` (${byRef.get(ref)})` : ''}`).join(', ')
+}
+
 function findAction(actions: WorkforceData['role_lanes'][number]['workers'][number]['available_actions'], actionType: string) {
   return actions.find((action) => action.action_type === actionType) ?? null
 }
@@ -57,6 +64,9 @@ export function WorkforcePanel({
   const [replaceOpenFor, setReplaceOpenFor] = useState<string | null>(null)
 
   const templatesById = new Map((workforce?.hire_templates ?? []).map((template) => [template.template_id, template]))
+  const governanceDocumentKindsByRef = new Map(
+    (workforce?.governance_templates?.document_kinds ?? []).map((kind) => [kind.kind_ref, kind.label]),
+  )
 
   return (
     <section className="support-panel" aria-labelledby="workforce-panel-title">
@@ -96,6 +106,40 @@ export function WorkforcePanel({
             submittingAction={submittingAction}
             onRequestHire={onRequestHire}
           />
+
+          {workforce.governance_templates.role_templates.length > 0 ? (
+            <section className="staffing-request-panel" aria-labelledby="governance-templates-title">
+              <div className="section-heading workforce-section-heading">
+                <p className="eyebrow">Governance</p>
+                <h3 id="governance-templates-title">Governance templates</h3>
+              </div>
+              <div className="staffing-template-list">
+                {workforce.governance_templates.role_templates.map((template) => (
+                  <article key={template.template_id} className="staffing-template-card">
+                    <div className="staffing-template-copy">
+                      <strong>{template.label}</strong>
+                      <span>{template.summary}</span>
+                    </div>
+                    <div className="worker-card-state">
+                      <span>{template.status}</span>
+                      <span>{template.participation_mode}</span>
+                    </div>
+                    <div className="worker-card-meta">
+                      <span>{template.role_profile_ref}</span>
+                      <span>{template.provider_target_ref}</span>
+                    </div>
+                    <p className="muted-copy">{template.execution_boundary}</p>
+                    <p className="muted-copy">
+                      {formatDocumentKindRefs(
+                        template.default_document_kind_refs,
+                        governanceDocumentKindsByRef,
+                      )}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <div className="lane-list">
             {workforce.role_lanes.map((lane) => (

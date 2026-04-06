@@ -1732,6 +1732,13 @@
 | P2-GOV-005 | 文档型角色默认不参与日常编码 / 测试执行约束 | 3h |
 | P2-GOV-006 | 治理模板与文档型角色测试和文档 | 5h |
 
+完成补记（2026-04-07）：
+
+- `P2-GOV-001`：后端新增共享 `governance_templates` catalog，固定暴露 `cto_governance / architect_governance` 两组只读 role template，以及 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类文档 metadata ref
+- `workforce` 投影现在会额外暴露只读 `governance_templates`，`runtime-provider.future_binding_slots` 也改成从同一 catalog 派生；前端 `WorkforcePanel` 与 `ProviderSettingsDrawer` 现在消费的是同一份后端治理模板真相
+- 本轮保持保守边界：`cto_primary / architect_primary` 仍未进入 runtime 支持矩阵、staffing 动作、CEO 文档型建票链或输出 schema；当前只为 `P2-GOV-002/003/004` 预留兼容形状
+- 本轮新增后端回归覆盖 catalog 数据形状、Workforce projection 与 provider future binding 槽位派生；前端回归覆盖 WorkforcePanel 的只读治理模板展示；整体验证结果更新为 backend `463 passed`、frontend build passed、frontend `73 passed`
+
 完成补记（2026-04-06）：
 
 - `P2-GOV-007`：closeout 证据与文档同步软约束已按最小边界收口，不改状态机，也不新增前端默认读面

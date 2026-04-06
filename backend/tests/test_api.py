@@ -4035,6 +4035,20 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert projection_data["providers"][0]["health_status"] == "HEALTHY"
         assert "saved OpenAI-compatible provider config" in projection_data["providers"][0]["health_reason"]
         assert projection_data["future_binding_slots"][0]["status"] == "NOT_ENABLED"
+        assert projection_data["future_binding_slots"] == [
+            {
+                "target_ref": "role_profile:cto_primary",
+                "label": "CTO / 架构治理",
+                "status": "NOT_ENABLED",
+                "reason": "治理模板角色尚未纳入当前主线。",
+            },
+            {
+                "target_ref": "role_profile:architect_primary",
+                "label": "架构师 / 设计评审",
+                "status": "NOT_ENABLED",
+                "reason": "治理模板角色尚未纳入当前主线。",
+            },
+        ]
         assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
         assert dashboard_data["runtime_status"]["provider_health_summary"] == "HEALTHY"
         assert dashboard_data["runtime_status"]["provider_label"] == "OpenAI Compat"
@@ -10386,6 +10400,19 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
         "frontend_engineer_backup",
         "checker_backup",
     ]
+    assert [template["template_id"] for template in body["governance_templates"]["role_templates"]] == [
+        "cto_governance",
+        "architect_governance",
+    ]
+    assert [kind["kind_ref"] for kind in body["governance_templates"]["document_kinds"]] == [
+        "architecture_brief",
+        "technology_decision",
+        "milestone_plan",
+        "detailed_design",
+        "backlog_recommendation",
+    ]
+    assert body["governance_templates"]["role_templates"][0]["status"] == "NOT_ENABLED"
+    assert body["governance_templates"]["role_templates"][0]["provider_target_ref"] == "role_profile:cto_primary"
 
     frontend_lane = next(
         lane
