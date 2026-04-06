@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-07）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `463 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `464 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `73 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -83,12 +83,21 @@
 
 状态：`已完成（2026-04-07，本轮手动纳入；与主线关系：为后续治理角色和文档型任务链补单点数据结构与只读可见性，不提前启用执行路径）`
 
-- `P2-GOV-001` 已完成：后端新增共享 `governance_templates` catalog，最小固定两组只读 role template：`cto_governance`、`architect_governance`
-- catalog 当前同时暴露五类文档型 metadata ref：`architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation`；只做 metadata，不提前定义 `P2-GOV-003` 的完整输出契约
-- `workforce` 投影现在会额外暴露只读 `governance_templates`，`runtime-provider` 的未来治理角色槽位也改成从同一 catalog 派生；前端 `WorkforcePanel` 与 `ProviderSettingsDrawer` 现在看到的是同一份后端真相，而不是各自硬编码
-- 当前保持保守边界：`cto_primary / architect_primary` 仍未进入 runtime 支持矩阵、staffing 动作或 CEO 文档型建票链；本轮验证基线更新为 backend `463 passed`、frontend build passed、frontend `73 passed`
+- `P2-GOV-001` 已完成：后端先补了治理模板基础目录，最小固定 `cto_governance / architect_governance` 两组只读模板和五类文档 metadata ref
+- 这层基础目录当前已被 `P2-GOV-002` 扩成统一只读 `role_templates_catalog`；`P2-GOV-001` 现在只保留“打底”语义，不再单独作为前端当前真相字段暴露
+- 当前保持保守边界：`cto_primary / architect_primary` 仍未进入 runtime 支持矩阵、staffing 动作或 CEO 文档型建票链；`P2-GOV-001` 只为后续文档链和角色纳入链提供基础结构
 
-本轮完成后，当前剩余未关闭项仍都属于冻结后置或后置增强；当前再次回到“没有可直接开启的默认主线任务”状态。
+### `P2-GOV-002`：统一角色/技能模板目录与组合元数据
+
+状态：`已完成（2026-04-07，本轮手动纳入；与主线关系：先把未来角色纳入所需的角色真相、模板片段和前端只读展示收口成单点目录，不提前启用新工作链）`
+
+- `P2-GOV-002` 已完成：后端新增统一只读 `role_templates_catalog`，固定暴露 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段
+- `workforce` 投影现在改为暴露 `role_templates_catalog`；当前 live worker 还会额外返回 `source_template_id / source_fragment_refs`，把现有 `skill_profile / personality_profile / aesthetic_profile` 映射回高层模板来源
+- `runtime-provider.future_binding_slots` 现在改从同一目录筛出未启用模板，最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`；当前仍保持保守边界，不把这些角色接进 staffing、CEO 建票、runtime 或执行包
+- 本轮已同时重排后续任务包：`P2-GOV-003` 到 `P2-GOV-006` 现在只负责“文档/设计链纳入与边界”，新增 `P2-RLS-001` 到 `P2-RLS-003` 专门承接后续 staffing / CEO / runtime 真实纳入链
+- 当前验证基线更新为 backend `464 passed`、frontend build passed、frontend `73 passed`
+
+本轮完成后，当前剩余未关闭项仍都属于冻结后置、后置增强或新增的角色纳入链；当前再次回到“没有可直接开启的默认主线任务”状态。
 
 ## 已降级出当前主线（冻结后置）
 

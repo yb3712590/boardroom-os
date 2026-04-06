@@ -282,13 +282,149 @@ function workforceData() {
       workers_in_staffing_containment: 0,
     },
     hire_templates: hireTemplates(),
-    governance_templates: {
+    role_templates_catalog: {
       role_templates: [
         {
+          template_id: 'scope_consensus_primary',
+          template_kind: 'live_execution',
+          label: 'Scope Consensus / 需求澄清',
+          role_family: 'frontend_uiux',
+          role_type: 'frontend_engineer',
+          canonical_role_ref: 'ui_designer_primary',
+          alias_role_profile_refs: [],
+          provider_target_ref: 'role_profile:ui_designer_primary',
+          participation_mode: 'HIGH_FREQUENCY_DELIVERY',
+          execution_boundary: '当前用于初始化和 scope 共识链，不承担主线实施主力。',
+          status: 'LIVE',
+          default_document_kind_refs: ['architecture_brief'],
+          responsibility_summary: '负责 scope 共识、需求澄清和早期界面方向收敛。',
+          summary: 'Keep project-init and scope review aligned before implementation.',
+          composition: {
+            fragment_refs: ['skill_frontend_ui', 'delivery_document_first'],
+          },
+        },
+        {
+          template_id: 'frontend_delivery_primary',
+          template_kind: 'live_execution',
+          label: 'Frontend Engineer / 实施交付',
+          role_family: 'frontend_uiux',
+          role_type: 'frontend_engineer',
+          canonical_role_ref: 'frontend_engineer_primary',
+          alias_role_profile_refs: [],
+          provider_target_ref: 'role_profile:frontend_engineer_primary',
+          participation_mode: 'HIGH_FREQUENCY_DELIVERY',
+          execution_boundary: '当前主线 BUILD / REVIEW / closeout 的 maker 实施角色。',
+          status: 'LIVE',
+          default_document_kind_refs: ['detailed_design'],
+          responsibility_summary: '负责前端实现、交付整理和最终 review 包。',
+          summary: 'Own the implementation path for the thin boardroom shell.',
+          composition: {
+            fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
+          },
+        },
+        {
+          template_id: 'quality_checker_primary',
+          template_kind: 'live_execution',
+          label: 'Checker / 质量审查',
+          role_family: 'test_or_checker',
+          role_type: 'checker',
+          canonical_role_ref: 'checker_primary',
+          alias_role_profile_refs: [],
+          provider_target_ref: 'role_profile:checker_primary',
+          participation_mode: 'HIGH_FREQUENCY_REVIEW',
+          execution_boundary: '负责主线 maker-checker 质量门，不承担主实施。',
+          status: 'LIVE',
+          default_document_kind_refs: [],
+          responsibility_summary: '负责交付检查、maker-checker verdict 和 closeout 审查。',
+          summary: 'Keep implementation quality and auditability in check.',
+          composition: {
+            fragment_refs: ['skill_quality_validation', 'review_internal_gate'],
+          },
+        },
+        {
+          template_id: 'backend_execution_reserved',
+          template_kind: 'reserved_execution',
+          label: 'Backend Engineer / 服务交付',
+          role_family: 'backend_engineer',
+          role_type: 'backend_engineer',
+          canonical_role_ref: 'backend_engineer_primary',
+          alias_role_profile_refs: [],
+          provider_target_ref: 'role_profile:backend_engineer_primary',
+          participation_mode: 'HIGH_FREQUENCY_DELIVERY',
+          execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
+          status: 'NOT_ENABLED',
+          default_document_kind_refs: ['detailed_design'],
+          responsibility_summary: '负责服务实现、接口落地和集成切片。',
+          summary: 'Reserved for future backend delivery slices.',
+          composition: {
+            fragment_refs: ['skill_backend_services', 'delivery_execution_loop'],
+          },
+        },
+        {
+          template_id: 'database_execution_reserved',
+          template_kind: 'reserved_execution',
+          label: 'Database Engineer / 数据可靠性',
+          role_family: 'database_engineer',
+          role_type: 'database_engineer',
+          canonical_role_ref: 'database_engineer_primary',
+          alias_role_profile_refs: [],
+          provider_target_ref: 'role_profile:database_engineer_primary',
+          participation_mode: 'HIGH_FREQUENCY_DELIVERY',
+          execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
+          status: 'NOT_ENABLED',
+          default_document_kind_refs: ['detailed_design'],
+          responsibility_summary: '负责数据模型、迁移和数据库可靠性边界。',
+          summary: 'Reserved for future database-heavy slices.',
+          composition: {
+            fragment_refs: ['skill_database_reliability', 'delivery_execution_loop'],
+          },
+        },
+        {
+          template_id: 'platform_sre_reserved',
+          template_kind: 'reserved_execution',
+          label: 'Platform / SRE',
+          role_family: 'platform_sre',
+          role_type: 'platform_sre',
+          canonical_role_ref: 'platform_sre_primary',
+          alias_role_profile_refs: [],
+          provider_target_ref: 'role_profile:platform_sre_primary',
+          participation_mode: 'HIGH_FREQUENCY_DELIVERY',
+          execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
+          status: 'NOT_ENABLED',
+          default_document_kind_refs: ['detailed_design'],
+          responsibility_summary: '负责部署、稳定性和运行环境治理。',
+          summary: 'Reserved for future platform and reliability work.',
+          composition: {
+            fragment_refs: ['skill_platform_operations', 'delivery_execution_loop'],
+          },
+        },
+        {
+          template_id: 'architect_governance',
+          template_kind: 'governance',
+          label: '架构师 / 设计评审',
+          role_family: 'architect',
+          role_type: 'governance_architect',
+          canonical_role_ref: 'architect_primary',
+          alias_role_profile_refs: [],
+          provider_target_ref: 'role_profile:architect_primary',
+          participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
+          execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
+          status: 'NOT_ENABLED',
+          default_document_kind_refs: ['architecture_brief', 'technology_decision', 'detailed_design'],
+          responsibility_summary: '负责设计评审、方案收敛和实现边界校准。',
+          summary: 'Review design detail and keep implementation aligned to architecture.',
+          composition: {
+            fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
+          },
+        },
+        {
           template_id: 'cto_governance',
+          template_kind: 'governance',
           label: 'CTO / 架构治理',
+          role_family: 'cto',
           role_type: 'governance_cto',
-          role_profile_ref: 'cto_primary',
+          canonical_role_ref: 'cto_primary',
+          alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:cto_primary',
           participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
           execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
@@ -299,19 +435,11 @@ function workforceData() {
             'milestone_plan',
             'backlog_recommendation',
           ],
+          responsibility_summary: '负责高杠杆架构判断、关键治理决策和切片方向建议。',
           summary: 'Shape architecture, major decisions, and backlog direction.',
-        },
-        {
-          template_id: 'architect_governance',
-          label: '架构师 / 设计评审',
-          role_type: 'governance_architect',
-          role_profile_ref: 'architect_primary',
-          provider_target_ref: 'role_profile:architect_primary',
-          participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
-          execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
-          status: 'NOT_ENABLED',
-          default_document_kind_refs: ['architecture_brief', 'technology_decision', 'detailed_design'],
-          summary: 'Review design detail and keep implementation aligned to architecture.',
+          composition: {
+            fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
+          },
         },
       ],
       document_kinds: [
@@ -339,6 +467,89 @@ function workforceData() {
           kind_ref: 'backlog_recommendation',
           label: 'TODO / Backlog 建议',
           summary: 'Recommend next execution slices without opening runtime support.',
+        },
+      ],
+      fragments: [
+        {
+          fragment_id: 'skill_frontend_ui',
+          fragment_kind: 'skill_domain',
+          label: 'Frontend / UI',
+          summary: 'Focus on the boardroom shell and UI delivery details.',
+          payload: {
+            primary_domain: 'frontend',
+          },
+        },
+        {
+          fragment_id: 'skill_backend_services',
+          fragment_kind: 'skill_domain',
+          label: 'Backend services',
+          summary: 'Focus on API, orchestration and service integration work.',
+          payload: {
+            primary_domain: 'backend',
+          },
+        },
+        {
+          fragment_id: 'skill_database_reliability',
+          fragment_kind: 'skill_domain',
+          label: 'Database reliability',
+          summary: 'Focus on schema design, migrations and data integrity.',
+          payload: {
+            primary_domain: 'data',
+          },
+        },
+        {
+          fragment_id: 'skill_platform_operations',
+          fragment_kind: 'skill_domain',
+          label: 'Platform / operations',
+          summary: 'Focus on deployment, observability and reliability operations.',
+          payload: {
+            primary_domain: 'platform',
+          },
+        },
+        {
+          fragment_id: 'skill_architecture_governance',
+          fragment_kind: 'skill_domain',
+          label: 'Architecture governance',
+          summary: 'Focus on architecture framing and key decision tradeoffs.',
+          payload: {
+            decision_scope: 'architecture',
+          },
+        },
+        {
+          fragment_id: 'skill_quality_validation',
+          fragment_kind: 'skill_domain',
+          label: 'Quality validation',
+          summary: 'Focus on review rigor, defect detection and release checks.',
+          payload: {
+            primary_domain: 'quality',
+          },
+        },
+        {
+          fragment_id: 'delivery_execution_loop',
+          fragment_kind: 'delivery_mode',
+          label: 'Execution loop',
+          summary: 'Optimized for frequent implementation and rework loops.',
+          payload: {
+            default_mode: 'execution',
+          },
+        },
+        {
+          fragment_id: 'delivery_document_first',
+          fragment_kind: 'delivery_mode',
+          label: 'Document first',
+          summary: 'Optimized for low-frequency, document-led participation.',
+          payload: {
+            default_mode: 'document',
+          },
+        },
+        {
+          fragment_id: 'review_internal_gate',
+          fragment_kind: 'review_mode',
+          label: 'Internal review gate',
+          summary: 'Optimized for internal checker gates before board-facing review.',
+          payload: {
+            default_mode: 'checker_gate',
+          },
         },
       ],
     },
@@ -375,6 +586,8 @@ function workforceData() {
             },
             profile_summary:
               'Skill frontend, delivery slice, balanced. Personality assertive, constructive, fast, focused, direct. Aesthetic functional, balanced, measured.',
+            source_template_id: 'frontend_delivery_primary',
+            source_fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
             last_update_at: '2026-04-01T23:08:00+08:00',
             available_actions: [
               workforceAction('FREEZE', true),
@@ -409,6 +622,8 @@ function workforceData() {
             },
             profile_summary:
               'Skill frontend, surface polish, finish first. Personality cautious, probing, measured, rigorous, concise. Aesthetic polished, layered, restrained.',
+            source_template_id: 'frontend_delivery_primary',
+            source_fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
             last_update_at: '2026-04-01T23:07:00+08:00',
             available_actions: [
               workforceAction('FREEZE', true),
@@ -450,6 +665,8 @@ function workforceData() {
             },
             profile_summary:
               'Skill quality, release guard, evidence first. Personality guarded, probing, measured, rigorous, forensic. Aesthetic systematic, dense, minimal.',
+            source_template_id: 'quality_checker_primary',
+            source_fragment_refs: ['skill_quality_validation', 'review_internal_gate'],
             last_update_at: '2026-04-01T23:08:00+08:00',
             available_actions: [
               workforceAction('FREEZE', true),
@@ -712,16 +929,22 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
     role_bindings: [],
     future_binding_slots: [
       {
-        target_ref: 'role_profile:cto_primary',
-        label: 'CTO / 架构治理',
+        target_ref: 'role_profile:backend_engineer_primary',
+        label: 'Backend Engineer / 服务交付',
         status: 'NOT_ENABLED',
-        reason: '治理模板角色尚未纳入当前主线。',
+        reason: '角色模板已定义，但尚未纳入当前主线。',
       },
       {
         target_ref: 'role_profile:architect_primary',
         label: '架构师 / 设计评审',
         status: 'NOT_ENABLED',
-        reason: '治理模板角色尚未纳入当前主线。',
+        reason: '角色模板已定义，但尚未纳入当前主线。',
+      },
+      {
+        target_ref: 'role_profile:cto_primary',
+        label: 'CTO / 架构治理',
+        status: 'NOT_ENABLED',
+        reason: '角色模板已定义，但尚未纳入当前主线。',
       },
     ],
     ...overrides,
@@ -1519,7 +1742,7 @@ describe('Boardroom UI', () => {
     expect(screen.getByText(/gpt-5.3-codex/i)).toBeInTheDocument()
   })
 
-  it('shows future governance role slots as read-only in runtime provider settings', async () => {
+  it('shows future role slots as read-only in runtime provider settings', async () => {
     installBoardroomMock({
       runtimeProvider: runtimeProviderData(),
     })
@@ -1529,9 +1752,9 @@ describe('Boardroom UI', () => {
 
     await user.click(await screen.findByRole('button', { name: /runtime settings/i }))
 
-    const futureSlots = await screen.findAllByDisplayValue(/not_enabled: 治理模板角色尚未纳入当前主线。/i)
+    const futureSlots = await screen.findAllByDisplayValue(/not_enabled: 角色模板已定义，但尚未纳入当前主线。/i)
 
-    expect(futureSlots).toHaveLength(2)
+    expect(futureSlots).toHaveLength(3)
     for (const slot of futureSlots) {
       expect(slot).toBeDisabled()
     }

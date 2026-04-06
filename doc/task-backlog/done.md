@@ -1726,18 +1726,19 @@
 | ID | 标题 | 预估 |
 |----|------|------|
 | P2-GOV-001 | 定义治理模板数据结构 | 4h |
-| P2-GOV-002 | 定义 CTO / 架构师低频角色模板 | 4h |
-| P2-GOV-003 | 定义架构 / 选型 / 里程碑 / 详细设计 / TODO 文档产物契约 | 4h |
-| P2-GOV-004 | CEO 按治理模板触发文档型任务 | 4h |
-| P2-GOV-005 | 文档型角色默认不参与日常编码 / 测试执行约束 | 3h |
-| P2-GOV-006 | 治理模板与文档型角色测试和文档 | 5h |
+| P2-GOV-002 | 统一角色/技能模板目录与组合元数据 | 4h |
+| P2-GOV-003 | 文档/设计型角色产物契约与可编译输入 | 4h |
+| P2-GOV-004 | CEO 按统一目录触发文档/设计链 | 4h |
+| P2-GOV-005 | 角色纳入顺序与工作链路边界 | 3h |
+| P2-GOV-006 | 统一角色目录的测试、前端说明与文档真相收口 | 5h |
 
 完成补记（2026-04-07）：
 
-- `P2-GOV-001`：后端新增共享 `governance_templates` catalog，固定暴露 `cto_governance / architect_governance` 两组只读 role template，以及 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类文档 metadata ref
-- `workforce` 投影现在会额外暴露只读 `governance_templates`，`runtime-provider.future_binding_slots` 也改成从同一 catalog 派生；前端 `WorkforcePanel` 与 `ProviderSettingsDrawer` 现在消费的是同一份后端治理模板真相
-- 本轮保持保守边界：`cto_primary / architect_primary` 仍未进入 runtime 支持矩阵、staffing 动作、CEO 文档型建票链或输出 schema；当前只为 `P2-GOV-002/003/004` 预留兼容形状
-- 本轮新增后端回归覆盖 catalog 数据形状、Workforce projection 与 provider future binding 槽位派生；前端回归覆盖 WorkforcePanel 的只读治理模板展示；整体验证结果更新为 backend `463 passed`、frontend build passed、frontend `73 passed`
+- `P2-GOV-001`：后端先补了治理模板基础目录，给后续角色目录和文档链打底
+- `P2-GOV-002`：当前统一只读 `role_templates_catalog` 已覆盖 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段；`workforce` 投影现在改为暴露这份统一目录
+- `workforce` worker 还会额外返回 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`
+- 本轮保持保守边界：当前没有把新增角色接进 staffing、CEO 建票、runtime 或执行包；后续真实纳入链已拆到 `P2-GOV-003/004/005/006` 与新增 `P2-RLS-*`
+- 本轮新增后端回归覆盖统一目录数据形状、Workforce projection 的 worker 来源模板信息和 provider future binding 槽位派生；前端回归覆盖 WorkforcePanel 的统一目录展示；整体验证结果更新为 backend `464 passed`、frontend build passed、frontend `73 passed`
 
 完成补记（2026-04-06）：
 

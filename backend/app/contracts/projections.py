@@ -138,28 +138,46 @@ class StaffingHireTemplateProjection(StrictModel):
     aesthetic_profile: dict[str, str] = Field(default_factory=dict)
 
 
-class GovernanceDocumentKindProjection(StrictModel):
+class RoleTemplateDocumentKindProjection(StrictModel):
     kind_ref: str
     label: str
     summary: str
 
 
-class GovernanceRoleTemplateProjection(StrictModel):
-    template_id: str
+class RoleTemplateCompositionProjection(StrictModel):
+    fragment_refs: list[str] = Field(default_factory=list)
+
+
+class RoleTemplateFragmentProjection(StrictModel):
+    fragment_id: str
+    fragment_kind: str
     label: str
+    summary: str
+    payload: dict[str, str] = Field(default_factory=dict)
+
+
+class RoleTemplateProjection(StrictModel):
+    template_id: str
+    template_kind: str
+    label: str
+    role_family: str
     role_type: str
-    role_profile_ref: str
+    canonical_role_ref: str
+    alias_role_profile_refs: list[str] = Field(default_factory=list)
     provider_target_ref: str
     participation_mode: str
     execution_boundary: str
     status: str
     default_document_kind_refs: list[str] = Field(default_factory=list)
+    responsibility_summary: str
     summary: str
+    composition: RoleTemplateCompositionProjection = Field(default_factory=RoleTemplateCompositionProjection)
 
 
-class GovernanceTemplatesProjection(StrictModel):
-    role_templates: list[GovernanceRoleTemplateProjection] = Field(default_factory=list)
-    document_kinds: list[GovernanceDocumentKindProjection] = Field(default_factory=list)
+class RoleTemplatesCatalogProjection(StrictModel):
+    role_templates: list[RoleTemplateProjection] = Field(default_factory=list)
+    document_kinds: list[RoleTemplateDocumentKindProjection] = Field(default_factory=list)
+    fragments: list[RoleTemplateFragmentProjection] = Field(default_factory=list)
 
 
 class WorkforceWorkerProjection(StrictModel):
@@ -174,6 +192,8 @@ class WorkforceWorkerProjection(StrictModel):
     personality_profile: dict[str, str] = Field(default_factory=dict)
     aesthetic_profile: dict[str, str] = Field(default_factory=dict)
     profile_summary: str = Field(min_length=1)
+    source_template_id: str | None = None
+    source_fragment_refs: list[str] = Field(default_factory=list)
     last_update_at: datetime | None = None
     available_actions: list[WorkforceActionProjection] = Field(default_factory=list)
 
@@ -188,7 +208,7 @@ class WorkforceRoleLaneProjection(StrictModel):
 class WorkforceProjectionData(StrictModel):
     summary: WorkforceSummaryProjection
     hire_templates: list[StaffingHireTemplateProjection] = Field(default_factory=list)
-    governance_templates: GovernanceTemplatesProjection = Field(default_factory=GovernanceTemplatesProjection)
+    role_templates_catalog: RoleTemplatesCatalogProjection = Field(default_factory=RoleTemplatesCatalogProjection)
     role_lanes: list[WorkforceRoleLaneProjection]
 
 

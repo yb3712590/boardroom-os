@@ -1,9 +1,9 @@
 import type {
-  GovernanceTemplates,
   DependencyInspectorNode,
   InboxItem,
   PhaseSummary,
   ReviewPack,
+  RoleTemplatesCatalog,
   StaffingHireTemplate,
   WorkforceRoleLane,
   WorkflowSummary,
@@ -109,7 +109,7 @@ export type WorkforceData = {
     workers_in_staffing_containment: number
   }
   hire_templates: StaffingHireTemplate[]
-  governance_templates: GovernanceTemplates
+  role_templates_catalog: RoleTemplatesCatalog
   role_lanes: WorkforceRoleLane[]
 }
 

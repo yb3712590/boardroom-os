@@ -72,7 +72,10 @@
 - provider-to-provider failover 现在只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径，board-facing evidence 也继续只突出 deterministic fallback
 - `P2-GOV-001` 已完成：后端新增单点 `governance_templates` catalog，固定暴露 `cto_governance / architect_governance` 两组只读 role template 和五类文档 metadata ref；`workforce` 投影与 `runtime-provider.future_binding_slots` 现在都从同一 catalog 派生
 - 这轮保持保守边界：治理模板当前只做只读数据结构与前端可见性，不启用 `cto_primary / architect_primary` runtime 执行、不扩 staffing 动作，也不提前定义文档型输出 schema
-- 当前验证基线更新为 backend `463 passed`、frontend build passed、frontend `73 passed`
+- `P2-GOV-002` 已完成：统一只读 `role_templates_catalog` 现在覆盖 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段；`workforce` worker 还会额外暴露 `source_template_id / source_fragment_refs`
+- `runtime-provider.future_binding_slots` 现在改从统一目录筛出未启用模板，最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`；这轮仍不把这些角色接进 staffing、CEO 建票、runtime 或执行包
+- 后续真实纳入链已拆成两段：`P2-GOV-003` 到 `P2-GOV-006` 负责文档/设计链与边界，新增 `P2-RLS-001` 到 `P2-RLS-003` 专门承接 staffing / CEO / runtime 纳入
+- 当前验证基线更新为 backend `464 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 

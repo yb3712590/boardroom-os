@@ -111,8 +111,10 @@ from app.core.constants import (
 )
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.governance_templates import (
-    list_governance_document_kinds,
-    list_governance_role_templates,
+    list_role_template_catalog_entries,
+    list_role_template_document_kinds,
+    list_role_template_fragments,
+    role_template_source_for_worker,
 )
 from app.core.output_schemas import DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
 from app.core.workflow_relationships import (
@@ -310,22 +312,29 @@ def _build_workforce_hire_templates() -> list[StaffingHireTemplateProjection]:
     ]
 
 
-def _build_governance_templates_projection() -> dict[str, Any]:
+def _build_role_templates_catalog_projection() -> dict[str, Any]:
     return {
         "role_templates": [
             {
                 "template_id": str(template["template_id"]),
+                "template_kind": str(template["template_kind"]),
                 "label": str(template["label"]),
+                "role_family": str(template["role_family"]),
                 "role_type": str(template["role_type"]),
-                "role_profile_ref": str(template["role_profile_ref"]),
+                "canonical_role_ref": str(template["canonical_role_ref"]),
+                "alias_role_profile_refs": list(template.get("alias_role_profile_refs") or []),
                 "provider_target_ref": str(template["provider_target_ref"]),
                 "participation_mode": str(template["participation_mode"]),
                 "execution_boundary": str(template["execution_boundary"]),
                 "status": str(template["status"]),
                 "default_document_kind_refs": list(template.get("default_document_kind_refs") or []),
+                "responsibility_summary": str(template["responsibility_summary"]),
                 "summary": str(template["summary"]),
+                "composition": {
+                    "fragment_refs": list((template.get("composition") or {}).get("fragment_refs") or []),
+                },
             }
-            for template in list_governance_role_templates()
+            for template in list_role_template_catalog_entries()
         ],
         "document_kinds": [
             {
@@ -333,7 +342,17 @@ def _build_governance_templates_projection() -> dict[str, Any]:
                 "label": str(kind["label"]),
                 "summary": str(kind["summary"]),
             }
-            for kind in list_governance_document_kinds()
+            for kind in list_role_template_document_kinds()
+        ],
+        "fragments": [
+            {
+                "fragment_id": str(fragment["fragment_id"]),
+                "fragment_kind": str(fragment["fragment_kind"]),
+                "label": str(fragment["label"]),
+                "summary": str(fragment["summary"]),
+                "payload": dict(fragment.get("payload") or {}),
+            }
+            for fragment in list_role_template_fragments()
         ],
     }
 
@@ -1042,6 +1061,10 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
         else:
             activity_state = "EXECUTING"
             lane["active_count"] += 1
+        source_template = role_template_source_for_worker(
+            role_type=role_type,
+            role_profile_ref=str(ticket.get("role_profile_ref") or "") if ticket is not None else None,
+        )
 
         lane["workers"].append(
             WorkforceWorkerProjection(
@@ -1056,6 +1079,10 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
                 personality_profile=dict(employee.get("personality_profile_json") or {}),
                 aesthetic_profile=dict(employee.get("aesthetic_profile_json") or {}),
                 profile_summary=str(employee.get("profile_summary") or ""),
+                source_template_id=(
+                    str(source_template.get("template_id")) if source_template is not None else None
+                ),
+                source_fragment_refs=list((source_template.get("composition") or {}).get("fragment_refs") or []),
                 last_update_at=employee.get("updated_at"),
                 available_actions=_build_workforce_available_actions(employee),
             )
@@ -1081,7 +1108,7 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
         data=WorkforceProjectionData(
             summary=summary,
             hire_templates=_build_workforce_hire_templates(),
-            governance_templates=_build_governance_templates_projection(),
+            role_templates_catalog=_build_role_templates_catalog_projection(),
             role_lanes=role_lanes,
         ),
     )

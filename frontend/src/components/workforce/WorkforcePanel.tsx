@@ -34,6 +34,23 @@ function formatDocumentKindRefs(
   return refs.map((ref) => `${ref}${byRef.get(ref) ? ` (${byRef.get(ref)})` : ''}`).join(', ')
 }
 
+function formatFragmentRefs(refs: string[], byRef: Map<string, string>) {
+  return refs.map((ref) => byRef.get(ref) ?? ref).join(', ')
+}
+
+function formatTemplateKindLabel(templateKind: string) {
+  switch (templateKind) {
+    case 'live_execution':
+      return 'Live execution templates'
+    case 'reserved_execution':
+      return 'Reserved execution templates'
+    case 'governance':
+      return 'Governance templates'
+    default:
+      return templateKind.replaceAll('_', ' ')
+  }
+}
+
 function findAction(actions: WorkforceData['role_lanes'][number]['workers'][number]['available_actions'], actionType: string) {
   return actions.find((action) => action.action_type === actionType) ?? null
 }
@@ -64,9 +81,21 @@ export function WorkforcePanel({
   const [replaceOpenFor, setReplaceOpenFor] = useState<string | null>(null)
 
   const templatesById = new Map((workforce?.hire_templates ?? []).map((template) => [template.template_id, template]))
-  const governanceDocumentKindsByRef = new Map(
-    (workforce?.governance_templates?.document_kinds ?? []).map((kind) => [kind.kind_ref, kind.label]),
+  const roleTemplateDocumentKindsByRef = new Map(
+    (workforce?.role_templates_catalog?.document_kinds ?? []).map((kind) => [kind.kind_ref, kind.label]),
   )
+  const roleTemplateFragmentsByRef = new Map(
+    (workforce?.role_templates_catalog?.fragments ?? []).map((fragment) => [fragment.fragment_id, fragment.label]),
+  )
+  const roleTemplatesByKind = (workforce?.role_templates_catalog?.role_templates ?? []).reduce<
+    Record<string, WorkforceData['role_templates_catalog']['role_templates']>
+  >((accumulator, template) => {
+    if (accumulator[template.template_kind] == null) {
+      accumulator[template.template_kind] = []
+    }
+    accumulator[template.template_kind].push(template)
+    return accumulator
+  }, {})
 
   return (
     <section className="support-panel" aria-labelledby="workforce-panel-title">
@@ -107,37 +136,49 @@ export function WorkforcePanel({
             onRequestHire={onRequestHire}
           />
 
-          {workforce.governance_templates.role_templates.length > 0 ? (
-            <section className="staffing-request-panel" aria-labelledby="governance-templates-title">
+          {(workforce.role_templates_catalog?.role_templates?.length ?? 0) > 0 ? (
+            <section className="staffing-request-panel" aria-labelledby="role-templates-title">
               <div className="section-heading workforce-section-heading">
-                <p className="eyebrow">Governance</p>
-                <h3 id="governance-templates-title">Governance templates</h3>
+                <p className="eyebrow">Catalog</p>
+                <h3 id="role-templates-title">Role template catalog</h3>
               </div>
-              <div className="staffing-template-list">
-                {workforce.governance_templates.role_templates.map((template) => (
-                  <article key={template.template_id} className="staffing-template-card">
-                    <div className="staffing-template-copy">
-                      <strong>{template.label}</strong>
-                      <span>{template.summary}</span>
-                    </div>
-                    <div className="worker-card-state">
-                      <span>{template.status}</span>
-                      <span>{template.participation_mode}</span>
-                    </div>
-                    <div className="worker-card-meta">
-                      <span>{template.role_profile_ref}</span>
-                      <span>{template.provider_target_ref}</span>
-                    </div>
-                    <p className="muted-copy">{template.execution_boundary}</p>
-                    <p className="muted-copy">
-                      {formatDocumentKindRefs(
-                        template.default_document_kind_refs,
-                        governanceDocumentKindsByRef,
-                      )}
-                    </p>
-                  </article>
-                ))}
-              </div>
+              {Object.entries(roleTemplatesByKind).map(([templateKind, templates]) => (
+                <div key={templateKind}>
+                  <p className="field-label">{formatTemplateKindLabel(templateKind)}</p>
+                  <div className="staffing-template-list">
+                    {templates.map((template) => (
+                      <article key={template.template_id} className="staffing-template-card">
+                        <div className="staffing-template-copy">
+                          <strong>{template.label}</strong>
+                          <span>{template.summary}</span>
+                        </div>
+                        <div className="worker-card-state">
+                          <span>{template.status}</span>
+                          <span>{template.participation_mode}</span>
+                        </div>
+                        <div className="worker-card-meta">
+                          <span>{template.canonical_role_ref}</span>
+                          <span>{template.provider_target_ref}</span>
+                        </div>
+                        <p className="muted-copy">{template.responsibility_summary}</p>
+                        <p className="muted-copy">{template.execution_boundary}</p>
+                        <p className="muted-copy">
+                          {formatDocumentKindRefs(
+                            template.default_document_kind_refs,
+                            roleTemplateDocumentKindsByRef,
+                          )}
+                        </p>
+                        <p className="muted-copy">
+                          {formatFragmentRefs(
+                            template.composition.fragment_refs,
+                            roleTemplateFragmentsByRef,
+                          )}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </section>
           ) : null}
 
@@ -184,6 +225,14 @@ export function WorkforcePanel({
                           personalityProfile={worker.personality_profile}
                           aestheticProfile={worker.aesthetic_profile}
                         />
+                        {worker.source_template_id ? (
+                          <p className="muted-copy">
+                            {`Source template ${worker.source_template_id}`}
+                            {(worker.source_fragment_refs ?? []).length > 0
+                              ? ` · ${formatFragmentRefs(worker.source_fragment_refs ?? [], roleTemplateFragmentsByRef)}`
+                              : ''}
+                          </p>
+                        ) : null}
                         <div className="worker-action-row">
                           {freezeAction?.enabled ? (
                             <Button

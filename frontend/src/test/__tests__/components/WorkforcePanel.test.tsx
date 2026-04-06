@@ -34,19 +34,64 @@ describe('WorkforcePanel', () => {
             workers_in_staffing_containment: 0,
           },
           hire_templates: [],
-          governance_templates: {
+          role_templates_catalog: {
             role_templates: [
               {
+                template_id: 'frontend_delivery_primary',
+                template_kind: 'live_execution',
+                label: 'Frontend Engineer / 实施交付',
+                role_family: 'frontend_uiux',
+                role_type: 'frontend_engineer',
+                canonical_role_ref: 'frontend_engineer_primary',
+                alias_role_profile_refs: [],
+                provider_target_ref: 'role_profile:frontend_engineer_primary',
+                participation_mode: 'HIGH_FREQUENCY_DELIVERY',
+                execution_boundary: '负责当前主线 BUILD / REVIEW / closeout 的前端实施与交付整理。',
+                status: 'LIVE',
+                default_document_kind_refs: ['detailed_design'],
+                responsibility_summary: '承担前端实施、交付整理和视觉落地。',
+                summary: 'Own the thin boardroom shell implementation path.',
+                composition: {
+                  fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
+                },
+              },
+              {
+                template_id: 'backend_execution_reserved',
+                template_kind: 'reserved_execution',
+                label: 'Backend Engineer / 服务交付',
+                role_family: 'backend_engineer',
+                role_type: 'backend_engineer',
+                canonical_role_ref: 'backend_engineer_primary',
+                alias_role_profile_refs: [],
+                provider_target_ref: 'role_profile:backend_engineer_primary',
+                participation_mode: 'HIGH_FREQUENCY_DELIVERY',
+                execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
+                status: 'NOT_ENABLED',
+                default_document_kind_refs: ['detailed_design'],
+                responsibility_summary: '负责服务实现、接口落地和集成切片。',
+                summary: 'Reserved for future service delivery slices.',
+                composition: {
+                  fragment_refs: ['skill_backend_services', 'delivery_execution_loop'],
+                },
+              },
+              {
                 template_id: 'cto_governance',
+                template_kind: 'governance',
                 label: 'CTO / 架构治理',
+                role_family: 'cto',
                 role_type: 'governance_cto',
-                role_profile_ref: 'cto_primary',
+                canonical_role_ref: 'cto_primary',
+                alias_role_profile_refs: [],
                 provider_target_ref: 'role_profile:cto_primary',
                 participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
                 execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
                 status: 'NOT_ENABLED',
                 default_document_kind_refs: ['architecture_brief', 'technology_decision'],
+                responsibility_summary: '负责高杠杆架构决策、治理边界和路线判断。',
                 summary: 'Own high-leverage architecture and governance decisions.',
+                composition: {
+                  fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
+                },
               },
             ],
             document_kinds: [
@@ -59,6 +104,53 @@ describe('WorkforcePanel', () => {
                 kind_ref: 'technology_decision',
                 label: '技术选型',
                 summary: 'Capture option comparisons and final decisions.',
+              },
+            ],
+            fragments: [
+              {
+                fragment_id: 'skill_frontend_ui',
+                fragment_kind: 'skill_domain',
+                label: 'Frontend / UI',
+                summary: 'Focus on the boardroom shell and UI delivery details.',
+                payload: {
+                  primary_domain: 'frontend',
+                },
+              },
+              {
+                fragment_id: 'skill_backend_services',
+                fragment_kind: 'skill_domain',
+                label: 'Backend services',
+                summary: 'Focus on API, orchestration and service integration work.',
+                payload: {
+                  primary_domain: 'backend',
+                },
+              },
+              {
+                fragment_id: 'skill_architecture_governance',
+                fragment_kind: 'skill_domain',
+                label: 'Architecture governance',
+                summary: 'Focus on architecture framing and key decision tradeoffs.',
+                payload: {
+                  decision_scope: 'architecture',
+                },
+              },
+              {
+                fragment_id: 'delivery_execution_loop',
+                fragment_kind: 'delivery_mode',
+                label: 'Execution loop',
+                summary: 'Optimized for frequent implementation and rework loops.',
+                payload: {
+                  default_mode: 'execution',
+                },
+              },
+              {
+                fragment_id: 'delivery_document_first',
+                fragment_kind: 'delivery_mode',
+                label: 'Document first',
+                summary: 'Optimized for low-frequency, document-led participation.',
+                payload: {
+                  default_mode: 'document',
+                },
               },
             ],
           },
@@ -95,6 +187,8 @@ describe('WorkforcePanel', () => {
                   },
                   profile_summary:
                     'Skill frontend, delivery slice, balanced. Personality assertive, constructive, fast, focused, direct. Aesthetic functional, balanced, measured.',
+                  source_template_id: 'frontend_delivery_primary',
+                  source_fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
                   last_update_at: '2026-04-04T18:00:00+08:00',
                   available_actions: [],
                 },
@@ -114,9 +208,16 @@ describe('WorkforcePanel', () => {
     expect(screen.getByText('Current profile')).toBeInTheDocument()
     expect(screen.getByText(/Skill frontend, delivery slice, balanced/i)).toBeInTheDocument()
     expect(screen.getByText(/risk posture: assertive/i)).toBeInTheDocument()
+    expect(screen.getByText('Role template catalog')).toBeInTheDocument()
+    expect(screen.getByText('Live execution templates')).toBeInTheDocument()
+    expect(screen.getByText('Reserved execution templates')).toBeInTheDocument()
     expect(screen.getByText('Governance templates')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Source template frontend_delivery_primary.*Execution loop/i),
+    ).toBeInTheDocument()
     expect(screen.getByText(/CTO \/ 架构治理/i)).toBeInTheDocument()
+    expect(screen.getByText(/Backend Engineer \/ 服务交付/i)).toBeInTheDocument()
     expect(screen.getByText(/architecture_brief/i)).toBeInTheDocument()
-    expect(screen.getByText(/not_enabled/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/not_enabled/i).length).toBeGreaterThan(0)
   })
 })

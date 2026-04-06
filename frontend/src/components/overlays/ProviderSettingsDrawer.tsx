@@ -447,7 +447,7 @@ export function ProviderSettingsDrawer({
 
             {providerData?.future_binding_slots?.length ? (
               <div>
-                <span className="field-label">Future governance roles</span>
+                <span className="field-label">Future role bindings</span>
                 <div className="provider-settings-grid">
                   {providerData.future_binding_slots.map((slot) => (
                     <label key={slot.target_ref}>

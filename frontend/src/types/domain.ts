@@ -69,6 +69,8 @@ export type WorkforceWorker = {
   personality_profile: Record<string, string>
   aesthetic_profile: Record<string, string>
   profile_summary: string
+  source_template_id?: string | null
+  source_fragment_refs?: string[]
   last_update_at?: string | null
   available_actions: WorkforceWorkerAction[]
 }
@@ -93,28 +95,44 @@ export type StaffingHireTemplate = {
   aesthetic_profile: Record<string, string>
 }
 
-export type GovernanceDocumentKind = {
+export type RoleTemplateDocumentKind = {
   kind_ref: string
   label: string
   summary: string
 }
 
-export type GovernanceRoleTemplate = {
-  template_id: string
+export type RoleTemplateFragment = {
+  fragment_id: string
+  fragment_kind: string
   label: string
+  summary: string
+  payload: Record<string, string>
+}
+
+export type RoleTemplate = {
+  template_id: string
+  template_kind: string
+  label: string
+  role_family: string
   role_type: string
-  role_profile_ref: string
+  canonical_role_ref: string
+  alias_role_profile_refs: string[]
   provider_target_ref: string
   participation_mode: string
   execution_boundary: string
   status: string
   default_document_kind_refs: string[]
+  responsibility_summary: string
   summary: string
+  composition: {
+    fragment_refs: string[]
+  }
 }
 
-export type GovernanceTemplates = {
-  role_templates: GovernanceRoleTemplate[]
-  document_kinds: GovernanceDocumentKind[]
+export type RoleTemplatesCatalog = {
+  role_templates: RoleTemplate[]
+  document_kinds: RoleTemplateDocumentKind[]
+  fragments: RoleTemplateFragment[]
 }
 
 export type ReviewPackEmployeeChange = {

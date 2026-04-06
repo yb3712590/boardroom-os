@@ -4034,19 +4034,36 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert projection_data["providers"][0]["fallback_provider_ids"] == []
         assert projection_data["providers"][0]["health_status"] == "HEALTHY"
         assert "saved OpenAI-compatible provider config" in projection_data["providers"][0]["health_reason"]
-        assert projection_data["future_binding_slots"][0]["status"] == "NOT_ENABLED"
         assert projection_data["future_binding_slots"] == [
             {
-                "target_ref": "role_profile:cto_primary",
-                "label": "CTO / 架构治理",
+                "target_ref": "role_profile:backend_engineer_primary",
+                "label": "Backend Engineer / 服务交付",
                 "status": "NOT_ENABLED",
-                "reason": "治理模板角色尚未纳入当前主线。",
+                "reason": "角色模板已定义，但尚未纳入当前主线。",
+            },
+            {
+                "target_ref": "role_profile:database_engineer_primary",
+                "label": "Database Engineer / 数据可靠性",
+                "status": "NOT_ENABLED",
+                "reason": "角色模板已定义，但尚未纳入当前主线。",
+            },
+            {
+                "target_ref": "role_profile:platform_sre_primary",
+                "label": "Platform / SRE",
+                "status": "NOT_ENABLED",
+                "reason": "角色模板已定义，但尚未纳入当前主线。",
             },
             {
                 "target_ref": "role_profile:architect_primary",
                 "label": "架构师 / 设计评审",
                 "status": "NOT_ENABLED",
-                "reason": "治理模板角色尚未纳入当前主线。",
+                "reason": "角色模板已定义，但尚未纳入当前主线。",
+            },
+            {
+                "target_ref": "role_profile:cto_primary",
+                "label": "CTO / 架构治理",
+                "status": "NOT_ENABLED",
+                "reason": "角色模板已定义，但尚未纳入当前主线。",
             },
         ]
         assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
@@ -10400,19 +10417,37 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
         "frontend_engineer_backup",
         "checker_backup",
     ]
-    assert [template["template_id"] for template in body["governance_templates"]["role_templates"]] == [
-        "cto_governance",
+    assert [template["template_id"] for template in body["role_templates_catalog"]["role_templates"]] == [
+        "scope_consensus_primary",
+        "frontend_delivery_primary",
+        "quality_checker_primary",
+        "backend_execution_reserved",
+        "database_execution_reserved",
+        "platform_sre_reserved",
         "architect_governance",
+        "cto_governance",
     ]
-    assert [kind["kind_ref"] for kind in body["governance_templates"]["document_kinds"]] == [
+    assert [kind["kind_ref"] for kind in body["role_templates_catalog"]["document_kinds"]] == [
         "architecture_brief",
         "technology_decision",
         "milestone_plan",
         "detailed_design",
         "backlog_recommendation",
     ]
-    assert body["governance_templates"]["role_templates"][0]["status"] == "NOT_ENABLED"
-    assert body["governance_templates"]["role_templates"][0]["provider_target_ref"] == "role_profile:cto_primary"
+    assert [fragment["fragment_id"] for fragment in body["role_templates_catalog"]["fragments"]] == [
+        "skill_frontend_ui",
+        "skill_backend_services",
+        "skill_database_reliability",
+        "skill_platform_operations",
+        "skill_architecture_governance",
+        "skill_quality_validation",
+        "delivery_execution_loop",
+        "delivery_document_first",
+        "review_internal_gate",
+    ]
+    assert body["role_templates_catalog"]["role_templates"][0]["status"] == "LIVE"
+    assert body["role_templates_catalog"]["role_templates"][0]["canonical_role_ref"] == "ui_designer_primary"
+    assert body["role_templates_catalog"]["role_templates"][3]["provider_target_ref"] == "role_profile:backend_engineer_primary"
 
     frontend_lane = next(
         lane
@@ -10427,6 +10462,11 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
     assert active_frontend_worker["employment_state"] == "ACTIVE"
     assert active_frontend_worker["profile_summary"]
     assert active_frontend_worker["skill_profile"]["primary_domain"] == "frontend"
+    assert active_frontend_worker["source_template_id"] == "frontend_delivery_primary"
+    assert active_frontend_worker["source_fragment_refs"] == [
+        "skill_frontend_ui",
+        "delivery_execution_loop",
+    ]
     assert active_frontend_worker["available_actions"] == [
         {
             "action_type": "FREEZE",
