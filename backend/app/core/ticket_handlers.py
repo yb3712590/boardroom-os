@@ -3970,6 +3970,11 @@ def _complete_ticket_locked(
             "node_id": payload.node_id,
             "completion_summary": payload.completion_summary,
             "artifact_refs": payload.artifact_refs,
+            "documentation_updates": (
+                list(result_payload.get("documentation_updates") or [])
+                if isinstance(result_payload, dict)
+                else []
+            ),
             "board_review_requested": open_board_review_now,
         },
         occurred_at=received_at,

@@ -12,6 +12,11 @@
 - 本地默认 + 可选对象存储双后端
 - 更强的远程 worker handoff 与公网暴露边界
 
+当前补记：
+
+- `P1-CLN-002` 已从当前批次降级为冻结后置：主线 command 虽已脱离 `tenant_id/workspace_id`，但 runtime、冻结 contracts 和共享读面仍保留这组 shape
+- `P1-CLN-003` 已从当前批次降级为冻结后置：`ticket-result-submit` 已脱离 upload session，但 upload 导入入口与 session 存储仍是当前主线需要保留的桥接面
+
 ## 明确后置的方向
 
 在本地 MVP 闭环完成前，不主动推进下面这些方向：

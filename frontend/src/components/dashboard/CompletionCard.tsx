@@ -50,7 +50,20 @@ export function CompletionCard({ summary, onOpenReview }: CompletionCardProps) {
           <span>Closeout refs</span>
           <strong>{summary.closeout_artifact_refs.length}</strong>
         </div>
+        <div>
+          <span>Documentation updates</span>
+          <strong>{summary.documentation_update_count}</strong>
+        </div>
+        <div>
+          <span>Follow-up docs</span>
+          <strong>{summary.documentation_follow_up_count}</strong>
+        </div>
       </div>
+      <p className="completion-card-summary">
+        <strong>Documentation sync</strong>
+        {': '}
+        <span>{summary.documentation_sync_summary ?? 'No documentation sync updates were recorded.'}</span>
+      </p>
       <p className="completion-card-summary">{summary.summary}</p>
       <div className="completion-card-actions">
         <Button type="button" variant="secondary" onClick={() => onOpenReview(summary.final_review_pack_id)}>

@@ -93,4 +93,78 @@ describe('ReviewRoomDrawer', () => {
     expect(screen.getAllByText(/surface polish/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/risk posture: cautious/i).length).toBeGreaterThan(0)
   })
+
+  it('renders evidence source refs when present', () => {
+    render(
+      <ReviewRoomDrawer
+        isOpen
+        loading={false}
+        reviewData={{
+          review_pack: {
+            meta: {
+              approval_id: 'apr_002',
+              review_pack_id: 'brp_002',
+              review_pack_version: 1,
+              workflow_id: 'wf_002',
+              review_type: 'VISUAL_MILESTONE',
+              created_at: '2026-04-06T12:00:00+08:00',
+              priority: 'high',
+            },
+            subject: {
+              title: 'Approve final delivery package',
+            },
+            trigger: {
+              trigger_event_id: 'evt_002',
+              trigger_reason: 'Final package is ready for board review.',
+              why_now: 'Need final approval before completion.',
+            },
+            recommendation: {
+              recommended_action: 'APPROVE',
+              recommended_option_id: 'approve_delivery',
+              summary: 'Approve the final package.',
+            },
+            options: [
+              {
+                option_id: 'approve_delivery',
+                label: 'Approve delivery',
+                summary: 'Approve the final package.',
+              },
+            ],
+            evidence_summary: [
+              {
+                evidence_id: 'ev_closeout_docs',
+                label: 'Documentation sync',
+                summary: 'Closeout recorded one documentation follow-up item.',
+                source_ref: 'art://runtime/tkt_closeout_001/delivery-closeout-package.json',
+              } as never,
+            ],
+            decision_form: {
+              allowed_actions: ['APPROVE', 'REJECT'],
+              command_target_version: 1,
+              requires_comment_on_reject: true,
+              requires_constraint_patch_on_modify: false,
+            },
+          },
+          available_actions: ['APPROVE', 'REJECT'],
+          draft_defaults: {
+            selected_option_id: 'approve_delivery',
+            comment_template: '',
+          },
+        }}
+        inspectorData={null}
+        inspectorLoading={false}
+        error={null}
+        submittingAction={null}
+        onClose={vi.fn()}
+        onOpenInspector={vi.fn()}
+        onApprove={vi.fn().mockResolvedValue(undefined)}
+        onReject={vi.fn().mockResolvedValue(undefined)}
+        onModifyConstraints={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByText('Documentation sync')).toBeInTheDocument()
+    expect(screen.getByText('Source ref')).toBeInTheDocument()
+    expect(screen.getByText('art://runtime/tkt_closeout_001/delivery-closeout-package.json')).toBeInTheDocument()
+  })
 })

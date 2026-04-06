@@ -1723,7 +1723,23 @@
 - closeout 票创建与 internal closeout review 文案现在明确要求 checker 同时看 final evidence、handoff notes 和文档同步说明；`FOLLOW_UP_REQUIRED` 仍按 soft rule 处理，只有在它已经影响交付完整性时才应转成 blocking finding
 - 本轮新增后端测试覆盖了 closeout schema 校验、runtime review 摘要注入，以及 closeout checker 在 `FOLLOW_UP_REQUIRED` 下的 `APPROVED_WITH_NOTES / CHANGES_REQUIRED` 两条主路径
 
-### 4.4 UI 打磨 (P2-UI-001 到 P2-UI-008)
+### 4.4 M7 集成、文档与交付口径收口 (P2-M7-001 到 P2-M7-004)
+
+| ID | 标题 | 预估 |
+|----|------|------|
+| P2-M7-001 | 主线路线重排与入口文档收口 | 2h |
+| P2-M7-002 | Review Room 证据来源可见性收口 | 2h |
+| P2-M7-003 | Dashboard completion 文档同步状态可见性 | 3h |
+| P2-M7-004 | M7 验收矩阵与最小回归入口收口 | 2h |
+
+完成补记（2026-04-06）：
+
+- `P2-M7-001`：`doc/TODO.md`、`doc/task-backlog*.md`、`doc/milestone-timeline.md` 和 `doc/todo/postponed.md` 已统一切到 `M7` 为当前主线；`P1-CLN-002/003` 明确降级为冻结后置，而不是误写成已完成
+- `P2-M7-002`：前端 `ReviewPack.evidence_summary` 已补回 `source_ref` 契约，`ReviewRoomDrawer` 现在会把 evidence 来源 ref 直接展示给董事会读面
+- `P2-M7-003`：closeout 完成事件会显式带上 `documentation_updates`，dashboard completion 投影会汇总 `documentation_sync_summary / documentation_update_count / documentation_follow_up_count`，完成卡片也已展示这组信息
+- `P2-M7-004`：新增后端 completion 投影回归，以及 `ReviewRoomDrawer`、`CompletionCard` 前端组件回归；本轮全量验证结果更新为 backend `436 passed`、frontend build passed、frontend `66 passed`
+
+### 4.5 UI 打磨 (P2-UI-001 到 P2-UI-008)
 
 | ID | 标题 | 预估 |
 |----|------|------|
@@ -1747,7 +1763,7 @@
 - `P2-UI-007`：`ReviewRoomDrawer`、`MeetingRoomDrawer`、`IncidentDrawer`、`DependencyInspectorDrawer`、`ProviderSettingsDrawer` 改成按需懒加载；`useSSE` 对 clustered `boardroom-event` 失效通知默认做 `500ms` debounce
 - `P2-UI-008`：补了 `BoardGateIndicator`、`InboxWell`、`WorkflowRiver`、`WorkforcePanel`、`EventTicker` 的最小前端回归测试
 
-### 4.5 文档 (P2-DOC-001 到 P2-DOC-010)
+### 4.6 文档 (P2-DOC-001 到 P2-DOC-010)
 
 | ID | 标题 | 预估 |
 |----|------|------|

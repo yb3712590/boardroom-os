@@ -58,6 +58,9 @@ class DashboardCompletionSummaryProjection(StrictModel):
     board_comment: str | None = None
     artifact_refs: list[str]
     closeout_artifact_refs: list[str]
+    documentation_sync_summary: str | None = None
+    documentation_update_count: int = 0
+    documentation_follow_up_count: int = 0
 
 
 class NodeCountsProjection(StrictModel):

@@ -11304,6 +11304,9 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
     assert completion_summary["closeout_artifact_refs"] == [
         f"art://runtime/{expected_closeout_ticket_id}/delivery-closeout-package.json"
     ]
+    assert completion_summary["documentation_sync_summary"] == "2 documentation updates recorded; 0 follow-up items."
+    assert completion_summary["documentation_update_count"] == 2
+    assert completion_summary["documentation_follow_up_count"] == 0
     stored_artifact = repository.get_artifact_by_ref(
         f"art://runtime/{expected_closeout_ticket_id}/delivery-closeout-package.json"
     )
@@ -11323,6 +11326,48 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
             "summary": "No public capability or runtime flow changed in this round.",
         },
     ]
+
+
+def test_completion_summary_handles_missing_closeout_documentation_updates(client):
+    workflow_id, scope_approval = _project_init_to_scope_approval(client)
+    _approve_open_review(client, scope_approval, idempotency_suffix="closeout-no-docs-scope")
+    repository = client.app.state.repository
+    approval = next(
+        item
+        for item in repository.list_open_approvals()
+        if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
+    )
+
+    client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": "option_a",
+            "board_comment": "Proceed without documentation summary.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:closeout-no-docs-final",
+        },
+    )
+
+    _, expected_closeout_ticket_id, _ = _expected_closeout_ids(repository, approval)
+    with repository.connection() as connection:
+        closeout_terminal_event = repository.get_latest_ticket_terminal_event(connection, expected_closeout_ticket_id)
+        payload = dict(closeout_terminal_event["payload"])
+        payload.pop("documentation_updates", None)
+        connection.execute(
+            "UPDATE events SET payload_json = ? WHERE event_id = ?",
+            (json.dumps(payload, sort_keys=True), closeout_terminal_event["event_id"]),
+        )
+        repository.refresh_projections(connection)
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+    assert completion_summary["documentation_sync_summary"] is None
+    assert completion_summary["documentation_update_count"] == 0
+    assert completion_summary["documentation_follow_up_count"] == 0
 
 
 def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_handoff_is_complete(client):

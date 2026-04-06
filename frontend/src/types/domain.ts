@@ -152,6 +152,7 @@ export type ReviewPack = {
     evidence_id: string
     label: string
     summary: string
+    source_ref?: string | null
   }>
   delta_summary?: string | null
   maker_checker_summary?: {

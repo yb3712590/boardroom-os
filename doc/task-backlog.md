@@ -13,16 +13,17 @@
 
 | 指标 | 数值 | 说明 |
 |------|------|------|
-| 总任务数 | 131 | 原始编号保留，新增编号只用于本轮文档重整与后续条件批次 |
-| 已完成 / 已收口 | 111 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
-| 当前仍未关闭 | 20 | 当前工作集保存在 `task-backlog/active.md` |
-| 总预估工时 | 490h | 在原表基础上补入本轮新增任务 |
+| 总任务数 | 136 | 原始编号保留，新增编号继续用于路线重排、M7 首批和条件批次 |
+| 已完成 / 已收口 | 115 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 当前仍未关闭 | 21 | 当前工作集保存在 `task-backlog/active.md` |
+| 总预估工时 | 502h | 在原表基础上补入本轮新增任务 |
 
 ## 当前活跃区域
 
 | 区域 | 任务范围 | 当前状态 | 默认看哪里 |
 |------|----------|----------|------------|
-| 代码清理 | `P1-CLN-002` 到 `P1-CLN-003` | 进行中 | [task-backlog/active.md](task-backlog/active.md) |
+| M7 收口 | `P2-M7-005` | 进行中 | [task-backlog/active.md](task-backlog/active.md) |
+| 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | [task-backlog/active.md](task-backlog/active.md) |
 | 检索层 | `P2-RET-006` | 条件纳入 | [task-backlog/active.md](task-backlog/active.md) |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 后置增强 | [task-backlog/active.md](task-backlog/active.md) |
 | 治理模板与交付口径 | `P2-GOV-001` 到 `P2-GOV-007` | 后置增强 / 条件纳入 | [task-backlog/active.md](task-backlog/active.md) |

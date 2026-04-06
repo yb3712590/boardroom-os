@@ -14,32 +14,29 @@
 
 ## 当前基线（2026-04-06）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `435 passed`
-- frontend：`npm run build` -> passed，`npm run test:run` -> `64 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `436 passed`
+- frontend：`npm run build` -> passed，`npm run test:run` -> `66 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
 ## 当前批次
 
-### `P2-B`：代码瘦身与冻结能力隔离
+### `P2-M7`：集成、文档与交付口径收口
 
-状态：`阻塞已确认，等待前置条件改变`
+状态：`进行中（首批 4 项已完成，继续推进最小证据消费面）`
+
+- `P2-M7-001` 已完成：`TODO`、任务库、里程碑和冻结后置文档已改成 `M7` 为当前主线，`P1-CLN-002/003` 明确降级为冻结后置而非已完成
+- `P2-M7-002` 已完成：Review Room 现在会展示 evidence `source_ref`，前端契约已对齐后端现状
+- `P2-M7-003` 已完成：dashboard completion 投影与完成卡片现在会显示 closeout 文档同步摘要、更新数和 follow-up 数
+- `P2-M7-004` 已完成：M7 首批最小回归已补齐，当前验证基线更新为 backend `436 passed`、frontend build passed、frontend `66 passed`
+- `P2-M7-005` 进行中：把 completion / review room 已露出的 `artifact_ref`、`source_ref` 接到现有只读查看入口，不新建 artifact 浏览器
+
+后续顺序统一看 [milestone-timeline.md](milestone-timeline.md)。
+
+## 已降级出当前主线（冻结后置）
 
 - `P1-CLN-002`：主线 command 侧已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留 `tenant_id/workspace_id` shape
 - `P1-CLN-003`：`ticket-result-submit` 已与 upload session 解耦，但 upload 导入入口和 upload session 存储仍保留
-
-详细任务与 blocker 统一看 [task-backlog/active.md](task-backlog/active.md)。
-
-### `P2-C`：检索、Provider 路由与发布准备
-
-状态：`进行中（检索首批已完成，Provider 未开始）`
-
-- `P2-RET-001` 到 `P2-RET-005` 已完成：本地 SQLite 已新增 `review / incident / artifact` 三通道 FTS5 检索索引，repository 检索改走 FTS 命中，`Context Compiler` 继续消费原有 retrieval summary 契约
-- artifact 检索仍保留原有“先看路径 / kind / media_type 粗匹配，再消费正文命中”的边界，避免把当前输入附件正文误回灌成历史检索摘要
-- `P2-RET-006` 仍留在 `C1` 条件批次；当前没有证据表明要提前打开执行包最小组织上下文收口
-- `P2-PRV-*` 只有在证明当前主链不够用后才打开
-- 发布准备仍是后续顺序的一部分，但当前不单独开活跃任务面
-
-后续顺序统一看 [milestone-timeline.md](milestone-timeline.md)。
+- 这两项 blocker 没有消失，只是不再占用当前批次；详细约束统一看 [task-backlog/active.md](task-backlog/active.md) 和 [todo/postponed.md](todo/postponed.md)
 
 ## `C1` 条件批次
 

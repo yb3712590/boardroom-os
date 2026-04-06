@@ -80,6 +80,9 @@ export type DashboardData = {
     board_comment: string | null
     artifact_refs: string[]
     closeout_artifact_refs: string[]
+    documentation_sync_summary: string | null
+    documentation_update_count: number
+    documentation_follow_up_count: number
   } | null
   event_stream_preview: Array<{
     event_id: string

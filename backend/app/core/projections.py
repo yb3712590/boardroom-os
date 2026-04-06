@@ -449,6 +449,11 @@ def _build_dashboard_completion_summary(
     closeout_completed_at = closeout_terminal_event.get("occurred_at")
     if closeout_completed_at is None:
         return None
+    (
+        documentation_sync_summary,
+        documentation_update_count,
+        documentation_follow_up_count,
+    ) = _summarize_closeout_documentation_updates(closeout_payload.get("documentation_updates"))
 
     return DashboardCompletionSummaryProjection(
         workflow_id=workflow_id,
@@ -468,7 +473,40 @@ def _build_dashboard_completion_summary(
         board_comment=resolution.get("board_comment"),
         artifact_refs=list((selected_option or {}).get("artifact_refs") or []),
         closeout_artifact_refs=list(closeout_payload.get("artifact_refs") or []),
+        documentation_sync_summary=documentation_sync_summary,
+        documentation_update_count=documentation_update_count,
+        documentation_follow_up_count=documentation_follow_up_count,
     )
+
+
+def _summarize_closeout_documentation_updates(documentation_updates: Any) -> tuple[str | None, int, int]:
+    if not isinstance(documentation_updates, list) or not documentation_updates:
+        return None, 0, 0
+
+    documentation_update_count = 0
+    documentation_follow_up_count = 0
+    for item in documentation_updates:
+        if not isinstance(item, dict):
+            continue
+        doc_ref = str(item.get("doc_ref") or "").strip()
+        status = str(item.get("status") or "").strip()
+        summary = str(item.get("summary") or "").strip()
+        if not doc_ref or not status or not summary:
+            continue
+        documentation_update_count += 1
+        if status == "FOLLOW_UP_REQUIRED":
+            documentation_follow_up_count += 1
+
+    if documentation_update_count == 0:
+        return None, 0, 0
+
+    update_label = "update" if documentation_update_count == 1 else "updates"
+    follow_up_label = "item" if documentation_follow_up_count == 1 else "items"
+    summary = (
+        f"{documentation_update_count} documentation {update_label} recorded; "
+        f"{documentation_follow_up_count} follow-up {follow_up_label}."
+    )
+    return summary, documentation_update_count, documentation_follow_up_count
 
 
 def _empty_phase_counts() -> dict[str, int]:

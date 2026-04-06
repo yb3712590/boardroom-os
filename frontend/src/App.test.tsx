@@ -1054,6 +1054,9 @@ function installBoardroomMock(options?: {
           board_comment: 'Proceed with option A.',
           artifact_refs: ['art://runtime/tkt_visual_002/option-a.png'],
           closeout_artifact_refs: ['art://runtime/tkt_closeout_001/delivery-closeout-package.json'],
+          documentation_sync_summary: '2 documentation updates recorded; 0 follow-up items.',
+          documentation_update_count: 2,
+          documentation_follow_up_count: 0,
         },
       })
       state.inbox = inboxData()

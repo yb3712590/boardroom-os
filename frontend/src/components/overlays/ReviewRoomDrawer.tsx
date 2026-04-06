@@ -128,6 +128,12 @@ export function ReviewRoomDrawer({
                   <li key={item.evidence_id}>
                     <strong>{item.label}</strong>
                     <span>{item.summary}</span>
+                    {item.source_ref ? (
+                      <>
+                        <span>Source ref</span>
+                        <span>{item.source_ref}</span>
+                      </>
+                    ) : null}
                   </li>
                 ))}
                 {(reviewPack.evidence_summary ?? []).length === 0 ? (
