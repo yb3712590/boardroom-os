@@ -20,6 +20,8 @@ _WORKING_TICKET_STATUSES = {
     "LEASED",
     "EXECUTING",
 }
+_RECENT_COMPLETED_TICKET_LIMIT = 5
+_RECENT_CLOSED_MEETING_LIMIT = 3
 
 
 def _serialize_timestamp(value: datetime | None) -> str | None:
@@ -30,6 +32,77 @@ def _serialize_timestamp(value: datetime | None) -> str | None:
 
 def _enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
+
+
+def _build_recent_completed_ticket_reuse_candidates(
+    repository: ControlPlaneRepository,
+    *,
+    tickets: list[dict[str, Any]],
+    connection,
+) -> list[dict[str, Any]]:
+    completed_tickets = [ticket for ticket in tickets if ticket["status"] == "COMPLETED"]
+    candidates: list[dict[str, Any]] = []
+    for ticket in completed_tickets[:_RECENT_COMPLETED_TICKET_LIMIT]:
+        ticket_id = str(ticket["ticket_id"])
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+        artifact_refs = [
+            str(artifact.get("artifact_ref") or "")
+            for artifact in repository.list_ticket_artifacts(ticket_id, connection=connection)
+            if str(artifact.get("artifact_ref") or "").strip()
+        ]
+        completion_payload = terminal_event.get("payload") if terminal_event is not None else {}
+        summary = str(created_spec.get("summary") or "").strip() or str(
+            (completion_payload or {}).get("completion_summary") or ""
+        ).strip()
+        completed_at = (
+            terminal_event.get("occurred_at")
+            if terminal_event is not None and str(terminal_event.get("event_type") or "") == "TICKET_COMPLETED"
+            else ticket.get("updated_at")
+        )
+        candidates.append(
+            {
+                "ticket_id": ticket_id,
+                "node_id": str(ticket["node_id"]),
+                "output_schema_ref": str(created_spec.get("output_schema_ref") or ""),
+                "summary": summary,
+                "artifact_refs": artifact_refs,
+                "completed_at": _serialize_timestamp(completed_at),
+            }
+        )
+    return candidates
+
+
+def _build_recent_closed_meeting_reuse_candidates(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT * FROM meeting_projection
+        WHERE workflow_id = ? AND closed_at IS NOT NULL
+        ORDER BY closed_at DESC, meeting_id DESC
+        LIMIT ?
+        """,
+        (workflow_id, _RECENT_CLOSED_MEETING_LIMIT),
+    ).fetchall()
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        meeting = repository._convert_meeting_projection_row(row)
+        candidates.append(
+            {
+                "meeting_id": str(meeting["meeting_id"]),
+                "source_ticket_id": str(meeting["source_ticket_id"]),
+                "source_node_id": str(meeting["source_node_id"]),
+                "topic": str(meeting["topic"]),
+                "consensus_summary": str(meeting.get("consensus_summary") or ""),
+                "review_status": str(meeting.get("review_status") or ""),
+                "closed_at": _serialize_timestamp(meeting.get("closed_at")),
+            }
+        )
+    return candidates
 
 
 def build_ceo_shadow_snapshot(
@@ -72,9 +145,20 @@ def build_ceo_shadow_snapshot(
             """,
             (workflow_id,),
         ).fetchall()
-
-    tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
-    nodes = [repository._convert_node_projection_row(row) for row in node_rows]
+        tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
+        nodes = [repository._convert_node_projection_row(row) for row in node_rows]
+        reuse_candidates = {
+            "recent_completed_tickets": _build_recent_completed_ticket_reuse_candidates(
+                repository,
+                tickets=tickets,
+                connection=connection,
+            ),
+            "recent_closed_meetings": _build_recent_closed_meeting_reuse_candidates(
+                repository,
+                workflow_id=workflow_id,
+                connection=connection,
+            ),
+        }
     employees = repository.list_employee_projections()
     ready_tickets = [ticket for ticket in tickets if ticket["status"] == "PENDING"]
     meeting_candidates = build_ceo_meeting_candidates(
@@ -190,5 +274,6 @@ def build_ceo_shadow_snapshot(
             }
             for preview in repository.get_recent_event_previews()
         ],
+        "reuse_candidates": reuse_candidates,
         "meeting_candidates": meeting_candidates,
     }

@@ -1879,6 +1879,19 @@
 
 ---
 
+### 4.6 CEO 策略增强
+
+| ID | 标题 | 预估 |
+|----|------|------|
+| P2-CEO-002 | CEO 复用优先决策策略 | 3h |
+
+完成补记（2026-04-07）：
+
+- `P2-CEO-002`：CEO shadow snapshot 现在会暴露当前 workflow 内的 `reuse_candidates`，固定收口为最近 `5` 个已完成 ticket 和最近 `3` 个已关闭会议的只读摘要；不做跨 workflow 历史检索，也不引入新的 reuse registry
+- OpenAI Compat live prompt 现在会显式先检查 `snapshot.reuse_candidates`，优先 `NO_ACTION`、`RETRY_TICKET` 或等待现有工作继续；`REQUEST_MEETING` 仍只能从 `meeting_candidates` 里选，且只在复用候选不足以消解技术分歧时使用
+- 这轮按最保守边界实现 completed ticket 摘要：`output_schema_ref` 继续来自 `TICKET_CREATED`，但因普通 `TICKET_CREATED` payload 没有 `summary`，当前回退到完成态 `completion_summary`；会议复用候选只读 `meeting_projection`，不读 artifact 正文
+- 本轮新增后端回归覆盖 snapshot `reuse_candidates` 和 live provider prompt/rendered payload 复用优先路径；全量验证结果更新为 backend `446 passed`、frontend build passed、frontend `72 passed`
+
 ## 五、关键依赖图
 
 ```

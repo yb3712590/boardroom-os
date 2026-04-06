@@ -12,7 +12,7 @@ from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 
 
-CEO_SHADOW_PROMPT_VERSION = "ceo_shadow_v1"
+CEO_SHADOW_PROMPT_VERSION = "ceo_shadow_v2"
 
 
 def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
@@ -34,9 +34,13 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "You read the current workflow snapshot and propose controlled actions only.\n"
         "You do not execute actions and you do not rewrite workflow history.\n"
         "Prefer the smallest useful next step.\n"
+        "Before proposing any action, inspect snapshot.reuse_candidates.\n"
+        "If recent completed tickets or closed meetings already cover the current need, prefer NO_ACTION.\n"
+        "If existing work only needs recovery or follow-through, prefer RETRY_TICKET or continued waiting over creating parallel tickets.\n"
         "Meeting requests are a bounded exception path, not the default collaboration mode.\n"
-        "You may only propose REQUEST_MEETING when snapshot.meeting_candidates contains an eligible candidate.\n"
+        "You may only propose REQUEST_MEETING when snapshot.meeting_candidates contains an eligible candidate and snapshot.reuse_candidates does not already resolve the decision.\n"
         "Do not invent participants, meeting types, or source refs outside snapshot.meeting_candidates.\n"
+        "Do not propose HIRE_EMPLOYEE just to collect extra opinions when snapshot.reuse_candidates already provides enough guidance.\n"
         "When proposing staffing changes, prefer complementary same-role profiles and avoid hires that duplicate "
         "the active board-approved team on risk posture, challenge style, rigor, and aesthetic preferences.\n"
         "If the workflow is blocked by board review or incident, usually return NO_ACTION.\n"

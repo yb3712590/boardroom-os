@@ -60,6 +60,12 @@
 - `build_meeting_projection` 现在会从会议主 artifact 读出 `decision_record`，Meeting Room 默认先展示 ADR 决策视图，再把 round timeline 留作 audit trail；会议 follow-up ticket 只在 `MEETING_ESCALATION` 路径额外注入 ADR `decision + consequences`
 - 当前验证基线更新为 backend `444 passed`、frontend build passed、frontend `72 passed`
 
+### 2026-04-07
+
+- `P2-CEO-002` 已完成：CEO shadow snapshot 现在会暴露当前 workflow 内 `reuse_candidates.recent_completed_tickets / recent_closed_meetings`，OpenAI Compat live prompt 会先检查这些复用候选，再决定是否 `NO_ACTION`、`RETRY_TICKET`、`REQUEST_MEETING` 或 `HIRE_EMPLOYEE`
+- 这轮保持保守边界：deterministic fallback 完全不变，不新增 `CEOAction` 字段，也不把 artifact/ADR refs 直接注入新建 ticket；当前 completed ticket 摘要因普通 `TICKET_CREATED` payload 无 `summary`，回退到完成态 `completion_summary`
+- 当前验证基线更新为 backend `446 passed`、frontend build passed、frontend `72 passed`
+
 ## Current Working Set
 
 - Prefer reading `README.md`, `doc/README.md`, `doc/mainline-truth.md`, `doc/roadmap-reset.md`, `doc/TODO.md`, `doc/history/context-baseline.md`, and then this file before touching the archive.

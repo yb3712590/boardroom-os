@@ -14,19 +14,18 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 总任务数 | 136 | 原始编号保留，新增编号继续用于路线重排、M7 首批和条件批次 |
-| 已完成 / 已收口 | 119 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
-| 当前仍未关闭 | 17 | 当前工作集保存在 `task-backlog/active.md` |
+| 已完成 / 已收口 | 120 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 当前仍未关闭 | 16 | 当前工作集保存在 `task-backlog/active.md` |
 | 总预估工时 | 502h | 在原表基础上补入本轮新增任务 |
 
 ## 当前活跃区域
 
 | 区域 | 任务范围 | 当前状态 | 默认看哪里 |
 |------|----------|----------|------------|
-| 当前主线 | 无 | 暂无可直接开启任务；`P2-M7-005` 与手动纳入的 `P2-RET-006` 已于 2026-04-06 收口 | [task-backlog/active.md](task-backlog/active.md) |
+| 当前主线 | 无 | 暂无可直接开启任务；`P2-M7-005`、手动纳入的 `P2-RET-006`、`P2-MTG-011` 与 `P2-CEO-002` 已收口 | [task-backlog/active.md](task-backlog/active.md) |
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | [task-backlog/active.md](task-backlog/active.md) |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 后置增强 | [task-backlog/active.md](task-backlog/active.md) |
 | 治理模板与交付口径 | `P2-GOV-001` 到 `P2-GOV-007` | 后置增强 / 条件纳入 | [task-backlog/active.md](task-backlog/active.md) |
-| CEO 策略增强 | `P2-CEO-002` | 后置增强 | [task-backlog/active.md](task-backlog/active.md) |
 
 ## 读写约定
 

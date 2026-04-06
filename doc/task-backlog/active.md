@@ -9,7 +9,6 @@
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | blocker 仍在，但不再占用当前主线 |
 | Provider 增强 | `P2-PRV-001` 到 `P2-PRV-008` | 后置增强 | 继续保持未开启 |
 | 治理模板与交付口径 | `P2-GOV-001` 到 `P2-GOV-006` | 后置增强 | `P2-GOV-007` 已在 2026-04-06 收口 |
-| CEO 策略增强 | `P2-CEO-002` | 后置增强 | `P2-CEO-001` 已在 2026-04-07 收口 |
 
 ## 当前判断
 
@@ -17,6 +16,7 @@
 - `P2-RET-006` 已于 2026-04-06 显式纳入并收口：execution package 与 rendered `SYSTEM_CONTROLS` 现在会暴露结构化 `org_context`，继续保持 `L1` 边界，不引入新存储或新检索通道
 - `P2-CEO-001` 已于 2026-04-07 手动纳入并收口：`project-init` 现在可先打开 `REQUIREMENT_ELICITATION` 板审，董事会在现有 Review Room 里提交结构化答卷后，再继续 scope kickoff / scope review
 - `P2-MTG-011` 已于 2026-04-07 手动纳入并收口：会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`，Meeting Room 默认先看决策视图，会议来源 follow-up ticket 会额外带 ADR 摘要
+- `P2-CEO-002` 已于 2026-04-07 手动纳入并收口：OpenAI Compat live CEO 现在会先消费当前 workflow 内 `reuse_candidates`，优先复用已有完成交付、已关闭会议或恢复现有工作；deterministic fallback 保持不变
 - 当前未关闭任务里，没有可以直接开启的默认主线任务；剩余项都属于冻结后置或后置增强
 - 如果没有新任务被纳入当前批次、且条件任务也未触发，本轮应明确判定为“无可直接开启任务”
 
@@ -60,14 +60,8 @@
 | P2-GOV-005 | 文档型角色默认不参与日常编码 / 测试执行约束 | 3h | 后置增强 |
 | P2-GOV-006 | 治理模板与文档型角色测试和文档 | 5h | 后置增强 |
 
-### 4.3 CEO 策略增强
-
-| ID | 标题 | 预估 | 状态 |
-|----|------|------|------|
-| P2-CEO-002 | CEO 复用优先决策策略 | 3h | 后置增强 |
-
 ## 依赖提醒
 
 - `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
-- `P2-RET-*`、`P2-PRV-*`、`P2-GOV-*`、`P2-CEO-*` 目前都不是默认主线
+- `P2-RET-*`、`P2-PRV-*`、`P2-GOV-*` 目前都不是默认主线
 - 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`

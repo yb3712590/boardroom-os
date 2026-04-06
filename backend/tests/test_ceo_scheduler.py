@@ -9,6 +9,7 @@ from app.core.ceo_execution_presets import (
     PROJECT_INIT_SCOPE_NODE_ID,
     build_project_init_scope_ticket_id,
 )
+from app.core.ceo_prompts import build_ceo_shadow_system_prompt
 from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.ceo_scheduler import (
     SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
@@ -223,6 +224,144 @@ def _create_and_fail_ticket(
     assert fail_response.json()["status"] == "ACCEPTED"
 
 
+def _create_and_complete_ticket(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    summary: str = "Completed implementation slice ready for reuse.",
+) -> None:
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=node_id,
+                retry_budget=0,
+            ),
+            "output_schema_ref": "implementation_bundle",
+        },
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:complete",
+        },
+    )
+    assert lease_response.status_code == 200
+
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:complete",
+        },
+    )
+    assert start_response.status_code == 200
+
+    artifact_ref = f"art://runtime/{ticket_id}/implementation-bundle.json"
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": "implementation_bundle_v1",
+            "payload": {
+                "summary": summary,
+                "deliverable_artifact_refs": [artifact_ref],
+                "implementation_notes": ["Keep delivery inside the already approved scope."],
+            },
+            "artifact_refs": [artifact_ref],
+            "written_artifacts": [
+                {
+                    "path": "artifacts/ui/homepage/implementation-bundle.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": {
+                        "summary": summary,
+                        "deliverable_artifact_refs": [artifact_ref],
+                        "implementation_notes": ["Keep delivery inside the already approved scope."],
+                    },
+                }
+            ],
+            "assumptions": ["Completed bundle is still reusable for the current workflow."],
+            "issues": [],
+            "confidence": 0.87,
+            "needs_escalation": False,
+            "summary": summary,
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:complete",
+        },
+    )
+    assert submit_response.status_code == 200
+    assert submit_response.json()["status"] == "ACCEPTED"
+
+
+def _seed_closed_meeting(
+    client,
+    *,
+    workflow_id: str,
+    meeting_id: str,
+    source_ticket_id: str,
+    source_node_id: str,
+    topic: str = "Reuse the existing governance decision",
+    consensus_summary: str = "Meeting already resolved the technical trade-off.",
+) -> None:
+    repository = client.app.state.repository
+    closed_at = datetime.fromisoformat("2026-04-06T11:30:00+08:00")
+    with repository.transaction() as connection:
+        repository.create_meeting_projection(
+            connection,
+            meeting_id=meeting_id,
+            workflow_id=workflow_id,
+            meeting_type="TECHNICAL_DECISION",
+            topic=topic,
+            normalized_topic="reuse existing governance decision",
+            status="CLOSED",
+            review_status="APPROVED",
+            source_ticket_id=source_ticket_id,
+            source_node_id=source_node_id,
+            review_pack_id="rp_meeting_reuse_1",
+            opened_at=datetime.fromisoformat("2026-04-06T10:00:00+08:00"),
+            updated_at=closed_at,
+            closed_at=closed_at,
+            current_round="CLOSE",
+            recorder_employee_id="emp_frontend_2",
+            participants=[
+                {
+                    "employee_id": "emp_frontend_2",
+                    "role_type": "frontend_engineer",
+                    "meeting_responsibility": "recorder",
+                    "is_recorder": True,
+                },
+                {
+                    "employee_id": "emp_checker_1",
+                    "role_type": "checker",
+                    "meeting_responsibility": "reviewer",
+                    "is_recorder": False,
+                },
+            ],
+            rounds=[],
+            consensus_summary=consensus_summary,
+            no_consensus_reason=None,
+        )
+
+
 def test_ceo_shadow_run_records_fallback_without_touching_mainline_state(client):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO shadow fallback")
@@ -314,6 +453,122 @@ def test_ceo_shadow_snapshot_includes_failed_ticket_meeting_candidate(client):
     assert candidate["participant_employee_ids"] == ["emp_frontend_2", "emp_checker_1"]
     assert candidate["recorder_employee_id"] == "emp_frontend_2"
     assert "failed" in candidate["reason"].lower()
+
+
+def test_ceo_shadow_snapshot_includes_reuse_candidates(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_reuse_candidates")
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_reuse_completed",
+        node_id="node_ceo_reuse_completed",
+        summary="Completed implementation slice ready for reuse.",
+    )
+    _seed_closed_meeting(
+        client,
+        workflow_id=workflow_id,
+        meeting_id="mtg_ceo_reuse_closed",
+        source_ticket_id="tkt_ceo_reuse_completed",
+        source_node_id="node_ceo_reuse_completed",
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:reuse-candidates",
+    )
+
+    reuse_candidates = snapshot["reuse_candidates"]
+    assert reuse_candidates["recent_completed_tickets"]
+    completed_ticket = reuse_candidates["recent_completed_tickets"][0]
+    assert completed_ticket["ticket_id"] == "tkt_ceo_reuse_completed"
+    assert completed_ticket["node_id"] == "node_ceo_reuse_completed"
+    assert completed_ticket["output_schema_ref"] == "implementation_bundle"
+    assert completed_ticket["summary"] == "Completed implementation slice ready for reuse."
+    assert completed_ticket["artifact_refs"] == ["art://runtime/tkt_ceo_reuse_completed/implementation-bundle.json"]
+    assert completed_ticket["completed_at"] is not None
+
+    assert reuse_candidates["recent_closed_meetings"]
+    closed_meeting = reuse_candidates["recent_closed_meetings"][0]
+    assert closed_meeting["meeting_id"] == "mtg_ceo_reuse_closed"
+    assert closed_meeting["source_ticket_id"] == "tkt_ceo_reuse_completed"
+    assert closed_meeting["source_node_id"] == "node_ceo_reuse_completed"
+    assert closed_meeting["topic"] == "Reuse the existing governance decision"
+    assert closed_meeting["consensus_summary"] == "Meeting already resolved the technical trade-off."
+    assert closed_meeting["review_status"] == "APPROVED"
+    assert closed_meeting["closed_at"] is not None
+
+
+def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_live_reuse")
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_live_reuse_completed",
+        node_id="node_ceo_live_reuse_completed",
+    )
+    _seed_closed_meeting(
+        client,
+        workflow_id=workflow_id,
+        meeting_id="mtg_ceo_live_reuse_closed",
+        source_ticket_id="tkt_ceo_live_reuse_completed",
+        source_node_id="node_ceo_live_reuse_completed",
+    )
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, rendered_payload):
+        system_prompt = rendered_payload.messages[0].content_payload["text"]
+        snapshot = rendered_payload.messages[2].content_payload
+        assert "reuse_candidates" in system_prompt
+        assert "NO_ACTION" in system_prompt
+        assert "REQUEST_MEETING" in system_prompt
+        assert snapshot["reuse_candidates"]["recent_completed_tickets"]
+        assert snapshot["reuse_candidates"]["recent_closed_meetings"]
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Reuse candidates already cover this workflow state, so no new action is needed.",
+                    "actions": [
+                        {
+                            "action_type": "NO_ACTION",
+                            "payload": {
+                                "reason": "Recent completed tickets and closed meetings already provide reusable guidance.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_reuse_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:live-reuse",
+    )
+    system_prompt = build_ceo_shadow_system_prompt(snapshot)
+    assert "reuse_candidates" in system_prompt
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:live-reuse",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["provider_response_id"] == "resp_ceo_reuse_1"
+    assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
+    assert run["executed_actions"][0]["execution_status"] == "PASSTHROUGH"
+    assert run["deterministic_fallback_used"] is False
 
 
 def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_already_active(client):

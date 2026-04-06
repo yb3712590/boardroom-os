@@ -19,6 +19,7 @@
 - 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
 - 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
 - 当前 CEO 也能在窄触发条件下自动创建 `TECHNICAL_DECISION` 会议请求：只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重新对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会
+- CEO shadow snapshot 现在会暴露当前 workflow 内的 `reuse_candidates`：只读最近已完成 ticket 和已关闭会议的最小摘要；OpenAI Compat live prompt 会先检查这些复用候选，优先 `NO_ACTION / RETRY_TICKET / WAIT`，再考虑新建平行 ticket、额外会议或补招人；deterministic fallback 保持不变
 - 会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`；`MeetingRoom` 默认先展示压缩后的决策视图，再把 round timeline 留作 audit trail
 - 只有 `MEETING_ESCALATION` 批准后生成的 follow-up ticket 会额外把 ADR `decision + consequences` 注入后续执行输入；其他 `consensus_document` 来源路径不变
 - `delivery_closeout_package@1` 现在可选携带 `documentation_updates`；internal closeout review 已把文档同步纳入 soft checker 口径，但 `FOLLOW_UP_REQUIRED` 不会自动变成硬门禁
