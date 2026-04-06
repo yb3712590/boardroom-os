@@ -1801,6 +1801,44 @@
 - `P2-DOC-009`：`doc/milestone-timeline.md` 已从旧周历重写为“当前状态 + 后续顺序 + C1 条件批次 + R1 远期储备”
 - `P2-DOC-010`：`doc/history/memory-log.md` 已压缩成短事实日志，`doc/history/archive/memory-log-detailed-2026-04-03_to_2026-04-06.md` 负责承接本轮移出的详细实现流水账
 
+#### P2-CEO-001：初始化需求澄清板审协议
+
+**状态**：已完成（2026-04-07，本轮手动纳入）
+
+**描述**：在 `project-init` 输入明显不足，或董事会显式要求先澄清时，系统先打开一次受控 `REQUIREMENT_ELICITATION` 板审；董事会在现有 Review Room 中提交结构化答卷后，再继续进入首个 scope kickoff / scope review。
+
+**文件**：
+- 修改：`backend/app/contracts/commands.py`
+- 修改：`backend/app/contracts/projections.py`
+- 修改：`backend/app/core/command_handlers.py`
+- 修改：`backend/app/core/approval_handlers.py`
+- 新建：`backend/app/core/requirement_elicitation.py`
+- 修改：`backend/app/core/ticket_handlers.py`
+- 修改：`frontend/src/components/dashboard/ProjectInitForm.tsx`
+- 修改：`frontend/src/components/overlays/ReviewRoomDrawer.tsx`
+- 修改：`frontend/src/pages/dashboard-page-actions.ts`
+
+**依赖**：现有 `project-init`、`Inbox -> Review Room -> board-*` 审批链
+
+**预估**：4h
+
+**feature-spec**：条目 64
+
+**验收标准**：
+- `project-init` 支持显式 `force_requirement_elicitation`
+- 初始化阶段可打开独立 `REQUIREMENT_ELICITATION` review type，但继续复用现有 inbox、review room 和 board 命令
+- 董事会可在 Review Room 提交结构化答卷；`APPROVE` 后继续进入 scope kickoff，`MODIFY_CONSTRAINTS` 后重新打开一版澄清板审
+- 产出真实 `requirements-elicitation` / enriched board brief artifact，并保留现有 scope review 主链
+
+**风险**：中
+
+**完成补记（2026-04-07）**：
+- 自动阈值按保守口径落地：显式 `force_requirement_elicitation` 会直接触发；自动启发式只在明显弱输入同时命中 3 个弱信号时才打开初始化澄清，避免把现有正常 `project-init` 大面积打断
+- 当前问卷固定为 4 题：`delivery_scope / core_roles / quality_bar / hard_boundaries`；第一版不做模板系统，也不向后续 ticket 复用
+- `REQUIREMENT_ELICITATION` 当前只开放 `APPROVE / MODIFY_CONSTRAINTS`，不开放 `REJECT`
+- `board-approve / modify-constraints` 新增结构化 `elicitation_answers`；前端 `ProjectInitForm` 也新增“先走需求澄清”显式开关
+- 本轮验证基线更新为 backend `441 passed`、frontend build passed、frontend `72 passed`
+
 ---
 
 ## 五、关键依赖图

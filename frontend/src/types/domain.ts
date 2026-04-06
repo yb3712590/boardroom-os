@@ -118,6 +118,24 @@ export type ReviewOption = {
   artifact_refs?: string[]
 }
 
+export type ElicitationQuestion = {
+  question_id: string
+  prompt: string
+  response_kind: 'SINGLE_SELECT' | 'MULTI_SELECT' | 'TEXT'
+  required: boolean
+  options: Array<{
+    option_id: string
+    label: string
+    summary?: string | null
+  }>
+}
+
+export type ElicitationAnswer = {
+  question_id: string
+  selected_option_ids: string[]
+  text: string
+}
+
 export type ReviewPack = {
   meta: {
     approval_id: string
@@ -177,6 +195,7 @@ export type ReviewPack = {
     rendered_execution_payload_ref?: string
   } | null
   employee_change?: ReviewPackEmployeeChange | null
+  elicitation_questionnaire?: ElicitationQuestion[] | null
 }
 
 export type DependencyInspectorNode = {

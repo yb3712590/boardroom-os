@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-06
+> 最后更新：2026-04-07
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
@@ -14,8 +14,8 @@
 
 ## 当前基线（2026-04-06）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `437 passed`
-- frontend：`npm run build` -> passed，`npm run test:run` -> `70 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `441 passed`
+- frontend：`npm run build` -> passed，`npm run test:run` -> `72 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
 ## 当前批次
@@ -54,7 +54,7 @@
 
 | 任务 | 状态 | 触发条件 | 说明 |
 |---|---|---|---|
-| `P2-CEO-001` | 条件纳入 | 初始化输入反复低于最小可执行阈值 | 建立初始化需求澄清板审协议，不依赖 live `ESCALATE_TO_BOARD` |
+| `P2-CEO-001` | 已完成（2026-04-07，本轮手动纳入） | 已满足：本轮手动提升为当前批次，补上初始化阶段受控需求澄清板审 | `project-init` 现在支持显式 `force_requirement_elicitation`，也会在保守启发式命中明显弱输入时先打开 `REQUIREMENT_ELICITATION`；董事会在现有 Review Room 里提交结构化答卷后，再继续进入首个 scope review |
 | `P2-RET-006` | 已完成（2026-04-06，本轮显式纳入） | 已满足：本轮手动提升为当前批次，收紧执行包最小组织上下文与 `L1` | 已在 execution package / rendered `SYSTEM_CONTROLS` 补入结构化 `org_context`，不新增 `L2/L3` 或新存储 |
 | `P2-MTG-011` | 条件纳入 | 会议共识文档反复过长，默认消费面不清 | 把会议共识压成 ADR 化决策视图，不改当前 artifact 类型 |
 | `P2-GOV-007` | 已完成（2026-04-06） | 已触发：closeout / review 反复出现“代码已改但证据或文档没同步” | 已在 `delivery_closeout_package@1`、closeout checker 文案和 runtime review 摘要补入结构化 `documentation_updates`，保持 soft rule，不加硬状态机门禁 |

@@ -376,6 +376,11 @@ def _build_review_pack(
             if review_request.developer_inspector_refs is not None
             else None
         ),
+        "elicitation_questionnaire": (
+            [item.model_dump(mode="json") for item in review_request.elicitation_questionnaire]
+            if review_request.elicitation_questionnaire is not None
+            else None
+        ),
     }
 
 

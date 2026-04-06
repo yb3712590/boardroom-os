@@ -117,6 +117,11 @@ export type ReviewRoomData = {
   draft_defaults: {
     selected_option_id?: string | null
     comment_template: string
+    elicitation_answers?: Array<{
+      question_id: string
+      selected_option_ids: string[]
+      text: string
+    }>
   }
 }
 
@@ -246,6 +251,13 @@ export type ProjectInitRequest = {
   hard_constraints: string[]
   budget_cap: number
   deadline_at: string | null
+  force_requirement_elicitation?: boolean
+}
+
+export type ElicitationAnswerRequest = {
+  question_id: string
+  selected_option_ids: string[]
+  text: string
 }
 
 export type RuntimeProviderUpsertRequest = {
@@ -265,6 +277,7 @@ export type BoardApproveRequest = {
   approval_id: string
   selected_option_id: string
   board_comment: string
+  elicitation_answers?: ElicitationAnswerRequest[]
   idempotency_key: string
 }
 
@@ -289,6 +302,7 @@ export type ModifyConstraintsRequest = {
     replace_rules: string[]
   }
   board_comment: string
+  elicitation_answers?: ElicitationAnswerRequest[]
   idempotency_key: string
 }
 

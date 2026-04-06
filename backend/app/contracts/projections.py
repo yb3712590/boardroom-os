@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.contracts.common import ProjectionEnvelopeBase, StrictModel
+from app.contracts.commands import ElicitationAnswer
 from app.contracts.runtime import RenderedExecutionPayloadSummary
 from app.contracts.events import EventSeverity
 
@@ -388,6 +389,7 @@ class RuntimeProviderProjectionEnvelope(ProjectionEnvelopeBase):
 class ReviewRoomDraftDefaults(StrictModel):
     selected_option_id: str | None = None
     comment_template: str = ""
+    elicitation_answers: list[ElicitationAnswer] = Field(default_factory=list)
 
 
 class ReviewRoomProjectionData(StrictModel):

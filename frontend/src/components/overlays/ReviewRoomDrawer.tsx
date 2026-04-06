@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { DeveloperInspectorData, ReviewRoomData } from '../../types/api'
 import { isArtifactRef } from '../../utils/artifacts'
@@ -16,13 +16,26 @@ type ReviewRoomDrawerProps = {
   onClose: () => void
   onOpenInspector: () => void
   onOpenArtifact: (artifactRef: string) => void
-  onApprove: (input: { selectedOptionId: string; boardComment: string }) => Promise<void>
+  onApprove: (input: {
+    selectedOptionId: string
+    boardComment: string
+    elicitationAnswers?: Array<{
+      question_id: string
+      selected_option_ids: string[]
+      text: string
+    }>
+  }) => Promise<void>
   onReject: (input: { boardComment: string; rejectionReasons: string[] }) => Promise<void>
   onModifyConstraints: (input: {
     boardComment: string
     addRules: string[]
     removeRules: string[]
     replaceRules: string[]
+    elicitationAnswers?: Array<{
+      question_id: string
+      selected_option_ids: string[]
+      text: string
+    }>
   }) => Promise<void>
 }
 
@@ -63,10 +76,66 @@ export function ReviewRoomDrawer({
   const [removeRules, setRemoveRules] = useState('')
   const [replaceRules, setReplaceRules] = useState('')
   const [inspectorVisible, setInspectorVisible] = useState(false)
+  const [elicitationAnswers, setElicitationAnswers] = useState<
+    Array<{
+      question_id: string
+      selected_option_ids: string[]
+      text: string
+    }>
+  >(reviewData?.draft_defaults.elicitation_answers ?? [])
 
   const reviewPack = reviewData?.review_pack
   const availableActions = reviewData?.available_actions ?? []
   const employeeChange = reviewPack?.employee_change ?? null
+  const questionnaire = reviewPack?.elicitation_questionnaire ?? []
+  const isRequirementElicitation = reviewPack?.meta.review_type === 'REQUIREMENT_ELICITATION'
+
+  useEffect(() => {
+    setSelectedOptionId(initialSelectedOptionId)
+    setApproveNote(initialCommentTemplate)
+    setRejectNote('')
+    setModifyNote(initialCommentTemplate)
+    setAddRules('')
+    setRemoveRules('')
+    setReplaceRules('')
+    setElicitationAnswers(reviewData?.draft_defaults.elicitation_answers ?? [])
+  }, [initialCommentTemplate, initialSelectedOptionId, reviewData?.draft_defaults.elicitation_answers])
+
+  function updateElicitationAnswer(
+    questionId: string,
+    updater: (
+      current: {
+        question_id: string
+        selected_option_ids: string[]
+        text: string
+      },
+    ) => {
+      question_id: string
+      selected_option_ids: string[]
+      text: string
+    },
+  ) {
+    setElicitationAnswers((current) => {
+      const existing =
+        current.find((item) => item.question_id === questionId) ?? {
+          question_id: questionId,
+          selected_option_ids: [],
+          text: '',
+        }
+      const next = updater(existing)
+      const remaining = current.filter((item) => item.question_id !== questionId)
+      return [...remaining, next]
+    })
+  }
+
+  const normalizedElicitationAnswers = questionnaire.map((question) => {
+    const existing = elicitationAnswers.find((item) => item.question_id === question.question_id)
+    return {
+      question_id: question.question_id,
+      selected_option_ids: existing?.selected_option_ids ?? [],
+      text: existing?.text ?? '',
+    }
+  })
 
   return (
     <Drawer
@@ -129,6 +198,68 @@ export function ReviewRoomDrawer({
                     </div>
                   </label>
                 ))}
+              </div>
+            </section>
+          ) : null}
+
+          {isRequirementElicitation && questionnaire.length > 0 ? (
+            <section className="review-room-options">
+              <h3>Requirement elicitation</h3>
+              <div className="review-room-option-list">
+                {questionnaire.map((question) => {
+                  const currentAnswer =
+                    normalizedElicitationAnswers.find((item) => item.question_id === question.question_id) ?? null
+                  return (
+                    <div key={question.question_id} className="review-room-action-panel">
+                      <label className="field-label">{question.prompt}</label>
+                      {question.response_kind === 'TEXT' ? (
+                        <textarea
+                          aria-label={question.prompt}
+                          rows={3}
+                          value={currentAnswer?.text ?? ''}
+                          onChange={(event) =>
+                            updateElicitationAnswer(question.question_id, (existing) => ({
+                              ...existing,
+                              text: event.target.value,
+                            }))
+                          }
+                        />
+                      ) : (
+                        <div className="review-room-option-list">
+                          {question.options.map((option) => {
+                            const selectedOptionIds = currentAnswer?.selected_option_ids ?? []
+                            const checked = selectedOptionIds.includes(option.option_id)
+                            return (
+                              <label key={option.option_id} className="review-room-option">
+                                <input
+                                  type={question.response_kind === 'SINGLE_SELECT' ? 'radio' : 'checkbox'}
+                                  name={question.question_id}
+                                  aria-label={option.label}
+                                  checked={checked}
+                                  onChange={() =>
+                                    updateElicitationAnswer(question.question_id, (existing) => ({
+                                      ...existing,
+                                      selected_option_ids:
+                                        question.response_kind === 'SINGLE_SELECT'
+                                          ? [option.option_id]
+                                          : checked
+                                            ? existing.selected_option_ids.filter((item) => item !== option.option_id)
+                                            : [...existing.selected_option_ids, option.option_id],
+                                    }))
+                                  }
+                                />
+                                <div>
+                                  <strong>{option.label}</strong>
+                                  {option.summary ? <p>{option.summary}</p> : null}
+                                </div>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </section>
           ) : null}
@@ -249,6 +380,7 @@ export function ReviewRoomDrawer({
                     void onApprove({
                       selectedOptionId,
                       boardComment: approveNote.trim() || 'Approve the recommended option.',
+                      elicitationAnswers: isRequirementElicitation ? normalizedElicitationAnswers : undefined,
                     })
                   }
                 >
@@ -332,6 +464,7 @@ export function ReviewRoomDrawer({
                     addRules: splitRules(addRules),
                     removeRules: splitRules(removeRules),
                     replaceRules: splitRules(replaceRules),
+                    elicitationAnswers: isRequirementElicitation ? normalizedElicitationAnswers : undefined,
                   })
                 }
               >

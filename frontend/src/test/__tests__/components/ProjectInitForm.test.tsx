@@ -36,6 +36,24 @@ describe('ProjectInitForm', () => {
       northStarGoal: 'Stabilize the review shell',
       hardConstraints: ['Keep auditability', 'Stay local-first'],
       budgetCap: 1200,
+      forceRequirementElicitation: false,
+    })
+  })
+
+  it('submits force requirement elicitation when the toggle is enabled', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+
+    render(<ProjectInitForm submitting={false} onSubmit={onSubmit} />)
+
+    await user.click(screen.getByLabelText('Route through requirement elicitation first'))
+    await user.click(screen.getByRole('button', { name: 'Launch to first review' }))
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      northStarGoal: 'Ship the thinnest governance shell from dashboard to review room.',
+      hardConstraints: ['Keep governance explicit.', 'Do not move workflow truth into the browser.'],
+      budgetCap: 500000,
+      forceRequirementElicitation: true,
     })
   })
 })

@@ -34,7 +34,10 @@ def _project_init(client, goal: str = "CEO shadow test") -> str:
         "/api/v1/commands/project-init",
         json={
             "north_star_goal": goal,
-            "hard_constraints": ["Keep governance explicit."],
+            "hard_constraints": [
+                "Keep governance explicit.",
+                "Do not move workflow truth into the browser.",
+            ],
             "budget_cap": 500000,
             "deadline_at": None,
         },

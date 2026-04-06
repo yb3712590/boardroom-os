@@ -82,6 +82,7 @@ export function useDashboardPageActions({
     northStarGoal: string
     hardConstraints: string[]
     budgetCap: number
+    forceRequirementElicitation: boolean
   }) => {
     setProjectInitPending(true)
     setSnapshotError(null)
@@ -91,6 +92,7 @@ export function useDashboardPageActions({
         hard_constraints: payload.hardConstraints,
         budget_cap: payload.budgetCap,
         deadline_at: null,
+        force_requirement_elicitation: payload.forceRequirementElicitation,
       })
       await loadSnapshot()
     } catch (error) {
@@ -265,7 +267,15 @@ export function useDashboardPageActions({
     }
   }
 
-  const handleApprove = async (input: { selectedOptionId: string; boardComment: string }) => {
+  const handleApprove = async (input: {
+    selectedOptionId: string
+    boardComment: string
+    elicitationAnswers?: Array<{
+      question_id: string
+      selected_option_ids: string[]
+      text: string
+    }>
+  }) => {
     if (!reviewPack) {
       return
     }
@@ -278,6 +288,7 @@ export function useDashboardPageActions({
         approval_id: reviewPack.meta.approval_id,
         selected_option_id: input.selectedOptionId,
         board_comment: input.boardComment,
+        elicitation_answers: input.elicitationAnswers,
         idempotency_key: newPrefixedId('board-approve'),
       })
       await loadSnapshot()
@@ -318,6 +329,11 @@ export function useDashboardPageActions({
     addRules: string[]
     removeRules: string[]
     replaceRules: string[]
+    elicitationAnswers?: Array<{
+      question_id: string
+      selected_option_ids: string[]
+      text: string
+    }>
   }) => {
     if (!reviewPack) {
       return
@@ -335,6 +351,7 @@ export function useDashboardPageActions({
           replace_rules: input.replaceRules,
         },
         board_comment: input.boardComment,
+        elicitation_answers: input.elicitationAnswers,
         idempotency_key: newPrefixedId('modify-constraints'),
       })
       await loadSnapshot()
