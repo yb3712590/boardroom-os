@@ -1,7 +1,7 @@
 # Boardroom OS 详细 TODO 清单
 
-> 版本：1.0
-> 日期：2026-04-05
+> 版本：1.1
+> 日期：2026-04-06
 > 作者：CTO
 > 总任务数：121
 
@@ -1682,6 +1682,14 @@
 | P2-RET-003 | Context Compiler 集成 FTS5 查询 | 4h |
 | P2-RET-004 | 检索结果排序和去重 | 4h |
 | P2-RET-005 | 检索层测试 | 4h |
+
+完成补记（2026-04-06）：
+
+- `P2-RET-001`：`backend/app/db/repository.py` 现在会在初始化阶段创建三张 FTS5 虚拟表：`retrieval_review_summary_fts`、`retrieval_incident_summary_fts`、`retrieval_artifact_summary_fts`
+- `P2-RET-002`：review / incident / artifact 三类历史来源现在都会被回填进对应索引；approval 创建/resolve、incident projection 重建、artifact 写入或生命周期变化后都会刷新索引
+- `P2-RET-003`：`Context Compiler` 没有改 retrieval summary 契约，仍消费 `review_summaries / incident_summaries / artifact_summaries` 三通道，但候选来源已经切到 repository 的 FTS 查询
+- `P2-RET-004`：repository 检索结果现在按“命中词数 -> FTS rank -> 最近更新时间 -> 稳定键”排序，并对同一 `source_ref` 去重；artifact 检索仍保留“先粗匹配路径 / kind / media_type，再接受正文命中”的原边界
+- `P2-RET-005`：新增 repository 回归，覆盖 FTS 表创建、旧数据回填、排序去重、失效 artifact 过滤；全量验证结果更新为 backend `435 passed`、frontend build passed、frontend `64 passed`
 
 ### 4.2 Provider 增强 (P2-PRV-001 到 P2-PRV-008)
 

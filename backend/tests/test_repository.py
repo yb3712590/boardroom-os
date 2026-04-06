@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
+from app.core.artifact_store import ArtifactStore
 from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID, EVENT_EMPLOYEE_HIRED
 from app.db.repository import ControlPlaneRepository
 
@@ -1520,6 +1522,334 @@ def test_artifact_upload_session_lifecycle_and_consume_guard(db_path):
     assert session["assembled_staging_relpath"] == "uploads/upl_session_001/assembled.bin"
     assert session["consumed_by_artifact_ref"] == "art://runtime/tkt_visual_001/bundle.zip"
     assert [part["part_number"] for part in parts] == [1, 2]
+
+
+def test_initialize_builds_retrieval_fts_tables_and_backfills_existing_rows(db_path):
+    artifact_store = ArtifactStore(Path(db_path).with_suffix(".artifacts"))
+    repository = ControlPlaneRepository(db_path, 1000, artifact_store=artifact_store)
+    repository.initialize()
+
+    materialized = artifact_store.materialize_text(
+        "artifacts/history/homepage-notes.md",
+        "# Homepage\n\nApproved direction keeps brand visible in the hero.\n",
+        media_type="text/markdown",
+    )
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO workflow_projection (
+                workflow_id,
+                title,
+                north_star_goal,
+                tenant_id,
+                workspace_id,
+                current_stage,
+                status,
+                budget_total,
+                budget_used,
+                board_gate_state,
+                deadline_at,
+                started_at,
+                updated_at,
+                version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "wf_history",
+                "History workflow",
+                "Keep prior context searchable",
+                DEFAULT_TENANT_ID,
+                DEFAULT_WORKSPACE_ID,
+                "REVIEW",
+                "ACTIVE",
+                100,
+                20,
+                "NOT_REQUIRED",
+                None,
+                "2026-04-01T09:00:00+08:00",
+                "2026-04-01T09:10:00+08:00",
+                1,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO approval_projection (
+                approval_id,
+                review_pack_id,
+                workflow_id,
+                approval_type,
+                status,
+                requested_by,
+                resolved_by,
+                resolved_at,
+                created_at,
+                updated_at,
+                review_pack_version,
+                command_target_version,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "apr_history",
+                "brp_history",
+                "wf_history",
+                "VISUAL_MILESTONE",
+                "APPROVED",
+                "emp_frontend_1",
+                "board_1",
+                "2026-04-01T09:20:00+08:00",
+                "2026-04-01T09:10:00+08:00",
+                "2026-04-01T09:20:00+08:00",
+                1,
+                1,
+                '{"review_pack":{"subject":{"title":"Homepage review approval","source_ticket_id":"tkt_history"},"recommendation":{"summary":"Approved homepage direction with strong brand hierarchy."}},"inbox_title":"Homepage review approval","inbox_summary":"Approved homepage direction with strong brand hierarchy.","resolution":{"board_comment":"Approved and archived for later retrieval."}}',
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO incident_projection (
+                incident_id,
+                workflow_id,
+                node_id,
+                ticket_id,
+                provider_id,
+                incident_type,
+                status,
+                severity,
+                fingerprint,
+                circuit_breaker_state,
+                opened_at,
+                closed_at,
+                payload_json,
+                updated_at,
+                version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "inc_history",
+                "wf_history",
+                "node_history",
+                "tkt_history",
+                None,
+                "CHECKER_REJECTED",
+                "OPEN",
+                "HIGH",
+                "fingerprint-brand",
+                None,
+                "2026-04-01T09:30:00+08:00",
+                None,
+                '{"headline":"Homepage checker rejection","summary":"Homepage run failed after checker rejected weak brand alignment."}',
+                "2026-04-01T09:30:00+08:00",
+                1,
+            ),
+        )
+        repository.save_artifact_record(
+            connection,
+            artifact_ref="art://history/homepage-notes.md",
+            workflow_id="wf_history",
+            ticket_id="tkt_history",
+            node_id="node_history",
+            logical_path="artifacts/history/homepage-notes.md",
+            kind="MARKDOWN",
+            media_type="text/markdown",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_relpath=materialized.storage_relpath,
+            content_hash=materialized.content_hash,
+            size_bytes=materialized.size_bytes,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat("2026-04-01T09:40:00+08:00"),
+        )
+
+    reloaded = ControlPlaneRepository(db_path, 1000, artifact_store=artifact_store)
+    reloaded.initialize()
+
+    with reloaded.connection() as connection:
+        tables = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+            ).fetchall()
+        }
+
+    assert "retrieval_review_summary_fts" in tables
+    assert "retrieval_incident_summary_fts" in tables
+    assert "retrieval_artifact_summary_fts" in tables
+    assert reloaded.list_retrieval_review_summary_candidates(
+        tenant_id=DEFAULT_TENANT_ID,
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        exclude_workflow_id="wf_current",
+        normalized_terms=["homepage", "brand", "direction"],
+        limit=5,
+    )[0]["review_pack_id"] == "brp_history"
+    assert reloaded.list_retrieval_incident_summary_candidates(
+        tenant_id=DEFAULT_TENANT_ID,
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        exclude_workflow_id="wf_current",
+        normalized_terms=["homepage", "brand"],
+        limit=5,
+    )[0]["incident_id"] == "inc_history"
+    assert reloaded.list_retrieval_artifact_summary_candidates(
+        tenant_id=DEFAULT_TENANT_ID,
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        exclude_workflow_id="wf_current",
+        normalized_terms=["homepage", "brand", "hero"],
+        limit=5,
+    )[0]["artifact_ref"] == "art://history/homepage-notes.md"
+
+
+def test_retrieval_candidates_sort_by_match_quality_then_recency_and_deduplicate_source_ref(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+
+    ordered = repository._sort_retrieval_candidates(
+        [
+            {
+                "channel": "review_summaries",
+                "source_ref": "dup-review",
+                "matched_terms": ["homepage"],
+                "updated_at": datetime.fromisoformat("2026-04-01T09:00:00+08:00"),
+            },
+            {
+                "channel": "review_summaries",
+                "source_ref": "dup-review",
+                "matched_terms": ["homepage", "brand"],
+                "updated_at": datetime.fromisoformat("2026-04-01T09:30:00+08:00"),
+            },
+            {
+                "channel": "incident_summaries",
+                "source_ref": "incident-newer",
+                "matched_terms": ["homepage", "brand"],
+                "updated_at": datetime.fromisoformat("2026-04-01T09:20:00+08:00"),
+            },
+            {
+                "channel": "artifact_summaries",
+                "source_ref": "artifact-older",
+                "matched_terms": ["homepage", "brand"],
+                "updated_at": datetime.fromisoformat("2026-04-01T09:10:00+08:00"),
+            },
+        ]
+    )
+
+    assert [candidate["source_ref"] for candidate in ordered] == [
+        "dup-review",
+        "incident-newer",
+        "artifact-older",
+    ]
+
+
+def test_artifact_retrieval_skips_non_active_or_non_materialized_rows(db_path):
+    artifact_store = ArtifactStore(Path(db_path).with_suffix(".artifacts"))
+    repository = ControlPlaneRepository(db_path, 1000, artifact_store=artifact_store)
+    repository.initialize()
+
+    materialized = artifact_store.materialize_text(
+        "artifacts/history/active-homepage.md",
+        "Homepage guidance keeps the brand visible.",
+        media_type="text/markdown",
+    )
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO workflow_projection (
+                workflow_id,
+                title,
+                north_star_goal,
+                tenant_id,
+                workspace_id,
+                current_stage,
+                status,
+                budget_total,
+                budget_used,
+                board_gate_state,
+                deadline_at,
+                started_at,
+                updated_at,
+                version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "wf_history",
+                "History workflow",
+                "Keep prior context searchable",
+                DEFAULT_TENANT_ID,
+                DEFAULT_WORKSPACE_ID,
+                "REVIEW",
+                "ACTIVE",
+                100,
+                20,
+                "NOT_REQUIRED",
+                None,
+                "2026-04-01T09:00:00+08:00",
+                "2026-04-01T09:10:00+08:00",
+                1,
+            ),
+        )
+        repository.save_artifact_record(
+            connection,
+            artifact_ref="art://history/active.md",
+            workflow_id="wf_history",
+            ticket_id="tkt_history",
+            node_id="node_history",
+            logical_path="artifacts/history/active-homepage.md",
+            kind="MARKDOWN",
+            media_type="text/markdown",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_relpath=materialized.storage_relpath,
+            content_hash=materialized.content_hash,
+            size_bytes=materialized.size_bytes,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat("2026-04-01T09:40:00+08:00"),
+        )
+        repository.save_artifact_record(
+            connection,
+            artifact_ref="art://history/pending.md",
+            workflow_id="wf_history",
+            ticket_id="tkt_history",
+            node_id="node_history",
+            logical_path="artifacts/history/pending-homepage.md",
+            kind="MARKDOWN",
+            media_type="text/markdown",
+            materialization_status="PENDING",
+            lifecycle_status="ACTIVE",
+            storage_relpath=None,
+            content_hash=None,
+            size_bytes=None,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat("2026-04-01T09:41:00+08:00"),
+        )
+        repository.update_artifact_lifecycle(
+            connection,
+            artifact_ref="art://history/active.md",
+            lifecycle_status="DELETED",
+            deleted_at=datetime.fromisoformat("2026-04-01T09:50:00+08:00"),
+            deleted_by="emp_ops_1",
+            delete_reason="cleanup",
+        )
+
+    candidates = repository.list_retrieval_artifact_summary_candidates(
+        tenant_id=DEFAULT_TENANT_ID,
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        exclude_workflow_id="wf_current",
+        normalized_terms=["homepage", "brand"],
+        limit=5,
+    )
+
+    assert candidates == []
 
 
 def test_initialize_backfills_legacy_employee_rows_into_employee_events(db_path):

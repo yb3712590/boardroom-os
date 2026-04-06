@@ -1270,6 +1270,7 @@ def _build_retrieval_plan(
 def _build_retrieved_summaries(
     repository: ControlPlaneRepository,
     retrieval_plan: CompileRequestRetrievalPlan,
+    connection: sqlite3.Connection | None = None,
 ) -> list[CompileRequestRetrievedSummary]:
     if not retrieval_plan.normalized_terms:
         return []
@@ -1296,6 +1297,7 @@ def _build_retrieved_summaries(
             exclude_workflow_id=retrieval_plan.exclude_workflow_id,
             normalized_terms=list(retrieval_plan.normalized_terms),
             limit=int(retrieval_plan.max_hits_by_channel.get(channel, 0)),
+            connection=connection,
         )
         summaries.extend(
             CompileRequestRetrievedSummary.model_validate(
@@ -1461,7 +1463,11 @@ def build_compile_request(
         ),
         retrieval_plan=retrieval_plan,
         explicit_sources=explicit_sources,
-        retrieved_summaries=_build_retrieved_summaries(repository, retrieval_plan),
+        retrieved_summaries=_build_retrieved_summaries(
+            repository,
+            retrieval_plan,
+            connection=connection,
+        ),
         execution=CompileRequestExecution(
             acceptance_criteria=list(created_spec.get("acceptance_criteria") or []),
             allowed_tools=list(created_spec.get("allowed_tools") or []),

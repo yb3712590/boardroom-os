@@ -82,6 +82,9 @@ from app.core.time import now_local
 from app.db.schema import TABLE_SCHEMA_SQL
 
 DEFAULT_EMPLOYEE_ROSTER = build_default_employee_roster()
+RETRIEVAL_REVIEW_SUMMARY_FTS = "retrieval_review_summary_fts"
+RETRIEVAL_INCIDENT_SUMMARY_FTS = "retrieval_incident_summary_fts"
+RETRIEVAL_ARTIFACT_SUMMARY_FTS = "retrieval_artifact_summary_fts"
 
 
 class ControlPlaneRepository:
@@ -126,6 +129,9 @@ class ControlPlaneRepository:
             self._ensure_artifact_index_shape(connection)
             self._ensure_artifact_upload_session_shape(connection)
             self._ensure_artifact_upload_part_shape(connection)
+            self._ensure_retrieval_review_summary_fts(connection)
+            self._ensure_retrieval_incident_summary_fts(connection)
+            self._ensure_retrieval_artifact_summary_fts(connection)
             self._backfill_scope_defaults(connection)
             self._backfill_artifact_storage_defaults(connection)
             self._backfill_artifact_retention_defaults(connection)
@@ -135,6 +141,9 @@ class ControlPlaneRepository:
                 connection,
                 rebuild_employee_projections(employee_events),
             )
+            self._rebuild_retrieval_review_summary_fts(connection)
+            self._rebuild_retrieval_incident_summary_fts(connection)
+            self._rebuild_retrieval_artifact_summary_fts(connection)
         self._initialized = True
 
     @contextmanager
@@ -457,6 +466,7 @@ class ControlPlaneRepository:
                     projection["version"],
                 ),
             )
+        self._rebuild_retrieval_incident_summary_fts(connection)
 
     def refresh_projections(self, connection: sqlite3.Connection) -> None:
         events = self.list_all_events(connection)
@@ -2716,6 +2726,7 @@ class ControlPlaneRepository:
                 created_at.isoformat(),
             ),
         )
+        self._rebuild_retrieval_artifact_summary_fts(connection)
 
     def create_artifact_upload_session(
         self,
@@ -2995,78 +3006,102 @@ class ControlPlaneRepository:
         exclude_workflow_id: str,
         normalized_terms: list[str],
         limit: int,
+        connection: sqlite3.Connection | None = None,
     ) -> list[dict[str, Any]]:
         self.initialize()
-        query = """
-            SELECT approval_projection.*
-            FROM approval_projection
-            LEFT JOIN workflow_projection
-              ON workflow_projection.workflow_id = approval_projection.workflow_id
-            WHERE approval_projection.workflow_id != ?
-              AND approval_projection.status != ?
-              AND COALESCE(workflow_projection.tenant_id, ?) = ?
-              AND COALESCE(workflow_projection.workspace_id, ?) = ?
-            ORDER BY approval_projection.updated_at DESC, approval_projection.approval_id DESC
-            LIMIT 24
-        """
-        with self.connection() as connection:
-            rows = connection.execute(
-                query,
-                (
-                    exclude_workflow_id,
-                    APPROVAL_STATUS_OPEN,
-                    DEFAULT_TENANT_ID,
-                    tenant_id,
-                    DEFAULT_WORKSPACE_ID,
-                    workspace_id,
-                ),
-            ).fetchall()
+        match_query = self._build_retrieval_match_query(normalized_terms)
+        if match_query is None:
+            return []
 
         candidates: list[dict[str, Any]] = []
-        for row in rows:
-            converted = self._convert_approval_row(row)
-            payload = converted["payload"]
-            review_pack = payload.get("review_pack") or {}
-            subject = review_pack.get("subject") or {}
-            recommendation = review_pack.get("recommendation") or {}
-            resolution = payload.get("resolution") or {}
-            matched_terms = self._matched_retrieval_terms(
-                normalized_terms,
-                [
-                    subject.get("title"),
-                    recommendation.get("summary"),
-                    payload.get("inbox_title"),
-                    payload.get("inbox_summary"),
-                    resolution.get("board_comment"),
-                ],
-            )
-            if not matched_terms:
-                continue
-            candidates.append(
-                {
-                    "channel": "review_summaries",
-                    "source_ref": converted["review_pack_id"],
-                    "source_workflow_id": converted["workflow_id"],
-                    "source_ticket_id": subject.get("source_ticket_id"),
-                    "review_pack_id": converted["review_pack_id"],
-                    "headline": str(subject.get("title") or payload.get("inbox_title") or converted["review_pack_id"]),
-                    "summary": str(
-                        recommendation.get("summary")
-                        or payload.get("inbox_summary")
-                        or resolution.get("board_comment")
-                        or "Historical review summary."
-                    ),
-                    "matched_terms": matched_terms,
-                    "why_it_matched": (
-                        "Matched "
-                        + ", ".join(matched_terms)
-                        + " in a historical review summary from the same local workspace."
-                    ),
-                    "updated_at": converted.get("updated_at"),
-                }
-            )
+        if connection is not None:
+            owned_connection = None
+            active_connection = connection
+        else:
+            owned_connection = self.connection()
+            active_connection = owned_connection.__enter__()
+        try:
+            self._rebuild_retrieval_review_summary_fts(active_connection)
+            rows = active_connection.execute(
+                f"""
+                SELECT
+                    source_ref,
+                    updated_at,
+                    headline_text,
+                    summary_text,
+                    detail_text,
+                    bm25({RETRIEVAL_REVIEW_SUMMARY_FTS}) AS fts_rank
+                FROM {RETRIEVAL_REVIEW_SUMMARY_FTS}
+                WHERE {RETRIEVAL_REVIEW_SUMMARY_FTS} MATCH ?
+                  AND workflow_id != ?
+                  AND status != ?
+                  AND tenant_id = ?
+                  AND workspace_id = ?
+                ORDER BY bm25({RETRIEVAL_REVIEW_SUMMARY_FTS}), updated_at DESC, source_ref ASC
+                LIMIT ?
+                """,
+                (
+                    match_query,
+                    exclude_workflow_id,
+                    APPROVAL_STATUS_OPEN,
+                    tenant_id,
+                    workspace_id,
+                    max(limit * 4, 24),
+                ),
+            ).fetchall()
+            for row in rows:
+                approval = self.get_approval_by_id(active_connection, str(row["source_ref"]))
+                if approval is None:
+                    continue
+                payload = approval["payload"]
+                review_pack = payload.get("review_pack") or {}
+                subject = review_pack.get("subject") or {}
+                recommendation = review_pack.get("recommendation") or {}
+                resolution = payload.get("resolution") or {}
+                matched_terms = self._matched_retrieval_terms(
+                    normalized_terms,
+                    [row["headline_text"], row["summary_text"], row["detail_text"]],
+                )
+                if not matched_terms:
+                    continue
+                candidates.append(
+                    {
+                        "channel": "review_summaries",
+                        "source_ref": approval["review_pack_id"],
+                        "source_workflow_id": approval["workflow_id"],
+                        "source_ticket_id": subject.get("source_ticket_id"),
+                        "review_pack_id": approval["review_pack_id"],
+                        "headline": str(
+                            row["headline_text"]
+                            or subject.get("title")
+                            or payload.get("inbox_title")
+                            or approval["review_pack_id"]
+                        ),
+                        "summary": str(
+                            row["summary_text"]
+                            or recommendation.get("summary")
+                            or payload.get("inbox_summary")
+                            or resolution.get("board_comment")
+                            or "Historical review summary."
+                        ),
+                        "matched_terms": matched_terms,
+                        "why_it_matched": (
+                            "Matched "
+                            + ", ".join(matched_terms)
+                            + " in a historical review summary from the same local workspace."
+                        ),
+                        "updated_at": approval.get("updated_at"),
+                        "fts_rank": float(row["fts_rank"]) if row["fts_rank"] is not None else None,
+                    }
+                )
+        finally:
+            if owned_connection is not None:
+                owned_connection.__exit__(None, None, None)
 
-        return self._sort_retrieval_candidates(candidates)[:limit]
+        return [
+            {key: value for key, value in candidate.items() if key != "fts_rank"}
+            for candidate in self._sort_retrieval_candidates(candidates)[:limit]
+        ]
 
     def list_retrieval_incident_summary_candidates(
         self,
@@ -3076,66 +3111,98 @@ class ControlPlaneRepository:
         exclude_workflow_id: str,
         normalized_terms: list[str],
         limit: int,
+        connection: sqlite3.Connection | None = None,
     ) -> list[dict[str, Any]]:
         self.initialize()
-        query = """
-            SELECT incident_projection.*
-            FROM incident_projection
-            LEFT JOIN workflow_projection
-              ON workflow_projection.workflow_id = incident_projection.workflow_id
-            WHERE incident_projection.workflow_id != ?
-              AND COALESCE(workflow_projection.tenant_id, ?) = ?
-              AND COALESCE(workflow_projection.workspace_id, ?) = ?
-            ORDER BY incident_projection.updated_at DESC, incident_projection.incident_id DESC
-            LIMIT 24
-        """
-        with self.connection() as connection:
-            rows = connection.execute(
-                query,
-                (
-                    exclude_workflow_id,
-                    DEFAULT_TENANT_ID,
-                    tenant_id,
-                    DEFAULT_WORKSPACE_ID,
-                    workspace_id,
-                ),
-            ).fetchall()
+        match_query = self._build_retrieval_match_query(normalized_terms)
+        if match_query is None:
+            return []
 
         candidates: list[dict[str, Any]] = []
-        for row in rows:
-            converted = self._convert_incident_projection_row(row)
-            payload = converted["payload"]
-            matched_terms = self._matched_retrieval_terms(
-                normalized_terms,
-                [
-                    payload.get("headline"),
-                    payload.get("summary"),
-                    converted.get("incident_type"),
-                    converted.get("fingerprint"),
-                ],
-            )
-            if not matched_terms:
-                continue
-            candidates.append(
-                {
-                    "channel": "incident_summaries",
-                    "source_ref": converted["incident_id"],
-                    "source_workflow_id": converted["workflow_id"],
-                    "source_ticket_id": converted.get("ticket_id"),
-                    "incident_id": converted["incident_id"],
-                    "headline": str(payload.get("headline") or converted.get("incident_type") or converted["incident_id"]),
-                    "summary": str(payload.get("summary") or "Historical incident summary."),
-                    "matched_terms": matched_terms,
-                    "why_it_matched": (
-                        "Matched "
-                        + ", ".join(matched_terms)
-                        + " in a historical incident summary from the same local workspace."
-                    ),
-                    "updated_at": converted.get("updated_at"),
-                }
-            )
+        if connection is not None:
+            owned_connection = None
+            active_connection = connection
+        else:
+            owned_connection = self.connection()
+            active_connection = owned_connection.__enter__()
+        try:
+            self._rebuild_retrieval_incident_summary_fts(active_connection)
+            rows = active_connection.execute(
+                f"""
+                SELECT
+                    source_ref,
+                    updated_at,
+                    incident_type,
+                    fingerprint,
+                    headline_text,
+                    summary_text,
+                    bm25({RETRIEVAL_INCIDENT_SUMMARY_FTS}) AS fts_rank
+                FROM {RETRIEVAL_INCIDENT_SUMMARY_FTS}
+                WHERE {RETRIEVAL_INCIDENT_SUMMARY_FTS} MATCH ?
+                  AND workflow_id != ?
+                  AND tenant_id = ?
+                  AND workspace_id = ?
+                ORDER BY bm25({RETRIEVAL_INCIDENT_SUMMARY_FTS}), updated_at DESC, source_ref ASC
+                LIMIT ?
+                """,
+                (
+                    match_query,
+                    exclude_workflow_id,
+                    tenant_id,
+                    workspace_id,
+                    max(limit * 4, 24),
+                ),
+            ).fetchall()
+            for row in rows:
+                incident = self.get_incident_projection(str(row["source_ref"]), active_connection)
+                if incident is None:
+                    continue
+                payload = incident["payload"]
+                matched_terms = self._matched_retrieval_terms(
+                    normalized_terms,
+                    [
+                        row["headline_text"],
+                        row["summary_text"],
+                        row["incident_type"],
+                        row["fingerprint"],
+                    ],
+                )
+                if not matched_terms:
+                    continue
+                candidates.append(
+                    {
+                        "channel": "incident_summaries",
+                        "source_ref": incident["incident_id"],
+                        "source_workflow_id": incident["workflow_id"],
+                        "source_ticket_id": incident.get("ticket_id"),
+                        "incident_id": incident["incident_id"],
+                        "headline": str(
+                            row["headline_text"]
+                            or payload.get("headline")
+                            or incident.get("incident_type")
+                            or incident["incident_id"]
+                        ),
+                        "summary": str(
+                            row["summary_text"] or payload.get("summary") or "Historical incident summary."
+                        ),
+                        "matched_terms": matched_terms,
+                        "why_it_matched": (
+                            "Matched "
+                            + ", ".join(matched_terms)
+                            + " in a historical incident summary from the same local workspace."
+                        ),
+                        "updated_at": incident.get("updated_at"),
+                        "fts_rank": float(row["fts_rank"]) if row["fts_rank"] is not None else None,
+                    }
+                )
+        finally:
+            if owned_connection is not None:
+                owned_connection.__exit__(None, None, None)
 
-        return self._sort_retrieval_candidates(candidates)[:limit]
+        return [
+            {key: value for key, value in candidate.items() if key != "fts_rank"}
+            for candidate in self._sort_retrieval_candidates(candidates)[:limit]
+        ]
 
     def list_retrieval_artifact_summary_candidates(
         self,
@@ -3145,84 +3212,102 @@ class ControlPlaneRepository:
         exclude_workflow_id: str,
         normalized_terms: list[str],
         limit: int,
+        connection: sqlite3.Connection | None = None,
     ) -> list[dict[str, Any]]:
         self.initialize()
-        query = """
-            SELECT artifact_index.*
-            FROM artifact_index
-            LEFT JOIN workflow_projection
-              ON workflow_projection.workflow_id = artifact_index.workflow_id
-            WHERE artifact_index.workflow_id != ?
-              AND artifact_index.lifecycle_status = 'ACTIVE'
-              AND artifact_index.materialization_status = 'MATERIALIZED'
-              AND artifact_index.kind IN ('TEXT', 'MARKDOWN', 'JSON')
-              AND COALESCE(workflow_projection.tenant_id, ?) = ?
-              AND COALESCE(workflow_projection.workspace_id, ?) = ?
-            ORDER BY artifact_index.created_at DESC, artifact_index.artifact_ref DESC
-            LIMIT 24
-        """
-        with self.connection() as connection:
-            rows = connection.execute(
-                query,
-                (
-                    exclude_workflow_id,
-                    DEFAULT_TENANT_ID,
-                    tenant_id,
-                    DEFAULT_WORKSPACE_ID,
-                    workspace_id,
-                ),
-            ).fetchall()
+        match_query = self._build_retrieval_match_query(normalized_terms)
+        if match_query is None:
+            return []
 
         candidates: list[dict[str, Any]] = []
-        for row in rows:
-            converted = self._convert_artifact_index_row(row)
-            coarse_matched_terms = self._matched_retrieval_terms(
-                normalized_terms,
-                [
-                    converted.get("path"),
-                    converted.get("kind"),
-                    converted.get("media_type"),
-                ],
-            )
-            if not coarse_matched_terms:
-                continue
-            artifact_body = self._read_retrieval_artifact_body(converted)
-            if artifact_body is None:
-                continue
-            matched_terms = self._matched_retrieval_terms(
-                normalized_terms,
-                [
-                    converted.get("path"),
-                    artifact_body,
-                ],
-            )
-            if not matched_terms:
-                continue
-            access = build_artifact_access_descriptor(
-                converted,
-                artifact_ref=str(converted["artifact_ref"]),
-            )
-            candidates.append(
-                {
-                    "channel": "artifact_summaries",
-                    "source_ref": converted["artifact_ref"],
-                    "source_workflow_id": converted["workflow_id"],
-                    "source_ticket_id": converted.get("ticket_id"),
-                    "artifact_ref": converted["artifact_ref"],
-                    "preview_url": access.get("preview_url"),
-                    "headline": str(converted.get("path") or converted["artifact_ref"]),
-                    "summary": self._summarize_retrieval_text(artifact_body),
-                    "matched_terms": matched_terms,
-                    "why_it_matched": (
-                        "Matched "
-                        + ", ".join(matched_terms)
-                        + " in a historical artifact from the same local workspace."
-                    ),
-                    "updated_at": converted.get("created_at"),
-                }
-            )
+        if connection is not None:
+            owned_connection = None
+            active_connection = connection
+        else:
+            owned_connection = self.connection()
+            active_connection = owned_connection.__enter__()
+        try:
+            self._rebuild_retrieval_artifact_summary_fts(active_connection)
+            rows = active_connection.execute(
+                f"""
+                SELECT
+                    source_ref,
+                    updated_at,
+                    path_text,
+                    kind_text,
+                    media_type_text,
+                    summary_text,
+                    body_text,
+                    bm25({RETRIEVAL_ARTIFACT_SUMMARY_FTS}) AS fts_rank
+                FROM {RETRIEVAL_ARTIFACT_SUMMARY_FTS}
+                WHERE {RETRIEVAL_ARTIFACT_SUMMARY_FTS} MATCH ?
+                  AND workflow_id != ?
+                  AND tenant_id = ?
+                  AND workspace_id = ?
+                  AND lifecycle_status = 'ACTIVE'
+                  AND materialization_status = 'MATERIALIZED'
+                ORDER BY bm25({RETRIEVAL_ARTIFACT_SUMMARY_FTS}), updated_at DESC, source_ref ASC
+                LIMIT ?
+                """,
+                (
+                    match_query,
+                    exclude_workflow_id,
+                    tenant_id,
+                    workspace_id,
+                    max(limit * 4, 24),
+                ),
+            ).fetchall()
+            for row in rows:
+                artifact = self.get_artifact_by_ref(str(row["source_ref"]), active_connection)
+                if artifact is None:
+                    continue
+                coarse_matched_terms = self._matched_retrieval_terms(
+                    normalized_terms,
+                    [row["path_text"], row["kind_text"], row["media_type_text"]],
+                )
+                if not coarse_matched_terms:
+                    continue
+                matched_terms = self._matched_retrieval_terms(
+                    normalized_terms,
+                    [row["path_text"], row["body_text"]],
+                )
+                if not matched_terms:
+                    continue
+                access = build_artifact_access_descriptor(
+                    artifact,
+                    artifact_ref=str(artifact["artifact_ref"]),
+                )
+                candidates.append(
+                    {
+                        "channel": "artifact_summaries",
+                        "source_ref": artifact["artifact_ref"],
+                        "source_workflow_id": artifact["workflow_id"],
+                        "source_ticket_id": artifact.get("ticket_id"),
+                        "artifact_ref": artifact["artifact_ref"],
+                        "preview_url": access.get("preview_url"),
+                        "headline": str(row["path_text"] or artifact.get("path") or artifact["artifact_ref"]),
+                        "summary": str(
+                            row["summary_text"]
+                            or self._summarize_retrieval_text(str(row["body_text"] or ""))
+                        ),
+                        "matched_terms": matched_terms,
+                        "why_it_matched": (
+                            "Matched "
+                            + ", ".join(matched_terms)
+                            + " in a historical artifact from the same local workspace."
+                        ),
+                        "updated_at": artifact.get("created_at"),
+                        "fts_rank": float(row["fts_rank"]) if row["fts_rank"] is not None else None,
+                    }
+                )
+        finally:
+            if owned_connection is not None:
+                owned_connection.__exit__(None, None, None)
 
-        return self._sort_retrieval_candidates(candidates)[:limit]
+        return [
+            {key: value for key, value in candidate.items() if key != "fts_rank"}
+            for candidate in self._sort_retrieval_candidates(candidates)[:limit]
+        ]
 
     def list_artifacts_for_cleanup(
         self,
@@ -3324,6 +3409,7 @@ class ControlPlaneRepository:
                 artifact_ref,
             ),
         )
+        self._rebuild_retrieval_artifact_summary_fts(connection)
 
     def mark_artifact_storage_delete_pending(
         self,
@@ -3340,6 +3426,7 @@ class ControlPlaneRepository:
             """,
             (artifact_ref,),
         )
+        self._rebuild_retrieval_artifact_summary_fts(connection)
 
     def mark_artifact_storage_delete_failed(
         self,
@@ -3360,6 +3447,7 @@ class ControlPlaneRepository:
                 artifact_ref,
             ),
         )
+        self._rebuild_retrieval_artifact_summary_fts(connection)
 
     def update_artifact_lifecycle(
         self,
@@ -3388,6 +3476,7 @@ class ControlPlaneRepository:
                 artifact_ref,
             ),
         )
+        self._rebuild_retrieval_artifact_summary_fts(connection)
 
     def get_recent_event_previews(self) -> list[dict[str, Any]]:
         self.initialize()
@@ -4019,6 +4108,7 @@ class ControlPlaneRepository:
                 json.dumps(payload, sort_keys=True),
             ),
         )
+        self._rebuild_retrieval_review_summary_fts(connection)
         created = self.get_approval_by_id(connection, approval_id)
         if created is None:
             raise RuntimeError("Approval row was not persisted.")
@@ -4065,6 +4155,7 @@ class ControlPlaneRepository:
                 approval_id,
             ),
         )
+        self._rebuild_retrieval_review_summary_fts(connection)
         updated = self.get_approval_by_id(connection, approval_id)
         if updated is None:
             raise RuntimeError("Approval disappeared after resolution.")
@@ -4328,6 +4419,13 @@ class ControlPlaneRepository:
         converted["version"] = int(converted.get("version") or 0)
         return converted
 
+    def _build_retrieval_match_query(self, normalized_terms: list[str]) -> str | None:
+        unique_terms = [term.strip().lower() for term in normalized_terms if term and term.strip()]
+        if not unique_terms:
+            return None
+        deduplicated = list(dict.fromkeys(unique_terms))
+        return " OR ".join(f'"{term.replace("\"", "\"\"")}"' for term in deduplicated)
+
     def _matched_retrieval_terms(
         self,
         normalized_terms: list[str],
@@ -4344,23 +4442,29 @@ class ControlPlaneRepository:
         self,
         candidates: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        channel_rank = {
-            "review_summaries": 0,
-            "incident_summaries": 1,
-            "artifact_summaries": 2,
-        }
-        return sorted(
+        ordered = sorted(
             candidates,
             key=lambda candidate: (
                 -len(candidate.get("matched_terms") or []),
-                channel_rank.get(str(candidate.get("channel") or ""), 99),
+                float(candidate.get("fts_rank") or 1_000_000.0),
                 -(
                     candidate["updated_at"].timestamp()
                     if isinstance(candidate.get("updated_at"), datetime)
                     else 0.0
                 ),
+                str(candidate.get("channel") or ""),
+                str(candidate.get("source_ref") or ""),
             ),
         )
+        deduplicated: list[dict[str, Any]] = []
+        seen_source_refs: set[str] = set()
+        for candidate in ordered:
+            source_ref = str(candidate.get("source_ref") or "")
+            if source_ref in seen_source_refs:
+                continue
+            seen_source_refs.add(source_ref)
+            deduplicated.append(candidate)
+        return deduplicated
 
     def _read_retrieval_artifact_body(self, artifact: dict[str, Any]) -> str | None:
         if self.artifact_store is None:
@@ -4390,6 +4494,247 @@ class ControlPlaneRepository:
         if len(compact) <= limit:
             return compact
         return compact[: limit - 3].rstrip() + "..."
+
+    def _ensure_retrieval_review_summary_fts(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS {RETRIEVAL_REVIEW_SUMMARY_FTS}
+            USING fts5(
+                source_ref UNINDEXED,
+                workflow_id UNINDEXED,
+                tenant_id UNINDEXED,
+                workspace_id UNINDEXED,
+                status UNINDEXED,
+                updated_at UNINDEXED,
+                source_ticket_id UNINDEXED,
+                headline_text,
+                summary_text,
+                detail_text
+            )
+            """
+        )
+
+    def _ensure_retrieval_incident_summary_fts(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS {RETRIEVAL_INCIDENT_SUMMARY_FTS}
+            USING fts5(
+                source_ref UNINDEXED,
+                workflow_id UNINDEXED,
+                tenant_id UNINDEXED,
+                workspace_id UNINDEXED,
+                status UNINDEXED,
+                updated_at UNINDEXED,
+                source_ticket_id UNINDEXED,
+                incident_type,
+                fingerprint,
+                headline_text,
+                summary_text
+            )
+            """
+        )
+
+    def _ensure_retrieval_artifact_summary_fts(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS {RETRIEVAL_ARTIFACT_SUMMARY_FTS}
+            USING fts5(
+                source_ref UNINDEXED,
+                workflow_id UNINDEXED,
+                tenant_id UNINDEXED,
+                workspace_id UNINDEXED,
+                lifecycle_status UNINDEXED,
+                materialization_status UNINDEXED,
+                updated_at UNINDEXED,
+                source_ticket_id UNINDEXED,
+                path_text,
+                kind_text,
+                media_type_text,
+                summary_text,
+                body_text
+            )
+            """
+        )
+
+    def _rebuild_retrieval_review_summary_fts(self, connection: sqlite3.Connection) -> None:
+        connection.execute(f"DELETE FROM {RETRIEVAL_REVIEW_SUMMARY_FTS}")
+        rows = connection.execute(
+            """
+            SELECT
+                approval_projection.*,
+                COALESCE(workflow_projection.tenant_id, ?) AS scope_tenant_id,
+                COALESCE(workflow_projection.workspace_id, ?) AS scope_workspace_id
+            FROM approval_projection
+            LEFT JOIN workflow_projection
+              ON workflow_projection.workflow_id = approval_projection.workflow_id
+            """
+            ,
+            (DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID),
+        ).fetchall()
+        for row in rows:
+            approval = self._convert_approval_row(row)
+            payload = approval["payload"]
+            review_pack = payload.get("review_pack") or {}
+            subject = review_pack.get("subject") or {}
+            recommendation = review_pack.get("recommendation") or {}
+            resolution = payload.get("resolution") or {}
+            headline_text = str(subject.get("title") or payload.get("inbox_title") or "")
+            summary_text = str(
+                recommendation.get("summary")
+                or payload.get("inbox_summary")
+                or resolution.get("board_comment")
+                or ""
+            )
+            detail_text = str(
+                " ".join(
+                    value
+                    for value in [
+                        payload.get("inbox_title"),
+                        payload.get("inbox_summary"),
+                        resolution.get("board_comment"),
+                    ]
+                    if isinstance(value, str) and value.strip()
+                )
+            )
+            connection.execute(
+                f"""
+                INSERT INTO {RETRIEVAL_REVIEW_SUMMARY_FTS} (
+                    source_ref,
+                    workflow_id,
+                    tenant_id,
+                    workspace_id,
+                    status,
+                    updated_at,
+                    source_ticket_id,
+                    headline_text,
+                    summary_text,
+                    detail_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    approval["approval_id"],
+                    approval["workflow_id"],
+                    str(row["scope_tenant_id"] or DEFAULT_TENANT_ID),
+                    str(row["scope_workspace_id"] or DEFAULT_WORKSPACE_ID),
+                    approval["status"],
+                    approval["updated_at"].isoformat() if approval.get("updated_at") else "",
+                    subject.get("source_ticket_id"),
+                    headline_text,
+                    summary_text,
+                    detail_text,
+                ),
+            )
+
+    def _rebuild_retrieval_incident_summary_fts(self, connection: sqlite3.Connection) -> None:
+        connection.execute(f"DELETE FROM {RETRIEVAL_INCIDENT_SUMMARY_FTS}")
+        rows = connection.execute(
+            """
+            SELECT
+                incident_projection.*,
+                COALESCE(workflow_projection.tenant_id, ?) AS scope_tenant_id,
+                COALESCE(workflow_projection.workspace_id, ?) AS scope_workspace_id
+            FROM incident_projection
+            LEFT JOIN workflow_projection
+              ON workflow_projection.workflow_id = incident_projection.workflow_id
+            """,
+            (DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID),
+        ).fetchall()
+        for row in rows:
+            incident = self._convert_incident_projection_row(row)
+            payload = incident["payload"]
+            connection.execute(
+                f"""
+                INSERT INTO {RETRIEVAL_INCIDENT_SUMMARY_FTS} (
+                    source_ref,
+                    workflow_id,
+                    tenant_id,
+                    workspace_id,
+                    status,
+                    updated_at,
+                    source_ticket_id,
+                    incident_type,
+                    fingerprint,
+                    headline_text,
+                    summary_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    incident["incident_id"],
+                    incident["workflow_id"],
+                    str(row["scope_tenant_id"] or DEFAULT_TENANT_ID),
+                    str(row["scope_workspace_id"] or DEFAULT_WORKSPACE_ID),
+                    incident["status"],
+                    incident["updated_at"].isoformat() if incident.get("updated_at") else "",
+                    incident.get("ticket_id"),
+                    incident.get("incident_type"),
+                    incident.get("fingerprint"),
+                    str(payload.get("headline") or ""),
+                    str(payload.get("summary") or ""),
+                ),
+            )
+
+    def _rebuild_retrieval_artifact_summary_fts(self, connection: sqlite3.Connection) -> None:
+        connection.execute(f"DELETE FROM {RETRIEVAL_ARTIFACT_SUMMARY_FTS}")
+        if self.artifact_store is None:
+            return
+
+        rows = connection.execute(
+            """
+            SELECT
+                artifact_index.*,
+                COALESCE(workflow_projection.tenant_id, ?) AS scope_tenant_id,
+                COALESCE(workflow_projection.workspace_id, ?) AS scope_workspace_id
+            FROM artifact_index
+            LEFT JOIN workflow_projection
+              ON workflow_projection.workflow_id = artifact_index.workflow_id
+            """,
+            (DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID),
+        ).fetchall()
+        for row in rows:
+            artifact = self._convert_artifact_index_row(row)
+            if str(artifact.get("lifecycle_status") or "") != "ACTIVE":
+                continue
+            if str(artifact.get("materialization_status") or "") != "MATERIALIZED":
+                continue
+            if normalize_artifact_kind(str(artifact.get("kind") or "")) not in {"TEXT", "MARKDOWN", "JSON"}:
+                continue
+            artifact_body = self._read_retrieval_artifact_body(artifact)
+            if artifact_body is None:
+                continue
+            connection.execute(
+                f"""
+                INSERT INTO {RETRIEVAL_ARTIFACT_SUMMARY_FTS} (
+                    source_ref,
+                    workflow_id,
+                    tenant_id,
+                    workspace_id,
+                    lifecycle_status,
+                    materialization_status,
+                    updated_at,
+                    source_ticket_id,
+                    path_text,
+                    kind_text,
+                    media_type_text,
+                    summary_text,
+                    body_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    artifact["artifact_ref"],
+                    artifact["workflow_id"],
+                    str(row["scope_tenant_id"] or DEFAULT_TENANT_ID),
+                    str(row["scope_workspace_id"] or DEFAULT_WORKSPACE_ID),
+                    artifact.get("lifecycle_status"),
+                    artifact.get("materialization_status"),
+                    artifact["created_at"].isoformat() if artifact.get("created_at") else "",
+                    artifact.get("ticket_id"),
+                    str(artifact.get("path") or ""),
+                    str(artifact.get("kind") or ""),
+                    str(artifact.get("media_type") or ""),
+                    self._summarize_retrieval_text(artifact_body),
+                    artifact_body,
+                ),
+            )
 
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:

@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-06）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `432 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `435 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `64 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -31,9 +31,12 @@
 
 ### `P2-C`：检索、Provider 路由与发布准备
 
-状态：`未开始`
+状态：`进行中（检索首批已完成，Provider 未开始）`
 
-- 只有在证明当前主链不够用后，才打开 `P2-RET-*` 与 `P2-PRV-*`
+- `P2-RET-001` 到 `P2-RET-005` 已完成：本地 SQLite 已新增 `review / incident / artifact` 三通道 FTS5 检索索引，repository 检索改走 FTS 命中，`Context Compiler` 继续消费原有 retrieval summary 契约
+- artifact 检索仍保留原有“先看路径 / kind / media_type 粗匹配，再消费正文命中”的边界，避免把当前输入附件正文误回灌成历史检索摘要
+- `P2-RET-006` 仍留在 `C1` 条件批次；当前没有证据表明要提前打开执行包最小组织上下文收口
+- `P2-PRV-*` 只有在证明当前主链不够用后才打开
 - 发布准备仍是后续顺序的一部分，但当前不单独开活跃任务面
 
 后续顺序统一看 [milestone-timeline.md](milestone-timeline.md)。

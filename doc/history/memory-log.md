@@ -48,6 +48,8 @@
 - 高频文档入口这轮已按新愿景重整：`README`、`TODO`、`task-backlog`、`milestone-timeline` 和 `postponed` 已重新分层，不再把当前批次、已完成补记和远期储备混写
 - `P2-GOV-007` 已按 soft rule 收口：`delivery_closeout_package@1` 可选携带 `documentation_updates`，closeout checker / runtime review 会显式总结文档同步状态，但不会把 `FOLLOW_UP_REQUIRED` 自动升级成硬门禁
 - runtime 生成 structured artifact 的写回顺序已收正：`implementation_bundle`、`delivery_check_report`、`delivery_closeout_package` 的默认 artifact 现在会持久化最终 payload，而不是先写空壳再补内存结果
+- `P2-RET-001` 到 `P2-RET-005` 已完成：SQLite 现在有 `review / incident / artifact` 三通道 FTS5 检索索引，repository 检索改成“查询前懒刷新 + FTS 命中 + 稳定排序去重”
+- artifact 检索继续保留原有粗匹配边界：只有路径 / `kind` / `media_type` 先命中关键词时，正文命中才会进入历史 retrieval summary，避免把当前输入附件正文误回灌进执行包
 
 ## Current Working Set
 
