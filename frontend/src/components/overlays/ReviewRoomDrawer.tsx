@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import type { DeveloperInspectorData, ReviewRoomData } from '../../types/api'
+import { isArtifactRef } from '../../utils/artifacts'
 import { ProfileSummary } from '../shared/ProfileSummary'
 import { Drawer } from '../shared/Drawer'
 
@@ -14,6 +15,7 @@ type ReviewRoomDrawerProps = {
   submittingAction: string | null
   onClose: () => void
   onOpenInspector: () => void
+  onOpenArtifact: (artifactRef: string) => void
   onApprove: (input: { selectedOptionId: string; boardComment: string }) => Promise<void>
   onReject: (input: { boardComment: string; rejectionReasons: string[] }) => Promise<void>
   onModifyConstraints: (input: {
@@ -41,6 +43,7 @@ export function ReviewRoomDrawer({
   submittingAction,
   onClose,
   onOpenInspector,
+  onOpenArtifact,
   onApprove,
   onReject,
   onModifyConstraints,
@@ -113,6 +116,16 @@ export function ReviewRoomDrawer({
                     <div>
                       <strong>{option.label}</strong>
                       <p>{option.summary}</p>
+                      {(option.artifact_refs ?? []).map((artifactRef) => (
+                        <button
+                          key={artifactRef}
+                          type="button"
+                          className="ghost-button artifact-ref-button"
+                          onClick={() => onOpenArtifact(artifactRef)}
+                        >
+                          Open artifact {option.label}
+                        </button>
+                      ))}
                     </div>
                   </label>
                 ))}
@@ -124,18 +137,32 @@ export function ReviewRoomDrawer({
             <div className="review-room-column">
               <h3>Evidence</h3>
               <ul className="review-room-list">
-                {(reviewPack.evidence_summary ?? []).map((item) => (
-                  <li key={item.evidence_id}>
-                    <strong>{item.label}</strong>
-                    <span>{item.summary}</span>
-                    {item.source_ref ? (
+                {(reviewPack.evidence_summary ?? []).map((item) => {
+                  const sourceRef = item.source_ref
+                  const artifactSourceRef = isArtifactRef(sourceRef) ? sourceRef : null
+
+                  return (
+                    <li key={item.evidence_id}>
+                      <strong>{item.label}</strong>
+                      <span>{item.summary}</span>
+                      {sourceRef ? (
                       <>
                         <span>Source ref</span>
-                        <span>{item.source_ref}</span>
+                        <span>{sourceRef}</span>
+                        {artifactSourceRef ? (
+                          <button
+                            type="button"
+                            className="ghost-button artifact-ref-button"
+                            onClick={() => onOpenArtifact(artifactSourceRef)}
+                          >
+                            Open evidence {item.label}
+                          </button>
+                        ) : null}
                       </>
                     ) : null}
-                  </li>
-                ))}
+                    </li>
+                  )
+                })}
                 {(reviewPack.evidence_summary ?? []).length === 0 ? (
                   <li>
                     <strong>Evidence summary</strong>

@@ -15,22 +15,24 @@
 ## 当前基线（2026-04-06）
 
 - backend：`./backend/.venv/bin/pytest tests/ -q` -> `436 passed`
-- frontend：`npm run build` -> passed，`npm run test:run` -> `66 passed`
+- frontend：`npm run build` -> passed，`npm run test:run` -> `70 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
 ## 当前批次
 
 ### `P2-M7`：集成、文档与交付口径收口
 
-状态：`进行中（首批 4 项已完成，继续推进最小证据消费面）`
+状态：`已完成（2026-04-06，5 项已全部收口；当前没有新的可直接开启主线任务）`
 
 - `P2-M7-001` 已完成：`TODO`、任务库、里程碑和冻结后置文档已改成 `M7` 为当前主线，`P1-CLN-002/003` 明确降级为冻结后置而非已完成
 - `P2-M7-002` 已完成：Review Room 现在会展示 evidence `source_ref`，前端契约已对齐后端现状
 - `P2-M7-003` 已完成：dashboard completion 投影与完成卡片现在会显示 closeout 文档同步摘要、更新数和 follow-up 数
 - `P2-M7-004` 已完成：M7 首批最小回归已补齐，当前验证基线更新为 backend `436 passed`、frontend build passed、frontend `66 passed`
-- `P2-M7-005` 进行中：把 completion / review room 已露出的 `artifact_ref`、`source_ref` 接到现有只读查看入口，不新建 artifact 浏览器
+- `P2-M7-005` 已完成：Review Room 和 dashboard completion 已把现有 `artifact_ref`、artifact 型 `source_ref` 接到统一只读查看入口，沿用本地 artifact metadata / preview / content 接口，不新建 artifact 浏览器
 
 后续顺序统一看 [milestone-timeline.md](milestone-timeline.md)。
+
+本轮无新增任务。当前剩余未关闭项都属于冻结后置、条件纳入或后置增强；在没有新任务纳入当前批次、且触发条件未成立前，没有可直接开启的主线任务。
 
 ## 已降级出当前主线（冻结后置）
 

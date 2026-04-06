@@ -1,14 +1,16 @@
 import { Button } from '../shared/Button'
 
 import type { DashboardData } from '../../types/api'
+import { artifactRefFilename } from '../../utils/artifacts'
 import { formatTimestamp } from '../../utils/format'
 
 type CompletionCardProps = {
   summary: NonNullable<DashboardData['completion_summary']>
   onOpenReview: (reviewPackId: string) => void
+  onOpenArtifact: (artifactRef: string) => void
 }
 
-export function CompletionCard({ summary, onOpenReview }: CompletionCardProps) {
+export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: CompletionCardProps) {
   const finalReviewApprovedAt = summary.final_review_approved_at ?? summary.approved_at ?? null
 
   return (
@@ -45,10 +47,34 @@ export function CompletionCard({ summary, onOpenReview }: CompletionCardProps) {
         <div>
           <span>Evidence refs</span>
           <strong>{summary.artifact_refs.length}</strong>
+          <div className="artifact-ref-list">
+            {summary.artifact_refs.map((artifactRef) => (
+              <button
+                key={artifactRef}
+                type="button"
+                className="ghost-button artifact-ref-button"
+                onClick={() => onOpenArtifact(artifactRef)}
+              >
+                Open artifact {artifactRefFilename(artifactRef)}
+              </button>
+            ))}
+          </div>
         </div>
         <div>
           <span>Closeout refs</span>
           <strong>{summary.closeout_artifact_refs.length}</strong>
+          <div className="artifact-ref-list">
+            {summary.closeout_artifact_refs.map((artifactRef) => (
+              <button
+                key={artifactRef}
+                type="button"
+                className="ghost-button artifact-ref-button"
+                onClick={() => onOpenArtifact(artifactRef)}
+              >
+                Open artifact {artifactRefFilename(artifactRef)}
+              </button>
+            ))}
+          </div>
         </div>
         <div>
           <span>Documentation updates</span>

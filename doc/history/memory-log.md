@@ -50,8 +50,9 @@
 - runtime 生成 structured artifact 的写回顺序已收正：`implementation_bundle`、`delivery_check_report`、`delivery_closeout_package` 的默认 artifact 现在会持久化最终 payload，而不是先写空壳再补内存结果
 - `P2-RET-001` 到 `P2-RET-005` 已完成：SQLite 现在有 `review / incident / artifact` 三通道 FTS5 检索索引，repository 检索改成“查询前懒刷新 + FTS 命中 + 稳定排序去重”
 - artifact 检索继续保留原有粗匹配边界：只有路径 / `kind` / `media_type` 先命中关键词时，正文命中才会进入历史 retrieval summary，避免把当前输入附件正文误回灌进执行包
-- 当前主线已从 `P2-B` 切到 `M7`：`P1-CLN-002/003` 降级为冻结后置，`P2-M7-001` 到 `P2-M7-004` 已完成，`P2-M7-005` 成为下一条默认主线任务
-- completion 投影现在会汇总 closeout 文档同步摘要、更新数和 follow-up 数；Review Room 也会展示 evidence `source_ref`，当前验证基线更新为 backend `436 passed`、frontend build passed、frontend `66 passed`
+- 当前主线已从 `P2-B` 切到 `M7`：`P1-CLN-002/003` 降级为冻结后置，`P2-M7-001` 到 `P2-M7-005` 已全部完成；当前没有新的可直接开启主线任务
+- 前端现在有统一 `ArtifactPreviewDrawer`：Review Room 的 artifact 型 evidence `source_ref`、option `artifact_refs` 和 completion card 的 final / closeout artifact refs 都会接到现有本地 artifact metadata / preview / content 只读接口，不新建 artifact 浏览器
+- completion 投影现在会汇总 closeout 文档同步摘要、更新数和 follow-up 数；Review Room 也会展示 evidence `source_ref`，当前验证基线更新为 backend `436 passed`、frontend build passed、frontend `70 passed`
 
 ## Current Working Set
 

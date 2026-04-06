@@ -8,6 +8,7 @@ import type { DashboardData } from '../../../types/api'
 describe('CompletionCard', () => {
   it('shows documentation sync summary and counts', async () => {
     const onOpenReview = vi.fn()
+    const onOpenArtifact = vi.fn()
     const user = userEvent.setup()
 
     render(
@@ -32,6 +33,7 @@ describe('CompletionCard', () => {
           } as NonNullable<DashboardData['completion_summary']>
         }
         onOpenReview={onOpenReview}
+        onOpenArtifact={onOpenArtifact}
       />,
     )
 

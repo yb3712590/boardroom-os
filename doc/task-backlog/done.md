@@ -1731,6 +1731,7 @@
 | P2-M7-002 | Review Room 证据来源可见性收口 | 2h |
 | P2-M7-003 | Dashboard completion 文档同步状态可见性 | 3h |
 | P2-M7-004 | M7 验收矩阵与最小回归入口收口 | 2h |
+| P2-M7-005 | 最小证据查看入口收口 | 3h |
 
 完成补记（2026-04-06）：
 
@@ -1738,6 +1739,7 @@
 - `P2-M7-002`：前端 `ReviewPack.evidence_summary` 已补回 `source_ref` 契约，`ReviewRoomDrawer` 现在会把 evidence 来源 ref 直接展示给董事会读面
 - `P2-M7-003`：closeout 完成事件会显式带上 `documentation_updates`，dashboard completion 投影会汇总 `documentation_sync_summary / documentation_update_count / documentation_follow_up_count`，完成卡片也已展示这组信息
 - `P2-M7-004`：新增后端 completion 投影回归，以及 `ReviewRoomDrawer`、`CompletionCard` 前端组件回归；本轮全量验证结果更新为 backend `436 passed`、frontend build passed、frontend `66 passed`
+- `P2-M7-005`：前端新增统一 `ArtifactPreviewDrawer`，把 Review Room 的 artifact 型 evidence `source_ref`、option `artifact_refs` 和 completion card 里的 final / closeout artifact refs 都接到现有本地 artifact metadata / preview / content 只读接口；当前只覆盖现有两处读面，不新建 artifact 浏览器，本轮全量验证结果更新为 backend `436 passed`、frontend build passed、frontend `70 passed`
 
 ### 4.5 UI 打磨 (P2-UI-001 到 P2-UI-008)
 

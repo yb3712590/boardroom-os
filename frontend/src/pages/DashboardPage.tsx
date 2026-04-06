@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { CompletionCard } from '../components/dashboard/CompletionCard'
@@ -37,6 +37,9 @@ const DependencyInspectorDrawer = lazy(() =>
 )
 const ProviderSettingsDrawer = lazy(() =>
   import('../components/overlays/ProviderSettingsDrawer').then((module) => ({ default: module.ProviderSettingsDrawer })),
+)
+const ArtifactPreviewDrawer = lazy(() =>
+  import('../components/overlays/ArtifactPreviewDrawer').then((module) => ({ default: module.ArtifactPreviewDrawer })),
 )
 
 export function DashboardPage() {
@@ -82,6 +85,7 @@ export function DashboardPage() {
 
   const activeWorkflowId = dashboard?.active_workflow?.workflow_id ?? null
   const reviewPack = reviewRoom?.review_pack
+  const [artifactPreviewRef, setArtifactPreviewRef] = useState<string | null>(null)
 
   const {
     incidentDetail,
@@ -160,6 +164,10 @@ export function DashboardPage() {
 
   const handleOpenInspector = async () => {
     await openInspectorForReview(loadDeveloperInspector)
+  }
+
+  const handleOpenArtifactPreview = (artifactRef: string) => {
+    setArtifactPreviewRef(artifactRef)
   }
 
   const approvalsPending = dashboard?.inbox_counts.approvals_pending ?? 0
@@ -273,7 +281,11 @@ export function DashboardPage() {
                 </>
               ) : null}
               {completionSummary && !reviewPackId ? (
-                <CompletionCard summary={completionSummary} onOpenReview={handleOpenReviewRoom} />
+                <CompletionCard
+                  summary={completionSummary}
+                  onOpenReview={handleOpenReviewRoom}
+                  onOpenArtifact={handleOpenArtifactPreview}
+                />
               ) : null}
             </section>
           }
@@ -310,6 +322,7 @@ export function DashboardPage() {
           submittingAction={submittingAction}
           onClose={closeReviewRoom}
           onOpenInspector={handleOpenInspector}
+          onOpenArtifact={handleOpenArtifactPreview}
           onApprove={handleApprove}
           onReject={handleReject}
           onModifyConstraints={handleModifyConstraints}
@@ -362,6 +375,12 @@ export function DashboardPage() {
           submitting={runtimeProviderSubmitting}
           onClose={() => setProviderSettingsOpen(false)}
           onSave={handleRuntimeProviderSave}
+        />
+
+        <ArtifactPreviewDrawer
+          isOpen={artifactPreviewRef != null}
+          artifactRef={artifactPreviewRef}
+          onClose={() => setArtifactPreviewRef(null)}
         />
       </Suspense>
     </ErrorBoundary>

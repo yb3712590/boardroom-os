@@ -724,6 +724,78 @@ function jsonResponse(data: unknown) {
   )
 }
 
+function errorResponse(status: number, detail: string) {
+  return Promise.resolve(
+    new Response(JSON.stringify({ detail }), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+}
+
+function artifactContentUrl(artifactRef: string, disposition: 'inline' | 'attachment' = 'inline') {
+  const encodedRef = encodeURIComponent(artifactRef)
+  return `/api/v1/artifacts/content?artifact_ref=${encodedRef}&disposition=${disposition}`
+}
+
+function artifactPreviewUrl(artifactRef: string) {
+  return `/api/v1/artifacts/preview?artifact_ref=${encodeURIComponent(artifactRef)}`
+}
+
+function artifactMetadata(artifactRef: string, overrides: Partial<JsonRecord> = {}) {
+  return {
+    artifact_ref: artifactRef,
+    workflow_id: 'wf_001',
+    ticket_id: 'tkt_visual_002',
+    node_id: 'node_homepage_visual',
+    path: 'reports/review/homepage-option-a.json',
+    kind: 'JSON',
+    media_type: 'application/json',
+    preview_kind: 'JSON',
+    display_hint: 'INLINE',
+    status: 'ACTIVE',
+    materialization_status: 'MATERIALIZED',
+    lifecycle_status: 'ACTIVE',
+    retention_class: 'REVIEW_EVIDENCE',
+    retention_class_source: 'PATH_DEFAULT',
+    retention_ttl_sec: 604800,
+    retention_policy_source: 'CLASS_DEFAULT',
+    expires_at: null,
+    deleted_at: null,
+    deleted_by: null,
+    delete_reason: null,
+    storage_backend: 'LOCAL_DISK',
+    storage_object_key: null,
+    storage_delete_status: 'NOT_SCHEDULED',
+    storage_delete_error: null,
+    storage_deleted_at: null,
+    size_bytes: 128,
+    content_hash: 'sha256:test',
+    created_at: '2026-04-01T23:08:00+08:00',
+    content_url: artifactContentUrl(artifactRef),
+    download_url: artifactContentUrl(artifactRef, 'attachment'),
+    preview_url: artifactPreviewUrl(artifactRef),
+    ...overrides,
+  }
+}
+
+function artifactPreview(artifactRef: string, overrides: Partial<JsonRecord> = {}) {
+  return {
+    artifact_ref: artifactRef,
+    preview_kind: 'JSON',
+    media_type: 'application/json',
+    lifecycle_status: 'ACTIVE',
+    content_url: artifactContentUrl(artifactRef),
+    download_url: artifactContentUrl(artifactRef, 'attachment'),
+    json_content: {
+      summary: 'Approve option A to unblock the main build path.',
+      artifact_ref: artifactRef,
+    },
+    text_content: null,
+    ...overrides,
+  }
+}
+
 function setMockWorkerEmploymentState(workforce: JsonRecord, employeeId: string, nextState: 'ACTIVE' | 'FROZEN') {
   const roleLanes = ((workforce.role_lanes as JsonRecord[]) ?? [])
   for (const lane of roleLanes) {
@@ -785,7 +857,36 @@ function installBoardroomMock(options?: {
   incidentDetail?: JsonRecord
   runtimeProvider?: JsonRecord
   boardActionDashboard?: JsonRecord
+  artifactMetadataByRef?: Record<string, JsonRecord>
+  artifactPreviewByRef?: Record<string, JsonRecord>
+  artifactErrorsByRef?: Record<string, { status: number; detail: string }>
 }) {
+  const defaultArtifactMetadataByRef: Record<string, JsonRecord> = {
+    'art://runtime/tkt_visual_002/option-a.png': artifactMetadata('art://runtime/tkt_visual_002/option-a.png', {
+      path: 'reports/review/option-a.png',
+      kind: 'IMAGE',
+      media_type: 'image/png',
+      preview_kind: 'INLINE_MEDIA',
+      size_bytes: 2048,
+    }),
+    'art://runtime/tkt_closeout_001/delivery-closeout-package.json': artifactMetadata(
+      'art://runtime/tkt_closeout_001/delivery-closeout-package.json',
+      {
+        path: 'reports/closeout/delivery-closeout-package.json',
+      },
+    ),
+  }
+  const defaultArtifactPreviewByRef: Record<string, JsonRecord> = {
+    'art://runtime/tkt_visual_002/option-a.png': artifactPreview('art://runtime/tkt_visual_002/option-a.png', {
+      preview_kind: 'INLINE_MEDIA',
+      media_type: 'image/png',
+      json_content: null,
+    }),
+    'art://runtime/tkt_closeout_001/delivery-closeout-package.json': artifactPreview(
+      'art://runtime/tkt_closeout_001/delivery-closeout-package.json',
+    ),
+  }
+
   const state = {
     dashboard: options?.dashboard ?? dashboardData(),
     inbox: options?.inbox ?? inboxData(),
@@ -796,11 +897,16 @@ function installBoardroomMock(options?: {
     dependencyInspector: options?.dependencyInspector ?? dependencyInspectorData(),
     incidentDetail: options?.incidentDetail ?? incidentDetailData(),
     runtimeProvider: options?.runtimeProvider ?? runtimeProviderData(),
+    artifactMetadataByRef: options?.artifactMetadataByRef ?? defaultArtifactMetadataByRef,
+    artifactPreviewByRef: options?.artifactPreviewByRef ?? defaultArtifactPreviewByRef,
+    artifactErrorsByRef: options?.artifactErrorsByRef ?? {},
   }
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     const method = (init?.method ?? 'GET').toUpperCase()
+    const parsedUrl = new URL(url, 'http://test.local')
+    const artifactRef = parsedUrl.searchParams.get('artifact_ref')
 
     if (method === 'GET' && url.endsWith('/api/v1/projections/dashboard')) {
       return jsonResponse(envelope(state.dashboard))
@@ -831,6 +937,26 @@ function installBoardroomMock(options?: {
       url.endsWith('/api/v1/projections/review-room/brp_001/developer-inspector')
     ) {
       return jsonResponse(envelope(state.inspector))
+    }
+    if (method === 'GET' && parsedUrl.pathname === '/api/v1/artifacts/by-ref' && artifactRef) {
+      const error = state.artifactErrorsByRef[artifactRef]
+      if (error) {
+        return errorResponse(error.status, error.detail)
+      }
+      const metadata = state.artifactMetadataByRef[artifactRef]
+      if (metadata) {
+        return jsonResponse({ data: metadata })
+      }
+    }
+    if (method === 'GET' && parsedUrl.pathname === '/api/v1/artifacts/preview' && artifactRef) {
+      const error = state.artifactErrorsByRef[artifactRef]
+      if (error) {
+        return errorResponse(error.status, error.detail)
+      }
+      const preview = state.artifactPreviewByRef[artifactRef]
+      if (preview) {
+        return jsonResponse({ data: preview })
+      }
     }
     if (method === 'POST' && url.endsWith('/api/v1/commands/project-init')) {
       state.dashboard = dashboardData({
@@ -1909,6 +2035,176 @@ describe('Boardroom UI', () => {
       expect(screen.queryByRole('heading', { name: /delivery completed/i })).not.toBeInTheDocument(),
     )
     expect(screen.getByText(/live tickets/i)).toBeInTheDocument()
+  })
+
+  it('opens the artifact preview drawer from review evidence source refs', async () => {
+    installBoardroomMock({
+      reviewRoom: {
+        ...reviewRoomData(),
+        review_pack: {
+          ...reviewRoomData().review_pack,
+          evidence_summary: [
+            {
+              evidence_id: 'evidence_visual_consistency',
+              label: 'Visual consistency',
+              summary: 'The latest draft keeps the approved river layout and board cue hierarchy.',
+              source_ref: 'art://runtime/tkt_visual_002/review-pack.json',
+            },
+          ],
+        },
+      },
+      artifactMetadataByRef: {
+        'art://runtime/tkt_visual_002/review-pack.json': artifactMetadata(
+          'art://runtime/tkt_visual_002/review-pack.json',
+          {
+            path: 'reports/review/review-pack.json',
+          },
+        ),
+      },
+      artifactPreviewByRef: {
+        'art://runtime/tkt_visual_002/review-pack.json': artifactPreview(
+          'art://runtime/tkt_visual_002/review-pack.json',
+          {
+            json_content: {
+              decision: 'option_a',
+              summary: 'Board-ready evidence package.',
+            },
+          },
+        ),
+      },
+    })
+    const user = userEvent.setup()
+    window.history.replaceState({}, '', '/review/brp_001')
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open evidence visual consistency/i }))
+
+    expect(await screen.findByRole('heading', { name: /artifact preview/i })).toBeInTheDocument()
+    expect(await screen.findByText(/board-ready evidence package/i)).toBeInTheDocument()
+  })
+
+  it('opens the same artifact preview drawer from review option refs', async () => {
+    installBoardroomMock()
+    const user = userEvent.setup()
+    window.history.replaceState({}, '', '/review/brp_001')
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open artifact option a/i }))
+
+    expect(await screen.findByRole('heading', { name: /artifact preview/i })).toBeInTheDocument()
+    expect(await screen.findByText(/reports\/review\/option-a\.png/i)).toBeInTheDocument()
+  })
+
+  it('opens final and closeout artifacts from the completion card', async () => {
+    installBoardroomMock({
+      dashboard: dashboardData({
+        pipeline_summary: {
+          phases: [
+            phase('Intake', 'COMPLETED', { completed: 1 }),
+            phase('Plan', 'COMPLETED', { completed: 1 }),
+            phase('Build', 'COMPLETED', { completed: 1 }),
+            phase('Check', 'COMPLETED', { completed: 1 }),
+            phase('Review', 'COMPLETED', { completed: 1 }),
+          ],
+          critical_path_node_ids: [],
+          blocked_node_ids: [],
+        },
+        completion_summary: {
+          workflow_id: 'wf_001',
+          final_review_pack_id: 'brp_001',
+          approved_at: '2026-04-01T23:12:00+08:00',
+          final_review_approved_at: '2026-04-01T23:12:00+08:00',
+          closeout_completed_at: '2026-04-01T23:18:00+08:00',
+          closeout_ticket_id: 'tkt_closeout_001',
+          title: 'Review homepage visual milestone',
+          summary: 'Approve option A to unblock the main build path.',
+          selected_option_id: 'option_a',
+          board_comment: 'Proceed with option A.',
+          artifact_refs: ['art://runtime/tkt_visual_002/option-a.png'],
+          closeout_artifact_refs: ['art://runtime/tkt_closeout_001/delivery-closeout-package.json'],
+          documentation_sync_summary: '2 documentation updates recorded; 0 follow-up items.',
+          documentation_update_count: 2,
+          documentation_follow_up_count: 0,
+        },
+      }),
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open artifact option-a\.png/i }))
+    expect(await screen.findByText(/reports\/review\/option-a\.png/i)).toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: /close artifact preview/i }))
+    await user.click(await screen.findByRole('button', { name: /open artifact delivery-closeout-package\.json/i }))
+    expect(await screen.findByText(/reports\/closeout\/delivery-closeout-package\.json/i)).toBeInTheDocument()
+  })
+
+  it('shows download-only and API error fallback states in the artifact preview drawer', async () => {
+    installBoardroomMock({
+      reviewRoom: {
+        ...reviewRoomData(),
+        review_pack: {
+          ...reviewRoomData().review_pack,
+          options: [
+            {
+              option_id: 'option_zip',
+              label: 'Option ZIP',
+              summary: 'Download the packaged evidence bundle.',
+              artifact_refs: ['art://runtime/tkt_visual_002/evidence-bundle.zip'],
+            },
+            {
+              option_id: 'option_missing',
+              label: 'Option Missing',
+              summary: 'This evidence ref is no longer available.',
+              artifact_refs: ['art://runtime/tkt_visual_002/missing.json'],
+            },
+          ],
+        },
+      },
+      artifactMetadataByRef: {
+        'art://runtime/tkt_visual_002/evidence-bundle.zip': artifactMetadata(
+          'art://runtime/tkt_visual_002/evidence-bundle.zip',
+          {
+            path: 'reports/review/evidence-bundle.zip',
+            kind: 'BINARY',
+            media_type: 'application/zip',
+            preview_kind: 'DOWNLOAD_ONLY',
+          },
+        ),
+      },
+      artifactPreviewByRef: {
+        'art://runtime/tkt_visual_002/evidence-bundle.zip': artifactPreview(
+          'art://runtime/tkt_visual_002/evidence-bundle.zip',
+          {
+            preview_kind: 'DOWNLOAD_ONLY',
+            media_type: 'application/zip',
+            json_content: null,
+          },
+        ),
+      },
+      artifactErrorsByRef: {
+        'art://runtime/tkt_visual_002/missing.json': {
+          status: 410,
+          detail: "Artifact 'art://runtime/tkt_visual_002/missing.json' is no longer available (DELETED).",
+        },
+      },
+    })
+    const user = userEvent.setup()
+    window.history.replaceState({}, '', '/review/brp_001')
+
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: /open artifact option zip/i }))
+    expect(await screen.findByText(/download this artifact from the local backend/i)).toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: /close artifact preview/i }))
+    await user.click(await screen.findByRole('button', { name: /open artifact option missing/i }))
+    expect(
+      await screen.findByText(/artifact 'art:\/\/runtime\/tkt_visual_002\/missing\.json' is no longer available/i),
+    ).toBeInTheDocument()
   })
 
   it('submits reject and refreshes the snapshot', async () => {

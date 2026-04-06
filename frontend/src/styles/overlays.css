@@ -168,6 +168,55 @@
   gap: 12px;
 }
 
+.artifact-preview-overview {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.artifact-preview-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.artifact-preview-code {
+  margin: 0;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(3, 7, 16, 0.5);
+  border: 1px solid var(--divider-soft);
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.artifact-preview-image,
+.artifact-preview-frame {
+  width: 100%;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(3, 7, 16, 0.42);
+}
+
+.artifact-preview-image {
+  max-height: 520px;
+  object-fit: contain;
+}
+
+.artifact-preview-frame {
+  min-height: 520px;
+}
+
+.artifact-preview-download {
+  display: grid;
+  gap: 14px;
+}
+
+.artifact-preview-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .dependency-inspector-panel {
   width: min(840px, calc(100vw - 32px));
 }

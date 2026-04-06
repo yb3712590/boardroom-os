@@ -793,6 +793,21 @@
   justify-content: flex-start;
 }
 
+.artifact-ref-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.artifact-ref-button {
+  justify-self: flex-start;
+  padding: 0;
+  color: var(--text-strong);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  background: transparent;
+}
+
 .field-label {
   display: inline-block;
   margin-bottom: 8px;
