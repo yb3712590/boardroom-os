@@ -101,13 +101,53 @@ def _create_client_with_fake_object_store(monkeypatch, *, fail_delete: bool = Fa
         yield client, fake_client
 
 
-def _project_init_payload(goal: str, budget_cap: int = 500000) -> dict:
+def _project_init_payload(
+    goal: str,
+    budget_cap: int = 500000,
+    *,
+    hard_constraints: list[str] | None = None,
+    deadline_at: str | None = None,
+    force_requirement_elicitation: bool = False,
+) -> dict:
     return {
         "north_star_goal": goal,
-        "hard_constraints": ["Keep governance explicit."],
+        "hard_constraints": hard_constraints
+        or [
+            "Keep governance explicit.",
+            "Do not move workflow truth into the browser.",
+        ],
         "budget_cap": budget_cap,
-        "deadline_at": None,
+        "deadline_at": deadline_at,
+        "force_requirement_elicitation": force_requirement_elicitation,
     }
+
+
+def _elicitation_answers() -> list[dict]:
+    return [
+        {
+            "question_id": "delivery_scope",
+            "selected_option_ids": ["scope_mvp_slice"],
+            "text": "",
+        },
+        {
+            "question_id": "core_roles",
+            "selected_option_ids": [
+                "role_frontend_engineer",
+                "role_checker",
+            ],
+            "text": "",
+        },
+        {
+            "question_id": "quality_bar",
+            "selected_option_ids": ["quality_board_review_ready"],
+            "text": "",
+        },
+        {
+            "question_id": "hard_boundaries",
+            "selected_option_ids": [],
+            "text": "Stay local-first and avoid remote worker handoff.",
+        },
+    ]
 
 
 def _ensure_scoped_workflow(
@@ -2221,6 +2261,142 @@ def test_project_init_auto_advances_to_scope_review(client, set_ticket_time):
     assert review_pack["meta"]["review_type"] == "MEETING_ESCALATION"
     assert review_pack["subject"]["title"] == "Review scope decision consensus"
     assert review_pack["maker_checker_summary"]["review_status"] == "APPROVED_WITH_NOTES"
+
+
+def test_project_init_force_requirement_elicitation_opens_init_review(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+
+    response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload(
+            "Ship MVP A",
+            force_requirement_elicitation=True,
+        ),
+    )
+
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    repository = client.app.state.repository
+    approvals = repository.list_open_approvals()
+    scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert len(approvals) == 1
+    assert approvals[0]["approval_type"] == "REQUIREMENT_ELICITATION"
+    assert approvals[0]["payload"]["review_pack"]["meta"]["review_type"] == "REQUIREMENT_ELICITATION"
+    assert approvals[0]["payload"]["review_pack"]["elicitation_questionnaire"] is not None
+    assert approvals[0]["payload"]["available_actions"] == ["APPROVE", "MODIFY_CONSTRAINTS"]
+    assert scope_ticket is None
+
+
+def test_project_init_weak_signal_requirement_elicitation_stays_before_scope_kickoff(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+
+    response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload(
+            "Ship MVP",
+            budget_cap=0,
+            hard_constraints=["Keep governance explicit."],
+            deadline_at=None,
+        ),
+    )
+
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    repository = client.app.state.repository
+    approvals = repository.list_open_approvals()
+    scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert len(approvals) == 1
+    assert approvals[0]["approval_type"] == "REQUIREMENT_ELICITATION"
+    assert scope_ticket is None
+
+
+def test_board_approve_requirement_elicitation_generates_answers_artifact_and_starts_scope_kickoff(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Ship MVP A", force_requirement_elicitation=True),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    approval = client.app.state.repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+
+    response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Answers captured. Continue to scope kickoff.",
+            "elicitation_answers": _elicitation_answers(),
+            "idempotency_key": f"board-approve:{approval['approval_id']}:elicitation",
+        },
+    )
+
+    repository = client.app.state.repository
+    approvals = repository.list_open_approvals()
+    scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert any(item["approval_type"] == "MEETING_ESCALATION" for item in approvals)
+    assert scope_ticket is not None
+    with repository.connection() as connection:
+        artifact_rows = connection.execute(
+            "SELECT artifact_ref FROM artifact_index WHERE workflow_id = ? AND logical_path LIKE ?",
+            (workflow_id, "%requirements-elicitation%"),
+        ).fetchall()
+    assert artifact_rows
+
+
+def test_modify_constraints_requirement_elicitation_reopens_same_stage_with_saved_answers(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Ship MVP A", force_requirement_elicitation=True),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    approval = client.app.state.repository.list_open_approvals()[0]
+
+    response = client.post(
+        "/api/v1/commands/modify-constraints",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "constraint_patch": {
+                "add_rules": ["Need a clearer definition of what counts as MVP complete."],
+                "remove_rules": [],
+                "replace_rules": [],
+            },
+            "board_comment": "Clarify delivery boundaries before kickoff.",
+            "elicitation_answers": _elicitation_answers(),
+            "idempotency_key": f"modify-constraints:{approval['approval_id']}:elicitation",
+        },
+    )
+
+    repository = client.app.state.repository
+    approvals = repository.list_open_approvals()
+    scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert len(approvals) == 1
+    assert approvals[0]["approval_type"] == "REQUIREMENT_ELICITATION"
+    assert approvals[0]["payload"]["draft_defaults"]["elicitation_answers"] == _elicitation_answers()
+    assert scope_ticket is None
 
 
 def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visual_review(

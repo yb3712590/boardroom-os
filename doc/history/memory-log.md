@@ -54,6 +54,9 @@
 - 当前主线已从 `P2-B` 切到 `M7`：`P1-CLN-002/003` 降级为冻结后置，`P2-M7-001` 到 `P2-M7-005` 已全部完成；当前没有新的可直接开启主线任务
 - 前端现在有统一 `ArtifactPreviewDrawer`：Review Room 的 artifact 型 evidence `source_ref`、option `artifact_refs` 和 completion card 的 final / closeout artifact refs 都会接到现有本地 artifact metadata / preview / content 只读接口，不新建 artifact 浏览器
 - completion 投影现在会汇总 closeout 文档同步摘要、更新数和 follow-up 数；Review Room 也会展示 evidence `source_ref`，当前验证基线更新为 backend `437 passed`、frontend build passed、frontend `70 passed`
+- `P2-CEO-001` 已完成：`project-init` 现在支持显式 `force_requirement_elicitation`，也会在保守启发式命中明显弱输入时先打开 `REQUIREMENT_ELICITATION`
+- 初始化澄清继续复用现有 `Inbox -> Review Room -> board-*` 审批流；董事会在 Review Room 提交结构化 `elicitation_answers` 后，`APPROVE` 会生成 `requirements-elicitation` / enriched board brief artifact 并继续进入 scope kickoff，`MODIFY_CONSTRAINTS` 会重新打开一版澄清板审
+- 当前验证基线更新为 backend `441 passed`、frontend build passed、frontend `72 passed`
 
 ## Current Working Set
 

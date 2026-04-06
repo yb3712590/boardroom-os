@@ -7,7 +7,10 @@ from app.scheduler_runner import run_scheduler_once
 def _project_init_payload(goal: str) -> dict:
     return {
         "north_star_goal": goal,
-        "hard_constraints": ["Keep governance explicit."],
+        "hard_constraints": [
+            "Keep governance explicit.",
+            "Do not move workflow truth into the browser.",
+        ],
         "budget_cap": 500000,
         "deadline_at": None,
     }

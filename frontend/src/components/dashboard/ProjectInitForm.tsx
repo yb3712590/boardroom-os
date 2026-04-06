@@ -9,6 +9,7 @@ type ProjectInitFormProps = {
     northStarGoal: string
     hardConstraints: string[]
     budgetCap: number
+    forceRequirementElicitation: boolean
   }) => Promise<void>
 }
 
@@ -18,6 +19,7 @@ export function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) 
     'Keep governance explicit.\nDo not move workflow truth into the browser.',
   )
   const [budgetCap, setBudgetCap] = useState('500000')
+  const [forceRequirementElicitation, setForceRequirementElicitation] = useState(false)
 
   return (
     <section className="project-init-panel" aria-labelledby="project-init-title">
@@ -37,6 +39,7 @@ export function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) 
             northStarGoal: goal.trim(),
             hardConstraints: normalizeConstraints(constraints),
             budgetCap: Number.parseInt(budgetCap, 10) || 0,
+            forceRequirementElicitation,
           })
         }}
       >
@@ -51,6 +54,18 @@ export function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) 
         <label>
           <span className="field-label">Budget cap</span>
           <input type="number" min="0" value={budgetCap} onChange={(event) => setBudgetCap(event.target.value)} />
+        </label>
+        <label>
+          <span className="field-label">Startup routing</span>
+          <span className="checkbox-field">
+            <input
+              type="checkbox"
+              aria-label="Route through requirement elicitation first"
+              checked={forceRequirementElicitation}
+              onChange={(event) => setForceRequirementElicitation(event.target.checked)}
+            />
+            <span>Route through requirement elicitation first</span>
+          </span>
         </label>
         <Button type="submit" variant="primary" loading={submitting} disabled={goal.trim().length === 0}>
           {submitting ? 'Advancing to first review...' : 'Launch to first review'}

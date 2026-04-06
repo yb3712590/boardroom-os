@@ -1,6 +1,6 @@
 # Boardroom OS API Reference
 
-> 最后更新：2026-04-06  
+> 最后更新：2026-04-07  
 > 这份文档按当前代码真实暴露的路由写，不按设计草案写。接口分组来自 `backend/app/api/*.py`，并由 `backend/tests/test_api_surface.py` 固定。
 
 ## 1. 怎么看这份文档
@@ -59,7 +59,7 @@ worker-runtime 是单独一套受限接口：
 
 | 接口 | 边界标签 | 默认是否建议使用 | 用途 | 关键请求字段 |
 |------|----------|------------------|------|--------------|
-| `POST /api/v1/commands/project-init` | 当前主线 | 是 | 初始化 workflow，并触发首个 scope review 链路 | `north_star_goal`、`hard_constraints`、`budget_cap`、`deadline_at`、`idempotency_key` |
+| `POST /api/v1/commands/project-init` | 当前主线 | 是 | 初始化 workflow；默认继续触发首个 scope review 链路，必要时先打开初始化需求澄清板审 | `north_star_goal`、`hard_constraints`、`budget_cap`、`deadline_at`、`force_requirement_elicitation`、`idempotency_key` |
 | `POST /api/v1/commands/runtime-provider-upsert` | 当前主线 | 是 | 保存本地 runtime provider 配置 | `mode`、`base_url`、`api_key`、`model`、`timeout_sec`、`reasoning_effort` |
 | `POST /api/v1/commands/employee-hire-request` | 当前主线 | 是 | 发起员工招聘审批 | `workflow_id`、`employee_id`、`role_type`、`role_profile_refs`、人格画像、`provider_id` |
 | `POST /api/v1/commands/employee-replace-request` | 当前主线 | 是 | 发起换人审批 | `workflow_id`、`replaced_employee_id`、`replacement_employee_id`、替代员工画像 |
@@ -79,13 +79,14 @@ worker-runtime 是单独一套受限接口：
 | `POST /api/v1/commands/artifact-cleanup` | 当前主线 | 按需 | 触发一次 artifact cleanup | `cleaned_by`、`idempotency_key` |
 | `POST /api/v1/commands/ticket-artifact-import-upload` | 当前主线 | 是 | 把已完成的 upload session 导入为普通 artifact | `workflow_id`、`ticket_id`、`node_id`、`artifact_ref`、`path`、`upload_session_id` |
 | `POST /api/v1/commands/ticket-cancel` | 当前主线 | 按需 | 取消 ticket | `workflow_id`、`ticket_id`、`node_id`、`cancelled_by` |
-| `POST /api/v1/commands/board-approve` | 当前主线 | 是 | 董事会通过 review | `review_pack_id`、`approval_id`、`selected_option_id`、`board_comment` |
+| `POST /api/v1/commands/board-approve` | 当前主线 | 是 | 董事会通过 review | `review_pack_id`、`approval_id`、`selected_option_id`、`board_comment`、`elicitation_answers?` |
 | `POST /api/v1/commands/board-reject` | 当前主线 | 是 | 董事会驳回 review | `review_pack_id`、`approval_id`、`board_comment`、`rejection_reasons` |
-| `POST /api/v1/commands/modify-constraints` | 当前主线 | 是 | 董事会改约束并要求重做 | `review_pack_id`、`approval_id`、`constraint_patch`、`board_comment` |
+| `POST /api/v1/commands/modify-constraints` | 当前主线 | 是 | 董事会改约束并要求重做 | `review_pack_id`、`approval_id`、`constraint_patch`、`board_comment`、`elicitation_answers?` |
 
 补充说明：
 
 - `project-init` 和 `ticket-create` 当前仍接受弃用兼容输入 `tenant_id / workspace_id`，但它们已不再驱动主线行为
+- `project-init` 当前新增可选 `force_requirement_elicitation`；开启后会先进入一次 `REQUIREMENT_ELICITATION` 板审，而不是直接 kickoff scope review
 - `ticket-result-submit` 现在不再直接消费 `upload_session_id`；中大文件必须先走 `ticket-artifact-import-upload`
 
 ## 5. Projections

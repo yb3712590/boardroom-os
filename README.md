@@ -16,6 +16,7 @@ Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 ## 当前真实闭环
 
 - `project-init -> scope review -> BUILD -> CHECK -> REVIEW -> closeout` 已真实跑通
+- 当初始化输入明显不足，或董事会在启动时显式要求先澄清时，`project-init` 会先打开一次 `REQUIREMENT_ELICITATION` 板审，再继续进入首个 scope review
 - `BUILD`、`CHECK`、`closeout` 都带内部 maker-checker；最终董事会只看真正的 board-facing `REVIEW`
 - CEO 已真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
 - `ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`

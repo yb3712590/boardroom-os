@@ -29,6 +29,7 @@ class ReviewAction(StrEnum):
 
 
 class ReviewType(StrEnum):
+    REQUIREMENT_ELICITATION = "REQUIREMENT_ELICITATION"
     VISUAL_MILESTONE = "VISUAL_MILESTONE"
     BUDGET_EXCEPTION = "BUDGET_EXCEPTION"
     MEETING_ESCALATION = "MEETING_ESCALATION"
@@ -104,11 +105,38 @@ class MeetingRound(StrEnum):
     CONVERGENCE = "CONVERGENCE"
 
 
+class ElicitationResponseKind(StrEnum):
+    SINGLE_SELECT = "SINGLE_SELECT"
+    MULTI_SELECT = "MULTI_SELECT"
+    TEXT = "TEXT"
+
+
+class ElicitationQuestionOption(StrictModel):
+    option_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    summary: str | None = None
+
+
+class ElicitationQuestion(StrictModel):
+    question_id: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    response_kind: ElicitationResponseKind
+    required: bool = True
+    options: list[ElicitationQuestionOption] = Field(default_factory=list)
+
+
+class ElicitationAnswer(StrictModel):
+    question_id: str = Field(min_length=1)
+    selected_option_ids: list[str] = Field(default_factory=list)
+    text: str = ""
+
+
 class ProjectInitCommand(StrictModel):
     north_star_goal: str = Field(min_length=1)
     hard_constraints: list[str]
     budget_cap: int = Field(ge=0)
     deadline_at: datetime | None = None
+    force_requirement_elicitation: bool = False
 
 
 class RuntimeProviderUpsertCommand(StrictModel):
@@ -428,6 +456,7 @@ class TicketBoardReviewRequest(StrictModel):
     risk_summary: dict | None = None
     budget_impact: dict | None = None
     developer_inspector_refs: DeveloperInspectorRefs | None = None
+    elicitation_questionnaire: list[ElicitationQuestion] | None = None
     available_actions: list[ReviewAction] = Field(
         default_factory=lambda: [
             ReviewAction.APPROVE,
@@ -471,6 +500,7 @@ class BoardApproveCommand(StrictModel):
     approval_id: str = Field(min_length=1)
     selected_option_id: str = Field(min_length=1)
     board_comment: str = Field(min_length=1)
+    elicitation_answers: list[ElicitationAnswer] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1)
 
 
@@ -497,6 +527,7 @@ class ModifyConstraintsCommand(StrictModel):
     approval_id: str = Field(min_length=1)
     constraint_patch: ConstraintPatch
     board_comment: str = Field(min_length=1)
+    elicitation_answers: list[ElicitationAnswer] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1)
 
 

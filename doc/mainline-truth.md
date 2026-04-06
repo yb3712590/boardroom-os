@@ -1,6 +1,6 @@
 # 主线真相表
 
-> 最后更新：2026-04-06
+> 最后更新：2026-04-07
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
@@ -20,6 +20,7 @@
 - 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
 - 当前 CEO 也能在窄触发条件下自动创建 `TECHNICAL_DECISION` 会议请求：只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重新对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会
 - `delivery_closeout_package@1` 现在可选携带 `documentation_updates`；internal closeout review 已把文档同步纳入 soft checker 口径，但 `FOLLOW_UP_REQUIRED` 不会自动变成硬门禁
+- `project-init` 现在新增初始化澄清分支：当董事会显式传入 `force_requirement_elicitation=true`，或初始化输入同时命中保守阈值下的明显弱信号时，系统会先打开一次 workflow 级 `REQUIREMENT_ELICITATION` 板审；董事会在现有 Review Room 中提交结构化答卷后，`APPROVE` 才会继续创建首个 scope kickoff 票，`MODIFY_CONSTRAINTS` 会重新打开一版澄清板审
 
 ## 2. Runtime 支持矩阵
 

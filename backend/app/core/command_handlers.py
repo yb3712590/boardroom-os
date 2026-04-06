@@ -13,6 +13,10 @@ from app.core.ceo_execution_presets import (
     PROJECT_INIT_SCOPE_NODE_ID,
     build_project_init_scope_ticket_id,
 )
+from app.core.requirement_elicitation import (
+    build_requirement_elicitation_review_payload,
+    should_require_requirement_elicitation,
+)
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
@@ -193,23 +197,49 @@ def handle_project_init(
 
         repository.refresh_projections(connection)
 
-    _create_project_init_brief_artifact(
+    board_brief_artifact_ref = _create_project_init_brief_artifact(
         repository,
         workflow_id=workflow_id,
         ticket_id=build_project_init_scope_ticket_id(workflow_id),
         payload=payload,
     )
-    run_ceo_shadow_for_trigger(
-        repository,
-        workflow_id=workflow_id,
-        trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
-        trigger_ref=f"project-init:{workflow_id}",
-    )
-    _auto_advance_project_init_to_first_review(
-        repository,
-        workflow_id=workflow_id,
-        command_key=command_key,
-    )
+    require_elicitation, weak_signals = should_require_requirement_elicitation(payload)
+    if require_elicitation:
+        approval_payload = build_requirement_elicitation_review_payload(
+            workflow_id=workflow_id,
+            occurred_at=received_at,
+            weak_signals=weak_signals,
+            board_brief_artifact_ref=board_brief_artifact_ref,
+        )
+        with repository.transaction() as connection:
+            repository.create_approval_request(
+                connection,
+                workflow_id=workflow_id,
+                approval_type="REQUIREMENT_ELICITATION",
+                requested_by="system",
+                review_pack=approval_payload["review_pack"],
+                available_actions=approval_payload["available_actions"],
+                draft_defaults=approval_payload["draft_defaults"],
+                inbox_title=approval_payload["inbox_title"],
+                inbox_summary=approval_payload["inbox_summary"],
+                badges=approval_payload["badges"],
+                priority=approval_payload["priority"],
+                occurred_at=received_at,
+                idempotency_key=f"{command_key}:requirement-elicitation",
+            )
+            repository.refresh_projections(connection)
+    else:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
+            trigger_ref=f"project-init:{workflow_id}",
+        )
+        _auto_advance_project_init_to_first_review(
+            repository,
+            workflow_id=workflow_id,
+            command_key=command_key,
+        )
 
     return CommandAckEnvelope(
         command_id=command_id,

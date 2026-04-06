@@ -7,10 +7,18 @@ from app.contracts.commands import (
     BoardApproveCommand,
     BoardRejectCommand,
     CommandAckEnvelope,
+    ElicitationQuestion,
     CommandAckStatus,
     DeliveryStage,
+    ElicitationAnswer,
     ModifyConstraintsCommand,
     TicketCreateCommand,
+)
+from app.contracts.ceo_actions import CEOCreateTicketPayload
+from app.core.ceo_execution_presets import (
+    PROJECT_INIT_SCOPE_NODE_ID,
+    build_ceo_create_ticket_command,
+    build_project_init_scope_summary,
 )
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.constants import (
@@ -19,6 +27,7 @@ from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     APPROVAL_STATUS_REJECTED,
     EMPLOYEE_STATE_ACTIVE,
+    EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_EMPLOYEE_HIRED,
@@ -42,7 +51,16 @@ from app.core.output_schemas import (
     validate_output_payload,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.requirement_elicitation import (
+    build_enriched_board_brief_markdown,
+    build_requirement_elicitation_markdown,
+    build_requirement_elicitation_questionnaire,
+    build_requirement_elicitation_review_payload,
+    normalize_elicitation_answers,
+    summarize_elicitation_answers,
+)
 from app.core.staffing_containment import contain_employee_active_tickets
+from app.core.ticket_handlers import handle_ticket_create
 from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.workflow_scope import with_workflow_scope
@@ -58,6 +76,7 @@ SUPPORTED_SCOPE_FOLLOWUP_DELIVERY_STAGES = {
     DeliveryStage.CHECK,
     DeliveryStage.REVIEW,
 }
+PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS = 6
 
 
 def _trigger_ceo_shadow_safely(
@@ -444,6 +463,202 @@ def _build_closeout_internal_review_request(summary: str) -> dict[str, Any]:
         "comment_template": "",
         "badges": ["internal_closeout", "closeout_gate"],
     }
+
+
+def _load_project_init_directive_payload(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    workflow_id: str,
+) -> dict[str, Any]:
+    for event in reversed(repository.list_all_events(connection)):
+        if event["workflow_id"] != workflow_id:
+            continue
+        if event["event_type"] != EVENT_BOARD_DIRECTIVE_RECEIVED:
+            continue
+        payload = event.get("payload") or {}
+        if isinstance(payload, dict):
+            return payload
+    raise ValueError("Project-init directive payload is missing.")
+
+
+def _save_text_artifact(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    artifact_ref: str,
+    logical_path: str,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    content: str,
+    kind: str,
+    occurred_at,
+) -> None:
+    artifact_store = repository.artifact_store
+    if artifact_store is None:
+        raise ValueError("Artifact store is required to record requirement elicitation artifacts.")
+    materialized = artifact_store.materialize_text(
+        logical_path,
+        content,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+        media_type="text/markdown",
+    )
+    repository.save_artifact_record(
+        connection,
+        artifact_ref=artifact_ref,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        logical_path=logical_path,
+        kind=kind,
+        media_type="text/markdown",
+        materialization_status="MATERIALIZED",
+        lifecycle_status="ACTIVE",
+        storage_backend=materialized.storage_backend,
+        storage_relpath=materialized.storage_relpath,
+        storage_object_key=materialized.storage_object_key,
+        storage_delete_status=materialized.storage_delete_status,
+        storage_delete_error=None,
+        content_hash=materialized.content_hash,
+        size_bytes=materialized.size_bytes,
+        retention_class="PERSISTENT",
+        retention_class_source="explicit",
+        retention_ttl_sec=None,
+        retention_policy_source="explicit_class",
+        expires_at=None,
+        deleted_at=None,
+        deleted_by=None,
+        delete_reason=None,
+        created_at=occurred_at,
+    )
+
+
+def _normalize_requirement_elicitation_answers(
+    approval: dict[str, Any],
+    *,
+    answers: list[ElicitationAnswer],
+) -> tuple[list[ElicitationAnswer], list[str]]:
+    review_pack = approval["payload"].get("review_pack") or {}
+    raw_questionnaire = review_pack.get("elicitation_questionnaire") or []
+    questionnaire = (
+        [ElicitationQuestion.model_validate(item) for item in raw_questionnaire]
+        if raw_questionnaire
+        else build_requirement_elicitation_questionnaire()
+    )
+    normalized_answers = normalize_elicitation_answers(questionnaire, answers)
+    weak_signals = list(((review_pack.get("delta_summary") or {}).get("weak_signals") or []))
+    return normalized_answers, weak_signals
+
+
+def _record_requirement_elicitation_artifacts(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+    answers: list[ElicitationAnswer],
+    board_comment: str,
+    occurred_at,
+) -> tuple[str, str]:
+    workflow_id = approval["workflow_id"]
+    source_ticket_id = f"tkt_{workflow_id}_scope_decision"
+    source_node_id = PROJECT_INIT_SCOPE_NODE_ID
+    directive_payload = _load_project_init_directive_payload(
+        repository,
+        connection,
+        workflow_id=workflow_id,
+    )
+    questionnaire = build_requirement_elicitation_questionnaire()
+    answers_summary = summarize_elicitation_answers(questionnaire, answers)
+    weak_signals = list(
+        (((approval["payload"].get("review_pack") or {}).get("delta_summary") or {}).get("weak_signals") or [])
+    )
+    elicitation_artifact_ref = f"art://project-init/{workflow_id}/requirements-elicitation.md"
+    elicitation_logical_path = f"inputs/project-init/{workflow_id}/requirements-elicitation.md"
+    enriched_brief_artifact_ref = f"art://project-init/{workflow_id}/board-brief-enriched.md"
+    enriched_brief_logical_path = f"inputs/project-init/{workflow_id}/board-brief-enriched.md"
+    _save_text_artifact(
+        repository,
+        connection,
+        artifact_ref=elicitation_artifact_ref,
+        logical_path=elicitation_logical_path,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        content=build_requirement_elicitation_markdown(
+            workflow_id=workflow_id,
+            weak_signals=weak_signals,
+            answers_summary=answers_summary,
+            board_comment=board_comment,
+        ),
+        kind="MARKDOWN",
+        occurred_at=occurred_at,
+    )
+    _save_text_artifact(
+        repository,
+        connection,
+        artifact_ref=enriched_brief_artifact_ref,
+        logical_path=enriched_brief_logical_path,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        content=build_enriched_board_brief_markdown(
+            workflow_id=workflow_id,
+            north_star_goal=str(directive_payload.get("north_star_goal") or ""),
+            budget_cap=int(directive_payload.get("budget_cap") or 0),
+            deadline_at=str(directive_payload.get("deadline_at") or "") or None,
+            hard_constraints=[
+                str(item).strip()
+                for item in directive_payload.get("hard_constraints") or []
+                if str(item).strip()
+            ],
+            answers_summary=answers_summary,
+        ),
+        kind="MARKDOWN",
+        occurred_at=occurred_at,
+    )
+    return elicitation_artifact_ref, enriched_brief_artifact_ref
+
+
+def _kickoff_scope_after_requirement_elicitation(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    artifact_refs: list[str],
+    idempotency_key_prefix: str,
+) -> str | None:
+    workflow = repository.get_workflow_projection(workflow_id)
+    if workflow is None:
+        raise ValueError("Workflow projection missing during requirement elicitation approval.")
+    command = build_ceo_create_ticket_command(
+        workflow=workflow,
+        payload=CEOCreateTicketPayload(
+            workflow_id=workflow_id,
+            node_id=PROJECT_INIT_SCOPE_NODE_ID,
+            role_profile_ref="ui_designer_primary",
+            output_schema_ref="consensus_document",
+            summary=build_project_init_scope_summary(str(workflow.get("north_star_goal") or workflow.get("title") or "")),
+            parent_ticket_id=None,
+        ),
+    )
+    command = command.model_copy(
+        update={
+            "input_artifact_refs": list(dict.fromkeys(list(command.input_artifact_refs) + artifact_refs)),
+            "idempotency_key": f"{idempotency_key_prefix}:scope-kickoff",
+        }
+    )
+    ack = handle_ticket_create(repository, command)
+    if ack.status.value not in {"ACCEPTED", "DUPLICATE"}:
+        raise ValueError(ack.reason or "Scope kickoff could not be created after requirement elicitation.")
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix=f"{idempotency_key_prefix}:auto-advance",
+        max_steps=PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS,
+    )
+    return ack.causation_hint
 
 
 def _scope_followup_expected_artifact_ref(ticket_id: str, delivery_stage: DeliveryStage) -> str | None:
@@ -867,6 +1082,8 @@ def handle_board_approve(
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
     created_followup_ticket_ids: list[str] = []
+    kickoff_causation_hint: str | None = None
+    kickoff_artifact_refs: list[str] = []
     with repository.transaction() as connection:
         existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
         if existing_event is not None:
@@ -904,20 +1121,37 @@ def handle_board_approve(
             )
 
         subject = approval["payload"].get("review_pack", {}).get("subject", {})
-        try:
-            followup_ticket_payloads = _build_scope_followup_ticket_payloads(
-                repository,
-                connection,
-                approval=approval,
-            )
-        except ValueError as exc:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                reason=str(exc),
-                causation_hint=f"approval:{payload.approval_id}",
-            )
+        followup_ticket_payloads: list[dict[str, Any]] = []
+        normalized_elicitation_answers: list[ElicitationAnswer] = []
+        if approval["approval_type"] == "REQUIREMENT_ELICITATION":
+            try:
+                normalized_elicitation_answers, _ = _normalize_requirement_elicitation_answers(
+                    approval,
+                    answers=list(payload.elicitation_answers),
+                )
+            except ValueError as exc:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    reason=str(exc),
+                    causation_hint=f"approval:{payload.approval_id}",
+                )
+        else:
+            try:
+                followup_ticket_payloads = _build_scope_followup_ticket_payloads(
+                    repository,
+                    connection,
+                    approval=approval,
+                )
+            except ValueError as exc:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    reason=str(exc),
+                    causation_hint=f"approval:{payload.approval_id}",
+                )
 
         event_row = repository.insert_event(
             connection,
@@ -935,6 +1169,9 @@ def handle_board_approve(
                 "ticket_id": subject.get("source_ticket_id"),
                 "selected_option_id": payload.selected_option_id,
                 "board_comment": payload.board_comment,
+                "elicitation_answers": [
+                    item.model_dump(mode="json") for item in normalized_elicitation_answers
+                ],
             },
             occurred_at=received_at,
         )
@@ -967,53 +1204,79 @@ def handle_board_approve(
                 "decision_action": "APPROVE",
                 "selected_option_id": payload.selected_option_id,
                 "board_comment": payload.board_comment,
+                "elicitation_answers": [
+                    item.model_dump(mode="json") for item in normalized_elicitation_answers
+                ],
             },
         )
-        closeout_ticket_payload = _build_post_review_closeout_ticket_payload(
+        if approval["approval_type"] == "REQUIREMENT_ELICITATION":
+            elicitation_artifact_ref, enriched_brief_artifact_ref = _record_requirement_elicitation_artifacts(
+                repository,
+                connection,
+                approval=repository.get_approval_by_id(connection, payload.approval_id) or approval,
+                answers=normalized_elicitation_answers,
+                board_comment=payload.board_comment,
+                occurred_at=received_at,
+            )
+            kickoff_artifact_refs = [elicitation_artifact_ref, enriched_brief_artifact_ref]
+            repository.refresh_projections(connection)
+        else:
+            closeout_ticket_payload = _build_post_review_closeout_ticket_payload(
+                repository,
+                connection,
+                approval=repository.get_approval_by_id(connection, payload.approval_id) or approval,
+                selected_option_id=payload.selected_option_id,
+            )
+            for index, followup_ticket_payload in enumerate(followup_ticket_payloads):
+                created_followup_ticket_ids.append(
+                    _insert_scope_followup_ticket_created_event(
+                        repository,
+                        connection,
+                        command_id=command_id,
+                        occurred_at=received_at,
+                        workflow_id=approval["workflow_id"],
+                        idempotency_key=f"{payload.idempotency_key}:scope-followup-create:{index}",
+                        ticket_payload=followup_ticket_payload,
+                    )
+                )
+            if closeout_ticket_payload is not None:
+                created_followup_ticket_ids.append(
+                    _insert_scope_followup_ticket_created_event(
+                        repository,
+                        connection,
+                        command_id=command_id,
+                        occurred_at=received_at,
+                        workflow_id=approval["workflow_id"],
+                        idempotency_key=f"{payload.idempotency_key}:closeout-create",
+                        ticket_payload=closeout_ticket_payload,
+                    )
+                )
+            repository.refresh_projections(connection)
+
+    if approval["approval_type"] == "REQUIREMENT_ELICITATION":
+        kickoff_causation_hint = _kickoff_scope_after_requirement_elicitation(
             repository,
-            connection,
-            approval=repository.get_approval_by_id(connection, payload.approval_id) or approval,
-            selected_option_id=payload.selected_option_id,
+            workflow_id=approval["workflow_id"],
+            artifact_refs=kickoff_artifact_refs,
+            idempotency_key_prefix=payload.idempotency_key,
         )
-        for index, followup_ticket_payload in enumerate(followup_ticket_payloads):
-            created_followup_ticket_ids.append(
-                _insert_scope_followup_ticket_created_event(
-                    repository,
-                    connection,
-                    command_id=command_id,
-                    occurred_at=received_at,
-                    workflow_id=approval["workflow_id"],
-                    idempotency_key=f"{payload.idempotency_key}:scope-followup-create:{index}",
-                    ticket_payload=followup_ticket_payload,
-                )
-            )
-        if closeout_ticket_payload is not None:
-            created_followup_ticket_ids.append(
-                _insert_scope_followup_ticket_created_event(
-                    repository,
-                    connection,
-                    command_id=command_id,
-                    occurred_at=received_at,
-                    workflow_id=approval["workflow_id"],
-                    idempotency_key=f"{payload.idempotency_key}:closeout-create",
-                    ticket_payload=closeout_ticket_payload,
-                )
-            )
-        repository.refresh_projections(connection)
+        created_followup_ticket_ids.append(f"tkt_{approval['workflow_id']}_scope_decision")
 
-    auto_advance_workflow_to_next_stop(
-        repository,
-        workflow_id=approval["workflow_id"],
-        idempotency_key_prefix=f"{payload.idempotency_key}:workflow-auto-advance",
-        max_steps=SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS,
-        max_dispatches=1,
-    )
+    if approval["approval_type"] != "REQUIREMENT_ELICITATION":
+        auto_advance_workflow_to_next_stop(
+            repository,
+            workflow_id=approval["workflow_id"],
+            idempotency_key_prefix=f"{payload.idempotency_key}:workflow-auto-advance",
+            max_steps=SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS,
+            max_dispatches=1,
+        )
 
-    _trigger_ceo_shadow_safely(
-        repository,
-        workflow_id=approval["workflow_id"],
-        approval_id=payload.approval_id,
-    )
+    if approval["approval_type"] != "REQUIREMENT_ELICITATION":
+        _trigger_ceo_shadow_safely(
+            repository,
+            workflow_id=approval["workflow_id"],
+            approval_id=payload.approval_id,
+        )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -1024,9 +1287,13 @@ def handle_board_approve(
             f"employee:{employee_causation_hint}"
             if employee_causation_hint is not None
             else (
+                kickoff_causation_hint
+                if kickoff_causation_hint is not None
+                else (
                 f"ticket:{created_followup_ticket_ids[0]}"
                 if created_followup_ticket_ids
                 else f"approval:{payload.approval_id}"
+                )
             )
         ),
     )
@@ -1178,6 +1445,21 @@ def handle_modify_constraints(
             )
 
         subject = approval["payload"].get("review_pack", {}).get("subject", {})
+        normalized_elicitation_answers: list[ElicitationAnswer] = []
+        if approval["approval_type"] == "REQUIREMENT_ELICITATION":
+            try:
+                normalized_elicitation_answers, weak_signals = _normalize_requirement_elicitation_answers(
+                    approval,
+                    answers=list(payload.elicitation_answers),
+                )
+            except ValueError as exc:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    reason=str(exc),
+                    causation_hint=f"approval:{payload.approval_id}",
+                )
 
         event_row = repository.insert_event(
             connection,
@@ -1196,6 +1478,9 @@ def handle_modify_constraints(
                 "board_comment": payload.board_comment,
                 "constraint_patch": payload.constraint_patch.model_dump(mode="json"),
                 "decision_action": "MODIFY_CONSTRAINTS",
+                "elicitation_answers": [
+                    item.model_dump(mode="json") for item in normalized_elicitation_answers
+                ],
             },
             occurred_at=received_at,
         )
@@ -1219,15 +1504,50 @@ def handle_modify_constraints(
                 "decision_action": "MODIFY_CONSTRAINTS",
                 "board_comment": payload.board_comment,
                 "constraint_patch": payload.constraint_patch.model_dump(mode="json"),
+                "elicitation_answers": [
+                    item.model_dump(mode="json") for item in normalized_elicitation_answers
+                ],
             },
         )
+        if approval["approval_type"] == "REQUIREMENT_ELICITATION":
+            _record_requirement_elicitation_artifacts(
+                repository,
+                connection,
+                approval=repository.get_approval_by_id(connection, payload.approval_id) or approval,
+                answers=normalized_elicitation_answers,
+                board_comment=payload.board_comment,
+                occurred_at=received_at,
+            )
+            reopened_payload = build_requirement_elicitation_review_payload(
+                workflow_id=approval["workflow_id"],
+                occurred_at=received_at,
+                weak_signals=weak_signals,
+                board_brief_artifact_ref=f"art://project-init/{approval['workflow_id']}/board-brief.md",
+                draft_answers=normalized_elicitation_answers,
+            )
+            repository.create_approval_request(
+                connection,
+                workflow_id=approval["workflow_id"],
+                approval_type="REQUIREMENT_ELICITATION",
+                requested_by="system",
+                review_pack=reopened_payload["review_pack"],
+                available_actions=reopened_payload["available_actions"],
+                draft_defaults=reopened_payload["draft_defaults"],
+                inbox_title=reopened_payload["inbox_title"],
+                inbox_summary=reopened_payload["inbox_summary"],
+                badges=reopened_payload["badges"],
+                priority=reopened_payload["priority"],
+                occurred_at=received_at,
+                idempotency_key=f"{payload.idempotency_key}:reopen-requirement-elicitation",
+            )
         repository.refresh_projections(connection)
 
-    _trigger_ceo_shadow_safely(
-        repository,
-        workflow_id=approval["workflow_id"],
-        approval_id=payload.approval_id,
-    )
+    if approval["approval_type"] != "REQUIREMENT_ELICITATION":
+        _trigger_ceo_shadow_safely(
+            repository,
+            workflow_id=approval["workflow_id"],
+            approval_id=payload.approval_id,
+        )
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
