@@ -75,6 +75,8 @@
 - `P2-GOV-002` 已完成：统一只读 `role_templates_catalog` 现在覆盖 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段；`workforce` worker 还会额外暴露 `source_template_id / source_fragment_refs`
 - `runtime-provider.future_binding_slots` 现在改从统一目录筛出未启用模板，最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`；这轮仍不把这些角色接进 staffing、CEO 建票、runtime 或执行包
 - 后续真实纳入链已拆成两段：`P2-GOV-003` 到 `P2-GOV-006` 负责文档/设计链与边界，新增 `P2-RLS-001` 到 `P2-RLS-003` 专门承接 staffing / CEO / runtime 纳入
+- 董事会愿景本轮追加了 `#76` 到 `#80`：role 模板不再充当 runtime 执行键，原子任务输入输出经由过程资产闭环，scheduler 只做确定性 readiness / lease / wakeup，CEO 不进入状态机，并继续保留事件 + 定时双路径唤醒防停滞
+- 新的最高优先级任务包已改为 `P2-DEC-001` 到 `P2-DEC-004`；`P2-GOV-003` 到 `P2-GOV-006` 和 `P2-RLS-001` 到 `P2-RLS-003` 继续保留，但顺序统一排在这组前置解耦任务之后
 - 当前验证基线更新为 backend `464 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set

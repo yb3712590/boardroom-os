@@ -20,9 +20,19 @@
 
 ## 当前批次
 
+### `P2-DEC`：派单边界与 role/runtime 解耦前置
+
+状态：`当前主线（2026-04-07 新纳入；与主线关系：在继续纳入新角色前，先把 role 模板、runtime 执行键、CEO 派单与 scheduler 的确定性执行边界收正到原子 Ticket 模型）`
+
+- `P2-DEC-001` 待开始：执行 target contract 与 role/runtime 解耦；先把“角色模板只表达组织真相、runtime 按执行合同判定”的边界写成后续实现前置
+- `P2-DEC-002` 待开始：CEO 派单意图与 scheduler 确定性执行边界；明确 CEO 负责挑选派单对象和依赖意图，scheduler 只做 readiness / lease / wakeup
+- `P2-DEC-003` 待开始：过程资产驱动的原子任务输入输出闭环；把“上游上下文 -> Context Compiler -> Ticket 执行 -> 结果回写过程资产”的链路收成单点约束
+- `P2-DEC-004` 待开始：CEO 定时唤醒、防停滞与回归/文档收口；确认事件唤醒之外的 idle wakeup 仍保留，但职责只限于防停滞和触发 CEO 重新决策
+- 这组任务当前优先级高于 `P2-GOV-003` 到 `P2-GOV-006`、`P2-RLS-001` 到 `P2-RLS-003` 和剩余 provider 后置增强；本轮只完成愿景、任务顺序和文档真相收口，不宣称代码已经开始改造
+
 ### `P2-M7`：集成、文档与交付口径收口
 
-状态：`已完成（2026-04-06，5 项已全部收口；当前没有新的可直接开启主线任务）`
+状态：`已完成（2026-04-06，5 项已全部收口；后续默认主线已转入 P2-DEC 前置解耦批次）`
 
 - `P2-M7-001` 已完成：`TODO`、任务库、里程碑和冻结后置文档已改成 `M7` 为当前主线，`P1-CLN-002/003` 明确降级为冻结后置而非已完成
 - `P2-M7-002` 已完成：Review Room 现在会展示 evidence `source_ref`，前端契约已对齐后端现状
@@ -95,9 +105,8 @@
 - `workforce` 投影现在改为暴露 `role_templates_catalog`；当前 live worker 还会额外返回 `source_template_id / source_fragment_refs`，把现有 `skill_profile / personality_profile / aesthetic_profile` 映射回高层模板来源
 - `runtime-provider.future_binding_slots` 现在改从同一目录筛出未启用模板，最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`；当前仍保持保守边界，不把这些角色接进 staffing、CEO 建票、runtime 或执行包
 - 本轮已同时重排后续任务包：`P2-GOV-003` 到 `P2-GOV-006` 现在只负责“文档/设计链纳入与边界”，新增 `P2-RLS-001` 到 `P2-RLS-003` 专门承接后续 staffing / CEO / runtime 真实纳入链
+- 在本轮愿景重排后，这些后续任务都要排在 `P2-DEC-001` 到 `P2-DEC-004` 之后；当前先收正 role/runtime、CEO/scheduler 和过程资产的基础边界，再继续角色纳入
 - 当前验证基线更新为 backend `464 passed`、frontend build passed、frontend `73 passed`
-
-本轮完成后，当前剩余未关闭项仍都属于冻结后置、后置增强或新增的角色纳入链；当前再次回到“没有可直接开启的默认主线任务”状态。
 
 ## 已降级出当前主线（冻结后置）
 

@@ -21,6 +21,8 @@
 - Ticket lifecycle, incidents, approvals, and review loops are the real control surface.
 - Maker-Checker is the default internal quality gate before CEO or Board escalation.
 - Important outputs must stay schema-checked, write-set-checked, and auditable.
+- CEO should remain outside the workflow state machine: it reads snapshots, emits controlled actions, and does not become a long-lived stateful node.
+- Formal dispatch intent should come from CEO based on the employee registry and projections; the scheduler should only execute deterministic readiness, lease, retry, and wakeup mechanics.
 - Runtime should keep work moving autonomously and escalate only on defined blocking, risk, or approval conditions.
 - Parallel implementation / serial closeout is a governance preference, not current runtime scheduling policy.
 - Documentation governance currently lives in the maintained doc stack (`README` / `mainline-truth` / `roadmap-reset` / `TODO` / `task-backlog` / `history`), not in a separate system engine.
@@ -30,7 +32,9 @@
 
 - Backend remains the executable center: FastAPI + Pydantic v2 + SQLite.
 - Durable truth lives in the event log plus deterministic projections.
+- Role templates belong to the staffing/governance layer; runtime execution should converge on ticket contract, execution target, and capability requirements rather than role names as hard execution keys.
 - Worker input should come from a compiled execution package, not ad hoc payload stitching.
+- Process assets are the durable handoff layer: upstream context is compiled from them, and ticket results should flow back into the same asset surface.
 - Context Compiler is the deterministic boundary for evidence selection, budget control, and audit artifacts.
 - Runtime output should flow back through the same structured `ticket-result-submit` ingress.
 
