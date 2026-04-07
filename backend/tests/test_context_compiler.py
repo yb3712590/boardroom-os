@@ -15,6 +15,10 @@ from app.core.context_compiler import (
     compile_execution_package,
     export_latest_compile_artifacts_to_developer_inspector,
 )
+from app.core.process_assets import (
+    build_artifact_process_asset_ref,
+    build_compiled_context_bundle_process_asset_ref,
+)
 
 
 def _ticket_create_payload(
@@ -23,6 +27,7 @@ def _ticket_create_payload(
     ticket_id: str = "tkt_compile_001",
     node_id: str = "node_compile_001",
     input_artifact_refs: list[str] | None = None,
+    input_process_asset_refs: list[str] | None = None,
     role_profile_ref: str = "frontend_engineer_primary",
     output_schema_ref: str = "ui_milestone_review",
     allowed_write_set: list[str] | None = None,
@@ -70,6 +75,8 @@ def _ticket_create_payload(
         payload["workspace_id"] = workspace_id
     if delivery_stage is not None:
         payload["delivery_stage"] = delivery_stage
+    if input_process_asset_refs is not None:
+        payload["input_process_asset_refs"] = input_process_asset_refs
     return payload
 
 
@@ -343,8 +350,8 @@ def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time
     assert compile_request.budget_policy.max_input_tokens == 3000
     assert compile_request.budget_policy.overflow_policy == "FAIL_CLOSED"
     assert [source.source_ref for source in compile_request.explicit_sources] == [
-        "art://inputs/brief.md",
-        "art://inputs/brand-guide.md",
+        build_artifact_process_asset_ref("art://inputs/brief.md"),
+        build_artifact_process_asset_ref("art://inputs/brand-guide.md"),
     ]
     assert compile_request.execution.allowed_write_set == ["artifacts/ui/homepage/*"]
     assert compile_request.governance.timeout_sla_sec == 1800
@@ -1187,7 +1194,7 @@ def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(cli
     assert bundle.meta.compiler_version == MINIMAL_CONTEXT_COMPILER_VERSION
     assert bundle.meta.is_degraded is True
     assert bundle.system_controls.output_contract.schema_ref == "ui_milestone_review"
-    assert bundle.context_blocks[0].source_kind == "ARTIFACT_REFERENCE"
+    assert bundle.context_blocks[0].source_kind == "PROCESS_ASSET"
     assert bundle.context_blocks[0].selector.selector_type == "SOURCE_REF"
     assert bundle.context_blocks[0].transform_chain == ["NORMALIZE_REFERENCE_DESCRIPTOR"]
     assert bundle.context_blocks[0].trust_note
@@ -1491,6 +1498,72 @@ def test_compile_audit_artifacts_drops_low_priority_retrieval_cards_when_budget_
     assert [entry.source_ref for entry in dropped_entries] == ["art://history/budget-notes.md"]
     assert compiled_artifacts.compile_manifest.final_bundle_stats.retrieved_block_count == 2
     assert compiled_artifacts.compile_manifest.final_bundle_stats.dropped_retrieval_count == 1
+
+
+def test_build_compile_request_converts_input_artifact_refs_to_process_asset_refs(client, set_ticket_time):
+    set_ticket_time("2026-04-07T18:20:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md"]),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+
+    assert compile_request.execution.input_process_asset_refs == [
+        build_artifact_process_asset_ref("art://inputs/brief.md")
+    ]
+    assert compile_request.explicit_sources[0].source_kind == "PROCESS_ASSET"
+    assert compile_request.explicit_sources[0].process_asset_kind == "ARTIFACT"
+
+
+def test_build_compile_request_resolves_compiled_context_bundle_process_asset(client, set_ticket_time):
+    set_ticket_time("2026-04-07T18:20:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(input_artifact_refs=["art://inputs/brief.md"]),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    source_ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_and_persist_execution_artifacts(repository, source_ticket)
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_compile_process_assets",
+            ticket_id="tkt_compile_process_assets",
+            node_id="node_compile_process_assets",
+            input_artifact_refs=[],
+            input_process_asset_refs=[
+                build_compiled_context_bundle_process_asset_ref("tkt_compile_001")
+            ],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_compile_process_assets",
+            ticket_id="tkt_compile_process_assets",
+            node_id="node_compile_process_assets",
+        ),
+    )
+
+    ticket = repository.get_current_ticket_projection("tkt_compile_process_assets")
+    compile_request = build_compile_request(repository, ticket)
+
+    assert compile_request.execution.input_process_asset_refs == [
+        build_compiled_context_bundle_process_asset_ref("tkt_compile_001")
+    ]
+    assert compile_request.explicit_sources[0].process_asset_kind == "COMPILED_CONTEXT_BUNDLE"
+    assert compile_request.explicit_sources[0].inline_content_type == "JSON"
+    assert (
+        compile_request.explicit_sources[0].inline_content_json["meta"]["ticket_id"]
+        == "tkt_compile_001"
+    )
 
 
 def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(client, set_ticket_time):

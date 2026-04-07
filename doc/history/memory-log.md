@@ -82,7 +82,10 @@
 - `P2-DEC-002` 已完成：scheduler 现在会在 `dispatch_intent.assignee_employee_id` 存在时只租约给该 assignee，但仍要求 assignee 出现在当前可用 worker 候选里；`dispatch_intent` 也已补入 `dependency_gate_refs / selected_by / wakeup_policy`
 - `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化 `TICKET_FAILED` 并触发 CEO 重决策
 - 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，避免在 build/check/review staged 票链上提前打死下游票
-- 本轮全量验证结果更新为 backend `471 passed`、frontend build passed、frontend `73 passed`
+- `P2-DEC-003` 已完成：ticket create spec、compile request 和 maker-checker / approval follow-up 现在都补入 `input_process_asset_refs[]`；旧 `input_artifact_refs[]` 会兼容映射到同一套过程资产入口
+- 当前新增统一 `process asset resolver`，已纳入 `artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary` 六类来源；Context Compiler 现在只消费 resolver 输出的规范化文本块或 JSON 块
+- runtime 完成事件现在会写回结构化 `produced_process_assets[]`；meeting ADR、closeout summary 和 runtime 默认 artifact 会自动回灌到 follow-up ticket 与 internal checker 输入链
+- 本轮全量验证结果更新为 backend `473 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 

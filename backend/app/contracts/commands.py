@@ -6,6 +6,7 @@ from enum import StrEnum
 from pydantic import Field, model_validator
 
 from app.contracts.common import JsonValue, StrictModel
+from app.contracts.process_assets import ProcessAssetReference
 from app.core.developer_inspector import parse_developer_inspector_ref
 from app.core.constants import (
     DEFAULT_LEASE_TIMEOUT_SEC,
@@ -277,6 +278,7 @@ class TicketCreateCommand(StrictModel):
     role_profile_ref: str = Field(min_length=1)
     constraints_ref: str = Field(min_length=1)
     input_artifact_refs: list[str]
+    input_process_asset_refs: list[str] = Field(default_factory=list)
     context_query_plan: ContextQueryPlan
     acceptance_criteria: list[str]
     output_schema_ref: str = Field(min_length=1)
@@ -571,6 +573,7 @@ class TicketCompletedCommand(StrictModel):
     completed_by: str = Field(min_length=1)
     completion_summary: str = Field(min_length=1)
     artifact_refs: list[str] = Field(default_factory=list)
+    produced_process_assets: list[ProcessAssetReference] = Field(default_factory=list)
     review_request: TicketBoardReviewRequest | None = None
     idempotency_key: str = Field(min_length=1)
 

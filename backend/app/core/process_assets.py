@@ -1,0 +1,485 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from typing import Any, Iterable
+from urllib.parse import quote, unquote
+
+from app.contracts.process_assets import ProcessAssetReference, ResolvedProcessAsset
+from app.core.artifacts import (
+    build_artifact_access_descriptor,
+    is_artifact_readable,
+    normalize_artifact_kind,
+)
+from app.core.output_schemas import (
+    CONSENSUS_DOCUMENT_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+)
+from app.db.repository import ControlPlaneRepository
+
+_PROCESS_ASSET_PREFIX = "pa://"
+_ARTIFACT_FALLBACK_NOT_INDEXED = "ARTIFACT_NOT_INDEXED"
+_ARTIFACT_FALLBACK_NOT_READABLE = "ARTIFACT_NOT_READABLE"
+_ARTIFACT_FALLBACK_UNSUPPORTED_KIND = "UNSUPPORTED_ARTIFACT_KIND"
+_ARTIFACT_FALLBACK_READ_FAILED = "ARTIFACT_READ_FAILED"
+_ARTIFACT_FALLBACK_JSON_DECODE_FAILED = "ARTIFACT_JSON_DECODE_FAILED"
+_ARTIFACT_FALLBACK_TEXT_DECODE_FAILED = "ARTIFACT_TEXT_DECODE_FAILED"
+_ARTIFACT_FALLBACK_MEDIA_REFERENCE_ONLY = "MEDIA_REFERENCE_ONLY"
+_ARTIFACT_FALLBACK_BINARY_REFERENCE_ONLY = "BINARY_REFERENCE_ONLY"
+
+
+def dedupe_process_asset_refs(values: Iterable[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def build_artifact_process_asset_ref(artifact_ref: str) -> str:
+    return f"{_PROCESS_ASSET_PREFIX}artifact/{quote(str(artifact_ref), safe='')}"
+
+
+def build_compiled_context_bundle_process_asset_ref(ticket_id: str) -> str:
+    return f"{_PROCESS_ASSET_PREFIX}compiled-context-bundle/{quote(str(ticket_id), safe='')}"
+
+
+def build_compile_manifest_process_asset_ref(ticket_id: str) -> str:
+    return f"{_PROCESS_ASSET_PREFIX}compile-manifest/{quote(str(ticket_id), safe='')}"
+
+
+def build_compiled_execution_package_process_asset_ref(ticket_id: str) -> str:
+    return f"{_PROCESS_ASSET_PREFIX}compiled-execution-package/{quote(str(ticket_id), safe='')}"
+
+
+def build_meeting_decision_process_asset_ref(ticket_id: str) -> str:
+    return f"{_PROCESS_ASSET_PREFIX}meeting-decision-record/{quote(str(ticket_id), safe='')}"
+
+
+def build_closeout_summary_process_asset_ref(ticket_id: str) -> str:
+    return f"{_PROCESS_ASSET_PREFIX}closeout-summary/{quote(str(ticket_id), safe='')}"
+
+
+def artifact_refs_to_process_asset_refs(artifact_refs: Iterable[str]) -> list[str]:
+    return dedupe_process_asset_refs(build_artifact_process_asset_ref(value) for value in artifact_refs)
+
+
+def merge_input_process_asset_refs(
+    *,
+    existing_process_asset_refs: Iterable[str] = (),
+    artifact_refs: Iterable[str] = (),
+    produced_process_asset_refs: Iterable[str] = (),
+) -> list[str]:
+    return dedupe_process_asset_refs(
+        [
+            *list(existing_process_asset_refs),
+            *artifact_refs_to_process_asset_refs(artifact_refs),
+            *list(produced_process_asset_refs),
+        ]
+    )
+
+
+def parse_process_asset_ref(process_asset_ref: str) -> tuple[str, str]:
+    normalized = str(process_asset_ref).strip()
+    if not normalized.startswith(_PROCESS_ASSET_PREFIX):
+        raise ValueError(f"Unsupported process asset ref: {process_asset_ref}")
+    path = normalized.removeprefix(_PROCESS_ASSET_PREFIX)
+    kind, _, raw_target = path.partition("/")
+    if not kind or not raw_target:
+        raise ValueError(f"Unsupported process asset ref: {process_asset_ref}")
+    return kind, unquote(raw_target)
+
+
+def get_ticket_output_process_asset_refs(
+    repository: ControlPlaneRepository,
+    connection: sqlite3.Connection,
+    ticket_id: str,
+) -> list[str]:
+    terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+    if terminal_event is None:
+        return []
+    payload = terminal_event.get("payload") or {}
+    if isinstance(payload, dict):
+        produced_assets = payload.get("produced_process_assets") or []
+        refs = [
+            str(item.get("process_asset_ref") or "").strip()
+            for item in produced_assets
+            if isinstance(item, dict) and str(item.get("process_asset_ref") or "").strip()
+        ]
+        if refs:
+            return dedupe_process_asset_refs(refs)
+        artifact_refs = [
+            str(value).strip()
+            for value in (payload.get("artifact_refs") or [])
+            if str(value).strip()
+        ]
+        if artifact_refs:
+            return artifact_refs_to_process_asset_refs(artifact_refs)
+    return []
+
+
+def build_result_process_assets(
+    *,
+    ticket_id: str,
+    created_spec: dict[str, Any],
+    result_payload: dict[str, Any] | None,
+    artifact_refs: list[str],
+) -> list[dict[str, Any]]:
+    produced_assets: list[ProcessAssetReference] = []
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    summary = ""
+    if isinstance(result_payload, dict):
+        summary = str(result_payload.get("summary") or "").strip()
+
+    for artifact_ref in dedupe_process_asset_refs(artifact_refs):
+        produced_assets.append(
+            ProcessAssetReference(
+                process_asset_ref=build_artifact_process_asset_ref(artifact_ref),
+                process_asset_kind="ARTIFACT",
+                producer_ticket_id=ticket_id,
+                summary=summary or artifact_ref,
+                consumable_by=["context_compiler", "review", "closeout"],
+                source_metadata={"artifact_ref": artifact_ref},
+            )
+        )
+
+    if output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF and isinstance(result_payload, dict):
+        decision_record = result_payload.get("decision_record")
+        if isinstance(decision_record, dict):
+            produced_assets.append(
+                ProcessAssetReference(
+                    process_asset_ref=build_meeting_decision_process_asset_ref(ticket_id),
+                    process_asset_kind="MEETING_DECISION_RECORD",
+                    producer_ticket_id=ticket_id,
+                    summary=(
+                        str(decision_record.get("decision") or "").strip()
+                        or str(result_payload.get("consensus_summary") or "").strip()
+                        or summary
+                        or "Meeting ADR decision record"
+                    ),
+                    consumable_by=["context_compiler", "followup_ticket", "review"],
+                    source_metadata={"source_artifact_ref": f"art://runtime/{ticket_id}/consensus-document.json"},
+                )
+            )
+
+    if output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF and isinstance(result_payload, dict):
+        produced_assets.append(
+            ProcessAssetReference(
+                process_asset_ref=build_closeout_summary_process_asset_ref(ticket_id),
+                process_asset_kind="CLOSEOUT_SUMMARY",
+                producer_ticket_id=ticket_id,
+                summary=summary or "Delivery closeout summary",
+                consumable_by=["context_compiler", "review", "closeout"],
+                source_metadata={
+                    "source_artifact_ref": f"art://runtime/{ticket_id}/delivery-closeout-package.json"
+                },
+            )
+        )
+
+    return [asset.model_dump(mode="json") for asset in produced_assets]
+
+
+def resolve_process_asset(
+    repository: ControlPlaneRepository,
+    process_asset_ref: str,
+    *,
+    connection: sqlite3.Connection | None = None,
+) -> ResolvedProcessAsset:
+    kind, target = parse_process_asset_ref(process_asset_ref)
+    if kind == "artifact":
+        return _resolve_artifact_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            artifact_ref=target,
+            connection=connection,
+        )
+    if kind == "compiled-context-bundle":
+        return _resolve_compiled_payload_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            ticket_id=target,
+            payload_kind="COMPILED_CONTEXT_BUNDLE",
+            schema_ref="compiled_context_bundle@1",
+            loader=repository.get_latest_compiled_context_bundle_by_ticket,
+            connection=connection,
+        )
+    if kind == "compile-manifest":
+        return _resolve_compiled_payload_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            ticket_id=target,
+            payload_kind="COMPILE_MANIFEST",
+            schema_ref="compile_manifest@1",
+            loader=repository.get_latest_compile_manifest_by_ticket,
+            connection=connection,
+        )
+    if kind == "compiled-execution-package":
+        return _resolve_compiled_payload_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            ticket_id=target,
+            payload_kind="COMPILED_EXECUTION_PACKAGE",
+            schema_ref="compiled_execution_package@1",
+            loader=repository.get_latest_compiled_execution_package_by_ticket,
+            connection=connection,
+        )
+    if kind == "meeting-decision-record":
+        return _resolve_meeting_decision_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            ticket_id=target,
+            connection=connection,
+        )
+    if kind == "closeout-summary":
+        return _resolve_closeout_summary_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            ticket_id=target,
+            connection=connection,
+        )
+    raise ValueError(f"Unsupported process asset ref: {process_asset_ref}")
+
+
+def _resolve_compiled_payload_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    ticket_id: str,
+    payload_kind: str,
+    schema_ref: str,
+    loader,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    row = loader(ticket_id, connection=connection)
+    if row is None:
+        raise ValueError(f"Process asset {process_asset_ref} is missing.")
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError(f"Process asset {process_asset_ref} has no structured payload.")
+    return ResolvedProcessAsset(
+        process_asset_ref=process_asset_ref,
+        process_asset_kind=payload_kind,
+        producer_ticket_id=ticket_id,
+        summary=f"{payload_kind.lower()} for {ticket_id}",
+        consumable_by=["context_compiler", "audit"],
+        source_metadata={key: row.get(key) for key in ("bundle_id", "compile_id", "compile_request_id") if row.get(key)},
+        content_type="JSON",
+        json_content=dict(payload),
+        schema_ref=schema_ref,
+    )
+
+
+def _resolve_artifact_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    artifact_ref: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    artifact = repository.get_artifact_by_ref(artifact_ref, connection=connection)
+    if artifact is None:
+        return ResolvedProcessAsset(
+            process_asset_ref=process_asset_ref,
+            process_asset_kind="ARTIFACT",
+            producer_ticket_id=None,
+            summary=artifact_ref,
+            consumable_by=["context_compiler", "review", "closeout"],
+            source_metadata={"artifact_ref": artifact_ref},
+            artifact_ref=artifact_ref,
+            fallback_reason="Artifact is not indexed, so the compiler kept only the descriptor.",
+            fallback_reason_code=_ARTIFACT_FALLBACK_NOT_INDEXED,
+        )
+
+    artifact_access = build_artifact_access_descriptor(artifact, artifact_ref=artifact_ref)
+    resolved = ResolvedProcessAsset(
+        process_asset_ref=process_asset_ref,
+        process_asset_kind="ARTIFACT",
+        producer_ticket_id=str(artifact.get("ticket_id") or "").strip() or None,
+        summary=str(artifact.get("logical_path") or artifact_ref),
+        consumable_by=["context_compiler", "review", "closeout"],
+        source_metadata={
+            "artifact_ref": artifact_ref,
+            "kind": artifact.get("kind"),
+            "media_type": artifact.get("media_type"),
+            "logical_path": artifact.get("logical_path"),
+        },
+        artifact_ref=artifact_ref,
+        artifact_access=dict(artifact_access),
+    )
+    if not is_artifact_readable(artifact):
+        resolved.fallback_reason = (
+            "Artifact is not readable for inline hydration "
+            f"(materialization={artifact.get('materialization_status')}, "
+            f"lifecycle={artifact.get('lifecycle_status')})."
+        )
+        resolved.fallback_reason_code = _ARTIFACT_FALLBACK_NOT_READABLE
+        return resolved
+
+    artifact_store = repository.artifact_store
+    if artifact_store is None:
+        resolved.fallback_reason = "Artifact store is unavailable, so the compiler kept only the descriptor."
+        resolved.fallback_reason_code = _ARTIFACT_FALLBACK_READ_FAILED
+        return resolved
+
+    normalized_kind = normalize_artifact_kind(str(artifact.get("kind") or ""))
+    preview_kind = artifact_access.get("preview_kind")
+    if normalized_kind not in {"TEXT", "MARKDOWN", "JSON"}:
+        resolved.fallback_reason_code = (
+            _ARTIFACT_FALLBACK_MEDIA_REFERENCE_ONLY
+            if preview_kind == "INLINE_MEDIA"
+            else _ARTIFACT_FALLBACK_BINARY_REFERENCE_ONLY
+            if preview_kind == "DOWNLOAD_ONLY"
+            else _ARTIFACT_FALLBACK_UNSUPPORTED_KIND
+        )
+        resolved.fallback_reason = (
+            f"Artifact kind {normalized_kind} is preserved as a structured reference in the current MVP."
+        )
+        return resolved
+
+    try:
+        body = artifact_store.read_bytes(
+            artifact.get("storage_relpath"),
+            storage_object_key=artifact.get("storage_object_key"),
+        )
+    except Exception as exc:
+        resolved.fallback_reason = f"Artifact body could not be read for inline hydration: {exc}"
+        resolved.fallback_reason_code = _ARTIFACT_FALLBACK_READ_FAILED
+        return resolved
+
+    if normalized_kind == "JSON":
+        try:
+            resolved.content_type = "JSON"
+            decoded = json.loads(body.decode("utf-8"))
+            resolved.json_content = decoded if isinstance(decoded, dict) else {"value": decoded}
+            resolved.schema_ref = "artifact_json@1"
+            return resolved
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            resolved.fallback_reason = f"Artifact JSON body could not be decoded for inline hydration: {exc}"
+            resolved.fallback_reason_code = _ARTIFACT_FALLBACK_JSON_DECODE_FAILED
+            return resolved
+
+    try:
+        resolved.content_type = "TEXT"
+        resolved.text_content = body.decode("utf-8")
+        resolved.schema_ref = "artifact_text@1"
+        return resolved
+    except UnicodeDecodeError as exc:
+        resolved.fallback_reason = f"Artifact text body could not be decoded for inline hydration: {exc}"
+        resolved.fallback_reason_code = _ARTIFACT_FALLBACK_TEXT_DECODE_FAILED
+        return resolved
+
+
+def _resolve_json_payload_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    process_asset_kind: str,
+    ticket_id: str,
+    artifact_ref: str,
+    schema_ref: str,
+    summary: str,
+    transform_payload,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    artifact = repository.get_artifact_by_ref(artifact_ref, connection=connection)
+    if artifact is None:
+        raise ValueError(f"Process asset {process_asset_ref} is missing its source artifact.")
+    if not is_artifact_readable(artifact):
+        raise ValueError(f"Process asset {process_asset_ref} source artifact is not readable.")
+    artifact_store = repository.artifact_store
+    if artifact_store is None:
+        raise ValueError(f"Process asset {process_asset_ref} source artifact store is unavailable.")
+    try:
+        payload = json.loads(
+            artifact_store.read_bytes(
+                artifact.get("storage_relpath"),
+                storage_object_key=artifact.get("storage_object_key"),
+            ).decode("utf-8")
+        )
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Process asset {process_asset_ref} could not read source artifact: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Process asset {process_asset_ref} source payload is invalid.")
+    return ResolvedProcessAsset(
+        process_asset_ref=process_asset_ref,
+        process_asset_kind=process_asset_kind,
+        producer_ticket_id=ticket_id,
+        summary=summary,
+        consumable_by=["context_compiler", "review", "closeout"],
+        source_metadata={"source_artifact_ref": artifact_ref},
+        content_type="JSON",
+        json_content=transform_payload(payload),
+        schema_ref=schema_ref,
+    )
+
+
+def _resolve_meeting_decision_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    ticket_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    artifact_ref = f"art://runtime/{ticket_id}/consensus-document.json"
+
+    def _transform(payload: dict[str, Any]) -> dict[str, Any]:
+        record = payload.get("decision_record")
+        if not isinstance(record, dict):
+            raise ValueError(f"Process asset {process_asset_ref} has no decision_record.")
+        return dict(record)
+
+    base = _resolve_json_payload_process_asset(
+        repository,
+        process_asset_ref=process_asset_ref,
+        process_asset_kind="MEETING_DECISION_RECORD",
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+        schema_ref="consensus_document.decision_record@ADR_V1",
+        summary=f"Meeting ADR for {ticket_id}",
+        transform_payload=_transform,
+        connection=connection,
+    )
+    if isinstance(base.json_content, dict):
+        decision = str(base.json_content.get("decision") or "").strip()
+        if decision:
+            base.summary = decision
+    return base
+
+
+def _resolve_closeout_summary_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    ticket_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    artifact_ref = f"art://runtime/{ticket_id}/delivery-closeout-package.json"
+
+    def _transform(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "summary": payload.get("summary"),
+            "final_artifact_refs": list(payload.get("final_artifact_refs") or []),
+            "handoff_notes": list(payload.get("handoff_notes") or []),
+            "documentation_updates": list(payload.get("documentation_updates") or []),
+        }
+
+    base = _resolve_json_payload_process_asset(
+        repository,
+        process_asset_ref=process_asset_ref,
+        process_asset_kind="CLOSEOUT_SUMMARY",
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+        schema_ref="delivery_closeout_summary@1",
+        summary=f"Delivery closeout summary for {ticket_id}",
+        transform_payload=_transform,
+        connection=connection,
+    )
+    if isinstance(base.json_content, dict):
+        summary = str(base.json_content.get("summary") or "").strip()
+        if summary:
+            base.summary = summary
+    return base

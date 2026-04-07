@@ -28,6 +28,9 @@
 - `dispatch_intent` 现在已扩到最小 5 字段：`assignee_employee_id / selection_reason / dependency_gate_refs[] / selected_by / wakeup_policy`；scheduler 在该字段存在时只会尝试租约给指定 assignee，不再按 role 池重新挑人，但 assignee 仍必须出现在当前可用 worker 候选里
 - `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化失败并触发 CEO 重决策
 - 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，不把当前 staged follow-up 主链写成“上游一失败就全部重规划”
+- `TICKET_CREATED` payload 现在可选携带 `input_process_asset_refs[]`；`Context Compiler` 会把旧 `input_artifact_refs[]` 兼容映射到同一入口，再统一走 `process asset resolver`
+- 当前 resolver 已按最小闭环纳入 6 类过程资产：`artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary`
+- runtime 完成事件现在会额外写回 `produced_process_assets[]`；meeting ADR、closeout summary 和 runtime 默认 artifact 都会自动映射到后续 follow-up ticket 或 maker-checker checker ticket 的 `input_process_asset_refs[]`
 - 当前已把原治理模板扩成只读 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
 - `workforce` 投影现在会返回 `role_templates_catalog` 和每个 live worker 的 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，但这些预留角色仍未进入 runtime 支持矩阵、staffing 动作或 CEO 文档链
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`

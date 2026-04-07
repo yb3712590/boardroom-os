@@ -1803,7 +1803,7 @@ def build_review_room_developer_inspector_projection(
             if reason_code == "RETRIEVAL_DROPPED_FOR_BUDGET":
                 dropped_retrieval_count += 1
             if (
-                source_kind == "ARTIFACT_REFERENCE"
+                source_kind == "PROCESS_ASSET"
                 and entry.get("status") == "DROPPED"
             ):
                 dropped_explicit_source_count += 1

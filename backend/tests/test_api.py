@@ -11,6 +11,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.context_compiler import compile_and_persist_execution_artifacts
+from app.core.process_assets import (
+    build_closeout_summary_process_asset_ref,
+    build_meeting_decision_process_asset_ref,
+)
 from app.core.constants import (
     APPROVAL_STATUS_APPROVED,
     APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
@@ -11705,7 +11709,13 @@ def test_meeting_escalation_followup_tickets_include_decision_record_guidance(cl
     )
 
     approval = next(
-        item for item in repository.list_open_approvals() if item["approval_type"] == "MEETING_ESCALATION"
+        item
+        for item in repository.list_open_approvals()
+        if item["approval_type"] == "MEETING_ESCALATION"
+        and any(
+            evidence.get("source_ref") == "art://meeting/consensus-document.json"
+            for evidence in item["payload"]["review_pack"].get("evidence_summary", [])
+        )
     )
     option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
     approve_response = client.post(
@@ -11735,6 +11745,7 @@ def test_meeting_escalation_followup_tickets_include_decision_record_guidance(cl
         artifact_ref.endswith("/consensus-document.json")
         for artifact_ref in created_spec["input_artifact_refs"]
     )
+    assert build_meeting_decision_process_asset_ref("tkt_scope_adr_001") in created_spec["input_process_asset_refs"]
     assert any(
         "Use the narrower runtime contract for MVP." in query
         for query in created_spec["context_query_plan"]["semantic_queries"]
@@ -11919,10 +11930,12 @@ def test_final_review_approval_creates_closeout_ticket_and_completion_summary_us
     assert any(
         "documentation updates" in criterion.lower() for criterion in closeout_created_spec["acceptance_criteria"]
     )
+    assert closeout_created_spec["input_process_asset_refs"]
     assert "documentation sync" in closeout_created_spec["auto_review_request"]["why_now"].lower()
     assert closeout_ticket["status"] == TICKET_STATUS_COMPLETED
     assert checker_created_spec["output_schema_ref"] == "maker_checker_verdict"
     assert checker_created_spec["maker_checker_context"]["maker_ticket_id"] == closeout_ticket_id
+    assert build_closeout_summary_process_asset_ref(closeout_ticket_id) in checker_created_spec["input_process_asset_refs"]
     completion_summary = dashboard_response.json()["data"]["completion_summary"]
     assert completion_summary is not None
     assert completion_summary["closeout_ticket_id"] == closeout_ticket_id

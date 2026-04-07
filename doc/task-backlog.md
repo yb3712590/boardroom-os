@@ -14,15 +14,15 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 总任务数 | 143 | 原始编号保留，新增编号继续用于路线重排、M7 首批、条件批次、角色纳入链和本轮前置解耦批次 |
-| 已完成 / 已收口 | 130 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
-| 当前仍未关闭 | 13 | 当前工作集保存在 `task-backlog/active.md` |
+| 已完成 / 已收口 | 131 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 当前仍未关闭 | 12 | 当前工作集保存在 `task-backlog/active.md` |
 | 总预估工时 | 531h | 在原表基础上补入本轮新增前置解耦任务 |
 
 ## 当前活跃区域
 
 | 区域 | 任务范围 | 当前状态 | 默认看哪里 |
 |------|----------|----------|------------|
-| 当前主线 | `P2-DEC-003` 到 `P2-DEC-004` | 当前主线；`P2-DEC-001 / P2-DEC-002` 已完成，下一步继续收正过程资产闭环与 CEO 防停滞边界 | [task-backlog/active.md](task-backlog/active.md) |
+| 当前主线 | `P2-DEC-004` | 当前主线；`P2-DEC-001 / P2-DEC-002 / P2-DEC-003` 已完成，下一步继续收 CEO 防停滞与定时唤醒边界 | [task-backlog/active.md](task-backlog/active.md) |
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | [task-backlog/active.md](task-backlog/active.md) |
 | Provider 增强 | `P2-PRV-007` 到 `P2-PRV-008` | 后置增强 | [task-backlog/active.md](task-backlog/active.md) |
 | 治理模板与文档链 | `P2-GOV-003` 到 `P2-GOV-006` | 后置增强 / 条件纳入；顺序排在 `P2-DEC-*` 之后 | [task-backlog/active.md](task-backlog/active.md) |

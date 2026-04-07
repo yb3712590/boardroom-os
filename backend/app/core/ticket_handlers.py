@@ -106,6 +106,12 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
     validate_output_payload,
 )
+from app.core.process_assets import (
+    build_result_process_assets,
+    dedupe_process_asset_refs,
+    get_ticket_output_process_asset_refs,
+    merge_input_process_asset_refs,
+)
 from app.core.runtime_provider_config import find_provider_entry, resolve_runtime_provider_config
 from app.core.ticket_artifacts import (
     PreparedTicketArtifact,
@@ -484,6 +490,25 @@ def _build_maker_checker_input_artifact_refs(
     return list(created_spec.get("input_artifact_refs") or [])
 
 
+def _build_maker_checker_input_process_asset_refs(
+    *,
+    created_spec: dict[str, Any],
+    review_request: TicketBoardReviewRequest,
+    maker_process_asset_refs: list[str],
+) -> list[str]:
+    existing_process_asset_refs = list(created_spec.get("input_process_asset_refs") or [])
+    if review_request.review_type.value in {"INTERNAL_CHECK_REVIEW", "INTERNAL_CLOSEOUT_REVIEW"}:
+        return dedupe_process_asset_refs(
+            list(maker_process_asset_refs) + existing_process_asset_refs
+        )
+    if maker_process_asset_refs:
+        return dedupe_process_asset_refs(maker_process_asset_refs)
+    return merge_input_process_asset_refs(
+        existing_process_asset_refs=existing_process_asset_refs,
+        artifact_refs=list(created_spec.get("input_artifact_refs") or []),
+    )
+
+
 def _ticket_kind(created_spec: dict[str, Any] | None) -> str | None:
     if created_spec is None or created_spec.get("ticket_kind") is None:
         return None
@@ -648,6 +673,7 @@ def _build_maker_checker_ticket_payload(
     review_request: TicketBoardReviewRequest,
     maker_completed_by: str,
     maker_artifact_refs: list[str],
+    maker_process_asset_refs: list[str],
 ) -> dict[str, Any]:
     context_query_plan = dict(created_spec.get("context_query_plan") or {})
     max_context_tokens = int(context_query_plan.get("max_context_tokens") or 0)
@@ -661,6 +687,7 @@ def _build_maker_checker_ticket_payload(
         "acceptance_criteria": list(created_spec.get("acceptance_criteria") or []),
         "output_schema_ref": created_spec.get("output_schema_ref"),
         "output_schema_version": created_spec.get("output_schema_version"),
+        "input_process_asset_refs": list(created_spec.get("input_process_asset_refs") or []),
         "delivery_stage": created_spec.get("delivery_stage"),
         "allowed_tools": list(created_spec.get("allowed_tools") or []),
         "allowed_write_set": list(created_spec.get("allowed_write_set") or []),
@@ -682,6 +709,11 @@ def _build_maker_checker_ticket_payload(
         review_request=review_request,
         maker_artifact_refs=maker_artifact_refs,
     )
+    input_process_asset_refs = _build_maker_checker_input_process_asset_refs(
+        created_spec=created_spec,
+        review_request=review_request,
+        maker_process_asset_refs=maker_process_asset_refs,
+    )
     return {
         "ticket_id": new_prefixed_id("tkt"),
         "workflow_id": workflow_id,
@@ -691,6 +723,7 @@ def _build_maker_checker_ticket_payload(
         "role_profile_ref": "checker_primary",
         "constraints_ref": str(created_spec.get("constraints_ref") or ""),
         "input_artifact_refs": input_artifact_refs,
+        "input_process_asset_refs": input_process_asset_refs,
         "context_query_plan": {
             "keywords": list(context_query_plan.get("keywords") or []),
             "semantic_queries": list(context_query_plan.get("semantic_queries") or []),
@@ -720,6 +753,7 @@ def _build_maker_checker_ticket_payload(
             "maker_ticket_id": source_ticket_id,
             "maker_completed_by": maker_completed_by,
             "maker_artifact_refs": input_artifact_refs,
+            "maker_process_asset_refs": input_process_asset_refs,
             "maker_ticket_spec": maker_ticket_spec,
             "original_review_request": review_request.model_dump(mode="json"),
         },
@@ -748,6 +782,13 @@ def _build_fix_ticket_payload(
         list(maker_checker_context.get("maker_artifact_refs") or [])
         + list(checker_result_payload.get("artifact_refs") or [])
     ) or list(checker_created_spec.get("input_artifact_refs") or [])
+    input_process_asset_refs = merge_input_process_asset_refs(
+        existing_process_asset_refs=(
+            list(maker_checker_context.get("maker_process_asset_refs") or [])
+            or list(checker_created_spec.get("input_process_asset_refs") or [])
+        ),
+        artifact_refs=list(checker_result_payload.get("artifact_refs") or []),
+    )
     required_fixes = [
         {
             "finding_id": finding["finding_id"],
@@ -781,6 +822,7 @@ def _build_fix_ticket_payload(
         "role_profile_ref": str(maker_ticket_spec.get("role_profile_ref") or "ui_designer_primary"),
         "constraints_ref": str(maker_ticket_spec.get("constraints_ref") or ""),
         "input_artifact_refs": input_artifact_refs,
+        "input_process_asset_refs": input_process_asset_refs,
         "context_query_plan": {
             "keywords": list(context_query_plan.get("keywords") or []),
             "semantic_queries": list(context_query_plan.get("semantic_queries") or []),
@@ -811,6 +853,7 @@ def _build_fix_ticket_payload(
             "maker_ticket_id": maker_checker_context.get("maker_ticket_id"),
             "maker_completed_by": maker_checker_context.get("maker_completed_by"),
             "maker_artifact_refs": input_artifact_refs,
+            "maker_process_asset_refs": input_process_asset_refs,
             "maker_ticket_spec": maker_ticket_spec,
             "original_review_request": original_review_request,
             "checker_ticket_id": checker_ticket_id,
@@ -1553,6 +1596,13 @@ def _recreate_pending_delivery_descendants_for_retry(
                 artifact_replacements.get(str(artifact_ref), str(artifact_ref))
                 for artifact_ref in (created_spec.get("input_artifact_refs") or [])
             ],
+            "input_process_asset_refs": merge_input_process_asset_refs(
+                existing_process_asset_refs=list(created_spec.get("input_process_asset_refs") or []),
+                artifact_refs=[
+                    artifact_replacements.get(str(artifact_ref), str(artifact_ref))
+                    for artifact_ref in (created_spec.get("input_artifact_refs") or [])
+                ],
+            ),
         }
         created_event = repository.insert_event(
             connection,
@@ -4248,6 +4298,15 @@ def handle_ticket_result_submit(
         )
 
     persisted_inspector_artifacts: list[PersistedDeveloperInspectorArtifact] = []
+    completed_artifact_refs = _dedupe_artifact_refs(
+        list(payload.artifact_refs) + [artifact.artifact_ref for artifact in prepared_artifacts]
+    )
+    produced_process_assets = build_result_process_assets(
+        ticket_id=payload.ticket_id,
+        created_spec=created_spec,
+        result_payload=payload.payload if isinstance(payload.payload, dict) else None,
+        artifact_refs=completed_artifact_refs,
+    )
     try:
         with repository.transaction() as connection:
             existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
@@ -4282,10 +4341,8 @@ def handle_ticket_result_submit(
                     node_id=payload.node_id,
                     completed_by=payload.submitted_by,
                     completion_summary=payload.summary,
-                    artifact_refs=_dedupe_artifact_refs(
-                        list(payload.artifact_refs)
-                        + [artifact.artifact_ref for artifact in prepared_artifacts]
-                    ),
+                    artifact_refs=completed_artifact_refs,
+                    produced_process_assets=produced_process_assets,
                     review_request=payload.review_request,
                     idempotency_key=payload.idempotency_key,
                 ),
@@ -4429,6 +4486,9 @@ def _complete_ticket_locked(
             "node_id": payload.node_id,
             "completion_summary": payload.completion_summary,
             "artifact_refs": payload.artifact_refs,
+            "produced_process_assets": [
+                item.model_dump(mode="json") for item in payload.produced_process_assets
+            ],
             "documentation_updates": (
                 list(result_payload.get("documentation_updates") or [])
                 if isinstance(result_payload, dict)
@@ -4453,6 +4513,9 @@ def _complete_ticket_locked(
             review_request=effective_review_request,
             maker_completed_by=payload.completed_by,
             maker_artifact_refs=_dedupe_artifact_refs(list(payload.artifact_refs)),
+            maker_process_asset_refs=[
+                item.process_asset_ref for item in payload.produced_process_assets
+            ],
         )
         next_ticket_id = _insert_followup_ticket_created_event(
             repository=repository,

@@ -1993,6 +1993,47 @@
 - 本轮新增后端回归覆盖：固定 assignee 派发、显式 dependency gate 非法输入、显式 dependency gate 坏依赖触发 CEO、legacy delivery-stage 缺失父依赖失败、`project-init` 在无可用 worker 时停止自动推进，以及 provider / timeout recovery runner 回归不被 staged 依赖误伤
 - 本轮全量验证结果更新为 backend `471 passed`、frontend build passed、frontend `73 passed`
 
+#### P2-DEC-003：过程资产驱动的原子任务输入输出闭环
+
+**状态**：已完成（2026-04-07，本轮实现）
+
+**描述**：把 ticket 输入、Context Compiler 编译、runtime 结果写回和 follow-up / maker-checker 续链收敛到同一套过程资产 contract，不新建独立过程资产引擎。
+
+**文件**：
+- 新增：`backend/app/contracts/process_assets.py`
+- 新增：`backend/app/core/process_assets.py`
+- 修改：`backend/app/contracts/commands.py`
+- 修改：`backend/app/contracts/runtime.py`
+- 修改：`backend/app/core/context_compiler.py`
+- 修改：`backend/app/core/ticket_handlers.py`
+- 修改：`backend/app/core/approval_handlers.py`
+- 修改：`backend/app/core/projections.py`
+- 修改：`backend/tests/test_context_compiler.py`
+- 修改：`backend/tests/test_api.py`
+- 修改：`backend/tests/test_scheduler_runner.py`
+
+**依赖**：`P2-DEC-001`、`P2-DEC-002`
+
+**预估**：4h
+
+**feature-spec**：条目 77
+
+**验收标准**：
+- `ticket-create` 补入 `input_process_asset_refs[]`，旧 `input_artifact_refs[]` 继续兼容
+- `Context Compiler` 只消费统一 resolver 输出，不再直接分支底层存储类型
+- 当前最小纳入 `artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary`
+- runtime 完成事件会写回结构化 `produced_process_assets[]`
+- meeting ADR、closeout summary 和 runtime 默认 artifact 会自动回灌到 follow-up / maker-checker 输入链
+
+**风险**：中
+
+**完成补记（2026-04-07）**：
+- 这轮没有新建过程资产存储引擎，而是走最保守实现：用统一 `pa://...` 引用层和 resolver，把现有 artifact、编译产物和结构化输出映射成规范化文本块 / JSON 块
+- `CompileRequest` 与 compiled bundle 里的显式上下文块现在统一按 `PROCESS_ASSET` 记账；artifact 型过程资产继续保留底层 `artifact_access`，所以现有只读查看入口和预算裁剪策略没有被打断
+- runtime 完成事件已开始显式写回 `produced_process_assets[]`；当前会自动产出 artifact 过程资产，以及 `meeting_decision_record`、`closeout_summary` 这两类结构化补充资产
+- `approval_handlers` 和 maker-checker 续链现在都会优先吃 `produced_process_assets[]`，再兼容旧 `input_artifact_refs[]`；meeting ADR 和 closeout summary 已能进入后续 ticket 的 `input_process_asset_refs[]`
+- 当前全量验证结果更新为 backend `473 passed`、frontend build passed、frontend `73 passed`
+
 ## 五、关键依赖图
 
 ```

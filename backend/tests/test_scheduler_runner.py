@@ -951,7 +951,7 @@ def test_scheduler_runner_marks_started_then_failed_for_unsupported_compiled_exe
 
     assert latest_bundle is not None
     assert latest_manifest is not None
-    assert latest_bundle["payload"]["context_blocks"][0]["source_kind"] == "ARTIFACT_REFERENCE"
+    assert latest_bundle["payload"]["context_blocks"][0]["source_kind"] == "PROCESS_ASSET"
     assert latest_manifest["payload"]["degradation"]["is_degraded"] is True
     assert ticket_projection["status"] == "FAILED"
     assert started_events

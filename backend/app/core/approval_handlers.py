@@ -51,6 +51,7 @@ from app.core.output_schemas import (
     validate_output_payload,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.process_assets import get_ticket_output_process_asset_refs, merge_input_process_asset_refs
 from app.core.requirement_elicitation import (
     build_enriched_board_brief_markdown,
     build_requirement_elicitation_markdown,
@@ -844,8 +845,18 @@ def _build_post_review_closeout_ticket_payload(
         for item in ((selected_option or {}).get("artifact_refs") or [])
         if str(item).strip()
     ]
+    source_process_asset_refs = get_ticket_output_process_asset_refs(
+        repository,
+        connection,
+        logical_source_ticket_id,
+    )
     input_artifact_refs = _dedupe_artifact_refs(
         list(logical_created_spec.get("input_artifact_refs") or []) + evidence_refs + selected_artifact_refs
+    )
+    input_process_asset_refs = merge_input_process_asset_refs(
+        existing_process_asset_refs=list(logical_created_spec.get("input_process_asset_refs") or []),
+        artifact_refs=input_artifact_refs,
+        produced_process_asset_refs=source_process_asset_refs,
     )
 
     return TicketCreateCommand(
@@ -857,6 +868,7 @@ def _build_post_review_closeout_ticket_payload(
         role_profile_ref=str(logical_created_spec.get("role_profile_ref") or "ui_designer_primary"),
         constraints_ref="approved_scope_followup_closeout",
         input_artifact_refs=input_artifact_refs,
+        input_process_asset_refs=input_process_asset_refs,
         context_query_plan={
             "keywords": ["approved final review", "delivery closeout", "handoff"],
             "semantic_queries": [closeout_summary],
@@ -968,8 +980,18 @@ def _build_scope_followup_ticket_payloads(
         approval=approval,
     )
     workflow = repository.get_workflow_projection(approval["workflow_id"], connection=connection)
+    source_process_asset_refs = get_ticket_output_process_asset_refs(
+        repository,
+        connection,
+        source_ticket_id,
+    )
     input_artifact_refs = _dedupe_artifact_refs(
         [consensus_artifact_ref] + list(created_spec.get("input_artifact_refs") or [])
+    )
+    input_process_asset_refs = merge_input_process_asset_refs(
+        existing_process_asset_refs=list(created_spec.get("input_process_asset_refs") or []),
+        artifact_refs=input_artifact_refs,
+        produced_process_asset_refs=source_process_asset_refs,
     )
     followup_items = list(consensus_payload.get("followup_tickets") or [])
     seen_ticket_ids: set[str] = set()
@@ -1024,6 +1046,10 @@ def _build_scope_followup_ticket_payloads(
             role_profile_ref=role_profile_ref,
             constraints_ref=f"approved_scope_followup_{delivery_stage.value.lower()}",
             input_artifact_refs=_dedupe_artifact_refs(input_artifact_refs + chained_artifact_refs),
+            input_process_asset_refs=merge_input_process_asset_refs(
+                existing_process_asset_refs=input_process_asset_refs,
+                artifact_refs=chained_artifact_refs,
+            ),
             context_query_plan={
                 "keywords": _scope_followup_context_keywords(delivery_stage),
                 "semantic_queries": [followup_summary, *extra_semantic_queries],

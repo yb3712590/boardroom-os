@@ -72,6 +72,7 @@ from app.core.constants import (
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, get_output_schema_body
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.process_assets import merge_input_process_asset_refs, resolve_process_asset
 from app.core.time import now_local
 from app.core.workflow_relationships import WorkflowTicketSnapshot, list_workflow_ticket_snapshots
 from app.core.developer_inspector import (
@@ -174,11 +175,23 @@ def _normalize_retrieval_terms(*values: str) -> list[str]:
 
 
 def _build_descriptor_payload(source: CompileRequestExplicitSource) -> dict[str, Any]:
+    display_ref = _display_source_ref(source)
     content_payload = {
-        "source_ref": source.source_ref,
-        "source_kind": source.source_kind,
+        "source_ref": display_ref,
         "is_mandatory": source.is_mandatory,
     }
+    if source.process_asset_kind != "ARTIFACT":
+        content_payload["process_asset_ref"] = source.source_ref
+        content_payload["source_kind"] = source.source_kind
+        content_payload["process_asset_kind"] = source.process_asset_kind
+    if source.producer_ticket_id is not None:
+        content_payload["producer_ticket_id"] = source.producer_ticket_id
+    if source.source_summary and source.process_asset_kind != "ARTIFACT":
+        content_payload["summary"] = source.source_summary
+    if source.consumable_by and source.process_asset_kind != "ARTIFACT":
+        content_payload["consumable_by"] = list(source.consumable_by)
+    if source.source_metadata and source.process_asset_kind != "ARTIFACT":
+        content_payload["source_metadata"] = dict(source.source_metadata)
     if source.artifact_access is not None:
         artifact_access = source.artifact_access.model_dump(mode="json")
         content_payload["artifact_access"] = artifact_access
@@ -189,6 +202,16 @@ def _build_descriptor_payload(source: CompileRequestExplicitSource) -> dict[str,
         if display_hint := artifact_access.get("display_hint"):
             content_payload["display_hint"] = display_hint
     return content_payload
+
+
+def _display_source_ref(source: CompileRequestExplicitSource) -> str:
+    if source.process_asset_kind == "ARTIFACT":
+        if source.artifact_access is not None:
+            return source.artifact_access.artifact_ref
+        artifact_ref = source.source_metadata.get("artifact_ref")
+        if isinstance(artifact_ref, str) and artifact_ref.strip():
+            return artifact_ref
+    return source.source_ref
 
 
 def _set_inline_display_hint(content_payload: dict[str, Any]) -> None:
@@ -571,7 +594,7 @@ def _build_reference_block(
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type="SOURCE_REF",
-        selector_value=source.source_ref,
+        selector_value=_display_source_ref(source),
     )
     content_payload = _build_descriptor_payload(source)
     token_estimate = _estimate_tokens(content_payload)
@@ -579,8 +602,8 @@ def _build_reference_block(
     fallback_reason = reason or source.inline_fallback_reason or REFERENCE_ONLY_REASON
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         trust_level=1,
         instruction_authority="DATA_ONLY",
         priority_class="P1" if source.is_mandatory else "P2",
@@ -596,8 +619,8 @@ def _build_reference_block(
         trust_note=fallback_reason,
     )
     source_log = CompileManifestSourceLogEntry(
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         priority_class=block.priority_class,
         trust_level=block.trust_level,
         selector_used=f"{selector.selector_type}:{selector.selector_value}",
@@ -612,7 +635,7 @@ def _build_reference_block(
     transform_log = CompileManifestTransformLogEntry(
         stage="NORMALIZE_SOURCES",
         operation_type="NORMALIZE",
-        target_ref=source.source_ref,
+        target_ref=_display_source_ref(source),
         output_block_id=block.block_id,
         reason=fallback_reason,
     )
@@ -624,7 +647,7 @@ def _build_inline_block(
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type="SOURCE_REF",
-        selector_value=source.source_ref,
+        selector_value=_display_source_ref(source),
     )
     content_payload = _build_descriptor_payload(source)
     transform = INLINE_TEXT_TRANSFORM
@@ -644,8 +667,8 @@ def _build_inline_block(
     token_estimate = _estimate_tokens(content_payload)
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         trust_level=1,
         instruction_authority="DATA_ONLY",
         priority_class="P1" if source.is_mandatory else "P2",
@@ -661,8 +684,8 @@ def _build_inline_block(
         trust_note=reason,
     )
     source_log = CompileManifestSourceLogEntry(
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         priority_class=block.priority_class,
         trust_level=block.trust_level,
         selector_used=f"{selector.selector_type}:{selector.selector_value}",
@@ -677,7 +700,7 @@ def _build_inline_block(
     transform_log = CompileManifestTransformLogEntry(
         stage="HYDRATE_SOURCES",
         operation_type="HYDRATE",
-        target_ref=source.source_ref,
+        target_ref=_display_source_ref(source),
         output_block_id=block.block_id,
         reason=reason,
     )
@@ -1059,7 +1082,7 @@ def _build_fragment_block(
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type=str(source.fragment_selector_type or "SOURCE_REF"),
-        selector_value=str(source.fragment_selector_value or source.source_ref),
+        selector_value=str(source.fragment_selector_value or _display_source_ref(source)),
     )
     content_payload = _build_descriptor_payload(source)
     content_payload.update(source.fragment_metadata)
@@ -1073,15 +1096,15 @@ def _build_fragment_block(
     _set_inline_display_hint(content_payload)
 
     reason = (
-        f"Inline hydration for {source.source_ref} exceeded the full-body budget, so the compiler kept "
+        f"Inline hydration for {_display_source_ref(source)} exceeded the full-body budget, so the compiler kept "
         "deterministic relevant fragments instead of only the head preview."
     )
     token_estimate = _estimate_tokens(content_payload)
     source_tokens_before = max(tokens_before or token_estimate, token_estimate)
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         trust_level=1,
         instruction_authority="DATA_ONLY",
         priority_class="P1" if source.is_mandatory else "P2",
@@ -1097,8 +1120,8 @@ def _build_fragment_block(
         trust_note=reason,
     )
     source_log = CompileManifestSourceLogEntry(
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         priority_class=block.priority_class,
         trust_level=block.trust_level,
         selector_used=f"{selector.selector_type}:{selector.selector_value}",
@@ -1113,7 +1136,7 @@ def _build_fragment_block(
     transform_log = CompileManifestTransformLogEntry(
         stage="BUDGET_ENFORCEMENT",
         operation_type="SUMMARIZE",
-        target_ref=source.source_ref,
+        target_ref=_display_source_ref(source),
         output_block_id=block.block_id,
         reason=reason,
     )
@@ -1127,7 +1150,7 @@ def _build_partial_inline_block(
 ) -> tuple[CompiledContextBlock, CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type="SOURCE_REF",
-        selector_value=source.source_ref,
+        selector_value=_display_source_ref(source),
     )
     content_payload = _build_descriptor_payload(source)
     content_payload["content_truncated"] = True
@@ -1144,15 +1167,15 @@ def _build_partial_inline_block(
     _set_inline_display_hint(content_payload)
 
     reason = (
-        f"Inline hydration for {source.source_ref} exceeded the token budget, so the compiler kept "
+        f"Inline hydration for {_display_source_ref(source)} exceeded the token budget, so the compiler kept "
         "a deterministic preview instead of the full body."
     )
     token_estimate = _estimate_tokens(content_payload)
     source_tokens_before = max(tokens_before or token_estimate, token_estimate)
     block = CompiledContextBlock(
         block_id=new_prefixed_id("ctxblk"),
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         trust_level=1,
         instruction_authority="DATA_ONLY",
         priority_class="P1" if source.is_mandatory else "P2",
@@ -1168,8 +1191,8 @@ def _build_partial_inline_block(
         trust_note=reason,
     )
     source_log = CompileManifestSourceLogEntry(
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         priority_class=block.priority_class,
         trust_level=block.trust_level,
         selector_used=f"{selector.selector_type}:{selector.selector_value}",
@@ -1184,7 +1207,7 @@ def _build_partial_inline_block(
     transform_log = CompileManifestTransformLogEntry(
         stage="BUDGET_ENFORCEMENT",
         operation_type="TRUNCATE",
-        target_ref=source.source_ref,
+        target_ref=_display_source_ref(source),
         output_block_id=block.block_id,
         reason=reason,
     )
@@ -1200,11 +1223,11 @@ def _build_dropped_explicit_source_logs(
 ) -> tuple[CompileManifestSourceLogEntry, CompileManifestTransformLogEntry]:
     selector = CompiledContextSelector(
         selector_type="SOURCE_REF",
-        selector_value=source.source_ref,
+        selector_value=_display_source_ref(source),
     )
     source_log = CompileManifestSourceLogEntry(
-        source_ref=source.source_ref,
-        source_kind="ARTIFACT_REFERENCE",
+        source_ref=_display_source_ref(source),
+        source_kind="PROCESS_ASSET",
         priority_class="P1" if source.is_mandatory else "P2",
         trust_level=1,
         selector_used=f"{selector.selector_type}:{selector.selector_value}",
@@ -1219,7 +1242,7 @@ def _build_dropped_explicit_source_logs(
     transform_log = CompileManifestTransformLogEntry(
         stage="BUDGET_ENFORCEMENT",
         operation_type="DROP",
-        target_ref=source.source_ref,
+        target_ref=_display_source_ref(source),
         output_block_id=None,
         reason=reason,
     )
@@ -1233,7 +1256,7 @@ def _raise_mandatory_source_budget_error(
 ) -> None:
     raise ValueError(
         "Mandatory explicit source "
-        f"{source.source_ref} cannot fit within the remaining token budget "
+        f"{_display_source_ref(source)} cannot fit within the remaining token budget "
         f"({remaining_budget}) even as a reference descriptor."
     )
 
@@ -1282,7 +1305,7 @@ def _select_explicit_source_for_budget(
                 )
 
         fallback_reason = (
-            f"Inline hydration for {source.source_ref} exceeded the token budget, so the compiler kept "
+            f"Inline hydration for {_display_source_ref(source)} exceeded the token budget, so the compiler kept "
             "the source descriptor instead."
         )
         reference_block, reference_source_log, reference_transform_log = _build_reference_block(
@@ -1354,7 +1377,7 @@ def _build_atomic_context_bundle(context_blocks: list[CompiledContextBlock], tok
             AtomicContextBlock(
                 block_id=block.block_id,
                 source_ref=block.source_ref,
-                source_kind="ARTIFACT" if block.source_kind == "ARTIFACT_REFERENCE" else "RETRIEVAL",
+                source_kind="PROCESS_ASSET" if block.source_kind == "PROCESS_ASSET" else "RETRIEVAL",
                 selector=block.selector,
                 content_type=block.content_type,
                 content_mode=block.content_mode,
@@ -1602,27 +1625,34 @@ def build_compile_request(
         list(created_spec.get("acceptance_criteria") or []),
     )
 
+    input_process_asset_refs = merge_input_process_asset_refs(
+        existing_process_asset_refs=list(created_spec.get("input_process_asset_refs") or []),
+        artifact_refs=list(created_spec.get("input_artifact_refs") or []),
+    )
     explicit_sources = []
-    for source_ref in list(created_spec.get("input_artifact_refs") or []):
-        artifact = repository.get_artifact_by_ref(str(source_ref), connection=connection)
-        prepared_inline_source = _prepare_inline_source(repository, artifact)
+    for source_ref in input_process_asset_refs:
+        resolved_asset = resolve_process_asset(repository, str(source_ref), connection=connection)
         explicit_source = CompileRequestExplicitSource(
                 source_ref=str(source_ref),
-                source_kind="ARTIFACT",
+                source_kind="PROCESS_ASSET",
+                process_asset_kind=resolved_asset.process_asset_kind,
+                producer_ticket_id=resolved_asset.producer_ticket_id,
+                source_summary=resolved_asset.summary,
+                consumable_by=list(resolved_asset.consumable_by),
+                source_metadata=dict(resolved_asset.source_metadata),
                 is_mandatory=True,
-                artifact_access=CompiledArtifactAccessDescriptor.model_validate(
-                    build_artifact_access_descriptor(
-                        artifact,
-                        artifact_ref=str(source_ref),
-                    )
+                artifact_access=(
+                    CompiledArtifactAccessDescriptor.model_validate(resolved_asset.artifact_access)
+                    if resolved_asset.artifact_access is not None
+                    else None
                 ),
-                inline_content_type=prepared_inline_source.content_type,
-                inline_content_text=prepared_inline_source.content_text,
-                inline_content_json=prepared_inline_source.content_json,
-                inline_fallback_reason=prepared_inline_source.fallback_reason,
-                inline_fallback_reason_code=prepared_inline_source.fallback_reason_code,
-                inline_content_truncated=prepared_inline_source.content_truncated,
-                inline_preview_strategy=prepared_inline_source.preview_strategy,
+                inline_content_type=resolved_asset.content_type,
+                inline_content_text=resolved_asset.text_content,
+                inline_content_json=resolved_asset.json_content,
+                inline_fallback_reason=resolved_asset.fallback_reason,
+                inline_fallback_reason_code=resolved_asset.fallback_reason_code,
+                inline_content_truncated=False,
+                inline_preview_strategy=None,
             )
         explicit_sources.append(
             _build_fragment_candidate(
@@ -1687,6 +1717,7 @@ def build_compile_request(
             acceptance_criteria=list(created_spec.get("acceptance_criteria") or []),
             allowed_tools=list(created_spec.get("allowed_tools") or []),
             allowed_write_set=list(created_spec.get("allowed_write_set") or []),
+            input_process_asset_refs=input_process_asset_refs,
         ),
         governance=CompileRequestGovernance(
             retry_budget=int(created_spec.get("retry_budget") or 0),

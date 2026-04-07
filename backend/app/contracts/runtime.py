@@ -8,6 +8,7 @@ from pydantic import Field
 from app.contracts.common import StrictModel
 from app.contracts.scope import TenantWorkspaceScope
 from app.contracts.commands import TicketEscalationPolicy
+from app.contracts.process_assets import ProcessAssetKind
 
 
 class CompileRequestMeta(TenantWorkspaceScope):
@@ -85,7 +86,12 @@ class CompiledArtifactAccessDescriptor(StrictModel):
 
 class CompileRequestExplicitSource(StrictModel):
     source_ref: str = Field(min_length=1)
-    source_kind: Literal["ARTIFACT"]
+    source_kind: Literal["PROCESS_ASSET"]
+    process_asset_kind: ProcessAssetKind
+    producer_ticket_id: str | None = None
+    source_summary: str | None = None
+    consumable_by: list[str] = Field(default_factory=list)
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
     is_mandatory: bool = True
     artifact_access: CompiledArtifactAccessDescriptor | None = None
     inline_content_type: Literal["TEXT", "JSON"] | None = None
@@ -140,6 +146,7 @@ class CompileRequestExecution(StrictModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
     allowed_write_set: list[str] = Field(default_factory=list)
+    input_process_asset_refs: list[str] = Field(default_factory=list)
 
 
 class CompileRequestGovernance(StrictModel):
@@ -206,7 +213,7 @@ class CompiledContextSelector(StrictModel):
 class CompiledContextBlock(StrictModel):
     block_id: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
-    source_kind: Literal["ARTIFACT_REFERENCE", "RETRIEVAL_SUMMARY"]
+    source_kind: Literal["PROCESS_ASSET", "RETRIEVAL_SUMMARY"]
     trust_level: Literal[1, 2, 3]
     instruction_authority: Literal["DATA_ONLY"]
     priority_class: Literal["P1", "P2", "P3"]
@@ -382,7 +389,7 @@ class CompiledConstraints(StrictModel):
 class AtomicContextBlock(StrictModel):
     block_id: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
-    source_kind: Literal["ARTIFACT", "RETRIEVAL"]
+    source_kind: Literal["PROCESS_ASSET", "RETRIEVAL"]
     selector: CompiledContextSelector
     content_type: Literal["TEXT", "JSON", "SOURCE_DESCRIPTOR"]
     content_mode: Literal["INLINE_FULL", "INLINE_FRAGMENT", "INLINE_PARTIAL", "REFERENCE_ONLY"]
