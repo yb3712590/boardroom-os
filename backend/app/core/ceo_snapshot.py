@@ -34,6 +34,53 @@ def _enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
 
 
+def _build_idle_maintenance_signals(tickets: list[dict[str, Any]]) -> list[str]:
+    signals: list[str] = []
+    if not tickets:
+        signals.append("NO_TICKET_STARTED")
+
+    if any(ticket["status"] == "PENDING" for ticket in tickets):
+        signals.append("READY_TICKET")
+
+    has_invalid_dependency = False
+    has_failed_ticket = False
+    for ticket in tickets:
+        if ticket["status"] not in {"FAILED", "TIMED_OUT"}:
+            continue
+        failure_kind = str(ticket.get("last_failure_kind") or "").strip().upper()
+        if "DEPENDENCY" in failure_kind or failure_kind == "DISPATCH_INTENT_INVALID":
+            has_invalid_dependency = True
+        else:
+            has_failed_ticket = True
+
+    if has_invalid_dependency:
+        signals.append("INVALID_DEPENDENCY_OR_DISPATCH")
+    if has_failed_ticket:
+        signals.append("FAILED_TICKET")
+
+    return signals
+
+
+def _latest_snapshot_timestamp(
+    tickets: list[dict[str, Any]],
+    nodes: list[dict[str, Any]],
+    approvals: list[dict[str, Any]],
+    incidents: list[dict[str, Any]],
+) -> str | None:
+    candidates: list[datetime] = []
+    for value in (
+        *[ticket.get("updated_at") for ticket in tickets],
+        *[node.get("updated_at") for node in nodes],
+        *[approval.get("created_at") for approval in approvals],
+        *[incident.get("opened_at") for incident in incidents],
+    ):
+        if isinstance(value, datetime):
+            candidates.append(value)
+    if not candidates:
+        return None
+    return max(candidates).isoformat()
+
+
 def _build_recent_completed_ticket_reuse_candidates(
     repository: ControlPlaneRepository,
     *,
@@ -185,6 +232,7 @@ def build_ceo_shadow_snapshot(
             "budget_used": workflow["budget_used"],
             "board_gate_state": workflow["board_gate_state"],
             "deadline_at": _serialize_timestamp(workflow.get("deadline_at")),
+            "updated_at": _serialize_timestamp(workflow.get("updated_at")),
         },
         "ticket_summary": {
             "total": len(tickets),
@@ -242,6 +290,15 @@ def build_ceo_shadow_snapshot(
             }
             for incident in open_incidents
         ],
+        "idle_maintenance": {
+            "signal_types": _build_idle_maintenance_signals(tickets),
+            "latest_state_change_at": _latest_snapshot_timestamp(
+                tickets,
+                nodes,
+                open_approvals,
+                open_incidents,
+            ),
+        },
         "employees": [
             {
                 "employee_id": employee["employee_id"],

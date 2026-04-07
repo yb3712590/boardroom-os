@@ -13,6 +13,7 @@ import app.core.workflow_auto_advance as workflow_auto_advance_module
 import pytest
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
+from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
@@ -684,7 +685,11 @@ def test_scheduler_runner_once_external_mode_leaves_ticket_leased(client, set_ti
     assert latest_bundle is None
     assert latest_manifest is None
     assert latest_execution_package is None
-    assert [event["event_type"] for event in events][-2:] == ["TICKET_CREATED", "TICKET_LEASED"]
+    assert [event["event_type"] for event in events][-3:] == [
+        "TICKET_CREATED",
+        "TICKET_LEASED",
+        EVENT_SCHEDULER_ORCHESTRATION_RECORDED,
+    ]
 
 
 def test_scheduler_runner_loop_respects_tick_limit_and_dispatch_budget(client, set_ticket_time):
@@ -1684,6 +1689,74 @@ def test_scheduler_runner_skips_idle_ceo_maintenance_when_ticket_is_executing(
 
     runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
     assert not any(run["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER for run in runs)
+
+
+def test_scheduler_runner_records_orchestration_trace_in_execution_order(client, monkeypatch, set_ticket_time):
+    repository = client.app.state.repository
+    set_ticket_time("2026-04-07T10:00:00+08:00")
+
+    call_order: list[str] = []
+
+    def _fake_run_due_ceo_maintenance(*args, **kwargs):
+        call_order.append("ceo_maintenance")
+        return [
+            {
+                "run_id": "ceo_trace_001",
+                "workflow_id": "wf_trace_001",
+                "trigger_type": SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+            }
+        ]
+
+    def _fake_run_scheduler_tick(*args, **kwargs):
+        call_order.append("scheduler_tick")
+        return type(
+            "Ack",
+            (),
+            {
+                "status": "accepted",
+                "idempotency_key": kwargs["idempotency_key"],
+                "causation_hint": "scheduler:tick",
+                "received_at": datetime.fromisoformat("2026-04-07T10:00:00+08:00"),
+            },
+        )()
+
+    def _fake_run_leased_ticket_runtime(*args, **kwargs):
+        call_order.append("runtime_execution")
+        return [
+            {
+                "ticket_id": "tkt_trace_001",
+                "lease_owner": "emp_frontend_2",
+                "final_ack_status": "accepted",
+            }
+        ]
+
+    monkeypatch.setattr("app.scheduler_runner.run_due_ceo_maintenance", _fake_run_due_ceo_maintenance)
+    monkeypatch.setattr("app.scheduler_runner.run_scheduler_tick", _fake_run_scheduler_tick)
+    monkeypatch.setattr("app.scheduler_runner.run_leased_ticket_runtime", _fake_run_leased_ticket_runtime)
+    monkeypatch.setattr("app.scheduler_runner.maybe_run_artifact_cleanup", lambda *args, **kwargs: None)
+
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-orchestration-trace",
+        max_dispatches=10,
+    )
+
+    trace_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_SCHEDULER_ORCHESTRATION_RECORDED
+    ]
+
+    assert call_order == ["ceo_maintenance", "scheduler_tick", "runtime_execution"]
+    assert len(trace_events) == 1
+    assert trace_events[0]["payload"]["stage_order"] == [
+        "collect_due_ceo_maintenance",
+        "scheduler_tick",
+        "runtime_execution",
+        "record_orchestration_trace",
+    ]
+    assert trace_events[0]["payload"]["ceo_maintenance"]["run_ids"] == ["ceo_trace_001"]
+    assert trace_events[0]["payload"]["runtime_execution"]["ticket_ids"] == ["tkt_trace_001"]
 
 
 def test_provider_backed_scope_delivery_chain_reaches_closeout_completion(

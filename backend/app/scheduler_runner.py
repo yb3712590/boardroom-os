@@ -9,15 +9,97 @@ from app.config import Settings, get_settings
 from app.contracts.commands import ArtifactCleanupCommand
 from app.core.artifact_store import ArtifactStore
 from app.core.artifact_handlers import handle_artifact_cleanup
+from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED
 from app.core.ceo_scheduler import run_due_ceo_maintenance
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.ticket_handlers import run_scheduler_tick
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
+_SCHEDULER_ORCHESTRATION_WORKFLOW_ID = "wf_scheduler_orchestration"
+
 
 def _build_runner_idempotency_key(tick_index: int) -> str:
     return f"scheduler-runner:{now_local().isoformat()}:{tick_index}"
+
+
+def _enum_value(value):
+    return value.value if hasattr(value, "value") else value
+
+
+def _serialize_runtime_outcomes(runtime_outcomes) -> dict:
+    ticket_ids: list[str] = []
+    outcomes: list[dict] = []
+    for outcome in runtime_outcomes or []:
+        if isinstance(outcome, dict):
+            ticket_id = str(outcome.get("ticket_id") or "")
+            lease_owner = outcome.get("lease_owner")
+            final_ack = outcome.get("final_ack")
+            final_ack_status = outcome.get("final_ack_status")
+        else:
+            ticket_id = str(getattr(outcome, "ticket_id", "") or "")
+            lease_owner = getattr(outcome, "lease_owner", None)
+            final_ack = getattr(outcome, "final_ack", None)
+            final_ack_status = getattr(final_ack, "status", None)
+        if ticket_id:
+            ticket_ids.append(ticket_id)
+        outcomes.append(
+            {
+                "ticket_id": ticket_id,
+                "lease_owner": lease_owner,
+                "final_ack_status": _enum_value(final_ack_status),
+            }
+        )
+    return {
+        "ticket_ids": ticket_ids,
+        "outcomes": outcomes,
+        "count": len(outcomes),
+    }
+
+
+def _record_orchestration_trace(
+    repository: ControlPlaneRepository,
+    *,
+    runner_idempotency_key: str,
+    tick_index: int,
+    ceo_runs: list[dict],
+    scheduler_ack,
+    runtime_outcomes,
+) -> None:
+    payload = {
+        "runner_idempotency_key": runner_idempotency_key,
+        "tick_index": tick_index,
+        "stage_order": [
+            "collect_due_ceo_maintenance",
+            "scheduler_tick",
+            "runtime_execution",
+            "record_orchestration_trace",
+        ],
+        "ceo_maintenance": {
+            "workflow_ids": [str(run.get("workflow_id") or "") for run in ceo_runs],
+            "run_ids": [str(run.get("run_id") or "") for run in ceo_runs],
+            "count": len(ceo_runs),
+        },
+        "scheduler_tick": {
+            "status": _enum_value(getattr(scheduler_ack, "status", None)),
+            "idempotency_key": getattr(scheduler_ack, "idempotency_key", None),
+            "causation_hint": getattr(scheduler_ack, "causation_hint", None),
+        },
+        "runtime_execution": _serialize_runtime_outcomes(runtime_outcomes),
+    }
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_SCHEDULER_ORCHESTRATION_RECORDED,
+            actor_type="system",
+            actor_id="scheduler_runner",
+            workflow_id=_SCHEDULER_ORCHESTRATION_WORKFLOW_ID,
+            idempotency_key=f"{runner_idempotency_key}:orchestration-trace",
+            causation_id=getattr(scheduler_ack, "command_id", None),
+            correlation_id=runner_idempotency_key,
+            payload=payload,
+            occurred_at=now_local(),
+        )
 
 
 def _should_run_artifact_cleanup(
@@ -95,20 +177,29 @@ def run_scheduler_once(
 ):
     settings = get_settings()
     runner_idempotency_key = idempotency_key or _build_runner_idempotency_key(tick_index)
-    scheduler_ack = run_scheduler_tick(
-        repository,
-        idempotency_key=runner_idempotency_key,
-        max_dispatches=max_dispatches or settings.scheduler_max_dispatches,
-    )
-    if settings.runtime_execution_mode == "INPROCESS":
-        run_leased_ticket_runtime(repository)
-    maybe_run_artifact_cleanup(repository, current_time=now_local())
-    run_due_ceo_maintenance(
+    ceo_runs = run_due_ceo_maintenance(
         repository,
         current_time=now_local(),
         trigger_ref=runner_idempotency_key,
         interval_sec=settings.ceo_maintenance_interval_sec,
     )
+    scheduler_ack = run_scheduler_tick(
+        repository,
+        idempotency_key=runner_idempotency_key,
+        max_dispatches=max_dispatches or settings.scheduler_max_dispatches,
+    )
+    runtime_outcomes = []
+    if settings.runtime_execution_mode == "INPROCESS":
+        runtime_outcomes = run_leased_ticket_runtime(repository)
+    _record_orchestration_trace(
+        repository,
+        runner_idempotency_key=runner_idempotency_key,
+        tick_index=tick_index,
+        ceo_runs=ceo_runs,
+        scheduler_ack=scheduler_ack,
+        runtime_outcomes=runtime_outcomes,
+    )
+    maybe_run_artifact_cleanup(repository, current_time=now_local())
     return scheduler_ack
 
 

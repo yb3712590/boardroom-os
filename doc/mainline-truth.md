@@ -31,6 +31,8 @@
 - `TICKET_CREATED` payload 现在可选携带 `input_process_asset_refs[]`；`Context Compiler` 会把旧 `input_artifact_refs[]` 兼容映射到同一入口，再统一走 `process asset resolver`
 - 当前 resolver 已按最小闭环纳入 6 类过程资产：`artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary`
 - runtime 完成事件现在会额外写回 `produced_process_assets[]`；meeting ADR、closeout summary 和 runtime 默认 artifact 都会自动映射到后续 follow-up ticket 或 maker-checker checker ticket 的 `input_process_asset_refs[]`
+- `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
+- idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
 - 当前已把原治理模板扩成只读 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
 - `workforce` 投影现在会返回 `role_templates_catalog` 和每个 live worker 的 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，但这些预留角色仍未进入 runtime 支持矩阵、staffing 动作或 CEO 文档链
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`

@@ -33,6 +33,7 @@ from app.core.constants import (
     EVENT_ARTIFACT_DELETED,
     EVENT_ARTIFACT_EXPIRED,
     EVENT_ARTIFACT_IMPORTED,
+    EVENT_SCHEDULER_ORCHESTRATION_RECORDED,
     EVENT_CIRCUIT_BREAKER_CLOSED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
@@ -4739,6 +4740,8 @@ class ControlPlaneRepository:
     def _event_category(self, event_type: str) -> str:
         if event_type == EVENT_SYSTEM_INITIALIZED:
             return "system"
+        if event_type == EVENT_SCHEDULER_ORCHESTRATION_RECORDED:
+            return "system"
         if event_type in {
             EVENT_TICKET_CREATED,
             EVENT_TICKET_CANCEL_REQUESTED,
@@ -4777,6 +4780,7 @@ class ControlPlaneRepository:
         if event_type in {
             EVENT_ARTIFACT_IMPORTED,
             EVENT_ARTIFACT_CLEANUP_COMPLETED,
+            EVENT_SCHEDULER_ORCHESTRATION_RECORDED,
             EVENT_ARTIFACT_DELETED,
             EVENT_ARTIFACT_EXPIRED,
             EVENT_SYSTEM_INITIALIZED,
@@ -4844,6 +4848,9 @@ class ControlPlaneRepository:
         if event["event_type"] == EVENT_ARTIFACT_CLEANUP_COMPLETED:
             expired_count = event.get("payload", {}).get("expired_count")
             return f"ARTIFACT_CLEANUP_COMPLETED expired={expired_count}"
+        if event["event_type"] == EVENT_SCHEDULER_ORCHESTRATION_RECORDED:
+            trace_id = event.get("payload", {}).get("runner_idempotency_key") or event["workflow_id"]
+            return f"SCHEDULER_ORCHESTRATION_RECORDED {trace_id}"
         if event["event_type"] == EVENT_INCIDENT_OPENED:
             if event.get("payload", {}).get("incident_type") == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
                 provider_id = event.get("provider_id") or event.get("payload", {}).get("provider_id")
@@ -4900,6 +4907,13 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Board directive received.",
+            }
+        if event_type == EVENT_SCHEDULER_ORCHESTRATION_RECORDED:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Scheduler orchestration recorded.",
             }
         if event_type == EVENT_TICKET_COMPLETED:
             return {
