@@ -20,6 +20,7 @@ from app.core.provider_claude_code import (
     ClaudeCodeProviderError,
     invoke_claude_code_response,
 )
+from app.core.runtime import _resolve_ticket_target_ref
 from app.core.runtime_provider_config import (
     CLAUDE_CODE_PROVIDER_ID,
     OPENAI_COMPAT_PROVIDER_ID,
@@ -338,6 +339,69 @@ def test_resolve_provider_selection_skips_provider_that_misses_target_capability
     assert selection.preferred_provider_id == CLAUDE_CODE_PROVIDER_ID
     assert selection.preferred_model == "claude-sonnet-4-6"
     assert provider_meets_target_capability_floor(selection.provider, "ceo_shadow") is True
+
+
+def test_resolve_provider_selection_allows_execution_target_to_use_legacy_role_binding() -> None:
+    config = RuntimeProviderStoredConfig(
+        default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+        providers=[
+            RuntimeProviderConfigEntry(
+                provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                adapter_kind="openai_compat",
+                label="OpenAI Compat",
+                enabled=True,
+                base_url="https://api.example.test/v1",
+                api_key="sk-test-secret",
+                model="gpt-5.3-codex",
+                timeout_sec=30.0,
+                reasoning_effort="medium",
+                capability_tags=["structured_output", "implementation"],
+            ),
+            RuntimeProviderConfigEntry(
+                provider_id=CLAUDE_CODE_PROVIDER_ID,
+                adapter_kind="claude_code_cli",
+                label="Claude Code",
+                enabled=True,
+                command_path="/Users/bill/.local/bin/claude",
+                model="claude-sonnet-4-6",
+                timeout_sec=45.0,
+                capability_tags=["structured_output", "planning", "implementation"],
+            ),
+        ],
+        role_bindings=[
+            RuntimeProviderRoleBinding(
+                target_ref="role_profile:frontend_engineer_primary",
+                provider_id=CLAUDE_CODE_PROVIDER_ID,
+                model="claude-opus-4-1",
+            )
+        ],
+    )
+
+    selection = resolve_provider_selection(
+        config,
+        target_ref="execution_target:frontend_build",
+        employee_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == CLAUDE_CODE_PROVIDER_ID
+    assert selection.preferred_provider_id == CLAUDE_CODE_PROVIDER_ID
+    assert selection.preferred_model == "claude-opus-4-1"
+    assert selection.binding_target_ref == "execution_target:frontend_build"
+
+
+def test_resolve_ticket_target_ref_prefers_execution_contract_target() -> None:
+    assert _resolve_ticket_target_ref(
+        {
+            "role_profile_ref": "frontend_engineer_primary",
+            "output_schema_ref": "implementation_bundle",
+            "execution_contract": {
+                "execution_target_ref": "execution_target:frontend_closeout",
+                "required_capability_tags": ["structured_output", "implementation"],
+                "runtime_contract_version": "execution_contract_v1",
+            },
+        }
+    ) == "execution_target:frontend_closeout"
 
 
 def test_runtime_provider_health_details_reports_command_not_found_for_claude(client) -> None:

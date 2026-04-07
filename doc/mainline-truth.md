@@ -22,6 +22,9 @@
 - CEO shadow snapshot 现在会暴露当前 workflow 内的 `reuse_candidates`：只读最近已完成 ticket 和已关闭会议的最小摘要；OpenAI Compat live prompt 会先检查这些复用候选，优先 `NO_ACTION / RETRY_TICKET / WAIT`，再考虑新建平行 ticket、额外会议或补招人；deterministic fallback 保持不变
 - runtime provider 配置现在已从单一 OpenAI 表单切成最小 registry：固定暴露 `default_provider_id / providers[] / role_bindings[]`，旧配置文件会自动迁移
 - 当前 registry 首版真实支持两个 adapter：`prov_openai_compat` 与 `prov_claude_code`；`runtime-provider` 投影和前端设置抽屉都会暴露 provider 列表、`capability_tags[]`、`fallback_provider_ids[]`、每个 provider 的 `health_status / health_reason`、当前真实角色绑定和未来治理角色只读占位
+- `TICKET_CREATED` payload 现在会补入 `execution_contract`，固定包含 `execution_target_ref / required_capability_tags / runtime_contract_version`；普通 ticket-create 路径即使没显式传，也会按 `role_profile_ref + output_schema_ref` 自动补齐
+- 当前 execution target catalog 已按主线收口为 5 类：`scope_consensus / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`
+- CEO create-ticket 当前必须显式带 `dispatch_intent.assignee_employee_id / selection_reason`；校验层会拒绝不存在、非激活或能力不匹配的 assignee，非法派单不会入队
 - 当前已把原治理模板扩成只读 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
 - `workforce` 投影现在会返回 `role_templates_catalog` 和每个 live worker 的 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，但这些预留角色仍未进入 runtime 支持矩阵、staffing 动作或 CEO 文档链
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
@@ -33,7 +36,7 @@
 
 ## 2. Runtime 支持矩阵
 
-当前 runtime 默认走本地 `LOCAL_DETERMINISTIC`。如果 registry 里启用了匹配的 provider，并且 `ceo_shadow` 或当前 ticket 的 `role_profile` 先命中角色绑定，否则再命中员工 `provider_id` 兼容字段或默认 provider，同一批主线角色和输出会走对应 live path。
+当前 runtime 默认走本地 `LOCAL_DETERMINISTIC`。如果 registry 里启用了匹配的 provider，并且 `ceo_shadow` 或当前 ticket 的 `execution_contract.execution_target_ref` 先命中角色绑定，否则再回退 legacy `role_profile:*` binding、员工 `provider_id` 兼容字段或默认 provider，同一批主线角色和输出会走对应 live path。
 
 | owner role | role profile | 输出 | Deterministic | OpenAI Compat Live | Claude Code CLI Live | 备注 |
 |------------|--------------|------|---------------|--------------------|----------------------|------|

@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-07）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `464 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `467 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `73 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -22,13 +22,13 @@
 
 ### `P2-DEC`：派单边界与 role/runtime 解耦前置
 
-状态：`当前主线（2026-04-07 新纳入；与主线关系：在继续纳入新角色前，先把 role 模板、runtime 执行键、CEO 派单与 scheduler 的确定性执行边界收正到原子 Ticket 模型）`
+状态：`当前主线（2026-04-07 新纳入；2026-04-07 已完成首个实现切片 P2-DEC-001；与主线关系：在继续纳入新角色前，先把 role 模板、runtime 执行键、CEO 派单与 scheduler 的确定性执行边界收正到原子 Ticket 模型）`
 
-- `P2-DEC-001` 待开始：执行 target contract 与 role/runtime 解耦；先把“角色模板只表达组织真相、runtime 按执行合同判定”的边界写成后续实现前置
+- `P2-DEC-001` 已完成（2026-04-07）：执行 target contract 与 role/runtime 解耦；ticket create spec 现已补入 `execution_contract / dispatch_intent`，CEO create-ticket 校验会拒绝不存在、非激活或能力不匹配的 assignee，runtime/provider 会优先按 `execution_contract.execution_target_ref` 选路，同时保留 legacy `role_profile:*` binding 兼容
 - `P2-DEC-002` 待开始：CEO 派单意图与 scheduler 确定性执行边界；明确 CEO 负责挑选派单对象和依赖意图，scheduler 只做 readiness / lease / wakeup
 - `P2-DEC-003` 待开始：过程资产驱动的原子任务输入输出闭环；把“上游上下文 -> Context Compiler -> Ticket 执行 -> 结果回写过程资产”的链路收成单点约束
 - `P2-DEC-004` 待开始：CEO 定时唤醒、防停滞与回归/文档收口；确认事件唤醒之外的 idle wakeup 仍保留，但职责只限于防停滞和触发 CEO 重新决策
-- 这组任务当前优先级高于 `P2-GOV-003` 到 `P2-GOV-006`、`P2-RLS-001` 到 `P2-RLS-003` 和剩余 provider 后置增强；本轮只完成愿景、任务顺序和文档真相收口，不宣称代码已经开始改造
+- 这组任务当前优先级高于 `P2-GOV-003` 到 `P2-GOV-006`、`P2-RLS-001` 到 `P2-RLS-003` 和剩余 provider 后置增强；当前下一步应进入 `P2-DEC-002`
 
 ### `P2-M7`：集成、文档与交付口径收口
 

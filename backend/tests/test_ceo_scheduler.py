@@ -423,6 +423,15 @@ def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(cli
     assert created_spec is not None
     assert created_spec["node_id"] == PROJECT_INIT_SCOPE_NODE_ID
     assert created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert created_spec["execution_contract"] == {
+        "execution_target_ref": "execution_target:scope_consensus",
+        "required_capability_tags": ["structured_output", "planning"],
+        "runtime_contract_version": "execution_contract_v1",
+    }
+    assert created_spec["dispatch_intent"] == {
+        "assignee_employee_id": "emp_frontend_2",
+        "selection_reason": "Use the active frontend delivery owner for the kickoff scope consensus ticket.",
+    }
     assert created_spec["tenant_id"] == "tenant_default"
     assert created_spec["workspace_id"] == "ws_default"
     assert any(ref.endswith("/board-brief.md") for ref in created_spec["input_artifact_refs"])
@@ -610,15 +619,15 @@ def test_ceo_shadow_prefers_role_binding_over_default_provider(client, monkeypat
                     timeout_sec=30.0,
                     reasoning_effort="medium",
                 ),
-                RuntimeProviderConfigEntry(
-                    provider_id=CLAUDE_CODE_PROVIDER_ID,
-                    adapter_kind="claude_code_cli",
-                    label="Claude Code CLI",
-                    enabled=True,
-                    command_path="/Users/bill/.local/bin/claude",
-                    model="claude-sonnet-4-6",
-                    timeout_sec=30.0,
-                ),
+                    RuntimeProviderConfigEntry(
+                        provider_id=CLAUDE_CODE_PROVIDER_ID,
+                        adapter_kind="claude_code_cli",
+                        label="Claude Code CLI",
+                        enabled=True,
+                        command_path="python",
+                        model="claude-sonnet-4-6",
+                        timeout_sec=30.0,
+                    ),
             ],
             role_bindings=[
                 RuntimeProviderRoleBinding(
@@ -692,16 +701,16 @@ def test_ceo_shadow_failover_uses_fallback_provider_when_primary_is_unavailable(
                     capability_tags=["structured_output", "planning"],
                     fallback_provider_ids=[CLAUDE_CODE_PROVIDER_ID],
                 ),
-                RuntimeProviderConfigEntry(
-                    provider_id=CLAUDE_CODE_PROVIDER_ID,
-                    adapter_kind="claude_code_cli",
-                    label="Claude Code CLI",
-                    enabled=True,
-                    command_path="/Users/bill/.local/bin/claude",
-                    model="claude-sonnet-4-6",
-                    timeout_sec=30.0,
-                    capability_tags=["structured_output", "planning", "implementation", "review"],
-                ),
+                    RuntimeProviderConfigEntry(
+                        provider_id=CLAUDE_CODE_PROVIDER_ID,
+                        adapter_kind="claude_code_cli",
+                        label="Claude Code CLI",
+                        enabled=True,
+                        command_path="python",
+                        model="claude-sonnet-4-6",
+                        timeout_sec=30.0,
+                        capability_tags=["structured_output", "planning", "implementation", "review"],
+                    ),
             ],
             role_bindings=[],
         )
@@ -837,6 +846,15 @@ def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monke
                                 "node_id": PROJECT_INIT_SCOPE_NODE_ID,
                                 "role_profile_ref": "ui_designer_primary",
                                 "output_schema_ref": "consensus_document",
+                                "execution_contract": {
+                                    "execution_target_ref": "execution_target:scope_consensus",
+                                    "required_capability_tags": ["structured_output", "planning"],
+                                    "runtime_contract_version": "execution_contract_v1",
+                                },
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Use the active frontend delivery owner for the kickoff scope consensus ticket.",
+                                },
                                 "summary": "Prepare the kickoff consensus report and the first batch of follow-up ticket outlines.",
                                 "parent_ticket_id": None,
                             },
@@ -861,6 +879,8 @@ def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monke
     assert created_spec is not None
     assert created_spec["ticket_id"] == scope_ticket_id
     assert created_spec["node_id"] == PROJECT_INIT_SCOPE_NODE_ID
+    assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:scope_consensus"
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
     assert board_directive_run["provider_response_id"] == "resp_ceo_project_init_1"
 
 
@@ -1004,6 +1024,15 @@ def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
                                 "node_id": "node_ceo_create_bundle",
                                 "role_profile_ref": "frontend_engineer_primary",
                                 "output_schema_ref": "implementation_bundle",
+                                "execution_contract": {
+                                    "execution_target_ref": "execution_target:frontend_build",
+                                    "required_capability_tags": ["structured_output", "implementation"],
+                                    "runtime_contract_version": "execution_contract_v1",
+                                },
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Use the active frontend delivery owner for the approved scope build ticket.",
+                                },
                                 "summary": "Create the implementation bundle for the approved scope slice.",
                                 "parent_ticket_id": None,
                             },
@@ -1031,6 +1060,8 @@ def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
         created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
     assert created_spec["output_schema_ref"] == "implementation_bundle"
     assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
+    assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:frontend_build"
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
     assert created_spec["delivery_stage"] == "BUILD"
 
 
@@ -1053,6 +1084,15 @@ def test_ceo_shadow_run_rejects_invalid_create_ticket_preset(client, monkeypatch
                                 "node_id": "node_ceo_invalid_create",
                                 "role_profile_ref": "frontend_engineer_primary",
                                 "output_schema_ref": "delivery_check_report",
+                                "execution_contract": {
+                                    "execution_target_ref": "execution_target:frontend_build",
+                                    "required_capability_tags": ["structured_output", "implementation"],
+                                    "runtime_contract_version": "execution_contract_v1",
+                                },
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "This invalid preset still carries a concrete assignee.",
+                                },
                                 "summary": "This combo should be rejected.",
                                 "parent_ticket_id": None,
                             },
@@ -1075,6 +1115,67 @@ def test_ceo_shadow_run_rejects_invalid_create_ticket_preset(client, monkeypatch
 
     assert run["rejected_actions"][0]["action_type"] == "CREATE_TICKET"
     assert run["executed_actions"] == []
+
+
+def test_ceo_validator_rejects_create_ticket_when_assignee_is_missing_or_incapable(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO invalid dispatch intent")
+
+    result = validate_ceo_action_batch(
+        client.app.state.repository,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Reject invalid create-ticket dispatch intents.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "node_id": "node_missing_assignee",
+                            "role_profile_ref": "frontend_engineer_primary",
+                            "output_schema_ref": "implementation_bundle",
+                            "execution_contract": {
+                                "execution_target_ref": "execution_target:frontend_build",
+                                "required_capability_tags": ["structured_output", "implementation"],
+                                "runtime_contract_version": "execution_contract_v1",
+                            },
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_missing_dispatch",
+                                "selection_reason": "Try to dispatch to a missing employee.",
+                            },
+                            "summary": "This should fail because the assignee does not exist.",
+                            "parent_ticket_id": None,
+                        },
+                    },
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "node_id": "node_checker_assignee",
+                            "role_profile_ref": "frontend_engineer_primary",
+                            "output_schema_ref": "implementation_bundle",
+                            "execution_contract": {
+                                "execution_target_ref": "execution_target:frontend_build",
+                                "required_capability_tags": ["structured_output", "implementation"],
+                                "runtime_contract_version": "execution_contract_v1",
+                            },
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_checker_1",
+                                "selection_reason": "Try to dispatch a frontend build to the checker.",
+                            },
+                            "summary": "This should fail because the checker lacks implementation capability.",
+                            "parent_ticket_id": None,
+                        },
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert result["accepted_actions"] == []
+    assert len(result["rejected_actions"]) == 2
+    assert "does not exist" in result["rejected_actions"][0]["reason"].lower()
+    assert "required capability tags" in result["rejected_actions"][1]["reason"].lower()
 
 
 def test_ceo_shadow_run_marks_deferred_board_escalation(client, monkeypatch):

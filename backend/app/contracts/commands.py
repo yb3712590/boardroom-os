@@ -239,6 +239,17 @@ class MeetingRequestCommand(StrictModel):
         return self
 
 
+class ExecutionContract(StrictModel):
+    execution_target_ref: str = Field(min_length=1)
+    required_capability_tags: list[RuntimeProviderCapabilityTag] = Field(min_length=1)
+    runtime_contract_version: str = Field(min_length=1)
+
+
+class DispatchIntent(StrictModel):
+    assignee_employee_id: str = Field(min_length=1)
+    selection_reason: str = Field(min_length=1)
+
+
 class TicketCreateCommand(StrictModel):
     ticket_id: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
@@ -263,6 +274,8 @@ class TicketCreateCommand(StrictModel):
     excluded_employee_ids: list[str] = Field(default_factory=list)
     auto_review_request: TicketBoardReviewRequest | None = None
     meeting_context: dict | None = None
+    execution_contract: ExecutionContract | None = None
+    dispatch_intent: DispatchIntent | None = None
     escalation_policy: TicketEscalationPolicy
     idempotency_key: str = Field(min_length=1)
 

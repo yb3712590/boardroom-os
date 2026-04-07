@@ -77,7 +77,9 @@
 - 后续真实纳入链已拆成两段：`P2-GOV-003` 到 `P2-GOV-006` 负责文档/设计链与边界，新增 `P2-RLS-001` 到 `P2-RLS-003` 专门承接 staffing / CEO / runtime 纳入
 - 董事会愿景本轮追加了 `#76` 到 `#80`：role 模板不再充当 runtime 执行键，原子任务输入输出经由过程资产闭环，scheduler 只做确定性 readiness / lease / wakeup，CEO 不进入状态机，并继续保留事件 + 定时双路径唤醒防停滞
 - 新的最高优先级任务包已改为 `P2-DEC-001` 到 `P2-DEC-004`；`P2-GOV-003` 到 `P2-GOV-006` 和 `P2-RLS-001` 到 `P2-RLS-003` 继续保留，但顺序统一排在这组前置解耦任务之后
-- 当前验证基线更新为 backend `464 passed`、frontend build passed、frontend `73 passed`
+- `P2-DEC-001` 已完成：ticket create spec 现在会补 `execution_contract / dispatch_intent`，CEO create-ticket 校验会拒绝不存在、非激活或能力不匹配的 assignee；runtime/provider 现在优先按 `execution_contract.execution_target_ref` 选路，并兼容旧 `role_profile:*` binding
+- 当前 execution target catalog 先按主线收口为 5 类：`scope_consensus / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`；scheduler 还没改成消费 `dispatch_intent`，这部分留给后续 `P2-DEC-002`
+- 本轮全量验证结果更新为 backend `467 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 

@@ -87,6 +87,7 @@ from app.core.constants import (
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
+from app.core.execution_targets import infer_execution_contract_payload
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -906,6 +907,7 @@ def _insert_followup_ticket_created_event(
     idempotency_key: str,
     actor_id: str,
 ) -> str:
+    resolved_ticket_payload = _ensure_ticket_execution_contract_payload(ticket_payload)
     created_event = repository.insert_event(
         connection,
         event_type=EVENT_TICKET_CREATED,
@@ -915,12 +917,24 @@ def _insert_followup_ticket_created_event(
         idempotency_key=idempotency_key,
         causation_id=command_id,
         correlation_id=workflow_id,
-        payload=ticket_payload,
+        payload=resolved_ticket_payload,
         occurred_at=occurred_at,
     )
     if created_event is None:
         raise RuntimeError("Follow-up ticket creation idempotency conflict.")
-    return str(ticket_payload["ticket_id"])
+    return str(resolved_ticket_payload["ticket_id"])
+
+
+def _ensure_ticket_execution_contract_payload(ticket_payload: dict[str, Any]) -> dict[str, Any]:
+    resolved_payload = dict(ticket_payload)
+    if resolved_payload.get("execution_contract") is None:
+        inferred_execution_contract = infer_execution_contract_payload(
+            role_profile_ref=resolved_payload.get("role_profile_ref"),
+            output_schema_ref=resolved_payload.get("output_schema_ref"),
+        )
+        if inferred_execution_contract is not None:
+            resolved_payload["execution_contract"] = inferred_execution_contract
+    return resolved_payload
 
 
 def _normalized_failure_detail(failure_detail: dict | None) -> dict:
@@ -2931,6 +2945,7 @@ def handle_ticket_create(
 
         workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
         tenant_id, workspace_id = resolve_workflow_scope(workflow)
+        event_payload = _ensure_ticket_execution_contract_payload(payload.model_dump(mode="json"))
 
         event_row = repository.insert_event(
             connection,
@@ -2942,7 +2957,7 @@ def handle_ticket_create(
             causation_id=command_id,
             correlation_id=payload.workflow_id,
             payload={
-                **payload.model_dump(mode="json"),
+                **event_payload,
                 "tenant_id": tenant_id,
                 "workspace_id": workspace_id,
             },

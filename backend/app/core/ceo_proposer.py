@@ -19,6 +19,10 @@ from app.core.ceo_execution_presets import (
 )
 from app.core.ceo_prompts import build_ceo_shadow_rendered_payload
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED
+from app.core.execution_targets import (
+    employee_supports_execution_contract,
+    infer_execution_contract_payload,
+)
 from app.core.provider_openai_compat import (
     OpenAICompatProviderConfig,
     OpenAICompatProviderError,
@@ -76,10 +80,46 @@ def _should_fallback_to_project_init_scope_kickoff(snapshot: dict) -> bool:
     )
 
 
+def _select_default_assignee(
+    snapshot: dict,
+    *,
+    role_profile_ref: str,
+    output_schema_ref: str,
+) -> str | None:
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    )
+    if execution_contract is None:
+        return None
+
+    employees = sorted(
+        snapshot.get("employees") or [],
+        key=lambda item: str(item.get("employee_id") or ""),
+    )
+    for employee in employees:
+        if str(employee.get("state") or "") != "ACTIVE":
+            continue
+        if not employee_supports_execution_contract(
+            employee=employee,
+            execution_contract=execution_contract,
+        ):
+            continue
+        return str(employee["employee_id"])
+    return None
+
+
 def _build_project_init_scope_kickoff_batch(snapshot: dict, reason: str) -> CEOActionBatch:
     workflow = snapshot.get("workflow") or {}
     north_star_goal = str(workflow.get("north_star_goal") or workflow.get("title") or "").strip()
     summary = build_project_init_scope_summary(north_star_goal)
+    assignee_employee_id = _select_default_assignee(
+        snapshot,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="consensus_document",
+    )
+    if assignee_employee_id is None:
+        return build_no_action_batch("No active assignee satisfies the kickoff execution contract yet.")
     return CEOActionBatch(
         summary=reason,
         actions=[
@@ -90,6 +130,14 @@ def _build_project_init_scope_kickoff_batch(snapshot: dict, reason: str) -> CEOA
                     node_id=PROJECT_INIT_SCOPE_NODE_ID,
                     role_profile_ref="ui_designer_primary",
                     output_schema_ref="consensus_document",
+                    execution_contract=infer_execution_contract_payload(
+                        role_profile_ref="ui_designer_primary",
+                        output_schema_ref="consensus_document",
+                    ),
+                    dispatch_intent={
+                        "assignee_employee_id": assignee_employee_id,
+                        "selection_reason": "Use the active frontend delivery owner for the kickoff scope consensus ticket.",
+                    },
                     summary=summary,
                     parent_ticket_id=None,
                 ),

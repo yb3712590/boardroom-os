@@ -6,7 +6,7 @@
 
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
-| 架构解耦前置 | `P2-DEC-001` 到 `P2-DEC-004` | 当前主线 | 最高优先级；先收正 role/runtime、CEO/scheduler 与过程资产边界 |
+| 架构解耦前置 | `P2-DEC-002` 到 `P2-DEC-004` | 当前主线 | `P2-DEC-001` 已完成；下一步继续收正 CEO/scheduler 与过程资产边界 |
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | blocker 仍在，但不再占用当前主线 |
 | Provider 增强 | `P2-PRV-007` 到 `P2-PRV-008` | 后置增强 | `P2-PRV-001/002/003/004/005/006` 已于 2026-04-07 手动纳入并收口 |
 | 治理模板与文档链 | `P2-GOV-003` 到 `P2-GOV-006` | 后置增强 | `P2-GOV-001`、`P2-GOV-002` 已于 2026-04-07 手动纳入并收口；`P2-GOV-007` 已在 2026-04-06 收口；当前顺序排在 `P2-DEC-*` 之后 |
@@ -24,8 +24,8 @@
 - `P2-GOV-001` 已于 2026-04-07 手动纳入并收口：后端先补了治理模板基础目录，给后续角色目录和文档链打底
 - `P2-GOV-002` 已于 2026-04-07 手动纳入并收口：当前统一只读 `role_templates_catalog` 已覆盖 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段；`workforce` worker 还会返回 `source_template_id / source_fragment_refs`
 - `runtime-provider.future_binding_slots` 现在不再只看治理角色，而是从统一目录筛出未启用模板；当前最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`
-- `P2-DEC-001` 到 `P2-DEC-004` 已在 2026-04-07 文档重排中提升为新的当前主线：后续默认先收正 role 模板与 runtime 执行键、CEO 派单意图、scheduler 确定性执行和过程资产闭环，再继续文档型角色链或角色纳入链
-- 当前已不再是“无可直接开启任务”状态；新的最高优先级就是 `P2-DEC-*` 这组前置解耦任务
+- `P2-DEC-001` 已于 2026-04-07 完成：ticket create spec 现已补入 `execution_contract / dispatch_intent`，CEO create-ticket 校验会拒绝不存在、非激活或能力不匹配的 assignee，runtime/provider 会优先按 `execution_contract.execution_target_ref` 选路，同时兼容 legacy `role_profile:*` binding
+- `P2-DEC-002` 到 `P2-DEC-004` 仍是新的当前主线：后续继续收正 CEO 派单意图、scheduler 确定性执行和过程资产闭环，再继续文档型角色链或角色纳入链
 
 ## P1：冻结后置
 
@@ -47,7 +47,6 @@
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
-| P2-DEC-001 | 执行 target contract 与 role/runtime 解耦 | 4h | 当前主线 |
 | P2-DEC-002 | CEO 派单意图与 scheduler 确定性执行边界 | 4h | 当前主线 |
 | P2-DEC-003 | 过程资产驱动的原子任务输入输出闭环 | 4h | 当前主线 |
 | P2-DEC-004 | CEO 定时唤醒、防停滞与回归/文档收口 | 4h | 当前主线 |
@@ -79,8 +78,8 @@
 ## 依赖提醒
 
 - `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
-- `P2-DEC-*` 是当前默认主线；本轮如果继续实现，应优先从这组任务往下推进
-- `P2-GOV-*` 只有在 `P2-DEC-001/002` 收正边界后，才适合继续打开文档型角色链
+- `P2-DEC-002` 到 `P2-DEC-004` 是当前默认主线；本轮如果继续实现，应优先从这组任务往下推进
+- `P2-GOV-*` 只有在 `P2-DEC-002` 收正边界后，才适合继续打开文档型角色链
 - `P2-RLS-*` 只有在 `P2-DEC-*` 与 `P2-GOV-003/004` 完成后，才适合继续接 staffing / CEO / runtime
-- `P2-PRV-*` 的后置增强如果会继续碰运行时路由，也应以后续 `P2-DEC-001` 的执行合同为前置
+- `P2-PRV-*` 的后置增强如果会继续碰运行时路由，也应以后续 `P2-DEC-002` 的执行边界为前置
 - 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`

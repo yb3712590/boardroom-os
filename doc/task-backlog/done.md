@@ -1913,6 +1913,51 @@
 - 这轮按最保守边界实现 completed ticket 摘要：`output_schema_ref` 继续来自 `TICKET_CREATED`，但因普通 `TICKET_CREATED` payload 没有 `summary`，当前回退到完成态 `completion_summary`；会议复用候选只读 `meeting_projection`，不读 artifact 正文
 - 本轮新增后端回归覆盖 snapshot `reuse_candidates` 和 live provider prompt/rendered payload 复用优先路径；全量验证结果更新为 backend `446 passed`、frontend build passed、frontend `72 passed`
 
+#### P2-DEC-001：执行 target contract 与 role/runtime 解耦
+
+**状态**：已完成（2026-04-07，本轮实现）
+
+**描述**：把 ticket/runtime/provider 的执行真相从 `role_profile_ref` 收正到 `execution_contract`，并在 CEO create-ticket 落票前加上 `dispatch_intent` 守卫，拒绝非法派单。
+
+**文件**：
+- 新建：`backend/app/core/execution_targets.py`
+- 修改：`backend/app/contracts/commands.py`
+- 修改：`backend/app/contracts/ceo_actions.py`
+- 修改：`backend/app/core/ceo_execution_presets.py`
+- 修改：`backend/app/core/ceo_proposer.py`
+- 修改：`backend/app/core/ceo_prompts.py`
+- 修改：`backend/app/core/ceo_validator.py`
+- 修改：`backend/app/core/runtime_provider_config.py`
+- 修改：`backend/app/core/runtime.py`
+- 修改：`backend/app/core/ticket_handlers.py`
+- 修改：`backend/tests/test_ceo_scheduler.py`
+- 修改：`backend/tests/test_runtime_provider_registry.py`
+- 修改：`backend/tests/test_scheduler_runner.py`
+
+**依赖**：`P2-GOV-002`、当前 provider registry、当前 CEO 有限执行链
+
+**预估**：4h
+
+**feature-spec**：条目 76
+
+**验收标准**：
+- `TICKET_CREATED` payload 补入 `execution_contract.execution_target_ref / required_capability_tags / runtime_contract_version`
+- `CREATE_TICKET` payload 补入 `dispatch_intent.assignee_employee_id / selection_reason`
+- CEO create-ticket 校验会拒绝不存在、非激活或能力不匹配的 assignee
+- runtime/provider 优先按 `execution_contract.execution_target_ref` 选路
+- legacy `role_profile:*` provider binding 仍可兼容 execution target 路径
+
+**风险**：中
+
+**完成补记（2026-04-07）**：
+- 当前 execution target catalog 先按主线收口为 5 类：`scope_consensus / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`
+- `TicketCreateCommand` 与 `CEOCreateTicketPayload` 都已支持 `execution_contract / dispatch_intent`；普通 ticket-create 即使没显式带 `execution_contract`，落事件前也会按 `role_profile_ref + output_schema_ref` 自动补齐，避免把旧路径直接打断
+- CEO deterministic kickoff 和 live provider create-ticket 路径现在都要求显式带 `dispatch_intent`；校验层会拒绝不存在、非激活或能力标签不满足的 assignee，非法派单不会入队
+- runtime/provider 现在先按 `execution_contract.execution_target_ref` 解 target；provider 绑定仍兼容旧 `role_profile:*` 配置，不强制用户立刻迁移已有 registry
+- 这轮没有提前改 scheduler 的租约策略；`dispatch_intent` 目前先作为落票前守卫和后续 `P2-DEC-002` 的输入前置
+- 为了让 Windows 下验证稳定，这轮把几条 Claude CLI 路由测试改成使用当前机器可解析的 `python` 命令，不改变产品代码路径
+- 本轮验证结果更新为 backend `467 passed`、frontend build passed、frontend `73 passed`
+
 ## 五、关键依赖图
 
 ```

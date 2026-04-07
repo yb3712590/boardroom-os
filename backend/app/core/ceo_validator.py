@@ -12,6 +12,11 @@ from app.core.ceo_execution_presets import (
     is_project_init_scope_preset,
     supports_ceo_create_ticket_preset,
 )
+from app.core.constants import EMPLOYEE_STATE_ACTIVE
+from app.core.execution_targets import (
+    infer_execution_contract_payload,
+    employee_supports_execution_contract,
+)
 from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY
 from app.core.persona_profiles import (
     build_high_overlap_rejection_reason,
@@ -189,6 +194,61 @@ def validate_ceo_action_batch(
                     _action_entry(action, "role_profile_ref and output_schema_ref are not on the current limited CEO execution path.")
                 )
                 continue
+            expected_execution_contract = infer_execution_contract_payload(
+                role_profile_ref=action.payload.role_profile_ref,
+                output_schema_ref=action.payload.output_schema_ref,
+            )
+            payload_execution_contract = (
+                action.payload.execution_contract.model_dump(mode="json")
+                if action.payload.execution_contract is not None
+                else None
+            )
+            if payload_execution_contract is None:
+                rejected_actions.append(_action_entry(action, "CREATE_TICKET requires execution_contract."))
+                continue
+            if payload_execution_contract != expected_execution_contract:
+                rejected_actions.append(
+                    _action_entry(
+                        action,
+                        "execution_contract does not match the current limited CEO execution target contract.",
+                    )
+                )
+                continue
+            if action.payload.dispatch_intent is None:
+                rejected_actions.append(_action_entry(action, "CREATE_TICKET requires dispatch_intent."))
+                continue
+            assignee_employee_id = str(action.payload.dispatch_intent.assignee_employee_id or "").strip()
+            assignee = repository.get_employee_projection(assignee_employee_id)
+            if assignee is None:
+                rejected_actions.append(
+                    _action_entry(
+                        action,
+                        f"dispatch_intent.assignee_employee_id {assignee_employee_id} does not exist.",
+                    )
+                )
+                continue
+            if str(assignee.get("state") or "") != EMPLOYEE_STATE_ACTIVE:
+                rejected_actions.append(
+                    _action_entry(
+                        action,
+                        f"dispatch_intent.assignee_employee_id {assignee_employee_id} is not active.",
+                    )
+                )
+                continue
+            if not employee_supports_execution_contract(
+                employee=assignee,
+                execution_contract=payload_execution_contract,
+            ):
+                rejected_actions.append(
+                    _action_entry(
+                        action,
+                        (
+                            "dispatch_intent.assignee_employee_id "
+                            f"{assignee_employee_id} does not satisfy required capability tags."
+                        ),
+                    )
+                )
+                continue
             if is_project_init_scope_preset(
                 role_profile_ref=action.payload.role_profile_ref,
                 output_schema_ref=action.payload.output_schema_ref,
@@ -218,7 +278,12 @@ def validate_ceo_action_batch(
             if repository.get_current_node_projection(action.payload.workflow_id, action.payload.node_id) is not None:
                 rejected_actions.append(_action_entry(action, "node_id already exists in the current workflow."))
                 continue
-            accepted_actions.append(_action_entry(action, "Ticket proposal is structurally valid for shadow review."))
+            accepted_actions.append(
+                _action_entry(
+                    action,
+                    f"Ticket proposal is structurally valid and dispatches to {assignee_employee_id}.",
+                )
+            )
             continue
 
         if action.action_type == CEOActionType.ESCALATE_TO_BOARD:

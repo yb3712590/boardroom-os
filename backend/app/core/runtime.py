@@ -56,6 +56,7 @@ from app.core.runtime_provider_config import (
     resolve_provider_selection,
     resolve_runtime_provider_config,
 )
+from app.core.execution_targets import resolve_execution_target_ref_from_ticket_spec
 from app.core.ticket_handlers import (
     _open_provider_incident,
     handle_ticket_result_submit,
@@ -1407,12 +1408,7 @@ def _build_preemptive_provider_fallback_result(
 
 
 def _resolve_ticket_target_ref(created_spec: dict[str, Any] | None) -> str | None:
-    if not isinstance(created_spec, dict):
-        return None
-    role_profile_ref = str(created_spec.get("role_profile_ref") or "").strip()
-    if not role_profile_ref:
-        return None
-    return f"role_profile:{role_profile_ref}"
+    return resolve_execution_target_ref_from_ticket_spec(created_spec)
 
 
 def _resolve_provider_selection_for_ticket(

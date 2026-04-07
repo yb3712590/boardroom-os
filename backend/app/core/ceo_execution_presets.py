@@ -5,6 +5,7 @@ from typing import Any
 
 from app.contracts.ceo_actions import CEOCreateTicketPayload
 from app.contracts.commands import DeliveryStage, TicketCreateCommand
+from app.core.execution_targets import infer_execution_contract_payload
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -529,6 +530,15 @@ def build_ceo_create_ticket_command(
         timeout_sla_sec=1800,
         deadline_at=workflow.get("deadline_at"),
         delivery_stage=preset.delivery_stage,
+        execution_contract=(
+            payload.execution_contract
+            if payload.execution_contract is not None
+            else infer_execution_contract_payload(
+                role_profile_ref=preset.role_profile_ref,
+                output_schema_ref=preset.output_schema_ref,
+            )
+        ),
+        dispatch_intent=payload.dispatch_intent,
         auto_review_request=(
             _build_project_init_auto_review_request(ticket_id)
             if is_project_init_scope

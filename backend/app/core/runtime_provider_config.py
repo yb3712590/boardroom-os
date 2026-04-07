@@ -17,6 +17,14 @@ from app.contracts.commands import (
 )
 from app.contracts.common import StrictModel
 from app.config import get_settings
+from app.core.execution_targets import (
+    EXECUTION_TARGET_CHECKER_DELIVERY_CHECK,
+    EXECUTION_TARGET_FRONTEND_BUILD,
+    EXECUTION_TARGET_FRONTEND_CLOSEOUT,
+    EXECUTION_TARGET_FRONTEND_REVIEW,
+    EXECUTION_TARGET_SCOPE_CONSENSUS,
+    legacy_target_refs_for_execution_target,
+)
 from app.core.governance_templates import list_runtime_provider_future_binding_slots
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
@@ -42,6 +50,11 @@ RUNTIME_TARGET_LABELS = {
     ROLE_BINDING_UI_DESIGNER: "Scope Consensus",
     ROLE_BINDING_FRONTEND_ENGINEER: "Frontend Engineer",
     ROLE_BINDING_CHECKER: "Checker",
+    EXECUTION_TARGET_SCOPE_CONSENSUS: "Scope Consensus",
+    EXECUTION_TARGET_FRONTEND_BUILD: "Frontend Build",
+    EXECUTION_TARGET_CHECKER_DELIVERY_CHECK: "Checker Delivery Check",
+    EXECUTION_TARGET_FRONTEND_REVIEW: "Frontend Review",
+    EXECUTION_TARGET_FRONTEND_CLOSEOUT: "Frontend Closeout",
 }
 
 FUTURE_ROLE_BINDING_SLOTS = tuple(list_runtime_provider_future_binding_slots())
@@ -104,11 +117,31 @@ RUNTIME_TARGET_CAPABILITY_FLOORS: dict[str, tuple[RuntimeProviderCapabilityTag, 
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
         RuntimeProviderCapabilityTag.PLANNING,
     ),
+    EXECUTION_TARGET_SCOPE_CONSENSUS: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
     ROLE_BINDING_FRONTEND_ENGINEER: (
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
         RuntimeProviderCapabilityTag.IMPLEMENTATION,
     ),
+    EXECUTION_TARGET_FRONTEND_BUILD: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    EXECUTION_TARGET_FRONTEND_REVIEW: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    EXECUTION_TARGET_FRONTEND_CLOSEOUT: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
     ROLE_BINDING_CHECKER: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.REVIEW,
+    ),
+    EXECUTION_TARGET_CHECKER_DELIVERY_CHECK: (
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
         RuntimeProviderCapabilityTag.REVIEW,
     ),
@@ -314,25 +347,38 @@ def provider_meets_target_capability_floor(provider: RuntimeProviderConfigEntry,
     return all(required_tag.value in capability_values for required_tag in required_tags)
 
 
+def _binding_target_ref_candidates(target_ref: str) -> tuple[str, ...]:
+    normalized_target_ref = str(target_ref or "").strip()
+    if not normalized_target_ref:
+        return ()
+
+    candidates = [normalized_target_ref]
+    for legacy_target_ref in legacy_target_refs_for_execution_target(normalized_target_ref):
+        if legacy_target_ref not in candidates:
+            candidates.append(legacy_target_ref)
+    return tuple(candidates)
+
+
 def resolve_provider_selection(
     config: RuntimeProviderStoredConfig,
     *,
     target_ref: str,
     employee_provider_id: str | None,
 ) -> RuntimeProviderSelection | None:
-    for binding in config.role_bindings:
-        if binding.target_ref != target_ref:
-            continue
-        provider = find_provider_entry(config, binding.provider_id)
-        if provider is None or not provider.enabled or not provider_meets_target_capability_floor(provider, target_ref):
-            continue
-        return RuntimeProviderSelection(
-            provider=provider,
-            preferred_provider_id=provider.provider_id,
-            preferred_model=binding.model or provider.model,
-            actual_model=binding.model or provider.model,
-            binding_target_ref=binding.target_ref,
-        )
+    for binding_target_ref in _binding_target_ref_candidates(target_ref):
+        for binding in config.role_bindings:
+            if binding.target_ref != binding_target_ref:
+                continue
+            provider = find_provider_entry(config, binding.provider_id)
+            if provider is None or not provider.enabled or not provider_meets_target_capability_floor(provider, target_ref):
+                continue
+            return RuntimeProviderSelection(
+                provider=provider,
+                preferred_provider_id=provider.provider_id,
+                preferred_model=binding.model or provider.model,
+                actual_model=binding.model or provider.model,
+                binding_target_ref=target_ref,
+            )
 
     employee_provider = find_provider_entry(config, employee_provider_id)
     if (
