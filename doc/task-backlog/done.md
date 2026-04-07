@@ -1958,6 +1958,41 @@
 - 为了让 Windows 下验证稳定，这轮把几条 Claude CLI 路由测试改成使用当前机器可解析的 `python` 命令，不改变产品代码路径
 - 本轮验证结果更新为 backend `467 passed`、frontend build passed、frontend `73 passed`
 
+#### P2-DEC-002：CEO 派单意图与 scheduler 确定性执行边界
+
+**状态**：已完成（2026-04-07，本轮实现）
+
+**描述**：把“派给谁、依赖什么、为什么这样派”固定为 `dispatch_intent`；scheduler 只做 readiness / dependency health / lease / wakeup，不再对带显式 assignee 的 ticket 按 role 池重新挑人。
+
+**文件**：
+- 修改：`backend/app/contracts/commands.py`
+- 修改：`backend/app/core/ticket_handlers.py`
+- 修改：`backend/tests/test_api.py`
+- 修改：`backend/tests/test_ceo_scheduler.py`
+- 修改：`backend/tests/test_scheduler_runner.py`
+
+**依赖**：`P2-DEC-001`
+
+**预估**：4h
+
+**feature-spec**：条目 77, 78
+
+**验收标准**：
+- `dispatch_intent` 补入 `dependency_gate_refs / selected_by / wakeup_policy`
+- scheduler 在 `dispatch_intent.assignee_employee_id` 存在时，只租约给该 assignee，不再按 role 池重选
+- `ticket-create` 会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle
+- scheduler 遇到显式 dependency gate 的坏依赖时，会把 ticket 转成结构化失败并触发 CEO 重决策
+- 现有 `delivery_stage + parent_ticket_id` staged follow-up 主链不被误伤，仍保留节点级 retry / recovery 的恢复窗口
+
+**风险**：中
+
+**完成补记（2026-04-07）**：
+- scheduler 对显式 assignee 的 readiness 判断这轮收口为“指定 assignee 必须仍在当前可用 worker 候选里、未忙碌、未被排除、provider 未 pause”；满足才租约，不满足就继续等待，不再悄悄换人
+- 这轮把 hard dependency 分成两类：显式 `dependency_gate_refs` 走“坏依赖直接失败并触发 CEO”；老的 `delivery_stage + parent_ticket_id` staged follow-up 链则按最保守口径只把 `missing / cancelled` 视为硬坏依赖，`FAILED / TIMED_OUT` 继续等待同节点 retry / recovery
+- 为了防止 validation 和 scheduler 各自发散，dependency gate 的自依赖 / 缺失依赖 / simple cycle 校验统一收在 `ticket-create`，运行时只做健康判断，不重复发明第二套图结构
+- 本轮新增后端回归覆盖：固定 assignee 派发、显式 dependency gate 非法输入、显式 dependency gate 坏依赖触发 CEO、legacy delivery-stage 缺失父依赖失败、`project-init` 在无可用 worker 时停止自动推进，以及 provider / timeout recovery runner 回归不被 staged 依赖误伤
+- 本轮全量验证结果更新为 backend `471 passed`、frontend build passed、frontend `73 passed`
+
 ## 五、关键依赖图
 
 ```

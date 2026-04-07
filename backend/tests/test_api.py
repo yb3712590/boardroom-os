@@ -1665,6 +1665,7 @@ def _ticket_create_payload(
     workspace_id: str | None = None,
     delivery_stage: str | None = None,
     parent_ticket_id: str | None = None,
+    dispatch_intent: dict | None = None,
 ) -> dict:
     resolved_role_profile_ref = role_profile_ref
     if resolved_role_profile_ref is None:
@@ -1716,6 +1717,8 @@ def _ticket_create_payload(
         payload["workspace_id"] = workspace_id
     if delivery_stage is not None:
         payload["delivery_stage"] = delivery_stage
+    if dispatch_intent is not None:
+        payload["dispatch_intent"] = dispatch_intent
     return payload
 
 
@@ -9335,6 +9338,208 @@ def test_scheduler_tick_skips_busy_worker_and_role_mismatch(client, set_ticket_t
     assert response.json()["status"] == "ACCEPTED"
     assert ticket_projection["status"] == TICKET_STATUS_PENDING
     assert ticket_projection["lease_owner"] is None
+
+
+def test_scheduler_tick_dispatches_to_explicit_assignee_from_dispatch_intent(client, set_ticket_time):
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="EMPLOYEE_HIRED",
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=None,
+            idempotency_key="test-seed-employee:emp_frontend_backup",
+            causation_id=None,
+            correlation_id=None,
+            payload={
+                "employee_id": "emp_frontend_backup",
+                "role_type": "frontend_engineer",
+                "skill_profile": {},
+                "personality_profile": {},
+                "aesthetic_profile": {},
+                "state": "ACTIVE",
+                "board_approved": True,
+                "provider_id": "prov_openai_compat",
+                "role_profile_refs": ["frontend_engineer_primary"],
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T09:59:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dispatch_intent_fixed",
+            node_id="node_dispatch_intent_fixed",
+            role_profile_ref="frontend_engineer_primary",
+            dispatch_intent={
+                "assignee_employee_id": "emp_frontend_backup",
+                "selection_reason": "CEO already reserved the backup maker for this ticket.",
+            },
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:dispatch-intent-fixed"),
+    )
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_dispatch_intent_fixed")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_LEASED
+    assert ticket_projection["lease_owner"] == "emp_frontend_backup"
+
+
+def test_ticket_create_is_rejected_when_dispatch_intent_dependency_gate_is_invalid(client):
+    self_dependency_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_self",
+            node_id="node_dependency_self",
+            role_profile_ref="frontend_engineer_primary",
+            dispatch_intent={
+                "assignee_employee_id": "emp_frontend_2",
+                "selection_reason": "CEO selected the primary frontend maker.",
+                "dependency_gate_refs": ["tkt_dependency_self"],
+            },
+        ),
+    )
+    missing_dependency_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_missing",
+            node_id="node_dependency_missing",
+            role_profile_ref="frontend_engineer_primary",
+            dispatch_intent={
+                "assignee_employee_id": "emp_frontend_2",
+                "selection_reason": "CEO selected the primary frontend maker.",
+                "dependency_gate_refs": ["tkt_missing_gate_ref"],
+            },
+        ),
+    )
+
+    assert self_dependency_response.status_code == 200
+    assert self_dependency_response.json()["status"] == "REJECTED"
+    assert "self" in self_dependency_response.json()["reason"].lower()
+    assert missing_dependency_response.status_code == 200
+    assert missing_dependency_response.json()["status"] == "REJECTED"
+    assert "does not exist" in missing_dependency_response.json()["reason"].lower()
+
+
+def test_scheduler_tick_fails_ticket_when_dependency_gate_has_failed(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_seed",
+        ticket_id="tkt_dependency_failed_upstream",
+        node_id="node_dependency_failed_upstream",
+        role_profile_ref="frontend_engineer_primary",
+    )
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_failed_upstream",
+            node_id="node_dependency_failed_upstream",
+            failure_kind="RUNTIME_ERROR",
+            failure_message="Upstream delivery failed before the dependent ticket could start.",
+        ),
+    )
+    assert fail_response.status_code == 200
+    assert fail_response.json()["status"] == "ACCEPTED"
+
+    ceo_triggers: list[tuple[str, str | None]] = []
+    import app.core.ticket_handlers as ticket_handlers
+
+    monkeypatch.setattr(
+        ticket_handlers,
+        "run_ceo_shadow_for_trigger",
+        lambda repository, *, workflow_id, trigger_type, trigger_ref, runtime_provider_store=None: ceo_triggers.append(
+            (trigger_type, trigger_ref)
+        ),
+    )
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_blocked",
+            node_id="node_dependency_blocked",
+            role_profile_ref="frontend_engineer_primary",
+            dispatch_intent={
+                "assignee_employee_id": "emp_frontend_2",
+                "selection_reason": "CEO selected the primary frontend maker.",
+                "dependency_gate_refs": ["tkt_dependency_failed_upstream"],
+            },
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:dependency-gate-failed"),
+    )
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_dependency_blocked")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_FAILED
+    assert ticket_projection["last_failure_kind"] == "DEPENDENCY_GATE_UNHEALTHY"
+    assert ("TICKET_FAILED", "tkt_dependency_blocked") in ceo_triggers
+
+
+def test_scheduler_tick_fails_delivery_stage_child_when_parent_is_missing(client, set_ticket_time, monkeypatch):
+    ceo_triggers: list[tuple[str, str | None]] = []
+    import app.core.ticket_handlers as ticket_handlers
+
+    monkeypatch.setattr(
+        ticket_handlers,
+        "run_ceo_shadow_for_trigger",
+        lambda repository, *, workflow_id, trigger_type, trigger_ref, runtime_provider_store=None: ceo_triggers.append(
+            (trigger_type, trigger_ref)
+        ),
+    )
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_delivery_child_blocked",
+            node_id="node_delivery_child_blocked",
+            role_profile_ref="checker_primary",
+            output_schema_ref="delivery_check_report",
+            delivery_stage="CHECK",
+            parent_ticket_id="tkt_delivery_parent_missing",
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:delivery-parent-failed"),
+    )
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_delivery_child_blocked")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_FAILED
+    assert ticket_projection["last_failure_kind"] == "DEPENDENCY_GATE_INVALID"
+    assert ("TICKET_FAILED", "tkt_delivery_child_blocked") in ceo_triggers
 
 
 def test_inbox_and_dashboard_reflect_open_approval(client):

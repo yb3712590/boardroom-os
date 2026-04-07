@@ -248,6 +248,24 @@ class ExecutionContract(StrictModel):
 class DispatchIntent(StrictModel):
     assignee_employee_id: str = Field(min_length=1)
     selection_reason: str = Field(min_length=1)
+    dependency_gate_refs: list[str] = Field(default_factory=list)
+    selected_by: str = Field(default="ceo", min_length=1)
+    wakeup_policy: str = Field(default="default", min_length=1)
+
+    @model_validator(mode="after")
+    def validate_dependency_gate_refs(self) -> "DispatchIntent":
+        normalized_refs: list[str] = []
+        seen_refs: set[str] = set()
+        for ref in self.dependency_gate_refs:
+            normalized_ref = str(ref).strip()
+            if not normalized_ref:
+                raise ValueError("dependency_gate_refs must not contain empty values.")
+            if normalized_ref in seen_refs:
+                raise ValueError("dependency_gate_refs must not contain duplicates.")
+            seen_refs.add(normalized_ref)
+            normalized_refs.append(normalized_ref)
+        object.__setattr__(self, "dependency_gate_refs", normalized_refs)
+        return self
 
 
 class TicketCreateCommand(StrictModel):

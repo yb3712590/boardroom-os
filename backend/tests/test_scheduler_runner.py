@@ -1631,34 +1631,49 @@ def test_scheduler_runner_skips_idle_ceo_maintenance_when_ticket_is_executing(
 ):
     set_ticket_time("2026-04-04T10:00:00+08:00")
     monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "run_leased_ticket_runtime",
+        lambda _repository: [],
+    )
+    monkeypatch.setattr(
         client.app.state.repository,
         "list_scheduler_worker_candidates",
         lambda connection=None: [],
     )
     workflow_id = _project_init(client, goal="Scheduler executing workflow")
     scope_ticket_id = build_project_init_scope_ticket_id(workflow_id)
-
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": scope_ticket_id,
-            "node_id": "node_scope_decision",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{scope_ticket_id}",
-        },
-    )
-    start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": scope_ticket_id,
-            "node_id": "node_scope_decision",
-            "started_by": "emp_frontend_2",
-            "idempotency_key": f"ticket-start:{workflow_id}:{scope_ticket_id}",
-        },
-    )
+    scope_ticket = client.app.state.repository.get_current_ticket_projection(scope_ticket_id)
+    assert scope_ticket is not None
+    lease_response = None
+    if scope_ticket["status"] == "PENDING":
+        lease_response = client.post(
+            "/api/v1/commands/ticket-lease",
+            json={
+                "workflow_id": workflow_id,
+                "ticket_id": scope_ticket_id,
+                "node_id": "node_scope_decision",
+                "leased_by": "emp_frontend_2",
+                "lease_timeout_sec": 600,
+                "idempotency_key": f"ticket-lease:{workflow_id}:{scope_ticket_id}",
+            },
+        )
+        assert lease_response.status_code == 200
+        assert lease_response.json()["status"] == "ACCEPTED"
+        scope_ticket = client.app.state.repository.get_current_ticket_projection(scope_ticket_id)
+    start_response = None
+    if scope_ticket["status"] == "LEASED":
+        start_response = client.post(
+            "/api/v1/commands/ticket-start",
+            json={
+                "workflow_id": workflow_id,
+                "ticket_id": scope_ticket_id,
+                "node_id": "node_scope_decision",
+                "started_by": scope_ticket["lease_owner"] or "emp_frontend_2",
+                "idempotency_key": f"ticket-start:{workflow_id}:{scope_ticket_id}",
+            },
+        )
+        assert start_response.status_code == 200
+        assert start_response.json()["status"] == "ACCEPTED"
 
     set_ticket_time("2026-04-04T10:01:05+08:00")
     run_scheduler_once(
@@ -1668,9 +1683,6 @@ def test_scheduler_runner_skips_idle_ceo_maintenance_when_ticket_is_executing(
     )
 
     runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
-
-    assert lease_response.status_code == 200
-    assert start_response.status_code == 200
     assert not any(run["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER for run in runs)
 
 
@@ -2148,6 +2160,7 @@ def test_provider_incident_recovery_on_mainline_still_reaches_closeout_completio
         repository,
         workflow_id=workflow_id,
         idempotency_key_prefix="scheduler-runner:mainline-provider-recovery",
+        max_runs=20,
         before_each_run=lambda index: set_ticket_time(
             f"2026-03-28T11:{21 + index:02d}:00+08:00"
         ),

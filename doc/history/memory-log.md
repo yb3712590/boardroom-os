@@ -78,8 +78,11 @@
 - 董事会愿景本轮追加了 `#76` 到 `#80`：role 模板不再充当 runtime 执行键，原子任务输入输出经由过程资产闭环，scheduler 只做确定性 readiness / lease / wakeup，CEO 不进入状态机，并继续保留事件 + 定时双路径唤醒防停滞
 - 新的最高优先级任务包已改为 `P2-DEC-001` 到 `P2-DEC-004`；`P2-GOV-003` 到 `P2-GOV-006` 和 `P2-RLS-001` 到 `P2-RLS-003` 继续保留，但顺序统一排在这组前置解耦任务之后
 - `P2-DEC-001` 已完成：ticket create spec 现在会补 `execution_contract / dispatch_intent`，CEO create-ticket 校验会拒绝不存在、非激活或能力不匹配的 assignee；runtime/provider 现在优先按 `execution_contract.execution_target_ref` 选路，并兼容旧 `role_profile:*` binding
-- 当前 execution target catalog 先按主线收口为 5 类：`scope_consensus / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`；scheduler 还没改成消费 `dispatch_intent`，这部分留给后续 `P2-DEC-002`
-- 本轮全量验证结果更新为 backend `467 passed`、frontend build passed、frontend `73 passed`
+- 当前 execution target catalog 先按主线收口为 5 类：`scope_consensus / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`
+- `P2-DEC-002` 已完成：scheduler 现在会在 `dispatch_intent.assignee_employee_id` 存在时只租约给该 assignee，但仍要求 assignee 出现在当前可用 worker 候选里；`dispatch_intent` 也已补入 `dependency_gate_refs / selected_by / wakeup_policy`
+- `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化 `TICKET_FAILED` 并触发 CEO 重决策
+- 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，避免在 build/check/review staged 票链上提前打死下游票
+- 本轮全量验证结果更新为 backend `471 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 

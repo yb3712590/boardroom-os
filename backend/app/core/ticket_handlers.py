@@ -79,6 +79,7 @@ from app.core.constants import (
     TICKET_STATUS_PENDING,
     TICKET_STATUS_CANCEL_REQUESTED,
     TICKET_STATUS_CANCELLED,
+    TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_FAILED,
     TICKET_STATUS_TIMED_OUT,
@@ -87,7 +88,7 @@ from app.core.constants import (
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
-from app.core.execution_targets import infer_execution_contract_payload
+from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -971,6 +972,138 @@ def _build_failure_payload(
     }
 
 
+DISPATCH_INTENT_INVALID_FAILURE_KIND = "DISPATCH_INTENT_INVALID"
+DEPENDENCY_GATE_INVALID_FAILURE_KIND = "DEPENDENCY_GATE_INVALID"
+DEPENDENCY_GATE_UNHEALTHY_FAILURE_KIND = "DEPENDENCY_GATE_UNHEALTHY"
+UPSTREAM_DEPENDENCY_UNHEALTHY_FAILURE_KIND = "UPSTREAM_DEPENDENCY_UNHEALTHY"
+DEPENDENCY_TERMINAL_FAILURE_STATUSES = {
+    TICKET_STATUS_FAILED,
+    TICKET_STATUS_TIMED_OUT,
+    TICKET_STATUS_CANCELLED,
+}
+
+
+def _resolve_dispatch_intent(created_spec: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(created_spec, dict):
+        return {}
+    dispatch_intent = created_spec.get("dispatch_intent")
+    if not isinstance(dispatch_intent, dict):
+        return {}
+    return dispatch_intent
+
+
+def _normalized_dependency_gate_refs(raw_refs: list[Any] | tuple[Any, ...] | None) -> list[str]:
+    dependency_refs: list[str] = []
+    seen_dependency_refs: set[str] = set()
+    for raw_ref in raw_refs or ():
+        normalized_ref = str(raw_ref or "").strip()
+        if not normalized_ref or normalized_ref in seen_dependency_refs:
+            continue
+        dependency_refs.append(normalized_ref)
+        seen_dependency_refs.add(normalized_ref)
+    return dependency_refs
+
+
+def _resolve_dependency_gate_refs(created_spec: dict[str, Any]) -> list[str]:
+    return _normalized_dependency_gate_refs(_resolve_dispatch_intent(created_spec).get("dependency_gate_refs"))
+
+
+def _resolve_dispatch_assignee_employee_id(created_spec: dict[str, Any]) -> str | None:
+    assignee_employee_id = str(_resolve_dispatch_intent(created_spec).get("assignee_employee_id") or "").strip()
+    return assignee_employee_id or None
+
+
+def _resolve_dependency_ticket_refs(created_spec: dict[str, Any]) -> list[str]:
+    dependency_refs = _resolve_dependency_gate_refs(created_spec)
+    parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
+    if parent_ticket_id and parent_ticket_id not in dependency_refs:
+        dependency_refs.append(parent_ticket_id)
+    return dependency_refs
+
+
+def _dependency_gate_would_create_cycle(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    ticket_id: str,
+    dependency_gate_refs: list[str],
+) -> bool:
+    pending_ticket_ids = list(dependency_gate_refs)
+    seen_ticket_ids: set[str] = set()
+    while pending_ticket_ids:
+        dependency_ticket_id = pending_ticket_ids.pop()
+        if dependency_ticket_id == ticket_id:
+            return True
+        if dependency_ticket_id in seen_ticket_ids:
+            continue
+        seen_ticket_ids.add(dependency_ticket_id)
+        dependency_spec = repository.get_latest_ticket_created_payload(connection, dependency_ticket_id)
+        if dependency_spec is None:
+            continue
+        pending_ticket_ids.extend(_resolve_dependency_ticket_refs(dependency_spec))
+    return False
+
+
+def _validate_ticket_dependency_gates(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    dependency_gate_refs: list[str],
+) -> str | None:
+    for dependency_ticket_id in dependency_gate_refs:
+        if dependency_ticket_id == ticket_id:
+            return f"dispatch_intent.dependency_gate_refs cannot include ticket {ticket_id} itself."
+        dependency_ticket = repository.get_current_ticket_projection(dependency_ticket_id, connection=connection)
+        if dependency_ticket is None:
+            return f"dispatch_intent.dependency_gate_refs ticket {dependency_ticket_id} does not exist."
+        if str(dependency_ticket.get("workflow_id") or "") != workflow_id:
+            return (
+                "dispatch_intent.dependency_gate_refs must stay inside the current workflow; "
+                f"{dependency_ticket_id} belongs to {dependency_ticket.get('workflow_id')}."
+            )
+    if _dependency_gate_would_create_cycle(
+        repository,
+        connection,
+        ticket_id=ticket_id,
+        dependency_gate_refs=dependency_gate_refs,
+    ):
+        return "dispatch_intent.dependency_gate_refs would create a dependency cycle."
+    return None
+
+
+def _build_scheduler_failure_event(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    failure_payload: dict[str, Any],
+    idempotency_key: str,
+) -> dict | None:
+    return repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_FAILED,
+        actor_type="system",
+        actor_id="scheduler",
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "failed_by": "scheduler",
+            **failure_payload,
+        },
+        occurred_at=occurred_at,
+    )
+
+
 TIMEOUT_FAILURE_KINDS = {"TIMEOUT_SLA_EXCEEDED", "HEARTBEAT_TIMEOUT"}
 
 
@@ -1203,6 +1336,114 @@ def _delivery_stage_parent_completed(
         connection=connection,
     )
     return parent_node is not None and parent_node["status"] == NODE_STATUS_COMPLETED
+
+
+def _evaluate_delivery_stage_parent_dependency(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    created_spec: dict[str, Any],
+) -> tuple[bool, dict[str, Any] | None]:
+    delivery_stage = str(created_spec.get("delivery_stage") or "").strip()
+    parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
+    if not delivery_stage or not parent_ticket_id:
+        return True, None
+    current_node_id = str(created_spec.get("node_id") or "").strip()
+    parent_ticket = repository.get_current_ticket_projection(parent_ticket_id, connection=connection)
+    if parent_ticket is None:
+        return False, _build_failure_payload(
+            failure_kind=DEPENDENCY_GATE_INVALID_FAILURE_KIND,
+            failure_message="Delivery-stage parent ticket is missing.",
+            failure_detail={
+                "dependency_ticket_id": parent_ticket_id,
+                "dependency_type": "delivery_stage_parent",
+            },
+        )
+    parent_node_id = str(parent_ticket.get("node_id") or "").strip()
+    if current_node_id and parent_node_id and current_node_id == parent_node_id:
+        return True, None
+    parent_workflow_id = str(parent_ticket.get("workflow_id") or created_spec.get("workflow_id") or "").strip()
+    parent_node = (
+        repository.get_current_node_projection(
+            parent_workflow_id,
+            parent_node_id,
+            connection=connection,
+        )
+        if parent_node_id and parent_workflow_id
+        else None
+    )
+    if parent_node is not None:
+        if parent_node["status"] == NODE_STATUS_COMPLETED:
+            return True, None
+        if parent_node["status"] == NODE_STATUS_CANCELLED:
+            return False, _build_failure_payload(
+                failure_kind=UPSTREAM_DEPENDENCY_UNHEALTHY_FAILURE_KIND,
+                failure_message="Delivery-stage parent node was cancelled.",
+                failure_detail={
+                    "dependency_ticket_id": parent_ticket_id,
+                    "dependency_status": parent_node["status"],
+                    "dependency_type": "delivery_stage_parent",
+                },
+            )
+        if str(parent_node.get("latest_ticket_id") or "") != parent_ticket_id:
+            return False, None
+    if parent_ticket["status"] == TICKET_STATUS_CANCELLED:
+        return False, _build_failure_payload(
+            failure_kind=UPSTREAM_DEPENDENCY_UNHEALTHY_FAILURE_KIND,
+            failure_message="Delivery-stage parent ticket is no longer healthy.",
+            failure_detail={
+                "dependency_ticket_id": parent_ticket_id,
+                "dependency_status": parent_ticket["status"],
+                "dependency_type": "delivery_stage_parent",
+            },
+        )
+    if parent_ticket["status"] != TICKET_STATUS_COMPLETED:
+        return False, None
+    if not parent_node_id or not parent_workflow_id:
+        return True, None
+    if parent_node is None:
+        return False, _build_failure_payload(
+            failure_kind=DEPENDENCY_GATE_INVALID_FAILURE_KIND,
+            failure_message="Delivery-stage parent node projection is missing.",
+            failure_detail={
+                "dependency_ticket_id": parent_ticket_id,
+                "dependency_type": "delivery_stage_parent",
+            },
+        )
+    return parent_node["status"] == NODE_STATUS_COMPLETED, None
+
+
+def _evaluate_dispatch_dependency_gates(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    created_spec: dict[str, Any],
+) -> tuple[bool, dict[str, Any] | None]:
+    for dependency_ticket_id in _resolve_dependency_gate_refs(created_spec):
+        dependency_ticket = repository.get_current_ticket_projection(dependency_ticket_id, connection=connection)
+        if dependency_ticket is None:
+            return False, _build_failure_payload(
+                failure_kind=DEPENDENCY_GATE_INVALID_FAILURE_KIND,
+                failure_message="Dependency gate ticket is missing.",
+                failure_detail={
+                    "dependency_ticket_id": dependency_ticket_id,
+                    "dependency_type": "dispatch_intent_gate",
+                },
+            )
+        dependency_status = str(dependency_ticket.get("status") or "")
+        if dependency_status in DEPENDENCY_TERMINAL_FAILURE_STATUSES:
+            return False, _build_failure_payload(
+                failure_kind=DEPENDENCY_GATE_UNHEALTHY_FAILURE_KIND,
+                failure_message="Dependency gate ticket is no longer healthy.",
+                failure_detail={
+                    "dependency_ticket_id": dependency_ticket_id,
+                    "dependency_status": dependency_status,
+                    "dependency_type": "dispatch_intent_gate",
+                },
+            )
+        if dependency_status != TICKET_STATUS_COMPLETED:
+            return False, None
+    return True, None
 
 
 def _expected_primary_artifact_ref(created_spec: dict[str, Any], ticket_id: str) -> str | None:
@@ -2052,6 +2293,7 @@ def run_scheduler_tick(
             return key
 
         changed_state = False
+        ceo_failure_triggers: list[tuple[str, str]] = []
         timed_out_ticket_ids: set[str] = set()
         total_timeout_candidates = repository.list_total_timeout_ticket_candidates(connection, received_at)
         for ticket in total_timeout_candidates:
@@ -2265,7 +2507,67 @@ def run_scheduler_tick(
             created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             if created_spec is None:
                 continue
-            if not _delivery_stage_parent_completed(repository, connection, created_spec):
+            parent_ready, parent_failure_payload = _evaluate_delivery_stage_parent_dependency(
+                repository,
+                connection,
+                created_spec=created_spec,
+            )
+            if parent_failure_payload is not None:
+                failed_event = _build_scheduler_failure_event(
+                    repository,
+                    connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=ticket["workflow_id"],
+                    ticket_id=ticket["ticket_id"],
+                    node_id=ticket["node_id"],
+                    failure_payload=parent_failure_payload,
+                    idempotency_key=next_idempotency_key(
+                        f"failed:{ticket['ticket_id']}:delivery-stage-parent"
+                    ),
+                )
+                if failed_event is None:
+                    return _scheduler_duplicate_ack(
+                        command_id=command_id,
+                        idempotency_key=idempotency_key,
+                        received_at=received_at,
+                    )
+                repository.refresh_projections(connection)
+                changed_state = True
+                ceo_failure_triggers.append((ticket["workflow_id"], ticket["ticket_id"]))
+                continue
+            if not parent_ready:
+                continue
+            dependency_gates_ready, dependency_gate_failure_payload = _evaluate_dispatch_dependency_gates(
+                repository,
+                connection,
+                created_spec=created_spec,
+            )
+            if dependency_gate_failure_payload is not None:
+                failed_event = _build_scheduler_failure_event(
+                    repository,
+                    connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=ticket["workflow_id"],
+                    ticket_id=ticket["ticket_id"],
+                    node_id=ticket["node_id"],
+                    failure_payload=dependency_gate_failure_payload,
+                    idempotency_key=next_idempotency_key(
+                        f"failed:{ticket['ticket_id']}:dependency-gate"
+                    ),
+                )
+                if failed_event is None:
+                    return _scheduler_duplicate_ack(
+                        command_id=command_id,
+                        idempotency_key=idempotency_key,
+                        received_at=received_at,
+                    )
+                repository.refresh_projections(connection)
+                changed_state = True
+                ceo_failure_triggers.append((ticket["workflow_id"], ticket["ticket_id"]))
+                continue
+            if not dependency_gates_ready:
                 continue
             target_role_profile = created_spec.get("role_profile_ref")
             if not target_role_profile:
@@ -2276,26 +2578,106 @@ def run_scheduler_tick(
                 for employee_id in (created_spec.get("excluded_employee_ids") or [])
                 if employee_id
             }
-
-            selected_worker_id = next(
-                (
-                    worker_id
-                    for worker_id in worker_candidates
-                    if worker_id not in busy_workers
-                    and worker_id not in excluded_employee_ids
-                    and target_role_profile in worker_by_id[worker_id]
-                    and not _is_provider_paused(
+            selected_worker_id: str | None = None
+            selected_assignee_employee_id = _resolve_dispatch_assignee_employee_id(created_spec)
+            if selected_assignee_employee_id is not None:
+                if selected_assignee_employee_id not in worker_by_id:
+                    continue
+                if (
+                    selected_assignee_employee_id in busy_workers
+                    or selected_assignee_employee_id in excluded_employee_ids
+                ):
+                    continue
+                selected_assignee = repository.get_employee_projection(
+                    selected_assignee_employee_id,
+                    connection=connection,
+                )
+                if selected_assignee is None:
+                    dispatch_failure_payload = _build_failure_payload(
+                        failure_kind=DISPATCH_INTENT_INVALID_FAILURE_KIND,
+                        failure_message="Dispatch intent assignee is missing from the employee registry.",
+                        failure_detail={
+                            "assignee_employee_id": selected_assignee_employee_id,
+                        },
+                    )
+                elif str(selected_assignee.get("state") or "") != EMPLOYEE_STATE_ACTIVE:
+                    dispatch_failure_payload = _build_failure_payload(
+                        failure_kind=DISPATCH_INTENT_INVALID_FAILURE_KIND,
+                        failure_message="Dispatch intent assignee is not currently active.",
+                        failure_detail={
+                            "assignee_employee_id": selected_assignee_employee_id,
+                            "employee_state": selected_assignee.get("state"),
+                        },
+                    )
+                elif not employee_supports_execution_contract(
+                    employee=selected_assignee,
+                    execution_contract=created_spec.get("execution_contract"),
+                ):
+                    dispatch_failure_payload = _build_failure_payload(
+                        failure_kind=DISPATCH_INTENT_INVALID_FAILURE_KIND,
+                        failure_message="Dispatch intent assignee no longer satisfies the execution contract.",
+                        failure_detail={
+                            "assignee_employee_id": selected_assignee_employee_id,
+                            "execution_contract": created_spec.get("execution_contract"),
+                        },
+                    )
+                elif _is_provider_paused(
+                    repository,
+                    connection,
+                    _resolve_provider_id_for_ticket(
                         repository,
                         connection,
-                        _resolve_provider_id_for_ticket(
-                            repository,
-                            connection,
-                            lease_owner=worker_id,
+                        lease_owner=selected_assignee_employee_id,
+                    ),
+                ):
+                    continue
+                else:
+                    dispatch_failure_payload = None
+                    selected_worker_id = selected_assignee_employee_id
+                if dispatch_failure_payload is not None:
+                    failed_event = _build_scheduler_failure_event(
+                        repository,
+                        connection,
+                        command_id=command_id,
+                        occurred_at=received_at,
+                        workflow_id=ticket["workflow_id"],
+                        ticket_id=ticket["ticket_id"],
+                        node_id=ticket["node_id"],
+                        failure_payload=dispatch_failure_payload,
+                        idempotency_key=next_idempotency_key(
+                            f"failed:{ticket['ticket_id']}:dispatch-intent"
                         ),
                     )
-                ),
-                None,
-            )
+                    if failed_event is None:
+                        return _scheduler_duplicate_ack(
+                            command_id=command_id,
+                            idempotency_key=idempotency_key,
+                            received_at=received_at,
+                        )
+                    repository.refresh_projections(connection)
+                    changed_state = True
+                    ceo_failure_triggers.append((ticket["workflow_id"], ticket["ticket_id"]))
+                    continue
+            else:
+                selected_worker_id = next(
+                    (
+                        worker_id
+                        for worker_id in worker_candidates
+                        if worker_id not in busy_workers
+                        and worker_id not in excluded_employee_ids
+                        and target_role_profile in worker_by_id[worker_id]
+                        and not _is_provider_paused(
+                            repository,
+                            connection,
+                            _resolve_provider_id_for_ticket(
+                                repository,
+                                connection,
+                                lease_owner=worker_id,
+                            ),
+                        )
+                    ),
+                    None,
+                )
             if selected_worker_id is None:
                 continue
 
@@ -2332,6 +2714,14 @@ def run_scheduler_tick(
 
         if changed_state or dispatched > 0:
             repository.refresh_projections(connection)
+
+    for workflow_id, ticket_id in ceo_failure_triggers:
+        _trigger_ceo_shadow_safely(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type=EVENT_TICKET_FAILED,
+            trigger_ref=ticket_id,
+        )
 
     return CommandAckEnvelope(
         command_id=command_id,
@@ -2946,6 +3336,54 @@ def handle_ticket_create(
         workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
         tenant_id, workspace_id = resolve_workflow_scope(workflow)
         event_payload = _ensure_ticket_execution_contract_payload(payload.model_dump(mode="json"))
+        assignee_employee_id = _resolve_dispatch_assignee_employee_id(event_payload)
+        if assignee_employee_id is not None:
+            assignee = repository.get_employee_projection(assignee_employee_id, connection=connection)
+            if assignee is None:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=f"dispatch_intent.assignee_employee_id {assignee_employee_id} does not exist.",
+                )
+            if str(assignee.get("state") or "") != EMPLOYEE_STATE_ACTIVE:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=f"dispatch_intent.assignee_employee_id {assignee_employee_id} is not active.",
+                )
+            if not employee_supports_execution_contract(
+                employee=assignee,
+                execution_contract=event_payload.get("execution_contract"),
+            ):
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        "dispatch_intent.assignee_employee_id "
+                        f"{assignee_employee_id} does not satisfy required capability tags."
+                    ),
+                )
+        dependency_gate_error = _validate_ticket_dependency_gates(
+            repository,
+            connection,
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            dependency_gate_refs=_resolve_dependency_gate_refs(event_payload),
+        )
+        if dependency_gate_error is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=dependency_gate_error,
+            )
 
         event_row = repository.insert_event(
             connection,

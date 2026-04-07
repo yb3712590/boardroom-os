@@ -191,6 +191,9 @@ def _create_and_fail_ticket(
     ticket_id: str,
     node_id: str,
     retry_budget: int,
+    failure_kind: str = "TEST_FAILURE",
+    failure_message: str = "Synthetic failure for CEO limited execution coverage.",
+    failure_detail: dict | None = None,
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -236,9 +239,9 @@ def _create_and_fail_ticket(
             "ticket_id": ticket_id,
             "node_id": node_id,
             "failed_by": "emp_frontend_2",
-            "failure_kind": "TEST_FAILURE",
-            "failure_message": "Synthetic failure for CEO limited execution coverage.",
-            "failure_detail": {},
+            "failure_kind": failure_kind,
+            "failure_message": failure_message,
+            "failure_detail": failure_detail or {},
             "idempotency_key": f"ticket-fail:{workflow_id}:{ticket_id}",
         },
     )
@@ -431,6 +434,9 @@ def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(cli
     assert created_spec["dispatch_intent"] == {
         "assignee_employee_id": "emp_frontend_2",
         "selection_reason": "Use the active frontend delivery owner for the kickoff scope consensus ticket.",
+        "dependency_gate_refs": [],
+        "selected_by": "ceo",
+        "wakeup_policy": "default",
     }
     assert created_spec["tenant_id"] == "tenant_default"
     assert created_spec["workspace_id"] == "ws_default"

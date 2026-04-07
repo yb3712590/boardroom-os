@@ -25,6 +25,9 @@
 - `TICKET_CREATED` payload 现在会补入 `execution_contract`，固定包含 `execution_target_ref / required_capability_tags / runtime_contract_version`；普通 ticket-create 路径即使没显式传，也会按 `role_profile_ref + output_schema_ref` 自动补齐
 - 当前 execution target catalog 已按主线收口为 5 类：`scope_consensus / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`
 - CEO create-ticket 当前必须显式带 `dispatch_intent.assignee_employee_id / selection_reason`；校验层会拒绝不存在、非激活或能力不匹配的 assignee，非法派单不会入队
+- `dispatch_intent` 现在已扩到最小 5 字段：`assignee_employee_id / selection_reason / dependency_gate_refs[] / selected_by / wakeup_policy`；scheduler 在该字段存在时只会尝试租约给指定 assignee，不再按 role 池重新挑人，但 assignee 仍必须出现在当前可用 worker 候选里
+- `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化失败并触发 CEO 重决策
+- 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，不把当前 staged follow-up 主链写成“上游一失败就全部重规划”
 - 当前已把原治理模板扩成只读 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
 - `workforce` 投影现在会返回 `role_templates_catalog` 和每个 live worker 的 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，但这些预留角色仍未进入 runtime 支持矩阵、staffing 动作或 CEO 文档链
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
