@@ -1734,11 +1734,14 @@
 
 完成补记（2026-04-08）：
 
+- `P2-GOV-005`：统一角色目录现在会为每个模板暴露结构化 `mainline_boundary`，明确区分 `LIVE_ON_MAINLINE` 与 `CATALOG_ONLY`；当前只有 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 属于真实 live 角色链，`backend / database / platform / architect / cto` 五个模板继续只作为目录占位
+- `P2-GOV-006`：`workforce` 目录卡片和 `runtime-provider.future_binding_slots` 现在都会直接展示这套边界；provider 抽屉把预留位改成 `Reserved bindings`，并明确这些角色当前仍被挡在 `staffing / ceo_create_ticket / runtime_execution / workforce_lane` 之外
+- 本轮没有放宽 CEO preset、staffing 模板、runtime 支持矩阵或 workforce live lane；这轮只把“目录可见”和“主线已纳入”之间的边界写实，避免把未来角色误写成当前 live 能力
 - `P2-GOV-004`：CEO 现在可在 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不再作为建票或 runtime 的硬白名单
 - 当前 execution target catalog 已补出 `scope_governance_document / frontend_governance_document` 两类 planning 文档目标；五类治理文档已进入 runtime 支持矩阵，但 `architect / cto / backend / database / platform` 仍保持冻结，不提前接入 staffing、CEO 建票或 runtime
 - 当 CEO 创建的后续票显式挂在治理文档父票下时，建票路径会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产，避免下游票继续手工补这类输入
 - 当前 OpenAI Compat live CEO prompt 会先考虑是否需要治理文档票，再考虑直接建实施票，并明确禁止为了文档票启用未纳入的冻结角色
-- 本轮新增后端回归覆盖 live CEO 文档票、冻结角色拒绝、父治理文档过程资产自动继承，以及 deterministic runtime 直接完成治理文档票；整体验证结果更新为 backend `493 passed`、frontend build passed、frontend `73 passed`
+- 本轮新增后端回归覆盖角色目录边界、provider 预留位 blocked surface、live CEO 文档票、冻结角色拒绝和父治理文档过程资产自动继承；前端回归补上了 workforce 目录边界与 reserved bindings 展示；整体验证结果更新为 backend `493 passed`、frontend build passed、frontend `74 passed`
 
 完成补记（2026-04-07）：
 

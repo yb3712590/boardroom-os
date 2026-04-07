@@ -67,6 +67,48 @@ def test_role_template_catalog_exposes_live_reserved_and_governance_templates():
         "skill_quality_validation",
         "review_internal_gate",
     ]
+    assert templates[0]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
+        "active_path_refs": [
+            "catalog_readonly",
+            "scope_consensus",
+            "governance_document_live",
+        ],
+        "blocked_path_refs": [],
+    }
+    assert templates[1]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
+        "active_path_refs": [
+            "catalog_readonly",
+            "governance_document_live",
+            "implementation_delivery",
+            "final_review",
+            "closeout",
+        ],
+        "blocked_path_refs": [],
+    }
+    assert templates[2]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
+        "active_path_refs": [
+            "catalog_readonly",
+            "checker_gate",
+        ],
+        "blocked_path_refs": [],
+    }
+    assert templates[6]["mainline_boundary"] == {
+        "boundary_status": "CATALOG_ONLY",
+        "active_path_refs": [
+            "catalog_readonly",
+            "provider_future_slot",
+        ],
+        "blocked_path_refs": [
+            "staffing",
+            "ceo_create_ticket",
+            "runtime_execution",
+            "workforce_lane",
+        ],
+    }
+    assert templates[7]["mainline_boundary"] == templates[6]["mainline_boundary"]
 
 
 def test_role_template_document_kinds_expose_expected_metadata_refs():

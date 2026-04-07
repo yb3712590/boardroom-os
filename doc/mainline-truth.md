@@ -37,7 +37,9 @@
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
 - 当前已把原治理模板扩成只读 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
-- `workforce` 投影现在会返回 `role_templates_catalog` 和每个 live worker 的 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，但这些预留角色仍未进入 runtime 支持矩阵、staffing 动作或 CEO 文档链
+- `role_templates_catalog.role_templates[]` 现在会额外暴露结构化 `mainline_boundary`：`boundary_status` 只会是 `LIVE_ON_MAINLINE / CATALOG_ONLY`；当前只有前 `3` 个模板会标成 `LIVE_ON_MAINLINE`，后 `5` 个模板全部保持 `CATALOG_ONLY`
+- `workforce` 投影现在会返回 `role_templates_catalog` 和每个 live worker 的 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，并额外暴露它们当前被挡住的 surface `blocked_path_refs[]`
+- 这组 `CATALOG_ONLY` 模板当前只具备 `catalog_readonly` 与 `provider_future_slot` 两类只读存在感；仍未进入 runtime 支持矩阵、staffing 动作、CEO create-ticket 预设或 workforce live lane
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
 - provider-to-provider failover 当前只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；运行时与 CEO live path 会按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径
 - 会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`；`MeetingRoom` 默认先展示压缩后的决策视图，再把 round timeline 留作 audit trail

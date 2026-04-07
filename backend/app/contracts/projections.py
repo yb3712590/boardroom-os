@@ -148,6 +148,12 @@ class RoleTemplateCompositionProjection(StrictModel):
     fragment_refs: list[str] = Field(default_factory=list)
 
 
+class RoleTemplateMainlineBoundaryProjection(StrictModel):
+    boundary_status: str
+    active_path_refs: list[str] = Field(default_factory=list)
+    blocked_path_refs: list[str] = Field(default_factory=list)
+
+
 class RoleTemplateFragmentProjection(StrictModel):
     fragment_id: str
     fragment_kind: str
@@ -172,6 +178,13 @@ class RoleTemplateProjection(StrictModel):
     responsibility_summary: str
     summary: str
     composition: RoleTemplateCompositionProjection = Field(default_factory=RoleTemplateCompositionProjection)
+    mainline_boundary: RoleTemplateMainlineBoundaryProjection = Field(
+        default_factory=lambda: RoleTemplateMainlineBoundaryProjection(
+            boundary_status="",
+            active_path_refs=[],
+            blocked_path_refs=[],
+        )
+    )
 
 
 class RoleTemplatesCatalogProjection(StrictModel):
@@ -438,7 +451,7 @@ class RuntimeProviderProjectionData(StrictModel):
     default_provider_id: str | None = None
     providers: list[dict[str, object]] = Field(default_factory=list)
     role_bindings: list[dict[str, object]] = Field(default_factory=list)
-    future_binding_slots: list[dict[str, str]] = Field(default_factory=list)
+    future_binding_slots: list[dict[str, object]] = Field(default_factory=list)
 
 
 class RuntimeProviderProjectionEnvelope(ProjectionEnvelopeBase):

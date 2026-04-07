@@ -6,11 +6,41 @@ from typing import Any
 ROLE_TEMPLATE_STATUS_LIVE = "LIVE"
 ROLE_TEMPLATE_STATUS_NOT_ENABLED = "NOT_ENABLED"
 
+MAINLINE_BOUNDARY_STATUS_LIVE = "LIVE_ON_MAINLINE"
+MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY = "CATALOG_ONLY"
+
+MAINLINE_PATH_CATALOG_READONLY = "catalog_readonly"
+MAINLINE_PATH_SCOPE_CONSENSUS = "scope_consensus"
+MAINLINE_PATH_GOVERNANCE_DOCUMENT_LIVE = "governance_document_live"
+MAINLINE_PATH_IMPLEMENTATION_DELIVERY = "implementation_delivery"
+MAINLINE_PATH_CHECKER_GATE = "checker_gate"
+MAINLINE_PATH_FINAL_REVIEW = "final_review"
+MAINLINE_PATH_CLOSEOUT = "closeout"
+MAINLINE_PATH_PROVIDER_FUTURE_SLOT = "provider_future_slot"
+
+MAINLINE_BLOCKED_PATH_STAFFING = "staffing"
+MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET = "ceo_create_ticket"
+MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION = "runtime_execution"
+MAINLINE_BLOCKED_PATH_WORKFORCE_LANE = "workforce_lane"
+
 PARTICIPATION_MODE_HIGH_FREQUENCY_DELIVERY = "HIGH_FREQUENCY_DELIVERY"
 PARTICIPATION_MODE_HIGH_FREQUENCY_REVIEW = "HIGH_FREQUENCY_REVIEW"
 PARTICIPATION_MODE_LOW_FREQUENCY_HIGH_LEVERAGE = "LOW_FREQUENCY_HIGH_LEVERAGE"
 
 ROLE_TEMPLATE_NOT_ENABLED_REASON = "角色模板已定义，但尚未纳入当前主线。"
+
+
+def _mainline_boundary(
+    *,
+    boundary_status: str,
+    active_path_refs: tuple[str, ...],
+    blocked_path_refs: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    return {
+        "boundary_status": boundary_status,
+        "active_path_refs": list(active_path_refs),
+        "blocked_path_refs": list(blocked_path_refs),
+    }
 
 _ROLE_TEMPLATE_DOCUMENT_KINDS: tuple[dict[str, str], ...] = (
     {
@@ -152,6 +182,14 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 "delivery_document_first",
             ],
         },
+        "mainline_boundary": _mainline_boundary(
+            boundary_status=MAINLINE_BOUNDARY_STATUS_LIVE,
+            active_path_refs=(
+                MAINLINE_PATH_CATALOG_READONLY,
+                MAINLINE_PATH_SCOPE_CONSENSUS,
+                MAINLINE_PATH_GOVERNANCE_DOCUMENT_LIVE,
+            ),
+        ),
         "future_provider_binding_enabled": False,
     },
     {
@@ -175,6 +213,16 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 "delivery_execution_loop",
             ],
         },
+        "mainline_boundary": _mainline_boundary(
+            boundary_status=MAINLINE_BOUNDARY_STATUS_LIVE,
+            active_path_refs=(
+                MAINLINE_PATH_CATALOG_READONLY,
+                MAINLINE_PATH_GOVERNANCE_DOCUMENT_LIVE,
+                MAINLINE_PATH_IMPLEMENTATION_DELIVERY,
+                MAINLINE_PATH_FINAL_REVIEW,
+                MAINLINE_PATH_CLOSEOUT,
+            ),
+        ),
         "future_provider_binding_enabled": False,
     },
     {
@@ -198,6 +246,13 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 "review_internal_gate",
             ],
         },
+        "mainline_boundary": _mainline_boundary(
+            boundary_status=MAINLINE_BOUNDARY_STATUS_LIVE,
+            active_path_refs=(
+                MAINLINE_PATH_CATALOG_READONLY,
+                MAINLINE_PATH_CHECKER_GATE,
+            ),
+        ),
         "future_provider_binding_enabled": False,
     },
     {
@@ -221,6 +276,19 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 "delivery_execution_loop",
             ],
         },
+        "mainline_boundary": _mainline_boundary(
+            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            active_path_refs=(
+                MAINLINE_PATH_CATALOG_READONLY,
+                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+            ),
+            blocked_path_refs=(
+                MAINLINE_BLOCKED_PATH_STAFFING,
+                MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
+                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
+                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
+            ),
+        ),
         "future_provider_binding_enabled": True,
     },
     {
@@ -244,6 +312,19 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 "delivery_execution_loop",
             ],
         },
+        "mainline_boundary": _mainline_boundary(
+            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            active_path_refs=(
+                MAINLINE_PATH_CATALOG_READONLY,
+                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+            ),
+            blocked_path_refs=(
+                MAINLINE_BLOCKED_PATH_STAFFING,
+                MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
+                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
+                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
+            ),
+        ),
         "future_provider_binding_enabled": True,
     },
     {
@@ -267,6 +348,19 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 "delivery_execution_loop",
             ],
         },
+        "mainline_boundary": _mainline_boundary(
+            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            active_path_refs=(
+                MAINLINE_PATH_CATALOG_READONLY,
+                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+            ),
+            blocked_path_refs=(
+                MAINLINE_BLOCKED_PATH_STAFFING,
+                MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
+                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
+                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
+            ),
+        ),
         "future_provider_binding_enabled": True,
     },
     {
@@ -294,6 +388,19 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 "delivery_document_first",
             ],
         },
+        "mainline_boundary": _mainline_boundary(
+            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            active_path_refs=(
+                MAINLINE_PATH_CATALOG_READONLY,
+                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+            ),
+            blocked_path_refs=(
+                MAINLINE_BLOCKED_PATH_STAFFING,
+                MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
+                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
+                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
+            ),
+        ),
         "future_provider_binding_enabled": True,
     },
     {
@@ -322,6 +429,19 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 "delivery_document_first",
             ],
         },
+        "mainline_boundary": _mainline_boundary(
+            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            active_path_refs=(
+                MAINLINE_PATH_CATALOG_READONLY,
+                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+            ),
+            blocked_path_refs=(
+                MAINLINE_BLOCKED_PATH_STAFFING,
+                MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
+                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
+                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
+            ),
+        ),
         "future_provider_binding_enabled": True,
     },
 )
@@ -346,6 +466,11 @@ def _clone_role_template(template: dict[str, Any]) -> dict[str, Any]:
         "composition": {
             "fragment_refs": list((template.get("composition") or {}).get("fragment_refs") or []),
         },
+        "mainline_boundary": {
+            "boundary_status": str((template.get("mainline_boundary") or {}).get("boundary_status") or ""),
+            "active_path_refs": list((template.get("mainline_boundary") or {}).get("active_path_refs") or []),
+            "blocked_path_refs": list((template.get("mainline_boundary") or {}).get("blocked_path_refs") or []),
+        },
     }
 
 
@@ -361,13 +486,14 @@ def list_role_template_catalog_entries() -> list[dict[str, Any]]:
     return [_clone_role_template(template) for template in _ROLE_TEMPLATE_CATALOG]
 
 
-def list_runtime_provider_future_binding_slots() -> list[dict[str, str]]:
+def list_runtime_provider_future_binding_slots() -> list[dict[str, Any]]:
     return [
         {
             "target_ref": str(template["provider_target_ref"]),
             "label": str(template["label"]),
             "status": str(template["status"]),
             "reason": ROLE_TEMPLATE_NOT_ENABLED_REASON,
+            "blocked_path_refs": list((template.get("mainline_boundary") or {}).get("blocked_path_refs") or []),
         }
         for template in list_role_template_catalog_entries()
         if template.get("future_provider_binding_enabled") and template.get("status") == ROLE_TEMPLATE_STATUS_NOT_ENABLED

@@ -54,6 +54,11 @@ describe('WorkforcePanel', () => {
                 composition: {
                   fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
                 },
+                mainline_boundary: {
+                  boundary_status: 'LIVE_ON_MAINLINE',
+                  active_path_refs: ['catalog_readonly', 'governance_document_live', 'implementation_delivery'],
+                  blocked_path_refs: [],
+                },
               },
               {
                 template_id: 'backend_execution_reserved',
@@ -73,6 +78,11 @@ describe('WorkforcePanel', () => {
                 composition: {
                   fragment_refs: ['skill_backend_services', 'delivery_execution_loop'],
                 },
+                mainline_boundary: {
+                  boundary_status: 'CATALOG_ONLY',
+                  active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+                  blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+                },
               },
               {
                 template_id: 'cto_governance',
@@ -91,6 +101,11 @@ describe('WorkforcePanel', () => {
                 summary: 'Own high-leverage architecture and governance decisions.',
                 composition: {
                   fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
+                },
+                mainline_boundary: {
+                  boundary_status: 'CATALOG_ONLY',
+                  active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+                  blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
                 },
               },
             ],
@@ -218,6 +233,10 @@ describe('WorkforcePanel', () => {
     expect(screen.getByText(/CTO \/ 架构治理/i)).toBeInTheDocument()
     expect(screen.getByText(/Backend Engineer \/ 服务交付/i)).toBeInTheDocument()
     expect(screen.getByText(/architecture_brief/i)).toBeInTheDocument()
+    expect(screen.getByText(/Current live path/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/Catalog only \/ not on current mainline/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/implementation delivery/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/blocked: staffing, ceo create ticket, runtime execution, workforce lane/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/not_enabled/i).length).toBeGreaterThan(0)
   })
 })

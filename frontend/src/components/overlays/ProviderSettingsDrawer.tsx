@@ -20,6 +20,10 @@ const PROVIDER_CAPABILITY_OPTIONS = [
   { value: 'review', label: 'Review' },
 ] as const
 
+function formatBoundaryPathRef(ref: string) {
+  return ref.replaceAll('_', ' ')
+}
+
 type EditableRoleBinding = {
   target_ref: string
   target_label: string
@@ -447,12 +451,20 @@ export function ProviderSettingsDrawer({
 
             {providerData?.future_binding_slots?.length ? (
               <div>
-                <span className="field-label">Future role bindings</span>
+                <span className="field-label">Reserved bindings</span>
+                <p className="muted-copy">
+                  Catalog-only roles stay read-only here until a later mainline role intake round.
+                </p>
                 <div className="provider-settings-grid">
                   {providerData.future_binding_slots.map((slot) => (
                     <label key={slot.target_ref}>
                       <span className="field-label">{slot.label}</span>
                       <input aria-label={`${slot.label} status`} value={`${slot.status}: ${slot.reason}`} disabled />
+                      {slot.blocked_path_refs.length > 0 ? (
+                        <span className="muted-copy">
+                          {`Blocked surfaces: ${slot.blocked_path_refs.map(formatBoundaryPathRef).join(', ')}`}
+                        </span>
+                      ) : null}
                     </label>
                   ))}
                 </div>

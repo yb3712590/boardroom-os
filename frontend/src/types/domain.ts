@@ -109,6 +109,12 @@ export type RoleTemplateFragment = {
   payload: Record<string, string>
 }
 
+export type RoleTemplateMainlineBoundary = {
+  boundary_status: string
+  active_path_refs: string[]
+  blocked_path_refs: string[]
+}
+
 export type RoleTemplate = {
   template_id: string
   template_kind: string
@@ -127,6 +133,7 @@ export type RoleTemplate = {
   composition: {
     fragment_refs: string[]
   }
+  mainline_boundary: RoleTemplateMainlineBoundary
 }
 
 export type RoleTemplatesCatalog = {

@@ -93,7 +93,10 @@
 - `P2-GOV-004` 已完成：CEO 现在可在 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不再作为硬白名单
 - execution target catalog 现在扩到 `7` 类：在原有 `scope_consensus / frontend_build / checker_delivery_check / frontend_review / frontend_closeout` 之外，新增 `scope_governance_document / frontend_governance_document` 两类 planning 文档目标；五类治理文档也已进入 runtime 支持矩阵，但 `architect / cto / backend / database / platform` 仍未纳入 live 路径
 - 当 CEO 创建的后续票显式挂在治理文档父票下时，建票路径会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产，避免下游票继续手工补这类引用
-- `P2-DEC-*` 与 `P2-GOV-004` 已全部收口，当前下一步转入 `P2-GOV-005`；本轮全量验证结果更新为 backend `493 passed`、frontend build passed、frontend `73 passed`
+- `P2-GOV-005 / P2-GOV-006` 已完成：`role_templates_catalog.role_templates[]` 现在会暴露结构化 `mainline_boundary`，明确区分 `LIVE_ON_MAINLINE` 与 `CATALOG_ONLY`；当前只有 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 属于真实 live 角色链
+- `runtime-provider.future_binding_slots` 现在会从同一份边界真相带出 `blocked_path_refs[]`；前端 provider 抽屉也把这组入口改成 `Reserved bindings`，直接说明这些预留位还不能进入 `staffing / ceo_create_ticket / runtime_execution / workforce_lane`
+- `workforce` 目录卡片现在会直接展示 `Current live path` 或 `Catalog only / not on current mainline`，不再只靠 `NOT_ENABLED` 让人猜哪些角色只是目录占位
+- 当前默认主线已从 `P2-GOV` 转到 `P2-RLS-001`；本轮全量验证结果更新为 backend `493 passed`、frontend build passed、frontend `74 passed`
 
 ## Current Working Set
 

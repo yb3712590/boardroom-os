@@ -38,6 +38,10 @@ function formatFragmentRefs(refs: string[], byRef: Map<string, string>) {
   return refs.map((ref) => byRef.get(ref) ?? ref).join(', ')
 }
 
+function formatBoundaryPathRef(ref: string) {
+  return ref.replaceAll('_', ' ')
+}
+
 function formatTemplateKindLabel(templateKind: string) {
   switch (templateKind) {
     case 'live_execution':
@@ -162,6 +166,22 @@ export function WorkforcePanel({
                         </div>
                         <p className="muted-copy">{template.responsibility_summary}</p>
                         <p className="muted-copy">{template.execution_boundary}</p>
+                        <p className="muted-copy">
+                          {template.mainline_boundary.boundary_status === 'LIVE_ON_MAINLINE'
+                            ? `Current live path: ${template.mainline_boundary.active_path_refs
+                                .map(formatBoundaryPathRef)
+                                .join(', ')}`
+                            : `Catalog only / not on current mainline: ${template.mainline_boundary.active_path_refs
+                                .map(formatBoundaryPathRef)
+                                .join(', ')}`}
+                        </p>
+                        {template.mainline_boundary.blocked_path_refs.length > 0 ? (
+                          <p className="muted-copy">
+                            {`Blocked: ${template.mainline_boundary.blocked_path_refs
+                              .map(formatBoundaryPathRef)
+                              .join(', ')}`}
+                          </p>
+                        ) : null}
                         <p className="muted-copy">
                           {formatDocumentKindRefs(
                             template.default_document_kind_refs,

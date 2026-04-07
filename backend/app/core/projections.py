@@ -333,6 +333,11 @@ def _build_role_templates_catalog_projection() -> dict[str, Any]:
                 "composition": {
                     "fragment_refs": list((template.get("composition") or {}).get("fragment_refs") or []),
                 },
+                "mainline_boundary": {
+                    "boundary_status": str((template.get("mainline_boundary") or {}).get("boundary_status") or ""),
+                    "active_path_refs": list((template.get("mainline_boundary") or {}).get("active_path_refs") or []),
+                    "blocked_path_refs": list((template.get("mainline_boundary") or {}).get("blocked_path_refs") or []),
+                },
             }
             for template in list_role_template_catalog_entries()
         ],

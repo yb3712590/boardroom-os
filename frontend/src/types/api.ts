@@ -200,6 +200,7 @@ export type RuntimeProviderFutureBindingSlot = {
   label: string
   status: string
   reason: string
+  blocked_path_refs: string[]
 }
 
 export type RuntimeProviderData = {

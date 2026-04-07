@@ -302,6 +302,11 @@ function workforceData() {
           composition: {
             fragment_refs: ['skill_frontend_ui', 'delivery_document_first'],
           },
+          mainline_boundary: {
+            boundary_status: 'LIVE_ON_MAINLINE',
+            active_path_refs: ['catalog_readonly', 'scope_consensus', 'governance_document_live'],
+            blocked_path_refs: [],
+          },
         },
         {
           template_id: 'frontend_delivery_primary',
@@ -320,6 +325,17 @@ function workforceData() {
           summary: 'Own the implementation path for the thin boardroom shell.',
           composition: {
             fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
+          },
+          mainline_boundary: {
+            boundary_status: 'LIVE_ON_MAINLINE',
+            active_path_refs: [
+              'catalog_readonly',
+              'governance_document_live',
+              'implementation_delivery',
+              'final_review',
+              'closeout',
+            ],
+            blocked_path_refs: [],
           },
         },
         {
@@ -340,6 +356,11 @@ function workforceData() {
           composition: {
             fragment_refs: ['skill_quality_validation', 'review_internal_gate'],
           },
+          mainline_boundary: {
+            boundary_status: 'LIVE_ON_MAINLINE',
+            active_path_refs: ['catalog_readonly', 'checker_gate'],
+            blocked_path_refs: [],
+          },
         },
         {
           template_id: 'backend_execution_reserved',
@@ -358,6 +379,11 @@ function workforceData() {
           summary: 'Reserved for future backend delivery slices.',
           composition: {
             fragment_refs: ['skill_backend_services', 'delivery_execution_loop'],
+          },
+          mainline_boundary: {
+            boundary_status: 'CATALOG_ONLY',
+            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
           },
         },
         {
@@ -378,6 +404,11 @@ function workforceData() {
           composition: {
             fragment_refs: ['skill_database_reliability', 'delivery_execution_loop'],
           },
+          mainline_boundary: {
+            boundary_status: 'CATALOG_ONLY',
+            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+          },
         },
         {
           template_id: 'platform_sre_reserved',
@@ -397,6 +428,11 @@ function workforceData() {
           composition: {
             fragment_refs: ['skill_platform_operations', 'delivery_execution_loop'],
           },
+          mainline_boundary: {
+            boundary_status: 'CATALOG_ONLY',
+            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+          },
         },
         {
           template_id: 'architect_governance',
@@ -415,6 +451,11 @@ function workforceData() {
           summary: 'Review design detail and keep implementation aligned to architecture.',
           composition: {
             fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
+          },
+          mainline_boundary: {
+            boundary_status: 'CATALOG_ONLY',
+            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
           },
         },
         {
@@ -439,6 +480,11 @@ function workforceData() {
           summary: 'Shape architecture, major decisions, and backlog direction.',
           composition: {
             fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
+          },
+          mainline_boundary: {
+            boundary_status: 'CATALOG_ONLY',
+            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
           },
         },
       ],
@@ -933,18 +979,21 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
         label: 'Backend Engineer / 服务交付',
         status: 'NOT_ENABLED',
         reason: '角色模板已定义，但尚未纳入当前主线。',
+        blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
       },
       {
         target_ref: 'role_profile:architect_primary',
         label: '架构师 / 设计评审',
         status: 'NOT_ENABLED',
         reason: '角色模板已定义，但尚未纳入当前主线。',
+        blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
       },
       {
         target_ref: 'role_profile:cto_primary',
         label: 'CTO / 架构治理',
         status: 'NOT_ENABLED',
         reason: '角色模板已定义，但尚未纳入当前主线。',
+        blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
       },
     ],
     ...overrides,

@@ -4047,30 +4047,60 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
                 "label": "Backend Engineer / 服务交付",
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
+                "blocked_path_refs": [
+                    "staffing",
+                    "ceo_create_ticket",
+                    "runtime_execution",
+                    "workforce_lane",
+                ],
             },
             {
                 "target_ref": "role_profile:database_engineer_primary",
                 "label": "Database Engineer / 数据可靠性",
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
+                "blocked_path_refs": [
+                    "staffing",
+                    "ceo_create_ticket",
+                    "runtime_execution",
+                    "workforce_lane",
+                ],
             },
             {
                 "target_ref": "role_profile:platform_sre_primary",
                 "label": "Platform / SRE",
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
+                "blocked_path_refs": [
+                    "staffing",
+                    "ceo_create_ticket",
+                    "runtime_execution",
+                    "workforce_lane",
+                ],
             },
             {
                 "target_ref": "role_profile:architect_primary",
                 "label": "架构师 / 设计评审",
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
+                "blocked_path_refs": [
+                    "staffing",
+                    "ceo_create_ticket",
+                    "runtime_execution",
+                    "workforce_lane",
+                ],
             },
             {
                 "target_ref": "role_profile:cto_primary",
                 "label": "CTO / 架构治理",
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
+                "blocked_path_refs": [
+                    "staffing",
+                    "ceo_create_ticket",
+                    "runtime_execution",
+                    "workforce_lane",
+                ],
             },
         ]
         assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
@@ -10657,6 +10687,47 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
     assert body["role_templates_catalog"]["role_templates"][0]["status"] == "LIVE"
     assert body["role_templates_catalog"]["role_templates"][0]["canonical_role_ref"] == "ui_designer_primary"
     assert body["role_templates_catalog"]["role_templates"][3]["provider_target_ref"] == "role_profile:backend_engineer_primary"
+    assert body["role_templates_catalog"]["role_templates"][0]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
+        "active_path_refs": [
+            "catalog_readonly",
+            "scope_consensus",
+            "governance_document_live",
+        ],
+        "blocked_path_refs": [],
+    }
+    assert body["role_templates_catalog"]["role_templates"][1]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
+        "active_path_refs": [
+            "catalog_readonly",
+            "governance_document_live",
+            "implementation_delivery",
+            "final_review",
+            "closeout",
+        ],
+        "blocked_path_refs": [],
+    }
+    assert body["role_templates_catalog"]["role_templates"][2]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
+        "active_path_refs": [
+            "catalog_readonly",
+            "checker_gate",
+        ],
+        "blocked_path_refs": [],
+    }
+    assert body["role_templates_catalog"]["role_templates"][6]["mainline_boundary"] == {
+        "boundary_status": "CATALOG_ONLY",
+        "active_path_refs": [
+            "catalog_readonly",
+            "provider_future_slot",
+        ],
+        "blocked_path_refs": [
+            "staffing",
+            "ceo_create_ticket",
+            "runtime_execution",
+            "workforce_lane",
+        ],
+    }
 
     frontend_lane = next(
         lane
