@@ -2034,6 +2034,43 @@
 - `approval_handlers` 和 maker-checker 续链现在都会优先吃 `produced_process_assets[]`，再兼容旧 `input_artifact_refs[]`；meeting ADR 和 closeout summary 已能进入后续 ticket 的 `input_process_asset_refs[]`
 - 当前全量验证结果更新为 backend `473 passed`、frontend build passed、frontend `73 passed`
 
+#### P2-DEC-004：CEO 定时唤醒、防停滞与 runner 编排收口
+
+**状态**：已完成（2026-04-07，本轮实现）
+
+**描述**：保留事件唤醒之外的定时防停滞路径，但把它收口成“只在确实卡住时叫醒 CEO”，同时把 runner 明确成编排器并留下本轮调度痕迹。
+
+**文件**：
+- 修改：`backend/app/core/constants.py`
+- 修改：`backend/app/core/ceo_snapshot.py`
+- 修改：`backend/app/core/ceo_scheduler.py`
+- 修改：`backend/app/scheduler_runner.py`
+- 修改：`backend/app/db/repository.py`
+- 修改：`backend/tests/test_ceo_scheduler.py`
+- 修改：`backend/tests/test_scheduler_runner.py`
+
+**依赖**：`P2-DEC-001`、`P2-DEC-002`、`P2-DEC-003`
+
+**预估**：4h
+
+**feature-spec**：条目 80
+
+**验收标准**：
+- idle maintenance 只会在 workflow 未被 approval / incident / active runtime 占住、且存在明确重决策信号时触发
+- 重决策信号至少覆盖 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET`
+- 最近 ticket / node / approval / incident 状态变化未过冷却窗口时，不重复触发 idle wakeup
+- runner 固定按 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace` 编排，并保留每轮 trace
+
+**风险**：中
+
+**完成补记（2026-04-07）**：
+- 这轮没有新增 `SNOOZE` 动作，也没有把 CEO 写进状态机；保守做法是给 snapshot 明确补 `idle_maintenance.signal_types / latest_state_change_at`，让防停滞判断直接复用现有票据、节点、审批和事故投影
+- 冷却窗口当前只看真正影响重决策的最近状态变化，不再错误依赖 workflow 行自己的旧时间戳；这样既能挡住刚发生变化时的空转，也不会因为 workflow 行时间形状差异误伤 idle wakeup
+- runner 现在已显式收口成 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`；artifact cleanup 保持为主链之后的 sidecar，不再混进“谁先决策、谁先执行”的核心顺序里
+- 每轮 runner 会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 事件，最小记录本轮 CEO 唤醒 run ids、scheduler ack 和 runtime ticket ids，便于验证“这轮调度到底做了什么”
+- 本轮新增后端回归覆盖：recent-state-change cooldown、runner 编排顺序 trace、external runtime 模式下 trace 兼容、pending workflow 的 idle maintenance 命中与 executing ticket 的误触发保护
+- 本轮全量验证结果更新为 backend `475 passed`、frontend build passed、frontend `73 passed`
+
 ## 五、关键依赖图
 
 ```

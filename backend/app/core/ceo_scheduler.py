@@ -56,12 +56,25 @@ def _build_comparison(
 
 
 def _snapshot_has_idle_maintenance_signal(snapshot: dict[str, Any]) -> bool:
-    ticket_summary = snapshot.get("ticket_summary") or {}
-    return (
-        int(ticket_summary.get("total") or 0) == 0
-        or int(ticket_summary.get("ready_count") or 0) > 0
-        or int(ticket_summary.get("failed_count") or 0) > 0
-    )
+    idle_maintenance = snapshot.get("idle_maintenance") or {}
+    return bool(idle_maintenance.get("signal_types"))
+
+
+def _parse_snapshot_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        return datetime.fromisoformat(value)
+    return None
+
+
+def _snapshot_latest_state_change_at(snapshot: dict[str, Any]) -> datetime | None:
+    idle_maintenance = snapshot.get("idle_maintenance") or {}
+    latest_change = _parse_snapshot_timestamp(idle_maintenance.get("latest_state_change_at"))
+    if latest_change is not None:
+        return latest_change
+    workflow = snapshot.get("workflow") or {}
+    return _parse_snapshot_timestamp(workflow.get("updated_at"))
 
 
 def list_due_ceo_maintenance_workflows(
@@ -90,6 +103,11 @@ def list_due_ceo_maintenance_workflows(
             continue
         if not _snapshot_has_idle_maintenance_signal(snapshot):
             continue
+        latest_state_change_at = _snapshot_latest_state_change_at(snapshot)
+        if latest_state_change_at is not None:
+            elapsed_since_change = (current_time - latest_state_change_at).total_seconds()
+            if elapsed_since_change < resolved_interval_sec:
+                continue
         latest_run = repository.get_latest_ceo_shadow_run_for_trigger(
             str(workflow["workflow_id"]),
             SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
@@ -98,7 +116,17 @@ def list_due_ceo_maintenance_workflows(
             elapsed_sec = (current_time - latest_run["occurred_at"]).total_seconds()
             if elapsed_sec < resolved_interval_sec:
                 continue
-        due_workflows.append(workflow)
+        due_workflows.append(
+            {
+                **workflow,
+                "idle_maintenance_signal_types": list(
+                    (snapshot.get("idle_maintenance") or {}).get("signal_types") or []
+                ),
+                "idle_maintenance_latest_state_change_at": (
+                    latest_state_change_at.isoformat() if latest_state_change_at is not None else None
+                ),
+            }
+        )
 
     return due_workflows
 

@@ -1682,3 +1682,26 @@ def test_idle_ceo_maintenance_skips_workflow_waiting_for_board_review(client, se
     }
 
     assert workflow_id not in due_workflow_ids
+
+
+def test_idle_ceo_maintenance_waits_for_recent_state_change_cooldown(client, monkeypatch, set_ticket_time):
+    set_ticket_time("2026-04-04T10:00:00+08:00")
+    _set_deterministic_mode(client)
+    monkeypatch.setattr(
+        client.app.state.repository,
+        "list_scheduler_worker_candidates",
+        lambda connection=None: [],
+    )
+    workflow_id = _project_init(client, "CEO idle maintenance cooldown")
+    repository = client.app.state.repository
+
+    due_workflow_ids = {
+        item["workflow_id"]
+        for item in list_due_ceo_maintenance_workflows(
+            repository,
+            current_time=datetime.fromisoformat("2026-04-04T10:00:30+08:00"),
+            interval_sec=60,
+        )
+    }
+
+    assert workflow_id not in due_workflow_ids

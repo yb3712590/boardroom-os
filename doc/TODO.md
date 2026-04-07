@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-07）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `473 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `475 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `73 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -22,13 +22,22 @@
 
 ### `P2-DEC`：派单边界与 role/runtime 解耦前置
 
-状态：`当前主线（2026-04-07 新纳入；2026-04-07 已完成前三个实现切片 P2-DEC-001 / P2-DEC-002 / P2-DEC-003；与主线关系：在继续纳入新角色前，先把 role 模板、runtime 执行键、CEO 派单、过程资产闭环与 scheduler 的确定性执行边界收正到原子 Ticket 模型）`
+状态：`已完成（2026-04-07，新纳入后已于同日完成四个实现切片；与主线关系：在继续纳入新角色前，先把 role 模板、runtime 执行键、CEO 派单、过程资产闭环与 scheduler 的确定性执行边界收正到原子 Ticket 模型）`
 
 - `P2-DEC-001` 已完成（2026-04-07）：执行 target contract 与 role/runtime 解耦；ticket create spec 现已补入 `execution_contract / dispatch_intent`，CEO create-ticket 校验会拒绝不存在、非激活或能力不匹配的 assignee，runtime/provider 会优先按 `execution_contract.execution_target_ref` 选路，同时保留 legacy `role_profile:*` binding 兼容
 - `P2-DEC-002` 已完成（2026-04-07）：scheduler 现在会在 `dispatch_intent.assignee_employee_id` 存在时只租约给该 assignee，并把 `dependency_gate_refs / selected_by / wakeup_policy` 收进 `dispatch_intent`；ticket-create 会拒绝自依赖、缺失依赖和简单 dependency cycle；scheduler 会把显式 dependency gate 的坏依赖直接转成结构化失败并触发 CEO 重决策。对现有 `delivery_stage + parent_ticket_id` 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖，`FAILED / TIMED_OUT` 仍继续等待节点级 retry / recovery，避免打断 staged follow-up 主链
 - `P2-DEC-003` 已完成（2026-04-07）：ticket create spec 现已补入 `input_process_asset_refs[]`，`Context Compiler` 会先把 `input_artifact_refs[]` 兼容转换到过程资产，再统一经 `process asset resolver` 解析；当前已纳入 `artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary` 六类过程资产，并把 meeting ADR、closeout summary、runtime 默认 artifact 的输出映射补到 follow-up / maker-checker 输入链
-- `P2-DEC-004` 待开始：CEO 定时唤醒、防停滞与回归/文档收口；确认事件唤醒之外的 idle wakeup 仍保留，但职责只限于防停滞和触发 CEO 重新决策
-- 这组任务当前优先级高于 `P2-GOV-003` 到 `P2-GOV-006`、`P2-RLS-001` 到 `P2-RLS-003` 和剩余 provider 后置增强；当前下一步应进入 `P2-DEC-004`
+- `P2-DEC-004` 已完成（2026-04-07）：runner 现在固定按 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace` 编排，artifact cleanup 保持 sidecar；idle wakeup 只会在没有 open approval / incident、没有 active runtime、存在明确重决策信号且最近 ticket / node / approval / incident 变化已经过冷却窗口时触发；每轮 runner 也会写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
+
+### `P2-GOV`：文档/设计型角色链纳入与边界收口
+
+状态：`当前主线（2026-04-07 起接替 P2-DEC；与主线关系：在派单/runtime/过程资产边界收正后，把文档/设计型角色的产物契约、CEO 触发边界和文档真相收进现有 Ticket 主链，不提前打开新增执行角色）`
+
+- `P2-GOV-003` 待开始：文档/设计型角色产物契约与可编译输入；先补文档/设计链需要的最小输出契约和编译入口，不改 runtime 支持矩阵
+- `P2-GOV-004` 未开始：CEO 按统一目录触发文档/设计链；在统一目录下补最小建票 preset 与触发边界，不越过现有治理链
+- `P2-GOV-005` 未开始：角色纳入顺序与工作链路边界；把“只读目录”和“真实纳入链”之间的边界写实，不把未来角色写成当前 live 能力
+- `P2-GOV-006` 未开始：统一角色目录的测试、前端说明与文档真相收口；在上述契约落地后，再统一补回归、前端说明和文档索引同步
+- 当前下一步应进入 `P2-GOV-003`；`P2-RLS-001` 到 `P2-RLS-003` 继续保持在 `P2-GOV-003/004` 之后
 
 ### `P2-M7`：集成、文档与交付口径收口
 

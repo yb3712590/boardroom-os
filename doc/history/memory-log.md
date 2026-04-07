@@ -85,7 +85,9 @@
 - `P2-DEC-003` 已完成：ticket create spec、compile request 和 maker-checker / approval follow-up 现在都补入 `input_process_asset_refs[]`；旧 `input_artifact_refs[]` 会兼容映射到同一套过程资产入口
 - 当前新增统一 `process asset resolver`，已纳入 `artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary` 六类来源；Context Compiler 现在只消费 resolver 输出的规范化文本块或 JSON 块
 - runtime 完成事件现在会写回结构化 `produced_process_assets[]`；meeting ADR、closeout summary 和 runtime 默认 artifact 会自动回灌到 follow-up ticket 与 internal checker 输入链
-- 本轮全量验证结果更新为 backend `473 passed`、frontend build passed、frontend `73 passed`
+- `P2-DEC-004` 已完成：runner 现在固定按 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace` 编排，artifact cleanup 保持为 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
+- idle wakeup 现在会基于 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 信号和最近 ticket / node / approval / incident 变化的冷却窗口决定是否触发，不再把 workflow 行本身的旧时间戳当作防停滞依据
+- `P2-DEC-*` 已全部收口，当前下一步转入 `P2-GOV-003`；本轮全量验证结果更新为 backend `475 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 
