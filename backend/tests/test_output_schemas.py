@@ -5,6 +5,40 @@ import pytest
 from app.core.output_schemas import get_output_schema_body, validate_output_payload
 
 
+def _governance_document_payload(document_kind_ref: str) -> dict[str, object]:
+    return {
+        "title": f"{document_kind_ref} for Boardroom OS",
+        "summary": f"{document_kind_ref} keeps the next delivery slice aligned.",
+        "document_kind_ref": document_kind_ref,
+        "linked_document_refs": ["doc://governance/technology-decision/current"],
+        "linked_artifact_refs": ["art://inputs/board-brief.md"],
+        "source_process_asset_refs": ["pa://artifact/art%3A%2F%2Finputs%2Fboard-brief.md"],
+        "decisions": [
+            "Keep the next slice inside the current local MVP boundary.",
+            "Preserve explicit governance between board review and worker execution.",
+        ],
+        "constraints": [
+            "Do not widen into remote handoff.",
+            "Keep React as a thin governance shell.",
+        ],
+        "sections": [
+            {
+                "section_id": "sec_context",
+                "label": "Context",
+                "summary": "Current boundary and rationale.",
+                "content_markdown": "## Context\n\nKeep the scope narrow and auditable.",
+            }
+        ],
+        "followup_recommendations": [
+            {
+                "recommendation_id": "rec_followup_build",
+                "summary": "Prepare the next implementation ticket without widening scope.",
+                "target_role": "frontend_engineer",
+            }
+        ],
+    }
+
+
 def test_output_schema_registry_exposes_consensus_document_schema() -> None:
     schema = get_output_schema_body("consensus_document", 1)
 
@@ -319,3 +353,57 @@ def test_output_schema_registry_exposes_structured_failure_detail_for_missing_re
     assert getattr(exc_info.value, "field_path", None) == "options"
     assert getattr(exc_info.value, "expected", None) == "non-empty array"
     assert getattr(exc_info.value, "actual", None) == "missing"
+
+
+@pytest.mark.parametrize(
+    "schema_ref",
+    [
+        "architecture_brief",
+        "technology_decision",
+        "milestone_plan",
+        "detailed_design",
+        "backlog_recommendation",
+    ],
+)
+def test_output_schema_registry_exposes_governance_document_schemas(schema_ref: str) -> None:
+    schema = get_output_schema_body(schema_ref, 1)
+
+    assert schema["type"] == "object"
+    assert "title" in schema["required"]
+    assert "summary" in schema["required"]
+    assert "document_kind_ref" in schema["required"]
+    assert "decisions" in schema["required"]
+    assert "constraints" in schema["required"]
+    assert "sections" in schema["required"]
+
+
+@pytest.mark.parametrize(
+    "schema_ref",
+    [
+        "architecture_brief",
+        "technology_decision",
+        "milestone_plan",
+        "detailed_design",
+        "backlog_recommendation",
+    ],
+)
+def test_output_schema_registry_accepts_valid_governance_document_payloads(schema_ref: str) -> None:
+    payload = _governance_document_payload(schema_ref)
+    payload["sections"] = []
+
+    validate_output_payload(
+        schema_ref=schema_ref,
+        schema_version=1,
+        submitted_schema_version=f"{schema_ref}_v1",
+        payload=payload,
+    )
+
+
+def test_output_schema_registry_rejects_governance_document_kind_mismatch() -> None:
+    with pytest.raises(ValueError, match="document_kind_ref"):
+        validate_output_payload(
+            schema_ref="architecture_brief",
+            schema_version=1,
+            submitted_schema_version="architecture_brief_v1",
+            payload=_governance_document_payload("detailed_design"),
+        )

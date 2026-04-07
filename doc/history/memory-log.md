@@ -83,11 +83,14 @@
 - `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化 `TICKET_FAILED` 并触发 CEO 重决策
 - 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，避免在 build/check/review staged 票链上提前打死下游票
 - `P2-DEC-003` 已完成：ticket create spec、compile request 和 maker-checker / approval follow-up 现在都补入 `input_process_asset_refs[]`；旧 `input_artifact_refs[]` 会兼容映射到同一套过程资产入口
-- 当前新增统一 `process asset resolver`，已纳入 `artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary` 六类来源；Context Compiler 现在只消费 resolver 输出的规范化文本块或 JSON 块
-- runtime 完成事件现在会写回结构化 `produced_process_assets[]`；meeting ADR、closeout summary 和 runtime 默认 artifact 会自动回灌到 follow-up ticket 与 internal checker 输入链
+- 当前新增统一 `process asset resolver`，已纳入 `artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary / governance_document` 七类来源；Context Compiler 现在只消费 resolver 输出的规范化文本块或 JSON 块
+- runtime 完成事件现在会写回结构化 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 会自动回灌到 follow-up ticket 与 internal checker 输入链
 - `P2-DEC-004` 已完成：runner 现在固定按 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace` 编排，artifact cleanup 保持为 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle wakeup 现在会基于 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 信号和最近 ticket / node / approval / incident 变化的冷却窗口决定是否触发，不再把 workflow 行本身的旧时间戳当作防停滞依据
-- `P2-DEC-*` 已全部收口，当前下一步转入 `P2-GOV-003`；本轮全量验证结果更新为 backend `475 passed`、frontend build passed、frontend `73 passed`
+- `P2-GOV-003` 已完成：治理文档合同现已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema，并统一保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / decisions / constraints / sections / followup_recommendations`
+- 过程资产入口现已新增 `GOVERNANCE_DOCUMENT`：`ticket-result-submit` 会为治理文档结果额外写回该类过程资产，`Context Compiler` 也能直接把它当作一等显式输入消费；runtime 支持矩阵、staffing 和 CEO live 建票边界仍保持不变
+- 文档入口规则这轮补成“混合版分层”：继续保留现有高频真相栈命名，`doc/design/*` 继续承担详细设计层，文档关系要求用索引或相关文档段落显式回链
+- `P2-DEC-*` 与 `P2-GOV-003` 已全部收口，当前下一步转入 `P2-GOV-004`；本轮全量验证结果更新为 backend `488 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 

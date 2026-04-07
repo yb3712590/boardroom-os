@@ -96,6 +96,56 @@ def _ticket_lease_payload(
     }
 
 
+def _ticket_start_payload(
+    *,
+    workflow_id: str = "wf_compile",
+    ticket_id: str = "tkt_compile_001",
+    node_id: str = "node_compile_001",
+    started_by: str = "emp_frontend_2",
+) -> dict:
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "started_by": started_by,
+        "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
+    }
+
+
+def _governance_document_payload(document_kind_ref: str = "architecture_brief") -> dict:
+    return {
+        "title": f"{document_kind_ref} for Boardroom OS",
+        "summary": f"{document_kind_ref} keeps the next delivery slice aligned.",
+        "document_kind_ref": document_kind_ref,
+        "linked_document_refs": ["doc://governance/technology-decision/current"],
+        "linked_artifact_refs": ["art://inputs/board-brief.md"],
+        "source_process_asset_refs": ["pa://artifact/art%3A%2F%2Finputs%2Fboard-brief.md"],
+        "decisions": [
+            "Keep the next slice inside the current local MVP boundary.",
+            "Preserve explicit governance between board review and worker execution.",
+        ],
+        "constraints": [
+            "Do not widen into remote handoff.",
+            "Keep React as a thin governance shell.",
+        ],
+        "sections": [
+            {
+                "section_id": "sec_context",
+                "label": "Context",
+                "summary": "Current boundary and rationale.",
+                "content_markdown": "## Context\n\nKeep the scope narrow and auditable.",
+            }
+        ],
+        "followup_recommendations": [
+            {
+                "recommendation_id": "rec_followup_build",
+                "summary": "Prepare the next implementation ticket without widening scope.",
+                "target_role": "frontend_engineer",
+            }
+        ],
+    }
+
+
 def _seed_artifact(
     client,
     *,
@@ -1564,6 +1614,108 @@ def test_build_compile_request_resolves_compiled_context_bundle_process_asset(cl
         compile_request.explicit_sources[0].inline_content_json["meta"]["ticket_id"]
         == "tkt_compile_001"
     )
+
+
+def test_build_compile_request_resolves_governance_document_process_asset(client, set_ticket_time):
+    set_ticket_time("2026-04-07T18:30:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_governance_source",
+            ticket_id="tkt_gov_doc_source",
+            node_id="node_gov_doc_source",
+            output_schema_ref="architecture_brief",
+            allowed_write_set=["artifacts/ui/homepage/*"],
+            input_artifact_refs=[],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_governance_source",
+            ticket_id="tkt_gov_doc_source",
+            node_id="node_gov_doc_source",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_governance_source",
+            ticket_id="tkt_gov_doc_source",
+            node_id="node_gov_doc_source",
+        ),
+    )
+    source_payload = _governance_document_payload("architecture_brief")
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": "wf_governance_source",
+            "ticket_id": "tkt_gov_doc_source",
+            "node_id": "node_gov_doc_source",
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": "architecture_brief_v1",
+            "payload": source_payload,
+            "artifact_refs": ["art://runtime/tkt_gov_doc_source/architecture-brief.json"],
+            "written_artifacts": [
+                {
+                    "path": "artifacts/ui/homepage/architecture-brief.json",
+                    "artifact_ref": "art://runtime/tkt_gov_doc_source/architecture-brief.json",
+                    "kind": "JSON",
+                    "content_json": source_payload,
+                }
+            ],
+            "assumptions": [],
+            "issues": [],
+            "confidence": 0.81,
+            "needs_escalation": False,
+            "summary": "Structured governance document submitted.",
+            "failure_kind": None,
+            "failure_message": None,
+            "failure_detail": None,
+            "idempotency_key": "ticket-result-submit:wf_governance_source:tkt_gov_doc_source:architecture-brief",
+        },
+    )
+
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_gov_doc_source")
+    produced_assets = list((terminal_event or {}).get("payload", {}).get("produced_process_assets") or [])
+    assert "pa://governance-document/tkt_gov_doc_source" in [
+        asset.get("process_asset_ref") for asset in produced_assets
+    ]
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_governance_consumer",
+            ticket_id="tkt_gov_doc_consumer",
+            node_id="node_gov_doc_consumer",
+            input_artifact_refs=[],
+            input_process_asset_refs=["pa://governance-document/tkt_gov_doc_source"],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_governance_consumer",
+            ticket_id="tkt_gov_doc_consumer",
+            node_id="node_gov_doc_consumer",
+        ),
+    )
+
+    ticket = repository.get_current_ticket_projection("tkt_gov_doc_consumer")
+    compile_request = build_compile_request(repository, ticket)
+
+    assert compile_request.execution.input_process_asset_refs == [
+        "pa://governance-document/tkt_gov_doc_source"
+    ]
+    assert compile_request.explicit_sources[0].process_asset_kind == "GOVERNANCE_DOCUMENT"
+    assert compile_request.explicit_sources[0].inline_content_type == "JSON"
+    assert compile_request.explicit_sources[0].inline_content_json["document_kind_ref"] == "architecture_brief"
+    assert compile_request.explicit_sources[0].inline_content_json["linked_document_refs"] == [
+        "doc://governance/technology-decision/current"
+    ]
 
 
 def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(client, set_ticket_time):

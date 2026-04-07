@@ -13,6 +13,7 @@ ProcessAssetKind = Literal[
     "COMPILED_EXECUTION_PACKAGE",
     "MEETING_DECISION_RECORD",
     "CLOSEOUT_SUMMARY",
+    "GOVERNANCE_DOCUMENT",
 ]
 
 ProcessAssetContentType = Literal["TEXT", "JSON"]

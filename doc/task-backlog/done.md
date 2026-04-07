@@ -1736,9 +1736,12 @@
 
 - `P2-GOV-001`：后端先补了治理模板基础目录，给后续角色目录和文档链打底
 - `P2-GOV-002`：当前统一只读 `role_templates_catalog` 已覆盖 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段；`workforce` 投影现在改为暴露这份统一目录
+- `P2-GOV-003`：治理文档合同现已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；每类文档都会保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / decisions / constraints / sections / followup_recommendations`
+- `ticket-result-submit` 现在会把治理文档结果额外写成 `GOVERNANCE_DOCUMENT` 过程资产；`Context Compiler` 已能把这类过程资产作为一等显式输入消费，不再只能把治理文档降级成普通 artifact descriptor
+- 本轮同时把文档入口规则补成“混合版分层”：继续保留 `README / mainline-truth / roadmap-reset / TODO / task-backlog / history` 这组高频真相栈，`doc/design/*` 继续承担详细设计层；文档关系要求显式回链，不靠文件名猜依赖
 - `workforce` worker 还会额外返回 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`
 - 本轮保持保守边界：当前没有把新增角色接进 staffing、CEO 建票、runtime 或执行包；后续真实纳入链已拆到 `P2-GOV-003/004/005/006` 与新增 `P2-RLS-*`
-- 本轮新增后端回归覆盖统一目录数据形状、Workforce projection 的 worker 来源模板信息和 provider future binding 槽位派生；前端回归覆盖 WorkforcePanel 的统一目录展示；整体验证结果更新为 backend `464 passed`、frontend build passed、frontend `73 passed`
+- 本轮新增后端回归覆盖治理文档 schema、治理文档过程资产写回和 compiler 输入消费；整体验证结果更新为 backend `488 passed`、frontend build passed、frontend `73 passed`
 
 完成补记（2026-04-06）：
 

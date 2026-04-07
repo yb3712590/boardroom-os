@@ -2,6 +2,13 @@
 
 `doc/` 继续按“短入口 -> 详细页 -> 归档页”分层。默认先读短入口，不把大文件整篇塞进上下文。
 
+当前文档组织采用“混合版分层”：
+
+- `README / mainline-truth / roadmap-reset / TODO / task-backlog / history` 继续承担高频真相层
+- `design/*` 继续承担详细设计与实现规格层
+- 若后续新增 ADR / 决策记录，必须走独立目录并在索引里显式回链；不要把 ADR 混写进主线真相文件
+- 文档之间的依赖关系必须通过索引或“相关文档”显式保留，不靠文件名猜关系
+
 ## 默认首读
 
 1. [mainline-truth.md](mainline-truth.md)：当前代码真相表，先确认主链现实、runtime 支持矩阵和冻结边界

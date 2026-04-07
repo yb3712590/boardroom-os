@@ -14,6 +14,16 @@ UI_MILESTONE_REVIEW_SCHEMA_ID = (
 )
 CONSENSUS_DOCUMENT_SCHEMA_REF = "consensus_document"
 CONSENSUS_DOCUMENT_SCHEMA_VERSION = 1
+ARCHITECTURE_BRIEF_SCHEMA_REF = "architecture_brief"
+ARCHITECTURE_BRIEF_SCHEMA_VERSION = 1
+TECHNOLOGY_DECISION_SCHEMA_REF = "technology_decision"
+TECHNOLOGY_DECISION_SCHEMA_VERSION = 1
+MILESTONE_PLAN_SCHEMA_REF = "milestone_plan"
+MILESTONE_PLAN_SCHEMA_VERSION = 1
+DETAILED_DESIGN_SCHEMA_REF = "detailed_design"
+DETAILED_DESIGN_SCHEMA_VERSION = 1
+BACKLOG_RECOMMENDATION_SCHEMA_REF = "backlog_recommendation"
+BACKLOG_RECOMMENDATION_SCHEMA_VERSION = 1
 IMPLEMENTATION_BUNDLE_SCHEMA_REF = "implementation_bundle"
 IMPLEMENTATION_BUNDLE_SCHEMA_VERSION = 1
 DELIVERY_CHECK_REPORT_SCHEMA_REF = "delivery_check_report"
@@ -25,6 +35,13 @@ MAKER_CHECKER_VERDICT_SCHEMA_VERSION = 1
 CEO_ACTION_BATCH_SCHEMA_REF = "ceo_action_batch"
 CEO_ACTION_BATCH_SCHEMA_VERSION = 1
 DOCUMENTATION_UPDATE_STATUSES = {"UPDATED", "NO_CHANGE_REQUIRED", "FOLLOW_UP_REQUIRED"}
+GOVERNANCE_DOCUMENT_SCHEMA_REFS = (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+)
 
 OutputSchemaValidator = Callable[[dict[str, Any]], None]
 _MISSING = object()
@@ -344,6 +361,177 @@ def _validate_consensus_decision_record(payload: dict[str, Any]) -> None:
             label=f"Consensus document payload.decision_record.{key}",
             non_empty=True,
         )
+
+
+def _governance_document_schema_body(document_kind_ref: str) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": [
+            "title",
+            "summary",
+            "document_kind_ref",
+            "decisions",
+            "constraints",
+            "sections",
+        ],
+        "properties": {
+            "title": {"type": "string"},
+            "summary": {"type": "string"},
+            "document_kind_ref": {"type": "string", "enum": [document_kind_ref]},
+            "linked_document_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "linked_artifact_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "source_process_asset_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "decisions": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "constraints": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "sections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["section_id", "label", "summary"],
+                    "properties": {
+                        "section_id": {"type": "string"},
+                        "label": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "content_markdown": {"type": "string"},
+                        "content_json": {"type": "object"},
+                    },
+                },
+            },
+            "followup_recommendations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["recommendation_id", "summary", "target_role"],
+                    "properties": {
+                        "recommendation_id": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "target_role": {"type": "string"},
+                    },
+                },
+            },
+        },
+    }
+
+
+def _validate_governance_document_payload(
+    payload: dict[str, Any],
+    *,
+    expected_document_kind_ref: str,
+) -> None:
+    payload = _require_object(payload)
+    _require_non_empty_string(payload, "title", label="Governance document payload.title")
+    _require_non_empty_string(payload, "summary", label="Governance document payload.summary")
+    document_kind_ref = _require_non_empty_string(
+        payload,
+        "document_kind_ref",
+        label="Governance document payload.document_kind_ref",
+    )
+    if document_kind_ref != expected_document_kind_ref:
+        _raise_schema_validation_error(
+            field_path="document_kind_ref",
+            expected=f"literal {expected_document_kind_ref}",
+            actual_value=document_kind_ref,
+            message=(
+                "Governance document payload.document_kind_ref must match "
+                f"{expected_document_kind_ref}."
+            ),
+        )
+
+    for key in (
+        "linked_document_refs",
+        "linked_artifact_refs",
+        "source_process_asset_refs",
+        "decisions",
+        "constraints",
+    ):
+        value = payload.get(key, _MISSING)
+        if value is _MISSING:
+            if key in {"decisions", "constraints"}:
+                _raise_schema_validation_error(
+                    field_path=key,
+                    expected="array",
+                    actual_value=value,
+                    message=f"Governance document payload.{key} must be an array.",
+                )
+            continue
+        _require_string_array(payload, key, label=f"Governance document payload.{key}")
+
+    sections = _require_array(payload, "sections", label="Governance document payload.sections")
+    for index, section in enumerate(sections):
+        if not isinstance(section, dict):
+            _raise_schema_validation_error(
+                field_path=f"sections[{index}]",
+                expected="object",
+                actual_value=section,
+                message="Governance document payload.sections items must be objects.",
+            )
+        for key in ("section_id", "label", "summary"):
+            value = section.get(key, _MISSING)
+            if not isinstance(value, str) or not value.strip():
+                _raise_schema_validation_error(
+                    field_path=f"sections[{index}].{key}",
+                    expected="non-empty string",
+                    actual_value=value,
+                    message=f"Governance document payload.sections[{index}].{key} must be a non-empty string.",
+                )
+        content_markdown = section.get("content_markdown", _MISSING)
+        content_json = section.get("content_json", _MISSING)
+        has_markdown = isinstance(content_markdown, str) and bool(content_markdown.strip())
+        has_json = isinstance(content_json, dict)
+        if not has_markdown and not has_json:
+            _raise_schema_validation_error(
+                field_path=f"sections[{index}]",
+                expected="content_markdown or content_json",
+                actual_value=section,
+                message=(
+                    "Governance document payload.sections items must include non-empty "
+                    "content_markdown or object content_json."
+                ),
+            )
+
+    followup_recommendations = payload.get("followup_recommendations", _MISSING)
+    if followup_recommendations is _MISSING:
+        return
+    followup_recommendations = _require_array(
+        payload,
+        "followup_recommendations",
+        label="Governance document payload.followup_recommendations",
+    )
+    for index, recommendation in enumerate(followup_recommendations):
+        if not isinstance(recommendation, dict):
+            _raise_schema_validation_error(
+                field_path=f"followup_recommendations[{index}]",
+                expected="object",
+                actual_value=recommendation,
+                message="Governance document followup recommendations must be objects.",
+            )
+        for key in ("recommendation_id", "summary", "target_role"):
+            value = recommendation.get(key, _MISSING)
+            if not isinstance(value, str) or not value.strip():
+                _raise_schema_validation_error(
+                    field_path=f"followup_recommendations[{index}].{key}",
+                    expected="non-empty string",
+                    actual_value=value,
+                    message=(
+                        "Governance document followup recommendations require "
+                        f"{key}."
+                    ),
+                )
 
 
 def _implementation_bundle_schema_body() -> dict[str, Any]:
@@ -794,6 +982,41 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (CONSENSUS_DOCUMENT_SCHEMA_REF, CONSENSUS_DOCUMENT_SCHEMA_VERSION): {
         "body": _consensus_document_schema_body,
         "validator": _validate_consensus_document_payload,
+    },
+    (ARCHITECTURE_BRIEF_SCHEMA_REF, ARCHITECTURE_BRIEF_SCHEMA_VERSION): {
+        "body": lambda: _governance_document_schema_body(ARCHITECTURE_BRIEF_SCHEMA_REF),
+        "validator": lambda payload: _validate_governance_document_payload(
+            payload,
+            expected_document_kind_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        ),
+    },
+    (TECHNOLOGY_DECISION_SCHEMA_REF, TECHNOLOGY_DECISION_SCHEMA_VERSION): {
+        "body": lambda: _governance_document_schema_body(TECHNOLOGY_DECISION_SCHEMA_REF),
+        "validator": lambda payload: _validate_governance_document_payload(
+            payload,
+            expected_document_kind_ref=TECHNOLOGY_DECISION_SCHEMA_REF,
+        ),
+    },
+    (MILESTONE_PLAN_SCHEMA_REF, MILESTONE_PLAN_SCHEMA_VERSION): {
+        "body": lambda: _governance_document_schema_body(MILESTONE_PLAN_SCHEMA_REF),
+        "validator": lambda payload: _validate_governance_document_payload(
+            payload,
+            expected_document_kind_ref=MILESTONE_PLAN_SCHEMA_REF,
+        ),
+    },
+    (DETAILED_DESIGN_SCHEMA_REF, DETAILED_DESIGN_SCHEMA_VERSION): {
+        "body": lambda: _governance_document_schema_body(DETAILED_DESIGN_SCHEMA_REF),
+        "validator": lambda payload: _validate_governance_document_payload(
+            payload,
+            expected_document_kind_ref=DETAILED_DESIGN_SCHEMA_REF,
+        ),
+    },
+    (BACKLOG_RECOMMENDATION_SCHEMA_REF, BACKLOG_RECOMMENDATION_SCHEMA_VERSION): {
+        "body": lambda: _governance_document_schema_body(BACKLOG_RECOMMENDATION_SCHEMA_REF),
+        "validator": lambda payload: _validate_governance_document_payload(
+            payload,
+            expected_document_kind_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
+        ),
     },
     (IMPLEMENTATION_BUNDLE_SCHEMA_REF, IMPLEMENTATION_BUNDLE_SCHEMA_VERSION): {
         "body": _implementation_bundle_schema_body,

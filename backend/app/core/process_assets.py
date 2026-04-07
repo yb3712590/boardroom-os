@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import nullcontext
 from typing import Any, Iterable
 from urllib.parse import quote, unquote
 
@@ -14,6 +15,7 @@ from app.core.artifacts import (
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
 )
 from app.db.repository import ControlPlaneRepository
 
@@ -62,6 +64,10 @@ def build_meeting_decision_process_asset_ref(ticket_id: str) -> str:
 
 def build_closeout_summary_process_asset_ref(ticket_id: str) -> str:
     return f"{_PROCESS_ASSET_PREFIX}closeout-summary/{quote(str(ticket_id), safe='')}"
+
+
+def build_governance_document_process_asset_ref(ticket_id: str) -> str:
+    return f"{_PROCESS_ASSET_PREFIX}governance-document/{quote(str(ticket_id), safe='')}"
 
 
 def artifact_refs_to_process_asset_refs(artifact_refs: Iterable[str]) -> list[str]:
@@ -180,6 +186,31 @@ def build_result_process_assets(
             )
         )
 
+    if output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS and isinstance(result_payload, dict):
+        summary = (
+            str(result_payload.get("summary") or "").strip()
+            or str(result_payload.get("title") or "").strip()
+            or f"Governance document for {ticket_id}"
+        )
+        source_artifact_ref = (
+            dedupe_process_asset_refs(artifact_refs)[0]
+            if dedupe_process_asset_refs(artifact_refs)
+            else f"art://runtime/{ticket_id}/{output_schema_ref.replace('_', '-')}.json"
+        )
+        produced_assets.append(
+            ProcessAssetReference(
+                process_asset_ref=build_governance_document_process_asset_ref(ticket_id),
+                process_asset_kind="GOVERNANCE_DOCUMENT",
+                producer_ticket_id=ticket_id,
+                summary=summary,
+                consumable_by=["context_compiler", "followup_ticket", "review"],
+                source_metadata={
+                    "document_kind_ref": str(result_payload.get("document_kind_ref") or output_schema_ref),
+                    "source_artifact_ref": source_artifact_ref,
+                },
+            )
+        )
+
     return [asset.model_dump(mode="json") for asset in produced_assets]
 
 
@@ -236,6 +267,13 @@ def resolve_process_asset(
         )
     if kind == "closeout-summary":
         return _resolve_closeout_summary_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            ticket_id=target,
+            connection=connection,
+        )
+    if kind == "governance-document":
+        return _resolve_governance_document_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             ticket_id=target,
@@ -483,3 +521,70 @@ def _resolve_closeout_summary_process_asset(
         if summary:
             base.summary = summary
     return base
+
+
+def _resolve_governance_document_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    ticket_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(resolved_connection, ticket_id)
+        if terminal_event is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        payload = terminal_event.get("payload") or {}
+        produced_assets = list(payload.get("produced_process_assets") or [])
+        asset_entry = next(
+            (
+                item
+                for item in produced_assets
+                if isinstance(item, dict)
+                and str(item.get("process_asset_ref") or "") == process_asset_ref
+                and str(item.get("process_asset_kind") or "") == "GOVERNANCE_DOCUMENT"
+            ),
+            None,
+        )
+        if asset_entry is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        source_metadata = dict(asset_entry.get("source_metadata") or {})
+        artifact_ref = str(source_metadata.get("source_artifact_ref") or "").strip()
+        if not artifact_ref:
+            raise ValueError(f"Process asset {process_asset_ref} is missing its source artifact.")
+
+        def _transform(governance_payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "title": governance_payload.get("title"),
+                "summary": governance_payload.get("summary"),
+                "document_kind_ref": governance_payload.get("document_kind_ref"),
+                "linked_document_refs": list(governance_payload.get("linked_document_refs") or []),
+                "linked_artifact_refs": list(governance_payload.get("linked_artifact_refs") or []),
+                "source_process_asset_refs": list(governance_payload.get("source_process_asset_refs") or []),
+                "decisions": list(governance_payload.get("decisions") or []),
+                "constraints": list(governance_payload.get("constraints") or []),
+                "sections": list(governance_payload.get("sections") or []),
+                "followup_recommendations": list(
+                    governance_payload.get("followup_recommendations") or []
+                ),
+            }
+
+        base = _resolve_json_payload_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            process_asset_kind="GOVERNANCE_DOCUMENT",
+            ticket_id=ticket_id,
+            artifact_ref=artifact_ref,
+            schema_ref=f"{source_metadata.get('document_kind_ref') or 'governance_document'}@1",
+            summary=str(asset_entry.get("summary") or f"Governance document for {ticket_id}"),
+            transform_payload=_transform,
+            connection=resolved_connection,
+        )
+        base.consumable_by = ["context_compiler", "followup_ticket", "review"]
+        if isinstance(base.source_metadata, dict):
+            base.source_metadata["document_kind_ref"] = source_metadata.get("document_kind_ref")
+        if isinstance(base.json_content, dict):
+            summary = str(base.json_content.get("summary") or "").strip()
+            if summary:
+                base.summary = summary
+        return base
