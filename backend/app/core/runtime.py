@@ -33,6 +33,7 @@ from app.core.constants import (
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
@@ -93,6 +94,7 @@ SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
     "ui_milestone_review",
     "maker_checker_verdict",
     CONSENSUS_DOCUMENT_SCHEMA_REF,
+    *GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -197,12 +199,17 @@ def _build_runtime_default_artifacts(
     output_schema_ref = execution_package.execution.output_schema_ref
     if output_schema_ref in {
         CONSENSUS_DOCUMENT_SCHEMA_REF,
+        *GOVERNANCE_DOCUMENT_SCHEMA_REFS,
         IMPLEMENTATION_BUNDLE_SCHEMA_REF,
         DELIVERY_CHECK_REPORT_SCHEMA_REF,
         DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     }:
         filename_by_schema = {
             CONSENSUS_DOCUMENT_SCHEMA_REF: "consensus-document.json",
+            **{
+                schema_ref: f"{schema_ref}.json"
+                for schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
+            },
             IMPLEMENTATION_BUNDLE_SCHEMA_REF: "implementation-bundle.json",
             DELIVERY_CHECK_REPORT_SCHEMA_REF: "delivery-check-report.json",
             DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF: "delivery-closeout-package.json",
@@ -559,6 +566,43 @@ def _build_runtime_success_payload(
             "deliverable_artifact_refs": list(artifact_refs),
             "implementation_notes": [
                 "Homepage foundation stays inside the approved scope lock and is ready for internal checking."
+            ],
+        }
+    if execution_package.execution.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+        ticket_id = execution_package.meta.ticket_id
+        output_schema_ref = execution_package.execution.output_schema_ref
+        return {
+            "document_kind_ref": output_schema_ref,
+            "title": f"{output_schema_ref} for ticket {ticket_id}",
+            "summary": (
+                f"Runtime prepared a structured {output_schema_ref} document before opening the next delivery step."
+            ),
+            "linked_document_refs": ["doc://governance/upstream/current"],
+            "linked_artifact_refs": list(artifact_refs),
+            "source_process_asset_refs": [],
+            "decisions": [
+                "Keep the next delivery step explicit and document-first.",
+            ],
+            "constraints": [
+                "Do not widen the current MVP boundary while preparing governance documents.",
+            ],
+            "sections": [
+                {
+                    "section_id": "section_summary",
+                    "label": "Summary",
+                    "summary": f"Document-first guidance for {ticket_id}.",
+                    "content_markdown": (
+                        f"Prepared `{output_schema_ref}` so the next ticket can consume structured guidance "
+                        "instead of improvising from raw context."
+                    ),
+                }
+            ],
+            "followup_recommendations": [
+                {
+                    "recommendation_id": "rec_document_first_followup",
+                    "summary": "Compile this governance document into the next implementation-facing ticket.",
+                    "target_role": execution_package.compiled_role.employee_role_type,
+                }
             ],
         }
     if execution_package.execution.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:

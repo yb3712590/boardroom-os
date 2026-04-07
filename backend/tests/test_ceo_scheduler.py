@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+import pytest
+
 from app.contracts.ceo_actions import CEOActionBatch
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_execution_presets import (
@@ -11,6 +13,11 @@ from app.core.ceo_execution_presets import (
 )
 from app.core.ceo_prompts import build_ceo_shadow_system_prompt
 from app.core.ceo_validator import validate_ceo_action_batch
+from app.core.execution_targets import infer_execution_contract_payload
+from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+)
 from app.core.ceo_scheduler import (
     SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
     list_due_ceo_maintenance_workflows,
@@ -331,6 +338,114 @@ def _create_and_complete_ticket(
             "needs_escalation": False,
             "summary": summary,
             "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:complete",
+        },
+    )
+    assert submit_response.status_code == 200
+    assert submit_response.json()["status"] == "ACCEPTED"
+
+
+def _create_and_complete_governance_ticket(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    output_schema_ref: str = ARCHITECTURE_BRIEF_SCHEMA_REF,
+    summary: str = "Structured governance document is ready for downstream delivery.",
+) -> None:
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=node_id,
+                retry_budget=0,
+            ),
+            "role_profile_ref": "frontend_engineer_primary",
+            "output_schema_ref": output_schema_ref,
+            "allowed_write_set": [f"reports/governance/{ticket_id}/*"],
+        },
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:governance",
+        },
+    )
+    assert lease_response.status_code == 200
+
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:governance",
+        },
+    )
+    assert start_response.status_code == 200
+
+    artifact_ref = f"art://runtime/{ticket_id}/{output_schema_ref}.json"
+    governance_payload = {
+        "document_kind_ref": output_schema_ref,
+        "title": f"{output_schema_ref} for {ticket_id}",
+        "summary": summary,
+        "linked_document_refs": ["doc://governance/upstream/current"],
+        "linked_artifact_refs": [artifact_ref],
+        "source_process_asset_refs": [],
+        "decisions": ["Keep the delivery sequence explicit and document-first."],
+        "constraints": ["Do not widen the current MVP boundary."],
+        "sections": [
+            {
+                "section_id": "section_overview",
+                "label": "Overview",
+                "summary": summary,
+                "content_markdown": "Document-first guidance for the next delivery slice.",
+            }
+        ],
+        "followup_recommendations": [
+            {
+                "recommendation_id": "rec_implementation_followup",
+                "summary": "Turn this document into the next implementation ticket.",
+                "target_role": "frontend_engineer",
+            }
+        ],
+    }
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": f"{output_schema_ref}_v1",
+            "payload": governance_payload,
+            "artifact_refs": [artifact_ref],
+            "written_artifacts": [
+                {
+                    "path": f"reports/governance/{ticket_id}/{output_schema_ref}.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": governance_payload,
+                }
+            ],
+            "assumptions": ["Governance document can be compiled into the next delivery ticket."],
+            "issues": [],
+            "confidence": 0.84,
+            "needs_escalation": False,
+            "summary": summary,
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:governance",
         },
     )
     assert submit_response.status_code == 200
@@ -686,6 +801,23 @@ def test_ceo_shadow_prefers_role_binding_over_default_provider(client, monkeypat
     assert run["effective_mode"] == "CLAUDE_CODE_CLI_LIVE"
     assert run["model"] == "claude-opus-4-1"
     assert run["proposed_action_batch"]["summary"] == "Use Claude for the CEO proposal."
+
+
+def test_ceo_shadow_system_prompt_prefers_document_chain_before_implementation(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO governance prompt guidance")
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:governance-prompt",
+    )
+    system_prompt = build_ceo_shadow_system_prompt(snapshot)
+
+    assert "governance document" in system_prompt.lower()
+    assert "before directly creating implementation tickets" in system_prompt.lower()
+    assert "do not enable frozen or not-yet-enabled roles" in system_prompt.lower()
 
 
 def test_ceo_shadow_failover_uses_fallback_provider_when_primary_is_unavailable(client, monkeypatch):
@@ -1071,6 +1203,69 @@ def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
     assert created_spec["delivery_stage"] == "BUILD"
 
 
+def test_ceo_shadow_run_executes_governance_document_create_ticket_for_live_role(client, monkeypatch):
+    workflow_id = _project_init(client, "CEO governance create execution")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Create an architecture brief before implementation starts.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_ceo_architecture_brief",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                                "execution_contract": {
+                                    "execution_target_ref": "execution_target:frontend_governance_document",
+                                    "required_capability_tags": ["structured_output", "planning"],
+                                    "runtime_contract_version": "execution_contract_v1",
+                                },
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Keep the first governance document on the current live frontend owner.",
+                                },
+                                "summary": "Write the architecture brief before opening the implementation ticket.",
+                                "parent_ticket_id": None,
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_gov_doc_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:gov-doc-create",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+    assert created_spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
+    assert created_spec["execution_contract"]["required_capability_tags"] == [
+        "structured_output",
+        "planning",
+    ]
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
+    assert created_spec["delivery_stage"] is None
+
+
 def test_ceo_shadow_run_rejects_invalid_create_ticket_preset(client, monkeypatch):
     workflow_id = _project_init(client, "CEO invalid create preset")
     _set_live_provider(client)
@@ -1121,6 +1316,130 @@ def test_ceo_shadow_run_rejects_invalid_create_ticket_preset(client, monkeypatch
 
     assert run["rejected_actions"][0]["action_type"] == "CREATE_TICKET"
     assert run["executed_actions"] == []
+
+
+def test_ceo_validator_rejects_governance_document_create_ticket_for_non_live_role(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO invalid governance role")
+
+    result = validate_ceo_action_batch(
+        client.app.state.repository,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Reject governance-document tickets on not-yet-enabled roles.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "node_id": "node_architect_governance_attempt",
+                            "role_profile_ref": "architect_primary",
+                            "output_schema_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+                            "execution_contract": {
+                                "execution_target_ref": "execution_target:architect_governance_document",
+                                "required_capability_tags": ["structured_output", "planning"],
+                                "runtime_contract_version": "execution_contract_v1",
+                            },
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_frontend_2",
+                                "selection_reason": "Try to route a governance document through a frozen role.",
+                            },
+                            "summary": "This should fail because architect_primary is not on the live path yet.",
+                            "parent_ticket_id": None,
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert result["accepted_actions"] == []
+    assert result["rejected_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert "current limited CEO execution path" in result["rejected_actions"][0]["reason"]
+
+
+def test_ceo_create_ticket_inherits_parent_governance_process_assets(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO governance process asset inheritance")
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_governance_doc",
+        node_id="node_parent_governance_doc",
+    )
+
+    repository = client.app.state.repository
+    validation = validate_ceo_action_batch(
+        repository,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Create the implementation ticket from the architecture brief.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "node_id": "node_child_implementation_from_doc",
+                            "role_profile_ref": "frontend_engineer_primary",
+                            "output_schema_ref": "implementation_bundle",
+                            "execution_contract": infer_execution_contract_payload(
+                                role_profile_ref="frontend_engineer_primary",
+                                output_schema_ref="implementation_bundle",
+                            ),
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_frontend_2",
+                                "selection_reason": "Keep the downstream implementation on the same live owner.",
+                            },
+                            "summary": "Turn the architecture brief into the next implementation bundle.",
+                            "parent_ticket_id": "tkt_parent_governance_doc",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert validation["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+
+    from app.core.ceo_executor import execute_ceo_action_batch
+
+    action_batch = CEOActionBatch.model_validate(
+        {
+            "summary": "Create the implementation ticket from the architecture brief.",
+            "actions": [
+                {
+                    "action_type": "CREATE_TICKET",
+                    "payload": {
+                        "workflow_id": workflow_id,
+                        "node_id": "node_child_implementation_from_doc",
+                        "role_profile_ref": "frontend_engineer_primary",
+                        "output_schema_ref": "implementation_bundle",
+                        "execution_contract": infer_execution_contract_payload(
+                            role_profile_ref="frontend_engineer_primary",
+                            output_schema_ref="implementation_bundle",
+                        ),
+                        "dispatch_intent": {
+                            "assignee_employee_id": "emp_frontend_2",
+                            "selection_reason": "Keep the downstream implementation on the same live owner.",
+                        },
+                        "summary": "Turn the architecture brief into the next implementation bundle.",
+                        "parent_ticket_id": "tkt_parent_governance_doc",
+                    },
+                }
+            ],
+        }
+    )
+    execution_result = execute_ceo_action_batch(
+        repository,
+        action_batch=action_batch,
+        accepted_actions=validation["accepted_actions"],
+    )
+
+    assert execution_result["executed_actions"][0]["execution_status"] == "EXECUTED"
+    created_ticket_id = execution_result["executed_actions"][0]["payload"]["ticket_id"]
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+    assert "pa://governance-document/tkt_parent_governance_doc" in created_spec["input_process_asset_refs"]
 
 
 def test_ceo_validator_rejects_create_ticket_when_assignee_is_missing_or_incapable(client):

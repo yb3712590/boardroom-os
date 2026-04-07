@@ -6,7 +6,7 @@ from app.contracts.runtime import (
     RenderedExecutionPayloadMeta,
     RenderedExecutionPayloadSummary,
 )
-from app.core.ceo_execution_presets import PROJECT_INIT_SCOPE_NODE_ID
+from app.core.ceo_execution_presets import GOVERNANCE_DOCUMENT_CHAIN_ORDER, PROJECT_INIT_SCOPE_NODE_ID
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
@@ -38,6 +38,13 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "You do not execute actions and you do not rewrite workflow history.\n"
         "Prefer the smallest useful next step.\n"
         "Every CREATE_TICKET payload must include both execution_contract and dispatch_intent.\n"
+        "Prefer a governance document first when the workflow still needs architecture, technology, milestone, design, or backlog direction.\n"
+        "Governance document outputs available on the current live path are: "
+        f"{', '.join(GOVERNANCE_DOCUMENT_CHAIN_ORDER)}.\n"
+        "Before directly creating implementation tickets, consider whether one governance document should be created first.\n"
+        "Keep the minimal document-first order explicit: architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> implementation_bundle.\n"
+        "Governance document kinds are a shared document family, not a hard role whitelist.\n"
+        "Do not enable frozen or not-yet-enabled roles just to create governance documents; stay on the current live roles only.\n"
         "Before proposing any action, inspect snapshot.reuse_candidates.\n"
         "If recent completed tickets or closed meetings already cover the current need, prefer NO_ACTION.\n"
         "If existing work only needs recovery or follow-through, prefer RETRY_TICKET or continued waiting over creating parallel tickets.\n"

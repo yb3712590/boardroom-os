@@ -643,6 +643,7 @@ def _kickoff_scope_after_requirement_elicitation(
             summary=build_project_init_scope_summary(str(workflow.get("north_star_goal") or workflow.get("title") or "")),
             parent_ticket_id=None,
         ),
+        repository=repository,
     )
     command = command.model_copy(
         update={

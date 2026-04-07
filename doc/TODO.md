@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-07
+> 最后更新：2026-04-08
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
@@ -12,9 +12,9 @@
 - Maker-Checker 和 Review 闭环真实可用
 - React 只做最薄治理壳，不接管工作流真相
 
-## 当前基线（2026-04-07）
+## 当前基线（2026-04-08）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `488 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `493 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `73 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -34,10 +34,10 @@
 状态：`当前主线（2026-04-07 起接替 P2-DEC；与主线关系：在派单/runtime/过程资产边界收正后，把文档/设计型角色的产物契约、CEO 触发边界和文档真相收进现有 Ticket 主链，不提前打开新增执行角色）`
 
 - `P2-GOV-003` 已完成（2026-04-07）：治理文档合同现已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；`ticket-result-submit` 会把这类结果额外写成 `GOVERNANCE_DOCUMENT` 过程资产，`Context Compiler` 也已能把它们当作一等显式输入消费，同时保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / sections / followup_recommendations` 这组结构化关联，不改 runtime 支持矩阵，也不提前启用治理角色 live 执行
-- `P2-GOV-004` 未开始：CEO 按统一目录触发文档/设计链；在统一目录下补最小建票 preset 与触发边界，不越过现有治理链
+- `P2-GOV-004` 已完成（2026-04-08）：CEO 现在可在当前 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单；五类治理文档当前都已进入 runtime 支持矩阵，但仍只落在 `ui_designer_primary / frontend_engineer_primary` 两个 live 角色，不提前启用 `architect / cto / backend / database / platform`；当 CEO 创建的后续票显式挂在治理文档父票下时，会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产
 - `P2-GOV-005` 未开始：角色纳入顺序与工作链路边界；把“只读目录”和“真实纳入链”之间的边界写实，不把未来角色写成当前 live 能力
 - `P2-GOV-006` 未开始：统一角色目录的测试、前端说明与文档真相收口；在上述契约落地后，再统一补回归、前端说明和文档索引同步
-- 当前下一步应进入 `P2-GOV-004`；`P2-RLS-001` 到 `P2-RLS-003` 继续保持在 `P2-GOV-004` 之后
+- 当前下一步应进入 `P2-GOV-005`；`P2-RLS-001` 到 `P2-RLS-003` 继续保持在 `P2-GOV-005` 之后
 
 ### `P2-M7`：集成、文档与交付口径收口
 

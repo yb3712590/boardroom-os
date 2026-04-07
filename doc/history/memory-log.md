@@ -90,7 +90,10 @@
 - `P2-GOV-003` 已完成：治理文档合同现已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema，并统一保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / decisions / constraints / sections / followup_recommendations`
 - 过程资产入口现已新增 `GOVERNANCE_DOCUMENT`：`ticket-result-submit` 会为治理文档结果额外写回该类过程资产，`Context Compiler` 也能直接把它当作一等显式输入消费；runtime 支持矩阵、staffing 和 CEO live 建票边界仍保持不变
 - 文档入口规则这轮补成“混合版分层”：继续保留现有高频真相栈命名，`doc/design/*` 继续承担详细设计层，文档关系要求用索引或相关文档段落显式回链
-- `P2-DEC-*` 与 `P2-GOV-003` 已全部收口，当前下一步转入 `P2-GOV-004`；本轮全量验证结果更新为 backend `488 passed`、frontend build passed、frontend `73 passed`
+- `P2-GOV-004` 已完成：CEO 现在可在 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不再作为硬白名单
+- execution target catalog 现在扩到 `7` 类：在原有 `scope_consensus / frontend_build / checker_delivery_check / frontend_review / frontend_closeout` 之外，新增 `scope_governance_document / frontend_governance_document` 两类 planning 文档目标；五类治理文档也已进入 runtime 支持矩阵，但 `architect / cto / backend / database / platform` 仍未纳入 live 路径
+- 当 CEO 创建的后续票显式挂在治理文档父票下时，建票路径会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产，避免下游票继续手工补这类引用
+- `P2-DEC-*` 与 `P2-GOV-004` 已全部收口，当前下一步转入 `P2-GOV-005`；本轮全量验证结果更新为 backend `493 passed`、frontend build passed、frontend `73 passed`
 
 ## Current Working Set
 

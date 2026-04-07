@@ -14,6 +14,7 @@ import pytest
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED
+from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
@@ -1300,6 +1301,51 @@ def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_live"]
     assert called_ticket_ids == ["tkt_runner_provider_live"]
     assert ticket_projection["status"] == "COMPLETED"
+
+
+def test_runtime_completes_governance_document_ticket_on_live_role(client, set_ticket_time):
+    set_ticket_time("2026-04-07T19:00:00+08:00")
+    repository = client.app.state.repository
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runtime_governance_doc",
+            ticket_id="tkt_runtime_governance_doc",
+            node_id="node_runtime_governance_doc",
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=["reports/governance/tkt_runtime_governance_doc/*"],
+            acceptance_criteria=["Must produce a structured architecture_brief governance document."],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runtime_governance_doc",
+            "ticket_id": "tkt_runtime_governance_doc",
+            "node_id": "node_runtime_governance_doc",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runtime_governance_doc:tkt_runtime_governance_doc",
+        },
+    )
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runtime_governance_doc")
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runtime_governance_doc")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runtime_governance_doc"]
+    assert ticket_projection["status"] == "COMPLETED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["artifact_refs"] == [
+        "art://runtime/tkt_runtime_governance_doc/architecture_brief.json"
+    ]
+    assert "pa://governance-document/tkt_runtime_governance_doc" in [
+        item["process_asset_ref"] for item in terminal_event["payload"]["produced_process_assets"]
+    ]
 
 
 def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(

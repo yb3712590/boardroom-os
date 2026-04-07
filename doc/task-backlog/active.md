@@ -6,10 +6,10 @@
 
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
-| 治理模板与文档链 | `P2-GOV-004` 到 `P2-GOV-006` | 当前主线 / 后续同批 | `P2-GOV-003` 已完成；下一步进入 CEO 按统一目录触发文档/设计链 |
+| 治理模板与文档链 | `P2-GOV-005` 到 `P2-GOV-006` | 当前主线 / 后续同批 | `P2-GOV-004` 已完成；下一步进入角色纳入顺序与工作链路边界 |
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | blocker 仍在，但不再占用当前主线 |
 | Provider 增强 | `P2-PRV-007` 到 `P2-PRV-008` | 后置增强 | `P2-PRV-001/002/003/004/005/006` 已于 2026-04-07 手动纳入并收口 |
-| 角色纳入链 | `P2-RLS-001` 到 `P2-RLS-003` | 后续工作链纳入 | 统一目录已就位，但 staffing / CEO / runtime 仍未接入；等待 `P2-DEC-*` 与 `P2-GOV-004` |
+| 角色纳入链 | `P2-RLS-001` 到 `P2-RLS-003` | 后续工作链纳入 | 统一目录已就位，但 staffing / CEO / runtime 仍未接入；等待 `P2-GOV-005` |
 
 ## 当前判断
 
@@ -30,7 +30,8 @@
 - `P2-DEC-003` 已于 2026-04-07 完成：ticket create spec 与 compile request 现已补入 `input_process_asset_refs[]`，`Context Compiler` 会先把 `input_artifact_refs[]` 兼容映射到过程资产，再统一走 resolver；当前已纳入 `artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary / governance_document` 七类过程资产
 - runtime 完成事件现在会写回结构化 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 都会自动映射回 follow-up / maker-checker 输入，避免 Context Compiler 继续直接猜底层存储类型
 - `P2-DEC-004` 已于 2026-04-07 完成：idle wakeup 现在只会在没有 open approval / incident、没有 active runtime、存在明确重决策信号且最近 ticket / node / approval / incident 变化已过冷却窗口时触发；runner 也已固定按 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace` 编排，并追加 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
-- 当前新的默认主线任务是 `P2-GOV-004`：在统一目录和治理文档合同已经就位后，再补 CEO 按统一目录触发文档/设计链；`P2-GOV-005` 到 `P2-GOV-006` 作为后续同批，`P2-RLS-*` 继续等待 `P2-GOV-004`
+- `P2-GOV-004` 已于 2026-04-08 完成：CEO 现在可在当前 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不再作为硬白名单；五类治理文档当前已进入 runtime 支持矩阵，但仍只落在 `ui_designer_primary / frontend_engineer_primary` 两个 live 角色；当 CEO 创建的后续票显式挂在治理文档父票下时，会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产
+- 当前新的默认主线任务是 `P2-GOV-005`：在 CEO 文档先行链已经就位后，再把“只读目录”和“真实纳入链”之间的边界写实；`P2-GOV-006` 作为后续同批，`P2-RLS-*` 继续等待 `P2-GOV-005`
 
 ## P1：冻结后置
 
@@ -52,8 +53,7 @@
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
-| P2-GOV-004 | CEO 按统一目录触发文档/设计链 | 4h | 当前主线 |
-| P2-GOV-005 | 角色纳入顺序与工作链路边界 | 3h | 后续同批 |
+| P2-GOV-005 | 角色纳入顺序与工作链路边界 | 3h | 当前主线 |
 | P2-GOV-006 | 统一角色目录的测试、前端说明与文档真相收口 | 5h | 后续同批 |
 
 ### 4.2 Provider 增强
@@ -74,8 +74,8 @@
 ## 依赖提醒
 
 - `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
-- `P2-DEC-*` 已全部完成；当前默认主线已切到 `P2-GOV-004`
-- `P2-GOV-005 / 006` 现在可以作为同一方向的后续切片继续推进，但默认先完成 `P2-GOV-004`
-- `P2-RLS-*` 只有在 `P2-DEC-*` 与 `P2-GOV-004` 完成后，才适合继续接 staffing / CEO / runtime
+- `P2-DEC-*` 与 `P2-GOV-004` 已全部完成；当前默认主线已切到 `P2-GOV-005`
+- `P2-GOV-006` 现在可以作为同一方向的后续切片继续推进，但默认先完成 `P2-GOV-005`
+- `P2-RLS-*` 只有在 `P2-GOV-005` 完成后，才适合继续接 staffing / CEO / runtime
 - `P2-PRV-*` 的后置增强如果会继续碰运行时路由，也应以后续 `P2-DEC-003/004` 的边界收口为前置
 - 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`

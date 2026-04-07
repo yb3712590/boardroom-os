@@ -94,7 +94,11 @@ def execute_ceo_action_batch(
                     )
                 )
                 continue
-            command = build_ceo_create_ticket_command(workflow=workflow, payload=action.payload)
+            command = build_ceo_create_ticket_command(
+                workflow=workflow,
+                payload=action.payload,
+                repository=repository,
+            )
             ack = handle_ticket_create(repository, command)
             executed_actions.append(
                 _executed_entry(

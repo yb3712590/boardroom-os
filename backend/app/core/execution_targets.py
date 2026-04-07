@@ -5,6 +5,7 @@ from typing import Any
 
 from app.contracts.commands import RuntimeProviderCapabilityTag
 from app.core.output_schemas import (
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -15,7 +16,9 @@ from app.core.output_schemas import (
 EXECUTION_CONTRACT_VERSION = "execution_contract_v1"
 
 EXECUTION_TARGET_SCOPE_CONSENSUS = "execution_target:scope_consensus"
+EXECUTION_TARGET_SCOPE_GOVERNANCE_DOCUMENT = "execution_target:scope_governance_document"
 EXECUTION_TARGET_FRONTEND_BUILD = "execution_target:frontend_build"
+EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT = "execution_target:frontend_governance_document"
 EXECUTION_TARGET_CHECKER_DELIVERY_CHECK = "execution_target:checker_delivery_check"
 EXECUTION_TARGET_FRONTEND_REVIEW = "execution_target:frontend_review"
 EXECUTION_TARGET_FRONTEND_CLOSEOUT = "execution_target:frontend_closeout"
@@ -40,6 +43,32 @@ EXECUTION_TARGET_DEFINITIONS = (
             RuntimeProviderCapabilityTag.PLANNING,
         ),
         label="Scope Consensus",
+    ),
+    *(
+        ExecutionTargetDefinition(
+            execution_target_ref=EXECUTION_TARGET_SCOPE_GOVERNANCE_DOCUMENT,
+            role_profile_ref="ui_designer_primary",
+            output_schema_ref=output_schema_ref,
+            required_capability_tags=(
+                RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+                RuntimeProviderCapabilityTag.PLANNING,
+            ),
+            label="Scope Governance Document",
+        )
+        for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
+    ),
+    *(
+        ExecutionTargetDefinition(
+            execution_target_ref=EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT,
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref=output_schema_ref,
+            required_capability_tags=(
+                RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+                RuntimeProviderCapabilityTag.PLANNING,
+            ),
+            label="Frontend Governance Document",
+        )
+        for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
     ),
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_FRONTEND_BUILD,

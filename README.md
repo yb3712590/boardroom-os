@@ -20,6 +20,7 @@ Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 - `BUILD`、`CHECK`、`closeout` 都带内部 maker-checker；最终董事会只看真正的 board-facing `REVIEW`
 - CEO 已真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
 - `ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
+- CEO 现在也可在当前 live 规划角色上先创建五类治理文档票；治理文档结果会写回统一 `GOVERNANCE_DOCUMENT` 过程资产，并可自动带入后续实施票
 - runtime provider 设置现在已升级为最小 registry：首版真实支持 `OpenAI Compat` 与 `Claude Code CLI`，并可给当前真实角色保存默认 provider / model 绑定、能力标签、健康明细和最小 fallback provider 链
 - `workforce` 与 runtime provider 设置现在都会暴露统一只读 `role_templates_catalog`：固定包含当前 live 执行角色、未来执行角色预留、治理角色预留、文档类型和模板片段，但这些预留角色还没有进入 staffing / CEO / runtime 主链
 - React 壳当前可看 `dashboard / inbox / review room / meeting room / incident / workforce / dependency inspector / completion`

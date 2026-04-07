@@ -1,24 +1,39 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.contracts.ceo_actions import CEOCreateTicketPayload
 from app.contracts.commands import DeliveryStage, TicketCreateCommand
 from app.core.execution_targets import infer_execution_contract_payload
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    ARCHITECTURE_BRIEF_SCHEMA_VERSION,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    DETAILED_DESIGN_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_VERSION,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
+    MILESTONE_PLAN_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_VERSION,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_VERSION,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
 )
+from app.core.process_assets import get_ticket_output_process_asset_refs
+
+if TYPE_CHECKING:
+    from app.db.repository import ControlPlaneRepository
 
 
 @dataclass(frozen=True)
@@ -74,6 +89,36 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
     ),
 }
 
+_GOVERNANCE_DOCUMENT_PRESET_VERSION_BY_SCHEMA = {
+    ARCHITECTURE_BRIEF_SCHEMA_REF: ARCHITECTURE_BRIEF_SCHEMA_VERSION,
+    TECHNOLOGY_DECISION_SCHEMA_REF: TECHNOLOGY_DECISION_SCHEMA_VERSION,
+    MILESTONE_PLAN_SCHEMA_REF: MILESTONE_PLAN_SCHEMA_VERSION,
+    DETAILED_DESIGN_SCHEMA_REF: DETAILED_DESIGN_SCHEMA_VERSION,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF: BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
+}
+_LIVE_GOVERNANCE_DOCUMENT_ROLE_PROFILES = (
+    "ui_designer_primary",
+    "frontend_engineer_primary",
+)
+GOVERNANCE_DOCUMENT_CHAIN_ORDER = (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+)
+
+for role_profile_ref in _LIVE_GOVERNANCE_DOCUMENT_ROLE_PROFILES:
+    for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+        _CREATE_TICKET_PRESETS[(role_profile_ref, output_schema_ref)] = CEOCreateTicketPreset(
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+            output_schema_version=_GOVERNANCE_DOCUMENT_PRESET_VERSION_BY_SCHEMA[output_schema_ref],
+            constraints_ref=f"ceo_governance_document_{output_schema_ref}",
+            priority="high" if output_schema_ref in {ARCHITECTURE_BRIEF_SCHEMA_REF, DETAILED_DESIGN_SCHEMA_REF} else "medium",
+            delivery_stage=None,
+        )
+
 
 PROJECT_INIT_SCOPE_NODE_ID = "node_scope_decision"
 
@@ -100,6 +145,10 @@ def is_project_init_scope_preset(*, role_profile_ref: str, output_schema_ref: st
 
 def supports_ceo_create_ticket_preset(*, role_profile_ref: str, output_schema_ref: str) -> bool:
     return (role_profile_ref, output_schema_ref) in _CREATE_TICKET_PRESETS
+
+
+def is_governance_document_preset(output_schema_ref: str) -> bool:
+    return output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
 
 
 def _build_project_init_auto_review_request(ticket_id: str) -> dict[str, Any]:
@@ -388,6 +437,7 @@ def _build_closeout_review_request(summary: str) -> dict[str, Any]:
 def _allowed_tools_for_preset(preset: CEOCreateTicketPreset) -> list[str]:
     if preset.output_schema_ref in {
         CONSENSUS_DOCUMENT_SCHEMA_REF,
+        *GOVERNANCE_DOCUMENT_SCHEMA_REFS,
         DELIVERY_CHECK_REPORT_SCHEMA_REF,
         DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     }:
@@ -398,6 +448,8 @@ def _allowed_tools_for_preset(preset: CEOCreateTicketPreset) -> list[str]:
 def _allowed_write_set_for_preset(ticket_id: str, preset: CEOCreateTicketPreset) -> list[str]:
     if preset.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
         return ["reports/meeting/*"]
+    if preset.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+        return [f"reports/governance/{ticket_id}/*"]
     if preset.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
         return [f"artifacts/ui/scope-followups/{ticket_id}/*"]
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
@@ -413,6 +465,16 @@ def _allowed_write_set_for_preset(ticket_id: str, preset: CEOCreateTicketPreset)
 def _context_keywords_for_preset(preset: CEOCreateTicketPreset) -> list[str]:
     if preset.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
         return ["scope", "constraints", "board review"]
+    if preset.output_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF:
+        return ["architecture", "constraints", "delivery path"]
+    if preset.output_schema_ref == TECHNOLOGY_DECISION_SCHEMA_REF:
+        return ["technology decision", "trade-offs", "constraints"]
+    if preset.output_schema_ref == MILESTONE_PLAN_SCHEMA_REF:
+        return ["milestones", "sequence", "delivery plan"]
+    if preset.output_schema_ref == DETAILED_DESIGN_SCHEMA_REF:
+        return ["detailed design", "interfaces", "implementation boundary"]
+    if preset.output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF:
+        return ["backlog", "follow-up slices", "delivery recommendation"]
     if preset.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
         return ["approved scope", "implementation", "build"]
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
@@ -429,6 +491,12 @@ def _acceptance_criteria_for_preset(summary: str, preset: CEOCreateTicketPreset)
             f"Must produce a scope consensus for this delivery need: {clean_summary}",
             "Must keep the proposal explicit, reviewable, and auditable.",
             "Must produce a structured consensus document.",
+        ]
+    if preset.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+        return [
+            f"Must produce a structured governance document for this delivery need: {clean_summary}",
+            f"Must use document_kind_ref `{preset.output_schema_ref}` and keep the result auditable.",
+            "Must keep downstream implementation explicit instead of jumping straight into code.",
         ]
     if preset.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
         return [
@@ -460,6 +528,8 @@ def _acceptance_criteria_for_preset(summary: str, preset: CEOCreateTicketPreset)
 def _review_request_for_preset(summary: str, preset: CEOCreateTicketPreset) -> dict[str, Any] | None:
     if preset.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
         return _build_consensus_review_request(summary)
+    if preset.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+        return None
     if preset.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
         return _build_internal_delivery_review_request(summary)
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
@@ -475,6 +545,7 @@ def build_ceo_create_ticket_command(
     *,
     workflow: dict[str, Any],
     payload: CEOCreateTicketPayload,
+    repository: "ControlPlaneRepository" | None = None,
 ) -> TicketCreateCommand:
     preset = _CREATE_TICKET_PRESETS[(payload.role_profile_ref, payload.output_schema_ref)]
     is_project_init_scope = is_project_init_scope_preset(
@@ -492,6 +563,16 @@ def build_ceo_create_ticket_command(
         if is_project_init_scope
         else []
     )
+    inherited_process_asset_refs: list[str] = []
+    if repository is not None and payload.parent_ticket_id and preset.output_schema_ref != CONSENSUS_DOCUMENT_SCHEMA_REF:
+        with repository.connection() as connection:
+            parent_created_spec = repository.get_latest_ticket_created_payload(connection, payload.parent_ticket_id) or {}
+            if str(parent_created_spec.get("output_schema_ref") or "").strip() in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+                inherited_process_asset_refs = get_ticket_output_process_asset_refs(
+                    repository,
+                    connection,
+                    payload.parent_ticket_id,
+                )
     semantic_queries = [
         str(workflow.get("north_star_goal") or payload.summary).strip() or payload.summary
     ]
@@ -504,6 +585,7 @@ def build_ceo_create_ticket_command(
         role_profile_ref=preset.role_profile_ref,
         constraints_ref=preset.constraints_ref,
         input_artifact_refs=input_artifact_refs,
+        input_process_asset_refs=inherited_process_asset_refs,
         context_query_plan={
             "keywords": (
                 ["scope", "constraints", "board review"]

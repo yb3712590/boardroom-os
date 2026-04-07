@@ -11,11 +11,16 @@ from app.core.mainline_truth import (
     MAINLINE_WORKFLOW_STAGE_TRUTH,
 )
 from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 from app.core.runtime import SUPPORTED_RUNTIME_OUTPUT_SCHEMAS, SUPPORTED_RUNTIME_ROLE_PROFILES
@@ -41,7 +46,17 @@ def test_mainline_runtime_support_matrix_matches_runtime_constants() -> None:
         (entry.role_profile_ref, entry.output_schema_ref)
         for entry in MAINLINE_RUNTIME_SUPPORT_MATRIX
     } == {
+        ("ui_designer_primary", ARCHITECTURE_BRIEF_SCHEMA_REF),
+        ("ui_designer_primary", TECHNOLOGY_DECISION_SCHEMA_REF),
+        ("ui_designer_primary", MILESTONE_PLAN_SCHEMA_REF),
+        ("ui_designer_primary", DETAILED_DESIGN_SCHEMA_REF),
+        ("ui_designer_primary", BACKLOG_RECOMMENDATION_SCHEMA_REF),
         ("ui_designer_primary", CONSENSUS_DOCUMENT_SCHEMA_REF),
+        ("frontend_engineer_primary", ARCHITECTURE_BRIEF_SCHEMA_REF),
+        ("frontend_engineer_primary", TECHNOLOGY_DECISION_SCHEMA_REF),
+        ("frontend_engineer_primary", MILESTONE_PLAN_SCHEMA_REF),
+        ("frontend_engineer_primary", DETAILED_DESIGN_SCHEMA_REF),
+        ("frontend_engineer_primary", BACKLOG_RECOMMENDATION_SCHEMA_REF),
         ("frontend_engineer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
         ("frontend_engineer_primary", UI_MILESTONE_REVIEW_SCHEMA_REF),
         ("frontend_engineer_primary", DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF),

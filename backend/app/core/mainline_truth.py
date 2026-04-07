@@ -3,11 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 
@@ -104,6 +110,24 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
         output_schema_ref=CONSENSUS_DOCUMENT_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
         notes="当前共识文档仍由主线 maker 角色产出。",
+    ),
+    *(
+        RuntimeSupportRow(
+            role_profile_ref="ui_designer_primary",
+            output_schema_ref=output_schema_ref,
+            supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+            notes="当前治理文档可由现有 live planning 角色产出，不额外启用治理新角色。",
+        )
+        for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
+    ),
+    *(
+        RuntimeSupportRow(
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref=output_schema_ref,
+            supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+            notes="当前治理文档也可由现有 frontend live 角色产出，保持文档家族与角色目录解耦。",
+        )
+        for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
     ),
     RuntimeSupportRow(
         role_profile_ref="frontend_engineer_primary",
