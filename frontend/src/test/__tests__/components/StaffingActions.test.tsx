@@ -85,4 +85,72 @@ describe('StaffingActions', () => {
     expect(screen.getAllByText(/risk posture: cautious/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/surface preference: polished/i).length).toBeGreaterThan(0)
   })
+
+  it('renders newly added staffing templates without custom UI branches', () => {
+    render(
+      <StaffingActions
+        templates={[
+          {
+            template_id: 'backend_engineer_backup',
+            label: 'Backend Engineer / 服务交付',
+            role_type: 'backend_engineer',
+            role_profile_refs: ['backend_engineer_primary'],
+            employee_id_hint: 'emp_backend_backup',
+            provider_id: 'prov_openai_compat',
+            request_summary: 'Hire a backend engineer for service delivery.',
+            skill_profile: {
+              primary_domain: 'backend',
+              system_scope: 'service_delivery',
+              validation_bias: 'balanced',
+            },
+            personality_profile: {
+              risk_posture: 'assertive',
+              challenge_style: 'constructive',
+              execution_pace: 'fast',
+              detail_rigor: 'focused',
+              communication_style: 'direct',
+            },
+            aesthetic_profile: {
+              surface_preference: 'functional',
+              information_density: 'balanced',
+              motion_tolerance: 'measured',
+            },
+          },
+          {
+            template_id: 'cto_governance_backup',
+            label: 'CTO / 架构治理',
+            role_type: 'governance_cto',
+            role_profile_refs: ['cto_primary'],
+            employee_id_hint: 'emp_cto_governance',
+            provider_id: 'prov_openai_compat',
+            request_summary: 'Hire a CTO governance role for architecture direction.',
+            skill_profile: {
+              primary_domain: 'architecture',
+              system_scope: 'governance_direction',
+              validation_bias: 'balanced',
+            },
+            personality_profile: {
+              risk_posture: 'guarded',
+              challenge_style: 'probing',
+              execution_pace: 'deliberate',
+              detail_rigor: 'rigorous',
+              communication_style: 'direct',
+            },
+            aesthetic_profile: {
+              surface_preference: 'clarifying',
+              information_density: 'layered',
+              motion_tolerance: 'restrained',
+            },
+          },
+        ]}
+        submittingAction={null}
+        onRequestHire={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByLabelText('Backend Engineer / 服务交付 employee id')).toBeInTheDocument()
+    expect(screen.getByLabelText('CTO / 架构治理 employee id')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request hire for Backend Engineer / 服务交付' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request hire for CTO / 架构治理' })).toBeInTheDocument()
+  })
 })

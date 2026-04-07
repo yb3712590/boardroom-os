@@ -26,8 +26,18 @@ PERSONALITY_HIGH_OVERLAP_THRESHOLD = 4
 AESTHETIC_HIGH_OVERLAP_THRESHOLD = 2
 
 _ALLOWED_VALUES_BY_DIMENSION = {
-    "primary_domain": {"frontend", "quality"},
-    "system_scope": {"delivery_slice", "surface_polish", "release_guard", "release_sweep"},
+    "primary_domain": {"frontend", "quality", "backend", "data", "platform", "architecture"},
+    "system_scope": {
+        "delivery_slice",
+        "surface_polish",
+        "release_guard",
+        "release_sweep",
+        "service_delivery",
+        "data_reliability",
+        "runtime_operations",
+        "design_review",
+        "governance_direction",
+    },
     "validation_bias": {"balanced", "finish_first", "evidence_first", "regression_first"},
     "risk_posture": {"assertive", "cautious", "guarded"},
     "challenge_style": {"constructive", "probing", "adversarial"},
@@ -116,15 +126,177 @@ _PERSONA_TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
             "motion_tolerance": "restrained",
         },
     },
+    "backend_service_builder": {
+        "skill_profile": {
+            "primary_domain": "backend",
+            "system_scope": "service_delivery",
+            "validation_bias": "balanced",
+        },
+        "personality_profile": {
+            "risk_posture": "assertive",
+            "challenge_style": "constructive",
+            "execution_pace": "fast",
+            "detail_rigor": "focused",
+            "communication_style": "direct",
+        },
+        "aesthetic_profile": {
+            "surface_preference": "functional",
+            "information_density": "balanced",
+            "motion_tolerance": "measured",
+        },
+    },
+    "backend_integration_counterweight": {
+        "skill_profile": {
+            "primary_domain": "backend",
+            "system_scope": "service_delivery",
+            "validation_bias": "evidence_first",
+        },
+        "personality_profile": {
+            "risk_posture": "cautious",
+            "challenge_style": "probing",
+            "execution_pace": "measured",
+            "detail_rigor": "rigorous",
+            "communication_style": "concise",
+        },
+        "aesthetic_profile": {
+            "surface_preference": "systematic",
+            "information_density": "layered",
+            "motion_tolerance": "restrained",
+        },
+    },
+    "database_reliability_guard": {
+        "skill_profile": {
+            "primary_domain": "data",
+            "system_scope": "data_reliability",
+            "validation_bias": "evidence_first",
+        },
+        "personality_profile": {
+            "risk_posture": "guarded",
+            "challenge_style": "probing",
+            "execution_pace": "measured",
+            "detail_rigor": "rigorous",
+            "communication_style": "forensic",
+        },
+        "aesthetic_profile": {
+            "surface_preference": "systematic",
+            "information_density": "dense",
+            "motion_tolerance": "minimal",
+        },
+    },
+    "database_change_guard": {
+        "skill_profile": {
+            "primary_domain": "data",
+            "system_scope": "data_reliability",
+            "validation_bias": "regression_first",
+        },
+        "personality_profile": {
+            "risk_posture": "cautious",
+            "challenge_style": "constructive",
+            "execution_pace": "deliberate",
+            "detail_rigor": "sweeping",
+            "communication_style": "concise",
+        },
+        "aesthetic_profile": {
+            "surface_preference": "clarifying",
+            "information_density": "balanced",
+            "motion_tolerance": "restrained",
+        },
+    },
+    "platform_operations_guard": {
+        "skill_profile": {
+            "primary_domain": "platform",
+            "system_scope": "runtime_operations",
+            "validation_bias": "evidence_first",
+        },
+        "personality_profile": {
+            "risk_posture": "guarded",
+            "challenge_style": "probing",
+            "execution_pace": "measured",
+            "detail_rigor": "rigorous",
+            "communication_style": "forensic",
+        },
+        "aesthetic_profile": {
+            "surface_preference": "systematic",
+            "information_density": "dense",
+            "motion_tolerance": "minimal",
+        },
+    },
+    "platform_reliability_counterweight": {
+        "skill_profile": {
+            "primary_domain": "platform",
+            "system_scope": "runtime_operations",
+            "validation_bias": "regression_first",
+        },
+        "personality_profile": {
+            "risk_posture": "cautious",
+            "challenge_style": "constructive",
+            "execution_pace": "deliberate",
+            "detail_rigor": "sweeping",
+            "communication_style": "concise",
+        },
+        "aesthetic_profile": {
+            "surface_preference": "clarifying",
+            "information_density": "balanced",
+            "motion_tolerance": "restrained",
+        },
+    },
+    "architecture_design_reviewer": {
+        "skill_profile": {
+            "primary_domain": "architecture",
+            "system_scope": "design_review",
+            "validation_bias": "evidence_first",
+        },
+        "personality_profile": {
+            "risk_posture": "guarded",
+            "challenge_style": "probing",
+            "execution_pace": "measured",
+            "detail_rigor": "rigorous",
+            "communication_style": "direct",
+        },
+        "aesthetic_profile": {
+            "surface_preference": "clarifying",
+            "information_density": "layered",
+            "motion_tolerance": "restrained",
+        },
+    },
+    "architecture_governance_director": {
+        "skill_profile": {
+            "primary_domain": "architecture",
+            "system_scope": "governance_direction",
+            "validation_bias": "balanced",
+        },
+        "personality_profile": {
+            "risk_posture": "guarded",
+            "challenge_style": "probing",
+            "execution_pace": "deliberate",
+            "detail_rigor": "rigorous",
+            "communication_style": "direct",
+        },
+        "aesthetic_profile": {
+            "surface_preference": "clarifying",
+            "information_density": "layered",
+            "motion_tolerance": "restrained",
+        },
+    },
 }
 
 _BASELINE_TEMPLATE_BY_ROLE_TYPE = {
     "frontend_engineer": "frontend_core_builder",
     "checker": "checker_evidence_guard",
+    "backend_engineer": "backend_service_builder",
+    "database_engineer": "database_reliability_guard",
+    "platform_sre": "platform_operations_guard",
+    "governance_architect": "architecture_design_reviewer",
+    "governance_cto": "architecture_governance_director",
 }
 _HIRE_TEMPLATE_BY_ROLE_TYPE = {
     "frontend_engineer": "frontend_polish_counterweight",
     "checker": "checker_release_sweeper",
+    "backend_engineer": "backend_integration_counterweight",
+    "database_engineer": "database_change_guard",
+    "platform_sre": "platform_reliability_counterweight",
+    "governance_architect": "architecture_design_reviewer",
+    "governance_cto": "architecture_governance_director",
 }
 _LEGACY_STYLE_TEMPLATE_BY_ROLE_TYPE = {
     ("frontend_engineer", "maker"): "frontend_core_builder",
@@ -213,6 +385,16 @@ def _resolve_legacy_template_id(
         return "checker_evidence_guard"
     if role_type == "frontend_engineer" or primary_domain == "frontend":
         return "frontend_core_builder"
+    if role_type == "backend_engineer" or primary_domain == "backend":
+        return "backend_service_builder"
+    if role_type == "database_engineer" or primary_domain == "data":
+        return "database_reliability_guard"
+    if role_type == "platform_sre" or primary_domain == "platform":
+        return "platform_operations_guard"
+    if role_type == "governance_architect":
+        return "architecture_design_reviewer"
+    if role_type == "governance_cto" or primary_domain == "architecture":
+        return "architecture_governance_director"
     return None
 
 

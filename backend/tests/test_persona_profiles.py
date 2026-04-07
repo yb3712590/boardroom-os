@@ -60,3 +60,31 @@ def test_find_same_role_high_overlap_conflict_detects_active_board_approved_dupl
         role_type="frontend_engineer",
         conflict=conflict,
     ).lower()
+
+
+def test_normalize_persona_profiles_supports_reserved_and_governance_roles():
+    normalized = normalize_persona_profiles(
+        "governance_cto",
+        skill_profile={"primary_domain": "architecture"},
+        personality_profile={"risk_posture": "guarded"},
+        aesthetic_profile={"surface_preference": "clarifying"},
+    )
+
+    assert normalized["skill_profile"] == {
+        "primary_domain": "architecture",
+        "system_scope": "governance_direction",
+        "validation_bias": "balanced",
+    }
+    assert normalized["personality_profile"] == {
+        "risk_posture": "guarded",
+        "challenge_style": "probing",
+        "execution_pace": "deliberate",
+        "detail_rigor": "rigorous",
+        "communication_style": "direct",
+    }
+    assert normalized["aesthetic_profile"] == {
+        "surface_preference": "clarifying",
+        "information_density": "layered",
+        "motion_tolerance": "restrained",
+    }
+    assert "architecture" in normalized["profile_summary"].lower()

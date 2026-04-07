@@ -964,6 +964,38 @@ def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_alre
     assert "too similar" in result["rejected_actions"][0]["reason"].lower()
 
 
+def test_ceo_validator_keeps_new_role_hires_outside_current_limited_path(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO limited staffing boundary")
+    repository = client.app.state.repository
+
+    result = validate_ceo_action_batch(
+        repository,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Hire a backend engineer from the CEO path.",
+                "actions": [
+                    {
+                        "action_type": "HIRE_EMPLOYEE",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "role_type": "backend_engineer",
+                            "role_profile_refs": ["backend_engineer_primary"],
+                            "request_summary": "Hire a backend engineer for service delivery.",
+                            "employee_id_hint": "emp_backend_shadow",
+                            "provider_id": "prov_openai_compat",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert result["accepted_actions"] == []
+    assert result["rejected_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert "current limited ceo staffing path" in result["rejected_actions"][0]["reason"].lower()
+
+
 def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monkeypatch):
     _set_live_provider(client)
 

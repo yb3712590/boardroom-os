@@ -36,10 +36,10 @@
 - runtime 完成事件现在会额外写回 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 都会自动映射到后续 follow-up ticket 或 maker-checker checker ticket 的 `input_process_asset_refs[]`
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
-- 当前已把原治理模板扩成只读 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
-- `role_templates_catalog.role_templates[]` 现在会额外暴露结构化 `mainline_boundary`：`boundary_status` 只会是 `LIVE_ON_MAINLINE / CATALOG_ONLY`；当前只有前 `3` 个模板会标成 `LIVE_ON_MAINLINE`，后 `5` 个模板全部保持 `CATALOG_ONLY`
-- `workforce` 投影现在会返回 `role_templates_catalog` 和每个 live worker 的 `source_template_id / source_fragment_refs`；`runtime-provider.future_binding_slots` 也改成从同一目录筛出未启用模板，并额外暴露它们当前被挡住的 surface `blocked_path_refs[]`
-- 这组 `CATALOG_ONLY` 模板当前只具备 `catalog_readonly` 与 `provider_future_slot` 两类只读存在感；仍未进入 runtime 支持矩阵、staffing 动作、CEO create-ticket 预设或 workforce live lane
+- 当前已把原治理模板扩成统一 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
+- `role_templates_catalog.role_templates[]` 现在会额外暴露结构化 `mainline_boundary`：`boundary_status` 只会是 `LIVE_ON_MAINLINE / CATALOG_ONLY`；当前只有前 `3` 个模板会标成 `LIVE_ON_MAINLINE`，后 `5` 个模板继续保持 `CATALOG_ONLY`
+- `workforce` 投影现在会返回 `role_templates_catalog`、扩展后的 staffing hire templates，以及每个 worker 的 `source_template_id / source_fragment_refs`；`backend / database / platform / architect / cto` 五类模板现在已进入 Board/workforce staffing 动作与 workforce lane，但 `runtime-provider.future_binding_slots` 仍会把它们标成未启用 runtime 绑定，并暴露剩余被挡住的 `blocked_path_refs[]`
+- 这组 `CATALOG_ONLY` 模板当前不再只是只读目录占位：它们已经具备 `catalog_readonly / provider_future_slot / staffing / workforce_lane` 这组主线存在感；但仍未进入 runtime 支持矩阵或 CEO create-ticket 预设
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
 - provider-to-provider failover 当前只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；运行时与 CEO live path 会按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径
 - 会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`；`MeetingRoom` 默认先展示压缩后的决策视图，再把 round timeline 留作 audit trail
@@ -65,7 +65,7 @@
 - `OpenAI Compat` 与 `Claude Code CLI` live path **都不只** 支持 `ui_milestone_review` 和 `maker_checker_verdict`
 - 当前主线真实覆盖的 role profile 已经是三类：`ui_designer_primary`、`frontend_engineer_primary`、`checker_primary`
 - CEO 的 `REQUEST_MEETING` 当前也同时支持 deterministic、OpenAI Compat live 和 Claude Code CLI live，但 deterministic 只会在 snapshot 里恰好存在一个合格会议候选时触发
-- 五类治理文档 schema 现在已进入 runtime 支持矩阵和 CEO live 建票路径，但当前仍只兼容 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色；`architect / cto / backend / database / platform` 仍未进入 staffing、CEO 建票或 runtime live 路径
+- 五类治理文档 schema 现在已进入 runtime 支持矩阵和 CEO live 建票路径，但当前仍只兼容 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色；`architect / cto / backend / database / platform` 虽然已经进入 Board/workforce staffing 路径，但仍未进入 CEO 建票或 runtime live 路径
 - `role_templates_catalog.default_document_kind_refs` 当前只是目录建议值，不是 runtime、CEO 校验或建票 preset 的硬约束
 
 ## 3. 冻结边界清单

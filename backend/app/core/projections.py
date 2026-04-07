@@ -124,8 +124,8 @@ from app.core.workflow_relationships import (
     resolve_phase_label as _shared_resolve_phase_label,
 )
 from app.core.staffing_catalog import (
-    list_mainline_staffing_hire_templates,
-    mainline_staffing_template_id_for_role,
+    board_workforce_staffing_template_id_for_role,
+    list_board_workforce_staffing_hire_templates,
 )
 from app.core.runtime_provider_config import (
     FUTURE_ROLE_BINDING_SLOTS,
@@ -308,7 +308,7 @@ def _build_workforce_hire_templates() -> list[StaffingHireTemplateProjection]:
             personality_profile=dict(template.get("personality_profile") or {}),
             aesthetic_profile=dict(template.get("aesthetic_profile") or {}),
         )
-        for template in list_mainline_staffing_hire_templates()
+        for template in list_board_workforce_staffing_hire_templates()
     ]
 
 
@@ -365,7 +365,7 @@ def _build_role_templates_catalog_projection() -> dict[str, Any]:
 def _build_workforce_available_actions(employee: dict[str, Any]) -> list[WorkforceActionProjection]:
     state = str(employee.get("state") or "UNKNOWN").strip().upper()
     role_type = str(employee.get("role_type") or "").strip()
-    template_id = mainline_staffing_template_id_for_role(role_type)
+    template_id = board_workforce_staffing_template_id_for_role(role_type)
 
     if state == EMPLOYEE_STATE_ACTIVE:
         replace_enabled = template_id is not None

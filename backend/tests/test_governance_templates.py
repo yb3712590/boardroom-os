@@ -100,12 +100,12 @@ def test_role_template_catalog_exposes_live_reserved_and_governance_templates():
         "active_path_refs": [
             "catalog_readonly",
             "provider_future_slot",
+            "staffing",
+            "workforce_lane",
         ],
         "blocked_path_refs": [
-            "staffing",
             "ceo_create_ticket",
             "runtime_execution",
-            "workforce_lane",
         ],
     }
     assert templates[7]["mainline_boundary"] == templates[6]["mainline_boundary"]

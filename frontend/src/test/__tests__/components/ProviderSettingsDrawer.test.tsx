@@ -30,7 +30,7 @@ describe('ProviderSettingsDrawer', () => {
               label: '架构师 / 设计评审',
               status: 'NOT_ENABLED',
               reason: '角色模板已定义，但尚未纳入当前主线。',
-              blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+              blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
             },
           ],
         }}
@@ -45,6 +45,6 @@ describe('ProviderSettingsDrawer', () => {
     expect(screen.getByText('Reserved bindings')).toBeInTheDocument()
     expect(screen.getByText(/Catalog-only roles stay read-only here until a later mainline role intake round./i)).toBeInTheDocument()
     expect(screen.getByDisplayValue(/NOT_ENABLED: 角色模板已定义，但尚未纳入当前主线。/i)).toBeDisabled()
-    expect(screen.getByText(/Blocked surfaces: staffing, ceo create ticket, runtime execution, workforce lane/i)).toBeInTheDocument()
+    expect(screen.getByText(/Blocked surfaces: ceo create ticket, runtime execution/i)).toBeInTheDocument()
   })
 })

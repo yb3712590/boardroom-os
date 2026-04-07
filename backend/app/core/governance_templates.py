@@ -17,6 +17,8 @@ MAINLINE_PATH_CHECKER_GATE = "checker_gate"
 MAINLINE_PATH_FINAL_REVIEW = "final_review"
 MAINLINE_PATH_CLOSEOUT = "closeout"
 MAINLINE_PATH_PROVIDER_FUTURE_SLOT = "provider_future_slot"
+MAINLINE_PATH_STAFFING = "staffing"
+MAINLINE_PATH_WORKFORCE_LANE = "workforce_lane"
 
 MAINLINE_BLOCKED_PATH_STAFFING = "staffing"
 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET = "ceo_create_ticket"
@@ -281,12 +283,12 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
                 MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+                MAINLINE_PATH_STAFFING,
+                MAINLINE_PATH_WORKFORCE_LANE,
             ),
             blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_STAFFING,
                 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
                 MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
-                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
             ),
         ),
         "future_provider_binding_enabled": True,
@@ -317,12 +319,12 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
                 MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+                MAINLINE_PATH_STAFFING,
+                MAINLINE_PATH_WORKFORCE_LANE,
             ),
             blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_STAFFING,
                 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
                 MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
-                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
             ),
         ),
         "future_provider_binding_enabled": True,
@@ -353,12 +355,12 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
                 MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+                MAINLINE_PATH_STAFFING,
+                MAINLINE_PATH_WORKFORCE_LANE,
             ),
             blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_STAFFING,
                 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
                 MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
-                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
             ),
         ),
         "future_provider_binding_enabled": True,
@@ -393,12 +395,12 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
                 MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+                MAINLINE_PATH_STAFFING,
+                MAINLINE_PATH_WORKFORCE_LANE,
             ),
             blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_STAFFING,
                 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
                 MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
-                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
             ),
         ),
         "future_provider_binding_enabled": True,
@@ -434,12 +436,12 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
                 MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
+                MAINLINE_PATH_STAFFING,
+                MAINLINE_PATH_WORKFORCE_LANE,
             ),
             blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_STAFFING,
                 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
                 MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
-                MAINLINE_BLOCKED_PATH_WORKFORCE_LANE,
             ),
         ),
         "future_provider_binding_enabled": True,
@@ -512,8 +514,18 @@ def role_template_source_for_worker(
                 return _clone_role_template(template)
 
     normalized_role_type = str(role_type or "").strip()
-    if normalized_role_type == "frontend_engineer":
-        return _clone_role_template(_ROLE_TEMPLATE_CATALOG[1])
-    if normalized_role_type == "checker":
-        return _clone_role_template(_ROLE_TEMPLATE_CATALOG[2])
+    default_template_id_by_role_type = {
+        "frontend_engineer": "frontend_delivery_primary",
+        "checker": "quality_checker_primary",
+        "backend_engineer": "backend_execution_reserved",
+        "database_engineer": "database_execution_reserved",
+        "platform_sre": "platform_sre_reserved",
+        "governance_architect": "architect_governance",
+        "governance_cto": "cto_governance",
+    }
+    preferred_template_id = default_template_id_by_role_type.get(normalized_role_type)
+    if preferred_template_id is not None:
+        for template in _ROLE_TEMPLATE_CATALOG:
+            if template["template_id"] == preferred_template_id:
+                return _clone_role_template(template)
     return None

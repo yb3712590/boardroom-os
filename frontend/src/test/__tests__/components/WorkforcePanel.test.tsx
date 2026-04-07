@@ -80,8 +80,8 @@ describe('WorkforcePanel', () => {
                 },
                 mainline_boundary: {
                   boundary_status: 'CATALOG_ONLY',
-                  active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-                  blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+                  active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
+                  blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
                 },
               },
               {
@@ -104,8 +104,8 @@ describe('WorkforcePanel', () => {
                 },
                 mainline_boundary: {
                   boundary_status: 'CATALOG_ONLY',
-                  active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-                  blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+                  active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
+                  blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
                 },
               },
             ],
@@ -236,7 +236,7 @@ describe('WorkforcePanel', () => {
     expect(screen.getByText(/Current live path/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Catalog only \/ not on current mainline/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/implementation delivery/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/blocked: staffing, ceo create ticket, runtime execution, workforce lane/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/blocked: ceo create ticket, runtime execution/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/not_enabled/i).length).toBeGreaterThan(0)
   })
 })

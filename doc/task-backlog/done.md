@@ -1754,6 +1754,20 @@
 - 本轮保持保守边界：当前没有把新增角色接进 staffing、CEO 建票、runtime 或执行包；后续真实纳入链已拆到 `P2-GOV-003/004/005/006` 与新增 `P2-RLS-*`
 - 本轮新增后端回归覆盖治理文档 schema、治理文档过程资产写回和 compiler 输入消费；整体验证结果更新为 backend `488 passed`、frontend build passed、frontend `73 passed`
 
+### 4.3b 角色纳入链 (P2-RLS-001)
+
+| ID | 标题 | 预估 |
+|----|------|------|
+| P2-RLS-001 | staffing 模板与 workforce lane 纳入新增角色 | 4h |
+
+完成补记（2026-04-08）：
+
+- `P2-RLS-001`：Board/workforce staffing 现在已从两类主线角色扩到七类模板，新增纳入 `backend_engineer / database_engineer / platform_sre / governance_architect / governance_cto`
+- `P2-RLS-001`：Board 可继续沿用现有 `employee-hire-request / employee-replace-request -> CORE_HIRE_APPROVAL` 闭环，为这些新增角色发起 hire / replace 审批；审批通过后，它们会真实进入 workforce lane
+- `P2-RLS-001`：`workforce` 投影现在会为这些新增角色返回 `source_template_id / source_fragment_refs` 与一致的 `FREEZE / RESTORE / REPLACE` 动作；`role_templates_catalog.mainline_boundary` 也同步改成“已进入 staffing / workforce，但仍挡在 `ceo_create_ticket / runtime_execution` 外”
+- `P2-RLS-001`：这轮把 staffing 目录显式拆成 board/workforce 与 CEO limited hire 两条边界，确保新增角色不会顺手提前进入 CEO `HIRE_EMPLOYEE` 路径；`P2-RLS-002` 之前，CEO 仍只允许当前受限主线角色
+- 本轮新增后端回归覆盖新增角色 persona 规范化、治理角色 hire 审批、workforce lane/source template 映射和 CEO 边界保持不变；前端回归补齐新增 staffing 模板与更新后的 blocked surface 文案；整体验证结果更新为 backend `497 passed`、frontend build passed、frontend `75 passed`
+
 完成补记（2026-04-06）：
 
 - `P2-GOV-007`：closeout 证据与文档同步软约束已按最小边界收口，不改状态机，也不新增前端默认读面

@@ -98,6 +98,13 @@
 - `workforce` 目录卡片现在会直接展示 `Current live path` 或 `Catalog only / not on current mainline`，不再只靠 `NOT_ENABLED` 让人猜哪些角色只是目录占位
 - 当前默认主线已从 `P2-GOV` 转到 `P2-RLS-001`；本轮全量验证结果更新为 backend `493 passed`、frontend build passed、frontend `74 passed`
 
+### 2026-04-08
+
+- `P2-RLS-001` 已完成：`backend / database / platform / architect / cto` 五类模板现在已进入 Board/workforce staffing 主链；Board 可发起 hire / replace 审批，审批通过后这些角色会真实进入 workforce lane，并带上 `source_template_id / source_fragment_refs`
+- 这轮把 staffing 分成两条显式边界：board/workforce staffing 已放宽到七类模板，但 CEO `HIRE_EMPLOYEE` 仍只允许当前受限主线角色，不提前打开 `P2-RLS-002`
+- `role_templates_catalog` 的 `CATALOG_ONLY` 边界现在改成“可进 staffing / workforce lane，但仍挡在 `ceo_create_ticket / runtime_execution` 外”；`runtime-provider.future_binding_slots` 与前端文案已同步到这条新边界
+- 当前验证基线更新为 backend `497 passed`、frontend build passed、frontend `75 passed`
+
 ## Current Working Set
 
 - Prefer reading `README.md`, `doc/README.md`, `doc/mainline-truth.md`, `doc/roadmap-reset.md`, `doc/TODO.md`, `doc/history/context-baseline.md`, and then this file before touching the archive.

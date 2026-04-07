@@ -268,6 +268,136 @@ function hireTemplates() {
         motion_tolerance: 'restrained',
       },
     },
+    {
+      template_id: 'backend_engineer_backup',
+      label: 'Backend Engineer / 服务交付',
+      role_type: 'backend_engineer',
+      role_profile_refs: ['backend_engineer_primary'],
+      employee_id_hint: 'emp_backend_backup',
+      provider_id: 'prov_openai_compat',
+      request_summary: 'Hire a backend engineer for service delivery.',
+      skill_profile: {
+        primary_domain: 'backend',
+        system_scope: 'service_delivery',
+        validation_bias: 'evidence_first',
+      },
+      personality_profile: {
+        risk_posture: 'cautious',
+        challenge_style: 'probing',
+        execution_pace: 'measured',
+        detail_rigor: 'rigorous',
+        communication_style: 'concise',
+      },
+      aesthetic_profile: {
+        surface_preference: 'systematic',
+        information_density: 'layered',
+        motion_tolerance: 'restrained',
+      },
+    },
+    {
+      template_id: 'database_engineer_backup',
+      label: 'Database Engineer / 数据可靠性',
+      role_type: 'database_engineer',
+      role_profile_refs: ['database_engineer_primary'],
+      employee_id_hint: 'emp_database_backup',
+      provider_id: 'prov_openai_compat',
+      request_summary: 'Hire a database engineer for migration and reliability work.',
+      skill_profile: {
+        primary_domain: 'data',
+        system_scope: 'data_reliability',
+        validation_bias: 'regression_first',
+      },
+      personality_profile: {
+        risk_posture: 'cautious',
+        challenge_style: 'constructive',
+        execution_pace: 'deliberate',
+        detail_rigor: 'sweeping',
+        communication_style: 'concise',
+      },
+      aesthetic_profile: {
+        surface_preference: 'clarifying',
+        information_density: 'balanced',
+        motion_tolerance: 'restrained',
+      },
+    },
+    {
+      template_id: 'platform_sre_backup',
+      label: 'Platform / SRE',
+      role_type: 'platform_sre',
+      role_profile_refs: ['platform_sre_primary'],
+      employee_id_hint: 'emp_platform_backup',
+      provider_id: 'prov_openai_compat',
+      request_summary: 'Hire a platform engineer for runtime and operations stability.',
+      skill_profile: {
+        primary_domain: 'platform',
+        system_scope: 'runtime_operations',
+        validation_bias: 'regression_first',
+      },
+      personality_profile: {
+        risk_posture: 'cautious',
+        challenge_style: 'constructive',
+        execution_pace: 'deliberate',
+        detail_rigor: 'sweeping',
+        communication_style: 'concise',
+      },
+      aesthetic_profile: {
+        surface_preference: 'clarifying',
+        information_density: 'balanced',
+        motion_tolerance: 'restrained',
+      },
+    },
+    {
+      template_id: 'architect_governance_backup',
+      label: '架构师 / 设计评审',
+      role_type: 'governance_architect',
+      role_profile_refs: ['architect_primary'],
+      employee_id_hint: 'emp_architect_governance',
+      provider_id: 'prov_openai_compat',
+      request_summary: 'Hire an architect governance role for design review and alignment.',
+      skill_profile: {
+        primary_domain: 'architecture',
+        system_scope: 'design_review',
+        validation_bias: 'evidence_first',
+      },
+      personality_profile: {
+        risk_posture: 'guarded',
+        challenge_style: 'probing',
+        execution_pace: 'measured',
+        detail_rigor: 'rigorous',
+        communication_style: 'direct',
+      },
+      aesthetic_profile: {
+        surface_preference: 'clarifying',
+        information_density: 'layered',
+        motion_tolerance: 'restrained',
+      },
+    },
+    {
+      template_id: 'cto_governance_backup',
+      label: 'CTO / 架构治理',
+      role_type: 'governance_cto',
+      role_profile_refs: ['cto_primary'],
+      employee_id_hint: 'emp_cto_governance',
+      provider_id: 'prov_openai_compat',
+      request_summary: 'Hire a CTO governance role for architecture direction.',
+      skill_profile: {
+        primary_domain: 'architecture',
+        system_scope: 'governance_direction',
+        validation_bias: 'balanced',
+      },
+      personality_profile: {
+        risk_posture: 'guarded',
+        challenge_style: 'probing',
+        execution_pace: 'deliberate',
+        detail_rigor: 'rigorous',
+        communication_style: 'direct',
+      },
+      aesthetic_profile: {
+        surface_preference: 'clarifying',
+        information_density: 'layered',
+        motion_tolerance: 'restrained',
+      },
+    },
   ]
 }
 
@@ -383,7 +513,7 @@ function workforceData() {
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
             active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
           },
         },
         {
@@ -407,7 +537,7 @@ function workforceData() {
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
             active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
           },
         },
         {
@@ -431,7 +561,7 @@ function workforceData() {
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
             active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
           },
         },
         {
@@ -455,7 +585,7 @@ function workforceData() {
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
             active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
           },
         },
         {
@@ -484,7 +614,7 @@ function workforceData() {
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
             active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-            blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
           },
         },
       ],
@@ -979,21 +1109,21 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
         label: 'Backend Engineer / 服务交付',
         status: 'NOT_ENABLED',
         reason: '角色模板已定义，但尚未纳入当前主线。',
-        blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+        blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
       },
       {
         target_ref: 'role_profile:architect_primary',
         label: '架构师 / 设计评审',
         status: 'NOT_ENABLED',
         reason: '角色模板已定义，但尚未纳入当前主线。',
-        blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+        blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
       },
       {
         target_ref: 'role_profile:cto_primary',
         label: 'CTO / 架构治理',
         status: 'NOT_ENABLED',
         reason: '角色模板已定义，但尚未纳入当前主线。',
-        blocked_path_refs: ['staffing', 'ceo_create_ticket', 'runtime_execution', 'workforce_lane'],
+        blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
       },
     ],
     ...overrides,

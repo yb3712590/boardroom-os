@@ -22,7 +22,7 @@ from app.core.persona_profiles import (
     build_high_overlap_rejection_reason,
     find_same_role_high_overlap_conflict,
 )
-from app.core.staffing_catalog import resolve_mainline_staffing_combo
+from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
 from app.db.repository import ControlPlaneRepository
 
 
@@ -55,7 +55,7 @@ def validate_ceo_action_batch(
             continue
 
         if action.action_type == CEOActionType.HIRE_EMPLOYEE:
-            template, staffing_reason = resolve_mainline_staffing_combo(
+            template, staffing_reason = resolve_limited_ceo_staffing_combo(
                 action.payload.role_type,
                 action.payload.role_profile_refs,
             )

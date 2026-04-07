@@ -6,7 +6,7 @@ from typing import Any
 from app.contracts.ceo_actions import CEOActionBatch, CEOActionType
 from app.contracts.commands import EmployeeHireRequestCommand, MeetingRequestCommand
 from app.core.ceo_execution_presets import build_ceo_create_ticket_command
-from app.core.staffing_catalog import resolve_mainline_staffing_combo
+from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
 from app.db.repository import ControlPlaneRepository
 
 
@@ -138,7 +138,7 @@ def execute_ceo_action_batch(
         if action.action_type == CEOActionType.HIRE_EMPLOYEE:
             from app.core.employee_handlers import handle_employee_hire_request
 
-            template, staffing_reason = resolve_mainline_staffing_combo(
+            template, staffing_reason = resolve_limited_ceo_staffing_combo(
                 action.payload.role_type,
                 action.payload.role_profile_refs,
             )

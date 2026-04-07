@@ -26,7 +26,7 @@ from app.core.staffing_containment import (
     contain_employee_active_tickets,
     restore_employee_requeued_tickets,
 )
-from app.core.staffing_catalog import resolve_mainline_staffing_combo
+from app.core.staffing_catalog import resolve_board_workforce_staffing_combo
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -152,7 +152,7 @@ def handle_employee_hire_request(
                 reason=f"Workflow {payload.workflow_id} was not found.",
             )
 
-        _, staffing_reason = resolve_mainline_staffing_combo(payload.role_type, payload.role_profile_refs)
+        _, staffing_reason = resolve_board_workforce_staffing_combo(payload.role_type, payload.role_profile_refs)
         if staffing_reason is not None:
             return _rejected_ack(
                 command_id=command_id,
@@ -292,7 +292,7 @@ def handle_employee_replace_request(
                 causation_hint=f"employee:{payload.replaced_employee_id}",
             )
 
-        _, staffing_reason = resolve_mainline_staffing_combo(
+        _, staffing_reason = resolve_board_workforce_staffing_combo(
             payload.replacement_role_type,
             payload.replacement_role_profile_refs,
         )
@@ -307,7 +307,7 @@ def handle_employee_replace_request(
 
         current_role_type = str(current_employee.get("role_type") or "").strip()
         current_role_profile_refs = list(current_employee.get("role_profile_refs") or [])
-        _, current_staffing_reason = resolve_mainline_staffing_combo(
+        _, current_staffing_reason = resolve_board_workforce_staffing_combo(
             current_role_type,
             current_role_profile_refs,
         )

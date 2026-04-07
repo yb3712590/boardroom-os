@@ -202,6 +202,7 @@ def _employee_hire_request_payload(
     skill_profile: dict | None = None,
     personality_profile: dict | None = None,
     aesthetic_profile: dict | None = None,
+    request_summary: str = "Hire a backup frontend maker for rework rotation.",
 ) -> dict:
     return {
         "workflow_id": workflow_id,
@@ -229,7 +230,7 @@ def _employee_hire_request_payload(
             "motion_tolerance": "restrained",
         },
         "provider_id": "prov_openai_compat",
-        "request_summary": "Hire a backup frontend maker for rework rotation.",
+        "request_summary": request_summary,
         "idempotency_key": f"employee-hire-request:{workflow_id}:{employee_id}",
     }
 
@@ -4048,10 +4049,8 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
                 "blocked_path_refs": [
-                    "staffing",
                     "ceo_create_ticket",
                     "runtime_execution",
-                    "workforce_lane",
                 ],
             },
             {
@@ -4060,10 +4059,8 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
                 "blocked_path_refs": [
-                    "staffing",
                     "ceo_create_ticket",
                     "runtime_execution",
-                    "workforce_lane",
                 ],
             },
             {
@@ -4072,10 +4069,8 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
                 "blocked_path_refs": [
-                    "staffing",
                     "ceo_create_ticket",
                     "runtime_execution",
-                    "workforce_lane",
                 ],
             },
             {
@@ -4084,10 +4079,8 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
                 "blocked_path_refs": [
-                    "staffing",
                     "ceo_create_ticket",
                     "runtime_execution",
-                    "workforce_lane",
                 ],
             },
             {
@@ -4096,10 +4089,8 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
                 "blocked_path_refs": [
-                    "staffing",
                     "ceo_create_ticket",
                     "runtime_execution",
-                    "workforce_lane",
                 ],
             },
         ]
@@ -10547,6 +10538,28 @@ def test_employee_hire_request_rejects_unsupported_mainline_staffing_combo(clien
     assert "not on the current local mvp staffing path" in response.json()["reason"].lower()
 
 
+def test_employee_hire_request_accepts_governance_cto_on_board_workforce_path(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+
+    response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_cto_governance",
+            role_type="governance_cto",
+            role_profile_refs=["cto_primary"],
+            skill_profile={"primary_domain": "architecture"},
+            personality_profile={"risk_posture": "guarded"},
+            aesthetic_profile={"surface_preference": "clarifying"},
+            request_summary="Hire a CTO governance role for architecture direction.",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+
 def test_employee_replace_request_rejects_role_profile_mismatch_for_supported_role(client):
     workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Replace maker"))
     workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
@@ -10614,6 +10627,76 @@ def test_board_approve_core_hire_request_adds_employee_to_workforce_projection(c
     assert hired_worker["skill_profile"]["system_scope"] == "surface_polish"
 
 
+def test_board_approve_core_hire_request_adds_governance_cto_to_workforce_lane(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_cto_governance",
+            role_type="governance_cto",
+            role_profile_refs=["cto_primary"],
+            skill_profile={"primary_domain": "architecture"},
+            personality_profile={"risk_posture": "guarded"},
+            aesthetic_profile={"surface_preference": "clarifying"},
+            request_summary="Hire a CTO governance role for architecture direction.",
+        ),
+    )
+
+    repository = client.app.state.repository
+    approval = repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve the CTO governance role.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:hire-cto",
+        },
+    )
+
+    workforce_response = client.get("/api/v1/projections/workforce")
+    hired_employee = repository.get_employee_projection("emp_cto_governance")
+
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+    assert hired_employee is not None
+    assert hired_employee["state"] == "ACTIVE"
+    cto_lane = next(
+        lane
+        for lane in workforce_response.json()["data"]["role_lanes"]
+        if lane["role_type"] == "governance_cto"
+    )
+    hired_worker = next(worker for worker in cto_lane["workers"] if worker["employee_id"] == "emp_cto_governance")
+    assert hired_worker["source_template_id"] == "cto_governance"
+    assert hired_worker["available_actions"] == [
+        {
+            "action_type": "FREEZE",
+            "enabled": True,
+            "disabled_reason": None,
+            "template_id": None,
+        },
+        {
+            "action_type": "RESTORE",
+            "enabled": False,
+            "disabled_reason": "Only frozen workers can be restored.",
+            "template_id": None,
+        },
+        {
+            "action_type": "REPLACE",
+            "enabled": True,
+            "disabled_reason": None,
+            "template_id": "cto_governance_backup",
+        },
+    ]
+
+
 def test_employee_replace_request_rejects_high_overlap_against_other_active_same_role_worker(client):
     workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Replace maker"))
     workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
@@ -10655,6 +10738,11 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
     assert [template["template_id"] for template in body["hire_templates"]] == [
         "frontend_engineer_backup",
         "checker_backup",
+        "backend_engineer_backup",
+        "database_engineer_backup",
+        "platform_sre_backup",
+        "architect_governance_backup",
+        "cto_governance_backup",
     ]
     assert [template["template_id"] for template in body["role_templates_catalog"]["role_templates"]] == [
         "scope_consensus_primary",
@@ -10720,12 +10808,12 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
         "active_path_refs": [
             "catalog_readonly",
             "provider_future_slot",
+            "staffing",
+            "workforce_lane",
         ],
         "blocked_path_refs": [
-            "staffing",
             "ceo_create_ticket",
             "runtime_execution",
-            "workforce_lane",
         ],
     }
 
