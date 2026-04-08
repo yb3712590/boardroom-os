@@ -98,6 +98,16 @@ def _build_responses_input(rendered_payload: RenderedExecutionPayload) -> list[d
     ]
 
 
+def _build_chat_completions_messages(rendered_payload: RenderedExecutionPayload) -> list[dict[str, object]]:
+    return [
+        {
+            "role": message.role,
+            "content": _message_payload_to_text(message.content_type, dict(message.content_payload)),
+        }
+        for message in rendered_payload.messages
+    ]
+
+
 def _extract_output_text(response_payload: dict[str, object]) -> str:
     output_text = response_payload.get("output_text")
     if isinstance(output_text, str) and output_text.strip():
@@ -140,6 +150,157 @@ def _extract_output_text(response_payload: dict[str, object]) -> str:
             "provider_response_id": response_payload.get("id"),
         },
     )
+
+
+def _extract_streaming_chat_output(
+    response: httpx.Response,
+) -> tuple[str, str | None]:
+    response_id: str | None = None
+    output_parts: list[str] = []
+    buffer = ""
+
+    for chunk in response.iter_text():
+        if not chunk:
+            continue
+        buffer += chunk
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            line = line.rstrip("\r")
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data:
+                continue
+            if data == "[DONE]":
+                combined = "".join(output_parts).strip()
+                if not combined:
+                    raise OpenAICompatProviderBadResponseError(
+                        failure_kind="PROVIDER_BAD_RESPONSE",
+                        message="Streaming chat completion did not return any assistant text output.",
+                        failure_detail={
+                            "provider_response_id": response_id,
+                        },
+                    )
+                return combined, response_id
+            try:
+                event_payload = json.loads(data)
+            except ValueError as exc:
+                raise OpenAICompatProviderBadResponseError(
+                    failure_kind="PROVIDER_BAD_RESPONSE",
+                    message=f"Streaming chat completion returned invalid JSON event: {exc}",
+                    failure_detail={
+                        "provider_response_id": response_id,
+                    },
+                ) from exc
+            if not isinstance(event_payload, dict):
+                continue
+            if response_id is None and event_payload.get("id") is not None:
+                response_id = str(event_payload.get("id"))
+            choices = event_payload.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    continue
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    output_parts.append(content)
+
+    combined = "".join(output_parts).strip()
+    if combined:
+        return combined, response_id
+    raise OpenAICompatProviderBadResponseError(
+        failure_kind="PROVIDER_BAD_RESPONSE",
+        message="Streaming chat completion ended without any assistant text output.",
+        failure_detail={
+            "provider_response_id": response_id,
+        },
+    )
+
+
+def _invoke_streaming_chat_completions(
+    config: OpenAICompatProviderConfig,
+    rendered_payload: RenderedExecutionPayload,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> OpenAICompatProviderResult:
+    try:
+        with httpx.Client(
+            timeout=config.timeout_sec,
+            transport=transport,
+        ) as client:
+            with client.stream(
+                "POST",
+                f"{config.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {config.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": config.model,
+                    "messages": _build_chat_completions_messages(rendered_payload),
+                    "stream": True,
+                    "response_format": {"type": "json_object"},
+                    **(
+                        {"reasoning": {"effort": config.reasoning_effort}}
+                        if config.reasoning_effort is not None
+                        else {}
+                    ),
+                },
+            ) as response:
+                failure_detail = {"provider_status_code": response.status_code}
+                if response.status_code == 429:
+                    retry_after_sec = _parse_retry_after_sec(response.headers.get("Retry-After"))
+                    if retry_after_sec is not None:
+                        failure_detail["retry_after_sec"] = retry_after_sec
+                    raise OpenAICompatProviderRateLimitedError(
+                        failure_kind="PROVIDER_RATE_LIMITED",
+                        message="Provider rejected the streaming chat completion request with rate limiting.",
+                        failure_detail=failure_detail,
+                    )
+                if response.status_code in {401, 403}:
+                    raise OpenAICompatProviderAuthError(
+                        failure_kind="PROVIDER_AUTH_FAILED",
+                        message="Provider rejected the configured credentials.",
+                        failure_detail=failure_detail,
+                    )
+                if response.status_code >= 500:
+                    raise OpenAICompatProviderUnavailableError(
+                        failure_kind="UPSTREAM_UNAVAILABLE",
+                        message="Provider returned an upstream server error.",
+                        failure_detail=failure_detail,
+                    )
+                if response.status_code >= 400:
+                    raise OpenAICompatProviderBadResponseError(
+                        failure_kind="PROVIDER_BAD_RESPONSE",
+                        message="Provider returned an unsupported client error.",
+                        failure_detail=failure_detail,
+                    )
+
+                output_text, response_id = _extract_streaming_chat_output(response)
+                return OpenAICompatProviderResult(
+                    output_text=output_text,
+                    response_id=response_id,
+                )
+    except httpx.TimeoutException as exc:
+        raise OpenAICompatProviderUnavailableError(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            message=f"Provider request timed out: {exc}",
+            failure_detail={
+                "provider_transport_error": type(exc).__name__,
+            },
+        ) from exc
+    except httpx.TransportError as exc:
+        raise OpenAICompatProviderUnavailableError(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            message=f"Provider transport failed: {exc}",
+            failure_detail={
+                "provider_transport_error": type(exc).__name__,
+            },
+        ) from exc
 
 
 def invoke_openai_compat_response(
@@ -215,6 +376,12 @@ def invoke_openai_compat_response(
             failure_kind="PROVIDER_BAD_RESPONSE",
             message="Provider returned an unsupported client error.",
             failure_detail=failure_detail,
+        )
+    if not response.content:
+        return _invoke_streaming_chat_completions(
+            config,
+            rendered_payload,
+            transport=transport,
         )
 
     try:

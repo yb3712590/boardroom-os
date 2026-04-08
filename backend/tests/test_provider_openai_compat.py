@@ -209,3 +209,38 @@ def test_invoke_openai_compat_response_rejects_bad_json_payloads() -> None:
 
     assert exc_info.value.failure_kind == "PROVIDER_BAD_RESPONSE"
     assert exc_info.value.failure_detail["provider_response_id"] == "resp_bad"
+
+
+def test_invoke_openai_compat_response_falls_back_to_streaming_chat_completions_when_responses_body_is_empty() -> None:
+    request_urls: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        request_urls.append(str(request.url))
+        if request.url.path.endswith("/responses"):
+            return httpx.Response(200, content=b"")
+        if request.url.path.endswith("/chat/completions"):
+            body = (
+                'data: {"id":"resp_stream_001","choices":[{"index":0,"delta":{"role":"assistant","content":"{\\"ok\\""},"finish_reason":null}]}\n\n'
+                'data: {"id":"resp_stream_001","choices":[{"index":0,"delta":{"role":"assistant","content":":true}"},"finish_reason":null}]}\n\n'
+                'data: {"id":"resp_stream_001","choices":[{"index":0,"delta":{"role":null,"content":null},"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            )
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=body,
+            )
+        raise AssertionError(f"Unexpected request URL: {request.url}")
+
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        transport=httpx.MockTransport(_handler),
+    )
+
+    assert request_urls == [
+        "https://api-vip.codex-for.me/v1/responses",
+        "https://api-vip.codex-for.me/v1/chat/completions",
+    ]
+    assert result.response_id == "resp_stream_001"
+    assert result.output_text == '{"ok":true}'
