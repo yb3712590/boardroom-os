@@ -50,6 +50,12 @@ class CEOProposalResult:
     effective_mode: str
     provider_health_summary: str
     model: str | None
+    preferred_provider_id: str | None = None
+    preferred_model: str | None = None
+    actual_provider_id: str | None = None
+    actual_model: str | None = None
+    selection_reason: str | None = None
+    policy_reason: str | None = None
     provider_response_id: str | None = None
     fallback_reason: str | None = None
 
@@ -219,6 +225,12 @@ def propose_ceo_action_batch(
             effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
             model=selection.actual_model or selection.provider.model,
+            preferred_provider_id=selection.preferred_provider_id,
+            preferred_model=selection.preferred_model,
+            actual_provider_id=selection.provider.provider_id,
+            actual_model=selection.actual_model or selection.provider.model,
+            selection_reason=selection.selection_reason,
+            policy_reason=selection.policy_reason,
             fallback_reason=provider_reason,
         )
 
@@ -255,6 +267,12 @@ def propose_ceo_action_batch(
             effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
             model=selection.actual_model or selection.provider.model,
+            preferred_provider_id=selection.preferred_provider_id,
+            preferred_model=selection.preferred_model,
+            actual_provider_id=selection.provider.provider_id,
+            actual_model=selection.actual_model or selection.provider.model,
+            selection_reason=selection.selection_reason,
+            policy_reason=selection.policy_reason,
             provider_response_id=provider_result.response_id,
         )
     except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as exc:
@@ -276,6 +294,12 @@ def propose_ceo_action_batch(
                         effective_mode=failover_mode,
                         provider_health_summary=provider_health_summary,
                         model=failover_selection.actual_model or failover_selection.provider.model,
+                        preferred_provider_id=failover_selection.preferred_provider_id,
+                        preferred_model=failover_selection.preferred_model,
+                        actual_provider_id=failover_selection.provider.provider_id,
+                        actual_model=failover_selection.actual_model or failover_selection.provider.model,
+                        selection_reason=failover_selection.selection_reason,
+                        policy_reason=failover_selection.policy_reason,
                         provider_response_id=provider_result.response_id,
                     )
                 except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as failover_exc:
@@ -293,5 +317,11 @@ def propose_ceo_action_batch(
             effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
             model=selection.actual_model or selection.provider.model,
+            preferred_provider_id=selection.preferred_provider_id,
+            preferred_model=selection.preferred_model,
+            actual_provider_id=selection.provider.provider_id,
+            actual_model=selection.actual_model or selection.provider.model,
+            selection_reason=selection.selection_reason,
+            policy_reason=selection.policy_reason,
             fallback_reason=fallback_reason,
         )

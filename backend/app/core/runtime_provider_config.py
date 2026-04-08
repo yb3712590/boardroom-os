@@ -5,6 +5,7 @@ import shutil
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 
@@ -12,7 +13,10 @@ from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
     RuntimeProviderCapabilityTag,
+    RuntimeProviderCostTier,
     RuntimeProviderMode,
+    RuntimeProviderParticipationPolicy,
+    RuntimeSelectionPreference,
     RuntimeProviderUpsertCommand,
 )
 from app.contracts.common import StrictModel
@@ -106,6 +110,8 @@ class RuntimeProviderConfigEntry(StrictModel):
     reasoning_effort: str | None = None
     command_path: str | None = None
     capability_tags: list[RuntimeProviderCapabilityTag] = Field(default_factory=list)
+    cost_tier: RuntimeProviderCostTier = RuntimeProviderCostTier.STANDARD
+    participation_policy: RuntimeProviderParticipationPolicy = RuntimeProviderParticipationPolicy.ALWAYS_ALLOWED
     fallback_provider_ids: list[str] = Field(default_factory=list)
 
 
@@ -128,6 +134,8 @@ class RuntimeProviderSelection:
     preferred_model: str | None
     actual_model: str | None
     binding_target_ref: str | None = None
+    selection_reason: str | None = None
+    policy_reason: str | None = None
 
 
 DEFAULT_PROVIDER_CAPABILITY_TAGS = (
@@ -135,6 +143,20 @@ DEFAULT_PROVIDER_CAPABILITY_TAGS = (
     RuntimeProviderCapabilityTag.PLANNING,
     RuntimeProviderCapabilityTag.IMPLEMENTATION,
     RuntimeProviderCapabilityTag.REVIEW,
+)
+
+LOW_FREQUENCY_HIGH_LEVERAGE_TARGET_REFS = frozenset(
+    {
+        ROLE_BINDING_CEO_SHADOW,
+        ROLE_BINDING_UI_DESIGNER,
+        ROLE_BINDING_ARCHITECT,
+        ROLE_BINDING_CTO,
+        EXECUTION_TARGET_SCOPE_CONSENSUS,
+        EXECUTION_TARGET_SCOPE_GOVERNANCE_DOCUMENT,
+        EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT,
+        EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
+        EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT,
+    }
 )
 
 RUNTIME_TARGET_CAPABILITY_FLOORS: dict[str, tuple[RuntimeProviderCapabilityTag, ...]] = {
@@ -264,6 +286,8 @@ def _default_provider_entries(
             timeout_sec=openai_timeout_sec,
             reasoning_effort=openai_reasoning_effort,
             capability_tags=list(DEFAULT_PROVIDER_CAPABILITY_TAGS),
+            cost_tier=RuntimeProviderCostTier.STANDARD,
+            participation_policy=RuntimeProviderParticipationPolicy.ALWAYS_ALLOWED,
             fallback_provider_ids=[],
         ),
         RuntimeProviderConfigEntry(
@@ -275,6 +299,8 @@ def _default_provider_entries(
             model=None,
             timeout_sec=30.0,
             capability_tags=list(DEFAULT_PROVIDER_CAPABILITY_TAGS),
+            cost_tier=RuntimeProviderCostTier.PREMIUM,
+            participation_policy=RuntimeProviderParticipationPolicy.LOW_FREQUENCY_ONLY,
             fallback_provider_ids=[],
         ),
     ]
@@ -320,6 +346,8 @@ def _migrate_legacy_provider_payload(payload: dict) -> dict:
                 "timeout_sec": payload.get("timeout_sec") or 30.0,
                 "reasoning_effort": payload.get("reasoning_effort"),
                 "capability_tags": [tag.value for tag in DEFAULT_PROVIDER_CAPABILITY_TAGS],
+                "cost_tier": RuntimeProviderCostTier.STANDARD,
+                "participation_policy": RuntimeProviderParticipationPolicy.ALWAYS_ALLOWED,
                 "fallback_provider_ids": [],
             },
             {
@@ -331,6 +359,8 @@ def _migrate_legacy_provider_payload(payload: dict) -> dict:
                 "model": None,
                 "timeout_sec": 30.0,
                 "capability_tags": [tag.value for tag in DEFAULT_PROVIDER_CAPABILITY_TAGS],
+                "cost_tier": RuntimeProviderCostTier.PREMIUM,
+                "participation_policy": RuntimeProviderParticipationPolicy.LOW_FREQUENCY_ONLY,
                 "fallback_provider_ids": [],
             },
         ],
@@ -351,6 +381,11 @@ def _normalize_provider_store_payload(payload: dict) -> dict:
         normalized_provider.setdefault(
             "capability_tags",
             [tag.value for tag in DEFAULT_PROVIDER_CAPABILITY_TAGS],
+        )
+        normalized_provider.setdefault("cost_tier", RuntimeProviderCostTier.STANDARD)
+        normalized_provider.setdefault(
+            "participation_policy",
+            RuntimeProviderParticipationPolicy.ALWAYS_ALLOWED,
         )
         normalized_provider.setdefault("fallback_provider_ids", [])
         providers.append(normalized_provider)
@@ -406,9 +441,21 @@ def find_provider_entry(
 
 
 def _normalized_provider_entry(provider: RuntimeProviderConfigEntry) -> RuntimeProviderConfigEntry:
-    if provider.capability_tags:
+    if (
+        provider.capability_tags
+        and provider.cost_tier is not None
+        and provider.participation_policy is not None
+    ):
         return provider
-    return provider.model_copy(update={"capability_tags": list(DEFAULT_PROVIDER_CAPABILITY_TAGS)})
+    return provider.model_copy(
+        update={
+            "capability_tags": list(provider.capability_tags or DEFAULT_PROVIDER_CAPABILITY_TAGS),
+            "cost_tier": provider.cost_tier or RuntimeProviderCostTier.STANDARD,
+            "participation_policy": (
+                provider.participation_policy or RuntimeProviderParticipationPolicy.ALWAYS_ALLOWED
+            ),
+        }
+    )
 
 
 def _provider_capability_tag_values(provider: RuntimeProviderConfigEntry) -> set[str]:
@@ -422,6 +469,65 @@ def provider_meets_target_capability_floor(provider: RuntimeProviderConfigEntry,
         return True
     capability_values = _provider_capability_tag_values(provider)
     return all(required_tag.value in capability_values for required_tag in required_tags)
+
+
+def target_is_low_frequency_high_leverage(target_ref: str) -> bool:
+    return target_ref in LOW_FREQUENCY_HIGH_LEVERAGE_TARGET_REFS
+
+
+def provider_allows_target_participation(provider: RuntimeProviderConfigEntry, target_ref: str) -> bool:
+    normalized_provider = _normalized_provider_entry(provider)
+    if normalized_provider.participation_policy == RuntimeProviderParticipationPolicy.ALWAYS_ALLOWED:
+        return True
+    return target_is_low_frequency_high_leverage(target_ref)
+
+
+def _preferred_provider_policy_reason(provider: RuntimeProviderConfigEntry, target_ref: str) -> str | None:
+    if provider_allows_target_participation(provider, target_ref):
+        return None
+    if provider.participation_policy == RuntimeProviderParticipationPolicy.LOW_FREQUENCY_ONLY:
+        return "preferred_provider_low_frequency_only_for_high_frequency_target"
+    return "preferred_provider_participation_policy_rejected"
+
+
+def _normalize_runtime_preference(
+    runtime_preference: RuntimeSelectionPreference | dict[str, Any] | None,
+) -> RuntimeSelectionPreference | None:
+    if runtime_preference is None:
+        return None
+    if isinstance(runtime_preference, RuntimeSelectionPreference):
+        return runtime_preference
+    if isinstance(runtime_preference, dict):
+        preferred_provider_id = str(runtime_preference.get("preferred_provider_id") or "").strip()
+        if not preferred_provider_id:
+            return None
+        preferred_model = runtime_preference.get("preferred_model")
+        return RuntimeSelectionPreference(
+            preferred_provider_id=preferred_provider_id,
+            preferred_model=(str(preferred_model).strip() or None) if preferred_model is not None else None,
+        )
+    return None
+
+
+def _build_runtime_provider_selection(
+    *,
+    provider: RuntimeProviderConfigEntry,
+    preferred_provider_id: str,
+    preferred_model: str | None,
+    actual_model: str | None,
+    binding_target_ref: str | None,
+    selection_reason: str,
+    policy_reason: str | None = None,
+) -> RuntimeProviderSelection:
+    return RuntimeProviderSelection(
+        provider=provider,
+        preferred_provider_id=preferred_provider_id,
+        preferred_model=preferred_model,
+        actual_model=actual_model,
+        binding_target_ref=binding_target_ref,
+        selection_reason=selection_reason,
+        policy_reason=policy_reason,
+    )
 
 
 def _binding_target_ref_candidates(target_ref: str) -> tuple[str, ...]:
@@ -441,20 +547,60 @@ def resolve_provider_selection(
     *,
     target_ref: str,
     employee_provider_id: str | None,
+    runtime_preference: RuntimeSelectionPreference | dict[str, Any] | None = None,
 ) -> RuntimeProviderSelection | None:
+    normalized_preference = _normalize_runtime_preference(runtime_preference)
+    preferred_provider_id = (
+        normalized_preference.preferred_provider_id if normalized_preference is not None else None
+    )
+    preferred_model = normalized_preference.preferred_model if normalized_preference is not None else None
+    preferred_policy_reason: str | None = None
+    if normalized_preference is not None:
+        preferred_provider = find_provider_entry(config, normalized_preference.preferred_provider_id)
+        if (
+            preferred_provider is not None
+            and preferred_provider.enabled
+            and provider_meets_target_capability_floor(preferred_provider, target_ref)
+            and provider_allows_target_participation(preferred_provider, target_ref)
+        ):
+            resolved_preferred_model = normalized_preference.preferred_model or preferred_provider.model
+            return _build_runtime_provider_selection(
+                provider=preferred_provider,
+                preferred_provider_id=normalized_preference.preferred_provider_id,
+                preferred_model=resolved_preferred_model,
+                actual_model=resolved_preferred_model,
+                binding_target_ref=target_ref,
+                selection_reason="ticket_runtime_preference",
+            )
+        if preferred_provider is not None:
+            preferred_policy_reason = _preferred_provider_policy_reason(preferred_provider, target_ref)
+
     for binding_target_ref in _binding_target_ref_candidates(target_ref):
         for binding in config.role_bindings:
             if binding.target_ref != binding_target_ref:
                 continue
             provider = find_provider_entry(config, binding.provider_id)
-            if provider is None or not provider.enabled or not provider_meets_target_capability_floor(provider, target_ref):
+            if (
+                provider is None
+                or not provider.enabled
+                or not provider_meets_target_capability_floor(provider, target_ref)
+                or not provider_allows_target_participation(provider, target_ref)
+            ):
                 continue
-            return RuntimeProviderSelection(
+            resolved_preferred_provider_id = preferred_provider_id or provider.provider_id
+            resolved_preferred_model = preferred_model or binding.model or provider.model
+            return _build_runtime_provider_selection(
                 provider=provider,
-                preferred_provider_id=provider.provider_id,
-                preferred_model=binding.model or provider.model,
+                preferred_provider_id=resolved_preferred_provider_id,
+                preferred_model=resolved_preferred_model,
                 actual_model=binding.model or provider.model,
                 binding_target_ref=target_ref,
+                selection_reason=(
+                    "role_binding_fallback_after_ticket_runtime_preference"
+                    if normalized_preference is not None
+                    else "role_binding"
+                ),
+                policy_reason=preferred_policy_reason,
             )
 
     employee_provider = find_provider_entry(config, employee_provider_id)
@@ -462,23 +608,41 @@ def resolve_provider_selection(
         employee_provider is not None
         and employee_provider.enabled
         and provider_meets_target_capability_floor(employee_provider, target_ref)
+        and provider_allows_target_participation(employee_provider, target_ref)
     ):
-        return RuntimeProviderSelection(
+        return _build_runtime_provider_selection(
             provider=employee_provider,
-            preferred_provider_id=employee_provider.provider_id,
-            preferred_model=employee_provider.model,
+            preferred_provider_id=preferred_provider_id or employee_provider.provider_id,
+            preferred_model=preferred_model or employee_provider.model,
             actual_model=employee_provider.model,
             binding_target_ref=None,
+            selection_reason=(
+                "employee_provider_fallback_after_ticket_runtime_preference"
+                if normalized_preference is not None
+                else "employee_provider"
+            ),
+            policy_reason=preferred_policy_reason,
         )
 
     default_provider = find_provider_entry(config, config.default_provider_id)
-    if default_provider is not None and default_provider.enabled and provider_meets_target_capability_floor(default_provider, target_ref):
-        return RuntimeProviderSelection(
+    if (
+        default_provider is not None
+        and default_provider.enabled
+        and provider_meets_target_capability_floor(default_provider, target_ref)
+        and provider_allows_target_participation(default_provider, target_ref)
+    ):
+        return _build_runtime_provider_selection(
             provider=default_provider,
-            preferred_provider_id=default_provider.provider_id,
-            preferred_model=default_provider.model,
+            preferred_provider_id=preferred_provider_id or default_provider.provider_id,
+            preferred_model=preferred_model or default_provider.model,
             actual_model=default_provider.model,
             binding_target_ref=None,
+            selection_reason=(
+                "default_provider_fallback_after_ticket_runtime_preference"
+                if normalized_preference is not None
+                else "default_provider"
+            ),
+            policy_reason=preferred_policy_reason,
         )
     return None
 
@@ -504,12 +668,14 @@ def resolve_provider_failover_selections(
         if health_status != "HEALTHY":
             continue
         selections.append(
-            RuntimeProviderSelection(
+            _build_runtime_provider_selection(
                 provider=fallback_provider,
                 preferred_provider_id=primary_selection.preferred_provider_id,
                 preferred_model=primary_selection.preferred_model,
                 actual_model=fallback_provider.model,
                 binding_target_ref=primary_selection.binding_target_ref,
+                selection_reason="provider_failover",
+                policy_reason=primary_selection.policy_reason,
             )
         )
         attempted_provider_ids.add(fallback_provider.provider_id)

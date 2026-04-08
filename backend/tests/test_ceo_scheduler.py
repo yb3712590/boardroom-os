@@ -844,6 +844,12 @@ def test_ceo_shadow_prefers_role_binding_over_default_provider(client, monkeypat
 
     assert run["effective_mode"] == "CLAUDE_CODE_CLI_LIVE"
     assert run["model"] == "claude-opus-4-1"
+    assert run["preferred_provider_id"] == CLAUDE_CODE_PROVIDER_ID
+    assert run["preferred_model"] == "claude-opus-4-1"
+    assert run["actual_provider_id"] == CLAUDE_CODE_PROVIDER_ID
+    assert run["actual_model"] == "claude-opus-4-1"
+    assert run["selection_reason"] == "role_binding"
+    assert run["policy_reason"] is None
     assert run["proposed_action_batch"]["summary"] == "Use Claude for the CEO proposal."
 
 
@@ -948,6 +954,12 @@ def test_ceo_shadow_failover_uses_fallback_provider_when_primary_is_unavailable(
     assert openai_attempts["value"] == 1
     assert run["effective_mode"] == "CLAUDE_CODE_CLI_LIVE"
     assert run["deterministic_fallback_used"] is False
+    assert run["preferred_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert run["preferred_model"] == "gpt-5.3-codex"
+    assert run["actual_provider_id"] == CLAUDE_CODE_PROVIDER_ID
+    assert run["actual_model"] == "claude-sonnet-4-6"
+    assert run["selection_reason"] == "provider_failover"
+    assert run["policy_reason"] is None
     assert run["proposed_action_batch"]["summary"] == "Claude handled the CEO failover proposal."
 
 

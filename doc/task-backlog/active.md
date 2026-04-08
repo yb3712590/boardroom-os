@@ -7,7 +7,6 @@
 | 方向 | 任务范围 | 默认状态 | 备注 |
 |------|----------|----------|------|
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | blocker 仍在，但不再占用当前主线 |
-| Provider 增强 | `P2-PRV-007` 到 `P2-PRV-008` | 后置增强 | `P2-PRV-001/002/003/004/005/006` 已于 2026-04-07 手动纳入并收口 |
 
 ## 当前判断
 
@@ -18,6 +17,7 @@
 - `P2-CEO-002` 已于 2026-04-07 手动纳入并收口：OpenAI Compat live CEO 现在会先消费当前 workflow 内 `reuse_candidates`，优先复用已有完成交付、已关闭会议或恢复现有工作；deterministic fallback 保持不变
 - `P2-PRV-001 / P2-PRV-005 / P2-PRV-006` 已于 2026-04-07 手动纳入并收口：runtime provider 已从单一 OpenAI 表单升级为最小 registry，当前真实支持 `OpenAI Compat / Claude Code CLI`，并开放现有真实角色的默认 provider / model 绑定
 - `P2-PRV-002 / P2-PRV-003 / P2-PRV-004` 已于 2026-04-07 手动纳入并收口：provider registry 现在会暴露结构化 `capability_tags[]`、每个 provider 的 `health_status / health_reason`，并支持最小 `fallback_provider_ids[]`；运行时与 CEO 只在 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE` 时尝试满足目标能力底线的备选 provider
+- `P2-PRV-007 / P2-PRV-008` 已于 2026-04-08 手动提升并收口：`ticket-create` 与 `CEO create-ticket` 现已补入可选 `runtime_preference`；provider registry / projection / 前端设置抽屉现已补入 `cost_tier / participation_policy`；运行时与 CEO shadow 审计现在都会记录 `preferred_* / actual_* / selection_reason / policy_reason`
 - `P2-GOV-001` 已于 2026-04-07 手动纳入并收口：后端先补了治理模板基础目录，给后续角色目录和文档链打底
 - `P2-GOV-002` 已于 2026-04-07 手动纳入并收口：当前统一只读 `role_templates_catalog` 已覆盖 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段；`workforce` worker 还会返回 `source_template_id / source_fragment_refs`
 - `runtime-provider.future_binding_slots` 现在不再只看治理角色，而是从统一目录筛出未启用模板；当前最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`
@@ -33,7 +33,7 @@
 - `P2-RLS-001` 已于 2026-04-08 完成：Board/workforce staffing 现在已覆盖 `backend / database / platform / architect / cto` 五类新增角色；审批通过后这些角色会真实进入 workforce lane，并保留一致的 `FREEZE / RESTORE / REPLACE` 动作和模板来源字段
 - `P2-RLS-002` 已于 2026-04-08 完成：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role
 - `P2-RLS-003` 已于 2026-04-08 完成：五类新增角色现在都已进入 formal runtime live path。`backend / database / platform` 已补入正式 build execution target，`architect / cto` 已进入正式治理文档 runtime 支持矩阵；Provider 设置抽屉不再把它们放在 `Reserved bindings`，`runtime-provider.future_binding_slots` 当前为空
-- 当前没有新的可直接开启主线任务；剩余未关闭项都属于冻结后置或后置增强
+- 当前没有新的可直接开启主线任务；剩余未关闭项都属于冻结后置
 
 ## P1：冻结后置
 
@@ -49,20 +49,9 @@
 | P1-CLN-002 | 移动多租户代码到 _frozen/ | 2h | 冻结后置 |
 | P1-CLN-003 | 移动对象存储代码到 _frozen/ | 2h | 冻结后置 |
 
-## P2：当前主线与增强
-
-### 4.1 治理模板与文档链
-
-### 4.2 Provider 增强
-
-| ID | 标题 | 预估 | 状态 |
-|----|------|------|------|
-| P2-PRV-007 | 任务级模型覆盖与 preferred/actual model 追踪 | 4h | 后置增强 |
-| P2-PRV-008 | 成本分层与高价模型低频路由 | 4h | 后置增强 |
-
 ## 依赖提醒
 
 - `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
 - `P2-DEC-*`、`P2-GOV-*` 与 `P2-RLS-*` 已全部完成；当前没有新的可直接开启主线任务
-- `P2-PRV-*` 的后置增强如果会继续碰运行时路由，也应以后续 `P2-DEC-003/004` 的边界收口为前置
+- `P2-PRV-*` 已全部完成；如果后续继续扩 provider 路由，仍应以后续 `P2-DEC-003/004` 已收口的边界为前置
 - 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`

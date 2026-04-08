@@ -327,6 +327,10 @@ def _runtime_provider_upsert_payload(
     claude_capability_tags: list[str] | None = None,
     openai_fallback_provider_ids: list[str] | None = None,
     claude_fallback_provider_ids: list[str] | None = None,
+    openai_cost_tier: str = "standard",
+    claude_cost_tier: str = "premium",
+    openai_participation_policy: str = "always_allowed",
+    claude_participation_policy: str = "low_frequency_only",
     role_bindings: list[dict] | None = None,
     idempotency_key: str = "runtime-provider-upsert:test",
 ) -> dict:
@@ -347,6 +351,8 @@ def _runtime_provider_upsert_payload(
                 "capability_tags": list(
                     openai_capability_tags or ["structured_output", "planning", "implementation"]
                 ),
+                "cost_tier": openai_cost_tier,
+                "participation_policy": openai_participation_policy,
                 "fallback_provider_ids": list(openai_fallback_provider_ids or []),
             },
             {
@@ -363,6 +369,8 @@ def _runtime_provider_upsert_payload(
                 "capability_tags": list(
                     claude_capability_tags or ["structured_output", "planning", "implementation", "review"]
                 ),
+                "cost_tier": claude_cost_tier,
+                "participation_policy": claude_participation_policy,
                 "fallback_provider_ids": list(claude_fallback_provider_ids or []),
             },
         ],
@@ -4039,9 +4047,13 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
             "planning",
             "implementation",
         ]
+        assert projection_data["providers"][0]["cost_tier"] == "standard"
+        assert projection_data["providers"][0]["participation_policy"] == "always_allowed"
         assert projection_data["providers"][0]["fallback_provider_ids"] == []
         assert projection_data["providers"][0]["health_status"] == "HEALTHY"
         assert "saved OpenAI-compatible provider config" in projection_data["providers"][0]["health_reason"]
+        assert projection_data["providers"][1]["cost_tier"] == "premium"
+        assert projection_data["providers"][1]["participation_policy"] == "low_frequency_only"
         assert projection_data["future_binding_slots"] == []
         assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
         assert dashboard_data["runtime_status"]["provider_health_summary"] == "HEALTHY"

@@ -247,6 +247,124 @@ def test_resolve_provider_selection_prefers_role_binding_over_employee_provider(
     assert selection.binding_target_ref == "role_profile:frontend_engineer_primary"
 
 
+def test_resolve_provider_selection_prefers_ticket_runtime_preference_when_allowed() -> None:
+    config = RuntimeProviderStoredConfig(
+        default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+        providers=[
+            RuntimeProviderConfigEntry(
+                provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                adapter_kind="openai_compat",
+                label="OpenAI Compat",
+                enabled=True,
+                base_url="https://api.example.test/v1",
+                api_key="sk-test-secret",
+                model="gpt-5.3-codex",
+                timeout_sec=30.0,
+                reasoning_effort="medium",
+                capability_tags=["structured_output", "implementation"],
+                cost_tier="standard",
+                participation_policy="always_allowed",
+            ),
+            RuntimeProviderConfigEntry(
+                provider_id=CLAUDE_CODE_PROVIDER_ID,
+                adapter_kind="claude_code_cli",
+                label="Claude Code",
+                enabled=True,
+                command_path="/Users/bill/.local/bin/claude",
+                model="claude-sonnet-4-6",
+                timeout_sec=45.0,
+                capability_tags=["structured_output", "planning", "implementation"],
+                cost_tier="premium",
+                participation_policy="always_allowed",
+            ),
+        ],
+        role_bindings=[
+            RuntimeProviderRoleBinding(
+                target_ref="execution_target:frontend_build",
+                provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                model="gpt-5.3-codex",
+            )
+        ],
+    )
+
+    selection = resolve_provider_selection(
+        config,
+        target_ref="execution_target:frontend_build",
+        employee_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+        runtime_preference={
+            "preferred_provider_id": CLAUDE_CODE_PROVIDER_ID,
+            "preferred_model": "claude-opus-4-1",
+        },
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == CLAUDE_CODE_PROVIDER_ID
+    assert selection.preferred_provider_id == CLAUDE_CODE_PROVIDER_ID
+    assert selection.preferred_model == "claude-opus-4-1"
+    assert selection.actual_model == "claude-opus-4-1"
+    assert selection.selection_reason == "ticket_runtime_preference"
+    assert selection.policy_reason is None
+
+
+def test_resolve_provider_selection_downgrades_low_frequency_only_ticket_preference_for_high_frequency_target() -> None:
+    config = RuntimeProviderStoredConfig(
+        default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+        providers=[
+            RuntimeProviderConfigEntry(
+                provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                adapter_kind="openai_compat",
+                label="OpenAI Compat",
+                enabled=True,
+                base_url="https://api.example.test/v1",
+                api_key="sk-test-secret",
+                model="gpt-5.3-codex",
+                timeout_sec=30.0,
+                reasoning_effort="medium",
+                capability_tags=["structured_output", "implementation"],
+                cost_tier="standard",
+                participation_policy="always_allowed",
+            ),
+            RuntimeProviderConfigEntry(
+                provider_id=CLAUDE_CODE_PROVIDER_ID,
+                adapter_kind="claude_code_cli",
+                label="Claude Code",
+                enabled=True,
+                command_path="/Users/bill/.local/bin/claude",
+                model="claude-sonnet-4-6",
+                timeout_sec=45.0,
+                capability_tags=["structured_output", "planning", "implementation"],
+                cost_tier="premium",
+                participation_policy="low_frequency_only",
+            ),
+        ],
+        role_bindings=[
+            RuntimeProviderRoleBinding(
+                target_ref="execution_target:frontend_build",
+                provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                model="gpt-5.3-codex",
+            )
+        ],
+    )
+
+    selection = resolve_provider_selection(
+        config,
+        target_ref="execution_target:frontend_build",
+        employee_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+        runtime_preference={
+            "preferred_provider_id": CLAUDE_CODE_PROVIDER_ID,
+            "preferred_model": "claude-opus-4-1",
+        },
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == OPENAI_COMPAT_PROVIDER_ID
+    assert selection.preferred_provider_id == CLAUDE_CODE_PROVIDER_ID
+    assert selection.preferred_model == "claude-opus-4-1"
+    assert selection.actual_model == "gpt-5.3-codex"
+    assert selection.selection_reason == "role_binding_fallback_after_ticket_runtime_preference"
+    assert selection.policy_reason == "preferred_provider_low_frequency_only_for_high_frequency_target"
+
+
 def test_resolve_provider_selection_falls_back_to_employee_provider_and_default_provider() -> None:
     config = RuntimeProviderStoredConfig(
         default_provider_id=OPENAI_COMPAT_PROVIDER_ID,

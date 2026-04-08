@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from app.contracts.common import StrictModel
-from app.contracts.commands import DispatchIntent, ExecutionContract, MeetingType
+from app.contracts.commands import DispatchIntent, ExecutionContract, MeetingType, RuntimeSelectionPreference
 
 
 class CEOActionType(StrEnum):
@@ -25,6 +25,7 @@ class CEOCreateTicketPayload(StrictModel):
     output_schema_ref: str = Field(min_length=1)
     execution_contract: ExecutionContract | None = None
     dispatch_intent: DispatchIntent | None = None
+    runtime_preference: RuntimeSelectionPreference | None = None
     summary: str = Field(min_length=1)
     parent_ticket_id: str | None = None
 

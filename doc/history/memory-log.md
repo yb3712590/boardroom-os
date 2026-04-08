@@ -111,6 +111,10 @@
 - `role_templates_catalog` 这轮已不再把五类新增角色写成 `CATALOG_ONLY`；五类模板全部改成 `LIVE_ON_MAINLINE`，但仍保留既有边界：`backend / database / platform` 继续挡在 direct CEO create-ticket 外，`architect / cto` 继续只走治理文档 runtime
 - `runtime-provider.future_binding_slots` 当前为空，Provider 设置抽屉会把五类新增角色直接展示在当前可编辑绑定区；Context Compiler 也已补齐这五类 role profile 的组织语义映射
 - 当前验证基线更新为 backend `506 passed`、frontend build passed、frontend `76 passed`
+- `P2-PRV-007 / P2-PRV-008` 已完成：`ticket-create` 与 `CEO create-ticket` 现在都可选携带 `runtime_preference`，provider registry / projection / 前端设置抽屉现已补入 `cost_tier / participation_policy`
+- provider 选路顺序现已统一收口为 `任务级偏好 -> execution target / role 绑定 -> 员工 provider -> 默认 provider`；命中高价低频限制时会自动降级到下一层可用 provider，并把 `selection_reason / policy_reason` 写入运行时与 CEO 审计
+- 当前低频高杠杆分类固定复用主线语义：`ceo_shadow`、scope/governance 文档链、`architect / cto` 治理文档属于低频高杠杆；`BUILD / CHECK / REVIEW / CLOSEOUT` 属于高频执行或高频审查
+- 当前验证基线更新为 backend `508 passed`、frontend build passed、frontend `77 passed`
 
 ## Current Working Set
 

@@ -278,6 +278,12 @@ def run_ceo_shadow_for_trigger(
         proposal.effective_mode = "SHADOW_ERROR"
         proposal.provider_health_summary = "ERROR"
         proposal.model = None
+        proposal.preferred_provider_id = None
+        proposal.preferred_model = None
+        proposal.actual_provider_id = None
+        proposal.actual_model = None
+        proposal.selection_reason = None
+        proposal.policy_reason = None
         proposal.provider_response_id = None
         proposal.fallback_reason = fallback_reason
         deterministic_fallback_used = True
@@ -293,6 +299,12 @@ def run_ceo_shadow_for_trigger(
             effective_mode=proposal.effective_mode,
             provider_health_summary=proposal.provider_health_summary,
             model=proposal.model,
+            preferred_provider_id=proposal.preferred_provider_id,
+            preferred_model=proposal.preferred_model,
+            actual_provider_id=proposal.actual_provider_id,
+            actual_model=proposal.actual_model,
+            selection_reason=proposal.selection_reason,
+            policy_reason=proposal.policy_reason,
             prompt_version=CEO_SHADOW_PROMPT_VERSION,
             provider_response_id=proposal.provider_response_id,
             fallback_reason=proposal.fallback_reason,

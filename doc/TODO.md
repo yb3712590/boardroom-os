@@ -14,8 +14,8 @@
 
 ## 当前基线（2026-04-08）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `506 passed`
-- frontend：`npm run build` -> passed，`npm run test:run` -> `76 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `508 passed`
+- frontend：`npm run build` -> passed，`npm run test:run` -> `77 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
 ## 当前批次
@@ -46,6 +46,14 @@
 - `P2-RLS-001` 已完成（2026-04-08）：`backend / database / platform / architect / cto` 五类模板现在已进入 Board/workforce staffing 主链；Board 可发起 hire / replace 审批，审批通过后这些角色会真实进入 workforce lane，并带上 `source_template_id / source_fragment_refs` 与一致的 `FREEZE / RESTORE / REPLACE` 动作；这轮同时把 board/workforce staffing 与 CEO limited hire 拆开，确保新增角色仍不会提前进入 CEO preset
 - `P2-RLS-002` 已完成（2026-04-08）：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口，并通过最小 `execution_contract + legacy role_profile:*` 兼容路径执行；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`
 - `P2-RLS-003` 已完成（2026-04-08）：`backend / database / platform` 现在已进入正式 `implementation_bundle` runtime live 路径，并新增 `backend_build / database_build / platform_build` 三类 execution target；`architect_primary / cto_primary` 现在也已进入正式治理文档 runtime 支持矩阵与 provider target label。`role_templates_catalog` 五类新增模板现已标成 `LIVE_ON_MAINLINE`，`runtime-provider.future_binding_slots` 当前为空，Provider 设置抽屉改为直接编辑这五类角色的当前绑定；同时保留既有边界：`backend / database / platform` 仍不进入 direct CEO create-ticket，`architect / cto` 仍不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
+
+### `P2-PRV`：Provider 策略收口
+
+状态：`已完成（2026-04-08，本轮手动提升并收口；与主线关系：在 provider registry、角色绑定和 runtime live path 已收口后，把任务级 runtime 偏好、静态成本层级和参与策略补进现有 CEO / runtime 审计闭环，同时保持“用户只通过 CEO / Board 施加影响”的边界）`
+
+- `P2-PRV-007` 已完成（2026-04-08）：`ticket-create` 与 `CEO create-ticket` 现在都可选携带 `runtime_preference`，最小支持 `preferred_provider_id / preferred_model`；当前只作为 CEO / 内部兼容入口能力，不新增 Board 侧人工建票入口。运行时与 CEO shadow 审计现在都会稳定写出 `preferred_provider_id / preferred_model / actual_provider_id / actual_model / selection_reason / policy_reason`
+- `P2-PRV-008` 已完成（2026-04-08）：provider registry、投影和前端设置抽屉现在都会暴露 `cost_tier / participation_policy`；当前静态策略固定支持 `standard / premium` 两档成本层级，以及 `always_allowed / low_frequency_only` 两档参与策略。provider 选路顺序现已收口为 `任务级偏好 -> 目标/角色绑定 -> 员工 provider -> 默认 provider`；命中高价低频限制时，会自动降级到下一层可用 provider，而不是硬失败
+- 当前低频高杠杆路径按现有主线语义固定收口：`ceo_shadow`、scope/governance 文档链、`architect / cto` 治理文档属于低频高杠杆；`BUILD / CHECK / REVIEW / CLOSEOUT` 属于高频执行或高频审查；本轮不引入预算自适应、动态频率控制或新的策略引擎
 
 ### `P2-M7`：集成、文档与交付口径收口
 

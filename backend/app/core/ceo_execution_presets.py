@@ -632,6 +632,7 @@ def build_ceo_create_ticket_command(
             )
         ),
         dispatch_intent=payload.dispatch_intent,
+        runtime_preference=payload.runtime_preference,
         auto_review_request=(
             _build_project_init_auto_review_request(ticket_id)
             if is_project_init_scope

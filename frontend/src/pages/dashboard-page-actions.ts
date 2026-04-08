@@ -116,6 +116,8 @@ export function useDashboardPageActions({
       reasoning_effort: string | null
       command_path: string | null
       capability_tags: string[]
+      cost_tier: string
+      participation_policy: string
       fallback_provider_ids: string[]
     }>
     roleBindings: Array<{

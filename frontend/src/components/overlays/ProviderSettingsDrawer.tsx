@@ -57,6 +57,8 @@ type ProviderSettingsDrawerProps = {
       reasoning_effort: string | null
       command_path: string | null
       capability_tags: string[]
+      cost_tier: string
+      participation_policy: string
       fallback_provider_ids: string[]
     }>
     roleBindings: Array<{
@@ -103,6 +105,10 @@ export function ProviderSettingsDrawer({
   const [openaiTimeoutSec, setOpenaiTimeoutSec] = useState(String(openaiProvider?.timeout_sec ?? 30))
   const [openaiReasoningEffort, setOpenaiReasoningEffort] = useState(openaiProvider?.reasoning_effort ?? '')
   const [openaiCapabilityTags, setOpenaiCapabilityTags] = useState<string[]>(openaiProvider?.capability_tags ?? [])
+  const [openaiCostTier, setOpenaiCostTier] = useState(openaiProvider?.cost_tier ?? 'standard')
+  const [openaiParticipationPolicy, setOpenaiParticipationPolicy] = useState(
+    openaiProvider?.participation_policy ?? 'always_allowed',
+  )
   const [openaiFallbackProviderId, setOpenaiFallbackProviderId] = useState(
     openaiProvider?.fallback_provider_ids?.[0] ?? '',
   )
@@ -110,6 +116,10 @@ export function ProviderSettingsDrawer({
   const [claudeModel, setClaudeModel] = useState(claudeProvider?.model ?? '')
   const [claudeTimeoutSec, setClaudeTimeoutSec] = useState(String(claudeProvider?.timeout_sec ?? 30))
   const [claudeCapabilityTags, setClaudeCapabilityTags] = useState<string[]>(claudeProvider?.capability_tags ?? [])
+  const [claudeCostTier, setClaudeCostTier] = useState(claudeProvider?.cost_tier ?? 'premium')
+  const [claudeParticipationPolicy, setClaudeParticipationPolicy] = useState(
+    claudeProvider?.participation_policy ?? 'low_frequency_only',
+  )
   const [claudeFallbackProviderId, setClaudeFallbackProviderId] = useState(
     claudeProvider?.fallback_provider_ids?.[0] ?? '',
   )
@@ -128,11 +138,15 @@ export function ProviderSettingsDrawer({
     setOpenaiTimeoutSec(String(nextOpenaiProvider?.timeout_sec ?? 30))
     setOpenaiReasoningEffort(nextOpenaiProvider?.reasoning_effort ?? '')
     setOpenaiCapabilityTags(nextOpenaiProvider?.capability_tags ?? [])
+    setOpenaiCostTier(nextOpenaiProvider?.cost_tier ?? 'standard')
+    setOpenaiParticipationPolicy(nextOpenaiProvider?.participation_policy ?? 'always_allowed')
     setOpenaiFallbackProviderId(nextOpenaiProvider?.fallback_provider_ids?.[0] ?? '')
     setClaudeCommandPath(nextClaudeProvider?.command_path ?? '')
     setClaudeModel(nextClaudeProvider?.model ?? '')
     setClaudeTimeoutSec(String(nextClaudeProvider?.timeout_sec ?? 30))
     setClaudeCapabilityTags(nextClaudeProvider?.capability_tags ?? [])
+    setClaudeCostTier(nextClaudeProvider?.cost_tier ?? 'premium')
+    setClaudeParticipationPolicy(nextClaudeProvider?.participation_policy ?? 'low_frequency_only')
     setClaudeFallbackProviderId(nextClaudeProvider?.fallback_provider_ids?.[0] ?? '')
     setRoleBindings(buildEditableBindings(providerData))
   }, [isOpen, providerData])
@@ -185,6 +199,8 @@ export function ProviderSettingsDrawer({
           reasoning_effort: openaiReasoningEffort || null,
           command_path: null,
           capability_tags: openaiCapabilityTags,
+          cost_tier: openaiCostTier,
+          participation_policy: openaiParticipationPolicy,
           fallback_provider_ids: openaiFallbackProviderId ? [openaiFallbackProviderId] : [],
         },
         {
@@ -200,6 +216,8 @@ export function ProviderSettingsDrawer({
           reasoning_effort: null,
           command_path: claudeCommandPath.trim() || null,
           capability_tags: claudeCapabilityTags,
+          cost_tier: claudeCostTier,
+          participation_policy: claudeParticipationPolicy,
           fallback_provider_ids: claudeFallbackProviderId ? [claudeFallbackProviderId] : [],
         },
       ],
@@ -360,6 +378,31 @@ export function ProviderSettingsDrawer({
               </div>
             </div>
 
+            <div className="provider-settings-grid">
+              <label>
+                <span className="field-label">OpenAI cost tier</span>
+                <select
+                  aria-label="OpenAI cost tier"
+                  value={openaiCostTier}
+                  onChange={(event) => setOpenaiCostTier(event.target.value)}
+                >
+                  <option value="standard">Standard</option>
+                  <option value="premium">Premium</option>
+                </select>
+              </label>
+              <label>
+                <span className="field-label">OpenAI participation policy</span>
+                <select
+                  aria-label="OpenAI participation policy"
+                  value={openaiParticipationPolicy}
+                  onChange={(event) => setOpenaiParticipationPolicy(event.target.value)}
+                >
+                  <option value="always_allowed">Always allowed</option>
+                  <option value="low_frequency_only">Low-frequency only</option>
+                </select>
+              </label>
+            </div>
+
             <label>
               <span className="field-label">OpenAI fallback provider</span>
               <select
@@ -414,6 +457,31 @@ export function ProviderSettingsDrawer({
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div className="provider-settings-grid">
+              <label>
+                <span className="field-label">Claude cost tier</span>
+                <select
+                  aria-label="Claude cost tier"
+                  value={claudeCostTier}
+                  onChange={(event) => setClaudeCostTier(event.target.value)}
+                >
+                  <option value="standard">Standard</option>
+                  <option value="premium">Premium</option>
+                </select>
+              </label>
+              <label>
+                <span className="field-label">Claude participation policy</span>
+                <select
+                  aria-label="Claude participation policy"
+                  value={claudeParticipationPolicy}
+                  onChange={(event) => setClaudeParticipationPolicy(event.target.value)}
+                >
+                  <option value="always_allowed">Always allowed</option>
+                  <option value="low_frequency_only">Low-frequency only</option>
+                </select>
+              </label>
             </div>
 
             <label>

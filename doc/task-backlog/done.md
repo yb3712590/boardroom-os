@@ -1721,6 +1721,15 @@
 - `P2-PRV-005`：新增后端回归覆盖旧配置迁移、角色路由优先级、Claude CLI adapter、CEO/Worker 角色绑定和 provider pause 兼容路径；前端回归覆盖 provider center 保存流程与未来治理角色只读占位
 - 本轮整体验证结果更新为 backend `461 passed`、frontend build passed、frontend `73 passed`
 
+完成补记（2026-04-08，P2-PRV-007 / P2-PRV-008）：
+
+- `P2-PRV-007`：`TicketCreateCommand` 与 `CEOCreateTicketPayload` 现已补入可选 `runtime_preference`，最小支持 `preferred_provider_id / preferred_model`；该字段只作为 CEO / 内部兼容入口的任务级 runtime 偏好，不提供绕过能力底线、启停状态、参与策略或现有 failover 约束的硬覆盖
+- `P2-PRV-007`：运行时、CEO live proposal、CEO shadow 审计和 provider fallback 失败明细现在都会统一记录 `preferred_provider_id / preferred_model / actual_provider_id / actual_model / selection_reason / policy_reason`；failover 或策略降级时保持 `preferred_*` 不变，只切换 `actual_*`
+- `P2-PRV-008`：provider registry、`runtime-provider` 投影和前端设置抽屉现在都会暴露 `cost_tier / participation_policy`；当前静态策略固定支持 `standard / premium` 两档成本层级，以及 `always_allowed / low_frequency_only` 两档参与策略
+- `P2-PRV-008`：provider 选路顺序现已收口为 `任务级偏好 -> execution target / role 绑定 -> 员工 provider -> 默认 provider`；每一层都会继续校验能力标签、启用状态和参与策略。命中高价低频限制时，会自动降级到下一层可用 provider，而不是硬失败
+- `P2-PRV-008`：当前低频高杠杆分类直接复用主线语义：`ceo_shadow`、scope/governance 文档链、`architect / cto` 治理文档属于低频高杠杆；`BUILD / CHECK / REVIEW / CLOSEOUT` 属于高频执行或高频审查；本轮不引入预算自适应、成本统计报表或策略引擎
+- 本轮整体验证结果更新为 backend `508 passed`、frontend build passed、frontend `77 passed`
+
 ### 4.3 治理模板与文档型角色 (P2-GOV-001 到 P2-GOV-006)
 
 | ID | 标题 | 预估 |

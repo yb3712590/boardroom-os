@@ -181,6 +181,8 @@ export type RuntimeProviderEntry = {
   reasoning_effort: string | null
   command_path: string | null
   capability_tags: string[]
+  cost_tier: string
+  participation_policy: string
   fallback_provider_ids: string[]
   health_status: string
   health_reason: string
@@ -323,6 +325,8 @@ export type RuntimeProviderConfigRequest = {
   reasoning_effort: string | null
   command_path: string | null
   capability_tags: string[]
+  cost_tier: string
+  participation_policy: string
   fallback_provider_ids: string[]
 }
 

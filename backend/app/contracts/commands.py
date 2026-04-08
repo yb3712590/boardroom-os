@@ -94,6 +94,16 @@ class RuntimeProviderCapabilityTag(StrEnum):
     REVIEW = "review"
 
 
+class RuntimeProviderCostTier(StrEnum):
+    STANDARD = "standard"
+    PREMIUM = "premium"
+
+
+class RuntimeProviderParticipationPolicy(StrEnum):
+    ALWAYS_ALLOWED = "always_allowed"
+    LOW_FREQUENCY_ONLY = "low_frequency_only"
+
+
 class MeetingType(StrEnum):
     TECHNICAL_DECISION = "TECHNICAL_DECISION"
 
@@ -160,6 +170,8 @@ class RuntimeProviderConfigInput(StrictModel):
     reasoning_effort: str | None = None
     command_path: str | None = None
     capability_tags: list[RuntimeProviderCapabilityTag] = Field(default_factory=list)
+    cost_tier: RuntimeProviderCostTier = RuntimeProviderCostTier.STANDARD
+    participation_policy: RuntimeProviderParticipationPolicy = RuntimeProviderParticipationPolicy.ALWAYS_ALLOWED
     fallback_provider_ids: list[str] = Field(default_factory=list)
 
 
@@ -167,6 +179,11 @@ class RuntimeProviderRoleBindingInput(StrictModel):
     target_ref: str = Field(min_length=1)
     provider_id: str = Field(min_length=1)
     model: str | None = None
+
+
+class RuntimeSelectionPreference(StrictModel):
+    preferred_provider_id: str = Field(min_length=1)
+    preferred_model: str | None = None
 
 
 class RuntimeProviderUpsertCommand(StrictModel):
@@ -296,6 +313,7 @@ class TicketCreateCommand(StrictModel):
     meeting_context: dict | None = None
     execution_contract: ExecutionContract | None = None
     dispatch_intent: DispatchIntent | None = None
+    runtime_preference: RuntimeSelectionPreference | None = None
     escalation_policy: TicketEscalationPolicy
     idempotency_key: str = Field(min_length=1)
 

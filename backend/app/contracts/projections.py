@@ -252,6 +252,12 @@ class CEOShadowRunProjection(StrictModel):
     effective_mode: str
     provider_health_summary: str
     model: str | None = None
+    preferred_provider_id: str | None = None
+    preferred_model: str | None = None
+    actual_provider_id: str | None = None
+    actual_model: str | None = None
+    selection_reason: str | None = None
+    policy_reason: str | None = None
     prompt_version: str
     provider_response_id: str | None = None
     fallback_reason: str | None = None

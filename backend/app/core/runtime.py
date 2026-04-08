@@ -1059,6 +1059,8 @@ def _normalize_provider_failure_detail(
         normalized.setdefault("actual_provider_id", selection.provider.provider_id)
         normalized.setdefault("actual_model", selection.actual_model or selection.provider.model)
         normalized.setdefault("adapter_kind", selection.provider.adapter_kind)
+        normalized.setdefault("selection_reason", selection.selection_reason)
+        normalized.setdefault("policy_reason", selection.policy_reason)
     else:
         normalized.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
     normalized["attempt_count"] = attempt_count
@@ -1147,6 +1149,8 @@ def _execute_openai_compat_provider(
                     f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
                     f"actual_provider_id={selection.provider.provider_id}",
                     f"actual_model={selection.actual_model or selection.provider.model or 'unknown'}",
+                    f"selection_reason={selection.selection_reason or 'provider_selection'}",
+                    f"policy_reason={selection.policy_reason or 'none'}",
                     f"adapter_kind={selection.provider.adapter_kind}",
                     f"provider_response_id={provider_result.response_id or 'unknown'}",
                     f"provider_attempt_count={attempt_no}",
@@ -1253,6 +1257,8 @@ def _execute_claude_code_provider(
                 f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
                 f"actual_provider_id={selection.provider.provider_id}",
                 f"actual_model={selection.actual_model or selection.provider.model or 'unknown'}",
+                f"selection_reason={selection.selection_reason or 'provider_selection'}",
+                f"policy_reason={selection.policy_reason or 'none'}",
                 f"adapter_kind={selection.provider.adapter_kind}",
                 "provider_response_id=unknown",
                 "provider_attempt_count=1",
@@ -1323,6 +1329,12 @@ def _build_provider_fallback_execution_result(
             "runtime_fallback=LOCAL_DETERMINISTIC",
             f"runtime_fallback_reason={fallback_reason}",
             f"provider_id={provider_id}",
+            f"preferred_provider_id={failure_detail.get('preferred_provider_id') or provider_id}",
+            f"preferred_model={failure_detail.get('preferred_model') or 'unknown'}",
+            f"actual_provider_id={failure_detail.get('actual_provider_id') or provider_id}",
+            f"actual_model={failure_detail.get('actual_model') or 'unknown'}",
+            f"selection_reason={failure_detail.get('selection_reason') or 'provider_selection'}",
+            f"policy_reason={failure_detail.get('policy_reason') or 'none'}",
             f"provider_failure_kind={failure_kind}",
         ],
         issues=[fallback_issue, *deterministic_result.issues],
@@ -1486,6 +1498,7 @@ def _resolve_provider_selection_for_ticket(
         config,
         target_ref=target_ref,
         employee_provider_id=_resolve_ticket_provider_id(repository, ticket),
+        runtime_preference=(created_spec or {}).get("runtime_preference"),
     )
 
 

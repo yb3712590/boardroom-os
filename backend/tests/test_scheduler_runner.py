@@ -2637,7 +2637,10 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
     assert len(open_incidents) == 1
     assert open_incidents[0]["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
     assert "preferred_provider_id=prov_openai_compat" in recorded_submit["assumptions"]
+    assert "preferred_model=gpt-5.3-codex" in recorded_submit["assumptions"]
     assert "actual_provider_id=prov_claude_code" in recorded_submit["assumptions"]
+    assert "actual_model=claude-sonnet-4-6" in recorded_submit["assumptions"]
+    assert "selection_reason=provider_failover" in recorded_submit["assumptions"]
     assert any("failover" in issue.lower() for issue in recorded_submit["issues"])
 
 
