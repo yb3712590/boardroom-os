@@ -4042,56 +4042,7 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert projection_data["providers"][0]["fallback_provider_ids"] == []
         assert projection_data["providers"][0]["health_status"] == "HEALTHY"
         assert "saved OpenAI-compatible provider config" in projection_data["providers"][0]["health_reason"]
-        assert projection_data["future_binding_slots"] == [
-            {
-                "target_ref": "role_profile:backend_engineer_primary",
-                "label": "Backend Engineer / 服务交付",
-                "status": "NOT_ENABLED",
-                "reason": "角色模板已定义，但尚未纳入当前主线。",
-                "blocked_path_refs": [
-                    "ceo_create_ticket",
-                    "runtime_execution",
-                ],
-            },
-            {
-                "target_ref": "role_profile:database_engineer_primary",
-                "label": "Database Engineer / 数据可靠性",
-                "status": "NOT_ENABLED",
-                "reason": "角色模板已定义，但尚未纳入当前主线。",
-                "blocked_path_refs": [
-                    "ceo_create_ticket",
-                    "runtime_execution",
-                ],
-            },
-            {
-                "target_ref": "role_profile:platform_sre_primary",
-                "label": "Platform / SRE",
-                "status": "NOT_ENABLED",
-                "reason": "角色模板已定义，但尚未纳入当前主线。",
-                "blocked_path_refs": [
-                    "ceo_create_ticket",
-                    "runtime_execution",
-                ],
-            },
-            {
-                "target_ref": "role_profile:architect_primary",
-                "label": "架构师 / 设计评审",
-                "status": "NOT_ENABLED",
-                "reason": "角色模板已定义，但尚未纳入当前主线。",
-                "blocked_path_refs": [
-                    "runtime_execution",
-                ],
-            },
-            {
-                "target_ref": "role_profile:cto_primary",
-                "label": "CTO / 架构治理",
-                "status": "NOT_ENABLED",
-                "reason": "角色模板已定义，但尚未纳入当前主线。",
-                "blocked_path_refs": [
-                    "runtime_execution",
-                ],
-            },
-        ]
+        assert projection_data["future_binding_slots"] == []
         assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
         assert dashboard_data["runtime_status"]["provider_health_summary"] == "HEALTHY"
         assert dashboard_data["runtime_status"]["provider_label"] == "OpenAI Compat"
@@ -10801,18 +10752,30 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
         ],
         "blocked_path_refs": [],
     }
-    assert body["role_templates_catalog"]["role_templates"][6]["mainline_boundary"] == {
-        "boundary_status": "CATALOG_ONLY",
+    assert body["role_templates_catalog"]["role_templates"][3]["status"] == "LIVE"
+    assert body["role_templates_catalog"]["role_templates"][6]["status"] == "LIVE"
+    assert body["role_templates_catalog"]["role_templates"][3]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
         "active_path_refs": [
             "catalog_readonly",
-            "provider_future_slot",
+            "staffing",
+            "workforce_lane",
+            "implementation_delivery",
+        ],
+        "blocked_path_refs": [
+            "ceo_create_ticket",
+        ],
+    }
+    assert body["role_templates_catalog"]["role_templates"][6]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
+        "active_path_refs": [
+            "catalog_readonly",
             "staffing",
             "workforce_lane",
             "ceo_create_ticket",
+            "governance_document_live",
         ],
-        "blocked_path_refs": [
-            "runtime_execution",
-        ],
+        "blocked_path_refs": [],
     }
 
     frontend_lane = next(

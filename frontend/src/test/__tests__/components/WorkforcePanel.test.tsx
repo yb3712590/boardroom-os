@@ -71,7 +71,7 @@ describe('WorkforcePanel', () => {
                 provider_target_ref: 'role_profile:backend_engineer_primary',
                 participation_mode: 'HIGH_FREQUENCY_DELIVERY',
                 execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
-                status: 'NOT_ENABLED',
+                status: 'LIVE',
                 default_document_kind_refs: ['detailed_design'],
                 responsibility_summary: '负责服务实现、接口落地和集成切片。',
                 summary: 'Reserved for future service delivery slices.',
@@ -79,9 +79,9 @@ describe('WorkforcePanel', () => {
                   fragment_refs: ['skill_backend_services', 'delivery_execution_loop'],
                 },
                 mainline_boundary: {
-                  boundary_status: 'CATALOG_ONLY',
-                  active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
-                  blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+                  boundary_status: 'LIVE_ON_MAINLINE',
+                  active_path_refs: ['catalog_readonly', 'staffing', 'workforce_lane', 'implementation_delivery'],
+                  blocked_path_refs: ['ceo_create_ticket'],
                 },
               },
               {
@@ -95,7 +95,7 @@ describe('WorkforcePanel', () => {
                 provider_target_ref: 'role_profile:cto_primary',
                 participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
                 execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
-                status: 'NOT_ENABLED',
+                status: 'LIVE',
                 default_document_kind_refs: ['architecture_brief', 'technology_decision'],
                 responsibility_summary: '负责高杠杆架构决策、治理边界和路线判断。',
                 summary: 'Own high-leverage architecture and governance decisions.',
@@ -103,15 +103,15 @@ describe('WorkforcePanel', () => {
                   fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
                 },
                 mainline_boundary: {
-                  boundary_status: 'CATALOG_ONLY',
+                  boundary_status: 'LIVE_ON_MAINLINE',
                   active_path_refs: [
                     'catalog_readonly',
-                    'provider_future_slot',
                     'staffing',
                     'workforce_lane',
                     'ceo_create_ticket',
+                    'governance_document_live',
                   ],
-                  blocked_path_refs: ['runtime_execution'],
+                  blocked_path_refs: [],
                 },
               },
             ],
@@ -239,11 +239,11 @@ describe('WorkforcePanel', () => {
     expect(screen.getByText(/CTO \/ 架构治理/i)).toBeInTheDocument()
     expect(screen.getByText(/Backend Engineer \/ 服务交付/i)).toBeInTheDocument()
     expect(screen.getByText(/architecture_brief/i)).toBeInTheDocument()
-    expect(screen.getByText(/Current live path/i)).toBeInTheDocument()
-    expect(screen.getByText(/Partial mainline path/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/Catalog only \/ not on current mainline/i).length).toBeGreaterThan(0)
-    expect(screen.getByText(/implementation delivery/i)).toBeInTheDocument()
-    expect(screen.getByText(/blocked: runtime execution/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/not_enabled/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Current live path/i)).toHaveLength(3)
+    expect(screen.queryByText(/Partial mainline path/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Catalog only \/ not on current mainline/i)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/implementation delivery/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/blocked: ceo create ticket/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/live/i).length).toBeGreaterThan(0)
   })
 })

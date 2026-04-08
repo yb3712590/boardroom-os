@@ -107,6 +107,10 @@
 - 这轮继续保持保守边界：`architect / cto` 仍只进入 CEO 治理文档链，不进入 staged BUILD/CHECK/REVIEW follow-up owner_role，也不写成 formal runtime 支持矩阵或 provider target label；`backend / database / platform` 仍不进入 direct CEO create-ticket
 - `role_templates_catalog.mainline_boundary` 与 `runtime-provider.future_binding_slots` 现在已改成更细边界：`architect / cto` 只剩 `runtime_execution` blocked surface，workforce 目录卡片会显示它们是 partial mainline path，而不是纯目录占位
 - 当前验证基线更新为 backend `504 passed`、frontend build passed、frontend `75 passed`
+- `P2-RLS-003` 已完成：`backend / database / platform` 已补入正式 `backend_build / database_build / platform_build` execution target，并进入 `implementation_bundle` runtime live path；`architect_primary / cto_primary` 也已进入正式治理文档 runtime 支持矩阵与 provider target label
+- `role_templates_catalog` 这轮已不再把五类新增角色写成 `CATALOG_ONLY`；五类模板全部改成 `LIVE_ON_MAINLINE`，但仍保留既有边界：`backend / database / platform` 继续挡在 direct CEO create-ticket 外，`architect / cto` 继续只走治理文档 runtime
+- `runtime-provider.future_binding_slots` 当前为空，Provider 设置抽屉会把五类新增角色直接展示在当前可编辑绑定区；Context Compiler 也已补齐这五类 role profile 的组织语义映射
+- 当前验证基线更新为 backend `506 passed`、frontend build passed、frontend `76 passed`
 
 ## Current Working Set
 

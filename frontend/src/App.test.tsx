@@ -503,7 +503,7 @@ function workforceData() {
           provider_target_ref: 'role_profile:backend_engineer_primary',
           participation_mode: 'HIGH_FREQUENCY_DELIVERY',
           execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
-          status: 'NOT_ENABLED',
+          status: 'LIVE',
           default_document_kind_refs: ['detailed_design'],
           responsibility_summary: '负责服务实现、接口落地和集成切片。',
           summary: 'Reserved for future backend delivery slices.',
@@ -511,9 +511,9 @@ function workforceData() {
             fragment_refs: ['skill_backend_services', 'delivery_execution_loop'],
           },
           mainline_boundary: {
-            boundary_status: 'CATALOG_ONLY',
-            active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
-            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+            boundary_status: 'LIVE_ON_MAINLINE',
+            active_path_refs: ['catalog_readonly', 'staffing', 'workforce_lane', 'implementation_delivery'],
+            blocked_path_refs: ['ceo_create_ticket'],
           },
         },
         {
@@ -527,7 +527,7 @@ function workforceData() {
           provider_target_ref: 'role_profile:database_engineer_primary',
           participation_mode: 'HIGH_FREQUENCY_DELIVERY',
           execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
-          status: 'NOT_ENABLED',
+          status: 'LIVE',
           default_document_kind_refs: ['detailed_design'],
           responsibility_summary: '负责数据模型、迁移和数据库可靠性边界。',
           summary: 'Reserved for future database-heavy slices.',
@@ -535,9 +535,9 @@ function workforceData() {
             fragment_refs: ['skill_database_reliability', 'delivery_execution_loop'],
           },
           mainline_boundary: {
-            boundary_status: 'CATALOG_ONLY',
-            active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
-            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+            boundary_status: 'LIVE_ON_MAINLINE',
+            active_path_refs: ['catalog_readonly', 'staffing', 'workforce_lane', 'implementation_delivery'],
+            blocked_path_refs: ['ceo_create_ticket'],
           },
         },
         {
@@ -551,7 +551,7 @@ function workforceData() {
           provider_target_ref: 'role_profile:platform_sre_primary',
           participation_mode: 'HIGH_FREQUENCY_DELIVERY',
           execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
-          status: 'NOT_ENABLED',
+          status: 'LIVE',
           default_document_kind_refs: ['detailed_design'],
           responsibility_summary: '负责部署、稳定性和运行环境治理。',
           summary: 'Reserved for future platform and reliability work.',
@@ -559,9 +559,9 @@ function workforceData() {
             fragment_refs: ['skill_platform_operations', 'delivery_execution_loop'],
           },
           mainline_boundary: {
-            boundary_status: 'CATALOG_ONLY',
-            active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
-            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+            boundary_status: 'LIVE_ON_MAINLINE',
+            active_path_refs: ['catalog_readonly', 'staffing', 'workforce_lane', 'implementation_delivery'],
+            blocked_path_refs: ['ceo_create_ticket'],
           },
         },
         {
@@ -575,7 +575,7 @@ function workforceData() {
           provider_target_ref: 'role_profile:architect_primary',
           participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
           execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
-          status: 'NOT_ENABLED',
+          status: 'LIVE',
           default_document_kind_refs: ['architecture_brief', 'technology_decision', 'detailed_design'],
           responsibility_summary: '负责设计评审、方案收敛和实现边界校准。',
           summary: 'Review design detail and keep implementation aligned to architecture.',
@@ -583,15 +583,15 @@ function workforceData() {
             fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
           },
           mainline_boundary: {
-            boundary_status: 'CATALOG_ONLY',
+            boundary_status: 'LIVE_ON_MAINLINE',
             active_path_refs: [
               'catalog_readonly',
-              'provider_future_slot',
               'staffing',
               'workforce_lane',
               'ceo_create_ticket',
+              'governance_document_live',
             ],
-            blocked_path_refs: ['runtime_execution'],
+            blocked_path_refs: [],
           },
         },
         {
@@ -605,7 +605,7 @@ function workforceData() {
           provider_target_ref: 'role_profile:cto_primary',
           participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
           execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
-          status: 'NOT_ENABLED',
+          status: 'LIVE',
           default_document_kind_refs: [
             'architecture_brief',
             'technology_decision',
@@ -618,15 +618,15 @@ function workforceData() {
             fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
           },
           mainline_boundary: {
-            boundary_status: 'CATALOG_ONLY',
+            boundary_status: 'LIVE_ON_MAINLINE',
             active_path_refs: [
               'catalog_readonly',
-              'provider_future_slot',
               'staffing',
               'workforce_lane',
               'ceo_create_ticket',
+              'governance_document_live',
             ],
-            blocked_path_refs: ['runtime_execution'],
+            blocked_path_refs: [],
           },
         },
       ],
@@ -1114,30 +1114,39 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
         is_default: false,
       },
     ],
-    role_bindings: [],
-    future_binding_slots: [
+    role_bindings: [
       {
         target_ref: 'role_profile:backend_engineer_primary',
-        label: 'Backend Engineer / 服务交付',
-        status: 'NOT_ENABLED',
-        reason: '角色模板已定义，但尚未纳入当前主线。',
-        blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+        target_label: 'Backend Engineer / 服务交付',
+        provider_id: 'prov_openai_compat',
+        model: 'gpt-5.3-codex',
+      },
+      {
+        target_ref: 'role_profile:database_engineer_primary',
+        target_label: 'Database Engineer / 数据可靠性',
+        provider_id: 'prov_openai_compat',
+        model: 'gpt-5.3-codex',
+      },
+      {
+        target_ref: 'role_profile:platform_sre_primary',
+        target_label: 'Platform / SRE',
+        provider_id: 'prov_openai_compat',
+        model: 'gpt-5.3-codex',
       },
       {
         target_ref: 'role_profile:architect_primary',
-        label: '架构师 / 设计评审',
-        status: 'NOT_ENABLED',
-        reason: '角色模板已定义，但尚未纳入当前主线。',
-        blocked_path_refs: ['runtime_execution'],
+        target_label: '架构师 / 设计评审',
+        provider_id: 'prov_openai_compat',
+        model: 'gpt-5.3-codex',
       },
       {
         target_ref: 'role_profile:cto_primary',
-        label: 'CTO / 架构治理',
-        status: 'NOT_ENABLED',
-        reason: '角色模板已定义，但尚未纳入当前主线。',
-        blocked_path_refs: ['runtime_execution'],
+        target_label: 'CTO / 架构治理',
+        provider_id: 'prov_openai_compat',
+        model: 'gpt-5.3-codex',
       },
     ],
+    future_binding_slots: [],
     ...overrides,
   }
 }
@@ -1933,7 +1942,7 @@ describe('Boardroom UI', () => {
     expect(screen.getByText(/gpt-5.3-codex/i)).toBeInTheDocument()
   })
 
-  it('shows future role slots as read-only in runtime provider settings', async () => {
+  it('shows newly live role bindings in runtime provider settings', async () => {
     installBoardroomMock({
       runtimeProvider: runtimeProviderData(),
     })
@@ -1943,12 +1952,12 @@ describe('Boardroom UI', () => {
 
     await user.click(await screen.findByRole('button', { name: /runtime settings/i }))
 
-    const futureSlots = await screen.findAllByDisplayValue(/not_enabled: 角色模板已定义，但尚未纳入当前主线。/i)
-
-    expect(futureSlots).toHaveLength(3)
-    for (const slot of futureSlots) {
-      expect(slot).toBeDisabled()
-    }
+    expect(await screen.findByLabelText('Backend Engineer / 服务交付 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Database Engineer / 数据可靠性 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Platform / SRE provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('架构师 / 设计评审 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('CTO / 架构治理 provider')).toBeInTheDocument()
+    expect(screen.queryByText('Reserved bindings')).not.toBeInTheDocument()
   })
 
   it('launches project init and refreshes into the first review state', async () => {

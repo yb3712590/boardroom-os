@@ -378,6 +378,11 @@ _ROLE_PROFILE_TO_ROLE_TYPE = {
     "ui_designer_primary": "frontend_engineer",
     "frontend_engineer_primary": "frontend_engineer",
     "checker_primary": "checker",
+    "backend_engineer_primary": "backend_engineer",
+    "database_engineer_primary": "database_engineer",
+    "platform_sre_primary": "platform_sre",
+    "architect_primary": "governance_architect",
+    "cto_primary": "governance_cto",
 }
 
 

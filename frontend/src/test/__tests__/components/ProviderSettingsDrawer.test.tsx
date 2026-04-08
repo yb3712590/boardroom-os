@@ -47,4 +47,42 @@ describe('ProviderSettingsDrawer', () => {
     expect(screen.getByDisplayValue(/NOT_ENABLED: 角色模板已定义，但尚未纳入当前主线。/i)).toBeDisabled()
     expect(screen.getByText(/Blocked surfaces: runtime execution/i)).toBeInTheDocument()
   })
+
+  it('renders newly live role bindings in the editable current bindings area', () => {
+    render(
+      <ProviderSettingsDrawer
+        isOpen
+        providerData={{
+          mode: 'DETERMINISTIC',
+          effective_mode: 'LOCAL_DETERMINISTIC',
+          provider_health_summary: 'LOCAL_ONLY',
+          provider_id: null,
+          base_url: null,
+          model: null,
+          timeout_sec: 30,
+          reasoning_effort: null,
+          api_key_configured: false,
+          api_key_masked: null,
+          configured_worker_count: 1,
+          effective_reason: 'Runtime is using the local deterministic path.',
+          default_provider_id: null,
+          providers: [],
+          role_bindings: [],
+          future_binding_slots: [],
+        }}
+        loading={false}
+        error={null}
+        submitting={false}
+        onClose={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByLabelText('Backend Engineer / 服务交付 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Database Engineer / 数据可靠性 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Platform / SRE provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('架构师 / 设计评审 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('CTO / 架构治理 provider')).toBeInTheDocument()
+    expect(screen.queryByText('Reserved bindings')).not.toBeInTheDocument()
+  })
 })

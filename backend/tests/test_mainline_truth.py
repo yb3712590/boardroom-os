@@ -46,12 +46,22 @@ def test_mainline_runtime_support_matrix_matches_runtime_constants() -> None:
         (entry.role_profile_ref, entry.output_schema_ref)
         for entry in MAINLINE_RUNTIME_SUPPORT_MATRIX
     } == {
+        ("backend_engineer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
+        ("database_engineer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
+        ("platform_sre_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
         ("ui_designer_primary", ARCHITECTURE_BRIEF_SCHEMA_REF),
         ("ui_designer_primary", TECHNOLOGY_DECISION_SCHEMA_REF),
         ("ui_designer_primary", MILESTONE_PLAN_SCHEMA_REF),
         ("ui_designer_primary", DETAILED_DESIGN_SCHEMA_REF),
         ("ui_designer_primary", BACKLOG_RECOMMENDATION_SCHEMA_REF),
         ("ui_designer_primary", CONSENSUS_DOCUMENT_SCHEMA_REF),
+        ("architect_primary", ARCHITECTURE_BRIEF_SCHEMA_REF),
+        ("architect_primary", TECHNOLOGY_DECISION_SCHEMA_REF),
+        ("architect_primary", DETAILED_DESIGN_SCHEMA_REF),
+        ("cto_primary", ARCHITECTURE_BRIEF_SCHEMA_REF),
+        ("cto_primary", TECHNOLOGY_DECISION_SCHEMA_REF),
+        ("cto_primary", MILESTONE_PLAN_SCHEMA_REF),
+        ("cto_primary", BACKLOG_RECOMMENDATION_SCHEMA_REF),
         ("frontend_engineer_primary", ARCHITECTURE_BRIEF_SCHEMA_REF),
         ("frontend_engineer_primary", TECHNOLOGY_DECISION_SCHEMA_REF),
         ("frontend_engineer_primary", MILESTONE_PLAN_SCHEMA_REF),

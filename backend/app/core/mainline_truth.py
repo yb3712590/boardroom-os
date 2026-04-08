@@ -106,6 +106,24 @@ MAINLINE_WORKFLOW_STAGE_TRUTH: tuple[MainlineWorkflowStageTruth, ...] = (
 
 MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
     RuntimeSupportRow(
+        role_profile_ref="backend_engineer_primary",
+        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        notes="新增 backend 实施角色现在已进入正式 BUILD runtime 路径。",
+    ),
+    RuntimeSupportRow(
+        role_profile_ref="database_engineer_primary",
+        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        notes="新增 database 实施角色现在已进入正式 BUILD runtime 路径。",
+    ),
+    RuntimeSupportRow(
+        role_profile_ref="platform_sre_primary",
+        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        notes="新增 platform 实施角色现在已进入正式 BUILD runtime 路径。",
+    ),
+    RuntimeSupportRow(
         role_profile_ref="ui_designer_primary",
         output_schema_ref=CONSENSUS_DOCUMENT_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
@@ -119,6 +137,33 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
             notes="当前治理文档可由现有 live planning 角色产出，不额外启用治理新角色。",
         )
         for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
+    ),
+    *(
+        RuntimeSupportRow(
+            role_profile_ref="architect_primary",
+            output_schema_ref=output_schema_ref,
+            supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+            notes="架构治理角色现在已进入正式治理文档 runtime 路径。",
+        )
+        for output_schema_ref in (
+            ARCHITECTURE_BRIEF_SCHEMA_REF,
+            TECHNOLOGY_DECISION_SCHEMA_REF,
+            DETAILED_DESIGN_SCHEMA_REF,
+        )
+    ),
+    *(
+        RuntimeSupportRow(
+            role_profile_ref="cto_primary",
+            output_schema_ref=output_schema_ref,
+            supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+            notes="CTO 治理角色现在已进入正式治理文档 runtime 路径。",
+        )
+        for output_schema_ref in (
+            ARCHITECTURE_BRIEF_SCHEMA_REF,
+            TECHNOLOGY_DECISION_SCHEMA_REF,
+            MILESTONE_PLAN_SCHEMA_REF,
+            BACKLOG_RECOMMENDATION_SCHEMA_REF,
+        )
     ),
     *(
         RuntimeSupportRow(

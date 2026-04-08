@@ -18,11 +18,18 @@ from app.contracts.commands import (
 from app.contracts.common import StrictModel
 from app.config import get_settings
 from app.core.execution_targets import (
+    EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
+    EXECUTION_TARGET_BACKEND_BUILD,
     EXECUTION_TARGET_CHECKER_DELIVERY_CHECK,
+    EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT,
+    EXECUTION_TARGET_DATABASE_BUILD,
     EXECUTION_TARGET_FRONTEND_BUILD,
     EXECUTION_TARGET_FRONTEND_CLOSEOUT,
+    EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT,
     EXECUTION_TARGET_FRONTEND_REVIEW,
+    EXECUTION_TARGET_PLATFORM_BUILD,
     EXECUTION_TARGET_SCOPE_CONSENSUS,
+    EXECUTION_TARGET_SCOPE_GOVERNANCE_DOCUMENT,
     legacy_target_refs_for_execution_target,
 )
 from app.core.governance_templates import list_runtime_provider_future_binding_slots
@@ -37,12 +44,22 @@ ROLE_BINDING_CEO_SHADOW = "ceo_shadow"
 ROLE_BINDING_UI_DESIGNER = "role_profile:ui_designer_primary"
 ROLE_BINDING_FRONTEND_ENGINEER = "role_profile:frontend_engineer_primary"
 ROLE_BINDING_CHECKER = "role_profile:checker_primary"
+ROLE_BINDING_BACKEND_ENGINEER = "role_profile:backend_engineer_primary"
+ROLE_BINDING_DATABASE_ENGINEER = "role_profile:database_engineer_primary"
+ROLE_BINDING_PLATFORM_SRE = "role_profile:platform_sre_primary"
+ROLE_BINDING_ARCHITECT = "role_profile:architect_primary"
+ROLE_BINDING_CTO = "role_profile:cto_primary"
 
 CURRENT_RUNTIME_ROLE_TARGET_REFS = (
     ROLE_BINDING_CEO_SHADOW,
     ROLE_BINDING_UI_DESIGNER,
     ROLE_BINDING_FRONTEND_ENGINEER,
     ROLE_BINDING_CHECKER,
+    ROLE_BINDING_BACKEND_ENGINEER,
+    ROLE_BINDING_DATABASE_ENGINEER,
+    ROLE_BINDING_PLATFORM_SRE,
+    ROLE_BINDING_ARCHITECT,
+    ROLE_BINDING_CTO,
 )
 
 RUNTIME_TARGET_LABELS = {
@@ -50,8 +67,20 @@ RUNTIME_TARGET_LABELS = {
     ROLE_BINDING_UI_DESIGNER: "Scope Consensus",
     ROLE_BINDING_FRONTEND_ENGINEER: "Frontend Engineer",
     ROLE_BINDING_CHECKER: "Checker",
+    ROLE_BINDING_BACKEND_ENGINEER: "Backend Engineer / 服务交付",
+    ROLE_BINDING_DATABASE_ENGINEER: "Database Engineer / 数据可靠性",
+    ROLE_BINDING_PLATFORM_SRE: "Platform / SRE",
+    ROLE_BINDING_ARCHITECT: "架构师 / 设计评审",
+    ROLE_BINDING_CTO: "CTO / 架构治理",
     EXECUTION_TARGET_SCOPE_CONSENSUS: "Scope Consensus",
+    EXECUTION_TARGET_SCOPE_GOVERNANCE_DOCUMENT: "Scope Governance Document",
     EXECUTION_TARGET_FRONTEND_BUILD: "Frontend Build",
+    EXECUTION_TARGET_BACKEND_BUILD: "Backend Build",
+    EXECUTION_TARGET_DATABASE_BUILD: "Database Build",
+    EXECUTION_TARGET_PLATFORM_BUILD: "Platform Build",
+    EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT: "Frontend Governance Document",
+    EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT: "Architect Governance Document",
+    EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT: "CTO Governance Document",
     EXECUTION_TARGET_CHECKER_DELIVERY_CHECK: "Checker Delivery Check",
     EXECUTION_TARGET_FRONTEND_REVIEW: "Frontend Review",
     EXECUTION_TARGET_FRONTEND_CLOSEOUT: "Frontend Closeout",
@@ -125,9 +154,57 @@ RUNTIME_TARGET_CAPABILITY_FLOORS: dict[str, tuple[RuntimeProviderCapabilityTag, 
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
         RuntimeProviderCapabilityTag.IMPLEMENTATION,
     ),
+    ROLE_BINDING_BACKEND_ENGINEER: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    ROLE_BINDING_DATABASE_ENGINEER: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    ROLE_BINDING_PLATFORM_SRE: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    ROLE_BINDING_ARCHITECT: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
+    ROLE_BINDING_CTO: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
     EXECUTION_TARGET_FRONTEND_BUILD: (
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
         RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    EXECUTION_TARGET_BACKEND_BUILD: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    EXECUTION_TARGET_DATABASE_BUILD: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    EXECUTION_TARGET_PLATFORM_BUILD: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    EXECUTION_TARGET_SCOPE_GOVERNANCE_DOCUMENT: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
+    EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
+    EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
+    EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT: (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
     ),
     EXECUTION_TARGET_FRONTEND_REVIEW: (
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,

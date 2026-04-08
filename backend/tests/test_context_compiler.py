@@ -561,6 +561,71 @@ def test_compile_execution_package_builds_dynamic_org_context_for_parent_child_a
     assert org_context.responsibility_boundary.allowed_write_set == ["artifacts/ui/homepage/*"]
 
 
+def test_compile_execution_package_maps_new_runtime_live_role_types_in_org_context(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-04-08T10:00:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_architect_parent",
+            node_id="node_architect_parent",
+            role_profile_ref="architect_primary",
+            output_schema_ref="architecture_brief",
+            allowed_write_set=["reports/governance/*"],
+            input_artifact_refs=[],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_backend_current",
+            node_id="node_backend_current",
+            parent_ticket_id="tkt_architect_parent",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="implementation_bundle",
+            delivery_stage="BUILD",
+            input_artifact_refs=[],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            ticket_id="tkt_platform_sibling",
+            node_id="node_platform_sibling",
+            parent_ticket_id="tkt_architect_parent",
+            role_profile_ref="platform_sre_primary",
+            output_schema_ref="implementation_bundle",
+            delivery_stage="BUILD",
+            input_artifact_refs=[],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            ticket_id="tkt_backend_current",
+            node_id="node_backend_current",
+        ),
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_backend_current")
+    compile_request = build_compile_request(repository, ticket)
+    compiled_package = compile_execution_package(compile_request)
+    org_context = compiled_package.org_context
+
+    assert org_context.upstream_provider is not None
+    assert org_context.upstream_provider.role_profile_ref == "architect_primary"
+    assert org_context.upstream_provider.role_type == "governance_architect"
+    assert org_context.downstream_reviewer is not None
+    assert org_context.downstream_reviewer.role_profile_ref == "checker_primary"
+    assert org_context.downstream_reviewer.role_type == "checker"
+    assert [item.ticket_id for item in org_context.collaborators] == ["tkt_platform_sibling"]
+    assert org_context.collaborators[0].role_profile_ref == "platform_sre_primary"
+    assert org_context.collaborators[0].role_type == "platform_sre"
+
+
 def test_compile_execution_package_includes_indexed_artifact_access_descriptors(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     artifact_ref = "art://inputs/brief.md"

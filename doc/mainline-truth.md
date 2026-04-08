@@ -21,9 +21,9 @@
 - 当前 CEO 也能在窄触发条件下自动创建 `TECHNICAL_DECISION` 会议请求：只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重新对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会
 - CEO shadow snapshot 现在会暴露当前 workflow 内的 `reuse_candidates`：只读最近已完成 ticket 和已关闭会议的最小摘要；OpenAI Compat live prompt 会先检查这些复用候选，优先 `NO_ACTION / RETRY_TICKET / WAIT`，再考虑新建平行 ticket、额外会议或补招人；deterministic fallback 保持不变
 - runtime provider 配置现在已从单一 OpenAI 表单切成最小 registry：固定暴露 `default_provider_id / providers[] / role_bindings[]`，旧配置文件会自动迁移
-- 当前 registry 首版真实支持两个 adapter：`prov_openai_compat` 与 `prov_claude_code`；`runtime-provider` 投影和前端设置抽屉都会暴露 provider 列表、`capability_tags[]`、`fallback_provider_ids[]`、每个 provider 的 `health_status / health_reason`、当前真实角色绑定和未来治理角色只读占位
+- 当前 registry 首版真实支持两个 adapter：`prov_openai_compat` 与 `prov_claude_code`；`runtime-provider` 投影和前端设置抽屉都会暴露 provider 列表、`capability_tags[]`、`fallback_provider_ids[]`、每个 provider 的 `health_status / health_reason` 和当前真实角色绑定；当前 `future_binding_slots` 已为空
 - `TICKET_CREATED` payload 现在会补入 `execution_contract`，固定包含 `execution_target_ref / required_capability_tags / runtime_contract_version`；普通 ticket-create 路径即使没显式传，也会按 `role_profile_ref + output_schema_ref` 自动补齐
-- 当前 execution target catalog 已按主线收口为 9 类：`scope_consensus / scope_governance_document / frontend_governance_document / architect_governance_document / cto_governance_document / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`
+- 当前 execution target catalog 已按主线收口为 12 类：`scope_consensus / scope_governance_document / frontend_governance_document / architect_governance_document / cto_governance_document / frontend_build / backend_build / database_build / platform_build / checker_delivery_check / frontend_review / frontend_closeout`
 - CEO create-ticket 当前必须显式带 `dispatch_intent.assignee_employee_id / selection_reason`；校验层会拒绝不存在、非激活或能力不匹配的 assignee，非法派单不会入队
 - CEO create-ticket 当前也接受五类治理文档输出：`architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation`；这类文档现在除了 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色，也可落到 `architect_primary / cto_primary`，但仍只限治理文档链；`backend / database / platform` 仍未进入 direct CEO create-ticket，`role_templates_catalog.default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单
 - `dispatch_intent` 现在已扩到最小 5 字段：`assignee_employee_id / selection_reason / dependency_gate_refs[] / selected_by / wakeup_policy`；scheduler 在该字段存在时只会尝试租约给指定 assignee，不再按 role 池重新挑人，但 assignee 仍必须出现在当前可用 worker 候选里
@@ -36,13 +36,13 @@
 - runtime 完成事件现在会额外写回 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 都会自动映射到后续 follow-up ticket 或 maker-checker checker ticket 的 `input_process_asset_refs[]`
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
-- 当前已把原治理模板扩成统一 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
-- `role_templates_catalog.role_templates[]` 现在会额外暴露结构化 `mainline_boundary`：`boundary_status` 只会是 `LIVE_ON_MAINLINE / CATALOG_ONLY`；当前只有前 `3` 个模板会标成 `LIVE_ON_MAINLINE`，后 `5` 个模板继续保持 `CATALOG_ONLY`
-- `workforce` 投影现在会返回 `role_templates_catalog`、扩展后的 staffing hire templates，以及每个 worker 的 `source_template_id / source_fragment_refs`；`backend / database / platform / architect / cto` 五类模板现在都已进入 Board/workforce staffing 动作与 workforce lane，CEO `HIRE_EMPLOYEE` 也已放宽到这五类模板
-- 这组 `CATALOG_ONLY` 模板当前不再只是只读目录占位：`backend / database / platform` 具备 `catalog_readonly / provider_future_slot / staffing / workforce_lane` 这组主线存在感，仍被挡在 `ceo_create_ticket / runtime_execution` 外；`architect / cto` 则进一步具备 `ceo_create_ticket` 这条 partial mainline path，但仍未进入 formal runtime 支持矩阵、provider target label 或 `runtime_execution`
+- 当前已把原治理模板扩成统一 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary / backend_execution_reserved / database_execution_reserved / platform_sre_reserved / architect_governance / cto_governance` 八个当前 live 模板，同时附带五类文档 metadata ref 和九个模板片段
+- `role_templates_catalog.role_templates[]` 现在会额外暴露结构化 `mainline_boundary`：`boundary_status` 只会是 `LIVE_ON_MAINLINE / CATALOG_ONLY`；当前 8 个模板都已标成 `LIVE_ON_MAINLINE`，再通过 `active_path_refs / blocked_path_refs` 表达各自仍保留的 CEO / staged follow-up 边界
+- `workforce` 投影现在会返回 `role_templates_catalog`、扩展后的 staffing hire templates，以及每个 worker 的 `source_template_id / source_fragment_refs`；`backend / database / platform / architect / cto` 五类模板现在都已进入 Board/workforce staffing 动作、workforce lane 与 formal runtime live path，CEO `HIRE_EMPLOYEE` 也已放宽到这五类模板
+- 当前五类新增模板都不再只是目录或 partial path：`backend / database / platform` 已进入 `implementation_delivery` runtime live path，但仍被挡在 direct `ceo_create_ticket` 外；`architect / cto` 已进入 `ceo_create_ticket + governance_document_live` 这条正式治理文档 runtime 路径，仍不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
 - 自动 meeting candidate 现在也会把治理文档票视为决策型恢复候选；`architect / cto` 可作为 source ticket owner 进入 `TECHNICAL_DECISION` 候选，`backend / database / platform / architect / cto` 也都可进入 CEO meeting participant 匹配
 - Board approve / meeting consensus 里的 staged follow-up 现在只按最小口径放宽：`backend / database / platform` 可进入 `BUILD` owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`，`architect / cto` 不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
-- provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
+- provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary / architect_primary / cto_primary` 需要 `structured_output + planning`，`frontend_engineer_primary / backend_engineer_primary / database_engineer_primary / platform_sre_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
 - provider-to-provider failover 当前只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；运行时与 CEO live path 会按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径
 - 会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`；`MeetingRoom` 默认先展示压缩后的决策视图，再把 round timeline 留作 audit trail
 - 只有 `MEETING_ESCALATION` 批准后生成的 follow-up ticket 会额外把 ADR `decision + consequences` 注入后续执行输入；其他 `consensus_document` 来源路径不变
@@ -56,7 +56,14 @@
 | owner role | role profile | 输出 | Deterministic | OpenAI Compat Live | Claude Code CLI Live | 备注 |
 |------------|--------------|------|---------------|--------------------|----------------------|------|
 | `frontend_engineer` | `ui_designer_primary` | `consensus_document` | 支持 | 支持 | 支持 | 当前共识文档仍由旧 scope 共识链产出 |
+| `frontend_engineer` | `ui_designer_primary` | 五类治理文档 | 支持 | 支持 | 支持 | scope governance document 当前继续支持 live planning 角色 |
+| `frontend_engineer` | `frontend_engineer_primary` | 五类治理文档 | 支持 | 支持 | 支持 | frontend live 规划角色仍可产出治理文档 |
 | `frontend_engineer` | `frontend_engineer_primary` | `implementation_bundle` | 支持 | 支持 | 支持 | `BUILD` 产物当前由独立 frontend worker 产出 |
+| `backend_engineer` | `backend_engineer_primary` | `implementation_bundle` | 支持 | 支持 | 支持 | backend build 现在已进入正式 runtime live 路径 |
+| `database_engineer` | `database_engineer_primary` | `implementation_bundle` | 支持 | 支持 | 支持 | database build 现在已进入正式 runtime live 路径 |
+| `platform_sre` | `platform_sre_primary` | `implementation_bundle` | 支持 | 支持 | 支持 | platform build 现在已进入正式 runtime live 路径 |
+| `architect` | `architect_primary` | `architecture_brief / technology_decision / detailed_design` | 支持 | 支持 | 支持 | architect 治理文档现在已进入正式 runtime live 路径 |
+| `cto` | `cto_primary` | `architecture_brief / technology_decision / milestone_plan / backlog_recommendation` | 支持 | 支持 | 支持 | cto 治理文档现在已进入正式 runtime live 路径 |
 | `checker` | `checker_primary` | `delivery_check_report` | 支持 | 支持 | 支持 | `CHECK` 报告当前由 checker 产出 |
 | `frontend_engineer` | `frontend_engineer_primary` | `ui_milestone_review` | 支持 | 支持 | 支持 | 最终董事会 review 包当前由独立 frontend worker 产出 |
 | `frontend_engineer` | `frontend_engineer_primary` | `delivery_closeout_package` | 支持 | 支持 | 支持 | closeout package 当前由独立 frontend worker 产出 |
@@ -65,10 +72,10 @@
 当前不应误判的点：
 
 - `OpenAI Compat` 与 `Claude Code CLI` live path **都不只** 支持 `ui_milestone_review` 和 `maker_checker_verdict`
-- 当前主线真实覆盖的 role profile 已经是三类：`ui_designer_primary`、`frontend_engineer_primary`、`checker_primary`
+- 当前主线真实覆盖的 role profile 已扩到八类：`ui_designer_primary / frontend_engineer_primary / checker_primary / backend_engineer_primary / database_engineer_primary / platform_sre_primary / architect_primary / cto_primary`
 - CEO 的 `REQUEST_MEETING` 当前也同时支持 deterministic、OpenAI Compat live 和 Claude Code CLI live，但 deterministic 只会在 snapshot 里恰好存在一个合格会议候选时触发
-- 五类治理文档 schema 现在已进入 runtime 支持矩阵和 CEO live 建票路径；`architect_primary / cto_primary` 当前也已进入 CEO 治理文档建票入口，但这两类角色仍未进入 formal runtime 支持矩阵或 provider target label，而是继续走最小 `execution_contract + legacy role_profile:*` 兼容路径
-- `backend / database / platform` 虽然已经进入 Board/workforce staffing、CEO hire、meeting participant 和 `BUILD` follow-up 路径，但仍未进入 direct CEO create-ticket 或 formal runtime live 路径
+- 五类治理文档 schema 现在已进入 runtime 支持矩阵和 CEO live 建票路径；`architect_primary / cto_primary` 现在也已进入 formal runtime 支持矩阵与 provider target label
+- `backend / database / platform` 现在已进入 formal runtime live 路径，但仍未进入 direct CEO create-ticket
 - `role_templates_catalog.default_document_kind_refs` 当前只是目录建议值，不是 runtime、CEO 校验或建票 preset 的硬约束
 
 ## 3. 冻结边界清单

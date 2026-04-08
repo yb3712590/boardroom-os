@@ -1783,6 +1783,23 @@
 - `P2-RLS-002`：`role_templates_catalog.mainline_boundary` 与 `runtime-provider.future_binding_slots` 现在会把 `architect / cto` 显示成“CEO 入口已开、runtime_execution 仍 blocked”的 partial path；`backend / database / platform` 继续保持 `ceo_create_ticket / runtime_execution` 双 blocked surface
 - 本轮新增后端回归覆盖新增角色 CEO hire、architect/cto 治理文档建票、治理文档 meeting candidate、backend BUILD follow-up 放宽与 runtime 默认 follow-up 边界；前端回归补上 workforce partial-path 文案与 reserved binding blocked surface 更新；整体验证结果更新为 backend `504 passed`、frontend build passed、frontend `75 passed`
 
+### 4.3d 角色纳入链 (P2-RLS-003)
+
+**feature-spec**：条目 60, 61, 62, 63, 76, 77
+
+| ID | 标题 | 预估 |
+|----|------|------|
+| P2-RLS-003 | runtime 支持矩阵、context compiler 与 provider target label 纳入新增角色 | 5h |
+
+完成补记（2026-04-08）：
+
+- `P2-RLS-003`：`backend_engineer_primary / database_engineer_primary / platform_sre_primary` 现在都已进入正式 `implementation_bundle` runtime 支持矩阵，并新增 `backend_build / database_build / platform_build` 三类 execution target；这三类 build 票不再回退成裸 `role_profile:*` 路径
+- `P2-RLS-003`：`architect_primary / cto_primary` 现在已进入正式治理文档 runtime 支持矩阵与 provider target label，不再只靠最小兼容路径挂在 CEO 治理文档入口上
+- `P2-RLS-003`：`role_templates_catalog` 五类新增模板现已全部标成 `LIVE_ON_MAINLINE`；`backend / database / platform` 保留 `ceo_create_ticket` blocked surface，`architect / cto` 保持治理文档 live path，不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
+- `P2-RLS-003`：`runtime-provider.future_binding_slots` 当前为空，Provider 设置抽屉已把五类新增角色从 `Reserved bindings` 提升到当前可编辑绑定区；执行时仍保持 `execution_target` 优先、legacy `role_profile:*` binding 兼容兜底
+- `P2-RLS-003`：Context Compiler 已补齐新增角色的组织语义映射，`org_context` 现在能正确表达 `backend / database / platform / architect / cto` 的上游/协作者角色类型，不新增存储层或新检索通道
+- 本轮新增后端回归覆盖 execution target 推断、runtime 支持矩阵、provider target floor、role template 边界、runtime-provider 投影和 Context Compiler 组织语义；前端回归补齐新增 role binding 可编辑区、workforce live-path 文案和运行时设置抽屉的新绑定项；整体验证结果更新为 backend `506 passed`、frontend build passed、frontend `76 passed`
+
 完成补记（2026-04-06）：
 
 - `P2-GOV-007`：closeout 证据与文档同步软约束已按最小边界收口，不改状态机，也不新增前端默认读面

@@ -269,7 +269,7 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
         "provider_target_ref": "role_profile:backend_engineer_primary",
         "participation_mode": PARTICIPATION_MODE_HIGH_FREQUENCY_DELIVERY,
         "execution_boundary": "已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。",
-        "status": ROLE_TEMPLATE_STATUS_NOT_ENABLED,
+        "status": ROLE_TEMPLATE_STATUS_LIVE,
         "default_document_kind_refs": ["detailed_design"],
         "responsibility_summary": "负责服务实现、接口落地和集成切片。",
         "summary": "Reserved for future backend delivery slices.",
@@ -280,19 +280,18 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             ],
         },
         "mainline_boundary": _mainline_boundary(
-            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            boundary_status=MAINLINE_BOUNDARY_STATUS_LIVE,
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
-                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
                 MAINLINE_PATH_STAFFING,
                 MAINLINE_PATH_WORKFORCE_LANE,
+                MAINLINE_PATH_IMPLEMENTATION_DELIVERY,
             ),
             blocked_path_refs=(
                 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
-                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
             ),
         ),
-        "future_provider_binding_enabled": True,
+        "future_provider_binding_enabled": False,
     },
     {
         "template_id": "database_execution_reserved",
@@ -305,7 +304,7 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
         "provider_target_ref": "role_profile:database_engineer_primary",
         "participation_mode": PARTICIPATION_MODE_HIGH_FREQUENCY_DELIVERY,
         "execution_boundary": "已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。",
-        "status": ROLE_TEMPLATE_STATUS_NOT_ENABLED,
+        "status": ROLE_TEMPLATE_STATUS_LIVE,
         "default_document_kind_refs": ["detailed_design"],
         "responsibility_summary": "负责数据模型、迁移和数据库可靠性边界。",
         "summary": "Reserved for future database-heavy slices.",
@@ -316,19 +315,18 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             ],
         },
         "mainline_boundary": _mainline_boundary(
-            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            boundary_status=MAINLINE_BOUNDARY_STATUS_LIVE,
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
-                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
                 MAINLINE_PATH_STAFFING,
                 MAINLINE_PATH_WORKFORCE_LANE,
+                MAINLINE_PATH_IMPLEMENTATION_DELIVERY,
             ),
             blocked_path_refs=(
                 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
-                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
             ),
         ),
-        "future_provider_binding_enabled": True,
+        "future_provider_binding_enabled": False,
     },
     {
         "template_id": "platform_sre_reserved",
@@ -341,7 +339,7 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
         "provider_target_ref": "role_profile:platform_sre_primary",
         "participation_mode": PARTICIPATION_MODE_HIGH_FREQUENCY_DELIVERY,
         "execution_boundary": "已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。",
-        "status": ROLE_TEMPLATE_STATUS_NOT_ENABLED,
+        "status": ROLE_TEMPLATE_STATUS_LIVE,
         "default_document_kind_refs": ["detailed_design"],
         "responsibility_summary": "负责部署、稳定性和运行环境治理。",
         "summary": "Reserved for future platform and reliability work.",
@@ -352,19 +350,18 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             ],
         },
         "mainline_boundary": _mainline_boundary(
-            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            boundary_status=MAINLINE_BOUNDARY_STATUS_LIVE,
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
-                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
                 MAINLINE_PATH_STAFFING,
                 MAINLINE_PATH_WORKFORCE_LANE,
+                MAINLINE_PATH_IMPLEMENTATION_DELIVERY,
             ),
             blocked_path_refs=(
                 MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
-                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
             ),
         ),
-        "future_provider_binding_enabled": True,
+        "future_provider_binding_enabled": False,
     },
     {
         "template_id": "architect_governance",
@@ -377,7 +374,7 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
         "provider_target_ref": "role_profile:architect_primary",
         "participation_mode": PARTICIPATION_MODE_LOW_FREQUENCY_HIGH_LEVERAGE,
         "execution_boundary": "默认不承担日常编码、测试或持续实施主力工作。",
-        "status": ROLE_TEMPLATE_STATUS_NOT_ENABLED,
+        "status": ROLE_TEMPLATE_STATUS_LIVE,
         "default_document_kind_refs": [
             "architecture_brief",
             "technology_decision",
@@ -392,19 +389,16 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             ],
         },
         "mainline_boundary": _mainline_boundary(
-            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            boundary_status=MAINLINE_BOUNDARY_STATUS_LIVE,
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
-                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
                 MAINLINE_PATH_STAFFING,
                 MAINLINE_PATH_WORKFORCE_LANE,
                 MAINLINE_PATH_CEO_CREATE_TICKET,
-            ),
-            blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
+                MAINLINE_PATH_GOVERNANCE_DOCUMENT_LIVE,
             ),
         ),
-        "future_provider_binding_enabled": True,
+        "future_provider_binding_enabled": False,
     },
     {
         "template_id": "cto_governance",
@@ -417,7 +411,7 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
         "provider_target_ref": "role_profile:cto_primary",
         "participation_mode": PARTICIPATION_MODE_LOW_FREQUENCY_HIGH_LEVERAGE,
         "execution_boundary": "默认不承担日常编码、测试或持续实施主力工作。",
-        "status": ROLE_TEMPLATE_STATUS_NOT_ENABLED,
+        "status": ROLE_TEMPLATE_STATUS_LIVE,
         "default_document_kind_refs": [
             "architecture_brief",
             "technology_decision",
@@ -433,19 +427,16 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
             ],
         },
         "mainline_boundary": _mainline_boundary(
-            boundary_status=MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY,
+            boundary_status=MAINLINE_BOUNDARY_STATUS_LIVE,
             active_path_refs=(
                 MAINLINE_PATH_CATALOG_READONLY,
-                MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
                 MAINLINE_PATH_STAFFING,
                 MAINLINE_PATH_WORKFORCE_LANE,
                 MAINLINE_PATH_CEO_CREATE_TICKET,
-            ),
-            blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
+                MAINLINE_PATH_GOVERNANCE_DOCUMENT_LIVE,
             ),
         ),
-        "future_provider_binding_enabled": True,
+        "future_provider_binding_enabled": False,
     },
 )
 

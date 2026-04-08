@@ -34,11 +34,11 @@ def test_role_template_catalog_exposes_live_reserved_and_governance_templates():
         ROLE_TEMPLATE_STATUS_LIVE,
         ROLE_TEMPLATE_STATUS_LIVE,
         ROLE_TEMPLATE_STATUS_LIVE,
-        ROLE_TEMPLATE_STATUS_NOT_ENABLED,
-        ROLE_TEMPLATE_STATUS_NOT_ENABLED,
-        ROLE_TEMPLATE_STATUS_NOT_ENABLED,
-        ROLE_TEMPLATE_STATUS_NOT_ENABLED,
-        ROLE_TEMPLATE_STATUS_NOT_ENABLED,
+        ROLE_TEMPLATE_STATUS_LIVE,
+        ROLE_TEMPLATE_STATUS_LIVE,
+        ROLE_TEMPLATE_STATUS_LIVE,
+        ROLE_TEMPLATE_STATUS_LIVE,
+        ROLE_TEMPLATE_STATUS_LIVE,
     ]
     assert templates[0]["canonical_role_ref"] == "ui_designer_primary"
     assert templates[1]["canonical_role_ref"] == "frontend_engineer_primary"
@@ -95,18 +95,30 @@ def test_role_template_catalog_exposes_live_reserved_and_governance_templates():
         ],
         "blocked_path_refs": [],
     }
-    assert templates[6]["mainline_boundary"] == {
-        "boundary_status": "CATALOG_ONLY",
+    assert templates[3]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
         "active_path_refs": [
             "catalog_readonly",
-            "provider_future_slot",
+            "staffing",
+            "workforce_lane",
+            "implementation_delivery",
+        ],
+        "blocked_path_refs": [
+            "ceo_create_ticket",
+        ],
+    }
+    assert templates[4]["mainline_boundary"] == templates[3]["mainline_boundary"]
+    assert templates[5]["mainline_boundary"] == templates[3]["mainline_boundary"]
+    assert templates[6]["mainline_boundary"] == {
+        "boundary_status": "LIVE_ON_MAINLINE",
+        "active_path_refs": [
+            "catalog_readonly",
             "staffing",
             "workforce_lane",
             "ceo_create_ticket",
+            "governance_document_live",
         ],
-        "blocked_path_refs": [
-            "runtime_execution",
-        ],
+        "blocked_path_refs": [],
     }
     assert templates[7]["mainline_boundary"] == templates[6]["mainline_boundary"]
 

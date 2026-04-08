@@ -103,6 +103,11 @@ SUPPORTED_RUNTIME_ROLE_PROFILES = {
     "ui_designer_primary",
     "frontend_engineer_primary",
     "checker_primary",
+    "backend_engineer_primary",
+    "database_engineer_primary",
+    "platform_sre_primary",
+    "architect_primary",
+    "cto_primary",
 }
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
 PROVIDER_MAX_ATTEMPTS = 3

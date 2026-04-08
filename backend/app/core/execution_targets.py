@@ -23,6 +23,9 @@ EXECUTION_CONTRACT_VERSION = "execution_contract_v1"
 EXECUTION_TARGET_SCOPE_CONSENSUS = "execution_target:scope_consensus"
 EXECUTION_TARGET_SCOPE_GOVERNANCE_DOCUMENT = "execution_target:scope_governance_document"
 EXECUTION_TARGET_FRONTEND_BUILD = "execution_target:frontend_build"
+EXECUTION_TARGET_BACKEND_BUILD = "execution_target:backend_build"
+EXECUTION_TARGET_DATABASE_BUILD = "execution_target:database_build"
+EXECUTION_TARGET_PLATFORM_BUILD = "execution_target:platform_build"
 EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT = "execution_target:frontend_governance_document"
 EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT = "execution_target:architect_governance_document"
 EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT = "execution_target:cto_governance_document"
@@ -126,6 +129,36 @@ EXECUTION_TARGET_DEFINITIONS = (
         label="Frontend Build",
     ),
     ExecutionTargetDefinition(
+        execution_target_ref=EXECUTION_TARGET_BACKEND_BUILD,
+        role_profile_ref="backend_engineer_primary",
+        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        required_capability_tags=(
+            RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+            RuntimeProviderCapabilityTag.IMPLEMENTATION,
+        ),
+        label="Backend Build",
+    ),
+    ExecutionTargetDefinition(
+        execution_target_ref=EXECUTION_TARGET_DATABASE_BUILD,
+        role_profile_ref="database_engineer_primary",
+        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        required_capability_tags=(
+            RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+            RuntimeProviderCapabilityTag.IMPLEMENTATION,
+        ),
+        label="Database Build",
+    ),
+    ExecutionTargetDefinition(
+        execution_target_ref=EXECUTION_TARGET_PLATFORM_BUILD,
+        role_profile_ref="platform_sre_primary",
+        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        required_capability_tags=(
+            RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+            RuntimeProviderCapabilityTag.IMPLEMENTATION,
+        ),
+        label="Platform Build",
+    ),
+    ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_CHECKER_DELIVERY_CHECK,
         role_profile_ref="checker_primary",
         output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
@@ -177,6 +210,18 @@ _ROLE_PROFILE_CAPABILITY_TAGS = {
     "checker_primary": (
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
         RuntimeProviderCapabilityTag.REVIEW,
+    ),
+    "backend_engineer_primary": (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    "database_engineer_primary": (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
+    ),
+    "platform_sre_primary": (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.IMPLEMENTATION,
     ),
     "architect_primary": (
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,

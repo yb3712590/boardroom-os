@@ -11,6 +11,11 @@ const CURRENT_ROLE_TARGETS = [
   { target_ref: 'role_profile:ui_designer_primary', target_label: 'Scope Consensus' },
   { target_ref: 'role_profile:frontend_engineer_primary', target_label: 'Frontend Engineer' },
   { target_ref: 'role_profile:checker_primary', target_label: 'Checker' },
+  { target_ref: 'role_profile:backend_engineer_primary', target_label: 'Backend Engineer / 服务交付' },
+  { target_ref: 'role_profile:database_engineer_primary', target_label: 'Database Engineer / 数据可靠性' },
+  { target_ref: 'role_profile:platform_sre_primary', target_label: 'Platform / SRE' },
+  { target_ref: 'role_profile:architect_primary', target_label: '架构师 / 设计评审' },
+  { target_ref: 'role_profile:cto_primary', target_label: 'CTO / 架构治理' },
 ]
 
 const PROVIDER_CAPABILITY_OPTIONS = [
