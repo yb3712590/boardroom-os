@@ -96,10 +96,21 @@ _GOVERNANCE_DOCUMENT_PRESET_VERSION_BY_SCHEMA = {
     DETAILED_DESIGN_SCHEMA_REF: DETAILED_DESIGN_SCHEMA_VERSION,
     BACKLOG_RECOMMENDATION_SCHEMA_REF: BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
 }
-_LIVE_GOVERNANCE_DOCUMENT_ROLE_PROFILES = (
-    "ui_designer_primary",
-    "frontend_engineer_primary",
-)
+_GOVERNANCE_DOCUMENT_ROLE_PROFILES: dict[str, tuple[str, ...]] = {
+    "ui_designer_primary": tuple(GOVERNANCE_DOCUMENT_SCHEMA_REFS),
+    "frontend_engineer_primary": tuple(GOVERNANCE_DOCUMENT_SCHEMA_REFS),
+    "architect_primary": (
+        ARCHITECTURE_BRIEF_SCHEMA_REF,
+        TECHNOLOGY_DECISION_SCHEMA_REF,
+        DETAILED_DESIGN_SCHEMA_REF,
+    ),
+    "cto_primary": (
+        ARCHITECTURE_BRIEF_SCHEMA_REF,
+        TECHNOLOGY_DECISION_SCHEMA_REF,
+        MILESTONE_PLAN_SCHEMA_REF,
+        BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    ),
+}
 GOVERNANCE_DOCUMENT_CHAIN_ORDER = (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
@@ -108,8 +119,8 @@ GOVERNANCE_DOCUMENT_CHAIN_ORDER = (
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
 )
 
-for role_profile_ref in _LIVE_GOVERNANCE_DOCUMENT_ROLE_PROFILES:
-    for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+for role_profile_ref, output_schema_refs in _GOVERNANCE_DOCUMENT_ROLE_PROFILES.items():
+    for output_schema_ref in output_schema_refs:
         _CREATE_TICKET_PRESETS[(role_profile_ref, output_schema_ref)] = CEOCreateTicketPreset(
             role_profile_ref=role_profile_ref,
             output_schema_ref=output_schema_ref,

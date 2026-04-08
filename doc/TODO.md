@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-08）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `497 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `504 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `75 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -34,17 +34,17 @@
 状态：`已完成（2026-04-08，6 项已收口；与主线关系：在派单/runtime/过程资产边界收正后，把文档/设计型角色的产物契约、CEO 触发边界和文档真相收进现有 Ticket 主链，不提前打开新增执行角色；当前主线已转入 P2-RLS 角色纳入链）`
 
 - `P2-GOV-003` 已完成（2026-04-07）：治理文档合同现已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；`ticket-result-submit` 会把这类结果额外写成 `GOVERNANCE_DOCUMENT` 过程资产，`Context Compiler` 也已能把它们当作一等显式输入消费，同时保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / sections / followup_recommendations` 这组结构化关联，不改 runtime 支持矩阵，也不提前启用治理角色 live 执行
-- `P2-GOV-004` 已完成（2026-04-08）：CEO 现在可在当前 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单；五类治理文档当前都已进入 runtime 支持矩阵，但仍只落在 `ui_designer_primary / frontend_engineer_primary` 两个 live 角色，不提前启用 `architect / cto / backend / database / platform`；当 CEO 创建的后续票显式挂在治理文档父票下时，会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产
-- `P2-GOV-005` 已完成（2026-04-08）：`role_templates_catalog.role_templates[]` 现在会暴露结构化 `mainline_boundary`；当前只有 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 标成 `LIVE_ON_MAINLINE`，`backend / database / platform / architect / cto` 五个模板全部保持 `CATALOG_ONLY`，并明确被挡在 `staffing / ceo_create_ticket / runtime_execution / workforce_lane` 之外
+- `P2-GOV-004` 已完成（2026-04-08）：CEO 现在可在当前 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单；后续 `P2-RLS-002` 又把 `architect_primary / cto_primary` 纳入 CEO 治理文档建票入口，但 `backend / database / platform` 仍未进入 direct CEO create-ticket；治理文档父票输出的 `GOVERNANCE_DOCUMENT` 过程资产也会继续自动继承给后续票
+- `P2-GOV-005` 已完成（2026-04-08）：`role_templates_catalog.role_templates[]` 现在会暴露结构化 `mainline_boundary`；当前只有 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 标成 `LIVE_ON_MAINLINE`，`backend / database / platform / architect / cto` 五个模板全部保持 `CATALOG_ONLY`；其中 `backend / database / platform` 仍被挡在 `ceo_create_ticket / runtime_execution` 外，`architect / cto` 则已在 `P2-RLS-002` 打开 `ceo_create_ticket`，但仍挡在 `runtime_execution` 外
 - `P2-GOV-006` 已完成（2026-04-08）：`workforce` 目录卡片和 `runtime-provider.future_binding_slots` 现在都会直接展示这套边界；前端把预留位改写成 `Reserved bindings`，不再只靠 `NOT_ENABLED` 猜语义；本轮也补齐了后端回归、前端组件回归和文档真相同步
-- 当前下一步应进入 `P2-RLS-002`
+- 当前下一步应进入 `P2-RLS-003`
 
 ### `P2-RLS`：新增角色真实纳入链
 
-状态：`当前主线（2026-04-08 起接替 P2-GOV；与主线关系：在角色目录与真实 live 边界写实后，再按最小闭环把新增角色逐步接进 staffing、CEO preset 和 runtime，而不是直接整体打开）`
+状态：`当前主线（2026-04-08 起接替 P2-GOV；当前已完成 staffing 与 CEO 入口纳入，下一步进入 runtime 正式纳入；与主线关系：按最小闭环逐步接进 staffing、CEO preset 和 runtime，而不是直接整体打开）`
 
 - `P2-RLS-001` 已完成（2026-04-08）：`backend / database / platform / architect / cto` 五类模板现在已进入 Board/workforce staffing 主链；Board 可发起 hire / replace 审批，审批通过后这些角色会真实进入 workforce lane，并带上 `source_template_id / source_fragment_refs` 与一致的 `FREEZE / RESTORE / REPLACE` 动作；这轮同时把 board/workforce staffing 与 CEO limited hire 拆开，确保新增角色仍不会提前进入 CEO preset
-- `P2-RLS-002` 未开始：CEO 建票 preset、meeting policy 与 follow-up 纳入新增角色；只在新增角色已经进入 workforce/staffing 后，再继续接 CEO 决策入口
+- `P2-RLS-002` 已完成（2026-04-08）：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口，并通过最小 `execution_contract + legacy role_profile:*` 兼容路径执行；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`
 - `P2-RLS-003` 未开始：runtime 支持矩阵、context compiler 与 provider target label 纳入新增角色；只在前两步落地后，再把 runtime live 路径扩到新增角色
 
 ### `P2-M7`：集成、文档与交付口径收口
@@ -112,7 +112,7 @@
 
 - `P2-GOV-001` 已完成：后端先补了治理模板基础目录，最小固定 `cto_governance / architect_governance` 两组只读模板和五类文档 metadata ref
 - 这层基础目录当前已被 `P2-GOV-002` 扩成统一只读 `role_templates_catalog`；`P2-GOV-001` 现在只保留“打底”语义，不再单独作为前端当前真相字段暴露
-- 当前保持保守边界：`cto_primary / architect_primary` 仍未进入 runtime 支持矩阵、staffing 动作或 CEO 文档型建票链；`P2-GOV-001` 只为后续文档链和角色纳入链提供基础结构
+- 当前保持保守边界：`cto_primary / architect_primary` 现在已进入 CEO 文档型建票链，但仍未进入 formal runtime 支持矩阵或 provider target label；`P2-GOV-001` 只为后续文档链和角色纳入链提供基础结构
 
 ### `P2-GOV-002`：统一角色/技能模板目录与组合元数据
 
@@ -120,7 +120,7 @@
 
 - `P2-GOV-002` 已完成：后端新增统一只读 `role_templates_catalog`，固定暴露 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段
 - `workforce` 投影现在改为暴露 `role_templates_catalog`；当前 live worker 还会额外返回 `source_template_id / source_fragment_refs`，把现有 `skill_profile / personality_profile / aesthetic_profile` 映射回高层模板来源
-- `runtime-provider.future_binding_slots` 现在改从同一目录筛出未启用模板，最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`；当前保守边界已收窄为“不把这些角色接进 CEO 建票、runtime 或执行包”
+- `runtime-provider.future_binding_slots` 现在改从同一目录筛出未启用模板，最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`；当前保守边界已收窄为“不把这些角色写成 formal runtime live”；其中 `architect / cto` 已在 `P2-RLS-002` 打开 CEO 治理文档建票入口
 - 本轮已同时重排后续任务包：`P2-GOV-003` 到 `P2-GOV-006` 现在只负责“文档/设计链纳入与边界”，新增 `P2-RLS-001` 到 `P2-RLS-003` 专门承接后续 staffing / CEO / runtime 真实纳入链
 - 在本轮愿景重排后，这些后续任务都要排在 `P2-DEC-001` 到 `P2-DEC-004` 之后；当前先收正 role/runtime、CEO/scheduler 和过程资产的基础边界，再继续角色纳入
 - 当前验证基线更新为 backend `464 passed`、frontend build passed、frontend `73 passed`

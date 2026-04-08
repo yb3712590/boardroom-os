@@ -81,7 +81,17 @@ _BOARD_WORKFORCE_STAFFING_HIRE_TEMPLATES: tuple[dict[str, Any], ...] = (
     },
 )
 
-_CEO_LIMITED_STAFFING_ROLE_TYPES = frozenset({"frontend_engineer", "checker"})
+_CEO_LIMITED_STAFFING_ROLE_TYPES = frozenset(
+    {
+        "frontend_engineer",
+        "checker",
+        "backend_engineer",
+        "database_engineer",
+        "platform_sre",
+        "governance_architect",
+        "governance_cto",
+    }
+)
 
 
 def _clone_template(template: dict[str, Any]) -> dict[str, Any]:

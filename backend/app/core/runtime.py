@@ -272,6 +272,17 @@ def _build_meeting_round_notes(round_type: str, topic: str, participant_ids: lis
     return [f"{employee_id} confirmed the final technical decision summary." for employee_id in participant_ids]
 
 
+def _default_build_followup_owner_role(source_owner_role: str) -> str:
+    if source_owner_role in {
+        "frontend_engineer",
+        "backend_engineer",
+        "database_engineer",
+        "platform_sre",
+    }:
+        return source_owner_role
+    return "frontend_engineer"
+
+
 def _build_meeting_consensus_payload(
     execution_package: CompiledExecutionPackage,
     meeting_context: dict[str, Any],
@@ -282,6 +293,7 @@ def _build_meeting_consensus_payload(
     ticket_id = execution_package.meta.ticket_id
     topic = str(meeting_context.get("topic") or f"Consensus for ticket {ticket_id}")
     owner_role = execution_package.compiled_role.employee_role_type
+    build_owner_role = _default_build_followup_owner_role(owner_role)
     return {
         "topic": topic,
         "participants": participant_ids,
@@ -312,7 +324,7 @@ def _build_meeting_consensus_payload(
         "followup_tickets": [
             {
                 "ticket_id": f"{ticket_id}_followup_build",
-                "owner_role": owner_role,
+                "owner_role": build_owner_role,
                 "summary": "Implement the converged technical direction without widening the MVP boundary.",
                 "delivery_stage": DeliveryStage.BUILD.value,
             },
@@ -324,7 +336,7 @@ def _build_meeting_consensus_payload(
             },
             {
                 "ticket_id": f"{ticket_id}_followup_review",
-                "owner_role": owner_role,
+                "owner_role": "frontend_engineer",
                 "summary": "Prepare the final board-facing review package from the converged technical decision.",
                 "delivery_stage": DeliveryStage.REVIEW.value,
             },
@@ -527,6 +539,7 @@ def _build_runtime_success_payload(
 ) -> dict[str, Any]:
     if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
         owner_role = execution_package.compiled_role.employee_role_type
+        build_owner_role = _default_build_followup_owner_role(owner_role)
         ticket_id = execution_package.meta.ticket_id
         return {
             "topic": f"Consensus for ticket {ticket_id}",
@@ -542,7 +555,7 @@ def _build_runtime_success_payload(
             "followup_tickets": [
                 {
                     "ticket_id": f"{ticket_id}_followup_build",
-                    "owner_role": owner_role,
+                    "owner_role": build_owner_role,
                     "summary": "Build the approved homepage foundation without widening scope.",
                     "delivery_stage": DeliveryStage.BUILD.value,
                 },
@@ -554,7 +567,7 @@ def _build_runtime_success_payload(
                 },
                 {
                     "ticket_id": f"{ticket_id}_followup_review",
-                    "owner_role": owner_role,
+                    "owner_role": "frontend_engineer",
                     "summary": "Prepare the final board-facing homepage review package from the approved implementation.",
                     "delivery_stage": DeliveryStage.REVIEW.value,
                 },

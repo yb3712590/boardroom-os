@@ -12,6 +12,7 @@ MAINLINE_BOUNDARY_STATUS_CATALOG_ONLY = "CATALOG_ONLY"
 MAINLINE_PATH_CATALOG_READONLY = "catalog_readonly"
 MAINLINE_PATH_SCOPE_CONSENSUS = "scope_consensus"
 MAINLINE_PATH_GOVERNANCE_DOCUMENT_LIVE = "governance_document_live"
+MAINLINE_PATH_CEO_CREATE_TICKET = "ceo_create_ticket"
 MAINLINE_PATH_IMPLEMENTATION_DELIVERY = "implementation_delivery"
 MAINLINE_PATH_CHECKER_GATE = "checker_gate"
 MAINLINE_PATH_FINAL_REVIEW = "final_review"
@@ -397,9 +398,9 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
                 MAINLINE_PATH_STAFFING,
                 MAINLINE_PATH_WORKFORCE_LANE,
+                MAINLINE_PATH_CEO_CREATE_TICKET,
             ),
             blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
                 MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
             ),
         ),
@@ -438,9 +439,9 @@ _ROLE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
                 MAINLINE_PATH_PROVIDER_FUTURE_SLOT,
                 MAINLINE_PATH_STAFFING,
                 MAINLINE_PATH_WORKFORCE_LANE,
+                MAINLINE_PATH_CEO_CREATE_TICKET,
             ),
             blocked_path_refs=(
-                MAINLINE_BLOCKED_PATH_CEO_CREATE_TICKET,
                 MAINLINE_BLOCKED_PATH_RUNTIME_EXECUTION,
             ),
         ),

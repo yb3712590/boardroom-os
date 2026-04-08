@@ -5,11 +5,16 @@ from typing import Any
 
 from app.contracts.commands import RuntimeProviderCapabilityTag
 from app.core.output_schemas import (
-    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 
@@ -19,9 +24,23 @@ EXECUTION_TARGET_SCOPE_CONSENSUS = "execution_target:scope_consensus"
 EXECUTION_TARGET_SCOPE_GOVERNANCE_DOCUMENT = "execution_target:scope_governance_document"
 EXECUTION_TARGET_FRONTEND_BUILD = "execution_target:frontend_build"
 EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT = "execution_target:frontend_governance_document"
+EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT = "execution_target:architect_governance_document"
+EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT = "execution_target:cto_governance_document"
 EXECUTION_TARGET_CHECKER_DELIVERY_CHECK = "execution_target:checker_delivery_check"
 EXECUTION_TARGET_FRONTEND_REVIEW = "execution_target:frontend_review"
 EXECUTION_TARGET_FRONTEND_CLOSEOUT = "execution_target:frontend_closeout"
+
+_ARCHITECT_GOVERNANCE_DOCUMENT_SCHEMA_REFS = (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
+)
+_CTO_GOVERNANCE_DOCUMENT_SCHEMA_REFS = (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +88,32 @@ EXECUTION_TARGET_DEFINITIONS = (
             label="Frontend Governance Document",
         )
         for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
+    ),
+    *(
+        ExecutionTargetDefinition(
+            execution_target_ref=EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
+            role_profile_ref="architect_primary",
+            output_schema_ref=output_schema_ref,
+            required_capability_tags=(
+                RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+                RuntimeProviderCapabilityTag.PLANNING,
+            ),
+            label="Architect Governance Document",
+        )
+        for output_schema_ref in _ARCHITECT_GOVERNANCE_DOCUMENT_SCHEMA_REFS
+    ),
+    *(
+        ExecutionTargetDefinition(
+            execution_target_ref=EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT,
+            role_profile_ref="cto_primary",
+            output_schema_ref=output_schema_ref,
+            required_capability_tags=(
+                RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+                RuntimeProviderCapabilityTag.PLANNING,
+            ),
+            label="CTO Governance Document",
+        )
+        for output_schema_ref in _CTO_GOVERNANCE_DOCUMENT_SCHEMA_REFS
     ),
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_FRONTEND_BUILD,
@@ -132,6 +177,14 @@ _ROLE_PROFILE_CAPABILITY_TAGS = {
     "checker_primary": (
         RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
         RuntimeProviderCapabilityTag.REVIEW,
+    ),
+    "architect_primary": (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
+    ),
+    "cto_primary": (
+        RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+        RuntimeProviderCapabilityTag.PLANNING,
     ),
 }
 

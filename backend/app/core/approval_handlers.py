@@ -68,9 +68,24 @@ from app.core.workflow_scope import with_workflow_scope
 from app.db.repository import ControlPlaneRepository
 
 SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS = 6
+FOLLOWUP_OWNER_ROLE_TO_PROFILE_BY_STAGE = {
+    DeliveryStage.BUILD: {
+        "frontend_engineer": "frontend_engineer_primary",
+        "backend_engineer": "backend_engineer_primary",
+        "database_engineer": "database_engineer_primary",
+        "platform_sre": "platform_sre_primary",
+    },
+    DeliveryStage.CHECK: {
+        "checker": "checker_primary",
+    },
+    DeliveryStage.REVIEW: {
+        "frontend_engineer": "frontend_engineer_primary",
+    },
+}
 FOLLOWUP_OWNER_ROLE_TO_PROFILE = {
-    "frontend_engineer": "frontend_engineer_primary",
-    "checker": "checker_primary",
+    owner_role: role_profile_ref
+    for stage_mapping in FOLLOWUP_OWNER_ROLE_TO_PROFILE_BY_STAGE.values()
+    for owner_role, role_profile_ref in stage_mapping.items()
 }
 SUPPORTED_SCOPE_FOLLOWUP_DELIVERY_STAGES = {
     DeliveryStage.BUILD,
@@ -1024,7 +1039,7 @@ def _build_scope_followup_ticket_payloads(
             )
         seen_ticket_ids.add(followup_ticket_id)
 
-        role_profile_ref = FOLLOWUP_OWNER_ROLE_TO_PROFILE.get(owner_role)
+        role_profile_ref = FOLLOWUP_OWNER_ROLE_TO_PROFILE_BY_STAGE.get(delivery_stage, {}).get(owner_role)
         if role_profile_ref is None:
             raise ValueError(f"Unsupported approved follow-up owner_role '{owner_role}'.")
         if repository.get_current_ticket_projection(followup_ticket_id, connection=connection) is not None:

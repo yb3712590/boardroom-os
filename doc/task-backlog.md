@@ -14,18 +14,18 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 总任务数 | 143 | 原始编号保留，新增编号继续用于路线重排、M7 首批、条件批次、角色纳入链和本轮前置解耦批次 |
-| 已完成 / 已收口 | 137 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
-| 当前仍未关闭 | 6 | 当前工作集保存在 `task-backlog/active.md` |
+| 已完成 / 已收口 | 138 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 当前仍未关闭 | 5 | 当前工作集保存在 `task-backlog/active.md` |
 | 总预估工时 | 531h | 在原表基础上补入本轮新增前置解耦任务 |
 
 ## 当前活跃区域
 
 | 区域 | 任务范围 | 当前状态 | 默认看哪里 |
 |------|----------|----------|------------|
-| 当前主线 | `P2-RLS-002` | 当前主线；`P2-RLS-001` 已完成，下一步进入 CEO / meeting / follow-up 纳入链 | [task-backlog/active.md](task-backlog/active.md) |
+| 当前主线 | `P2-RLS-003` | 当前主线；`P2-RLS-001/002` 已完成，下一步进入 runtime / context / provider 正式纳入链 | [task-backlog/active.md](task-backlog/active.md) |
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | [task-backlog/active.md](task-backlog/active.md) |
 | Provider 增强 | `P2-PRV-007` 到 `P2-PRV-008` | 后置增强 | [task-backlog/active.md](task-backlog/active.md) |
-| 角色纳入链 | `P2-RLS-002` 到 `P2-RLS-003` | 当前主线 / 后续同批；staffing / workforce 已纳入新增角色，下一步继续接 CEO 与 runtime | [task-backlog/active.md](task-backlog/active.md) |
+| 角色纳入链 | `P2-RLS-003` | 当前主线；staffing 与 CEO 入口已纳入新增角色，下一步继续接 runtime 正式工作链 | [task-backlog/active.md](task-backlog/active.md) |
 
 ## 读写约定
 

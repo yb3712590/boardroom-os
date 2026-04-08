@@ -23,9 +23,9 @@
 - runtime provider 配置现在已从单一 OpenAI 表单切成最小 registry：固定暴露 `default_provider_id / providers[] / role_bindings[]`，旧配置文件会自动迁移
 - 当前 registry 首版真实支持两个 adapter：`prov_openai_compat` 与 `prov_claude_code`；`runtime-provider` 投影和前端设置抽屉都会暴露 provider 列表、`capability_tags[]`、`fallback_provider_ids[]`、每个 provider 的 `health_status / health_reason`、当前真实角色绑定和未来治理角色只读占位
 - `TICKET_CREATED` payload 现在会补入 `execution_contract`，固定包含 `execution_target_ref / required_capability_tags / runtime_contract_version`；普通 ticket-create 路径即使没显式传，也会按 `role_profile_ref + output_schema_ref` 自动补齐
-- 当前 execution target catalog 已按主线收口为 7 类：`scope_consensus / scope_governance_document / frontend_governance_document / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`
+- 当前 execution target catalog 已按主线收口为 9 类：`scope_consensus / scope_governance_document / frontend_governance_document / architect_governance_document / cto_governance_document / frontend_build / checker_delivery_check / frontend_review / frontend_closeout`
 - CEO create-ticket 当前必须显式带 `dispatch_intent.assignee_employee_id / selection_reason`；校验层会拒绝不存在、非激活或能力不匹配的 assignee，非法派单不会入队
-- CEO create-ticket 当前也接受五类治理文档输出：`architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation`；这类文档当前只能落在 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色上，`role_templates_catalog.default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单
+- CEO create-ticket 当前也接受五类治理文档输出：`architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation`；这类文档现在除了 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色，也可落到 `architect_primary / cto_primary`，但仍只限治理文档链；`backend / database / platform` 仍未进入 direct CEO create-ticket，`role_templates_catalog.default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单
 - `dispatch_intent` 现在已扩到最小 5 字段：`assignee_employee_id / selection_reason / dependency_gate_refs[] / selected_by / wakeup_policy`；scheduler 在该字段存在时只会尝试租约给指定 assignee，不再按 role 池重新挑人，但 assignee 仍必须出现在当前可用 worker 候选里
 - `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化失败并触发 CEO 重决策
 - 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，不把当前 staged follow-up 主链写成“上游一失败就全部重规划”
@@ -38,8 +38,10 @@
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
 - 当前已把原治理模板扩成统一 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary` 三个 live 执行模板，`backend_execution_reserved / database_execution_reserved / platform_sre_reserved` 三个未来执行模板，以及 `architect_governance / cto_governance` 两个治理模板，同时附带五类文档 metadata ref 和九个模板片段
 - `role_templates_catalog.role_templates[]` 现在会额外暴露结构化 `mainline_boundary`：`boundary_status` 只会是 `LIVE_ON_MAINLINE / CATALOG_ONLY`；当前只有前 `3` 个模板会标成 `LIVE_ON_MAINLINE`，后 `5` 个模板继续保持 `CATALOG_ONLY`
-- `workforce` 投影现在会返回 `role_templates_catalog`、扩展后的 staffing hire templates，以及每个 worker 的 `source_template_id / source_fragment_refs`；`backend / database / platform / architect / cto` 五类模板现在已进入 Board/workforce staffing 动作与 workforce lane，但 `runtime-provider.future_binding_slots` 仍会把它们标成未启用 runtime 绑定，并暴露剩余被挡住的 `blocked_path_refs[]`
-- 这组 `CATALOG_ONLY` 模板当前不再只是只读目录占位：它们已经具备 `catalog_readonly / provider_future_slot / staffing / workforce_lane` 这组主线存在感；但仍未进入 runtime 支持矩阵或 CEO create-ticket 预设
+- `workforce` 投影现在会返回 `role_templates_catalog`、扩展后的 staffing hire templates，以及每个 worker 的 `source_template_id / source_fragment_refs`；`backend / database / platform / architect / cto` 五类模板现在都已进入 Board/workforce staffing 动作与 workforce lane，CEO `HIRE_EMPLOYEE` 也已放宽到这五类模板
+- 这组 `CATALOG_ONLY` 模板当前不再只是只读目录占位：`backend / database / platform` 具备 `catalog_readonly / provider_future_slot / staffing / workforce_lane` 这组主线存在感，仍被挡在 `ceo_create_ticket / runtime_execution` 外；`architect / cto` 则进一步具备 `ceo_create_ticket` 这条 partial mainline path，但仍未进入 formal runtime 支持矩阵、provider target label 或 `runtime_execution`
+- 自动 meeting candidate 现在也会把治理文档票视为决策型恢复候选；`architect / cto` 可作为 source ticket owner 进入 `TECHNICAL_DECISION` 候选，`backend / database / platform / architect / cto` 也都可进入 CEO meeting participant 匹配
+- Board approve / meeting consensus 里的 staged follow-up 现在只按最小口径放宽：`backend / database / platform` 可进入 `BUILD` owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`，`architect / cto` 不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary` 需要 `structured_output + planning`，`frontend_engineer_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
 - provider-to-provider failover 当前只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；运行时与 CEO live path 会按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径
 - 会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`；`MeetingRoom` 默认先展示压缩后的决策视图，再把 round timeline 留作 audit trail
@@ -65,7 +67,8 @@
 - `OpenAI Compat` 与 `Claude Code CLI` live path **都不只** 支持 `ui_milestone_review` 和 `maker_checker_verdict`
 - 当前主线真实覆盖的 role profile 已经是三类：`ui_designer_primary`、`frontend_engineer_primary`、`checker_primary`
 - CEO 的 `REQUEST_MEETING` 当前也同时支持 deterministic、OpenAI Compat live 和 Claude Code CLI live，但 deterministic 只会在 snapshot 里恰好存在一个合格会议候选时触发
-- 五类治理文档 schema 现在已进入 runtime 支持矩阵和 CEO live 建票路径，但当前仍只兼容 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色；`architect / cto / backend / database / platform` 虽然已经进入 Board/workforce staffing 路径，但仍未进入 CEO 建票或 runtime live 路径
+- 五类治理文档 schema 现在已进入 runtime 支持矩阵和 CEO live 建票路径；`architect_primary / cto_primary` 当前也已进入 CEO 治理文档建票入口，但这两类角色仍未进入 formal runtime 支持矩阵或 provider target label，而是继续走最小 `execution_contract + legacy role_profile:*` 兼容路径
+- `backend / database / platform` 虽然已经进入 Board/workforce staffing、CEO hire、meeting participant 和 `BUILD` follow-up 路径，但仍未进入 direct CEO create-ticket 或 formal runtime live 路径
 - `role_templates_catalog.default_document_kind_refs` 当前只是目录建议值，不是 runtime、CEO 校验或建票 preset 的硬约束
 
 ## 3. 冻结边界清单

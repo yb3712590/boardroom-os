@@ -8,7 +8,7 @@
 |------|----------|----------|------|
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | blocker 仍在，但不再占用当前主线 |
 | Provider 增强 | `P2-PRV-007` 到 `P2-PRV-008` | 后置增强 | `P2-PRV-001/002/003/004/005/006` 已于 2026-04-07 手动纳入并收口 |
-| 角色纳入链 | `P2-RLS-002` 到 `P2-RLS-003` | 当前主线 / 后续同批 | 新增角色已进入 staffing / workforce，下一步开始把它们按顺序接入 CEO 与 runtime |
+| 角色纳入链 | `P2-RLS-003` | 当前主线 | 新增角色已进入 staffing / workforce 与 CEO 入口，下一步开始把它们按顺序接入 runtime 正式工作链 |
 
 ## 当前判断
 
@@ -31,8 +31,9 @@
 - `P2-DEC-004` 已于 2026-04-07 完成：idle wakeup 现在只会在没有 open approval / incident、没有 active runtime、存在明确重决策信号且最近 ticket / node / approval / incident 变化已过冷却窗口时触发；runner 也已固定按 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace` 编排，并追加 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - `P2-GOV-004` 已于 2026-04-08 完成：CEO 现在可在当前 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不再作为硬白名单；五类治理文档当前已进入 runtime 支持矩阵，但仍只落在 `ui_designer_primary / frontend_engineer_primary` 两个 live 角色；当 CEO 创建的后续票显式挂在治理文档父票下时，会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产
 - `P2-GOV-005 / P2-GOV-006` 已于 2026-04-08 完成：`role_templates_catalog.role_templates[]` 现在会暴露结构化 `mainline_boundary`，明确区分 `LIVE_ON_MAINLINE / CATALOG_ONLY`；`workforce` 目录卡片和 `runtime-provider.future_binding_slots` 现在都会直接展示哪些 surface 仍被挡住，前端 provider 抽屉也改成 `Reserved bindings`
-- `P2-RLS-001` 已于 2026-04-08 完成：Board/workforce staffing 现在已覆盖 `backend / database / platform / architect / cto` 五类新增角色；审批通过后这些角色会真实进入 workforce lane，并保留一致的 `FREEZE / RESTORE / REPLACE` 动作和模板来源字段；CEO `HIRE_EMPLOYEE` 仍只允许当前受限主线角色
-- 当前新的默认主线任务是 `P2-RLS-002`：继续把新增角色接进 CEO preset、meeting policy 与 follow-up；`P2-RLS-003` 继续排在后面
+- `P2-RLS-001` 已于 2026-04-08 完成：Board/workforce staffing 现在已覆盖 `backend / database / platform / architect / cto` 五类新增角色；审批通过后这些角色会真实进入 workforce lane，并保留一致的 `FREEZE / RESTORE / REPLACE` 动作和模板来源字段
+- `P2-RLS-002` 已于 2026-04-08 完成：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role；`architect / cto` 的 `mainline_boundary` 与 provider reserved bindings 现在只剩 `runtime_execution` blocked surface
+- 当前新的默认主线任务是 `P2-RLS-003`：继续把新增角色接进 runtime 支持矩阵、context compiler 与 provider target label；`P2-PRV-007/008` 继续保持后置增强
 
 ## P1：冻结后置
 
@@ -63,13 +64,12 @@
 
 | ID | 标题 | 预估 | 状态 |
 |----|------|------|------|
-| P2-RLS-002 | CEO 建票 preset、meeting policy 与 follow-up 纳入新增角色 | 4h | 当前主线 |
-| P2-RLS-003 | runtime 支持矩阵、context compiler 与 provider target label 纳入新增角色 | 5h | 后续工作链纳入 |
+| P2-RLS-003 | runtime 支持矩阵、context compiler 与 provider target label 纳入新增角色 | 5h | 当前主线 |
 
 ## 依赖提醒
 
 - `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
-- `P2-DEC-*` 与 `P2-GOV-*` 已全部完成；`P2-RLS-001` 也已完成，当前默认主线已切到 `P2-RLS-002`
-- `P2-RLS-003` 只有在 `P2-RLS-002` 完成后，才适合继续接 runtime
+- `P2-DEC-*` 与 `P2-GOV-*` 已全部完成；`P2-RLS-001/002` 也已完成，当前默认主线已切到 `P2-RLS-003`
+- `P2-RLS-003` 现在可以直接开启，但仍只处理 runtime 正式纳入，不回头重写 staffing 或 CEO 入口
 - `P2-PRV-*` 的后置增强如果会继续碰运行时路由，也应以后续 `P2-DEC-003/004` 的边界收口为前置
 - 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`

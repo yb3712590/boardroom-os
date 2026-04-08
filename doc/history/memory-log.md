@@ -103,7 +103,10 @@
 - `P2-RLS-001` 已完成：`backend / database / platform / architect / cto` 五类模板现在已进入 Board/workforce staffing 主链；Board 可发起 hire / replace 审批，审批通过后这些角色会真实进入 workforce lane，并带上 `source_template_id / source_fragment_refs`
 - 这轮把 staffing 分成两条显式边界：board/workforce staffing 已放宽到七类模板，但 CEO `HIRE_EMPLOYEE` 仍只允许当前受限主线角色，不提前打开 `P2-RLS-002`
 - `role_templates_catalog` 的 `CATALOG_ONLY` 边界现在改成“可进 staffing / workforce lane，但仍挡在 `ceo_create_ticket / runtime_execution` 外”；`runtime-provider.future_binding_slots` 与前端文案已同步到这条新边界
-- 当前验证基线更新为 backend `497 passed`、frontend build passed、frontend `75 passed`
+- `P2-RLS-002` 已完成：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口，`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role
+- 这轮继续保持保守边界：`architect / cto` 仍只进入 CEO 治理文档链，不进入 staged BUILD/CHECK/REVIEW follow-up owner_role，也不写成 formal runtime 支持矩阵或 provider target label；`backend / database / platform` 仍不进入 direct CEO create-ticket
+- `role_templates_catalog.mainline_boundary` 与 `runtime-provider.future_binding_slots` 现在已改成更细边界：`architect / cto` 只剩 `runtime_execution` blocked surface，workforce 目录卡片会显示它们是 partial mainline path，而不是纯目录占位
+- 当前验证基线更新为 backend `504 passed`、frontend build passed、frontend `75 passed`
 
 ## Current Working Set
 

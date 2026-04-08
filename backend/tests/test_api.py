@@ -3817,7 +3817,7 @@ def test_board_approve_scope_review_rejects_when_any_followup_owner_role_is_unsu
         },
         {
             "ticket_id": "tkt_followup_scope_invalid",
-            "owner_role": "backend_engineer",
+            "owner_role": "governance_architect",
             "summary": "This follow-up should be rejected for the current MVP lane.",
         },
     ]
@@ -4079,7 +4079,6 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
                 "blocked_path_refs": [
-                    "ceo_create_ticket",
                     "runtime_execution",
                 ],
             },
@@ -4089,7 +4088,6 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
                 "status": "NOT_ENABLED",
                 "reason": "角色模板已定义，但尚未纳入当前主线。",
                 "blocked_path_refs": [
-                    "ceo_create_ticket",
                     "runtime_execution",
                 ],
             },
@@ -10810,9 +10808,9 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
             "provider_future_slot",
             "staffing",
             "workforce_lane",
+            "ceo_create_ticket",
         ],
         "blocked_path_refs": [
-            "ceo_create_ticket",
             "runtime_execution",
         ],
     }
@@ -12405,7 +12403,7 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
     assert dashboard_response.json()["data"]["completion_summary"] is None
 
 
-def test_board_approve_scope_review_rejects_unsupported_followup_owner_role(client, set_ticket_time):
+def test_board_approve_scope_review_accepts_backend_build_followup_owner_role(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _, approval = _project_init_to_scope_approval(client)
     followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
@@ -12414,9 +12412,37 @@ def test_board_approve_scope_review_rejects_unsupported_followup_owner_role(clie
     artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
     payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     payload["followup_tickets"][0]["owner_role"] = "backend_engineer"
+    payload["followup_tickets"][0]["delivery_stage"] = "BUILD"
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
 
     response = _approve_open_review(client, approval, idempotency_suffix="unsupported-role")
+
+    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    followup_ticket = client.app.state.repository.get_current_ticket_projection(followup_ticket_id)
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, followup_ticket_id)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert updated["status"] == APPROVAL_STATUS_APPROVED
+    assert followup_ticket is not None
+    assert created_spec["role_profile_ref"] == "backend_engineer_primary"
+    assert created_spec["delivery_stage"] == "BUILD"
+
+
+def test_board_approve_scope_review_rejects_backend_followup_outside_build_stage(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _, approval = _project_init_to_scope_approval(client)
+    followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    payload["followup_tickets"][0]["owner_role"] = "backend_engineer"
+    payload["followup_tickets"][0]["delivery_stage"] = "REVIEW"
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="backend-review-stage")
 
     updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
     followup_ticket = client.app.state.repository.get_current_ticket_projection(followup_ticket_id)

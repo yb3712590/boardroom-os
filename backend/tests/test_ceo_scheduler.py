@@ -17,6 +17,7 @@ from app.core.execution_targets import infer_execution_contract_payload
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
 )
 from app.core.ceo_scheduler import (
     SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
@@ -157,6 +158,8 @@ def _ticket_create_payload(
     ticket_id: str,
     node_id: str,
     retry_budget: int = 0,
+    role_profile_ref: str = "frontend_engineer_primary",
+    output_schema_ref: str = "ui_milestone_review",
 ) -> dict:
     return {
         "ticket_id": ticket_id,
@@ -164,7 +167,7 @@ def _ticket_create_payload(
         "node_id": node_id,
         "parent_ticket_id": None,
         "attempt_no": 1,
-        "role_profile_ref": "frontend_engineer_primary",
+        "role_profile_ref": role_profile_ref,
         "constraints_ref": "global_constraints_v3",
         "input_artifact_refs": ["art://inputs/brief.md"],
         "context_query_plan": {
@@ -173,7 +176,7 @@ def _ticket_create_payload(
             "max_context_tokens": 3000,
         },
         "acceptance_criteria": ["Must produce a structured result."],
-        "output_schema_ref": "ui_milestone_review",
+        "output_schema_ref": output_schema_ref,
         "output_schema_version": 1,
         "allowed_tools": ["read_artifact", "write_artifact"],
         "allowed_write_set": ["artifacts/ui/homepage/*"],
@@ -201,6 +204,9 @@ def _create_and_fail_ticket(
     failure_kind: str = "TEST_FAILURE",
     failure_message: str = "Synthetic failure for CEO limited execution coverage.",
     failure_detail: dict | None = None,
+    role_profile_ref: str = "frontend_engineer_primary",
+    output_schema_ref: str = "ui_milestone_review",
+    leased_by: str = "emp_frontend_2",
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -209,6 +215,8 @@ def _create_and_fail_ticket(
             ticket_id=ticket_id,
             node_id=node_id,
             retry_budget=retry_budget,
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
         ),
     )
     assert create_response.status_code == 200
@@ -220,7 +228,7 @@ def _create_and_fail_ticket(
             "workflow_id": workflow_id,
             "ticket_id": ticket_id,
             "node_id": node_id,
-            "leased_by": "emp_frontend_2",
+            "leased_by": leased_by,
             "lease_timeout_sec": 600,
             "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}",
         },
@@ -233,7 +241,7 @@ def _create_and_fail_ticket(
             "workflow_id": workflow_id,
             "ticket_id": ticket_id,
             "node_id": node_id,
-            "started_by": "emp_frontend_2",
+            "started_by": leased_by,
             "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
         },
     )
@@ -245,7 +253,7 @@ def _create_and_fail_ticket(
             "workflow_id": workflow_id,
             "ticket_id": ticket_id,
             "node_id": node_id,
-            "failed_by": "emp_frontend_2",
+            "failed_by": leased_by,
             "failure_kind": failure_kind,
             "failure_message": failure_message,
             "failure_detail": failure_detail or {},
@@ -254,6 +262,42 @@ def _create_and_fail_ticket(
     )
     assert fail_response.status_code == 200
     assert fail_response.json()["status"] == "ACCEPTED"
+
+
+def _seed_board_approved_employee(
+    client,
+    *,
+    employee_id: str,
+    role_type: str,
+    role_profile_refs: list[str],
+    provider_id: str = OPENAI_COMPAT_PROVIDER_ID,
+) -> None:
+    repository = client.app.state.repository
+    persona = clone_persona_template(get_hire_persona_template_id(role_type))
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_HIRED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=None,
+            idempotency_key=f"test-seed-employee:{employee_id}",
+            causation_id=None,
+            correlation_id=None,
+            payload={
+                "employee_id": employee_id,
+                "role_type": role_type,
+                "skill_profile": persona["skill_profile"],
+                "personality_profile": persona["personality_profile"],
+                "aesthetic_profile": persona["aesthetic_profile"],
+                "state": "ACTIVE",
+                "board_approved": True,
+                "provider_id": provider_id,
+                "role_profile_refs": role_profile_refs,
+            },
+            occurred_at=datetime.fromisoformat("2026-04-04T18:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
 
 
 def _create_and_complete_ticket(
@@ -817,7 +861,8 @@ def test_ceo_shadow_system_prompt_prefers_document_chain_before_implementation(c
 
     assert "governance document" in system_prompt.lower()
     assert "before directly creating implementation tickets" in system_prompt.lower()
-    assert "do not enable frozen or not-yet-enabled roles" in system_prompt.lower()
+    assert "architect_primary / cto_primary" in system_prompt.lower()
+    assert "do not use backend_engineer_primary" in system_prompt.lower()
 
 
 def test_ceo_shadow_failover_uses_fallback_provider_when_primary_is_unavailable(client, monkeypatch):
@@ -964,7 +1009,22 @@ def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_alre
     assert "too similar" in result["rejected_actions"][0]["reason"].lower()
 
 
-def test_ceo_validator_keeps_new_role_hires_outside_current_limited_path(client):
+@pytest.mark.parametrize(
+    ("role_type", "role_profile_refs", "employee_id_hint"),
+    [
+        ("backend_engineer", ["backend_engineer_primary"], "emp_backend_shadow"),
+        ("database_engineer", ["database_engineer_primary"], "emp_database_shadow"),
+        ("platform_sre", ["platform_sre_primary"], "emp_platform_shadow"),
+        ("governance_architect", ["architect_primary"], "emp_architect_shadow"),
+        ("governance_cto", ["cto_primary"], "emp_cto_shadow"),
+    ],
+)
+def test_ceo_validator_accepts_new_role_hires_on_current_ceo_path(
+    client,
+    role_type,
+    role_profile_refs,
+    employee_id_hint,
+):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO limited staffing boundary")
     repository = client.app.state.repository
@@ -979,10 +1039,10 @@ def test_ceo_validator_keeps_new_role_hires_outside_current_limited_path(client)
                         "action_type": "HIRE_EMPLOYEE",
                         "payload": {
                             "workflow_id": workflow_id,
-                            "role_type": "backend_engineer",
-                            "role_profile_refs": ["backend_engineer_primary"],
-                            "request_summary": "Hire a backend engineer for service delivery.",
-                            "employee_id_hint": "emp_backend_shadow",
+                            "role_type": role_type,
+                            "role_profile_refs": role_profile_refs,
+                            "request_summary": f"Hire {role_type} on the CEO path.",
+                            "employee_id_hint": employee_id_hint,
                             "provider_id": "prov_openai_compat",
                         },
                     }
@@ -991,9 +1051,8 @@ def test_ceo_validator_keeps_new_role_hires_outside_current_limited_path(client)
         ),
     )
 
-    assert result["accepted_actions"] == []
-    assert result["rejected_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
-    assert "current limited ceo staffing path" in result["rejected_actions"][0]["reason"].lower()
+    assert result["rejected_actions"] == []
+    assert result["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
 
 
 def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monkeypatch):
@@ -1350,15 +1409,21 @@ def test_ceo_shadow_run_rejects_invalid_create_ticket_preset(client, monkeypatch
     assert run["executed_actions"] == []
 
 
-def test_ceo_validator_rejects_governance_document_create_ticket_for_non_live_role(client):
+def test_ceo_validator_accepts_governance_document_create_ticket_for_architect_role(client):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO invalid governance role")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_1",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
 
     result = validate_ceo_action_batch(
         client.app.state.repository,
         action_batch=CEOActionBatch.model_validate(
             {
-                "summary": "Reject governance-document tickets on not-yet-enabled roles.",
+                "summary": "Allow governance-document tickets on architect role.",
                 "actions": [
                     {
                         "action_type": "CREATE_TICKET",
@@ -1366,17 +1431,17 @@ def test_ceo_validator_rejects_governance_document_create_ticket_for_non_live_ro
                             "workflow_id": workflow_id,
                             "node_id": "node_architect_governance_attempt",
                             "role_profile_ref": "architect_primary",
-                            "output_schema_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+                            "output_schema_ref": DETAILED_DESIGN_SCHEMA_REF,
                             "execution_contract": {
                                 "execution_target_ref": "execution_target:architect_governance_document",
                                 "required_capability_tags": ["structured_output", "planning"],
                                 "runtime_contract_version": "execution_contract_v1",
                             },
                             "dispatch_intent": {
-                                "assignee_employee_id": "emp_frontend_2",
-                                "selection_reason": "Try to route a governance document through a frozen role.",
+                                "assignee_employee_id": "emp_architect_1",
+                                "selection_reason": "Use the active architect governance role for design detail.",
                             },
-                            "summary": "This should fail because architect_primary is not on the live path yet.",
+                            "summary": "This should succeed because architect_primary can now produce governance documents.",
                             "parent_ticket_id": None,
                         },
                     }
@@ -1385,9 +1450,73 @@ def test_ceo_validator_rejects_governance_document_create_ticket_for_non_live_ro
         ),
     )
 
-    assert result["accepted_actions"] == []
-    assert result["rejected_actions"][0]["action_type"] == "CREATE_TICKET"
-    assert "current limited CEO execution path" in result["rejected_actions"][0]["reason"]
+    assert result["rejected_actions"] == []
+    assert result["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+
+
+def test_ceo_shadow_run_executes_governance_document_create_ticket_for_cto_role(client, monkeypatch):
+    workflow_id = _project_init(client, "CEO governance create execution for cto")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_cto_1",
+        role_type="governance_cto",
+        role_profile_refs=["cto_primary"],
+    )
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Create a backlog recommendation with the CTO governance role.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_ceo_cto_backlog_recommendation",
+                                "role_profile_ref": "cto_primary",
+                                "output_schema_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+                                "execution_contract": {
+                                    "execution_target_ref": "execution_target:cto_governance_document",
+                                    "required_capability_tags": ["structured_output", "planning"],
+                                    "runtime_contract_version": "execution_contract_v1",
+                                },
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_cto_1",
+                                    "selection_reason": "Route the backlog recommendation through the active CTO governance role.",
+                                },
+                                "summary": "Write the backlog recommendation before implementation fans out.",
+                                "parent_ticket_id": None,
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_cto_gov_doc_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:cto-gov-doc-create",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+    assert created_spec["output_schema_ref"] == BACKLOG_RECOMMENDATION_SCHEMA_REF
+    assert created_spec["role_profile_ref"] == "cto_primary"
+    assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:cto_governance_document"
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_cto_1"
 
 
 def test_ceo_create_ticket_inherits_parent_governance_process_assets(client):
@@ -1669,6 +1798,43 @@ def test_ticket_fail_can_trigger_ceo_meeting_request_in_deterministic_mode(clien
     assert meeting is not None
     assert meeting["meeting_type"] == "TECHNICAL_DECISION"
     assert meeting["source_ticket_id"].startswith("tkt_meeting_")
+
+
+def test_ceo_shadow_snapshot_includes_failed_governance_ticket_meeting_candidate(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_governance_meeting_candidate")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_1",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_architect_meeting_candidate",
+        node_id="node_ceo_architect_meeting_candidate",
+        retry_budget=0,
+        role_profile_ref="architect_primary",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        leased_by="emp_architect_1",
+    )
+
+    snapshot = next(
+        run["snapshot"]
+        for run in client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+        if run["trigger_type"] == "TICKET_FAILED"
+    )
+
+    candidate = next(
+        item
+        for item in snapshot["meeting_candidates"]
+        if item["source_ticket_id"] == "tkt_ceo_architect_meeting_candidate"
+    )
+
+    assert candidate["eligible"] is True
+    assert candidate["participant_employee_ids"] == ["emp_architect_1", "emp_checker_1"]
+    assert candidate["recorder_employee_id"] == "emp_architect_1"
 
 
 def test_live_provider_can_request_meeting_from_snapshot_candidate(client, monkeypatch):

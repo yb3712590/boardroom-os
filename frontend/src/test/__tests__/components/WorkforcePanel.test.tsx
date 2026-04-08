@@ -104,8 +104,14 @@ describe('WorkforcePanel', () => {
                 },
                 mainline_boundary: {
                   boundary_status: 'CATALOG_ONLY',
-                  active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
-                  blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+                  active_path_refs: [
+                    'catalog_readonly',
+                    'provider_future_slot',
+                    'staffing',
+                    'workforce_lane',
+                    'ceo_create_ticket',
+                  ],
+                  blocked_path_refs: ['runtime_execution'],
                 },
               },
             ],
@@ -234,9 +240,10 @@ describe('WorkforcePanel', () => {
     expect(screen.getByText(/Backend Engineer \/ 服务交付/i)).toBeInTheDocument()
     expect(screen.getByText(/architecture_brief/i)).toBeInTheDocument()
     expect(screen.getByText(/Current live path/i)).toBeInTheDocument()
+    expect(screen.getByText(/Partial mainline path/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Catalog only \/ not on current mainline/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/implementation delivery/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/blocked: ceo create ticket, runtime execution/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/blocked: runtime execution/i)).toBeInTheDocument()
     expect(screen.getAllByText(/not_enabled/i).length).toBeGreaterThan(0)
   })
 })

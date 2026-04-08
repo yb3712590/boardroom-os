@@ -1768,6 +1768,21 @@
 - `P2-RLS-001`：这轮把 staffing 目录显式拆成 board/workforce 与 CEO limited hire 两条边界，确保新增角色不会顺手提前进入 CEO `HIRE_EMPLOYEE` 路径；`P2-RLS-002` 之前，CEO 仍只允许当前受限主线角色
 - 本轮新增后端回归覆盖新增角色 persona 规范化、治理角色 hire 审批、workforce lane/source template 映射和 CEO 边界保持不变；前端回归补齐新增 staffing 模板与更新后的 blocked surface 文案；整体验证结果更新为 backend `497 passed`、frontend build passed、frontend `75 passed`
 
+### 4.3c 角色纳入链 (P2-RLS-002)
+
+| ID | 标题 | 预估 |
+|----|------|------|
+| P2-RLS-002 | CEO 建票 preset、meeting policy 与 follow-up 纳入新增角色 | 4h |
+
+完成补记（2026-04-08）：
+
+- `P2-RLS-002`：CEO `HIRE_EMPLOYEE` 现在已从两类受限主线角色放宽到 `backend_engineer / database_engineer / platform_sre / governance_architect / governance_cto` 五类新增角色，继续沿用现有 staffing 模板、画像互补约束和 `CORE_HIRE_APPROVAL` 闭环
+- `P2-RLS-002`：`architect_primary` 现在可创建 `architecture_brief / technology_decision / detailed_design`，`cto_primary` 现在可创建 `architecture_brief / technology_decision / milestone_plan / backlog_recommendation`；这两类治理角色已进入 CEO 治理文档建票入口，但仍只走最小 `execution_contract + legacy role_profile:*` 兼容路径，不写成 formal runtime 支持矩阵已完成
+- `P2-RLS-002`：automatic meeting candidate 现在也会把治理文档票当作决策型恢复候选，`backend / database / platform / architect / cto` 都可进入 CEO meeting participant 匹配；但会议类型仍只开放 `TECHNICAL_DECISION`，也不允许递归 `MEETING_ESCALATION`
+- `P2-RLS-002`：Board approve / meeting consensus 的 staged follow-up 现在按最小口径放宽到 `backend / database / platform` 可承接 `BUILD` owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`，`architect / cto` 不进入 staged BUILD/CHECK/REVIEW follow-up owner_role；runtime 默认 consensus follow-up 也同步到这套边界
+- `P2-RLS-002`：`role_templates_catalog.mainline_boundary` 与 `runtime-provider.future_binding_slots` 现在会把 `architect / cto` 显示成“CEO 入口已开、runtime_execution 仍 blocked”的 partial path；`backend / database / platform` 继续保持 `ceo_create_ticket / runtime_execution` 双 blocked surface
+- 本轮新增后端回归覆盖新增角色 CEO hire、architect/cto 治理文档建票、治理文档 meeting candidate、backend BUILD follow-up 放宽与 runtime 默认 follow-up 边界；前端回归补上 workforce partial-path 文案与 reserved binding blocked surface 更新；整体验证结果更新为 backend `504 passed`、frontend build passed、frontend `75 passed`
+
 完成补记（2026-04-06）：
 
 - `P2-GOV-007`：closeout 证据与文档同步软约束已按最小边界收口，不改状态机，也不新增前端默认读面

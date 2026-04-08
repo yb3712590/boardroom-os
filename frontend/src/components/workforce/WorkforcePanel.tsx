@@ -42,6 +42,18 @@ function formatBoundaryPathRef(ref: string) {
   return ref.replaceAll('_', ' ')
 }
 
+function formatBoundarySummary(template: WorkforceData['role_templates_catalog']['role_templates'][number]) {
+  const activePaths = template.mainline_boundary.active_path_refs.map(formatBoundaryPathRef).join(', ')
+  const hasCeoCreateTicket = template.mainline_boundary.active_path_refs.includes('ceo_create_ticket')
+  if (template.mainline_boundary.boundary_status === 'LIVE_ON_MAINLINE') {
+    return `Current live path: ${activePaths}`
+  }
+  if (hasCeoCreateTicket) {
+    return `Partial mainline path: ${activePaths}`
+  }
+  return `Catalog only / not on current mainline: ${activePaths}`
+}
+
 function formatTemplateKindLabel(templateKind: string) {
   switch (templateKind) {
     case 'live_execution':
@@ -167,13 +179,7 @@ export function WorkforcePanel({
                         <p className="muted-copy">{template.responsibility_summary}</p>
                         <p className="muted-copy">{template.execution_boundary}</p>
                         <p className="muted-copy">
-                          {template.mainline_boundary.boundary_status === 'LIVE_ON_MAINLINE'
-                            ? `Current live path: ${template.mainline_boundary.active_path_refs
-                                .map(formatBoundaryPathRef)
-                                .join(', ')}`
-                            : `Catalog only / not on current mainline: ${template.mainline_boundary.active_path_refs
-                                .map(formatBoundaryPathRef)
-                                .join(', ')}`}
+                          {formatBoundarySummary(template)}
                         </p>
                         {template.mainline_boundary.blocked_path_refs.length > 0 ? (
                           <p className="muted-copy">

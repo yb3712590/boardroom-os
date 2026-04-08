@@ -512,7 +512,7 @@ function workforceData() {
           },
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
-            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+            active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
             blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
           },
         },
@@ -536,7 +536,7 @@ function workforceData() {
           },
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
-            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+            active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
             blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
           },
         },
@@ -560,7 +560,7 @@ function workforceData() {
           },
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
-            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
+            active_path_refs: ['catalog_readonly', 'provider_future_slot', 'staffing', 'workforce_lane'],
             blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
           },
         },
@@ -584,8 +584,14 @@ function workforceData() {
           },
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
-            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+            active_path_refs: [
+              'catalog_readonly',
+              'provider_future_slot',
+              'staffing',
+              'workforce_lane',
+              'ceo_create_ticket',
+            ],
+            blocked_path_refs: ['runtime_execution'],
           },
         },
         {
@@ -613,8 +619,14 @@ function workforceData() {
           },
           mainline_boundary: {
             boundary_status: 'CATALOG_ONLY',
-            active_path_refs: ['catalog_readonly', 'provider_future_slot'],
-            blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+            active_path_refs: [
+              'catalog_readonly',
+              'provider_future_slot',
+              'staffing',
+              'workforce_lane',
+              'ceo_create_ticket',
+            ],
+            blocked_path_refs: ['runtime_execution'],
           },
         },
       ],
@@ -1116,14 +1128,14 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
         label: '架构师 / 设计评审',
         status: 'NOT_ENABLED',
         reason: '角色模板已定义，但尚未纳入当前主线。',
-        blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+        blocked_path_refs: ['runtime_execution'],
       },
       {
         target_ref: 'role_profile:cto_primary',
         label: 'CTO / 架构治理',
         status: 'NOT_ENABLED',
         reason: '角色模板已定义，但尚未纳入当前主线。',
-        blocked_path_refs: ['ceo_create_ticket', 'runtime_execution'],
+        blocked_path_refs: ['runtime_execution'],
       },
     ],
     ...overrides,

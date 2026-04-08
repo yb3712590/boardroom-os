@@ -11,6 +11,7 @@ from app.core.constants import (
     TICKET_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_TIMED_OUT,
 )
+from app.core.output_schemas import GOVERNANCE_DOCUMENT_SCHEMA_REFS
 from app.db.repository import ControlPlaneRepository
 
 
@@ -18,12 +19,22 @@ _ROLE_PROFILE_TO_ROLE_TYPE = {
     "ui_designer_primary": "frontend_engineer",
     "frontend_engineer_primary": "frontend_engineer",
     "checker_primary": "checker",
+    "backend_engineer_primary": "backend_engineer",
+    "database_engineer_primary": "database_engineer",
+    "platform_sre_primary": "platform_sre",
+    "architect_primary": "governance_architect",
+    "cto_primary": "governance_cto",
 }
 
 _ROLE_PROFILE_TO_CAPABILITY = {
     "ui_designer_primary": ("frontend", "delivery_slice"),
     "frontend_engineer_primary": ("frontend", "delivery_slice"),
     "checker_primary": ("quality", "release_guard"),
+    "backend_engineer_primary": ("backend", "service_delivery"),
+    "database_engineer_primary": ("data", "data_reliability"),
+    "platform_sre_primary": ("platform", "runtime_operations"),
+    "architect_primary": ("architecture", "architecture"),
+    "cto_primary": ("architecture", "architecture"),
 }
 
 _MIN_PARTICIPANTS = 2
@@ -31,6 +42,7 @@ _MAX_PARTICIPANTS = 4
 _FAILED_TICKET_MEETING_OUTPUT_SCHEMAS = {
     "consensus_document",
     "ui_milestone_review",
+    *GOVERNANCE_DOCUMENT_SCHEMA_REFS,
 }
 
 
