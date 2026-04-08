@@ -10,6 +10,7 @@ from app.contracts.commands import (
     CommandAckEnvelope,
     ElicitationQuestion,
     CommandAckStatus,
+    DispatchIntent,
     DeliveryStage,
     ElicitationAnswer,
     ModifyConstraintsCommand,
@@ -17,7 +18,9 @@ from app.contracts.commands import (
 )
 from app.contracts.ceo_actions import CEOCreateTicketPayload
 from app.core.ceo_execution_presets import (
+    PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
     PROJECT_INIT_SCOPE_NODE_ID,
+    build_autopilot_architecture_brief_summary,
     build_ceo_create_ticket_command,
     build_project_init_scope_summary,
 )
@@ -37,6 +40,7 @@ from app.core.constants import (
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
 )
+from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -65,6 +69,10 @@ from app.core.staffing_containment import contain_employee_active_tickets
 from app.core.ticket_handlers import handle_ticket_create
 from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
+from app.core.workflow_autopilot import (
+    build_ceo_delegate_board_approval_command,
+    workflow_uses_ceo_board_delegate,
+)
 from app.core.workflow_scope import with_workflow_scope
 from app.db.repository import ControlPlaneRepository
 
@@ -649,14 +657,27 @@ def _kickoff_scope_after_requirement_elicitation(
     workflow = repository.get_workflow_projection(workflow_id)
     if workflow is None:
         raise ValueError("Workflow projection missing during requirement elicitation approval.")
+    uses_autopilot_governance = workflow_uses_ceo_board_delegate(workflow)
     command = build_ceo_create_ticket_command(
         workflow=workflow,
         payload=CEOCreateTicketPayload(
             workflow_id=workflow_id,
-            node_id=PROJECT_INIT_SCOPE_NODE_ID,
-            role_profile_ref="ui_designer_primary",
-            output_schema_ref="consensus_document",
-            summary=build_project_init_scope_summary(str(workflow.get("north_star_goal") or workflow.get("title") or "")),
+            node_id=(
+                PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
+                if uses_autopilot_governance
+                else PROJECT_INIT_SCOPE_NODE_ID
+            ),
+            role_profile_ref="frontend_engineer_primary" if uses_autopilot_governance else "ui_designer_primary",
+            output_schema_ref="architecture_brief" if uses_autopilot_governance else "consensus_document",
+            summary=(
+                build_autopilot_architecture_brief_summary(
+                    str(workflow.get("north_star_goal") or workflow.get("title") or "")
+                )
+                if uses_autopilot_governance
+                else build_project_init_scope_summary(
+                    str(workflow.get("north_star_goal") or workflow.get("title") or "")
+                )
+            ),
             parent_ticket_id=None,
         ),
         repository=repository,
@@ -744,6 +765,34 @@ def _scope_followup_acceptance_criteria(summary: str, delivery_stage: DeliverySt
         "Must stay inside the locked scope from the approved consensus document.",
         "Must produce a visual milestone review package.",
     ]
+
+
+def _select_followup_assignee_employee_id(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    role_profile_ref: str,
+    output_schema_ref: str,
+) -> str | None:
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    )
+    employees = repository.list_employee_projections(
+        connection,
+        states=["ACTIVE"],
+        board_approved_only=True,
+    )
+    for employee in employees:
+        if role_profile_ref not in set(employee.get("role_profile_refs") or []):
+            continue
+        if execution_contract is not None and not employee_supports_execution_contract(
+            employee=employee,
+            execution_contract=execution_contract,
+        ):
+            continue
+        return str(employee["employee_id"])
+    return None
 
 
 def _meeting_decision_guidance(consensus_payload: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -1024,8 +1073,14 @@ def _build_scope_followup_ticket_payloads(
     for raw_followup in followup_items:
         followup = dict(raw_followup)
         followup_ticket_id = str(followup.get("ticket_id") or "").strip()
+        task_title = str(followup.get("task_title") or followup.get("summary") or "").strip()
         owner_role = str(followup.get("owner_role") or "").strip()
         followup_summary = str(followup.get("summary") or "").strip()
+        dependency_ticket_ids = [
+            str(item).strip()
+            for item in list(followup.get("dependency_ticket_ids") or [])
+            if str(item).strip()
+        ]
         delivery_stage = DeliveryStage(
             str(followup.get("delivery_stage") or DeliveryStage.REVIEW.value).strip()
         )
@@ -1054,11 +1109,21 @@ def _build_scope_followup_ticket_payloads(
             raise ValueError(f"Follow-up node {node_id} already exists in projection state.")
 
         output_schema_ref, output_schema_version = _scope_followup_output_contract(delivery_stage)
+        execution_contract = infer_execution_contract_payload(
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        )
+        assignee_employee_id = _select_followup_assignee_employee_id(
+            repository,
+            connection,
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        )
         ticket_command = TicketCreateCommand(
             ticket_id=followup_ticket_id,
             workflow_id=approval["workflow_id"],
             node_id=node_id,
-            parent_ticket_id=prior_ticket_id,
+            parent_ticket_id=dependency_ticket_ids[-1] if dependency_ticket_ids else prior_ticket_id,
             attempt_no=1,
             role_profile_ref=role_profile_ref,
             constraints_ref=f"approved_scope_followup_{delivery_stage.value.lower()}",
@@ -1069,15 +1134,17 @@ def _build_scope_followup_ticket_payloads(
             ),
             context_query_plan={
                 "keywords": _scope_followup_context_keywords(delivery_stage),
-                "semantic_queries": [followup_summary, *extra_semantic_queries],
+                "semantic_queries": [task_title, followup_summary, *extra_semantic_queries],
                 "max_context_tokens": get_settings().default_max_context_tokens,
             },
             acceptance_criteria=[
+                f"Must complete this atomic task: {task_title}",
                 *_scope_followup_acceptance_criteria(followup_summary, delivery_stage),
                 *extra_acceptance_criteria,
             ],
             output_schema_ref=output_schema_ref,
             output_schema_version=output_schema_version,
+            execution_contract=execution_contract,
             allowed_tools=_scope_followup_allowed_tools(delivery_stage),
             allowed_write_set=_build_scope_followup_allowed_write_set(
                 followup_ticket_id,
@@ -1102,6 +1169,17 @@ def _build_scope_followup_ticket_payloads(
                 "on_schema_error": "retry",
                 "on_repeat_failure": "escalate_ceo",
             },
+            dispatch_intent=(
+                DispatchIntent(
+                    assignee_employee_id=assignee_employee_id,
+                    selection_reason="Approved atomic follow-up assignment.",
+                    dependency_gate_refs=dependency_ticket_ids,
+                    selected_by="scope_followup_router",
+                    wakeup_policy="dependency_gated",
+                )
+                if assignee_employee_id is not None
+                else None
+            ),
             idempotency_key=(
                 f"board-approved-scope-followup:{approval['approval_id']}:{followup_ticket_id}"
             ),
@@ -1143,9 +1221,16 @@ def _insert_scope_followup_ticket_created_event(
     if event_row is None:
         raise RuntimeError("Scope follow-up ticket creation idempotency conflict.")
     return str(ticket_payload["ticket_id"])
-def handle_board_approve(
+
+
+def _handle_board_approve(
     repository: ControlPlaneRepository,
     payload: BoardApproveCommand,
+    *,
+    actor_type: str,
+    actor_id: str,
+    resolved_by: str,
+    trigger_ceo_shadow: bool,
 ) -> CommandAckEnvelope:
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
@@ -1224,8 +1309,8 @@ def handle_board_approve(
         event_row = repository.insert_event(
             connection,
             event_type=EVENT_BOARD_REVIEW_APPROVED,
-            actor_type="board",
-            actor_id="board",
+            actor_type=actor_type,
+            actor_id=actor_id,
             workflow_id=approval["workflow_id"],
             idempotency_key=payload.idempotency_key,
             causation_id=command_id,
@@ -1264,7 +1349,7 @@ def handle_board_approve(
             connection,
             approval_id=payload.approval_id,
             status=APPROVAL_STATUS_APPROVED,
-            resolved_by="board",
+            resolved_by=resolved_by,
             resolved_at=received_at,
             review_pack_version=payload.review_pack_version + 1,
             command_target_version=int(event_row["sequence_no"]),
@@ -1339,7 +1424,7 @@ def handle_board_approve(
             max_dispatches=1,
         )
 
-    if approval["approval_type"] != "REQUIREMENT_ELICITATION":
+    if trigger_ceo_shadow and approval["approval_type"] != "REQUIREMENT_ELICITATION":
         _trigger_ceo_shadow_safely(
             repository,
             workflow_id=approval["workflow_id"],
@@ -1364,6 +1449,40 @@ def handle_board_approve(
                 )
             )
         ),
+    )
+
+
+def handle_board_approve(
+    repository: ControlPlaneRepository,
+    payload: BoardApproveCommand,
+) -> CommandAckEnvelope:
+    return _handle_board_approve(
+        repository,
+        payload,
+        actor_type="board",
+        actor_id="board",
+        resolved_by="board",
+        trigger_ceo_shadow=True,
+    )
+
+
+def handle_ceo_delegate_approve(
+    repository: ControlPlaneRepository,
+    approval: dict[str, Any],
+    *,
+    idempotency_key_prefix: str,
+) -> CommandAckEnvelope:
+    command = build_ceo_delegate_board_approval_command(
+        approval,
+        idempotency_key_prefix=idempotency_key_prefix,
+    )
+    return _handle_board_approve(
+        repository,
+        command,
+        actor_type="ceo",
+        actor_id="ceo",
+        resolved_by="ceo_delegate",
+        trigger_ceo_shadow=False,
     )
 
 

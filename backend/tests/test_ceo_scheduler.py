@@ -18,6 +18,7 @@ from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
     DETAILED_DESIGN_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
 )
 from app.core.ceo_scheduler import (
     SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
@@ -129,6 +130,27 @@ def _set_live_provider(client) -> None:
             role_bindings=[],
         )
     )
+
+
+def _persist_autopilot_workflow_profile(repository, workflow_id: str) -> None:
+    with repository.transaction() as connection:
+        row = connection.execute(
+            """
+            SELECT event_id, payload_json
+            FROM events
+            WHERE workflow_id = ? AND event_type = ?
+            ORDER BY sequence_no ASC
+            LIMIT 1
+            """,
+            (workflow_id, EVENT_WORKFLOW_CREATED),
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["workflow_profile"] = "CEO_AUTOPILOT_FINE_GRAINED"
+        connection.execute(
+            "UPDATE events SET payload_json = ? WHERE event_id = ?",
+            (json.dumps(payload, sort_keys=True), row["event_id"]),
+        )
+        repository.refresh_projections(connection)
 
 
 def _approve_scope_review(client, workflow_id: str) -> None:
@@ -496,6 +518,164 @@ def _create_and_complete_governance_ticket(
     assert submit_response.json()["status"] == "ACCEPTED"
 
 
+def _create_and_complete_backlog_recommendation_ticket(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+) -> None:
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=node_id,
+                retry_budget=0,
+            ),
+            "role_profile_ref": "frontend_engineer_primary",
+            "output_schema_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+            "allowed_write_set": [f"reports/governance/{ticket_id}/*"],
+        },
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:backlog",
+        },
+    )
+    assert lease_response.status_code == 200
+
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:backlog",
+        },
+    )
+    assert start_response.status_code == 200
+
+    artifact_ref = f"art://runtime/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json"
+    backlog_payload = {
+        "document_kind_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+        "title": "图书馆管理系统 backlog recommendation",
+        "summary": "把治理文档转成可执行 backlog。",
+        "linked_document_refs": ["doc://governance/upstream/current"],
+        "linked_artifact_refs": [artifact_ref],
+        "source_process_asset_refs": [],
+        "decisions": ["继续保持单一 MVP 范围，并把实现任务拆细。"],
+        "constraints": ["必须继续显式拆票，不能直接跳过任务分解。"],
+        "sections": [
+            {
+                "section_id": "recommended_ticket_split",
+                "label": "推荐工单拆分",
+                "summary": "把 backlog recommendation 变成实现工单。",
+                "content_markdown": "先做底座，再做登录，再做仪表盘。",
+                "content_json": {
+                    "tickets": [
+                        {
+                            "ticket_id": "BR-T01",
+                            "name": "登录能力交付",
+                            "priority": "P0",
+                            "scope": ["P-01 登录页", "M1 认证模块"],
+                        },
+                        {
+                            "ticket_id": "BR-T02",
+                            "name": "主布局与通用组件底座",
+                            "priority": "P0",
+                            "scope": ["后台主布局", "M2 布局模块", "M7 通用组件"],
+                        },
+                        {
+                            "ticket_id": "BR-T03",
+                            "name": "首页仪表盘交付",
+                            "priority": "P1",
+                            "scope": ["P-02 首页仪表盘", "M6 仪表盘模块"],
+                        },
+                    ]
+                },
+            },
+            {
+                "section_id": "dependency_and_sequence_plan",
+                "label": "依赖关系与实施顺序",
+                "summary": "先底座，再登录，再仪表盘。",
+                "content_markdown": "BR-T02 和 BR-T01 先行，BR-T03 依赖 BR-T02。",
+                "content_json": {
+                    "dependency_graph": [
+                        {
+                            "ticket_id": "BR-T01",
+                            "depends_on": [],
+                            "reason": "登录能力可以独立先行。",
+                        },
+                        {
+                            "ticket_id": "BR-T02",
+                            "depends_on": [],
+                            "reason": "布局底座建议最早交付。",
+                        },
+                        {
+                            "ticket_id": "BR-T03",
+                            "depends_on": ["BR-T02"],
+                            "reason": "仪表盘需要布局承载。",
+                        },
+                    ],
+                    "recommended_sequence": [
+                        "BR-T02 主布局与通用组件底座",
+                        "BR-T01 登录能力交付",
+                        "BR-T03 首页仪表盘交付",
+                    ],
+                },
+            },
+        ],
+        "followup_recommendations": [
+            {
+                "recommendation_id": "rec_impl_followup",
+                "summary": "创建实现工单并保留审计链路。",
+                "target_role": "frontend_engineer",
+            }
+        ],
+    }
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": f"{BACKLOG_RECOMMENDATION_SCHEMA_REF}_v1",
+            "payload": backlog_payload,
+            "artifact_refs": [artifact_ref],
+            "written_artifacts": [
+                {
+                    "path": f"reports/governance/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": backlog_payload,
+                }
+            ],
+            "assumptions": ["backlog recommendation 可以直接转成实现工单。"],
+            "issues": [],
+            "confidence": 0.88,
+            "needs_escalation": False,
+            "summary": "backlog recommendation 已完成。",
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:backlog",
+        },
+    )
+    assert submit_response.status_code == 200
+    assert submit_response.json()["status"] == "ACCEPTED"
+
+
 def _seed_closed_meeting(
     client,
     *,
@@ -569,6 +749,85 @@ def test_ceo_shadow_run_records_fallback_without_touching_mainline_state(client)
     assert run["deterministic_fallback_reason"] is not None
 
 
+def test_autopilot_completed_atomic_task_auto_creates_closeout_ticket(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_autopilot_closeout", goal="Autopilot closeout fallback")
+    repository = client.app.state.repository
+
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_autopilot_impl_done",
+        node_id="node_backlog_followup_demo",
+        summary="Atomic implementation slice is complete and ready for final closeout.",
+    )
+
+    with repository.connection() as connection:
+        closeout_ticket = next(
+            (
+                ticket
+                for ticket in repository.list_ticket_projections_by_statuses(connection, ["PENDING"])
+                if ticket["workflow_id"] == workflow_id
+            ),
+            None,
+        )
+        assert closeout_ticket is not None
+        closeout_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            closeout_ticket["ticket_id"],
+        )
+    assert closeout_created_spec is not None
+    assert closeout_created_spec["output_schema_ref"] == "delivery_closeout_package"
+    assert closeout_created_spec["delivery_stage"] == "CLOSEOUT"
+    assert closeout_created_spec["parent_ticket_id"] == "tkt_autopilot_impl_done"
+
+
+def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_autopilot_governance_only", goal="Autopilot governance only")
+    repository = client.app.state.repository
+
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_autopilot_gov_only",
+        node_id="node_ceo_architecture_brief",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete, but delivery has not started.",
+    )
+
+    run = run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_autopilot_gov_only",
+    )
+
+    with repository.connection() as connection:
+        closeout_ticket = next(
+            (
+                ticket
+                for ticket in repository.list_ticket_projections_by_statuses(
+                    connection,
+                    ["PENDING", "LEASED", "EXECUTING", "COMPLETED", "FAILED", "REWORK_REQUIRED"],
+                )
+                if ticket["workflow_id"] == workflow_id
+                and (
+                    repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"]) or {}
+                ).get("output_schema_ref")
+                == "delivery_closeout_package"
+            ),
+            None,
+        )
+
+    assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
+    assert run["executed_actions"][0]["action_type"] == "NO_ACTION"
+    assert closeout_ticket is None
+
+
 def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(client):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO kickoff deterministic fallback")
@@ -600,6 +859,35 @@ def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(cli
     assert created_spec["tenant_id"] == "tenant_default"
     assert created_spec["workspace_id"] == "ws_default"
     assert any(ref.endswith("/board-brief.md") for ref in created_spec["input_artifact_refs"])
+
+
+def test_ceo_autopilot_project_init_kicks_off_architecture_brief_before_scope_consensus(client):
+    _set_deterministic_mode(client)
+    response = client.post(
+        "/api/v1/commands/project-init",
+        json={
+            "north_star_goal": "做一个图书馆管理系统毕业设计",
+            "hard_constraints": [
+                "允许 CEO 代审当前项目。",
+                "必须拆成大量原子任务。",
+            ],
+            "budget_cap": 500000,
+            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+        },
+    )
+
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    created_events = [
+        event
+        for event in client.app.state.repository.list_events_for_testing()
+        if event["workflow_id"] == workflow_id and event["event_type"] == "TICKET_CREATED"
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert created_events
+    assert created_events[0]["payload"]["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert created_events[0]["payload"]["node_id"] == "node_ceo_architecture_brief"
 
 
 def test_ceo_shadow_snapshot_includes_normalized_profiles_and_summary(client):
@@ -869,6 +1157,29 @@ def test_ceo_shadow_system_prompt_prefers_document_chain_before_implementation(c
     assert "before directly creating implementation tickets" in system_prompt.lower()
     assert "architect_primary / cto_primary" in system_prompt.lower()
     assert "do not use backend_engineer_primary" in system_prompt.lower()
+
+
+def test_ceo_shadow_system_prompt_uses_architecture_brief_kickoff_for_autopilot_workflow(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_autopilot_prompt", "做一个图书馆管理系统毕业设计")
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            "UPDATE workflow_projection SET workflow_profile = ? WHERE workflow_id = ?",
+            ("CEO_AUTOPILOT_FINE_GRAINED", workflow_id),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
+        trigger_ref=f"project-init:{workflow_id}",
+    )
+    system_prompt = build_ceo_shadow_system_prompt(snapshot)
+
+    assert snapshot["workflow"]["workflow_profile"] == "CEO_AUTOPILOT_FINE_GRAINED"
+    assert "architecture_brief" in system_prompt.lower()
+    assert "atomic" in system_prompt.lower()
 
 
 def test_ceo_shadow_failover_uses_fallback_provider_when_primary_is_unavailable(client, monkeypatch):
@@ -1369,7 +1680,7 @@ def test_ceo_shadow_run_executes_governance_document_create_ticket_for_live_role
     assert created_spec["delivery_stage"] is None
 
 
-def test_ceo_shadow_run_rejects_invalid_create_ticket_preset(client, monkeypatch):
+def test_ceo_shadow_run_falls_back_safely_for_invalid_create_ticket_preset(client, monkeypatch):
     workflow_id = _project_init(client, "CEO invalid create preset")
     _set_live_provider(client)
 
@@ -1417,8 +1728,10 @@ def test_ceo_shadow_run_rejects_invalid_create_ticket_preset(client, monkeypatch
         runtime_provider_store=client.app.state.runtime_provider_store,
     )
 
-    assert run["rejected_actions"][0]["action_type"] == "CREATE_TICKET"
-    assert run["executed_actions"] == []
+    assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
+    assert run["executed_actions"][0]["action_type"] == "NO_ACTION"
+    assert run["deterministic_fallback_used"] is True
+    assert run["fallback_reason"] is not None
 
 
 def test_ceo_validator_accepts_governance_document_create_ticket_for_architect_role(client):
@@ -1529,6 +1842,349 @@ def test_ceo_shadow_run_executes_governance_document_create_ticket_for_cto_role(
     assert created_spec["role_profile_ref"] == "cto_primary"
     assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:cto_governance_document"
     assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_cto_1"
+
+
+def test_ceo_shadow_run_normalizes_loose_governance_followup_create_ticket_from_live_provider(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_live_gov_followup", "CEO live governance follow-up normalization")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Continue the governance chain after the architecture brief.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": {
+                                "node_id": "node_ceo_technology_decision",
+                                "output_schema_ref": TECHNOLOGY_DECISION_SCHEMA_REF,
+                                "execution_contract": {
+                                    "deliverable": "Produce the technology decision document for the current library system graduation project.",
+                                    "acceptance_criteria": [
+                                        "明确推荐的系统技术方案与取舍。",
+                                        "为后续实现级任务拆分提供依据。",
+                                    ],
+                                    "constraints": [
+                                        "保持细粒度，只推进下一张治理票。",
+                                        "避免重复架构定义。",
+                                    ],
+                                },
+                                "dispatch_intent": {
+                                    "document_family": "governance",
+                                    "document_kind": "technology_decision",
+                                    "reason": "已存在可复用的 architecture brief，需要继续补齐技术决策，为后续设计提供依据。",
+                                    "preferred_path": "current_live_planning_role",
+                                    "fallback_policy": "if no live planning assignee exists, wait instead of creating implementation tickets",
+                                },
+                                "title": "Create technology decision for the library system graduation project",
+                                "priority": "high",
+                                "depends_on_ticket_ids": ["tkt_parent_architecture_doc"],
+                                "inputs": {
+                                    "workflow_goal": "做一个图书馆管理系统毕业设计",
+                                    "next_document_kind": "technology_decision",
+                                },
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_loose_gov_followup_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_architecture_doc",
+        node_id="node_parent_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete and ready for the next governance document.",
+    )
+
+    repository = client.app.state.repository
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["trigger_type"] == "TICKET_COMPLETED"
+    assert run["provider_response_id"] == "resp_ceo_loose_gov_followup_1"
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+
+    assert created_spec["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
+    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
+    assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:frontend_governance_document"
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
+    assert created_spec["dispatch_intent"]["dependency_gate_refs"] == ["tkt_parent_architecture_doc"]
+    assert created_spec["parent_ticket_id"] == "tkt_parent_architecture_doc"
+
+
+def test_ceo_shadow_run_normalizes_live_governance_followup_with_kind_field_and_invalid_role(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_live_gov_kind", "CEO live governance kind normalization")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Architecture brief is already completed and reusable. Advance by one minimal governance step in the approved document-first sequence.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": {
+                                "title": "Produce technology decision for the library management system graduation project",
+                                "kind": TECHNOLOGY_DECISION_SCHEMA_REF,
+                                "priority": "high",
+                                "role_profile_ref": "checker_primary",
+                                "depends_on_ticket_ids": ["tkt_parent_architecture_doc"],
+                                "source_artifact_refs": [
+                                    "art://runtime/tkt_parent_architecture_doc/architecture_brief.json"
+                                ],
+                                "execution_contract": {
+                                    "objective": "Create the technology_decision document that selects a practical, low-risk stack for the library management system based on the completed architecture brief.",
+                                    "deliverable_schema_ref": TECHNOLOGY_DECISION_SCHEMA_REF,
+                                    "must_include": [
+                                        "recommended frontend technology",
+                                        "recommended backend technology",
+                                    ],
+                                    "constraints": [
+                                        "Use the existing architecture_brief as the primary input",
+                                        "Do not start implementation in this ticket",
+                                    ],
+                                    "definition_of_done": [
+                                        "A complete technology_decision artifact is produced"
+                                    ],
+                                },
+                                "dispatch_intent": {
+                                    "mode": "governance_document",
+                                    "reason": "The workflow has completed architecture_brief and still needs the next governance document in sequence.",
+                                    "sequence_position": "architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> implementation_bundle",
+                                },
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_live_kind_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_architecture_doc",
+        node_id="node_parent_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete and ready for the next governance document.",
+    )
+
+    repository = client.app.state.repository
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["provider_response_id"] == "resp_ceo_live_kind_1"
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+
+    assert created_spec["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
+    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
+    assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:frontend_governance_document"
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
+    assert created_spec["dispatch_intent"]["dependency_gate_refs"] == ["tkt_parent_architecture_doc"]
+
+
+def test_ceo_shadow_run_normalizes_flat_create_ticket_action_shape_from_live_provider(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_live_flat_action", "CEO live flat action normalization")
+    _set_live_provider(client)
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+
+    from app.core import ceo_proposer
+    from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Continue the governance sequence with a detailed design document.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "title": "Produce detailed design for the library management system graduation project",
+                            "priority": "medium",
+                            "node_id": "node_ceo_detailed_design",
+                            "role_type": "architect_primary",
+                            "output_schema_ref": DETAILED_DESIGN_SCHEMA_REF,
+                            "depends_on": [
+                                "tkt_parent_architecture_doc",
+                                "tkt_parent_technology_decision",
+                                "tkt_parent_milestone_plan",
+                            ],
+                            "execution_contract": {
+                                "goal": "Generate a detailed design document for the next implementation stage.",
+                                "deliverable_schema_ref": DETAILED_DESIGN_SCHEMA_REF,
+                                "constraints": [
+                                    "Use completed governance documents as source of truth."
+                                ],
+                            },
+                            "dispatch_intent": {
+                                "reason": "Next required document in the explicit governance order is detailed_design.",
+                                "prefer_parallel_implementation": True,
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_flat_action_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_architecture_doc",
+        node_id="node_parent_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete.",
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_technology_decision",
+        node_id="node_parent_technology_decision",
+        output_schema_ref=TECHNOLOGY_DECISION_SCHEMA_REF,
+        summary="Technology decision is complete.",
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_milestone_plan",
+        node_id="node_parent_milestone_plan",
+        output_schema_ref="milestone_plan",
+        summary="Milestone plan is complete.",
+    )
+
+    repository = client.app.state.repository
+    run = run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_parent_milestone_plan",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["provider_response_id"] == "resp_ceo_flat_action_1"
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+
+    assert created_spec["output_schema_ref"] == DETAILED_DESIGN_SCHEMA_REF
+    assert created_spec["node_id"] == "node_ceo_detailed_design"
+    assert created_spec["role_profile_ref"] == "architect_primary"
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
+    assert created_spec["dispatch_intent"]["dependency_gate_refs"] == [
+        "tkt_parent_architecture_doc",
+        "tkt_parent_technology_decision",
+        "tkt_parent_milestone_plan",
+    ]
+
+
+def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_leaves_fields_blank(
+    client,
+    monkeypatch,
+):
+    workflow_id = _seed_workflow(client, "wf_live_backlog_followup_fallback", "CEO backlog follow-up fallback")
+    _set_live_provider(client)
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_followup_parent",
+        node_id="node_ceo_backlog_recommendation",
+    )
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Fan out implementation work from the completed backlog recommendation.",
+                    "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "",
+                                "role_profile_ref": "",
+                                "output_schema_ref": "",
+                                "summary": "Create the next implementation tickets from backlog.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_backlog_blank_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    repository = client.app.state.repository
+    run = run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_followup_parent",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["deterministic_fallback_used"] is True
+    assert [item["action_type"] for item in run["executed_actions"]] == ["CREATE_TICKET", "CREATE_TICKET"]
+
+    created_ticket_ids = [item["payload"]["ticket_id"] for item in run["executed_actions"]]
+    with repository.connection() as connection:
+        created_specs = [
+            repository.get_latest_ticket_created_payload(connection, ticket_id)
+            for ticket_id in created_ticket_ids
+        ]
+
+    assert all(spec is not None for spec in created_specs)
+    assert {spec["output_schema_ref"] for spec in created_specs if spec is not None} == {"implementation_bundle"}
+    assert {spec["role_profile_ref"] for spec in created_specs if spec is not None} == {
+        "frontend_engineer_primary"
+    }
+    assert {spec["parent_ticket_id"] for spec in created_specs if spec is not None} == {
+        "tkt_backlog_followup_parent"
+    }
+    assert {spec["dispatch_intent"]["assignee_employee_id"] for spec in created_specs if spec is not None} == {
+        "emp_frontend_2"
+    }
+    assert {tuple(spec["dispatch_intent"]["dependency_gate_refs"]) for spec in created_specs if spec is not None} == {
+        ()
+    }
+    assert {spec["node_id"] for spec in created_specs if spec is not None} == {
+        "node_backlog_followup_br_t01",
+        "node_backlog_followup_br_t02",
+    }
 
 
 def test_ceo_create_ticket_inherits_parent_governance_process_assets(client):

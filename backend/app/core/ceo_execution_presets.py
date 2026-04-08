@@ -133,6 +133,7 @@ for role_profile_ref, output_schema_refs in _GOVERNANCE_DOCUMENT_ROLE_PROFILES.i
 
 
 PROJECT_INIT_SCOPE_NODE_ID = "node_scope_decision"
+PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID = "node_ceo_architecture_brief"
 
 
 def build_project_init_scope_ticket_id(workflow_id: str) -> str:
@@ -144,6 +145,14 @@ def build_project_init_scope_summary(north_star_goal: str) -> str:
     return (
         "Prepare the kickoff consensus report and the first batch of follow-up ticket outlines for "
         f"{clean_goal}."
+    )
+
+
+def build_autopilot_architecture_brief_summary(north_star_goal: str) -> str:
+    clean_goal = north_star_goal.strip() or "the current workflow"
+    return (
+        "Clarify the delivery architecture for "
+        f"{clean_goal}, extract concrete user-facing requirements, and decompose the work into fine-grained atomic tasks."
     )
 
 

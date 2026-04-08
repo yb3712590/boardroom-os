@@ -233,7 +233,7 @@ def run_ceo_shadow_for_trigger(
             deterministic_fallback_reason = str(first_failed_action.get("reason") or "Limited CEO execution failed.")
     except Exception as exc:
         fallback_reason = f"CEO shadow snapshot/proposal pipeline failed: {exc}"
-        fallback_action_batch = build_deterministic_fallback_batch(snapshot, fallback_reason)
+        fallback_action_batch = build_deterministic_fallback_batch(repository, snapshot, fallback_reason)
         try:
             validation = validate_ceo_action_batch(
                 repository,

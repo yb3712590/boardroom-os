@@ -13,7 +13,7 @@ import app.core.workflow_auto_advance as workflow_auto_advance_module
 import pytest
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
-from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED
+from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED, EVENT_TICKET_CREATED
 from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
@@ -506,18 +506,21 @@ def _mock_provider_payload_for_schema(schema_ref: str) -> dict:
             "followup_tickets": [
                 {
                     "ticket_id": "tkt_scope_provider_build",
+                    "task_title": "Build the provider-backed homepage foundation",
                     "owner_role": "frontend_engineer",
                     "summary": "Build the approved homepage foundation without widening scope.",
                     "delivery_stage": "BUILD",
                 },
                 {
                     "ticket_id": "tkt_scope_provider_check",
+                    "task_title": "Check the provider-backed homepage foundation",
                     "owner_role": "checker",
                     "summary": "Check the implementation bundle against the locked scope.",
                     "delivery_stage": "CHECK",
                 },
                 {
                     "ticket_id": "tkt_scope_provider_review",
+                    "task_title": "Prepare the provider-backed review package",
                     "owner_role": "frontend_engineer",
                     "summary": "Prepare the final board-facing review package.",
                     "delivery_stage": "REVIEW",
@@ -3149,6 +3152,59 @@ def test_scheduler_skips_excluded_employee_ids_and_leases_backup_worker(client):
     assert ticket_projection is not None
     assert ticket_projection["status"] == "COMPLETED"
     assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"
+
+
+def test_scheduler_relaxes_excluded_employee_ids_for_single_capable_rework_fix_worker(client):
+    workflow_id = _project_init(client, "Singleton rework fix routing")
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key="ticket-created:singleton-rework-fix",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                **_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id="tkt_runner_singleton_rework_fix",
+                    node_id="node_runner_singleton_rework_fix",
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref="implementation_bundle",
+                    excluded_employee_ids=["emp_frontend_2"],
+                    allowed_tools=["read_artifact", "write_artifact", "image_gen"],
+                    allowed_write_set=["artifacts/ui/scope-followups/tkt_runner_singleton_rework_fix/*"],
+                    acceptance_criteria=[
+                        "Must implement the approved scope follow-up.",
+                        "Must produce a structured implementation bundle.",
+                    ],
+                ),
+                "ticket_kind": "MAKER_REWORK_FIX",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-singleton-rework-fix",
+        max_dispatches=10,
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_singleton_rework_fix")
+    leased_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_singleton_rework_fix"
+    ]
+
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == "COMPLETED"
+    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_2"
 
 
 def test_scheduler_skips_frozen_employee_when_dispatching(client):

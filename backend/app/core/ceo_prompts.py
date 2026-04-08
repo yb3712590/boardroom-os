@@ -6,7 +6,11 @@ from app.contracts.runtime import (
     RenderedExecutionPayloadMeta,
     RenderedExecutionPayloadSummary,
 )
-from app.core.ceo_execution_presets import GOVERNANCE_DOCUMENT_CHAIN_ORDER, PROJECT_INIT_SCOPE_NODE_ID
+from app.core.ceo_execution_presets import (
+    GOVERNANCE_DOCUMENT_CHAIN_ORDER,
+    PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
+    PROJECT_INIT_SCOPE_NODE_ID,
+)
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
@@ -19,19 +23,33 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
     trigger_type = str((snapshot.get("trigger") or {}).get("trigger_type") or "")
     workflow = snapshot.get("workflow") or {}
     ticket_summary = snapshot.get("ticket_summary") or {}
+    workflow_profile = str(workflow.get("workflow_profile") or "")
     kickoff_instruction = ""
     if trigger_type == EVENT_BOARD_DIRECTIVE_RECEIVED and int(ticket_summary.get("total") or 0) == 0:
-        kickoff_instruction = (
-            "When a new board directive arrives and no tickets exist yet, propose exactly one CREATE_TICKET "
-            f"for the initial scope kickoff using role_profile_ref `ui_designer_primary`, "
-            f"output_schema_ref `consensus_document`, and node_id `{PROJECT_INIT_SCOPE_NODE_ID}`. "
-            "The payload must include execution_contract with execution_target_ref `execution_target:scope_consensus`, "
-            "required_capability_tags [`structured_output`, `planning`], and runtime_contract_version `execution_contract_v1`. "
-            "The payload must also include dispatch_intent with one active assignee_employee_id from snapshot.employees and a short selection_reason. "
-            "That kickoff ticket should produce a startup consensus report plus the first batch of follow-up "
-            f"ticket outlines for north star goal: {workflow.get('north_star_goal')}. "
-            "Do not create downstream BUILD, CHECK, or REVIEW tickets directly before board approval.\n"
-        )
+        if workflow_profile == "CEO_AUTOPILOT_FINE_GRAINED":
+            kickoff_instruction = (
+                "When a new CEO_AUTOPILOT_FINE_GRAINED board directive arrives and no tickets exist yet, propose exactly one CREATE_TICKET "
+                f"for the initial governance kickoff using role_profile_ref `frontend_engineer_primary`, "
+                f"output_schema_ref `architecture_brief`, and node_id `{PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID}`. "
+                "The payload must include execution_contract with execution_target_ref `execution_target:frontend_governance_document`, "
+                "required_capability_tags [`structured_output`, `planning`], and runtime_contract_version `execution_contract_v1`. "
+                "The payload must also include dispatch_intent with one active assignee_employee_id from snapshot.employees and a short selection_reason. "
+                "That kickoff ticket should clarify the vague goal, capture slightly more concrete delivery requirements, "
+                "and prepare a human-readable architecture brief that decomposes the library system into many atomic tasks with explicit dependencies. "
+                "Do not create consensus_document, BUILD, CHECK, or REVIEW tickets before the architecture_brief exists.\n"
+            )
+        else:
+            kickoff_instruction = (
+                "When a new board directive arrives and no tickets exist yet, propose exactly one CREATE_TICKET "
+                f"for the initial scope kickoff using role_profile_ref `ui_designer_primary`, "
+                f"output_schema_ref `consensus_document`, and node_id `{PROJECT_INIT_SCOPE_NODE_ID}`. "
+                "The payload must include execution_contract with execution_target_ref `execution_target:scope_consensus`, "
+                "required_capability_tags [`structured_output`, `planning`], and runtime_contract_version `execution_contract_v1`. "
+                "The payload must also include dispatch_intent with one active assignee_employee_id from snapshot.employees and a short selection_reason. "
+                "That kickoff ticket should produce a startup consensus report plus the first batch of follow-up "
+                f"ticket outlines for north star goal: {workflow.get('north_star_goal')}. "
+                "Do not create downstream BUILD, CHECK, or REVIEW tickets directly before board approval.\n"
+            )
     return (
         "You are the Boardroom OS CEO in shadow mode.\n"
         "You read the current workflow snapshot and propose controlled actions only.\n"
@@ -43,6 +61,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         f"{', '.join(GOVERNANCE_DOCUMENT_CHAIN_ORDER)}.\n"
         "Before directly creating implementation tickets, consider whether one governance document should be created first.\n"
         "Keep the minimal document-first order explicit: architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> implementation_bundle.\n"
+        "If workflow.workflow_profile is CEO_AUTOPILOT_FINE_GRAINED, keep task breakdown fine-grained and prefer atomic tasks with explicit dependency refs over large bundled tickets.\n"
         "Governance document kinds are a shared document family, not a hard role whitelist.\n"
         "Governance documents may stay on current live planning roles, or use architect_primary / cto_primary when those roles already exist in the active board-approved roster.\n"
         "Do not use backend_engineer_primary, database_engineer_primary, or platform_sre_primary for direct CEO CREATE_TICKET yet.\n"

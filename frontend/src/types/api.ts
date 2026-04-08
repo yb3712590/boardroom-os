@@ -70,9 +70,9 @@ export type DashboardData = {
   }
   completion_summary: {
     workflow_id: string
-    final_review_pack_id: string
-    approved_at: string
-    final_review_approved_at: string
+    final_review_pack_id: string | null
+    approved_at: string | null
+    final_review_approved_at: string | null
     closeout_completed_at: string
     closeout_ticket_id: string
     title: string
@@ -84,6 +84,7 @@ export type DashboardData = {
     documentation_sync_summary: string | null
     documentation_update_count: number
     documentation_follow_up_count: number
+    workflow_chain_report_artifact_ref: string | null
   } | null
   event_stream_preview: Array<{
     event_id: string

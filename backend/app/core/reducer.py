@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.constants import (
@@ -61,6 +61,10 @@ from app.core.constants import (
     TICKET_STATUS_TIMED_OUT,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.workflow_completion import (
+    infer_workflow_current_stage,
+    resolve_workflow_closeout_completion,
+)
 
 
 def _event_payload(event: dict) -> dict:
@@ -139,31 +143,442 @@ def _base_incident_projection(event: dict[str, Any], payload: dict[str, Any]) ->
     }
 
 
-def rebuild_workflow_projections(events: Iterable[dict]) -> list[dict]:
-    projections: dict[str, dict] = {}
+def _coerce_iso_datetime(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return value
 
-    for event in events:
+
+def _normalized_ticket_projection_for_workflow(projection: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **projection,
+        "lease_expires_at": _coerce_iso_datetime(projection.get("lease_expires_at")),
+        "started_at": _coerce_iso_datetime(projection.get("started_at")),
+        "last_heartbeat_at": _coerce_iso_datetime(projection.get("last_heartbeat_at")),
+        "heartbeat_expires_at": _coerce_iso_datetime(projection.get("heartbeat_expires_at")),
+        "updated_at": _coerce_iso_datetime(projection.get("updated_at")),
+    }
+
+
+def _normalized_node_projection_for_workflow(projection: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **projection,
+        "updated_at": _coerce_iso_datetime(projection.get("updated_at")),
+    }
+
+
+def rebuild_workflow_projections(events: Iterable[dict]) -> list[dict]:
+    event_list = list(events)
+    projections: dict[str, dict] = {}
+    created_specs_by_ticket: dict[str, dict[str, Any]] = {}
+    ticket_state_by_id: dict[str, dict[str, Any]] = {}
+    node_state_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    open_approval_count_by_workflow: dict[str, int] = {}
+    open_incident_count_by_workflow: dict[str, int] = {}
+
+    for event in event_list:
         payload = _event_payload(event)
-        if event["event_type"] != EVENT_WORKFLOW_CREATED:
+        event_type = event["event_type"]
+        workflow_id = event["workflow_id"]
+
+        if event_type == EVENT_WORKFLOW_CREATED:
+            projections[workflow_id] = {
+                "workflow_id": workflow_id,
+                "title": payload.get("title") or payload["north_star_goal"],
+                "north_star_goal": payload["north_star_goal"],
+                "workflow_profile": str(payload.get("workflow_profile") or "STANDARD"),
+                "tenant_id": payload.get("tenant_id", DEFAULT_TENANT_ID),
+                "workspace_id": payload.get("workspace_id", DEFAULT_WORKSPACE_ID),
+                "current_stage": DEFAULT_WORKFLOW_STAGE,
+                "status": DEFAULT_WORKFLOW_STATUS,
+                "budget_total": payload["budget_cap"],
+                "budget_used": 0,
+                "board_gate_state": DEFAULT_BOARD_GATE_STATE,
+                "deadline_at": payload.get("deadline_at"),
+                "started_at": event["occurred_at"].isoformat(),
+                "updated_at": event["occurred_at"].isoformat(),
+                "version": event["sequence_no"],
+            }
+            open_approval_count_by_workflow[workflow_id] = 0
+            open_incident_count_by_workflow[workflow_id] = 0
             continue
 
-        workflow_id = event["workflow_id"]
-        projections[workflow_id] = {
-            "workflow_id": workflow_id,
-            "title": payload.get("title") or payload["north_star_goal"],
-            "north_star_goal": payload["north_star_goal"],
-            "tenant_id": payload.get("tenant_id", DEFAULT_TENANT_ID),
-            "workspace_id": payload.get("workspace_id", DEFAULT_WORKSPACE_ID),
-            "current_stage": DEFAULT_WORKFLOW_STAGE,
-            "status": DEFAULT_WORKFLOW_STATUS,
-            "budget_total": payload["budget_cap"],
-            "budget_used": 0,
-            "board_gate_state": DEFAULT_BOARD_GATE_STATE,
-            "deadline_at": payload.get("deadline_at"),
-            "started_at": event["occurred_at"].isoformat(),
-            "updated_at": event["occurred_at"].isoformat(),
-            "version": event["sequence_no"],
+        if workflow_id is None or workflow_id not in projections:
+            continue
+
+        projection = projections[workflow_id]
+        occurred_at = event["occurred_at"].isoformat()
+        projection["updated_at"] = occurred_at
+        projection["version"] = event["sequence_no"]
+
+        if event_type == EVENT_TICKET_CREATED:
+            ticket_id = str(payload["ticket_id"])
+            node_id = str(payload["node_id"])
+            created_specs_by_ticket[ticket_id] = payload
+            ticket_state_by_id[ticket_id] = {
+                "ticket_id": ticket_id,
+                "workflow_id": workflow_id,
+                "node_id": node_id,
+                "status": TICKET_STATUS_PENDING,
+                "updated_at": event["occurred_at"],
+            }
+            node_state_by_key[(workflow_id, node_id)] = {
+                "workflow_id": workflow_id,
+                "node_id": node_id,
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_PENDING,
+                "updated_at": event["occurred_at"],
+            }
+            continue
+
+        if event_type == EVENT_TICKET_LEASED:
+            ticket_id = str(payload["ticket_id"])
+            node_id = str(payload["node_id"])
+            ticket_state = ticket_state_by_id.get(
+                ticket_id,
+                {"ticket_id": ticket_id, "workflow_id": workflow_id, "node_id": node_id},
+            )
+            ticket_state_by_id[ticket_id] = {
+                **ticket_state,
+                "status": TICKET_STATUS_LEASED,
+                "updated_at": event["occurred_at"],
+            }
+            node_state_by_key[(workflow_id, node_id)] = {
+                **node_state_by_key.get(
+                    (workflow_id, node_id),
+                    {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                    },
+                ),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_PENDING,
+                "updated_at": event["occurred_at"],
+            }
+            continue
+
+        if event_type == EVENT_TICKET_STARTED:
+            ticket_id = str(payload["ticket_id"])
+            node_id = str(payload["node_id"])
+            ticket_state = ticket_state_by_id.get(
+                ticket_id,
+                {"ticket_id": ticket_id, "workflow_id": workflow_id, "node_id": node_id},
+            )
+            ticket_state_by_id[ticket_id] = {
+                **ticket_state,
+                "status": TICKET_STATUS_EXECUTING,
+                "updated_at": event["occurred_at"],
+            }
+            node_state_by_key[(workflow_id, node_id)] = {
+                **node_state_by_key.get(
+                    (workflow_id, node_id),
+                    {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                    },
+                ),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_EXECUTING,
+                "updated_at": event["occurred_at"],
+            }
+            continue
+
+        if event_type == EVENT_TICKET_CANCEL_REQUESTED:
+            ticket_id = str(payload["ticket_id"])
+            node_id = str(payload["node_id"])
+            ticket_state = ticket_state_by_id.get(
+                ticket_id,
+                {"ticket_id": ticket_id, "workflow_id": workflow_id, "node_id": node_id},
+            )
+            ticket_state_by_id[ticket_id] = {
+                **ticket_state,
+                "status": TICKET_STATUS_CANCEL_REQUESTED,
+                "updated_at": event["occurred_at"],
+            }
+            node_state_by_key[(workflow_id, node_id)] = {
+                **node_state_by_key.get(
+                    (workflow_id, node_id),
+                    {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                    },
+                ),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_CANCEL_REQUESTED,
+                "updated_at": event["occurred_at"],
+            }
+            continue
+
+        if event_type == EVENT_TICKET_CANCELLED:
+            ticket_id = str(payload["ticket_id"])
+            node_id = str(payload["node_id"])
+            ticket_state = ticket_state_by_id.get(
+                ticket_id,
+                {"ticket_id": ticket_id, "workflow_id": workflow_id, "node_id": node_id},
+            )
+            ticket_state_by_id[ticket_id] = {
+                **ticket_state,
+                "status": TICKET_STATUS_CANCELLED,
+                "updated_at": event["occurred_at"],
+            }
+            node_state_by_key[(workflow_id, node_id)] = {
+                **node_state_by_key.get(
+                    (workflow_id, node_id),
+                    {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                    },
+                ),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_CANCELLED,
+                "updated_at": event["occurred_at"],
+            }
+            continue
+
+        if event_type == EVENT_TICKET_COMPLETED:
+            ticket_id = str(payload["ticket_id"])
+            node_id = str(payload["node_id"])
+            ticket_state = ticket_state_by_id.get(
+                ticket_id,
+                {"ticket_id": ticket_id, "workflow_id": workflow_id, "node_id": node_id},
+            )
+            ticket_state_by_id[ticket_id] = {
+                **ticket_state,
+                "status": TICKET_STATUS_COMPLETED,
+                "updated_at": event["occurred_at"],
+            }
+            if not payload.get("board_review_requested"):
+                node_state_by_key[(workflow_id, node_id)] = {
+                    **node_state_by_key.get(
+                        (workflow_id, node_id),
+                        {
+                            "workflow_id": workflow_id,
+                            "node_id": node_id,
+                        },
+                    ),
+                    "latest_ticket_id": ticket_id,
+                    "status": NODE_STATUS_COMPLETED,
+                    "updated_at": event["occurred_at"],
+                }
+            continue
+
+        if event_type == EVENT_TICKET_FAILED:
+            ticket_id = str(payload["ticket_id"])
+            node_id = str(payload["node_id"])
+            ticket_state = ticket_state_by_id.get(
+                ticket_id,
+                {"ticket_id": ticket_id, "workflow_id": workflow_id, "node_id": node_id},
+            )
+            ticket_state_by_id[ticket_id] = {
+                **ticket_state,
+                "status": TICKET_STATUS_FAILED,
+                "updated_at": event["occurred_at"],
+            }
+            node_state_by_key[(workflow_id, node_id)] = {
+                **node_state_by_key.get(
+                    (workflow_id, node_id),
+                    {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                    },
+                ),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_REWORK_REQUIRED,
+                "updated_at": event["occurred_at"],
+            }
+            continue
+
+        if event_type == EVENT_TICKET_TIMED_OUT:
+            ticket_id = str(payload["ticket_id"])
+            node_id = str(payload["node_id"])
+            ticket_state = ticket_state_by_id.get(
+                ticket_id,
+                {"ticket_id": ticket_id, "workflow_id": workflow_id, "node_id": node_id},
+            )
+            ticket_state_by_id[ticket_id] = {
+                **ticket_state,
+                "status": TICKET_STATUS_TIMED_OUT,
+                "updated_at": event["occurred_at"],
+            }
+            node_state_by_key[(workflow_id, node_id)] = {
+                **node_state_by_key.get(
+                    (workflow_id, node_id),
+                    {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                    },
+                ),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_REWORK_REQUIRED,
+                "updated_at": event["occurred_at"],
+            }
+            continue
+
+        if event_type == EVENT_BOARD_REVIEW_REQUIRED:
+            ticket_id = payload.get("ticket_id")
+            node_id = payload.get("node_id")
+            if ticket_id is None or node_id is None:
+                continue
+            ticket_state_by_id[str(ticket_id)] = {
+                **ticket_state_by_id.get(
+                    str(ticket_id),
+                    {"ticket_id": str(ticket_id), "workflow_id": workflow_id, "node_id": str(node_id)},
+                ),
+                "status": TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+                "updated_at": event["occurred_at"],
+            }
+            node_state_by_key[(workflow_id, str(node_id))] = {
+                **node_state_by_key.get(
+                    (workflow_id, str(node_id)),
+                    {
+                        "workflow_id": workflow_id,
+                        "node_id": str(node_id),
+                    },
+                ),
+                "latest_ticket_id": str(ticket_id),
+                "status": NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+                "updated_at": event["occurred_at"],
+            }
+            open_approval_count_by_workflow[workflow_id] = open_approval_count_by_workflow.get(workflow_id, 0) + 1
+            continue
+
+        if event_type == EVENT_BOARD_REVIEW_APPROVED:
+            ticket_id = payload.get("ticket_id")
+            node_id = payload.get("node_id")
+            if ticket_id is not None and node_id is not None:
+                ticket_state_by_id[str(ticket_id)] = {
+                    **ticket_state_by_id.get(
+                        str(ticket_id),
+                        {"ticket_id": str(ticket_id), "workflow_id": workflow_id, "node_id": str(node_id)},
+                    ),
+                    "status": TICKET_STATUS_COMPLETED,
+                    "updated_at": event["occurred_at"],
+                }
+                node_state_by_key[(workflow_id, str(node_id))] = {
+                    **node_state_by_key.get(
+                        (workflow_id, str(node_id)),
+                        {
+                            "workflow_id": workflow_id,
+                            "node_id": str(node_id),
+                        },
+                    ),
+                    "latest_ticket_id": str(ticket_id),
+                    "status": NODE_STATUS_COMPLETED,
+                    "updated_at": event["occurred_at"],
+                }
+            open_approval_count_by_workflow[workflow_id] = max(
+                open_approval_count_by_workflow.get(workflow_id, 0) - 1,
+                0,
+            )
+            continue
+
+        if event_type == EVENT_BOARD_REVIEW_REJECTED:
+            ticket_id = payload.get("ticket_id")
+            node_id = payload.get("node_id")
+            if ticket_id is not None and node_id is not None:
+                ticket_state_by_id[str(ticket_id)] = {
+                    **ticket_state_by_id.get(
+                        str(ticket_id),
+                        {"ticket_id": str(ticket_id), "workflow_id": workflow_id, "node_id": str(node_id)},
+                    ),
+                    "status": TICKET_STATUS_REWORK_REQUIRED,
+                    "updated_at": event["occurred_at"],
+                }
+                node_state_by_key[(workflow_id, str(node_id))] = {
+                    **node_state_by_key.get(
+                        (workflow_id, str(node_id)),
+                        {
+                            "workflow_id": workflow_id,
+                            "node_id": str(node_id),
+                        },
+                    ),
+                    "latest_ticket_id": str(ticket_id),
+                    "status": NODE_STATUS_REWORK_REQUIRED,
+                    "updated_at": event["occurred_at"],
+                }
+            open_approval_count_by_workflow[workflow_id] = max(
+                open_approval_count_by_workflow.get(workflow_id, 0) - 1,
+                0,
+            )
+            continue
+
+        if event_type == EVENT_INCIDENT_OPENED:
+            open_incident_count_by_workflow[workflow_id] = open_incident_count_by_workflow.get(workflow_id, 0) + 1
+            continue
+
+        if event_type == EVENT_INCIDENT_CLOSED:
+            open_incident_count_by_workflow[workflow_id] = max(
+                open_incident_count_by_workflow.get(workflow_id, 0) - 1,
+                0,
+            )
+
+    ticket_projections = rebuild_ticket_projections(event_list)
+    node_projections = rebuild_node_projections(event_list)
+    incident_projections = rebuild_incident_projections(event_list)
+    tickets_by_workflow: dict[str, list[dict[str, Any]]] = {}
+    nodes_by_workflow: dict[str, list[dict[str, Any]]] = {}
+    open_incident_count_by_workflow_from_projection: dict[str, int] = {}
+    for ticket in ticket_projections:
+        tickets_by_workflow.setdefault(str(ticket["workflow_id"]), []).append(
+            _normalized_ticket_projection_for_workflow(ticket)
+        )
+    for node in node_projections:
+        nodes_by_workflow.setdefault(str(node["workflow_id"]), []).append(
+            _normalized_node_projection_for_workflow(node)
+        )
+    for incident in incident_projections:
+        if str(incident.get("status") or "") != "OPEN":
+            continue
+        workflow_id = str(incident.get("workflow_id") or "")
+        if not workflow_id:
+            continue
+        open_incident_count_by_workflow_from_projection[workflow_id] = (
+            open_incident_count_by_workflow_from_projection.get(workflow_id, 0) + 1
+        )
+
+    ticket_terminal_events_by_ticket: dict[str, dict[str, Any]] = {}
+    for event in event_list:
+        event_type = event["event_type"]
+        if event_type not in {EVENT_TICKET_COMPLETED, EVENT_TICKET_FAILED, EVENT_TICKET_TIMED_OUT}:
+            continue
+        payload = _event_payload(event)
+        ticket_id = str(payload.get("ticket_id") or "")
+        if not ticket_id:
+            continue
+        ticket_terminal_events_by_ticket[ticket_id] = {
+            "event_type": event_type,
+            "occurred_at": event["occurred_at"],
         }
+
+    for workflow_id, projection in projections.items():
+        workflow_tickets = list(tickets_by_workflow.get(workflow_id, []))
+        workflow_nodes = list(nodes_by_workflow.get(workflow_id, []))
+        workflow_created_specs = {
+            ticket_id: created_spec
+            for ticket_id, created_spec in created_specs_by_ticket.items()
+            if str(created_spec.get("workflow_id") or workflow_id) == workflow_id
+        }
+        workflow_terminal_events = {
+            str(ticket["ticket_id"]): ticket_terminal_events_by_ticket.get(str(ticket["ticket_id"]))
+            for ticket in workflow_tickets
+        }
+        closeout_completion = resolve_workflow_closeout_completion(
+            tickets=workflow_tickets,
+            nodes=workflow_nodes,
+            has_open_approval=open_approval_count_by_workflow.get(workflow_id, 0) > 0,
+            has_open_incident=open_incident_count_by_workflow_from_projection.get(workflow_id, 0) > 0,
+            created_specs_by_ticket=workflow_created_specs,
+            ticket_terminal_events_by_ticket=workflow_terminal_events,
+        )
+        projection["status"] = "COMPLETED" if closeout_completion is not None else DEFAULT_WORKFLOW_STATUS
+        projection["current_stage"] = infer_workflow_current_stage(
+            nodes=workflow_nodes,
+            created_specs_by_ticket=workflow_created_specs,
+            closeout_completion=closeout_completion,
+        )
 
     return list(projections.values())
 

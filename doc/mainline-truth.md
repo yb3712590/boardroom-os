@@ -1,6 +1,6 @@
 # 主线真相表
 
-> 最后更新：2026-04-08
+> 最后更新：2026-04-09
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
@@ -11,12 +11,15 @@
 | `BUILD` 内部 maker-checker | 真实运行 | 先产出 `implementation_bundle@1`，再走 `maker -> checker -> fix / incident` | `BUILD` 不会直接放行到 `CHECK` |
 | `CHECK` 内部 maker-checker | 真实运行 | `delivery_check_report@1` 也有独立内审闭环 | `CHECK` 不会直接放行到最终董事会 |
 | 最终 `REVIEW` | 真实运行 | 只有真正 board-facing 的 review 才进入 `Inbox -> Review Room` | 董事会只看真实审批点 |
-| `closeout` 内部 maker-checker | 真实运行 | final review 通过后会自动补 `delivery_closeout_package@1`，closeout 完成后才算 workflow 完成 | completion 不是 board approve 就立刻出现 |
+| `closeout` 内部 maker-checker | 真实运行 | final review 通过后会自动补 `delivery_closeout_package@1`；对 autopilot workflow，只要真实 closeout 已完成，即使没有 `VISUAL_MILESTONE` 也会被认成 workflow 完成 | completion 不是 board approve 就立刻出现，但也不再要求伪造 board review |
 
 补充差异：
 
 - `project-init -> scope review` 这条共识链仍保留 `ui_designer_primary`，但首个 scope kickoff 票已经不再由命令处理器硬编码创建，而是由 `BOARD_DIRECTIVE_RECEIVED` 的 CEO shadow run 发起
 - 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
+- dashboard completion 现在同时支持两条真实完成路径：传统 `VISUAL_MILESTONE -> closeout`，以及 autopilot 的“closeout 已完成 + workflow-chain report 已落盘”路径；后者不会再伪造 `final_review_pack_id / approved_at`
+- deterministic autopilot closeout fallback 现在只会在 workflow 已经出现真实交付主线证据时触发：最小口径是 `BUILD / CHECK / REVIEW` 票、`implementation_bundle`、`ui_milestone_review`，或它们对应的 maker-checker verdict；纯治理文档流、纯规划流、只有 backlog recommendation 的流不会再被误判成可 closeout
+- deterministic autopilot closeout fallback 现在也会先检查 workflow 内是否已经存在正式 `delivery_closeout_package` 票；已有正式 closeout 时，不再补第二条 CEO closeout
 - 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
 - 当前 CEO 也能在窄触发条件下自动创建 `TECHNICAL_DECISION` 会议请求：只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重新对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会
 - CEO shadow snapshot 现在会暴露当前 workflow 内的 `reuse_candidates`：只读最近已完成 ticket 和已关闭会议的最小摘要；OpenAI Compat live prompt 会先检查这些复用候选，优先 `NO_ACTION / RETRY_TICKET / WAIT`，再考虑新建平行 ticket、额外会议或补招人；deterministic fallback 保持不变

@@ -116,7 +116,8 @@ from app.core.governance_templates import (
     list_role_template_fragments,
     role_template_source_for_worker,
 )
-from app.core.output_schemas import DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
+from app.core.workflow_completion import resolve_workflow_closeout_completion
+from app.core.workflow_autopilot import workflow_chain_report_artifact_ref
 from app.core.workflow_relationships import (
     list_workflow_ticket_snapshots,
     resolve_display_ticket_spec as _shared_resolve_display_ticket_spec,
@@ -457,34 +458,19 @@ def _build_dashboard_completion_summary(
     workflow_id: str,
 ) -> DashboardCompletionSummaryProjection | None:
     with repository.connection() as connection:
-        node_rows = connection.execute(
-            "SELECT status FROM node_projection WHERE workflow_id = ?",
+        ticket_rows = connection.execute(
+            """
+            SELECT * FROM ticket_projection
+            WHERE workflow_id = ?
+            ORDER BY updated_at ASC, ticket_id ASC
+            """,
             (workflow_id,),
         ).fetchall()
-        if not node_rows:
-            return None
-        if any(str(row["status"]) != NODE_STATUS_COMPLETED for row in node_rows):
-            return None
-
-        active_ticket_count = int(
-            connection.execute(
-                """
-                SELECT COUNT(*) AS total
-                FROM ticket_projection
-                WHERE workflow_id = ? AND status IN (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    workflow_id,
-                    "PENDING",
-                    "LEASED",
-                    "EXECUTING",
-                    "BLOCKED_FOR_BOARD_REVIEW",
-                    "REWORK_REQUIRED",
-                    "CANCEL_REQUESTED",
-                ),
-            ).fetchone()["total"]
-        )
-        if active_ticket_count > 0:
+        node_rows = connection.execute(
+            "SELECT * FROM node_projection WHERE workflow_id = ?",
+            (workflow_id,),
+        ).fetchall()
+        if not ticket_rows or not node_rows:
             return None
 
         open_approval_count = int(
@@ -493,16 +479,31 @@ def _build_dashboard_completion_summary(
                 (workflow_id, APPROVAL_STATUS_OPEN),
             ).fetchone()["total"]
         )
-        if open_approval_count > 0:
-            return None
-
         open_incident_count = int(
             connection.execute(
                 "SELECT COUNT(*) AS total FROM incident_projection WHERE workflow_id = ? AND status = ?",
                 (workflow_id, "OPEN"),
             ).fetchone()["total"]
         )
-        if open_incident_count > 0:
+        tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
+        nodes = [repository._convert_node_projection_row(row) for row in node_rows]
+        created_specs_by_ticket = {
+            str(ticket["ticket_id"]): repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+            for ticket in tickets
+        }
+        ticket_terminal_events_by_ticket = {
+            str(ticket["ticket_id"]): repository.get_latest_ticket_terminal_event(connection, str(ticket["ticket_id"]))
+            for ticket in tickets
+        }
+        closeout_completion = resolve_workflow_closeout_completion(
+            tickets=tickets,
+            nodes=nodes,
+            has_open_approval=open_approval_count > 0,
+            has_open_incident=open_incident_count > 0,
+            created_specs_by_ticket=created_specs_by_ticket,
+            ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        )
+        if closeout_completion is None:
             return None
 
         final_review_row = connection.execute(
@@ -514,50 +515,29 @@ def _build_dashboard_completion_summary(
             """,
             (workflow_id, "APPROVED", "VISUAL_MILESTONE"),
         ).fetchone()
-        if final_review_row is None:
-            return None
+        closeout_ticket = closeout_completion.closeout_ticket
+        closeout_terminal_event = closeout_completion.closeout_terminal_event
 
-        closeout_ticket: dict[str, Any] | None = None
-        for ticket in repository.list_ticket_projections_by_statuses(connection, [TICKET_STATUS_COMPLETED]):
-            if ticket["workflow_id"] != workflow_id:
-                continue
-            created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
-            if (
-                created_spec is not None
-                and str(created_spec.get("output_schema_ref") or "") == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
-            ):
-                closeout_ticket = ticket
-        if closeout_ticket is None:
-            return None
-
-        closeout_terminal_event = repository.get_latest_ticket_terminal_event(
-            connection,
-            str(closeout_ticket["ticket_id"]),
-        )
-        if closeout_terminal_event is None:
-            return None
-
-    if final_review_row is None:
-        return None
-
-    approval = repository._convert_approval_row(final_review_row)
-    payload = approval.get("payload") or {}
+    approval = repository._convert_approval_row(final_review_row) if final_review_row is not None else None
+    payload = approval.get("payload") or {} if approval is not None else {}
     review_pack = payload.get("review_pack") or {}
     resolution = payload.get("resolution") or {}
-    selected_option_id = resolution.get("selected_option_id")
-    selected_option = next(
-        (
-            option
-            for option in review_pack.get("options") or []
-            if option.get("option_id") == selected_option_id
-        ),
-        None,
+    selected_option_id = resolution.get("selected_option_id") if approval is not None else None
+    selected_option = (
+        next(
+            (
+                option
+                for option in review_pack.get("options") or []
+                if option.get("option_id") == selected_option_id
+            ),
+            None,
+        )
+        if approval is not None
+        else None
     )
     recommendation = review_pack.get("recommendation") or {}
     subject = review_pack.get("subject") or {}
-    resolved_at = approval.get("resolved_at")
-    if resolved_at is None:
-        return None
+    resolved_at = approval.get("resolved_at") if approval is not None else None
     closeout_payload = closeout_terminal_event.get("payload") or {}
     closeout_completed_at = closeout_terminal_event.get("occurred_at")
     if closeout_completed_at is None:
@@ -567,15 +547,23 @@ def _build_dashboard_completion_summary(
         documentation_update_count,
         documentation_follow_up_count,
     ) = _summarize_closeout_documentation_updates(closeout_payload.get("documentation_updates"))
+    chain_report_ref = workflow_chain_report_artifact_ref(workflow_id)
+    if repository.get_artifact_by_ref(chain_report_ref) is None:
+        chain_report_ref = None
 
     return DashboardCompletionSummaryProjection(
         workflow_id=workflow_id,
-        final_review_pack_id=str(approval["review_pack_id"]),
+        final_review_pack_id=(str(approval["review_pack_id"]) if approval is not None else None),
         approved_at=resolved_at,
         final_review_approved_at=resolved_at,
         closeout_completed_at=closeout_completed_at,
         closeout_ticket_id=str(closeout_ticket["ticket_id"]),
-        title=str(subject.get("title") or review_pack.get("title") or approval["review_pack_id"]),
+        title=str(
+            subject.get("title")
+            or review_pack.get("title")
+            or closeout_payload.get("summary")
+            or closeout_ticket["ticket_id"]
+        ),
         summary=str(
             closeout_payload.get("completion_summary")
             or recommendation.get("summary")
@@ -583,12 +571,13 @@ def _build_dashboard_completion_summary(
             or ""
         ),
         selected_option_id=selected_option_id,
-        board_comment=resolution.get("board_comment"),
+        board_comment=resolution.get("board_comment") if approval is not None else None,
         artifact_refs=list((selected_option or {}).get("artifact_refs") or []),
         closeout_artifact_refs=list(closeout_payload.get("artifact_refs") or []),
         documentation_sync_summary=documentation_sync_summary,
         documentation_update_count=documentation_update_count,
         documentation_follow_up_count=documentation_follow_up_count,
+        workflow_chain_report_artifact_ref=chain_report_ref,
     )
 
 

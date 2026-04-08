@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.context_compiler import compile_and_persist_execution_artifacts
+from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.process_assets import (
     build_closeout_summary_process_asset_ref,
     build_meeting_decision_process_asset_ref,
@@ -189,6 +190,72 @@ def _ensure_scoped_workflow(
                 "workspace_id": workspace_id,
             },
             occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+
+def _persist_workflow_profile(repository, workflow_id: str, workflow_profile: str) -> None:
+    with repository.transaction() as connection:
+        row = connection.execute(
+            """
+            SELECT event_id, payload_json
+            FROM events
+            WHERE workflow_id = ? AND event_type = ?
+            ORDER BY sequence_no ASC
+            LIMIT 1
+            """,
+            (workflow_id, EVENT_WORKFLOW_CREATED),
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["workflow_profile"] = workflow_profile
+        connection.execute(
+            "UPDATE events SET payload_json = ? WHERE event_id = ?",
+            (json.dumps(payload, sort_keys=True), row["event_id"]),
+        )
+        repository.refresh_projections(connection)
+
+
+def _seed_created_ticket(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    role_profile_ref: str,
+    output_schema_ref: str,
+    delivery_stage: str | None = None,
+    allowed_write_set: list[str] | None = None,
+    allowed_tools: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    input_artifact_refs: list[str] | None = None,
+    parent_ticket_id: str | None = None,
+) -> None:
+    repository = client.app.state.repository
+    payload = _ticket_create_payload(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+        delivery_stage=delivery_stage,
+        allowed_write_set=allowed_write_set,
+        allowed_tools=allowed_tools,
+        acceptance_criteria=acceptance_criteria,
+        input_artifact_refs=input_artifact_refs,
+        parent_ticket_id=parent_ticket_id,
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:{ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=payload,
+            occurred_at=datetime.fromisoformat("2026-03-28T10:30:00+08:00"),
         )
         repository.refresh_projections(connection)
 
@@ -1276,21 +1343,30 @@ def _staged_scope_followup_tickets(ticket_id_prefix: str = "tkt_followup_scope_l
     return [
         {
             "ticket_id": f"{ticket_id_prefix}_build",
+            "task_title": "实现已批准的首页基础版",
             "owner_role": "frontend_engineer",
             "summary": "Build the approved homepage foundation without widening the governance surface.",
             "delivery_stage": "BUILD",
+            "dependency_ticket_ids": [],
         },
         {
             "ticket_id": f"{ticket_id_prefix}_check",
+            "task_title": "检查首页基础版实现",
             "owner_role": "checker",
             "summary": "Check the implementation bundle against the approved scope lock.",
             "delivery_stage": "CHECK",
+            "dependency_ticket_ids": [f"{ticket_id_prefix}_build"],
         },
         {
             "ticket_id": f"{ticket_id_prefix}_review",
+            "task_title": "整理董事会评审包",
             "owner_role": "frontend_engineer",
             "summary": "Prepare the final board-facing homepage review package from the approved implementation.",
             "delivery_stage": "REVIEW",
+            "dependency_ticket_ids": [
+                f"{ticket_id_prefix}_build",
+                f"{ticket_id_prefix}_check",
+            ],
         },
     ]
 
@@ -2622,14 +2698,17 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
         "artifacts/ui/scope-followups/tkt_followup_scope_review/*",
         "reports/review/tkt_followup_scope_review/*",
     ]
-    assert build_created_spec["acceptance_criteria"][0].endswith(
-        "Build the approved homepage foundation without widening the governance surface."
+    assert any(
+        item.endswith("Build the approved homepage foundation without widening the governance surface.")
+        for item in build_created_spec["acceptance_criteria"]
     )
-    assert check_created_spec["acceptance_criteria"][0].endswith(
-        "Check the implementation bundle against the approved scope lock."
+    assert any(
+        item.endswith("Check the implementation bundle against the approved scope lock.")
+        for item in check_created_spec["acceptance_criteria"]
     )
-    assert review_created_spec["acceptance_criteria"][0].endswith(
-        "Prepare the final board-facing homepage review package from the approved implementation."
+    assert any(
+        item.endswith("Prepare the final board-facing homepage review package from the approved implementation.")
+        for item in review_created_spec["acceptance_criteria"]
     )
     assert build_created_spec["parent_ticket_id"] == f"tkt_{workflow_id}_scope_decision"
     assert check_created_spec["parent_ticket_id"] == "tkt_followup_scope_build"
@@ -2650,6 +2729,53 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
     assert build_ticket["status"] == TICKET_STATUS_COMPLETED
     assert check_ticket["status"] == TICKET_STATUS_COMPLETED
     assert review_ticket["status"] == TICKET_STATUS_COMPLETED
+
+
+def test_scope_followups_translate_atomic_dependency_refs_into_dispatch_intent(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id, approval = _project_init_to_scope_approval(client)
+
+    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
+    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
+    payload = _scope_followup_payload(client, approval)
+    payload["followup_tickets"] = [
+        {
+            "ticket_id": "tkt_library_books_ui",
+            "task_title": "实现图书列表页骨架",
+            "owner_role": "frontend_engineer",
+            "summary": "只实现图书列表页骨架和静态表格布局。",
+            "delivery_stage": "BUILD",
+            "dependency_ticket_ids": [],
+        },
+        {
+            "ticket_id": "tkt_library_search_ui",
+            "task_title": "实现搜索框交互",
+            "owner_role": "frontend_engineer",
+            "summary": "只实现搜索框和筛选交互。",
+            "delivery_stage": "BUILD",
+            "dependency_ticket_ids": ["tkt_library_books_ui"],
+        },
+    ]
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = _approve_open_review(client, approval, idempotency_suffix="atomic-deps")
+
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        api_created_spec = repository.get_latest_ticket_created_payload(connection, "tkt_library_books_ui")
+        ui_created_spec = repository.get_latest_ticket_created_payload(connection, "tkt_library_search_ui")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert api_created_spec is not None
+    assert ui_created_spec is not None
+    assert api_created_spec["workflow_id"] == workflow_id
+    assert api_created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
+    assert api_created_spec["dispatch_intent"]["dependency_gate_refs"] == []
+    assert ui_created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
+    assert ui_created_spec["dispatch_intent"]["dependency_gate_refs"] == ["tkt_library_books_ui"]
+    assert ui_created_spec["dispatch_intent"]["selected_by"] == "scope_followup_router"
+    assert ui_created_spec["dispatch_intent"]["wakeup_policy"] == "dependency_gated"
 
 
 def test_internal_delivery_build_checker_approved_does_not_open_board_review(client, set_ticket_time):
@@ -3705,15 +3831,19 @@ def test_board_approve_visual_review_auto_advances_next_pending_followup_to_next
     payload["followup_tickets"] = [
         {
             "ticket_id": "tkt_followup_scope_foundation",
+            "task_title": "完成首页基础评审包",
             "owner_role": "frontend_engineer",
             "summary": "Build the approved homepage foundation under the locked scope.",
             "delivery_stage": "REVIEW",
+            "dependency_ticket_ids": [],
         },
         {
             "ticket_id": "tkt_followup_scope_polish",
+            "task_title": "完成首页细节润色评审包",
             "owner_role": "frontend_engineer",
             "summary": "Polish the approved homepage details without widening the scope.",
             "delivery_stage": "REVIEW",
+            "dependency_ticket_ids": ["tkt_followup_scope_foundation"],
         },
     ]
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -3760,15 +3890,19 @@ def test_board_approve_visual_review_keeps_next_followup_pending_when_no_eligibl
     payload["followup_tickets"] = [
         {
             "ticket_id": "tkt_followup_scope_foundation",
+            "task_title": "完成首页基础评审包",
             "owner_role": "frontend_engineer",
             "summary": "Build the approved homepage foundation under the locked scope.",
             "delivery_stage": "REVIEW",
+            "dependency_ticket_ids": [],
         },
         {
             "ticket_id": "tkt_followup_scope_polish",
+            "task_title": "完成首页细节润色评审包",
             "owner_role": "frontend_engineer",
             "summary": "Polish the approved homepage details without widening the scope.",
             "delivery_stage": "REVIEW",
+            "dependency_ticket_ids": ["tkt_followup_scope_foundation"],
         },
     ]
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -3820,13 +3954,17 @@ def test_board_approve_scope_review_rejects_when_any_followup_owner_role_is_unsu
     payload["followup_tickets"] = [
         {
             "ticket_id": "tkt_followup_scope_valid",
+            "task_title": "实现有效的已批准范围任务",
             "owner_role": "frontend_engineer",
             "summary": "Implement the approved scope without expanding governance.",
+            "dependency_ticket_ids": [],
         },
         {
             "ticket_id": "tkt_followup_scope_invalid",
+            "task_title": "触发非法角色校验",
             "owner_role": "governance_architect",
             "summary": "This follow-up should be rejected for the current MVP lane.",
+            "dependency_ticket_ids": [],
         },
     ]
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -3857,13 +3995,17 @@ def test_board_approve_scope_review_rejects_when_followup_ticket_ids_repeat_with
     payload["followup_tickets"] = [
         {
             "ticket_id": "tkt_followup_scope_duplicate",
+            "task_title": "第一次使用重复 ticket id",
             "owner_role": "frontend_engineer",
             "summary": "First follow-up uses the duplicate ticket id.",
+            "dependency_ticket_ids": [],
         },
         {
             "ticket_id": "tkt_followup_scope_duplicate",
+            "task_title": "第二次使用重复 ticket id",
             "owner_role": "frontend_engineer",
             "summary": "Second follow-up repeats the same ticket id.",
+            "dependency_ticket_ids": [],
         },
     ]
     artifact_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -12264,6 +12406,127 @@ def test_completion_summary_handles_missing_closeout_documentation_updates(clien
     assert completion_summary["documentation_sync_summary"] is None
     assert completion_summary["documentation_update_count"] == 0
     assert completion_summary["documentation_follow_up_count"] == 0
+
+
+def test_dashboard_completion_summary_supports_autopilot_closeout_without_visual_milestone(client):
+    workflow_id = "wf_autopilot_closeout_dashboard"
+    repository = client.app.state.repository
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot closeout dashboard completion",
+    )
+    _persist_workflow_profile(repository, workflow_id, "CEO_AUTOPILOT_FINE_GRAINED")
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_autopilot_dashboard_build",
+        node_id="node_autopilot_dashboard_build",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="implementation_bundle",
+        delivery_stage="BUILD",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_autopilot_dashboard_build/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must deliver the approved implementation slice.",
+            "Must produce a structured implementation bundle.",
+        ],
+    )
+    build_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_implementation_bundle_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_dashboard_build",
+            node_id="node_autopilot_dashboard_build",
+        ),
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_autopilot_dashboard_closeout",
+        node_id="node_ceo_delivery_closeout",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="delivery_closeout_package",
+        delivery_stage="CLOSEOUT",
+        allowed_write_set=["reports/closeout/tkt_autopilot_dashboard_closeout/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must capture the approved final delivery choice.",
+            "Must produce a structured delivery closeout package.",
+        ],
+        parent_ticket_id="tkt_autopilot_dashboard_build",
+    )
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_dashboard_closeout",
+            node_id="node_ceo_delivery_closeout",
+            leased_by="emp_frontend_2",
+        ),
+    )
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_dashboard_closeout",
+            node_id="node_ceo_delivery_closeout",
+            started_by="emp_frontend_2",
+        ),
+    )
+    closeout_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_delivery_closeout_package_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_dashboard_closeout",
+            node_id="node_ceo_delivery_closeout",
+        ),
+    )
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="test-autopilot:dashboard-closeout",
+        max_steps=1,
+        max_dispatches=1,
+    )
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    workflow_projection = repository.get_workflow_projection(workflow_id)
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+    active_workflow = dashboard_response.json()["data"]["active_workflow"]
+
+    assert build_response.status_code == 200
+    assert build_response.json()["status"] == "ACCEPTED"
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+    assert closeout_response.status_code == 200
+    assert closeout_response.json()["status"] == "ACCEPTED"
+    assert dashboard_response.status_code == 200
+    assert completion_summary is not None
+    assert completion_summary["workflow_id"] == workflow_id
+    assert completion_summary["final_review_pack_id"] is None
+    assert completion_summary["approved_at"] is None
+    assert completion_summary["final_review_approved_at"] is None
+    assert completion_summary["board_comment"] is None
+    assert completion_summary["selected_option_id"] is None
+    assert completion_summary["closeout_ticket_id"] == "tkt_autopilot_dashboard_closeout"
+    assert completion_summary["closeout_artifact_refs"] == [
+        "art://runtime/tkt_autopilot_dashboard_closeout/delivery-closeout-package.json"
+    ]
+    assert completion_summary["workflow_chain_report_artifact_ref"] == (
+        f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"
+    )
+    assert workflow_projection is not None
+    assert workflow_projection["status"] == "COMPLETED"
+    assert workflow_projection["current_stage"] == "closeout"
+    assert active_workflow is not None
+    assert active_workflow["status"] == "COMPLETED"
+    assert active_workflow["current_stage"] == "closeout"
 
 
 def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_handoff_is_complete(client):

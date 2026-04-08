@@ -312,14 +312,19 @@ def _consensus_document_schema_body() -> dict[str, Any]:
                 "minItems": 1,
                 "items": {
                     "type": "object",
-                    "required": ["ticket_id", "owner_role", "summary"],
+                    "required": ["ticket_id", "task_title", "owner_role", "summary"],
                     "properties": {
                         "ticket_id": {"type": "string"},
+                        "task_title": {"type": "string"},
                         "owner_role": {"type": "string"},
                         "summary": {"type": "string"},
                         "delivery_stage": {
                             "type": "string",
                             "enum": [stage.value for stage in DeliveryStage],
+                        },
+                        "dependency_ticket_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
                         },
                     },
                 },
@@ -753,6 +758,7 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
                 message="Each consensus followup ticket must be an object.",
             )
         ticket_id = item.get("ticket_id")
+        task_title = item.get("task_title")
         owner_role = item.get("owner_role")
         summary = item.get("summary")
         delivery_stage = item.get("delivery_stage")
@@ -762,6 +768,13 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
                 expected="non-empty string",
                 actual_value=ticket_id if ticket_id is not None else _MISSING,
                 message="Each consensus followup ticket requires ticket_id.",
+            )
+        if not isinstance(task_title, str) or not task_title:
+            _raise_schema_validation_error(
+                field_path=f"followup_tickets[{index}].task_title",
+                expected="non-empty string",
+                actual_value=task_title if task_title is not None else _MISSING,
+                message="Each consensus followup ticket requires task_title.",
             )
         if not isinstance(owner_role, str) or not owner_role:
             _raise_schema_validation_error(
@@ -777,6 +790,22 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
                 actual_value=summary if summary is not None else _MISSING,
                 message="Each consensus followup ticket requires summary.",
             )
+        dependency_ticket_ids = item.get("dependency_ticket_ids", [])
+        if not isinstance(dependency_ticket_ids, list):
+            _raise_schema_validation_error(
+                field_path=f"followup_tickets[{index}].dependency_ticket_ids",
+                expected="array",
+                actual_value=dependency_ticket_ids,
+                message="Each consensus followup ticket dependency_ticket_ids must be an array.",
+            )
+        for dependency_index, dependency_ticket_id in enumerate(dependency_ticket_ids):
+            if not isinstance(dependency_ticket_id, str) or not dependency_ticket_id:
+                _raise_schema_validation_error(
+                    field_path=f"followup_tickets[{index}].dependency_ticket_ids[{dependency_index}]",
+                    expected="non-empty string",
+                    actual_value=dependency_ticket_id if dependency_ticket_id is not None else _MISSING,
+                    message="Each dependency_ticket_ids entry must be a non-empty string.",
+                )
         if delivery_stage is not None:
             if not isinstance(delivery_stage, str) or delivery_stage not in {
                 DeliveryStage.BUILD.value,

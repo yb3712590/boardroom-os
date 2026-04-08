@@ -22,6 +22,7 @@ from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.core.workflow_scope import default_workflow_scope
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
+from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.db.repository import ControlPlaneRepository
 
 PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS = 6
@@ -228,6 +229,12 @@ def handle_project_init(
                 idempotency_key=f"{command_key}:requirement-elicitation",
             )
             repository.refresh_projections(connection)
+        if workflow_uses_ceo_board_delegate({"workflow_profile": payload.workflow_profile}):
+            _auto_advance_project_init_to_first_review(
+                repository,
+                workflow_id=workflow_id,
+                command_key=command_key,
+            )
     else:
         run_ceo_shadow_for_trigger(
             repository,

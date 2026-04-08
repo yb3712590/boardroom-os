@@ -48,9 +48,9 @@ class DashboardRuntimeStatusProjection(StrictModel):
 
 class DashboardCompletionSummaryProjection(StrictModel):
     workflow_id: str
-    final_review_pack_id: str
-    approved_at: datetime
-    final_review_approved_at: datetime
+    final_review_pack_id: str | None = None
+    approved_at: datetime | None = None
+    final_review_approved_at: datetime | None = None
     closeout_completed_at: datetime
     closeout_ticket_id: str
     title: str
@@ -62,6 +62,7 @@ class DashboardCompletionSummaryProjection(StrictModel):
     documentation_sync_summary: str | None = None
     documentation_update_count: int = 0
     documentation_follow_up_count: int = 0
+    workflow_chain_report_artifact_ref: str | None = None
 
 
 class NodeCountsProjection(StrictModel):

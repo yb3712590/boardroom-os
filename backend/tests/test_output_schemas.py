@@ -77,9 +77,11 @@ def test_output_schema_registry_accepts_valid_consensus_document_payload() -> No
             "followup_tickets": [
                 {
                     "ticket_id": "tkt_followup_001",
+                    "task_title": "实现首页基础版",
                     "owner_role": "frontend_engineer",
                     "summary": "Implement approved homepage direction",
                     "delivery_stage": "BUILD",
+                    "dependency_ticket_ids": [],
                 }
             ],
         },
@@ -120,6 +122,7 @@ def test_output_schema_registry_rejects_invalid_consensus_document_decision_reco
                 "followup_tickets": [
                     {
                         "ticket_id": "tkt_followup_001",
+                        "task_title": "实现首页基础版",
                         "owner_role": "frontend_engineer",
                         "summary": "Implement approved homepage direction",
                         "delivery_stage": "BUILD",
@@ -141,9 +144,32 @@ def test_output_schema_registry_rejects_invalid_consensus_document_delivery_stag
                 "followup_tickets": [
                     {
                         "ticket_id": "tkt_followup_001",
+                        "task_title": "实现首页基础版",
                         "owner_role": "frontend_engineer",
                         "summary": "Implement approved homepage direction",
                         "delivery_stage": "LAUNCH",
+                    }
+                ],
+            },
+        )
+
+
+def test_output_schema_registry_rejects_consensus_document_followup_without_task_title() -> None:
+    with pytest.raises(ValueError, match="task_title"):
+        validate_output_payload(
+            schema_ref="consensus_document",
+            schema_version=1,
+            submitted_schema_version="consensus_document_v1",
+            payload={
+                "topic": "Resolve homepage interaction conflict",
+                "participants": ["emp_frontend_2", "emp_checker_1"],
+                "followup_tickets": [
+                    {
+                        "ticket_id": "tkt_followup_001",
+                        "owner_role": "frontend_engineer",
+                        "summary": "Implement approved homepage direction",
+                        "delivery_stage": "BUILD",
+                        "dependency_ticket_ids": [],
                     }
                 ],
             },

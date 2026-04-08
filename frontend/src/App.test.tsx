@@ -1783,6 +1783,7 @@ function installBoardroomMock(options?: {
           documentation_sync_summary: '2 documentation updates recorded; 0 follow-up items.',
           documentation_update_count: 2,
           documentation_follow_up_count: 0,
+          workflow_chain_report_artifact_ref: null,
         },
       })
       state.inbox = inboxData()
@@ -2764,6 +2765,7 @@ describe('Boardroom UI', () => {
           documentation_sync_summary: '2 documentation updates recorded; 0 follow-up items.',
           documentation_update_count: 2,
           documentation_follow_up_count: 0,
+          workflow_chain_report_artifact_ref: null,
         },
       }),
     })

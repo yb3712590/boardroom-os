@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS workflow_projection (
     workflow_id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     north_star_goal TEXT NOT NULL,
+    workflow_profile TEXT NOT NULL DEFAULT 'STANDARD',
     tenant_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL,
     current_stage TEXT NOT NULL,

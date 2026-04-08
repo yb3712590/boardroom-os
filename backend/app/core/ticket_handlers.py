@@ -121,6 +121,7 @@ from app.core.ticket_artifacts import (
     save_prepared_artifact_record,
 )
 from app.core.time import now_local
+from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.core.workflow_scope import resolve_workflow_scope
 from app.db.repository import ControlPlaneRepository
 
@@ -644,6 +645,26 @@ def _calculate_maker_checker_rework_streak(
     return max(1, int(parent_context.get("rework_streak_count") or 0) + 1)
 
 
+def _calculate_maker_checker_rework_cycle_count(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    checker_created_spec: dict[str, Any],
+) -> int:
+    cycle_count = 1
+    parent_ticket_id = checker_created_spec.get("parent_ticket_id")
+    seen_ticket_ids: set[str] = set()
+    while parent_ticket_id and parent_ticket_id not in seen_ticket_ids:
+        seen_ticket_ids.add(parent_ticket_id)
+        parent_created_spec = repository.get_latest_ticket_created_payload(connection, parent_ticket_id)
+        if parent_created_spec is None:
+            break
+        if _ticket_kind(parent_created_spec) == MAKER_REWORK_FIX_TICKET_KIND:
+            cycle_count += 1
+        parent_ticket_id = parent_created_spec.get("parent_ticket_id")
+    return max(1, cycle_count)
+
+
 def _should_escalate_maker_checker_rework(
     *,
     created_spec: dict[str, Any],
@@ -654,6 +675,44 @@ def _should_escalate_maker_checker_rework(
         escalation_policy.get("on_repeat_failure") == "escalate_ceo"
         and rework_streak_count >= _resolve_repeat_failure_threshold(created_spec)
     )
+
+
+def _should_autopilot_converge_maker_checker_rework(
+    *,
+    workflow: dict[str, Any] | None,
+    review_request: TicketBoardReviewRequest | None,
+    created_spec: dict[str, Any],
+    rework_cycle_count: int,
+) -> bool:
+    return bool(
+        workflow_uses_ceo_board_delegate(workflow)
+        and review_request is not None
+        and _is_internal_only_review_request(review_request)
+        and rework_cycle_count >= _resolve_repeat_failure_threshold(created_spec)
+    )
+
+
+def _build_autopilot_converged_checker_result_payload(
+    checker_result_payload: dict[str, Any],
+) -> dict[str, Any]:
+    note = "Autopilot reached the graduation-project rework cap and accepted this checker pass with notes."
+    findings = [
+        {
+            **finding,
+            "blocking": False,
+        }
+        for finding in list(checker_result_payload.get("findings") or [])
+        if isinstance(finding, dict)
+    ]
+    summary = str(checker_result_payload.get("summary") or "").strip()
+    return {
+        **checker_result_payload,
+        "summary": f"{summary} {note}".strip(),
+        "review_status": "APPROVED_WITH_NOTES",
+        "findings": findings,
+        "autopilot_convergence_applied": True,
+        "autopilot_convergence_note": note,
+    }
 
 
 def _resolve_maker_checker_rework_incident_fingerprint(
@@ -2315,6 +2374,73 @@ def _resolve_scheduler_workers(
     return worker_candidates, worker_by_id
 
 
+def _worker_is_dispatchable_for_ticket(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    worker_id: str,
+    target_role_profile: str,
+    worker_by_id: dict[str, set[str]],
+    busy_workers: set[str],
+) -> bool:
+    return (
+        worker_id not in busy_workers
+        and target_role_profile in worker_by_id.get(worker_id, set())
+        and not _is_provider_paused(
+            repository,
+            connection,
+            _resolve_provider_id_for_ticket(
+                repository,
+                connection,
+                lease_owner=worker_id,
+            ),
+        )
+    )
+
+
+def _should_relax_singleton_rework_exclusions(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    created_spec: dict[str, Any],
+    target_role_profile: str,
+    excluded_employee_ids: set[str],
+    worker_candidates: list[str],
+    worker_by_id: dict[str, set[str]],
+    busy_workers: set[str],
+) -> bool:
+    if _ticket_kind(created_spec) != MAKER_REWORK_FIX_TICKET_KIND or not excluded_employee_ids:
+        return False
+
+    has_non_excluded_candidate = any(
+        worker_id not in excluded_employee_ids
+        and _worker_is_dispatchable_for_ticket(
+            repository,
+            connection,
+            worker_id=worker_id,
+            target_role_profile=target_role_profile,
+            worker_by_id=worker_by_id,
+            busy_workers=busy_workers,
+        )
+        for worker_id in worker_candidates
+    )
+    if has_non_excluded_candidate:
+        return False
+
+    return any(
+        worker_id in excluded_employee_ids
+        and _worker_is_dispatchable_for_ticket(
+            repository,
+            connection,
+            worker_id=worker_id,
+            target_role_profile=target_role_profile,
+            worker_by_id=worker_by_id,
+            busy_workers=busy_workers,
+        )
+        for worker_id in worker_candidates
+    )
+
+
 def run_scheduler_tick(
     repository: ControlPlaneRepository,
     *,
@@ -2628,6 +2754,20 @@ def run_scheduler_tick(
                 for employee_id in (created_spec.get("excluded_employee_ids") or [])
                 if employee_id
             }
+            effective_excluded_employee_ids = (
+                set()
+                if _should_relax_singleton_rework_exclusions(
+                    repository,
+                    connection,
+                    created_spec=created_spec,
+                    target_role_profile=str(target_role_profile),
+                    excluded_employee_ids=excluded_employee_ids,
+                    worker_candidates=worker_candidates,
+                    worker_by_id=worker_by_id,
+                    busy_workers=busy_workers,
+                )
+                else excluded_employee_ids
+            )
             selected_worker_id: str | None = None
             selected_assignee_employee_id = _resolve_dispatch_assignee_employee_id(created_spec)
             if selected_assignee_employee_id is not None:
@@ -2635,7 +2775,7 @@ def run_scheduler_tick(
                     continue
                 if (
                     selected_assignee_employee_id in busy_workers
-                    or selected_assignee_employee_id in excluded_employee_ids
+                    or selected_assignee_employee_id in effective_excluded_employee_ids
                 ):
                     continue
                 selected_assignee = repository.get_employee_projection(
@@ -2713,17 +2853,14 @@ def run_scheduler_tick(
                     (
                         worker_id
                         for worker_id in worker_candidates
-                        if worker_id not in busy_workers
-                        and worker_id not in excluded_employee_ids
-                        and target_role_profile in worker_by_id[worker_id]
-                        and not _is_provider_paused(
+                        if worker_id not in effective_excluded_employee_ids
+                        and _worker_is_dispatchable_for_ticket(
                             repository,
                             connection,
-                            _resolve_provider_id_for_ticket(
-                                repository,
-                                connection,
-                                lease_owner=worker_id,
-                            ),
+                            worker_id=worker_id,
+                            target_role_profile=str(target_role_profile),
+                            worker_by_id=worker_by_id,
+                            busy_workers=busy_workers,
                         )
                     ),
                     None,
@@ -4459,6 +4596,34 @@ def _complete_ticket_locked(
         if isinstance(result_payload, dict)
         else ""
     )
+    workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
+    if (
+        checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
+        and checker_review_status in {"CHANGES_REQUIRED", "ESCALATED"}
+        and created_spec is not None
+        and isinstance(result_payload, dict)
+    ):
+        blocking_findings = _extract_blocking_checker_findings(result_payload)
+        rework_fingerprint = _build_rework_fingerprint(blocking_findings)
+        rework_streak_count = _calculate_maker_checker_rework_streak(
+            repository,
+            connection,
+            checker_created_spec=created_spec,
+            rework_fingerprint=rework_fingerprint,
+        )
+        rework_cycle_count = _calculate_maker_checker_rework_cycle_count(
+            repository,
+            connection,
+            checker_created_spec=created_spec,
+        )
+        if _should_autopilot_converge_maker_checker_rework(
+            workflow=workflow,
+            review_request=effective_review_request,
+            created_spec=created_spec,
+            rework_cycle_count=rework_cycle_count,
+        ):
+            result_payload = _build_autopilot_converged_checker_result_payload(result_payload)
+            checker_review_status = str(result_payload.get("review_status") or "")
     checker_requires_no_board_gate = bool(
         checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
         and (

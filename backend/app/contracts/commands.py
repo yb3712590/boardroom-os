@@ -156,6 +156,7 @@ class ProjectInitCommand(StrictModel):
     budget_cap: int = Field(ge=0)
     deadline_at: datetime | None = None
     force_requirement_elicitation: bool = False
+    workflow_profile: str = Field(default="STANDARD", min_length=1)
 
 
 class RuntimeProviderConfigInput(StrictModel):

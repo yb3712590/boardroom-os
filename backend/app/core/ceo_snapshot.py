@@ -226,6 +226,7 @@ def build_ceo_shadow_snapshot(
             "workflow_id": workflow["workflow_id"],
             "title": workflow["title"],
             "north_star_goal": workflow["north_star_goal"],
+            "workflow_profile": workflow.get("workflow_profile"),
             "status": workflow["status"],
             "current_stage": workflow["current_stage"],
             "budget_total": workflow["budget_total"],

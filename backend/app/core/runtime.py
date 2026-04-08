@@ -329,18 +329,21 @@ def _build_meeting_consensus_payload(
         "followup_tickets": [
             {
                 "ticket_id": f"{ticket_id}_followup_build",
+                "task_title": "Implement the converged build slice",
                 "owner_role": build_owner_role,
                 "summary": "Implement the converged technical direction without widening the MVP boundary.",
                 "delivery_stage": DeliveryStage.BUILD.value,
             },
             {
                 "ticket_id": f"{ticket_id}_followup_check",
+                "task_title": "Check the converged build slice",
                 "owner_role": "checker",
                 "summary": "Check the implementation against the converged technical decision before board review.",
                 "delivery_stage": DeliveryStage.CHECK.value,
             },
             {
                 "ticket_id": f"{ticket_id}_followup_review",
+                "task_title": "Prepare the converged review package",
                 "owner_role": "frontend_engineer",
                 "summary": "Prepare the final board-facing review package from the converged technical decision.",
                 "delivery_stage": DeliveryStage.REVIEW.value,
@@ -560,18 +563,21 @@ def _build_runtime_success_payload(
             "followup_tickets": [
                 {
                     "ticket_id": f"{ticket_id}_followup_build",
+                    "task_title": "Build the approved homepage foundation",
                     "owner_role": build_owner_role,
                     "summary": "Build the approved homepage foundation without widening scope.",
                     "delivery_stage": DeliveryStage.BUILD.value,
                 },
                 {
                     "ticket_id": f"{ticket_id}_followup_check",
+                    "task_title": "Check the approved implementation bundle",
                     "owner_role": "checker",
                     "summary": "Check the implementation bundle against the locked scope before board review.",
                     "delivery_stage": DeliveryStage.CHECK.value,
                 },
                 {
                     "ticket_id": f"{ticket_id}_followup_review",
+                    "task_title": "Prepare the approved board review package",
                     "owner_role": "frontend_engineer",
                     "summary": "Prepare the final board-facing homepage review package from the approved implementation.",
                     "delivery_stage": DeliveryStage.REVIEW.value,

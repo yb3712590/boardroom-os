@@ -263,6 +263,7 @@ class ControlPlaneRepository:
                     workflow_id,
                     title,
                     north_star_goal,
+                    workflow_profile,
                     tenant_id,
                     workspace_id,
                     current_stage,
@@ -274,12 +275,13 @@ class ControlPlaneRepository:
                     started_at,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["workflow_id"],
                     projection["title"],
                     projection["north_star_goal"],
+                    projection.get("workflow_profile", "STANDARD"),
                     projection["tenant_id"],
                     projection["workspace_id"],
                     projection["current_stage"],
@@ -4294,6 +4296,7 @@ class ControlPlaneRepository:
         for field in ("deadline_at", "started_at", "updated_at"):
             if converted.get(field):
                 converted[field] = datetime.fromisoformat(converted[field])
+        converted["workflow_profile"] = str(converted.get("workflow_profile") or "STANDARD")
         converted["budget_total"] = int(converted.get("budget_total") or 0)
         converted["budget_used"] = int(converted.get("budget_used") or 0)
         converted["version"] = int(converted.get("version") or 0)
@@ -5100,6 +5103,7 @@ class ControlPlaneRepository:
             "workflow_id": "TEXT",
             "title": "TEXT",
             "north_star_goal": "TEXT",
+            "workflow_profile": "TEXT NOT NULL DEFAULT 'STANDARD'",
             "tenant_id": "TEXT",
             "workspace_id": "TEXT",
             "current_stage": "TEXT",
