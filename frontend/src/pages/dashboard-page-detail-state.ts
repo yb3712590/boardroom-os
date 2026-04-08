@@ -10,8 +10,8 @@ type DashboardPageDetailStateArgs = {
   incidentId: string | undefined
   dependencyInspectorOpen: boolean
   activeWorkflowId: string | null
-  loadSnapshot: () => Promise<void>
-  loadReviewRoom: (reviewPackId: string) => Promise<void>
+  loadSnapshot: (options?: { background?: boolean }) => Promise<void>
+  loadReviewRoom: (reviewPackId: string, options?: { background?: boolean }) => Promise<void>
   clearReview: () => void
 }
 
@@ -35,12 +35,12 @@ export function useDashboardPageDetailState({
   const [meetingError, setMeetingError] = useState<string | null>(null)
   const [dependencyInspectorError, setDependencyInspectorError] = useState<string | null>(null)
 
-  const refreshSnapshot = useEffectEvent(async () => {
-    await loadSnapshot()
+  const refreshSnapshot = useEffectEvent(async (background = false) => {
+    await loadSnapshot(background ? { background: true } : undefined)
   })
 
-  const refreshReviewRoom = useEffectEvent(async (packId: string) => {
-    await loadReviewRoom(packId)
+  const refreshReviewRoom = useEffectEvent(async (packId: string, background = false) => {
+    await loadReviewRoom(packId, background ? { background: true } : undefined)
   })
 
   const refreshIncidentDetail = useEffectEvent(async (nextIncidentId: string) => {
@@ -50,7 +50,7 @@ export function useDashboardPageDetailState({
       const payload = await getIncidentDetail(nextIncidentId)
       setIncidentDetail(payload)
     } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : 'Failed to load the current incident detail.')
+      setIncidentError(error instanceof Error ? error.message : '加载当前故障详情失败。')
       setIncidentDetail(null)
     } finally {
       setIncidentLoading(false)
@@ -65,25 +65,32 @@ export function useDashboardPageDetailState({
       setMeetingDetail(payload)
     } catch (error) {
       setMeetingDetail(null)
-      setMeetingError(error instanceof Error ? error.message : 'Failed to load the current meeting room.')
+      setMeetingError(error instanceof Error ? error.message : '加载当前会议室失败。')
     } finally {
       setMeetingLoading(false)
     }
   })
 
-  const refreshDependencyInspector = useEffectEvent(async (workflowId: string) => {
-    setDependencyInspectorLoading(true)
-    setDependencyInspectorError(null)
+  const refreshDependencyInspector = useEffectEvent(async (workflowId: string, background = false) => {
+    if (!background) {
+      setDependencyInspectorLoading(true)
+      setDependencyInspectorError(null)
+    }
     try {
       const payload = await getDependencyInspector(workflowId)
       setDependencyInspector(payload)
+      setDependencyInspectorError(null)
     } catch (error) {
-      setDependencyInspector(null)
+      if (!background) {
+        setDependencyInspector(null)
+      }
       setDependencyInspectorError(
-        error instanceof Error ? error.message : 'Failed to load the current dependency inspector.',
+        error instanceof Error ? error.message : '加载当前依赖检查器失败。',
       )
     } finally {
-      setDependencyInspectorLoading(false)
+      if (!background) {
+        setDependencyInspectorLoading(false)
+      }
     }
   })
 
@@ -92,9 +99,9 @@ export function useDashboardPageDetailState({
   }, [])
 
   const handleInvalidate = useEffectEvent(async () => {
-    await refreshSnapshot()
+    await refreshSnapshot(true)
     if (reviewPackId) {
-      await refreshReviewRoom(reviewPackId)
+      await refreshReviewRoom(reviewPackId, true)
     }
     if (meetingId) {
       await refreshMeetingDetail(meetingId)
@@ -103,7 +110,7 @@ export function useDashboardPageDetailState({
       await refreshIncidentDetail(incidentId)
     }
     if (dependencyInspectorOpen && activeWorkflowId) {
-      await refreshDependencyInspector(activeWorkflowId)
+      await refreshDependencyInspector(activeWorkflowId, true)
     }
   })
 

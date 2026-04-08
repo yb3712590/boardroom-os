@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { DeveloperInspectorData, ReviewRoomData } from '../../types/api'
 import { isArtifactRef } from '../../utils/artifacts'
@@ -39,11 +39,99 @@ type ReviewRoomDrawerProps = {
   }) => Promise<void>
 }
 
+const EMPTY_ELICITATION_ANSWERS: Array<{
+  question_id: string
+  selected_option_ids: string[]
+  text: string
+}> = []
+
 function splitRules(value: string) {
   return value
     .split('\n')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function formatRiskFieldLabel(field: string) {
+  const riskLabelMap: Record<string, string> = {
+    user_risk: '用户风险',
+    engineering_risk: '工程风险',
+    schedule_risk: '进度风险',
+    budget_risk: '预算风险',
+  }
+  if (riskLabelMap[field]) {
+    return riskLabelMap[field]
+  }
+  return field
+    .split('_')
+    .filter(Boolean)
+    .join(' ')
+}
+
+function formatWeakSignal(signal: string) {
+  const signalLabelMap: Record<string, string> = {
+    hard_constraints_too_few: '硬约束条目过少',
+    deadline_missing: '缺少截止时间',
+    north_star_goal_missing: '缺少北极星目标',
+  }
+  return signalLabelMap[signal] ?? signal.replaceAll('_', ' ')
+}
+
+function formatDeltaSummary(deltaSummary: unknown): string | null {
+  if (deltaSummary == null) {
+    return null
+  }
+  if (typeof deltaSummary === 'string') {
+    const note = deltaSummary.trim()
+    return note.length > 0 ? note : null
+  }
+  if (Array.isArray(deltaSummary)) {
+    const notes = deltaSummary.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    return notes.length > 0 ? notes.join('；') : null
+  }
+  if (typeof deltaSummary === 'object') {
+    const payload = deltaSummary as Record<string, unknown>
+    if (typeof payload.summary === 'string' && payload.summary.trim().length > 0) {
+      return payload.summary.trim()
+    }
+    const weakSignalsRaw = payload.weak_signals
+    if (Array.isArray(weakSignalsRaw)) {
+      const weakSignals = weakSignalsRaw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      if (weakSignals.length > 0) {
+        return `待补充信息：${weakSignals.map(formatWeakSignal).join('、')}`
+      }
+    }
+    const parts = Object.entries(payload)
+      .filter(([, value]) => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+      .map(([key, value]) => `${formatRiskFieldLabel(key)}: ${String(value)}`)
+    return parts.length > 0 ? parts.join('；') : null
+  }
+  return null
+}
+
+function formatRiskSummary(riskSummary: unknown): string | null {
+  if (riskSummary == null) {
+    return null
+  }
+  if (Array.isArray(riskSummary)) {
+    const notes = riskSummary.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    return notes.length > 0 ? notes.join(' ') : null
+  }
+  if (typeof riskSummary === 'string') {
+    const note = riskSummary.trim()
+    return note.length > 0 ? note : null
+  }
+  if (typeof riskSummary === 'object') {
+    const payload = riskSummary as Record<string, unknown>
+    if (typeof payload.summary === 'string' && payload.summary.trim().length > 0) {
+      return payload.summary.trim()
+    }
+    const parts = Object.entries(payload)
+      .filter(([, value]) => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+      .map(([key, value]) => `${formatRiskFieldLabel(key)}: ${String(value)}`)
+    return parts.length > 0 ? parts.join(' · ') : null
+  }
+  return null
 }
 
 export function ReviewRoomDrawer({
@@ -76,21 +164,38 @@ export function ReviewRoomDrawer({
   const [removeRules, setRemoveRules] = useState('')
   const [replaceRules, setReplaceRules] = useState('')
   const [inspectorVisible, setInspectorVisible] = useState(false)
+  const reviewPackIdentity =
+    reviewData?.review_pack != null
+      ? `${reviewData.review_pack.meta.review_pack_id}:${reviewData.review_pack.meta.review_pack_version}`
+      : null
+  const initialElicitationAnswers = reviewData?.draft_defaults.elicitation_answers ?? EMPTY_ELICITATION_ANSWERS
+  const hydratedDraftIdentityRef = useRef<string | null>(null)
   const [elicitationAnswers, setElicitationAnswers] = useState<
     Array<{
       question_id: string
       selected_option_ids: string[]
       text: string
     }>
-  >(reviewData?.draft_defaults.elicitation_answers ?? [])
+  >(initialElicitationAnswers)
 
   const reviewPack = reviewData?.review_pack
   const availableActions = reviewData?.available_actions ?? []
   const employeeChange = reviewPack?.employee_change ?? null
   const questionnaire = reviewPack?.elicitation_questionnaire ?? []
   const isRequirementElicitation = reviewPack?.meta.review_type === 'REQUIREMENT_ELICITATION'
+  const deltaSummaryNote = formatDeltaSummary(reviewPack?.delta_summary)
+  const riskSummaryNote = formatRiskSummary(reviewPack?.risk_summary)
 
   useEffect(() => {
+    if (!isOpen) {
+      hydratedDraftIdentityRef.current = null
+      setInspectorVisible(false)
+      return
+    }
+    if (hydratedDraftIdentityRef.current === reviewPackIdentity && reviewPackIdentity !== null) {
+      return
+    }
+
     setSelectedOptionId(initialSelectedOptionId)
     setApproveNote(initialCommentTemplate)
     setRejectNote('')
@@ -98,8 +203,10 @@ export function ReviewRoomDrawer({
     setAddRules('')
     setRemoveRules('')
     setReplaceRules('')
-    setElicitationAnswers(reviewData?.draft_defaults.elicitation_answers ?? [])
-  }, [initialCommentTemplate, initialSelectedOptionId, reviewData?.draft_defaults.elicitation_answers])
+    setElicitationAnswers(initialElicitationAnswers)
+    setInspectorVisible(false)
+    hydratedDraftIdentityRef.current = reviewPackIdentity
+  }, [initialCommentTemplate, initialElicitationAnswers, initialSelectedOptionId, isOpen, reviewPackIdentity])
 
   function updateElicitationAnswer(
     questionId: string,
@@ -141,37 +248,37 @@ export function ReviewRoomDrawer({
     <Drawer
       isOpen={isOpen}
       onClose={onClose}
-      title={reviewPack?.subject.title ?? 'Loading review pack'}
-      subtitle="Review Room"
+      title={reviewPack?.subject.title ?? '评审包加载中'}
+      subtitle="评审室"
     >
       {loading ? (
-        <div className="review-room-state">Loading the current board review pack...</div>
+        <div className="review-room-state">正在加载当前董事会评审包...</div>
       ) : error ? (
         <div className="review-room-state review-room-error">{error}</div>
       ) : reviewPack == null ? (
-        <div className="review-room-state">No review pack is available for this item.</div>
+        <div className="review-room-state">当前条目暂无可用评审包。</div>
       ) : (
         <div className="review-room-content">
-          <p className="muted-copy">{reviewPack.trigger.trigger_reason ?? 'Pulling the current board review payload.'}</p>
+          <p className="muted-copy">{reviewPack.trigger.trigger_reason ?? '正在拉取当前董事会评审负载。'}</p>
 
           <section className="review-room-overview">
             <div>
-              <span className="eyebrow">Why now</span>
+              <span className="eyebrow">当前为何停在这里</span>
               <p>{reviewPack.trigger.why_now}</p>
             </div>
             <div>
-              <span className="eyebrow">Recommendation</span>
+              <span className="eyebrow">建议动作</span>
               <p>{reviewPack.recommendation.summary}</p>
             </div>
             <div>
-              <span className="eyebrow">Delta</span>
-              <p>{reviewPack.delta_summary ?? 'No delta summary was attached to this board gate.'}</p>
+              <span className="eyebrow">变化摘要</span>
+              <p>{deltaSummaryNote ?? '该董事会闸门未附带变化摘要。'}</p>
             </div>
           </section>
 
           {reviewPack.options.length > 0 ? (
             <section className="review-room-options">
-              <h3>Board options</h3>
+              <h3>董事会可选方案</h3>
               <div className="review-room-option-list">
                 {reviewPack.options.map((option) => (
                   <label key={option.option_id} className="review-room-option">
@@ -192,7 +299,7 @@ export function ReviewRoomDrawer({
                           className="ghost-button artifact-ref-button"
                           onClick={() => onOpenArtifact(artifactRef)}
                         >
-                          Open artifact {option.label}
+                          打开产物 {option.label}
                         </button>
                       ))}
                     </div>
@@ -204,7 +311,7 @@ export function ReviewRoomDrawer({
 
           {isRequirementElicitation && questionnaire.length > 0 ? (
             <section className="review-room-options">
-              <h3>Requirement elicitation</h3>
+              <h3>需求澄清问卷</h3>
               <div className="review-room-option-list">
                 {questionnaire.map((question) => {
                   const currentAnswer =
@@ -266,7 +373,7 @@ export function ReviewRoomDrawer({
 
           <section className="review-room-columns">
             <div className="review-room-column">
-              <h3>Evidence</h3>
+              <h3>证据</h3>
               <ul className="review-room-list">
                 {(reviewPack.evidence_summary ?? []).map((item) => {
                   const sourceRef = item.source_ref
@@ -278,7 +385,7 @@ export function ReviewRoomDrawer({
                       <span>{item.summary}</span>
                       {sourceRef ? (
                       <>
-                        <span>Source ref</span>
+                        <span>来源引用</span>
                         <span>{sourceRef}</span>
                         {artifactSourceRef ? (
                           <button
@@ -286,7 +393,7 @@ export function ReviewRoomDrawer({
                             className="ghost-button artifact-ref-button"
                             onClick={() => onOpenArtifact(artifactSourceRef)}
                           >
-                            Open evidence {item.label}
+                            打开证据 {item.label}
                           </button>
                         ) : null}
                       </>
@@ -296,26 +403,26 @@ export function ReviewRoomDrawer({
                 })}
                 {(reviewPack.evidence_summary ?? []).length === 0 ? (
                   <li>
-                    <strong>Evidence summary</strong>
-                    <span>No compact evidence cards were attached to this review pack.</span>
+                    <strong>证据摘要</strong>
+                    <span>该评审包未附带摘要证据卡片。</span>
                   </li>
                 ) : null}
               </ul>
             </div>
             <div className="review-room-column">
-              <h3>Governance notes</h3>
+              <h3>治理备注</h3>
               <ul className="review-room-list">
                 <li>
-                  <strong>Maker-checker</strong>
-                  <span>{reviewPack.maker_checker_summary?.summary ?? 'No maker-checker summary was attached.'}</span>
+                  <strong>制作-复核</strong>
+                  <span>{reviewPack.maker_checker_summary?.summary ?? '未附带制作-复核摘要。'}</span>
                 </li>
                 <li>
-                  <strong>Budget impact</strong>
-                  <span>{reviewPack.budget_impact?.summary ?? 'No budget exception required.'}</span>
+                  <strong>预算影响</strong>
+                  <span>{reviewPack.budget_impact?.summary ?? '当前无需预算例外。'}</span>
                 </li>
                 <li>
-                  <strong>Risks</strong>
-                  <span>{reviewPack.risk_summary?.join(' ') ?? 'No extra risk note was attached to this review.'}</span>
+                  <strong>风险</strong>
+                  <span>{riskSummaryNote ?? '该评审未附带额外风险备注。'}</span>
                 </li>
               </ul>
             </div>
@@ -327,9 +434,9 @@ export function ReviewRoomDrawer({
               employeeChange.personality_profile != null &&
               employeeChange.aesthetic_profile != null ? (
                 <div className="review-room-column">
-                  <h3>Candidate profile</h3>
+                  <h3>候选画像</h3>
                   <ProfileSummary
-                    label={employeeChange.employee_id ?? 'Candidate'}
+                    label={employeeChange.employee_id ?? '候选人'}
                     skillProfile={employeeChange.skill_profile}
                     personalityProfile={employeeChange.personality_profile}
                     aestheticProfile={employeeChange.aesthetic_profile}
@@ -340,13 +447,13 @@ export function ReviewRoomDrawer({
               employeeChange.replacement_personality_profile != null &&
               employeeChange.replacement_aesthetic_profile != null ? (
                 <div className="review-room-column">
-                  <h3>Replacement profile</h3>
+                  <h3>替换画像</h3>
                   <p className="muted-copy">
-                    Replace {employeeChange.employee_id ?? 'current worker'} with{' '}
-                    {employeeChange.replacement_employee_id ?? 'replacement candidate'}.
+                    将 {employeeChange.employee_id ?? '当前员工'} 替换为{' '}
+                    {employeeChange.replacement_employee_id ?? '替换候选人'}。
                   </p>
                   <ProfileSummary
-                    label={employeeChange.replacement_employee_id ?? 'Replacement'}
+                    label={employeeChange.replacement_employee_id ?? '替换人选'}
                     skillProfile={employeeChange.replacement_skill_profile}
                     personalityProfile={employeeChange.replacement_personality_profile}
                     aestheticProfile={employeeChange.replacement_aesthetic_profile}
@@ -360,7 +467,7 @@ export function ReviewRoomDrawer({
             <div className="review-room-action-grid">
               <div className="review-room-action-panel">
                 <label className="field-label" htmlFor="approve-note">
-                  Board note
+                  董事会备注
                 </label>
                 <textarea
                   id="approve-note"
@@ -379,18 +486,18 @@ export function ReviewRoomDrawer({
                   onClick={() =>
                     void onApprove({
                       selectedOptionId,
-                      boardComment: approveNote.trim() || 'Approve the recommended option.',
+                      boardComment: approveNote.trim() || '同意按推荐方案继续推进。',
                       elicitationAnswers: isRequirementElicitation ? normalizedElicitationAnswers : undefined,
                     })
                   }
                 >
-                  {submittingAction === 'APPROVE' ? 'Submitting…' : 'Approve and continue'}
+                  {submittingAction === 'APPROVE' ? '提交中…' : '批准并继续'}
                 </button>
               </div>
 
               <div className="review-room-action-panel">
                 <label className="field-label" htmlFor="reject-note">
-                  Reject note
+                  驳回备注
                 </label>
                 <textarea
                   id="reject-note"
@@ -409,15 +516,15 @@ export function ReviewRoomDrawer({
                     })
                   }
                 >
-                  {submittingAction === 'REJECT' ? 'Submitting…' : 'Reject and request rework'}
+                  {submittingAction === 'REJECT' ? '提交中…' : '驳回并要求返工'}
                 </button>
               </div>
             </div>
 
             <div className="review-room-action-panel review-room-constraint-panel">
-              <h3>Modify constraints</h3>
+              <h3>修改约束</h3>
               <label className="field-label" htmlFor="modify-note">
-                Constraint note
+                约束备注
               </label>
               <textarea
                 id="modify-note"
@@ -427,27 +534,27 @@ export function ReviewRoomDrawer({
               />
               <div className="constraint-grid">
                 <label>
-                  <span className="field-label">Add rules</span>
+                  <span className="field-label">新增规则</span>
                   <textarea
-                    aria-label="Add rules"
+                    aria-label="新增规则"
                     value={addRules}
                     onChange={(event) => setAddRules(event.target.value)}
                     rows={3}
                   />
                 </label>
                 <label>
-                  <span className="field-label">Remove rules</span>
+                  <span className="field-label">移除规则</span>
                   <textarea
-                    aria-label="Remove rules"
+                    aria-label="移除规则"
                     value={removeRules}
                     onChange={(event) => setRemoveRules(event.target.value)}
                     rows={3}
                   />
                 </label>
                 <label>
-                  <span className="field-label">Replace rules</span>
+                  <span className="field-label">替换规则</span>
                   <textarea
-                    aria-label="Replace rules"
+                    aria-label="替换规则"
                     value={replaceRules}
                     onChange={(event) => setReplaceRules(event.target.value)}
                     rows={3}
@@ -460,7 +567,7 @@ export function ReviewRoomDrawer({
                 disabled={submittingAction !== null || addRules.trim().length === 0}
                 onClick={() =>
                   void onModifyConstraints({
-                    boardComment: modifyNote.trim() || 'Apply the updated board constraints.',
+                    boardComment: modifyNote.trim() || '应用更新后的董事会约束。',
                     addRules: splitRules(addRules),
                     removeRules: splitRules(removeRules),
                     replaceRules: splitRules(replaceRules),
@@ -468,7 +575,7 @@ export function ReviewRoomDrawer({
                   })
                 }
               >
-                {submittingAction === 'MODIFY_CONSTRAINTS' ? 'Submitting…' : 'Modify constraints'}
+                {submittingAction === 'MODIFY_CONSTRAINTS' ? '提交中…' : '提交约束修改'}
               </button>
             </div>
           </section>
@@ -484,27 +591,27 @@ export function ReviewRoomDrawer({
                 }
               }}
             >
-              {inspectorVisible ? 'Hide developer inspector' : 'Developer inspector'}
+              {inspectorVisible ? '收起开发者检查器' : '开发者检查器'}
             </button>
             {inspectorVisible ? (
               <div className="review-room-inspector-panel">
                 {inspectorLoading ? (
-                  <p>Loading compiler detail…</p>
+                  <p>正在加载编译细节…</p>
                 ) : inspectorData ? (
                   <>
                     <p>
-                      Availability: <strong>{inspectorData.availability}</strong>
+                      可用性：<strong>{inspectorData.availability}</strong>
                     </p>
                     <p>
-                      Context budget: <strong>{inspectorData.compile_summary?.used_budget_tokens ?? 0}</strong> /{' '}
+                      上下文预算：<strong>{inspectorData.compile_summary?.used_budget_tokens ?? 0}</strong> /{' '}
                       {inspectorData.compile_summary?.total_budget_tokens ?? 0}
                     </p>
                     <p>
-                      Render messages: <strong>{inspectorData.render_summary?.data_message_count ?? 0}</strong>
+                      渲染消息数：<strong>{inspectorData.render_summary?.data_message_count ?? 0}</strong>
                     </p>
                   </>
                 ) : (
-                  <p>No developer inspector payload is available for this review pack.</p>
+                  <p>该评审包暂无开发者检查器负载。</p>
                 )}
               </div>
             ) : null}

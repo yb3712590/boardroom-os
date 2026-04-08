@@ -11,11 +11,11 @@ export function EventTicker({ events, loading = false }: EventTickerProps) {
   return (
     <section className="support-panel" aria-labelledby="event-ticker-title">
       <div className="section-heading">
-        <p className="eyebrow">Events</p>
-        <h2 id="event-ticker-title">Recent event pulse</h2>
+        <p className="eyebrow">事件</p>
+        <h2 id="event-ticker-title">近期事件脉冲</h2>
       </div>
       {loading ? <LoadingSkeleton lines={4} /> : null}
-      {!loading && events.length === 0 ? <p className="muted-copy">No recent events were emitted.</p> : null}
+      {!loading && events.length === 0 ? <p className="muted-copy">近期未产生事件。</p> : null}
       <div className="event-list">
         {!loading &&
           events.map((event) => (
@@ -25,7 +25,7 @@ export function EventTicker({ events, loading = false }: EventTickerProps) {
               <span>{event.category}</span>
             </div>
             <div className="event-card-meta">
-              <span>{event.related_ref ?? 'No related ref'}</span>
+              <span>{event.related_ref ?? '无关联引用'}</span>
               <span>{formatRelativeTime(event.occurred_at)}</span>
             </div>
           </article>

@@ -160,7 +160,7 @@
 }
 
 .inbox-well {
-  min-height: 620px;
+  min-height: 0;
   padding: 24px 20px;
   border-radius: 28px;
   background:
@@ -569,6 +569,7 @@
 
 .workflow-river-scroll {
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgba(199, 225, 255, 0.22) transparent;
 }
@@ -601,9 +602,10 @@
 .river-stage-strip {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(160px, 1fr));
   gap: 16px;
   padding-top: 34px;
+  min-width: 920px;
 }
 
 .river-mainline,
@@ -623,6 +625,14 @@
   width: 18%;
   background: linear-gradient(90deg, rgba(225, 198, 139, 0.18), rgba(225, 198, 139, 0.92));
   transform-origin: left center;
+  opacity: 0.18;
+  transform: scaleX(0.82);
+  transition: opacity 0.28s ease-out, transform 0.28s ease-out;
+}
+
+.river-board-branch.is-visible {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .river-stage {
@@ -700,7 +710,8 @@
   border-radius: 999px;
   background: rgba(236, 247, 255, 0.9);
   box-shadow: 0 0 18px rgba(236, 247, 255, 0.7);
-  animation: drift 4.8s linear infinite;
+  opacity: 0.5;
+  transform: translateX(0);
 }
 
 .center-detail-grid {
@@ -997,6 +1008,6 @@
   }
 
   .river-stage-strip {
-    min-width: 860px;
+    min-width: 820px;
   }
 }

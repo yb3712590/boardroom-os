@@ -14,9 +14,9 @@ type ProjectInitFormProps = {
 }
 
 export function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) {
-  const [goal, setGoal] = useState('Ship the thinnest governance shell from dashboard to review room.')
+  const [goal, setGoal] = useState('从仪表盘到评审室，交付最薄可用的治理壳。')
   const [constraints, setConstraints] = useState(
-    'Keep governance explicit.\nDo not move workflow truth into the browser.',
+    '治理流程必须显式可审计。\n工作流真相不得迁移到浏览器。',
   )
   const [budgetCap, setBudgetCap] = useState('500000')
   const [forceRequirementElicitation, setForceRequirementElicitation] = useState(false)
@@ -24,11 +24,10 @@ export function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) 
   return (
     <section className="project-init-panel" aria-labelledby="project-init-title">
       <div className="project-init-copy">
-        <p className="eyebrow">Workflow Init</p>
-        <h1 id="project-init-title">Launch workflow to first review</h1>
+        <p className="eyebrow">工作流初始化</p>
+        <h1 id="project-init-title">启动到首个董事会评审</h1>
         <p>
-          The backend still owns workflow truth. This entry now opens the next workflow, drafts the first scope
-          decision, and pushes it through to the first board review.
+          后端仍然负责工作流真相。这里会创建新工作流、生成首个范围决议，并推进到第一道董事会评审闸门。
         </p>
       </div>
       <form
@@ -44,31 +43,31 @@ export function ProjectInitForm({ submitting, onSubmit }: ProjectInitFormProps) 
         }}
       >
         <label>
-          <span className="field-label">North star goal</span>
+          <span className="field-label">北极星目标</span>
           <textarea value={goal} onChange={(event) => setGoal(event.target.value)} rows={4} />
         </label>
         <label>
-          <span className="field-label">Hard constraints</span>
+          <span className="field-label">硬约束</span>
           <textarea value={constraints} onChange={(event) => setConstraints(event.target.value)} rows={5} />
         </label>
         <label>
-          <span className="field-label">Budget cap</span>
+          <span className="field-label">预算上限</span>
           <input type="number" min="0" value={budgetCap} onChange={(event) => setBudgetCap(event.target.value)} />
         </label>
         <label>
-          <span className="field-label">Startup routing</span>
+          <span className="field-label">启动路由</span>
           <span className="checkbox-field">
             <input
               type="checkbox"
-              aria-label="Route through requirement elicitation first"
+              aria-label="先进入需求澄清回合"
               checked={forceRequirementElicitation}
               onChange={(event) => setForceRequirementElicitation(event.target.checked)}
             />
-            <span>Route through requirement elicitation first</span>
+            <span>先进入需求澄清回合</span>
           </span>
         </label>
         <Button type="submit" variant="primary" loading={submitting} disabled={goal.trim().length === 0}>
-          {submitting ? 'Advancing to first review...' : 'Launch to first review'}
+          {submitting ? '正在推进到首评审…' : '启动并推进到首评审'}
         </Button>
       </form>
     </section>

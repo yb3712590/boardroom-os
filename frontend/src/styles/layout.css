@@ -68,6 +68,7 @@
   grid-template-columns: minmax(280px, 0.86fr) minmax(0, 1.5fr) minmax(300px, 0.92fr);
   gap: 24px;
   padding-top: 28px;
+  align-items: start;
 }
 
 .boardroom-center {

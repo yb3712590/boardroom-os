@@ -13,7 +13,7 @@ type DependencyInspectorDrawerProps = {
 
 function formatLabel(value: string | null | undefined) {
   if (!value) {
-    return 'None'
+    return '无'
   }
   return value.replaceAll('_', ' ')
 }
@@ -30,56 +30,55 @@ export function DependencyInspectorDrawer({
   const currentStop = inspectorData?.summary.current_stop
 
   return (
-    <Drawer isOpen={isOpen} onClose={onClose} title="Dependency chain" subtitle="Dependency Inspector">
+    <Drawer isOpen={isOpen} onClose={onClose} title="依赖链路" subtitle="依赖检查器">
       <p className="muted-copy">
-        See which stage depends on which upstream ticket, where the current stop sits, and which node should send you
-        back to review or incident handling.
+        查看每个阶段依赖的上游工单、当前停点位置，以及应回到评审室或故障处理的节点。
       </p>
 
       {loading ? (
-        <div className="review-room-state">Loading dependency inspector...</div>
+        <div className="review-room-state">正在加载依赖检查器...</div>
       ) : error ? (
         <div className="review-room-state review-room-error">{error}</div>
       ) : inspectorData == null ? (
-        <div className="review-room-state">No dependency snapshot is available for this workflow.</div>
+        <div className="review-room-state">当前工作流暂无依赖快照。</div>
       ) : (
         <div className="review-room-content">
           <section className="review-room-overview">
             <div>
-              <span className="eyebrow">Current stop</span>
+              <span className="eyebrow">当前停点</span>
               <p>{formatLabel(currentStop?.reason)}</p>
             </div>
             <div>
-              <span className="eyebrow">Blocked nodes</span>
+              <span className="eyebrow">阻塞节点</span>
               <p>{inspectorData.summary.blocked_nodes}</p>
             </div>
             <div>
-              <span className="eyebrow">Critical path</span>
+              <span className="eyebrow">关键路径</span>
               <p>{inspectorData.summary.critical_path_nodes}</p>
             </div>
           </section>
 
           <section className="dependency-summary-grid">
             <div className="review-room-action-panel">
-              <span className="eyebrow">Workflow</span>
+              <span className="eyebrow">工作流</span>
               <p>{inspectorData.workflow.title}</p>
               <p className="muted-copy">
                 {inspectorData.workflow.workflow_id} · {formatLabel(inspectorData.workflow.current_stage)}
               </p>
             </div>
             <div className="review-room-action-panel">
-              <span className="eyebrow">Approvals</span>
+              <span className="eyebrow">审批数</span>
               <p>{inspectorData.summary.open_approvals}</p>
-              <p className="muted-copy">Open board approvals on this chain.</p>
+              <p className="muted-copy">当前链路中尚未关闭的董事会审批。</p>
             </div>
             <div className="review-room-action-panel">
-              <span className="eyebrow">Incidents</span>
+              <span className="eyebrow">故障数</span>
               <p>{inspectorData.summary.open_incidents}</p>
-              <p className="muted-copy">Open incidents that can stop downstream work.</p>
+              <p className="muted-copy">可能阻断下游推进的未关闭故障。</p>
             </div>
           </section>
 
-          <section className="dependency-node-list" aria-label="dependency nodes">
+          <section className="dependency-node-list" aria-label="依赖节点列表">
             {inspectorData.nodes.map((node) => (
               <article
                 key={node.node_id}
@@ -100,34 +99,34 @@ export function DependencyInspectorDrawer({
 
                 <dl className="dependency-node-grid">
                   <div>
-                    <dt>Depends on</dt>
-                    <dd>{node.depends_on_ticket_id ?? 'Root node'}</dd>
+                    <dt>依赖上游</dt>
+                    <dd>{node.depends_on_ticket_id ?? '根节点'}</dd>
                   </div>
                   <div>
-                    <dt>Downstream impact</dt>
+                    <dt>下游影响</dt>
                     <dd>
                       {node.dependent_ticket_ids.length > 0
                         ? node.dependent_ticket_ids.join(', ')
-                        : 'No downstream tickets'}
+                        : '无下游工单'}
                     </dd>
                   </div>
                   <div>
-                    <dt>Role</dt>
-                    <dd>{node.role_profile_ref ?? 'Not assigned'}</dd>
+                    <dt>执行角色</dt>
+                    <dd>{node.role_profile_ref ?? '未分配'}</dd>
                   </div>
                   <div>
-                    <dt>Output</dt>
-                    <dd>{node.output_schema_ref ?? 'No output schema'}</dd>
+                    <dt>输出结构</dt>
+                    <dd>{node.output_schema_ref ?? '无输出结构'}</dd>
                   </div>
                 </dl>
 
                 <div className="dependency-node-footer">
                   <div>
-                    <strong>Artifact scope</strong>
+                    <strong>产物范围</strong>
                     <p>
                       {node.expected_artifact_scope.length > 0
                         ? node.expected_artifact_scope.join(' · ')
-                        : 'No write scope attached.'}
+                        : '未附带写入范围。'}
                     </p>
                   </div>
                   <div className="dependency-node-actions">
@@ -137,7 +136,7 @@ export function DependencyInspectorDrawer({
                         className="secondary-button"
                         onClick={() => onOpenReview(node.open_review_pack_id as string)}
                       >
-                        Open review room
+                        打开评审室
                       </button>
                     ) : null}
                     {node.open_incident_id ? (
@@ -146,7 +145,7 @@ export function DependencyInspectorDrawer({
                         className="danger-button"
                         onClick={() => onOpenIncident(node.open_incident_id as string)}
                       >
-                        Open incident
+                        打开故障详情
                       </button>
                     ) : null}
                   </div>

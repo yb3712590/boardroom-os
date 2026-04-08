@@ -16,36 +16,36 @@ export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: Comple
   return (
     <section className="completion-card" aria-labelledby="completion-card-title">
       <div className="completion-card-copy">
-        <p className="eyebrow">Workflow result</p>
-        <h2 id="completion-card-title">Delivery completed</h2>
+        <p className="eyebrow">工作流结果</p>
+        <h2 id="completion-card-title">交付已完成</h2>
         <p className="muted-copy">
-          Board approved {formatTimestamp(finalReviewApprovedAt, 'Not recorded')} and closeout completed{' '}
-          {formatTimestamp(summary.closeout_completed_at, 'Not recorded')} for workflow {summary.workflow_id}.
+          董事会在 {formatTimestamp(finalReviewApprovedAt, '未记录')} 批准，工作流 {summary.workflow_id} 于{' '}
+          {formatTimestamp(summary.closeout_completed_at, '未记录')} 完成收口。
         </p>
       </div>
       <div className="completion-card-grid">
         <div>
-          <span>Final title</span>
+          <span>最终标题</span>
           <strong>{summary.title}</strong>
         </div>
         <div>
-          <span>Board approved</span>
-          <strong>{formatTimestamp(finalReviewApprovedAt, 'Not recorded')}</strong>
+          <span>批准时间</span>
+          <strong>{formatTimestamp(finalReviewApprovedAt, '未记录')}</strong>
         </div>
         <div>
-          <span>Closeout completed</span>
-          <strong>{formatTimestamp(summary.closeout_completed_at, 'Not recorded')}</strong>
+          <span>收口完成</span>
+          <strong>{formatTimestamp(summary.closeout_completed_at, '未记录')}</strong>
         </div>
         <div>
-          <span>Selected option</span>
-          <strong>{summary.selected_option_id ?? 'Board approved without option override'}</strong>
+          <span>选择方案</span>
+          <strong>{summary.selected_option_id ?? '未覆盖方案，按默认批准'}</strong>
         </div>
         <div>
-          <span>Board comment</span>
-          <strong>{summary.board_comment ?? 'No board comment recorded.'}</strong>
+          <span>董事会备注</span>
+          <strong>{summary.board_comment ?? '暂无董事会备注。'}</strong>
         </div>
         <div>
-          <span>Evidence refs</span>
+          <span>证据产物</span>
           <strong>{summary.artifact_refs.length}</strong>
           <div className="artifact-ref-list">
             {summary.artifact_refs.map((artifactRef) => (
@@ -55,13 +55,13 @@ export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: Comple
                 className="ghost-button artifact-ref-button"
                 onClick={() => onOpenArtifact(artifactRef)}
               >
-                Open artifact {artifactRefFilename(artifactRef)}
+                打开产物 {artifactRefFilename(artifactRef)}
               </button>
             ))}
           </div>
         </div>
         <div>
-          <span>Closeout refs</span>
+          <span>收口产物</span>
           <strong>{summary.closeout_artifact_refs.length}</strong>
           <div className="artifact-ref-list">
             {summary.closeout_artifact_refs.map((artifactRef) => (
@@ -71,29 +71,29 @@ export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: Comple
                 className="ghost-button artifact-ref-button"
                 onClick={() => onOpenArtifact(artifactRef)}
               >
-                Open artifact {artifactRefFilename(artifactRef)}
+                打开产物 {artifactRefFilename(artifactRef)}
               </button>
             ))}
           </div>
         </div>
         <div>
-          <span>Documentation updates</span>
+          <span>文档更新数</span>
           <strong>{summary.documentation_update_count}</strong>
         </div>
         <div>
-          <span>Follow-up docs</span>
+          <span>后续文档项</span>
           <strong>{summary.documentation_follow_up_count}</strong>
         </div>
       </div>
       <p className="completion-card-summary">
-        <strong>Documentation sync</strong>
+        <strong>文档同步</strong>
         {': '}
-        <span>{summary.documentation_sync_summary ?? 'No documentation sync updates were recorded.'}</span>
+        <span>{summary.documentation_sync_summary ?? '未记录文档同步更新。'}</span>
       </p>
       <p className="completion-card-summary">{summary.summary}</p>
       <div className="completion-card-actions">
         <Button type="button" variant="secondary" onClick={() => onOpenReview(summary.final_review_pack_id)}>
-          Open final review evidence
+          打开最终评审证据
         </Button>
       </div>
     </section>

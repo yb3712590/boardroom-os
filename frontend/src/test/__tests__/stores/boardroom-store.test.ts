@@ -109,6 +109,6 @@ describe('boardroom-store', () => {
     await useBoardroomStore.getState().loadSnapshot()
 
     expect(useBoardroomStore.getState().dashboard).toBeNull()
-    expect(useBoardroomStore.getState().snapshotError).toBe('Request failed: 503')
+    expect(useBoardroomStore.getState().snapshotError).toBe('请求失败：503')
   })
 })

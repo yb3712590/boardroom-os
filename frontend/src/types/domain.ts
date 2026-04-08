@@ -221,13 +221,13 @@ export type ReviewPack = {
     summary: string
     source_ref?: string | null
   }>
-  delta_summary?: string | null
+  delta_summary?: string | Record<string, unknown> | null
   maker_checker_summary?: {
     review_status?: string
     summary?: string
     checker_employee_id?: string
   } | null
-  risk_summary?: string[] | null
+  risk_summary?: string[] | string | Record<string, unknown> | null
   budget_impact?: {
     budget_delta_tokens?: number
     summary?: string

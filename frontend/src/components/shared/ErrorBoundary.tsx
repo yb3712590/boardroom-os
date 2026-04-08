@@ -35,10 +35,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       return (
         this.props.fallback ?? (
           <section className="shell-error" role="alert">
-            <strong>Boardroom page crashed.</strong>
-            <p>{this.state.error?.message ?? 'An unexpected render error occurred.'}</p>
+            <strong>页面渲染失败。</strong>
+            <p>{this.state.error?.message ?? '发生了未预期的渲染错误。'}</p>
             <button type="button" className="secondary-button" onClick={this.handleRetry}>
-              Retry
+              重试
             </button>
           </section>
         )

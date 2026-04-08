@@ -124,7 +124,12 @@ function reviewRoomData() {
         summary: 'Checker approved the deliverable with one downstream polish note.',
         checker_employee_id: 'emp_checker_1',
       },
-      risk_summary: ['Further copy polish may still be needed after approval.'],
+      risk_summary: {
+        user_risk: 'LOW',
+        engineering_risk: 'MEDIUM',
+        schedule_risk: 'LOW',
+        budget_risk: 'LOW',
+      },
       budget_impact: {
         budget_delta_tokens: 4200,
         summary: 'No budget exception required for this approval.',

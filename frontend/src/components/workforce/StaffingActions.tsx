@@ -36,8 +36,8 @@ export function StaffingActions({ templates, submittingAction, onRequestHire }: 
   return (
     <section className="staffing-request-panel" aria-labelledby="staffing-request-title">
       <div className="section-heading workforce-section-heading">
-        <p className="eyebrow">Staffing</p>
-        <h3 id="staffing-request-title">Request staffing</h3>
+        <p className="eyebrow">人员配置</p>
+        <h3 id="staffing-request-title">发起招聘请求</h3>
       </div>
       <div className="staffing-template-list">
         {templates.map((template) => {
@@ -63,13 +63,13 @@ export function StaffingActions({ templates, submittingAction, onRequestHire }: 
                 <span>{template.request_summary}</span>
               </div>
               <ProfileSummary
-                label="Template profile"
+                label="模板画像"
                 skillProfile={template.skill_profile}
                 personalityProfile={template.personality_profile}
                 aestheticProfile={template.aesthetic_profile}
               />
               <label className="staffing-inline-field">
-                <span>{template.label} employee id</span>
+                <span>{template.label} 员工编号</span>
                 <input
                   type="text"
                   value={value}
@@ -86,9 +86,9 @@ export function StaffingActions({ templates, submittingAction, onRequestHire }: 
                 variant="secondary"
                 loading={isSubmitting}
                 disabled={value.trim().length === 0}
-                aria-label={`Request hire for ${template.label}`}
+                aria-label={`为 ${template.label} 发起招聘`}
               >
-                {isSubmitting ? 'Requesting…' : 'Request hire'}
+                {isSubmitting ? '请求中…' : '发起招聘'}
               </Button>
             </form>
           )

@@ -12,7 +12,7 @@ type BoardroomState = {
   snapshotError: string | null
   runtimeProviderLoading: boolean
   runtimeProviderError: string | null
-  loadSnapshot: () => Promise<void>
+  loadSnapshot: (options?: { background?: boolean }) => Promise<void>
   setSnapshotError: (value: string | null) => void
   setRuntimeProviderError: (value: string | null) => void
 }
@@ -30,12 +30,15 @@ const boardroomDefaults = {
 
 export const useBoardroomStore = create<BoardroomState>((set) => ({
   ...boardroomDefaults,
-  loadSnapshot: async () => {
-    set({
-      snapshotLoading: true,
-      snapshotError: null,
-      runtimeProviderLoading: true,
-    })
+  loadSnapshot: async (options) => {
+    const background = options?.background === true
+    if (!background) {
+      set({
+        snapshotLoading: true,
+        snapshotError: null,
+        runtimeProviderLoading: true,
+      })
+    }
 
     try {
       const [snapshotResult, runtimeProviderResult] = await Promise.allSettled([
@@ -52,6 +55,7 @@ export const useBoardroomStore = create<BoardroomState>((set) => ({
         dashboard,
         inbox,
         workforce,
+        snapshotError: null,
       })
 
       if (runtimeProviderResult.status === 'fulfilled') {
@@ -65,19 +69,21 @@ export const useBoardroomStore = create<BoardroomState>((set) => ({
           runtimeProviderError:
             runtimeProviderResult.reason instanceof Error
               ? runtimeProviderResult.reason.message
-              : 'Failed to load runtime provider settings.',
+              : '加载运行时供应商设置失败。',
         })
       }
     } catch (error) {
       set({
         snapshotError:
-          error instanceof Error ? error.message : 'Failed to load the latest boardroom snapshot.',
+          error instanceof Error ? error.message : '加载最新董事会快照失败。',
       })
     } finally {
-      set({
-        snapshotLoading: false,
-        runtimeProviderLoading: false,
-      })
+      if (!background) {
+        set({
+          snapshotLoading: false,
+          runtimeProviderLoading: false,
+        })
+      }
     }
   },
   setSnapshotError: (value) => set({ snapshotError: value }),

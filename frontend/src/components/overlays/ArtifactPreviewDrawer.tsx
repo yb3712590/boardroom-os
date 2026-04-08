@@ -39,20 +39,20 @@ function readApiErrorMessage(error: unknown): string {
       return detail.detail
     }
   }
-  return error instanceof Error ? error.message : 'Failed to load the selected artifact.'
+  return error instanceof Error ? error.message : '加载所选产物失败。'
 }
 
 function renderInlineMedia(metadata: ArtifactMetadata, preview: ArtifactPreview) {
   const contentUrl = preview.content_url ?? metadata.content_url
   if (!contentUrl) {
-    return <p className="muted-copy">Inline media is unavailable for this artifact.</p>
+    return <p className="muted-copy">该产物暂不支持内联预览。</p>
   }
   if ((preview.media_type ?? metadata.media_type ?? '').includes('pdf')) {
     return (
       <iframe
         className="artifact-preview-frame"
         src={contentUrl}
-        title={`Preview ${artifactRefFilename(metadata.artifact_ref)}`}
+        title={`预览 ${artifactRefFilename(metadata.artifact_ref)}`}
       />
     )
   }
@@ -114,29 +114,29 @@ export function ArtifactPreviewDrawer({ isOpen, artifactRef, onClose }: Artifact
 
   const metadata = state.metadata
   const preview = state.preview
-  const artifactTitle = metadata ? artifactRefFilename(metadata.artifact_ref) || metadata.artifact_ref : 'Artifact preview'
+  const artifactTitle = metadata ? artifactRefFilename(metadata.artifact_ref) || metadata.artifact_ref : '产物预览'
 
   return (
-    <Drawer isOpen={isOpen} onClose={onClose} title="Artifact preview" subtitle={artifactTitle} width="760px">
+    <Drawer isOpen={isOpen} onClose={onClose} title="产物预览" subtitle={artifactTitle} width="760px">
       {state.loading ? (
-        <div className="review-room-state">Loading the selected artifact...</div>
+        <div className="review-room-state">正在加载所选产物...</div>
       ) : state.error ? (
         <div className="review-room-state review-room-error">{state.error}</div>
       ) : metadata == null || preview == null ? (
-        <div className="review-room-state">No artifact preview is available for this reference.</div>
+        <div className="review-room-state">该引用暂无可用产物预览。</div>
       ) : (
         <div className="review-room-content">
           <section className="review-room-overview artifact-preview-overview">
             <div>
-              <span className="eyebrow">Artifact ref</span>
+              <span className="eyebrow">产物引用</span>
               <p>{metadata.artifact_ref}</p>
             </div>
             <div>
-              <span className="eyebrow">Path</span>
+              <span className="eyebrow">路径</span>
               <p>{metadata.path}</p>
             </div>
             <div>
-              <span className="eyebrow">Preview kind</span>
+              <span className="eyebrow">预览类型</span>
               <p>{preview.preview_kind}</p>
             </div>
           </section>
@@ -151,14 +151,14 @@ export function ArtifactPreviewDrawer({ isOpen, artifactRef, onClose }: Artifact
             {preview.preview_kind === 'INLINE_MEDIA' ? renderInlineMedia(metadata, preview) : null}
             {preview.preview_kind === 'DOWNLOAD_ONLY' ? (
               <div className="artifact-preview-download">
-                <p>Download this artifact from the local backend.</p>
+                <p>可从本地后端下载该产物。</p>
                 <a
                   className="secondary-button artifact-preview-link"
                   href={preview.download_url ?? metadata.download_url}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Download artifact
+                  下载产物
                 </a>
               </div>
             ) : null}

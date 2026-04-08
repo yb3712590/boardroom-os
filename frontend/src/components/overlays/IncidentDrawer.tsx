@@ -20,21 +20,21 @@ function formatIncidentLabel(value: string) {
 function describeIncident(incidentType: string) {
   switch (incidentType) {
     case 'RUNTIME_TIMEOUT_ESCALATION':
-      return 'Execution timed out repeatedly and the breaker is now open.'
+      return '执行连续超时，熔断器已开启。'
     case 'REPEATED_FAILURE_ESCALATION':
-      return 'The same node failed repeatedly with the same fingerprint.'
+      return '同一节点以相同指纹连续失败。'
     case 'PROVIDER_EXECUTION_PAUSED':
-      return 'Provider execution is paused and downstream work is blocked.'
+      return '供应商执行已暂停，下游流程被阻塞。'
     case 'STAFFING_CONTAINMENT':
-      return 'Employee change containment interrupted the current execution path.'
+      return '人员变更隔离中断了当前执行链路。'
     default:
-      return 'A governance incident requires operator attention.'
+      return '出现治理故障，需要人工处理。'
   }
 }
 
 function formatPayloadValue(value: unknown) {
   if (value == null) {
-    return 'null'
+    return '空'
   }
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return String(value)
@@ -62,60 +62,60 @@ export function IncidentDrawer({
     <Drawer
       isOpen={isOpen}
       onClose={onClose}
-      title={incident ? formatIncidentLabel(incident.incident_type) : 'Loading incident'}
-      subtitle="Incident"
+      title={incident ? formatIncidentLabel(incident.incident_type) : '故障加载中'}
+      subtitle="故障处理"
     >
       <p className="muted-copy">
-        {incident ? describeIncident(incident.incident_type) : 'Pulling the current incident payload.'}
+        {incident ? describeIncident(incident.incident_type) : '正在拉取当前故障负载。'}
       </p>
 
       {loading ? (
-        <div className="review-room-state">Loading incident detail...</div>
+        <div className="review-room-state">正在加载故障详情...</div>
       ) : error ? (
         <div className="review-room-state review-room-error">{error}</div>
       ) : incident == null ? (
-        <div className="review-room-state">No incident detail is available for this item.</div>
+        <div className="review-room-state">当前条目暂无故障详情。</div>
       ) : (
         <div className="review-room-content">
           <section className="review-room-overview">
             <div>
-              <span className="eyebrow">Status</span>
+              <span className="eyebrow">状态</span>
               <p>{incident.status}</p>
             </div>
             <div>
-              <span className="eyebrow">Breaker</span>
-              <p>{incident.circuit_breaker_state ?? 'Unknown'}</p>
+              <span className="eyebrow">熔断器</span>
+              <p>{incident.circuit_breaker_state ?? '未知'}</p>
             </div>
             <div>
-              <span className="eyebrow">Severity</span>
-              <p>{incident.severity ?? 'Unknown'}</p>
+              <span className="eyebrow">严重级别</span>
+              <p>{incident.severity ?? '未知'}</p>
             </div>
           </section>
 
           <section className="review-room-columns">
             <div className="review-room-column">
-              <h3>Incident scope</h3>
+              <h3>故障范围</h3>
               <ul className="review-room-list">
                 <li>
-                  <strong>Workflow</strong>
+                  <strong>工作流</strong>
                   <span>{incident.workflow_id}</span>
                 </li>
                 <li>
-                  <strong>Node</strong>
-                  <span>{incident.node_id ?? 'No node attached'}</span>
+                  <strong>节点</strong>
+                  <span>{incident.node_id ?? '未关联节点'}</span>
                 </li>
                 <li>
-                  <strong>Ticket</strong>
-                  <span>{incident.ticket_id ?? 'No ticket attached'}</span>
+                  <strong>工单</strong>
+                  <span>{incident.ticket_id ?? '未关联工单'}</span>
                 </li>
                 <li>
-                  <strong>Provider</strong>
-                  <span>{incident.provider_id ?? 'No provider attached'}</span>
+                  <strong>供应商</strong>
+                  <span>{incident.provider_id ?? '未关联供应商'}</span>
                 </li>
               </ul>
             </div>
             <div className="review-room-column">
-              <h3>Incident payload</h3>
+              <h3>故障负载</h3>
               <ul className="review-room-list">
                 {Object.entries(incident.payload).map(([key, value]) => (
                   <li key={key}>
@@ -125,8 +125,8 @@ export function IncidentDrawer({
                 ))}
                 {Object.keys(incident.payload).length === 0 ? (
                   <li>
-                    <strong>Payload</strong>
-                    <span>No structured payload was attached.</span>
+                    <strong>负载</strong>
+                    <span>未附带结构化负载。</span>
                   </li>
                 ) : null}
               </ul>
@@ -134,9 +134,9 @@ export function IncidentDrawer({
           </section>
 
           <section className="review-room-action-panel incident-action-panel">
-            <h3>Recovery action</h3>
+            <h3>恢复动作</h3>
             <label>
-              <span className="field-label">Follow-up action</span>
+              <span className="field-label">后续动作</span>
               <select
                 value={followupAction}
                 onChange={(event) => setFollowupAction(event.target.value)}
@@ -150,9 +150,9 @@ export function IncidentDrawer({
               </select>
             </label>
             <label>
-              <span className="field-label">Resolution summary</span>
+              <span className="field-label">恢复说明</span>
               <textarea
-                aria-label="Resolution summary"
+                aria-label="恢复说明"
                 value={resolutionSummary}
                 onChange={(event) => setResolutionSummary(event.target.value)}
                 rows={4}
@@ -169,7 +169,7 @@ export function IncidentDrawer({
                 })
               }
             >
-              {submitting ? 'Submitting...' : 'Apply recovery action'}
+              {submitting ? '提交中...' : '执行恢复动作'}
             </button>
           </section>
         </div>

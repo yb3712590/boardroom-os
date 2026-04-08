@@ -13,11 +13,11 @@ export function InboxWell({ items, loading, onOpenReview, onOpenMeeting, onOpenI
   return (
     <aside className="inbox-well" aria-labelledby="inbox-title">
       <div className="section-heading">
-        <p className="eyebrow">Inbox</p>
-        <h2 id="inbox-title">Board actions and governance pressure</h2>
+        <p className="eyebrow">收件箱</p>
+        <h2 id="inbox-title">董事会动作与治理压力</h2>
       </div>
       {loading ? <LoadingSkeleton lines={5} /> : null}
-      {!loading && items.length === 0 ? <p className="muted-copy">No board escalations are waiting right now.</p> : null}
+      {!loading && items.length === 0 ? <p className="muted-copy">当前没有待处理的董事会升级项。</p> : null}
       <div className="inbox-item-list">
         {items.map((item) => {
           const isReviewRoute = item.route_target.view === 'review_room' && item.route_target.review_pack_id

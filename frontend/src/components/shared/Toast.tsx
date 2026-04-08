@@ -26,8 +26,8 @@ export function Toast({ message, variant, onDismiss }: ToastProps) {
         role="status"
       >
         <span>{message}</span>
-        <button type="button" className="ghost-button" onClick={onDismiss} aria-label="Dismiss message">
-          Close
+        <button type="button" className="ghost-button" onClick={onDismiss} aria-label="关闭消息">
+          关闭
         </button>
       </motion.div>
     </AnimatePresence>

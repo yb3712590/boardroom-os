@@ -10,7 +10,7 @@ type ReviewState = {
   inspectorLoading: boolean
   error: string | null
   submittingAction: string | null
-  loadReviewRoom: (reviewPackId: string) => Promise<void>
+  loadReviewRoom: (reviewPackId: string, options?: { background?: boolean }) => Promise<void>
   loadDeveloperInspector: (reviewPackId: string) => Promise<void>
   clearReview: () => void
   setSubmittingAction: (value: string | null) => void
@@ -28,23 +28,31 @@ const reviewDefaults = {
 
 export const useReviewStore = create<ReviewState>((set) => ({
   ...reviewDefaults,
-  loadReviewRoom: async (reviewPackId) => {
-    set({
-      loading: true,
-      error: null,
-      developerInspector: null,
-    })
+  loadReviewRoom: async (reviewPackId, options) => {
+    const background = options?.background === true
+    if (!background) {
+      set({
+        loading: true,
+        error: null,
+        developerInspector: null,
+      })
+    }
 
     try {
       const reviewRoom = await getReviewRoom(reviewPackId)
-      set({ reviewRoom })
+      set({
+        reviewRoom,
+        error: null,
+      })
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : 'Failed to load the current review pack.',
-        reviewRoom: null,
+        error: error instanceof Error ? error.message : '加载当前评审包失败。',
+        ...(background ? {} : { reviewRoom: null }),
       })
     } finally {
-      set({ loading: false })
+      if (!background) {
+        set({ loading: false })
+      }
     }
   },
   loadDeveloperInspector: async (reviewPackId) => {
@@ -58,7 +66,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
       set({ developerInspector })
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : 'Failed to load the developer inspector.',
+        error: error instanceof Error ? error.message : '加载开发者检查器失败。',
       })
     } finally {
       set({ inspectorLoading: false })

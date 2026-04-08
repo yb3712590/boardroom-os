@@ -7,22 +7,22 @@ const OPENAI_PROVIDER_ID = 'prov_openai_compat'
 const CLAUDE_PROVIDER_ID = 'prov_claude_code'
 
 const CURRENT_ROLE_TARGETS = [
-  { target_ref: 'ceo_shadow', target_label: 'CEO Shadow' },
-  { target_ref: 'role_profile:ui_designer_primary', target_label: 'Scope Consensus' },
-  { target_ref: 'role_profile:frontend_engineer_primary', target_label: 'Frontend Engineer' },
-  { target_ref: 'role_profile:checker_primary', target_label: 'Checker' },
-  { target_ref: 'role_profile:backend_engineer_primary', target_label: 'Backend Engineer / 服务交付' },
-  { target_ref: 'role_profile:database_engineer_primary', target_label: 'Database Engineer / 数据可靠性' },
-  { target_ref: 'role_profile:platform_sre_primary', target_label: 'Platform / SRE' },
+  { target_ref: 'ceo_shadow', target_label: 'CEO 影子角色' },
+  { target_ref: 'role_profile:ui_designer_primary', target_label: '范围共识' },
+  { target_ref: 'role_profile:frontend_engineer_primary', target_label: '前端工程师' },
+  { target_ref: 'role_profile:checker_primary', target_label: '检查员' },
+  { target_ref: 'role_profile:backend_engineer_primary', target_label: '后端工程师 / 服务交付' },
+  { target_ref: 'role_profile:database_engineer_primary', target_label: '数据库工程师 / 数据可靠性' },
+  { target_ref: 'role_profile:platform_sre_primary', target_label: '平台 / SRE' },
   { target_ref: 'role_profile:architect_primary', target_label: '架构师 / 设计评审' },
   { target_ref: 'role_profile:cto_primary', target_label: 'CTO / 架构治理' },
 ]
 
 const PROVIDER_CAPABILITY_OPTIONS = [
-  { value: 'structured_output', label: 'Structured output' },
-  { value: 'planning', label: 'Planning' },
-  { value: 'implementation', label: 'Implementation' },
-  { value: 'review', label: 'Review' },
+  { value: 'structured_output', label: '结构化输出' },
+  { value: 'planning', label: '规划' },
+  { value: 'implementation', label: '实施' },
+  { value: 'review', label: '评审' },
 ] as const
 
 function formatBoundaryPathRef(ref: string) {
@@ -232,81 +232,81 @@ export function ProviderSettingsDrawer({
   }
 
   return (
-    <Drawer isOpen={isOpen} onClose={onClose} title="Runtime provider" subtitle="Runtime">
+    <Drawer isOpen={isOpen} onClose={onClose} title="运行时供应商" subtitle="运行时">
       <p className="muted-copy">
-        Manage the local provider registry, choose the default runtime path, and bind the current live roles to
-        OpenAI Compat or Claude Code CLI without leaving the boardroom shell.
+        在不离开董事会界面的前提下，管理本地供应商注册表、选择默认运行路径，并为当前在线角色绑定
+        OpenAI 兼容或 Claude Code CLI。
       </p>
 
       {loading ? (
-        <div className="review-room-state">Loading runtime provider...</div>
+        <div className="review-room-state">正在加载运行时供应商...</div>
       ) : error ? (
         <div className="review-room-state review-room-error">{error}</div>
       ) : (
         <div className="review-room-content">
           <section className="review-room-overview">
             <div>
-              <span className="eyebrow">Effective mode</span>
-              <p>{providerData?.effective_mode ?? 'Unknown'}</p>
+              <span className="eyebrow">生效模式</span>
+              <p>{providerData?.effective_mode ?? '未知'}</p>
             </div>
             <div>
-              <span className="eyebrow">Health</span>
-              <p>{providerData?.provider_health_summary ?? 'Unknown'}</p>
+              <span className="eyebrow">健康状态</span>
+              <p>{providerData?.provider_health_summary ?? '未知'}</p>
             </div>
             <div>
-              <span className="eyebrow">Default provider</span>
-              <p>{providerData?.default_provider_id ?? 'Local deterministic only'}</p>
+              <span className="eyebrow">默认供应商</span>
+              <p>{providerData?.default_provider_id ?? '仅本地确定性模式'}</p>
             </div>
             <div>
-              <span className="eyebrow">Workers</span>
+              <span className="eyebrow">执行人数</span>
               <p>{providerData?.configured_worker_count ?? 0}</p>
             </div>
           </section>
-          <p className="muted-copy">{providerData?.effective_reason ?? 'Runtime provider state is not available.'}</p>
+          <p className="muted-copy">{providerData?.effective_reason ?? '运行时供应商状态暂不可用。'}</p>
 
           <section className="review-room-action-panel provider-settings-panel">
             <label>
-              <span className="field-label">Provider mode</span>
+              <span className="field-label">供应商模式</span>
               <select
-                aria-label="Provider mode"
+                aria-label="供应商模式"
                 value={mode}
                 onChange={(event) => setMode(event.target.value)}
                 disabled={submitting}
               >
-                <option value="DETERMINISTIC">Deterministic</option>
-                <option value="OPENAI_COMPAT">OpenAI Compat</option>
+                <option value="DETERMINISTIC">本地确定性</option>
+                <option value="OPENAI_COMPAT">OpenAI 兼容</option>
                 <option value="CLAUDE_CODE_CLI">Claude Code CLI</option>
               </select>
             </label>
 
             <section className="review-room-overview">
               <div>
-                <span className="eyebrow">OpenAI key</span>
-                <p>{openaiProvider?.api_key_masked ?? 'No key saved'}</p>
+                <span className="eyebrow">OpenAI 密钥</span>
+                <p>{openaiProvider?.api_key_masked ?? '未保存密钥'}</p>
               </div>
               <div>
-                <span className="eyebrow">Claude command</span>
-                <p>{claudeProvider?.command_path ?? 'Not configured'}</p>
+                <span className="eyebrow">Claude 命令</span>
+                <p>{claudeProvider?.command_path ?? '未配置'}</p>
               </div>
               <div>
-                <span className="eyebrow">OpenAI workers</span>
+                <span className="eyebrow">OpenAI 绑定人数</span>
                 <p>{openaiProvider?.configured_worker_count ?? 0}</p>
               </div>
               <div>
-                <span className="eyebrow">Claude workers</span>
+                <span className="eyebrow">Claude 绑定人数</span>
                 <p>{claudeProvider?.configured_worker_count ?? 0}</p>
               </div>
               <div>
-                <span className="eyebrow">OpenAI health</span>
-                <p>{openaiProvider?.health_status ?? 'Unknown'}</p>
+                <span className="eyebrow">OpenAI 健康</span>
+                <p>{openaiProvider?.health_status ?? '未知'}</p>
               </div>
               <div>
-                <span className="eyebrow">Claude health</span>
-                <p>{claudeProvider?.health_status ?? 'Unknown'}</p>
+                <span className="eyebrow">Claude 健康</span>
+                <p>{claudeProvider?.health_status ?? '未知'}</p>
               </div>
             </section>
-            <p className="muted-copy">{openaiProvider?.health_reason ?? 'OpenAI provider health is unavailable.'}</p>
-            <p className="muted-copy">{claudeProvider?.health_reason ?? 'Claude provider health is unavailable.'}</p>
+            <p className="muted-copy">{openaiProvider?.health_reason ?? 'OpenAI 健康明细暂不可用。'}</p>
+            <p className="muted-copy">{claudeProvider?.health_reason ?? 'Claude 健康明细暂不可用。'}</p>
 
             <label>
               <span className="field-label">OpenAI Base URL</span>
@@ -317,9 +317,9 @@ export function ProviderSettingsDrawer({
               />
             </label>
             <label>
-              <span className="field-label">OpenAI API key</span>
+              <span className="field-label">OpenAI API Key</span>
               <input
-                aria-label="OpenAI API key"
+                aria-label="OpenAI API Key"
                 type="password"
                 value={openaiApiKey}
                 placeholder={openaiProvider?.api_key_masked ?? ''}
@@ -327,18 +327,18 @@ export function ProviderSettingsDrawer({
               />
             </label>
             <label>
-              <span className="field-label">OpenAI model</span>
+              <span className="field-label">OpenAI 模型</span>
               <input
-                aria-label="OpenAI model"
+                aria-label="OpenAI 模型"
                 value={openaiModel}
                 onChange={(event) => setOpenaiModel(event.target.value)}
               />
             </label>
             <div className="provider-settings-grid">
               <label>
-                <span className="field-label">OpenAI timeout (sec)</span>
+                <span className="field-label">OpenAI 超时（秒）</span>
                 <input
-                  aria-label="OpenAI timeout (sec)"
+                  aria-label="OpenAI 超时（秒）"
                   type="number"
                   min="1"
                   value={openaiTimeoutSec}
@@ -346,28 +346,28 @@ export function ProviderSettingsDrawer({
                 />
               </label>
               <label>
-                <span className="field-label">OpenAI reasoning effort</span>
+                <span className="field-label">OpenAI 推理强度</span>
                 <select
-                  aria-label="OpenAI reasoning effort"
+                  aria-label="OpenAI 推理强度"
                   value={openaiReasoningEffort}
                   onChange={(event) => setOpenaiReasoningEffort(event.target.value)}
                 >
-                  <option value="">Default</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="xhigh">XHigh</option>
+                  <option value="">默认</option>
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                  <option value="xhigh">极高</option>
                 </select>
               </label>
             </div>
 
             <div>
-              <span className="field-label">OpenAI capabilities</span>
+              <span className="field-label">OpenAI 能力标签</span>
               <div className="provider-settings-grid">
                 {PROVIDER_CAPABILITY_OPTIONS.map((option) => (
                   <label key={`openai-capability-${option.value}`}>
                     <input
-                      aria-label={`OpenAI Compat capability ${option.value}`}
+                      aria-label={`OpenAI 能力 ${option.value}`}
                       type="checkbox"
                       checked={openaiCapabilityTags.includes(option.value)}
                       onChange={() => toggleCapability(openaiCapabilityTags, option.value, setOpenaiCapabilityTags)}
@@ -380,61 +380,61 @@ export function ProviderSettingsDrawer({
 
             <div className="provider-settings-grid">
               <label>
-                <span className="field-label">OpenAI cost tier</span>
+                <span className="field-label">OpenAI 成本等级</span>
                 <select
-                  aria-label="OpenAI cost tier"
+                  aria-label="OpenAI 成本等级"
                   value={openaiCostTier}
                   onChange={(event) => setOpenaiCostTier(event.target.value)}
                 >
-                  <option value="standard">Standard</option>
-                  <option value="premium">Premium</option>
+                  <option value="standard">标准</option>
+                  <option value="premium">高级</option>
                 </select>
               </label>
               <label>
-                <span className="field-label">OpenAI participation policy</span>
+                <span className="field-label">OpenAI 参与策略</span>
                 <select
-                  aria-label="OpenAI participation policy"
+                  aria-label="OpenAI 参与策略"
                   value={openaiParticipationPolicy}
                   onChange={(event) => setOpenaiParticipationPolicy(event.target.value)}
                 >
-                  <option value="always_allowed">Always allowed</option>
-                  <option value="low_frequency_only">Low-frequency only</option>
+                  <option value="always_allowed">始终允许</option>
+                  <option value="low_frequency_only">仅低频参与</option>
                 </select>
               </label>
             </div>
 
             <label>
-              <span className="field-label">OpenAI fallback provider</span>
+              <span className="field-label">OpenAI 失败回退供应商</span>
               <select
-                aria-label="OpenAI Compat fallback provider"
+                aria-label="OpenAI 回退供应商"
                 value={openaiFallbackProviderId}
                 onChange={(event) => setOpenaiFallbackProviderId(event.target.value)}
               >
-                <option value="">No fallback</option>
+                <option value="">不启用回退</option>
                 <option value={CLAUDE_PROVIDER_ID}>Claude Code CLI</option>
               </select>
             </label>
 
             <label>
-              <span className="field-label">Claude command path</span>
+              <span className="field-label">Claude 命令路径</span>
               <input
-                aria-label="Claude command path"
+                aria-label="Claude 命令路径"
                 value={claudeCommandPath}
                 onChange={(event) => setClaudeCommandPath(event.target.value)}
               />
             </label>
             <label>
-              <span className="field-label">Claude model</span>
+              <span className="field-label">Claude 模型</span>
               <input
-                aria-label="Claude model"
+                aria-label="Claude 模型"
                 value={claudeModel}
                 onChange={(event) => setClaudeModel(event.target.value)}
               />
             </label>
             <label>
-              <span className="field-label">Claude timeout (sec)</span>
+              <span className="field-label">Claude 超时（秒）</span>
               <input
-                aria-label="Claude timeout (sec)"
+                aria-label="Claude 超时（秒）"
                 type="number"
                 min="1"
                 value={claudeTimeoutSec}
@@ -443,12 +443,12 @@ export function ProviderSettingsDrawer({
             </label>
 
             <div>
-              <span className="field-label">Claude capabilities</span>
+              <span className="field-label">Claude 能力标签</span>
               <div className="provider-settings-grid">
                 {PROVIDER_CAPABILITY_OPTIONS.map((option) => (
                   <label key={`claude-capability-${option.value}`}>
                     <input
-                      aria-label={`Claude Code CLI capability ${option.value}`}
+                      aria-label={`Claude 能力 ${option.value}`}
                       type="checkbox"
                       checked={claudeCapabilityTags.includes(option.value)}
                       onChange={() => toggleCapability(claudeCapabilityTags, option.value, setClaudeCapabilityTags)}
@@ -461,60 +461,60 @@ export function ProviderSettingsDrawer({
 
             <div className="provider-settings-grid">
               <label>
-                <span className="field-label">Claude cost tier</span>
+                <span className="field-label">Claude 成本等级</span>
                 <select
-                  aria-label="Claude cost tier"
+                  aria-label="Claude 成本等级"
                   value={claudeCostTier}
                   onChange={(event) => setClaudeCostTier(event.target.value)}
                 >
-                  <option value="standard">Standard</option>
-                  <option value="premium">Premium</option>
+                  <option value="standard">标准</option>
+                  <option value="premium">高级</option>
                 </select>
               </label>
               <label>
-                <span className="field-label">Claude participation policy</span>
+                <span className="field-label">Claude 参与策略</span>
                 <select
-                  aria-label="Claude participation policy"
+                  aria-label="Claude 参与策略"
                   value={claudeParticipationPolicy}
                   onChange={(event) => setClaudeParticipationPolicy(event.target.value)}
                 >
-                  <option value="always_allowed">Always allowed</option>
-                  <option value="low_frequency_only">Low-frequency only</option>
+                  <option value="always_allowed">始终允许</option>
+                  <option value="low_frequency_only">仅低频参与</option>
                 </select>
               </label>
             </div>
 
             <label>
-              <span className="field-label">Claude fallback provider</span>
+              <span className="field-label">Claude 失败回退供应商</span>
               <select
-                aria-label="Claude Code CLI fallback provider"
+                aria-label="Claude 回退供应商"
                 value={claudeFallbackProviderId}
                 onChange={(event) => setClaudeFallbackProviderId(event.target.value)}
               >
-                <option value="">No fallback</option>
-                <option value={OPENAI_PROVIDER_ID}>OpenAI Compat</option>
+                <option value="">不启用回退</option>
+                <option value={OPENAI_PROVIDER_ID}>OpenAI 兼容</option>
               </select>
             </label>
 
             <div>
-              <span className="field-label">Current role bindings</span>
+              <span className="field-label">当前角色绑定</span>
               <div className="provider-settings-grid">
                 {roleBindings.map((binding) => (
                   <label key={binding.target_ref}>
                     <span className="field-label">{binding.target_label}</span>
                     <select
-                      aria-label={`${binding.target_label} provider`}
+                      aria-label={`${binding.target_label} 供应商`}
                       value={binding.provider_id}
                       onChange={(event) => updateBinding(binding.target_ref, { provider_id: event.target.value })}
                     >
-                      <option value="">Follow default</option>
-                      <option value={OPENAI_PROVIDER_ID}>OpenAI Compat</option>
+                      <option value="">跟随默认</option>
+                      <option value={OPENAI_PROVIDER_ID}>OpenAI 兼容</option>
                       <option value={CLAUDE_PROVIDER_ID}>Claude Code CLI</option>
                     </select>
                     <input
-                      aria-label={`${binding.target_label} model override`}
+                      aria-label={`${binding.target_label} 模型覆写`}
                       value={binding.model}
-                      placeholder="Model override (optional)"
+                      placeholder="模型覆写（可选）"
                       onChange={(event) => updateBinding(binding.target_ref, { model: event.target.value })}
                     />
                   </label>
@@ -524,9 +524,9 @@ export function ProviderSettingsDrawer({
 
             {providerData?.future_binding_slots?.length ? (
               <div>
-                <span className="field-label">Reserved bindings</span>
+                <span className="field-label">预留绑定位</span>
                 <p className="muted-copy">
-                  Catalog-only roles stay read-only here until a later mainline role intake round.
+                  仅目录角色在后续主线路角色纳入之前保持只读。
                 </p>
                 <div className="provider-settings-grid">
                   {providerData.future_binding_slots.map((slot) => (
@@ -535,7 +535,7 @@ export function ProviderSettingsDrawer({
                       <input aria-label={`${slot.label} status`} value={`${slot.status}: ${slot.reason}`} disabled />
                       {slot.blocked_path_refs.length > 0 ? (
                         <span className="muted-copy">
-                          {`Blocked surfaces: ${slot.blocked_path_refs.map(formatBoundaryPathRef).join(', ')}`}
+                          {`受阻面：${slot.blocked_path_refs.map(formatBoundaryPathRef).join(', ')}`}
                         </span>
                       ) : null}
                     </label>
@@ -545,7 +545,7 @@ export function ProviderSettingsDrawer({
             ) : null}
 
             <button type="button" className="secondary-button" disabled={submitting} onClick={handleSave}>
-              {submitting ? 'Saving...' : 'Save runtime settings'}
+              {submitting ? '保存中...' : '保存运行时设置'}
             </button>
           </section>
         </div>

@@ -19,7 +19,7 @@ import { useUIStore } from '../stores/ui-store'
 import { formatTimestamp } from '../utils/format'
 import { useDashboardPageActions } from './dashboard-page-actions'
 import { useDashboardPageDetailState } from './dashboard-page-detail-state'
-import { runtimeModeLabel } from './dashboard-page-helpers'
+import { runtimeModeLabel, runtimeReasonLabel } from './dashboard-page-helpers'
 
 const ReviewRoomDrawer = lazy(() =>
   import('../components/overlays/ReviewRoomDrawer').then((module) => ({ default: module.ReviewRoomDrawer })),
@@ -175,14 +175,10 @@ export function DashboardPage() {
   const runtimeStatus = dashboard?.runtime_status
   const completionSummary = dashboard?.completion_summary
   const effectiveRuntimeMode = runtimeStatus?.effective_mode ?? runtimeProvider?.effective_mode ?? 'LOCAL_DETERMINISTIC'
-  const runtimeProviderLabel =
-    runtimeStatus?.provider_label ?? runtimeModeLabel(runtimeProvider?.effective_mode ?? effectiveRuntimeMode)
+  const runtimeProviderLabel = runtimeModeLabel(runtimeStatus?.effective_mode ?? runtimeProvider?.effective_mode ?? effectiveRuntimeMode)
   const runtimeModel = runtimeStatus?.model ?? runtimeProvider?.model
   const runtimeWorkerCount = runtimeStatus?.configured_worker_count ?? runtimeProvider?.configured_worker_count ?? 0
-  const runtimeReason =
-    runtimeStatus?.reason ??
-    runtimeProvider?.effective_reason ??
-    'Runtime is using the currently saved local execution settings.'
+  const runtimeReason = runtimeReasonLabel(runtimeStatus?.reason ?? runtimeProvider?.effective_reason)
   const runtimeHealth =
     runtimeStatus?.provider_health_summary ??
     runtimeProvider?.provider_health_summary ??
@@ -193,9 +189,9 @@ export function DashboardPage() {
     <ErrorBoundary>
       <AppShell>
         <TopChrome
-          title={activeWorkflow?.title ?? 'Boardroom governance shell'}
+          title={activeWorkflow?.title ?? '董事会治理控制台'}
           northStarGoal={
-            activeWorkflow?.north_star_goal ?? 'The workflow shell is waiting for the next local directive.'
+            activeWorkflow?.north_star_goal ?? '当前等待下一条本地指令。'
           }
           effectiveRuntimeMode={effectiveRuntimeMode}
           runtimeProviderLabel={runtimeProviderLabel}
@@ -215,7 +211,7 @@ export function DashboardPage() {
           left={
             <InboxWell
               items={inbox?.items ?? []}
-              loading={snapshotLoading}
+              loading={snapshotLoading && inbox == null}
               onOpenReview={handleOpenReviewRoom}
               onOpenMeeting={handleOpenMeetingRoom}
               onOpenIncident={handleOpenIncidentRoom}
@@ -227,13 +223,13 @@ export function DashboardPage() {
               {snapshotLoading && dashboard == null ? (
                 <>
                   <WorkflowRiver phases={[]} approvalsPending={0} loading={true} />
-                  <section className="center-detail-grid center-detail-grid-loading" aria-label="Current workflow loading" aria-busy="true">
+                  <section className="center-detail-grid center-detail-grid-loading" aria-label="当前工作流加载中" aria-busy="true">
                     <LoadingSkeleton lines={4} className="center-detail-skeleton" />
                     <LoadingSkeleton lines={4} className="center-detail-skeleton" />
                   </section>
                 </>
               ) : null}
-              {!snapshotLoading && activeWorkflow == null ? (
+              {dashboard != null && activeWorkflow == null ? (
                 <ProjectInitForm submitting={projectInitPending} onSubmit={handleProjectInit} />
               ) : null}
               {activeWorkflow != null && dashboard != null ? (
@@ -244,11 +240,11 @@ export function DashboardPage() {
                   />
                   <section className="center-detail-grid">
                     <div>
-                      <p className="eyebrow">Current workflow</p>
+                      <p className="eyebrow">当前工作流</p>
                       <h2>{activeWorkflow.north_star_goal}</h2>
                       <p className="muted-copy">
-                        Workspace {dashboard.workspace.workspace_name} · started{' '}
-                        {formatTimestamp(activeWorkflow.started_at, 'Not recorded')}
+                        工作区 {dashboard.workspace.workspace_name} · 启动于{' '}
+                        {formatTimestamp(activeWorkflow.started_at, '未记录')}
                       </p>
                       <Button
                         type="button"
@@ -256,24 +252,24 @@ export function DashboardPage() {
                         className="inspector-launch"
                         onClick={() => setDependencyInspectorOpen(true)}
                       >
-                        Inspect dependency chain
+                        查看依赖链路
                       </Button>
                     </div>
                     <div className="center-detail-list">
                       <div>
-                        <span>Provider health</span>
+                        <span>供应商健康</span>
                         <strong>{dashboard.ops_strip.provider_health_summary}</strong>
                       </div>
                       <div>
-                        <span>Idle workers</span>
+                        <span>空闲员工</span>
                         <strong>{dashboard.workforce_summary.idle_workers}</strong>
                       </div>
                       <div>
-                        <span>Active workers</span>
+                        <span>活跃员工</span>
                         <strong>{dashboard.workforce_summary.active_workers}</strong>
                       </div>
                       <div>
-                        <span>Incidents</span>
+                        <span>故障数</span>
                         <strong>{dashboard.ops_strip.open_incidents}</strong>
                       </div>
                     </div>
@@ -308,11 +304,6 @@ export function DashboardPage() {
 
       <Suspense fallback={null}>
         <ReviewRoomDrawer
-          key={
-            reviewRoom?.review_pack != null
-              ? `${reviewRoom.review_pack.meta.review_pack_id}:${reviewRoom.review_pack.meta.review_pack_version}`
-              : reviewPackId ?? 'review-room-closed'
-          }
           isOpen={Boolean(reviewPackId)}
           loading={reviewLoading}
           reviewData={reviewRoom}
