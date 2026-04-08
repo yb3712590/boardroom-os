@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from app.config import get_settings
 from app.contracts.ceo_actions import CEOCreateTicketPayload
 from app.contracts.commands import DeliveryStage, TicketCreateCommand
 from app.core.execution_targets import infer_execution_contract_payload
@@ -604,7 +605,7 @@ def build_ceo_create_ticket_command(
                 else _context_keywords_for_preset(preset)
             ),
             "semantic_queries": semantic_queries,
-            "max_context_tokens": 3000,
+            "max_context_tokens": get_settings().default_max_context_tokens,
         },
         acceptance_criteria=(
             [

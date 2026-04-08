@@ -808,13 +808,28 @@ def save_runtime_provider_command(
     store: RuntimeProviderConfigStore,
     payload: RuntimeProviderUpsertCommand,
 ) -> CommandAckEnvelope:
+    existing_config = resolve_runtime_provider_config(store)
+    existing_provider_by_id = {
+        provider.provider_id: provider for provider in existing_config.providers
+    }
+
+    providers: list[RuntimeProviderConfigEntry] = []
+    for item in payload.providers:
+        provider_payload = item.model_dump(mode="json")
+        if provider_payload.get("adapter_kind") == RuntimeProviderAdapterKind.OPENAI_COMPAT.value:
+            existing_provider = existing_provider_by_id.get(str(provider_payload.get("provider_id") or ""))
+            if (
+                provider_payload.get("api_key") is None
+                and existing_provider is not None
+                and existing_provider.api_key
+            ):
+                provider_payload["api_key"] = existing_provider.api_key
+        providers.append(RuntimeProviderConfigEntry.model_validate(provider_payload))
+
     store.save_config(
         RuntimeProviderStoredConfig(
             default_provider_id=payload.default_provider_id,
-            providers=[
-                RuntimeProviderConfigEntry.model_validate(item.model_dump(mode="json"))
-                for item in payload.providers
-            ],
+            providers=providers,
             role_bindings=[
                 RuntimeProviderRoleBinding.model_validate(item.model_dump(mode="json"))
                 for item in payload.role_bindings

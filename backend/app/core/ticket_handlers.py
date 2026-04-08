@@ -678,7 +678,7 @@ def _build_maker_checker_ticket_payload(
     context_query_plan = dict(created_spec.get("context_query_plan") or {})
     max_context_tokens = int(context_query_plan.get("max_context_tokens") or 0)
     if max_context_tokens <= 0:
-        max_context_tokens = 3000
+        max_context_tokens = get_settings().default_max_context_tokens
 
     maker_ticket_spec = {
         "role_profile_ref": created_spec.get("role_profile_ref"),
@@ -777,7 +777,7 @@ def _build_fix_ticket_payload(
     context_query_plan = dict(maker_ticket_spec.get("context_query_plan") or {})
     max_context_tokens = int(context_query_plan.get("max_context_tokens") or 0)
     if max_context_tokens <= 0:
-        max_context_tokens = 3000
+        max_context_tokens = get_settings().default_max_context_tokens
     input_artifact_refs = _dedupe_artifact_refs(
         list(maker_checker_context.get("maker_artifact_refs") or [])
         + list(checker_result_payload.get("artifact_refs") or [])

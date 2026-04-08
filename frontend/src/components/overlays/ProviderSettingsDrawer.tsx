@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { RuntimeProviderData, RuntimeProviderRoleBinding } from '../../types/api'
 import { Drawer } from '../shared/Drawer'
@@ -124,9 +124,17 @@ export function ProviderSettingsDrawer({
     claudeProvider?.fallback_provider_ids?.[0] ?? '',
   )
   const [roleBindings, setRoleBindings] = useState<EditableRoleBinding[]>(buildEditableBindings(providerData))
+  const hydratedOpenSessionRef = useRef(false)
 
   useEffect(() => {
     if (!isOpen) {
+      hydratedOpenSessionRef.current = false
+      return
+    }
+    if (hydratedOpenSessionRef.current) {
+      return
+    }
+    if (providerData == null) {
       return
     }
     const nextOpenaiProvider = providerData?.providers.find((provider) => provider.provider_id === OPENAI_PROVIDER_ID)
@@ -149,6 +157,7 @@ export function ProviderSettingsDrawer({
     setClaudeParticipationPolicy(nextClaudeProvider?.participation_policy ?? 'low_frequency_only')
     setClaudeFallbackProviderId(nextClaudeProvider?.fallback_provider_ids?.[0] ?? '')
     setRoleBindings(buildEditableBindings(providerData))
+    hydratedOpenSessionRef.current = true
   }, [isOpen, providerData])
 
   const updateBinding = (targetRef: string, patch: Partial<EditableRoleBinding>) => {

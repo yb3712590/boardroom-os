@@ -66,4 +66,24 @@ describe('review-store', () => {
     expect(useReviewStore.getState().reviewRoom).toBeNull()
     expect(useReviewStore.getState().error).toBe('review missing')
   })
+
+  it('keeps current review content and avoids error flash when background review refresh fails', async () => {
+    useReviewStore.setState({
+      reviewRoom: { review_pack: { meta: { review_pack_id: 'brp_001' } } as never } as never,
+      error: null,
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('temporary fetch failure', {
+        status: 503,
+        headers: { 'Content-Type': 'text/plain' },
+      }),
+    )
+
+    await useReviewStore.getState().loadReviewRoom('brp_001', { background: true })
+
+    expect(useReviewStore.getState().reviewRoom).toMatchObject({
+      review_pack: { meta: { review_pack_id: 'brp_001' } },
+    })
+    expect(useReviewStore.getState().error).toBeNull()
+  })
 })

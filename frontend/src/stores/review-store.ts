@@ -45,9 +45,12 @@ export const useReviewStore = create<ReviewState>((set) => ({
         error: null,
       })
     } catch (error) {
+      if (background) {
+        return
+      }
       set({
         error: error instanceof Error ? error.message : '加载当前评审包失败。',
-        ...(background ? {} : { reviewRoom: null }),
+        reviewRoom: null,
       })
     } finally {
       if (!background) {

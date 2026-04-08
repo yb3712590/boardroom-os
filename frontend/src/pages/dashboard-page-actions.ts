@@ -294,7 +294,7 @@ export function useDashboardPageActions({
     }
     setSubmittingAction('APPROVE')
     try {
-      await boardApprove({
+      const ack = await boardApprove({
         review_pack_id: reviewPack.meta.review_pack_id,
         review_pack_version: reviewPack.meta.review_pack_version,
         command_target_version: reviewPack.decision_form.command_target_version,
@@ -304,6 +304,7 @@ export function useDashboardPageActions({
         elicitation_answers: input.elicitationAnswers,
         idempotency_key: newPrefixedId('board-approve'),
       })
+      assertAcceptedCommand(ack, '董事会批准失败。')
       await loadSnapshot()
       navigate('/')
     } catch (error) {
@@ -319,7 +320,7 @@ export function useDashboardPageActions({
     }
     setSubmittingAction('REJECT')
     try {
-      await boardReject({
+      const ack = await boardReject({
         review_pack_id: reviewPack.meta.review_pack_id,
         review_pack_version: reviewPack.meta.review_pack_version,
         command_target_version: reviewPack.decision_form.command_target_version,
@@ -328,6 +329,7 @@ export function useDashboardPageActions({
         rejection_reasons: input.rejectionReasons,
         idempotency_key: newPrefixedId('board-reject'),
       })
+      assertAcceptedCommand(ack, '董事会驳回失败。')
       await loadSnapshot()
       navigate('/')
     } catch (error) {
@@ -353,7 +355,7 @@ export function useDashboardPageActions({
     }
     setSubmittingAction('MODIFY_CONSTRAINTS')
     try {
-      await modifyConstraints({
+      const ack = await modifyConstraints({
         review_pack_id: reviewPack.meta.review_pack_id,
         review_pack_version: reviewPack.meta.review_pack_version,
         command_target_version: reviewPack.decision_form.command_target_version,
@@ -367,6 +369,7 @@ export function useDashboardPageActions({
         elicitation_answers: input.elicitationAnswers,
         idempotency_key: newPrefixedId('modify-constraints'),
       })
+      assertAcceptedCommand(ack, '修改约束失败。')
       await loadSnapshot()
       navigate('/')
     } catch (error) {

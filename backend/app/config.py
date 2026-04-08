@@ -8,6 +8,7 @@ from typing import Literal
 
 RuntimeExecutionMode = Literal["INPROCESS", "EXTERNAL"]
 ProviderOpenAICompatReasoningEffort = Literal["low", "medium", "high", "xhigh"]
+DEFAULT_MAX_CONTEXT_TOKENS = 270_000
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class Settings:
     worker_admin_max_ttl_sec: int
     worker_admin_trusted_proxy_ids: tuple[str, ...]
     worker_bootstrap_allowed_tenant_ids: tuple[str, ...]
+    default_max_context_tokens: int
     busy_timeout_ms: int = 5000
     recent_event_limit: int = 10
     scheduler_poll_interval_sec: float = 5.0
@@ -142,6 +144,14 @@ def get_settings() -> Settings:
     )
     if provider_openai_compat_timeout_sec <= 0:
         raise ValueError("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC must be greater than 0.")
+    default_max_context_tokens = int(
+        os.environ.get(
+            "BOARDROOM_OS_DEFAULT_MAX_CONTEXT_TOKENS",
+            str(DEFAULT_MAX_CONTEXT_TOKENS),
+        )
+    )
+    if default_max_context_tokens <= 0:
+        raise ValueError("BOARDROOM_OS_DEFAULT_MAX_CONTEXT_TOKENS must be greater than 0.")
     busy_timeout_ms = int(os.environ.get("BOARDROOM_OS_BUSY_TIMEOUT_MS", "5000"))
     recent_event_limit = int(os.environ.get("BOARDROOM_OS_RECENT_EVENT_LIMIT", "10"))
     scheduler_poll_interval_sec = float(
@@ -290,6 +300,7 @@ def get_settings() -> Settings:
         worker_admin_max_ttl_sec=worker_admin_max_ttl_sec,
         worker_admin_trusted_proxy_ids=worker_admin_trusted_proxy_ids,
         worker_bootstrap_allowed_tenant_ids=worker_bootstrap_allowed_tenant_ids,
+        default_max_context_tokens=default_max_context_tokens,
         busy_timeout_ms=busy_timeout_ms,
         recent_event_limit=recent_event_limit,
         scheduler_poll_interval_sec=scheduler_poll_interval_sec,

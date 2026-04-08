@@ -43,31 +43,43 @@ export function useDashboardPageDetailState({
     await loadReviewRoom(packId, background ? { background: true } : undefined)
   })
 
-  const refreshIncidentDetail = useEffectEvent(async (nextIncidentId: string) => {
-    setIncidentLoading(true)
-    setIncidentError(null)
+  const refreshIncidentDetail = useEffectEvent(async (nextIncidentId: string, background = false) => {
+    if (!background) {
+      setIncidentLoading(true)
+      setIncidentError(null)
+    }
     try {
       const payload = await getIncidentDetail(nextIncidentId)
       setIncidentDetail(payload)
     } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : '加载当前故障详情失败。')
-      setIncidentDetail(null)
+      if (!background) {
+        setIncidentError(error instanceof Error ? error.message : '加载当前故障详情失败。')
+        setIncidentDetail(null)
+      }
     } finally {
-      setIncidentLoading(false)
+      if (!background) {
+        setIncidentLoading(false)
+      }
     }
   })
 
-  const refreshMeetingDetail = useEffectEvent(async (nextMeetingId: string) => {
-    setMeetingLoading(true)
-    setMeetingError(null)
+  const refreshMeetingDetail = useEffectEvent(async (nextMeetingId: string, background = false) => {
+    if (!background) {
+      setMeetingLoading(true)
+      setMeetingError(null)
+    }
     try {
       const payload = await getMeetingDetail(nextMeetingId)
       setMeetingDetail(payload)
     } catch (error) {
-      setMeetingDetail(null)
-      setMeetingError(error instanceof Error ? error.message : '加载当前会议室失败。')
+      if (!background) {
+        setMeetingDetail(null)
+        setMeetingError(error instanceof Error ? error.message : '加载当前会议室失败。')
+      }
     } finally {
-      setMeetingLoading(false)
+      if (!background) {
+        setMeetingLoading(false)
+      }
     }
   })
 
@@ -104,10 +116,10 @@ export function useDashboardPageDetailState({
       await refreshReviewRoom(reviewPackId, true)
     }
     if (meetingId) {
-      await refreshMeetingDetail(meetingId)
+      await refreshMeetingDetail(meetingId, true)
     }
     if (incidentId) {
-      await refreshIncidentDetail(incidentId)
+      await refreshIncidentDetail(incidentId, true)
     }
     if (dependencyInspectorOpen && activeWorkflowId) {
       await refreshDependencyInspector(activeWorkflowId, true)

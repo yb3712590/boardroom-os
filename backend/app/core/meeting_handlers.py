@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.config import get_settings
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
@@ -242,7 +243,7 @@ def handle_meeting_request(
             context_query_plan={
                 "keywords": ["meeting", "technical decision", *[item["role_type"] for item in participants]],
                 "semantic_queries": [payload.topic],
-                "max_context_tokens": 3000,
+                "max_context_tokens": get_settings().default_max_context_tokens,
             },
             acceptance_criteria=[
                 "Must complete the technical decision meeting in structured rounds.",

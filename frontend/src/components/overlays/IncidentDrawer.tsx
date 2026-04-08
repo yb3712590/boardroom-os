@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { IncidentDetailData } from '../../types/api'
 import { Drawer } from '../shared/Drawer'
@@ -42,6 +42,43 @@ function formatPayloadValue(value: unknown) {
   return JSON.stringify(value)
 }
 
+function readPayloadString(payload: Record<string, unknown>, key: string) {
+  const value = payload[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function readPayloadNumber(payload: Record<string, unknown>, key: string) {
+  const value = payload[key]
+  return typeof value === 'number' ? value : null
+}
+
+function buildIncidentInterpretation(incident: IncidentDetailData['incident']): string | null {
+  const payload = incident.payload ?? {}
+  if (incident.incident_type !== 'REPEATED_FAILURE_ESCALATION') {
+    return null
+  }
+
+  const latestFailureKind = readPayloadString(payload, 'latest_failure_kind')
+  const latestFailureMessage = readPayloadString(payload, 'latest_failure_message')
+  const streakCount = readPayloadNumber(payload, 'failure_streak_count')
+
+  if (
+    latestFailureKind === 'RUNTIME_INPUT_ERROR' &&
+    latestFailureMessage.includes('Mandatory explicit source') &&
+    latestFailureMessage.includes('cannot fit within the remaining token budget')
+  ) {
+    const sourceMatch = latestFailureMessage.match(/Mandatory explicit source (.+?) cannot fit within/)
+    const budgetMatch = latestFailureMessage.match(/remaining token budget \((\d+)\)/)
+    const sourceRef = sourceMatch?.[1] ?? '关键输入产物'
+    const remainingBudget = budgetMatch?.[1]
+    const budgetHint = remainingBudget ? `（剩余预算 ${remainingBudget} tokens）` : ''
+    const streakHint = streakCount != null ? `，并已连续失败 ${streakCount} 次` : ''
+    return `这次不是供应商故障，而是输入预算超限：必需输入 ${sourceRef} 在当前上下文里放不下${budgetHint}${streakHint}，系统触发了重复失败熔断。`
+  }
+
+  return null
+}
+
 export function IncidentDrawer({
   isOpen,
   loading,
@@ -51,12 +88,33 @@ export function IncidentDrawer({
   onClose,
   onResolve,
 }: IncidentDrawerProps) {
-  const [followupAction, setFollowupAction] = useState(
-    incidentData?.recommended_followup_action ?? incidentData?.available_followup_actions[0] ?? '',
-  )
+  const incidentIdentity = incidentData?.incident.incident_id ?? null
+  const initialFollowupAction =
+    incidentData?.recommended_followup_action ?? incidentData?.available_followup_actions[0] ?? ''
+  const [followupAction, setFollowupAction] = useState(initialFollowupAction)
   const [resolutionSummary, setResolutionSummary] = useState('')
+  const hydratedIncidentRef = useRef<string | null>(null)
 
   const incident = incidentData?.incident
+  const incidentInterpretation = incident != null ? buildIncidentInterpretation(incident) : null
+
+  useEffect(() => {
+    if (!isOpen) {
+      hydratedIncidentRef.current = null
+      setFollowupAction('')
+      setResolutionSummary('')
+      return
+    }
+    if (incidentIdentity == null) {
+      return
+    }
+    if (hydratedIncidentRef.current === incidentIdentity) {
+      return
+    }
+    setFollowupAction(initialFollowupAction)
+    setResolutionSummary('')
+    hydratedIncidentRef.current = incidentIdentity
+  }, [incidentIdentity, initialFollowupAction, isOpen])
 
   return (
     <Drawer
@@ -132,6 +190,13 @@ export function IncidentDrawer({
               </ul>
             </div>
           </section>
+
+          {incidentInterpretation ? (
+            <section className="review-room-action-panel incident-action-panel">
+              <h3>故障解读</h3>
+              <p className="muted-copy">{incidentInterpretation}</p>
+            </section>
+          ) : null}
 
           <section className="review-room-action-panel incident-action-panel">
             <h3>恢复动作</h3>

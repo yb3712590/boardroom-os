@@ -320,11 +320,7 @@ export function DashboardPage() {
         />
 
         <MeetingRoomDrawer
-          key={
-            meetingDetail != null
-              ? `${meetingDetail.meeting_id}:${meetingDetail.updated_at}`
-              : meetingId ?? 'meeting-room-closed'
-          }
+          key={meetingId ?? 'meeting-room-closed'}
           isOpen={Boolean(meetingId)}
           loading={meetingLoading}
           meetingData={meetingDetail}
@@ -334,11 +330,7 @@ export function DashboardPage() {
         />
 
         <IncidentDrawer
-          key={
-            incidentDetail != null
-              ? `${incidentDetail.incident.incident_id}:${incidentDetail.recommended_followup_action ?? 'none'}`
-              : incidentId ?? 'incident-closed'
-          }
+          key={incidentId ?? 'incident-closed'}
           isOpen={Boolean(incidentId)}
           loading={incidentLoading}
           incidentData={incidentDetail}

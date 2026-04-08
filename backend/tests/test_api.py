@@ -4089,6 +4089,92 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert switched_dashboard.json()["data"]["runtime_status"]["provider_health_summary"] == "LOCAL_ONLY"
 
 
+def test_runtime_provider_upsert_preserves_existing_openai_api_key_when_update_omits_key(
+    db_path,
+    monkeypatch,
+):
+    config_path = db_path.parent / "runtime-provider-config-preserve-key.json"
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH", str(config_path))
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        first_response = client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                idempotency_key="runtime-provider-upsert:preserve-key:first",
+            ),
+        )
+        assert first_response.status_code == 200
+        assert first_response.json()["status"] == "ACCEPTED"
+
+        second_response = client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                openai_api_key=None,
+                openai_timeout_sec=60.0,
+                idempotency_key="runtime-provider-upsert:preserve-key:second",
+            ),
+        )
+        projection_response = client.get("/api/v1/projections/runtime-provider")
+
+        assert second_response.status_code == 200
+        assert second_response.json()["status"] == "ACCEPTED"
+        assert projection_response.status_code == 200
+
+        projection_data = projection_response.json()["data"]
+        assert projection_data["effective_mode"] == "OPENAI_COMPAT_LIVE"
+        assert projection_data["api_key_configured"] is True
+        assert projection_data["timeout_sec"] == 60.0
+        openai_provider = next(
+            provider for provider in projection_data["providers"] if provider["provider_id"] == "prov_openai_compat"
+        )
+        assert openai_provider["health_status"] == "HEALTHY"
+
+
+def test_board_approved_closeout_ticket_uses_configured_default_max_context_tokens(
+    db_path,
+    monkeypatch,
+):
+    config_path = db_path.parent / "runtime-provider-config-closeout-budget.json"
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("BOARDROOM_OS_DEFAULT_MAX_CONTEXT_TOKENS", "270000")
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        workflow_id, scope_approval = _project_init_to_scope_approval(client)
+        scope_response = _approve_open_review(client, scope_approval, idempotency_suffix="context-budget-scope")
+        repository = client.app.state.repository
+        approval = next(
+            item
+            for item in repository.list_open_approvals()
+            if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
+        )
+        final_response = client.post(
+            "/api/v1/commands/board-approve",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "selected_option_id": "option_a",
+                "board_comment": "Proceed with option A.",
+                "idempotency_key": f"board-approve:{approval['approval_id']}:context-budget-final",
+            },
+        )
+        _, closeout_ticket_id, _ = _expected_closeout_ids(repository, approval)
+        with repository.connection() as connection:
+            closeout_created_spec = repository.get_latest_ticket_created_payload(connection, closeout_ticket_id)
+
+        assert scope_response.status_code == 200
+        assert scope_response.json()["status"] == "ACCEPTED"
+        assert final_response.status_code == 200
+        assert final_response.json()["status"] == "ACCEPTED"
+        assert closeout_created_spec is not None
+        assert closeout_created_spec["context_query_plan"]["max_context_tokens"] == 270000
+
+
 def test_dashboard_runtime_status_shows_provider_paused_when_provider_incident_is_open(
     db_path,
     monkeypatch,

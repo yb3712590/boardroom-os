@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+from app.config import get_settings
 from app.contracts.commands import (
     BoardApproveCommand,
     BoardRejectCommand,
@@ -888,7 +889,7 @@ def _build_post_review_closeout_ticket_payload(
         context_query_plan={
             "keywords": ["approved final review", "delivery closeout", "handoff"],
             "semantic_queries": [closeout_summary],
-            "max_context_tokens": 3000,
+            "max_context_tokens": get_settings().default_max_context_tokens,
         },
         acceptance_criteria=[
             f"Must capture the approved final delivery choice: {closeout_summary}",
@@ -1069,7 +1070,7 @@ def _build_scope_followup_ticket_payloads(
             context_query_plan={
                 "keywords": _scope_followup_context_keywords(delivery_stage),
                 "semantic_queries": [followup_summary, *extra_semantic_queries],
-                "max_context_tokens": 3000,
+                "max_context_tokens": get_settings().default_max_context_tokens,
             },
             acceptance_criteria=[
                 *_scope_followup_acceptance_criteria(followup_summary, delivery_stage),
