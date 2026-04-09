@@ -14,7 +14,7 @@
 
 ## 当前基线（2026-04-09）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `537 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `533 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `84 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
@@ -63,6 +63,14 @@
 - `P2-PRV-008` 已完成（2026-04-08）：provider registry、投影和前端设置抽屉现在都会暴露 `cost_tier / participation_policy`；当前静态策略固定支持 `standard / premium` 两档成本层级，以及 `always_allowed / low_frequency_only` 两档参与策略。provider 选路顺序现已收口为 `任务级偏好 -> 目标/角色绑定 -> 员工 provider -> 默认 provider`；命中高价低频限制时，会自动降级到下一层可用 provider，而不是硬失败
 - 当前低频高杠杆路径按现有主线语义固定收口：`ceo_shadow`、scope/governance 文档链、`architect / cto` 治理文档属于低频高杠杆；`BUILD / CHECK / REVIEW / CLOSEOUT` 属于高频执行或高频审查；本轮不引入预算自适应、动态频率控制或新的策略引擎
 
+### `P2-PRV-009 / P2-PRV-010`：路线外 provider center 重构补记
+
+状态：`已完成（2026-04-09，路线外特性开发；与主线关系：当前主线任务空窗，且用户明确要求重构 provider 配置体验，所以按路线外补记收口，不回头改动冻结边界）`
+
+- `P2-PRV-009` 已完成（2026-04-09）：Provider Settings 现在已改成多 provider 配置中心；`runtime-provider` 读面和保存命令都按 `providers[] / provider_model_entries[] / role_bindings[]` 工作。provider 落库时会自动补 alias 和默认 `max_context_window=1000000`；旧固定 provider 配置升级后按空配置处理，不做迁移保留
+- `P2-PRV-010` 已完成（2026-04-09）：OpenAI-compatible provider 现在固定优先走 Responses 流式，连通性测试确认不支持时会回退到 Responses 非流式，并把返回的标准化 provider 结果用于保存；模型刷新接口会拉取远端模型列表，只保留仍存在的已勾选模型。CEO / role 绑定现在改成有序 `provider_model_entry_refs[]`，并支持 `max_context_window_override`；role 未配置时继承 CEO 的模型条目和上下文窗口
+- 当前新体验只真实开放 OpenAI-compatible Responses provider；`claude/gemini` 只保留类型占位，`Claude Code CLI` 兼容执行路径不进入这轮配置主流程
+
 ### `P2-M7`：集成、文档与交付口径收口
 
 状态：`已完成（2026-04-06，5 项已全部收口；后续默认主线已转入 P2-DEC 前置解耦批次）`
@@ -105,11 +113,11 @@
 
 状态：`已完成（2026-04-07，本轮手动纳入；与主线关系：把 runtime provider 从单一 OpenAI 开关收口成最小可用的多协议配置中心，并让 CEO / Worker 都能按角色绑定选 provider）`
 
-- `P2-PRV-001` 已完成：`runtime-provider-config.json` 现在改成 registry 结构，固定暴露 `default_provider_id / providers[] / role_bindings[]`；旧版单 provider JSON 会自动迁移到新结构
-- 当前 registry 首版真实支持两个 adapter：`prov_openai_compat` 和 `prov_claude_code`；Gemini 原生 adapter 仍未纳入，后续如果需要，先走 OpenAI-compatible 地址
-- `P2-PRV-006` 已完成：运行时和 CEO shadow 都会先解析角色绑定，再回退员工 `provider_id` 兼容字段，最后才回退默认 provider 或本地 deterministic；当前真实 target 只开放 `ceo_shadow / ui_designer_primary / frontend_engineer_primary / checker_primary`
-- `runtime-provider` 投影和前端 `ProviderSettingsDrawer` 现在都升级为最小 provider center：可编辑 OpenAI / Claude 配置、默认 provider 和当前真实角色绑定；未来治理角色只展示只读占位，不写成已启用能力
-- 当前实现只补最小审计字段：runtime provider 执行与 fallback 现在会显式记录 `preferred_provider_id / preferred_model / actual_provider_id / actual_model / adapter_kind`；未开启任务级 override、复杂 fallback 路由、成本分层或独立健康探测器
+- `P2-PRV-001` 已完成：`runtime-provider-config.json` 现在已收口成 provider center 结构；当前真实读写主形状以 `providers[] / provider_model_entries[] / role_bindings[]` 为准，旧固定 provider 配置后续已被 `P2-PRV-009` 进一步收正为“升级后按空配置处理，不再迁移保留”
+- 当前运行时兼容路径仍保留 `prov_openai_compat` 与 `prov_claude_code` 两类 adapter；但用户新配置主流程在 `P2-PRV-009 / P2-PRV-010` 后只真实开放 OpenAI-compatible Responses provider
+- `P2-PRV-006` 已完成：运行时和 CEO shadow 都会先解析 CEO / role 的模型条目绑定，再回退员工 `provider_id` 兼容字段，最后才回退默认 provider 或本地 deterministic；当前角色绑定还支持 `max_context_window_override`
+- `runtime-provider` 投影和前端 `ProviderSettingsDrawer` 现在都升级为 provider center：会暴露 `providers / provider_model_entries / role_bindings`、模型列表多选、连通性测试和模型刷新；未来治理角色只展示当前真实绑定，不写成新能力
+- 当前实现只补最小审计字段：runtime provider 执行与 fallback 现在会显式记录 `provider_model_entry_ref / preferred_provider_id / preferred_model / actual_provider_id / actual_model / effective_max_context_window`；未开启新的预算引擎或后台主动探活
 - `P2-PRV-005` 已完成：新增后端回归覆盖旧配置迁移、角色路由优先级、Claude CLI adapter、CEO/Worker 路由与 provider pause 兼容路径；前端回归补上 provider center 的未来治理角色只读占位；当前验证基线更新为 backend `453 passed`、frontend build passed、frontend `73 passed`
 
 ### `P2-PRV-002 / P2-PRV-003 / P2-PRV-004`：provider 能力标签、基础健康明细与简单 fallback 路由

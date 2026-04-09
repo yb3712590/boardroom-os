@@ -10,6 +10,10 @@ import type {
   IncidentResolveRequest,
   ModifyConstraintsRequest,
   ProjectInitRequest,
+  RuntimeProviderConnectivityTestRequest,
+  RuntimeProviderConnectivityTestResult,
+  RuntimeProviderModelsRefreshRequest,
+  RuntimeProviderModelsRefreshResult,
   RuntimeProviderUpsertRequest,
 } from '../types/api'
 
@@ -19,6 +23,18 @@ export function projectInit(payload: ProjectInitRequest): Promise<CommandAck> {
 
 export function runtimeProviderUpsert(payload: RuntimeProviderUpsertRequest): Promise<CommandAck> {
   return postJson<CommandAck>('/api/v1/commands/runtime-provider-upsert', payload)
+}
+
+export function runtimeProviderConnectivityTest(
+  payload: RuntimeProviderConnectivityTestRequest,
+): Promise<RuntimeProviderConnectivityTestResult> {
+  return postJson<RuntimeProviderConnectivityTestResult>('/api/v1/commands/runtime-provider-connectivity-test', payload)
+}
+
+export function runtimeProviderModelsRefresh(
+  payload: RuntimeProviderModelsRefreshRequest,
+): Promise<RuntimeProviderModelsRefreshResult> {
+  return postJson<RuntimeProviderModelsRefreshResult>('/api/v1/commands/runtime-provider-models-refresh', payload)
 }
 
 export function boardApprove(payload: BoardApproveRequest): Promise<CommandAck> {

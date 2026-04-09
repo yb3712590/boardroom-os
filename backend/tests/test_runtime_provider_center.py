@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from app.contracts.commands import RuntimeProviderUpsertCommand
+from app.core.runtime_provider_config import (
+    RuntimeProviderConfigStore,
+    RuntimeProviderStoredConfig,
+    build_provider_model_entry_ref,
+    resolve_provider_selection,
+    save_runtime_provider_command,
+)
+
+
+def _build_upsert_command() -> RuntimeProviderUpsertCommand:
+    return RuntimeProviderUpsertCommand.model_validate(
+        {
+            "providers": [
+                {
+                    "provider_id": "prov_primary",
+                    "type": "openai_responses_stream",
+                    "base_url": "https://api.example.test/v1",
+                    "api_key": "sk-test-secret",
+                    "alias": "",
+                    "preferred_model": "gpt-5.3-codex",
+                    "max_context_window": None,
+                    "enabled": True,
+                }
+            ],
+            "provider_model_entries": [
+                {
+                    "provider_id": "prov_primary",
+                    "model_name": "gpt-5.3-codex",
+                }
+            ],
+            "role_bindings": [
+                {
+                    "target_ref": "ceo_shadow",
+                    "provider_model_entry_refs": [
+                        build_provider_model_entry_ref("prov_primary", "gpt-5.3-codex")
+                    ],
+                    "max_context_window_override": None,
+                },
+                {
+                    "target_ref": "role_profile:frontend_engineer_primary",
+                    "provider_model_entry_refs": [],
+                    "max_context_window_override": None,
+                },
+            ],
+            "idempotency_key": "runtime-provider-upsert:center-test",
+        }
+    )
+
+
+def test_runtime_provider_store_discards_legacy_fixed_registry_and_starts_empty(tmp_path: Path) -> None:
+    config_path = tmp_path / "runtime-provider-config.json"
+    config_path.write_text(
+        """
+        {
+          "default_provider_id": "prov_openai_compat",
+          "providers": [
+            {
+              "provider_id": "prov_openai_compat",
+              "adapter_kind": "openai_compat",
+              "label": "OpenAI Compat",
+              "enabled": true,
+              "base_url": "https://api.example.test/v1",
+              "api_key": "sk-test-secret",
+              "model": "gpt-5.3-codex",
+              "timeout_sec": 30.0
+            }
+          ],
+          "role_bindings": []
+        }
+        """,
+        encoding="utf-8",
+    )
+    store = RuntimeProviderConfigStore(config_path)
+
+    loaded = store.load_saved_config()
+
+    assert loaded == RuntimeProviderStoredConfig(
+        providers=[],
+        provider_model_entries=[],
+        role_bindings=[],
+    )
+
+
+def test_save_runtime_provider_command_normalizes_alias_window_and_model_entry_ref(tmp_path: Path) -> None:
+    store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
+
+    ack = save_runtime_provider_command(store, _build_upsert_command())
+    loaded = store.load_saved_config()
+
+    assert ack.status == "ACCEPTED"
+    assert loaded is not None
+    assert loaded.providers[0].alias == "example"
+    assert loaded.providers[0].max_context_window == 1000000
+    assert loaded.provider_model_entries[0].entry_ref == build_provider_model_entry_ref(
+        "prov_primary",
+        "gpt-5.3-codex",
+    )
+
+
+def test_resolve_provider_selection_inherits_ceo_binding_and_provider_window(tmp_path: Path) -> None:
+    store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
+    save_runtime_provider_command(store, _build_upsert_command())
+    loaded = store.load_saved_config()
+
+    selection = resolve_provider_selection(
+        loaded,
+        target_ref="role_profile:frontend_engineer_primary",
+        employee_provider_id=None,
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == "prov_primary"
+    assert selection.provider_model_entry_ref == build_provider_model_entry_ref("prov_primary", "gpt-5.3-codex")
+    assert selection.actual_model == "gpt-5.3-codex"
+    assert selection.effective_max_context_window == 1000000
+
+
+def test_resolve_provider_selection_prefers_role_binding_and_window_override(tmp_path: Path) -> None:
+    store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
+    payload = {
+        "providers": [
+            {
+                "provider_id": "prov_primary",
+                "type": "openai_responses_stream",
+                "base_url": "https://api.example.test/v1",
+                "api_key": "sk-test-secret",
+                "alias": "",
+                "preferred_model": "gpt-5.3-codex",
+                "max_context_window": None,
+                "enabled": True,
+            },
+            {
+                "provider_id": "prov_backup",
+                "type": "openai_responses_non_stream",
+                "base_url": "https://api.backup.test/v1",
+                "api_key": "sk-backup-secret",
+                "alias": "backup",
+                "preferred_model": "gpt-4.1",
+                "max_context_window": 270000,
+                "enabled": True,
+            },
+        ],
+        "provider_model_entries": [
+            {
+                "provider_id": "prov_primary",
+                "model_name": "gpt-5.3-codex",
+            },
+            {
+                "provider_id": "prov_backup",
+                "model_name": "gpt-4.1",
+            },
+        ],
+        "role_bindings": [
+            {
+                "target_ref": "ceo_shadow",
+                "provider_model_entry_refs": [
+                    build_provider_model_entry_ref("prov_primary", "gpt-5.3-codex")
+                ],
+                "max_context_window_override": None,
+            },
+            {
+                "target_ref": "role_profile:frontend_engineer_primary",
+                "provider_model_entry_refs": [
+                    build_provider_model_entry_ref("prov_backup", "gpt-4.1")
+                ],
+                "max_context_window_override": 180000,
+            },
+        ],
+        "idempotency_key": "runtime-provider-upsert:center-role-override",
+    }
+    command = RuntimeProviderUpsertCommand.model_validate(payload)
+    save_runtime_provider_command(store, command)
+    loaded = store.load_saved_config()
+
+    selection = resolve_provider_selection(
+        loaded,
+        target_ref="role_profile:frontend_engineer_primary",
+        employee_provider_id=None,
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == "prov_backup"
+    assert selection.actual_model == "gpt-4.1"
+    assert selection.effective_max_context_window == 180000

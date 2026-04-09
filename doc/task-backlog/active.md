@@ -19,6 +19,8 @@
 - `P2-PRV-001 / P2-PRV-005 / P2-PRV-006` 已于 2026-04-07 手动纳入并收口：runtime provider 已从单一 OpenAI 表单升级为最小 registry，当前真实支持 `OpenAI Compat / Claude Code CLI`，并开放现有真实角色的默认 provider / model 绑定
 - `P2-PRV-002 / P2-PRV-003 / P2-PRV-004` 已于 2026-04-07 手动纳入并收口：provider registry 现在会暴露结构化 `capability_tags[]`、每个 provider 的 `health_status / health_reason`，并支持最小 `fallback_provider_ids[]`；运行时与 CEO 只在 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE` 时尝试满足目标能力底线的备选 provider
 - `P2-PRV-007 / P2-PRV-008` 已于 2026-04-08 手动提升并收口：`ticket-create` 与 `CEO create-ticket` 现已补入可选 `runtime_preference`；provider registry / projection / 前端设置抽屉现已补入 `cost_tier / participation_policy`；运行时与 CEO shadow 审计现在都会记录 `preferred_* / actual_* / selection_reason / policy_reason`
+- `P2-PRV-009 / P2-PRV-010` 已于 2026-04-09 完成（路线外补记）：Provider Settings 已重构成多 provider center，当前读写主形状为 `providers[] / provider_model_entries[] / role_bindings[]`；旧固定 provider 配置升级后按空配置处理，不再迁移保留
+- 当前新配置流程只真实开放 OpenAI-compatible Responses provider；连通性测试会在流式不支持时自动回退到非流式并返回标准化 provider 结果，模型刷新只保留仍存在的已勾选模型；CEO / role 绑定改成消费有序 `provider_model_entry_refs[]`，并支持 `max_context_window_override`
 - `P2-GOV-001` 已于 2026-04-07 手动纳入并收口：后端先补了治理模板基础目录，给后续角色目录和文档链打底
 - `P2-GOV-002` 已于 2026-04-07 手动纳入并收口：当前统一只读 `role_templates_catalog` 已覆盖 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段；`workforce` worker 还会返回 `source_template_id / source_fragment_refs`
 - `runtime-provider.future_binding_slots` 现在不再只看治理角色，而是从统一目录筛出未启用模板；当前最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`
@@ -54,5 +56,5 @@
 
 - `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
 - `P2-DEC-*`、`P2-GOV-*`、`P2-RLS-*` 与 `P2-UI-*` 已全部完成；当前没有新的可直接开启主线任务
-- `P2-PRV-*` 已全部完成；如果后续继续扩 provider 路由，仍应以后续 `P2-DEC-003/004` 已收口的边界为前置
+- `P2-PRV-*` 已全部完成；如果后续继续扩 provider 路由，仍应以后续 `P2-DEC-003/004` 已收口的边界为前置，并继续保持“新配置主流程只写已验证的 OpenAI-compatible Responses 能力”
 - 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
-import type { RuntimeProviderData, RuntimeProviderRoleBinding } from '../../types/api'
+import type {
+  RuntimeProviderConfigRequest,
+  RuntimeProviderConnectivityTestResult,
+  RuntimeProviderData,
+  RuntimeProviderModelEntry,
+} from '../../types/api'
 import { Drawer } from '../shared/Drawer'
-
-const OPENAI_PROVIDER_ID = 'prov_openai_compat'
-const CLAUDE_PROVIDER_ID = 'prov_claude_code'
 
 const CURRENT_ROLE_TARGETS = [
   { target_ref: 'ceo_shadow', target_label: 'CEO Shadow' },
@@ -16,24 +18,24 @@ const CURRENT_ROLE_TARGETS = [
   { target_ref: 'role_profile:platform_sre_primary', target_label: 'Platform / SRE' },
   { target_ref: 'role_profile:architect_primary', target_label: 'Architect / Design Review' },
   { target_ref: 'role_profile:cto_primary', target_label: 'CTO / Architecture Governance' },
-]
-
-const PROVIDER_CAPABILITY_OPTIONS = [
-  { value: 'structured_output', label: 'Structured output' },
-  { value: 'planning', label: 'Planning' },
-  { value: 'implementation', label: 'Implementation' },
-  { value: 'review', label: 'Review' },
 ] as const
 
-function formatBoundaryPathRef(ref: string) {
-  return ref.replaceAll('_', ' ')
+type EditableProvider = {
+  provider_id: string
+  type: string
+  base_url: string
+  api_key: string
+  alias: string
+  preferred_model: string
+  max_context_window: string
+  enabled: boolean
 }
 
 type EditableRoleBinding = {
   target_ref: string
   target_label: string
-  provider_id: string
-  model: string
+  provider_model_entry_refs: string[]
+  max_context_window_override: string
 }
 
 type ProviderSettingsDrawerProps = {
@@ -44,46 +46,80 @@ type ProviderSettingsDrawerProps = {
   submitting: boolean
   onClose: () => void
   onSave: (input: {
-    defaultProviderId: string | null
-    providers: Array<{
+    providers: RuntimeProviderConfigRequest[]
+    providerModelEntries: Array<{
       provider_id: string
-      adapter_kind: string
-      label: string
-      enabled: boolean
-      base_url: string | null
-      api_key: string | null
-      model: string | null
-      timeout_sec: number
-      reasoning_effort: string | null
-      command_path: string | null
-      capability_tags: string[]
-      cost_tier: string
-      participation_policy: string
-      fallback_provider_ids: string[]
+      model_name: string
     }>
     roleBindings: Array<{
       target_ref: string
-      provider_id: string
-      model: string | null
+      provider_model_entry_refs: string[]
+      max_context_window_override: number | null
     }>
   }) => Promise<void>
+  onConnectivityTest: (
+    provider: RuntimeProviderConfigRequest,
+  ) => Promise<RuntimeProviderConnectivityTestResult>
+  onRefreshModels: (providerId: string) => Promise<string[]>
 }
 
-function providerBindingMap(bindings: readonly RuntimeProviderRoleBinding[] | undefined) {
-  return new Map((bindings ?? []).map((binding) => [binding.target_ref, binding]))
+function buildEditableProviders(providerData: RuntimeProviderData | null): EditableProvider[] {
+  if (!providerData?.providers.length) {
+    return []
+  }
+  return providerData.providers.map((provider) => ({
+    provider_id: provider.provider_id,
+    type: provider.type,
+    base_url: provider.base_url ?? '',
+    api_key: '',
+    alias: provider.alias ?? '',
+    preferred_model: provider.preferred_model ?? provider.model ?? '',
+    max_context_window: String(provider.max_context_window ?? ''),
+    enabled: provider.enabled,
+  }))
 }
 
 function buildEditableBindings(providerData: RuntimeProviderData | null): EditableRoleBinding[] {
-  const bindingByRef = providerBindingMap(providerData?.role_bindings)
+  const bindingMap = new Map((providerData?.role_bindings ?? []).map((binding) => [binding.target_ref, binding]))
   return CURRENT_ROLE_TARGETS.map((target) => {
-    const binding = bindingByRef.get(target.target_ref)
+    const binding = bindingMap.get(target.target_ref)
     return {
       target_ref: target.target_ref,
       target_label: target.target_label,
-      provider_id: binding?.provider_id ?? '',
-      model: binding?.model ?? '',
+      provider_model_entry_refs: Array.from(binding?.provider_model_entry_refs ?? []),
+      max_context_window_override:
+        binding?.max_context_window_override == null ? '' : String(binding.max_context_window_override),
     }
   })
+}
+
+function buildSelectedEntryMap(providerData: RuntimeProviderData | null) {
+  const entries = new Set<string>()
+  for (const entry of providerData?.provider_model_entries ?? []) {
+    entries.add(entry.entry_ref)
+  }
+  return entries
+}
+
+function buildEntryRef(providerId: string, modelName: string) {
+  return `${providerId}::${modelName}`
+}
+
+function buildProviderPayload(provider: EditableProvider): RuntimeProviderConfigRequest {
+  return {
+    provider_id: provider.provider_id,
+    type: provider.type,
+    base_url: provider.base_url.trim(),
+    api_key: provider.api_key.trim(),
+    alias: provider.alias.trim() || null,
+    preferred_model: provider.preferred_model.trim() || null,
+    max_context_window: Number.parseInt(provider.max_context_window, 10) || null,
+    enabled: provider.enabled,
+  }
+}
+
+function entryLabel(entry: RuntimeProviderModelEntry) {
+  return `${entry.provider_label} / ${entry.model_name}`
 }
 
 export function ProviderSettingsDrawer({
@@ -94,40 +130,14 @@ export function ProviderSettingsDrawer({
   submitting,
   onClose,
   onSave,
+  onConnectivityTest,
+  onRefreshModels,
 }: ProviderSettingsDrawerProps) {
-  const openaiProvider = providerData?.providers.find((provider) => provider.provider_id === OPENAI_PROVIDER_ID)
-  const claudeProvider = providerData?.providers.find((provider) => provider.provider_id === CLAUDE_PROVIDER_ID)
-
-  const [mode, setMode] = useState(providerData?.mode ?? 'DETERMINISTIC')
-  const [openaiBaseUrl, setOpenaiBaseUrl] = useState(openaiProvider?.base_url ?? '')
-  const [openaiApiKey, setOpenaiApiKey] = useState('')
-  const [openaiModel, setOpenaiModel] = useState(openaiProvider?.model ?? '')
-  const [openaiTimeoutSec, setOpenaiTimeoutSec] = useState(String(openaiProvider?.timeout_sec ?? 30))
-  const [openaiReasoningEffort, setOpenaiReasoningEffort] = useState(openaiProvider?.reasoning_effort ?? '')
-  const [openaiCapabilityTags, setOpenaiCapabilityTags] = useState<string[]>(
-    Array.from(openaiProvider?.capability_tags ?? []),
-  )
-  const [openaiCostTier, setOpenaiCostTier] = useState(openaiProvider?.cost_tier ?? 'standard')
-  const [openaiParticipationPolicy, setOpenaiParticipationPolicy] = useState(
-    openaiProvider?.participation_policy ?? 'always_allowed',
-  )
-  const [openaiFallbackProviderId, setOpenaiFallbackProviderId] = useState(
-    openaiProvider?.fallback_provider_ids?.[0] ?? '',
-  )
-  const [claudeCommandPath, setClaudeCommandPath] = useState(claudeProvider?.command_path ?? '')
-  const [claudeModel, setClaudeModel] = useState(claudeProvider?.model ?? '')
-  const [claudeTimeoutSec, setClaudeTimeoutSec] = useState(String(claudeProvider?.timeout_sec ?? 30))
-  const [claudeCapabilityTags, setClaudeCapabilityTags] = useState<string[]>(
-    Array.from(claudeProvider?.capability_tags ?? []),
-  )
-  const [claudeCostTier, setClaudeCostTier] = useState(claudeProvider?.cost_tier ?? 'premium')
-  const [claudeParticipationPolicy, setClaudeParticipationPolicy] = useState(
-    claudeProvider?.participation_policy ?? 'low_frequency_only',
-  )
-  const [claudeFallbackProviderId, setClaudeFallbackProviderId] = useState(
-    claudeProvider?.fallback_provider_ids?.[0] ?? '',
-  )
+  const [providers, setProviders] = useState<EditableProvider[]>(buildEditableProviders(providerData))
   const [roleBindings, setRoleBindings] = useState<EditableRoleBinding[]>(buildEditableBindings(providerData))
+  const [availableModelsByProvider, setAvailableModelsByProvider] = useState<Record<string, string[]>>({})
+  const [selectedEntryRefs, setSelectedEntryRefs] = useState<Set<string>>(buildSelectedEntryMap(providerData))
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const hydratedOpenSessionRef = useRef(false)
 
   useEffect(() => {
@@ -135,34 +145,20 @@ export function ProviderSettingsDrawer({
       hydratedOpenSessionRef.current = false
       return
     }
-    if (hydratedOpenSessionRef.current) {
+    if (hydratedOpenSessionRef.current || providerData == null) {
       return
     }
-    if (providerData == null) {
-      return
-    }
-    const nextOpenaiProvider = providerData?.providers.find((provider) => provider.provider_id === OPENAI_PROVIDER_ID)
-    const nextClaudeProvider = providerData?.providers.find((provider) => provider.provider_id === CLAUDE_PROVIDER_ID)
-    setMode(providerData?.mode ?? 'DETERMINISTIC')
-    setOpenaiBaseUrl(nextOpenaiProvider?.base_url ?? '')
-    setOpenaiApiKey('')
-    setOpenaiModel(nextOpenaiProvider?.model ?? '')
-    setOpenaiTimeoutSec(String(nextOpenaiProvider?.timeout_sec ?? 30))
-    setOpenaiReasoningEffort(nextOpenaiProvider?.reasoning_effort ?? '')
-    setOpenaiCapabilityTags(Array.from(nextOpenaiProvider?.capability_tags ?? []))
-    setOpenaiCostTier(nextOpenaiProvider?.cost_tier ?? 'standard')
-    setOpenaiParticipationPolicy(nextOpenaiProvider?.participation_policy ?? 'always_allowed')
-    setOpenaiFallbackProviderId(nextOpenaiProvider?.fallback_provider_ids?.[0] ?? '')
-    setClaudeCommandPath(nextClaudeProvider?.command_path ?? '')
-    setClaudeModel(nextClaudeProvider?.model ?? '')
-    setClaudeTimeoutSec(String(nextClaudeProvider?.timeout_sec ?? 30))
-    setClaudeCapabilityTags(Array.from(nextClaudeProvider?.capability_tags ?? []))
-    setClaudeCostTier(nextClaudeProvider?.cost_tier ?? 'premium')
-    setClaudeParticipationPolicy(nextClaudeProvider?.participation_policy ?? 'low_frequency_only')
-    setClaudeFallbackProviderId(nextClaudeProvider?.fallback_provider_ids?.[0] ?? '')
+    setProviders(buildEditableProviders(providerData))
     setRoleBindings(buildEditableBindings(providerData))
+    setSelectedEntryRefs(buildSelectedEntryMap(providerData))
     hydratedOpenSessionRef.current = true
   }, [isOpen, providerData])
+
+  const updateProvider = (providerId: string, patch: Partial<EditableProvider>) => {
+    setProviders((current) =>
+      current.map((provider) => (provider.provider_id === providerId ? { ...provider, ...patch } : provider)),
+    )
+  }
 
   const updateBinding = (targetRef: string, patch: Partial<EditableRoleBinding>) => {
     setRoleBindings((current) =>
@@ -170,85 +166,116 @@ export function ProviderSettingsDrawer({
     )
   }
 
-  const toggleCapability = (
-    currentTags: string[],
-    nextTag: string,
-    setTags: (value: string[] | ((current: string[]) => string[])) => void,
-  ) => {
-    if (currentTags.includes(nextTag)) {
-      setTags(currentTags.filter((tag) => tag !== nextTag))
+  const toggleSelectedEntry = (entryRef: string) => {
+    setSelectedEntryRefs((current) => {
+      const next = new Set(current)
+      if (next.has(entryRef)) {
+        next.delete(entryRef)
+      } else {
+        next.add(entryRef)
+      }
+      return next
+    })
+  }
+
+  const handleAddProvider = () => {
+    const nextId = `prov_${providers.length + 1}`
+    setProviders((current) => [
+      ...current,
+      {
+        provider_id: nextId,
+        type: 'openai_responses_stream',
+        base_url: '',
+        api_key: '',
+        alias: '',
+        preferred_model: '',
+        max_context_window: '',
+        enabled: true,
+      },
+    ])
+  }
+
+  const handleConnectivityTest = async (providerId: string) => {
+    const provider = providers.find((item) => item.provider_id === providerId)
+    if (!provider) {
       return
     }
-    const ordered = PROVIDER_CAPABILITY_OPTIONS.map((option) => option.value).filter(
-      (option) => option === nextTag || currentTags.includes(option),
-    )
-    setTags(ordered)
+    const result = await onConnectivityTest(buildProviderPayload(provider))
+    if (result.resolved_provider != null) {
+      updateProvider(providerId, {
+        type: result.resolved_provider.type,
+        base_url: result.resolved_provider.base_url,
+        alias: result.resolved_provider.alias ?? '',
+        preferred_model: result.resolved_provider.preferred_model ?? '',
+        max_context_window: String(result.resolved_provider.max_context_window ?? ''),
+        enabled: result.resolved_provider.enabled,
+      })
+    }
+    setStatusMessage(result.ok ? `Connectivity ok for ${providerId}.` : `Connectivity failed for ${providerId}.`)
+  }
+
+  const handleRefreshModels = async (providerId: string) => {
+    const result = await onRefreshModels(providerId)
+    const allowedRefs = new Set(result.map((modelName) => buildEntryRef(providerId, modelName)))
+    setAvailableModelsByProvider((current) => ({ ...current, [providerId]: result }))
+    setSelectedEntryRefs((current) => {
+      const next = new Set(
+        Array.from(current).filter((entryRef) => !entryRef.startsWith(`${providerId}::`) || allowedRefs.has(entryRef)),
+      )
+      for (const modelName of result) {
+        const entryRef = buildEntryRef(providerId, modelName)
+        if (providerData?.provider_model_entries.some((entry) => entry.entry_ref === entryRef)) {
+          next.add(entryRef)
+        }
+      }
+      return next
+    })
   }
 
   const handleSave = () => {
-    const selectedProviderIds = new Set(
-      roleBindings.map((binding) => binding.provider_id).filter((providerId) => providerId.length > 0),
-    )
-    const defaultProviderId =
-      mode === 'OPENAI_COMPAT' ? OPENAI_PROVIDER_ID : mode === 'CLAUDE_CODE_CLI' ? CLAUDE_PROVIDER_ID : null
-    if (defaultProviderId) {
-      selectedProviderIds.add(defaultProviderId)
-    }
+    const providerModelEntries = Array.from(selectedEntryRefs)
+      .map((entryRef) => {
+        const [providerId, modelName] = entryRef.split('::')
+        if (!providerId || !modelName) {
+          return null
+        }
+        return {
+          provider_id: providerId,
+          model_name: modelName,
+        }
+      })
+      .filter((item): item is { provider_id: string; model_name: string } => item != null)
 
     void onSave({
-      defaultProviderId,
-      providers: [
-        {
-          provider_id: OPENAI_PROVIDER_ID,
-          adapter_kind: 'openai_compat',
-          label: 'OpenAI Compat',
-          enabled:
-            selectedProviderIds.has(OPENAI_PROVIDER_ID) ||
-            Boolean(openaiBaseUrl.trim() || openaiModel.trim() || openaiApiKey.trim()),
-          base_url: openaiBaseUrl.trim() || null,
-          api_key: openaiApiKey.trim() || null,
-          model: openaiModel.trim() || null,
-          timeout_sec: Number.parseFloat(openaiTimeoutSec) || 30,
-          reasoning_effort: openaiReasoningEffort || null,
-          command_path: null,
-          capability_tags: openaiCapabilityTags,
-          cost_tier: openaiCostTier,
-          participation_policy: openaiParticipationPolicy,
-          fallback_provider_ids: openaiFallbackProviderId ? [openaiFallbackProviderId] : [],
-        },
-        {
-          provider_id: CLAUDE_PROVIDER_ID,
-          adapter_kind: 'claude_code_cli',
-          label: 'Claude Code CLI',
-          enabled:
-            selectedProviderIds.has(CLAUDE_PROVIDER_ID) || Boolean(claudeCommandPath.trim() || claudeModel.trim()),
-          base_url: null,
-          api_key: null,
-          model: claudeModel.trim() || null,
-          timeout_sec: Number.parseFloat(claudeTimeoutSec) || 30,
-          reasoning_effort: null,
-          command_path: claudeCommandPath.trim() || null,
-          capability_tags: claudeCapabilityTags,
-          cost_tier: claudeCostTier,
-          participation_policy: claudeParticipationPolicy,
-          fallback_provider_ids: claudeFallbackProviderId ? [claudeFallbackProviderId] : [],
-        },
-      ],
-      roleBindings: roleBindings
-        .filter((binding) => binding.provider_id.length > 0)
-        .map((binding) => ({
-          target_ref: binding.target_ref,
-          provider_id: binding.provider_id,
-          model: binding.model.trim() || null,
-        })),
+      providers: providers.map(buildProviderPayload),
+      providerModelEntries,
+      roleBindings: roleBindings.map((binding) => ({
+        target_ref: binding.target_ref,
+        provider_model_entry_refs: binding.provider_model_entry_refs,
+        max_context_window_override: Number.parseInt(binding.max_context_window_override, 10) || null,
+      })),
     })
   }
+
+  const allEntries: RuntimeProviderModelEntry[] = [
+    ...(providerData?.provider_model_entries ?? []),
+    ...providers.flatMap((provider) =>
+      (availableModelsByProvider[provider.provider_id] ?? []).map((modelName) => ({
+        entry_ref: buildEntryRef(provider.provider_id, modelName),
+        provider_id: provider.provider_id,
+        provider_label: provider.alias || provider.provider_id,
+        model_name: modelName,
+        max_context_window: Number.parseInt(provider.max_context_window, 10) || 0,
+      })),
+    ),
+  ].filter(
+    (entry, index, entries) => entries.findIndex((candidate) => candidate.entry_ref === entry.entry_ref) === index,
+  )
 
   return (
     <Drawer isOpen={isOpen} onClose={onClose} title="Runtime providers" subtitle="Runtime">
       <p className="muted-copy">
-        Manage the local provider registry, choose the default execution path, and bind current live roles to
-        OpenAI Compat or Claude Code CLI without leaving the boardroom view.
+        Manage provider connections, load selectable models, and bind CEO or delivery roles to provider-model entries.
       </p>
 
       {loading ? (
@@ -276,286 +303,149 @@ export function ProviderSettingsDrawer({
             </div>
           </section>
           <p className="muted-copy">{providerData?.effective_reason ?? 'Runtime provider status is unavailable.'}</p>
+          {statusMessage ? <p className="muted-copy">{statusMessage}</p> : null}
 
           <section className="review-room-action-panel provider-settings-panel">
-            <label>
-              <span className="field-label">Provider mode</span>
-              <select
-                aria-label="Provider mode"
-                value={mode}
-                onChange={(event) => setMode(event.target.value)}
-                disabled={submitting}
-              >
-                <option value="DETERMINISTIC">Local deterministic</option>
-                <option value="OPENAI_COMPAT">OpenAI Compat</option>
-                <option value="CLAUDE_CODE_CLI">Claude Code CLI</option>
-              </select>
-            </label>
+            <button type="button" className="secondary-button" onClick={handleAddProvider}>
+              Add provider
+            </button>
 
-            <section className="review-room-overview">
-              <div>
-                <span className="eyebrow">OpenAI key</span>
-                <p>{openaiProvider?.api_key_masked ?? 'No saved key'}</p>
-              </div>
-              <div>
-                <span className="eyebrow">Claude command</span>
-                <p>{claudeProvider?.command_path ?? 'Not configured'}</p>
-              </div>
-              <div>
-                <span className="eyebrow">OpenAI bindings</span>
-                <p>{openaiProvider?.configured_worker_count ?? 0}</p>
-              </div>
-              <div>
-                <span className="eyebrow">Claude bindings</span>
-                <p>{claudeProvider?.configured_worker_count ?? 0}</p>
-              </div>
-              <div>
-                <span className="eyebrow">OpenAI health</span>
-                <p>{openaiProvider?.health_status ?? 'Unknown'}</p>
-              </div>
-              <div>
-                <span className="eyebrow">Claude health</span>
-                <p>{claudeProvider?.health_status ?? 'Unknown'}</p>
-              </div>
-            </section>
-            <p className="muted-copy">{openaiProvider?.health_reason ?? 'OpenAI health details are unavailable.'}</p>
-            <p className="muted-copy">{claudeProvider?.health_reason ?? 'Claude health details are unavailable.'}</p>
+            {providers.map((provider) => (
+              <section key={provider.provider_id} className="provider-settings-panel">
+                <h3>{provider.provider_id}</h3>
+                <label>
+                  <span className="field-label">Provider type</span>
+                  <select
+                    aria-label={`Provider type ${provider.provider_id}`}
+                    value={provider.type}
+                    onChange={(event) => updateProvider(provider.provider_id, { type: event.target.value })}
+                  >
+                    <option value="openai_responses_stream">OpenAI Responses stream</option>
+                    <option value="openai_responses_non_stream">OpenAI Responses non-stream</option>
+                    <option value="claude_stream">Claude stream (reserved)</option>
+                    <option value="gemini_stream">Gemini stream (reserved)</option>
+                  </select>
+                </label>
+                <label>
+                  <span className="field-label">Base URL</span>
+                  <input
+                    aria-label={`Provider base URL ${provider.provider_id}`}
+                    value={provider.base_url}
+                    onChange={(event) => updateProvider(provider.provider_id, { base_url: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span className="field-label">API key</span>
+                  <input
+                    aria-label={`Provider API key ${provider.provider_id}`}
+                    type="password"
+                    value={provider.api_key}
+                    onChange={(event) => updateProvider(provider.provider_id, { api_key: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span className="field-label">Alias</span>
+                  <input
+                    aria-label={`Provider alias ${provider.provider_id}`}
+                    value={provider.alias}
+                    onChange={(event) => updateProvider(provider.provider_id, { alias: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span className="field-label">Preferred model</span>
+                  <input
+                    aria-label={`Provider preferred model ${provider.provider_id}`}
+                    value={provider.preferred_model}
+                    onChange={(event) => updateProvider(provider.provider_id, { preferred_model: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span className="field-label">Context window</span>
+                  <input
+                    aria-label={`Provider context window ${provider.provider_id}`}
+                    type="number"
+                    value={provider.max_context_window}
+                    onChange={(event) => updateProvider(provider.provider_id, { max_context_window: event.target.value })}
+                  />
+                </label>
+                <div className="provider-settings-grid">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void handleConnectivityTest(provider.provider_id)}
+                  >
+                    {`Test ${provider.provider_id} connectivity`}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void handleRefreshModels(provider.provider_id)}
+                  >
+                    {`Load models for ${provider.provider_id}`}
+                  </button>
+                </div>
 
-            <label>
-              <span className="field-label">OpenAI Base URL</span>
-              <input
-                aria-label="OpenAI Base URL"
-                value={openaiBaseUrl}
-                onChange={(event) => setOpenaiBaseUrl(event.target.value)}
-              />
-            </label>
-            <label>
-              <span className="field-label">OpenAI API Key</span>
-              <input
-                aria-label="OpenAI API Key"
-                type="password"
-                value={openaiApiKey}
-                placeholder={openaiProvider?.api_key_masked ?? ''}
-                onChange={(event) => setOpenaiApiKey(event.target.value)}
-              />
-            </label>
-            <label>
-              <span className="field-label">OpenAI model</span>
-              <input
-                aria-label="OpenAI model"
-                value={openaiModel}
-                onChange={(event) => setOpenaiModel(event.target.value)}
-              />
-            </label>
-            <div className="provider-settings-grid">
-              <label>
-                <span className="field-label">OpenAI timeout (sec)</span>
-                <input
-                  aria-label="OpenAI timeout (sec)"
-                  type="number"
-                  min="1"
-                  value={openaiTimeoutSec}
-                  onChange={(event) => setOpenaiTimeoutSec(event.target.value)}
-                />
-              </label>
-              <label>
-                <span className="field-label">OpenAI reasoning effort</span>
-                <select
-                  aria-label="OpenAI reasoning effort"
-                  value={openaiReasoningEffort}
-                  onChange={(event) => setOpenaiReasoningEffort(event.target.value)}
-                >
-                  <option value="">Default</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="xhigh">Extra high</option>
-                </select>
-              </label>
-            </div>
-
-            <div>
-              <span className="field-label">OpenAI capability tags</span>
-              <div className="provider-settings-grid">
-                {PROVIDER_CAPABILITY_OPTIONS.map((option) => (
-                  <label key={`openai-capability-${option.value}`}>
-                    <input
-                      aria-label={`OpenAI Compat capability ${option.value}`}
-                      type="checkbox"
-                      checked={openaiCapabilityTags.includes(option.value)}
-                      onChange={() => toggleCapability(openaiCapabilityTags, option.value, setOpenaiCapabilityTags)}
-                    />
-                    <span>{option.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="provider-settings-grid">
-              <label>
-                <span className="field-label">OpenAI cost tier</span>
-                <select
-                  aria-label="OpenAI cost tier"
-                  value={openaiCostTier}
-                  onChange={(event) => setOpenaiCostTier(event.target.value)}
-                >
-                  <option value="standard">Standard</option>
-                  <option value="premium">Premium</option>
-                </select>
-              </label>
-              <label>
-                <span className="field-label">OpenAI participation policy</span>
-                <select
-                  aria-label="OpenAI participation policy"
-                  value={openaiParticipationPolicy}
-                  onChange={(event) => setOpenaiParticipationPolicy(event.target.value)}
-                >
-                  <option value="always_allowed">Always allowed</option>
-                  <option value="low_frequency_only">Low frequency only</option>
-                </select>
-              </label>
-            </div>
-
-            <label>
-              <span className="field-label">OpenAI fallback provider</span>
-              <select
-                aria-label="OpenAI Compat fallback provider"
-                value={openaiFallbackProviderId}
-                onChange={(event) => setOpenaiFallbackProviderId(event.target.value)}
-              >
-                <option value="">No fallback</option>
-                <option value={CLAUDE_PROVIDER_ID}>Claude Code CLI</option>
-              </select>
-            </label>
-
-            <label>
-              <span className="field-label">Claude command path</span>
-              <input
-                aria-label="Claude command path"
-                value={claudeCommandPath}
-                onChange={(event) => setClaudeCommandPath(event.target.value)}
-              />
-            </label>
-            <label>
-              <span className="field-label">Claude model</span>
-              <input
-                aria-label="Claude model"
-                value={claudeModel}
-                onChange={(event) => setClaudeModel(event.target.value)}
-              />
-            </label>
-            <label>
-              <span className="field-label">Claude timeout (sec)</span>
-              <input
-                aria-label="Claude timeout (sec)"
-                type="number"
-                min="1"
-                value={claudeTimeoutSec}
-                onChange={(event) => setClaudeTimeoutSec(event.target.value)}
-              />
-            </label>
+                {(availableModelsByProvider[provider.provider_id] ?? []).length ? (
+                  <div>
+                    <span className="field-label">Selectable models</span>
+                    <div className="provider-settings-grid">
+                      {availableModelsByProvider[provider.provider_id].map((modelName) => {
+                        const entryRef = buildEntryRef(provider.provider_id, modelName)
+                        return (
+                          <label key={entryRef}>
+                            <input
+                              aria-label={`Model ${modelName} for ${provider.provider_id}`}
+                              type="checkbox"
+                              checked={selectedEntryRefs.has(entryRef)}
+                              onChange={() => toggleSelectedEntry(entryRef)}
+                            />
+                            <span>{modelName}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            ))}
 
             <div>
-              <span className="field-label">Claude capability tags</span>
-              <div className="provider-settings-grid">
-                {PROVIDER_CAPABILITY_OPTIONS.map((option) => (
-                  <label key={`claude-capability-${option.value}`}>
-                    <input
-                      aria-label={`Claude Code CLI capability ${option.value}`}
-                      type="checkbox"
-                      checked={claudeCapabilityTags.includes(option.value)}
-                      onChange={() => toggleCapability(claudeCapabilityTags, option.value, setClaudeCapabilityTags)}
-                    />
-                    <span>{option.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="provider-settings-grid">
-              <label>
-                <span className="field-label">Claude cost tier</span>
-                <select
-                  aria-label="Claude cost tier"
-                  value={claudeCostTier}
-                  onChange={(event) => setClaudeCostTier(event.target.value)}
-                >
-                  <option value="standard">Standard</option>
-                  <option value="premium">Premium</option>
-                </select>
-              </label>
-              <label>
-                <span className="field-label">Claude participation policy</span>
-                <select
-                  aria-label="Claude participation policy"
-                  value={claudeParticipationPolicy}
-                  onChange={(event) => setClaudeParticipationPolicy(event.target.value)}
-                >
-                  <option value="always_allowed">Always allowed</option>
-                  <option value="low_frequency_only">Low frequency only</option>
-                </select>
-              </label>
-            </div>
-
-            <label>
-              <span className="field-label">Claude fallback provider</span>
-              <select
-                aria-label="Claude Code CLI fallback provider"
-                value={claudeFallbackProviderId}
-                onChange={(event) => setClaudeFallbackProviderId(event.target.value)}
-              >
-                <option value="">No fallback</option>
-                <option value={OPENAI_PROVIDER_ID}>OpenAI Compat</option>
-              </select>
-            </label>
-
-            <div>
-              <span className="field-label">Current role bindings</span>
+              <span className="field-label">Role bindings</span>
               <div className="provider-settings-grid">
                 {roleBindings.map((binding) => (
                   <label key={binding.target_ref}>
                     <span className="field-label">{binding.target_label}</span>
-                    <select
-                      aria-label={`${binding.target_label} provider`}
-                      value={binding.provider_id}
-                      onChange={(event) => updateBinding(binding.target_ref, { provider_id: event.target.value })}
-                    >
-                      <option value="">Follow default</option>
-                      <option value={OPENAI_PROVIDER_ID}>OpenAI Compat</option>
-                      <option value={CLAUDE_PROVIDER_ID}>Claude Code CLI</option>
-                    </select>
+                    <div className="provider-settings-grid">
+                      {allEntries.map((entry) => (
+                        <label key={`${binding.target_ref}:${entry.entry_ref}`}>
+                          <input
+                            aria-label={`${binding.target_label} uses ${entry.entry_ref}`}
+                            type="checkbox"
+                            checked={binding.provider_model_entry_refs.includes(entry.entry_ref)}
+                            onChange={() => {
+                              const nextRefs = binding.provider_model_entry_refs.includes(entry.entry_ref)
+                                ? binding.provider_model_entry_refs.filter((value) => value !== entry.entry_ref)
+                                : [...binding.provider_model_entry_refs, entry.entry_ref]
+                              updateBinding(binding.target_ref, { provider_model_entry_refs: nextRefs })
+                            }}
+                          />
+                          <span>{entryLabel(entry)}</span>
+                        </label>
+                      ))}
+                    </div>
                     <input
-                      aria-label={`${binding.target_label} model override`}
-                      value={binding.model}
-                      placeholder="Model override (optional)"
-                      onChange={(event) => updateBinding(binding.target_ref, { model: event.target.value })}
+                      aria-label={`${binding.target_label} context window override`}
+                      type="number"
+                      value={binding.max_context_window_override}
+                      placeholder="Inherit provider window"
+                      onChange={(event) =>
+                        updateBinding(binding.target_ref, { max_context_window_override: event.target.value })
+                      }
                     />
                   </label>
                 ))}
               </div>
             </div>
-
-            {providerData?.future_binding_slots?.length ? (
-              <div>
-                <span className="field-label">Reserved bindings</span>
-                <p className="muted-copy">
-                  Catalog-only roles stay read-only here until a later mainline role intake round.
-                </p>
-                <div className="provider-settings-grid">
-                  {providerData.future_binding_slots.map((slot) => (
-                    <label key={slot.target_ref}>
-                      <span className="field-label">{slot.label}</span>
-                      <input aria-label={`${slot.label} status`} value={`${slot.status}: ${slot.reason}`} disabled />
-                      {slot.blocked_path_refs.length > 0 ? (
-                        <span className="muted-copy">
-                          {`Blocked surfaces: ${slot.blocked_path_refs.map(formatBoundaryPathRef).join(', ')}`}
-                        </span>
-                      ) : null}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            ) : null}
 
             <button type="button" className="secondary-button" disabled={submitting} onClick={handleSave}>
               {submitting ? 'Saving...' : 'Save runtime settings'}

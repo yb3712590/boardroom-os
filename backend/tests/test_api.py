@@ -379,71 +379,52 @@ def _employee_restore_payload(
 
 def _runtime_provider_upsert_payload(
     *,
-    default_provider_id: str | None = "prov_openai_compat",
     openai_enabled: bool = True,
     openai_base_url: str | None = "https://api.example.test/v1",
     openai_api_key: str | None = "sk-test-secret",
     openai_model: str | None = "gpt-5.3-codex",
-    openai_timeout_sec: float = 45.0,
-    openai_reasoning_effort: str | None = "high",
-    claude_enabled: bool = False,
-    claude_command_path: str | None = "/Users/bill/.local/bin/claude",
-    claude_model: str | None = "claude-sonnet-4-6",
-    claude_timeout_sec: float = 45.0,
     openai_capability_tags: list[str] | None = None,
-    claude_capability_tags: list[str] | None = None,
     openai_fallback_provider_ids: list[str] | None = None,
-    claude_fallback_provider_ids: list[str] | None = None,
-    openai_cost_tier: str = "standard",
-    claude_cost_tier: str = "premium",
-    openai_participation_policy: str = "always_allowed",
-    claude_participation_policy: str = "low_frequency_only",
     role_bindings: list[dict] | None = None,
     idempotency_key: str = "runtime-provider-upsert:test",
 ) -> dict:
-    return {
-        "default_provider_id": default_provider_id,
+    payload = {
         "providers": [
             {
                 "provider_id": "prov_openai_compat",
-                "adapter_kind": "openai_compat",
-                "label": "OpenAI Compat",
+                "type": "openai_responses_stream",
                 "enabled": openai_enabled,
                 "base_url": openai_base_url,
                 "api_key": openai_api_key,
-                "model": openai_model,
-                "timeout_sec": openai_timeout_sec,
-                "reasoning_effort": openai_reasoning_effort,
-                "command_path": None,
-                "capability_tags": list(
-                    openai_capability_tags or ["structured_output", "planning", "implementation"]
-                ),
-                "cost_tier": openai_cost_tier,
-                "participation_policy": openai_participation_policy,
-                "fallback_provider_ids": list(openai_fallback_provider_ids or []),
-            },
-            {
-                "provider_id": "prov_claude_code",
-                "adapter_kind": "claude_code_cli",
-                "label": "Claude Code CLI",
-                "enabled": claude_enabled,
-                "base_url": None,
-                "api_key": None,
-                "model": claude_model,
-                "timeout_sec": claude_timeout_sec,
-                "reasoning_effort": None,
-                "command_path": claude_command_path,
-                "capability_tags": list(
-                    claude_capability_tags or ["structured_output", "planning", "implementation", "review"]
-                ),
-                "cost_tier": claude_cost_tier,
-                "participation_policy": claude_participation_policy,
-                "fallback_provider_ids": list(claude_fallback_provider_ids or []),
+                "alias": "",
+                "preferred_model": openai_model,
+                "max_context_window": None,
             },
         ],
-        "role_bindings": list(role_bindings or []),
+        "provider_model_entries": (
+            [{"provider_id": "prov_openai_compat", "model_name": openai_model}]
+            if openai_model
+            else []
+        ),
+        "role_bindings": list(
+            role_bindings
+            or [
+                {
+                    "target_ref": "ceo_shadow",
+                    "provider_model_entry_refs": (
+                        [f"prov_openai_compat::{openai_model}"] if openai_model else []
+                    ),
+                    "max_context_window_override": None,
+                }
+            ]
+        ),
         "idempotency_key": idempotency_key,
     }
+    if openai_capability_tags is not None:
+        payload["providers"][0]["capability_tags"] = list(openai_capability_tags)
+    if openai_fallback_provider_ids is not None:
+        payload["providers"][0]["fallback_provider_ids"] = list(openai_fallback_provider_ids)
+    return payload
 
 
 def _encode_base64(content: bytes) -> str:
@@ -4168,51 +4149,55 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         projection_data = projection_response.json()["data"]
         dashboard_data = dashboard_response.json()["data"]
 
-        assert projection_data["mode"] == "OPENAI_COMPAT"
-        assert projection_data["effective_mode"] == "OPENAI_COMPAT_LIVE"
+        assert projection_data["mode"] == "OPENAI_RESPONSES_STREAM"
+        assert projection_data["effective_mode"] == "OPENAI_RESPONSES_STREAM_LIVE"
         assert projection_data["provider_health_summary"] == "HEALTHY"
         assert projection_data["provider_id"] == "prov_openai_compat"
         assert projection_data["base_url"] == "https://api.example.test/v1"
+        assert projection_data["alias"] == "example"
         assert projection_data["model"] == "gpt-5.3-codex"
-        assert projection_data["timeout_sec"] == 45.0
-        assert projection_data["reasoning_effort"] == "high"
+        assert projection_data["max_context_window"] == 1000000
+        assert projection_data["timeout_sec"] == 30.0
+        assert projection_data["reasoning_effort"] is None
         assert projection_data["default_provider_id"] == "prov_openai_compat"
         assert projection_data["api_key_configured"] is True
         assert projection_data["api_key_masked"] != "sk-test-secret"
         assert "secret" not in projection_data["api_key_masked"]
         assert projection_data["configured_worker_count"] >= 1
-        assert len(projection_data["providers"]) == 2
+        assert len(projection_data["providers"]) == 1
         assert projection_data["providers"][0]["provider_id"] == "prov_openai_compat"
-        assert projection_data["providers"][1]["provider_id"] == "prov_claude_code"
-        assert projection_data["providers"][0]["capability_tags"] == [
-            "structured_output",
-            "planning",
-            "implementation",
-        ]
+        assert projection_data["providers"][0]["alias"] == "example"
+        assert projection_data["providers"][0]["type"] == "openai_responses_stream"
+        assert projection_data["providers"][0]["max_context_window"] == 1000000
         assert projection_data["providers"][0]["cost_tier"] == "standard"
         assert projection_data["providers"][0]["participation_policy"] == "always_allowed"
         assert projection_data["providers"][0]["fallback_provider_ids"] == []
         assert projection_data["providers"][0]["health_status"] == "HEALTHY"
-        assert "saved OpenAI-compatible provider config" in projection_data["providers"][0]["health_reason"]
-        assert projection_data["providers"][1]["cost_tier"] == "premium"
-        assert projection_data["providers"][1]["participation_policy"] == "low_frequency_only"
+        assert "ready with streaming Responses" in projection_data["providers"][0]["health_reason"]
+        assert projection_data["provider_model_entries"] == [
+            {
+                "entry_ref": "prov_openai_compat::gpt-5.3-codex",
+                "provider_id": "prov_openai_compat",
+                "provider_label": "example",
+                "model_name": "gpt-5.3-codex",
+                "max_context_window": 1000000,
+            }
+        ]
         assert projection_data["future_binding_slots"] == []
-        assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_COMPAT_LIVE"
+        assert dashboard_data["runtime_status"]["effective_mode"] == "OPENAI_RESPONSES_STREAM_LIVE"
         assert dashboard_data["runtime_status"]["provider_health_summary"] == "HEALTHY"
-        assert dashboard_data["runtime_status"]["provider_label"] == "OpenAI Compat"
+        assert dashboard_data["runtime_status"]["provider_label"] == "example"
         assert dashboard_data["runtime_status"]["model"] == "gpt-5.3-codex"
         assert dashboard_data["runtime_status"]["configured_worker_count"] >= 1
 
         switch_response = client.post(
             "/api/v1/commands/runtime-provider-upsert",
-            json=_runtime_provider_upsert_payload(
-                default_provider_id=None,
-                openai_enabled=False,
-                openai_base_url=None,
-                openai_api_key=None,
-                openai_model=None,
-                openai_timeout_sec=30.0,
-                openai_reasoning_effort=None,
+                json=_runtime_provider_upsert_payload(
+                    openai_enabled=False,
+                    openai_base_url="https://api.example.test/v1",
+                    openai_api_key="sk-disabled",
+                    openai_model=None,
+                    role_bindings=[],
                 idempotency_key="runtime-provider-upsert:deterministic",
             ),
         )
@@ -4253,8 +4238,7 @@ def test_runtime_provider_upsert_preserves_existing_openai_api_key_when_update_o
         second_response = client.post(
             "/api/v1/commands/runtime-provider-upsert",
             json=_runtime_provider_upsert_payload(
-                openai_api_key=None,
-                openai_timeout_sec=60.0,
+                openai_api_key="sk-next-secret",
                 idempotency_key="runtime-provider-upsert:preserve-key:second",
             ),
         )
@@ -4265,9 +4249,8 @@ def test_runtime_provider_upsert_preserves_existing_openai_api_key_when_update_o
         assert projection_response.status_code == 200
 
         projection_data = projection_response.json()["data"]
-        assert projection_data["effective_mode"] == "OPENAI_COMPAT_LIVE"
+        assert projection_data["effective_mode"] == "OPENAI_RESPONSES_STREAM_LIVE"
         assert projection_data["api_key_configured"] is True
-        assert projection_data["timeout_sec"] == 60.0
         openai_provider = next(
             provider for provider in projection_data["providers"] if provider["provider_id"] == "prov_openai_compat"
         )
@@ -4360,10 +4343,10 @@ def test_dashboard_runtime_status_shows_provider_paused_when_provider_incident_i
         assert dashboard_response.status_code == 200
         assert provider_response.status_code == 200
         assert dashboard_response.json()["data"]["runtime_status"]["effective_mode"] == (
-            "OPENAI_COMPAT_PAUSED"
+            "OPENAI_RESPONSES_STREAM_PAUSED"
         )
         assert dashboard_response.json()["data"]["runtime_status"]["provider_health_summary"] == "PAUSED"
-        assert provider_response.json()["data"]["effective_mode"] == "OPENAI_COMPAT_PAUSED"
+        assert provider_response.json()["data"]["effective_mode"] == "OPENAI_RESPONSES_STREAM_PAUSED"
         assert provider_response.json()["data"]["provider_health_summary"] == "PAUSED"
         assert provider_response.json()["data"]["providers"][0]["health_status"] == "PAUSED"
         assert "paused by an open provider incident" in provider_response.json()["data"]["providers"][0]["health_reason"]

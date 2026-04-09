@@ -133,7 +133,9 @@ from app.core.runtime_provider_config import (
     RuntimeProviderConfigStore,
     count_configured_workers,
     find_provider_entry,
+    find_provider_model_entry,
     mask_api_key,
+    resolve_provider_selection,
     resolve_runtime_provider_config,
     runtime_target_label,
     runtime_provider_effective_mode,
@@ -233,22 +235,29 @@ def _build_runtime_provider_projection_data(
     config = resolve_runtime_provider_config(runtime_provider_store)
     effective_mode, effective_reason = runtime_provider_effective_mode(config, repository)
     health_summary = runtime_provider_health_summary(config, repository)
-    default_provider = find_provider_entry(config, config.default_provider_id)
+    default_selection = resolve_provider_selection(
+        config,
+        target_ref="ceo_shadow",
+        employee_provider_id=None,
+    )
+    default_provider = default_selection.provider if default_selection is not None else None
     return RuntimeProviderProjectionData(
         mode=(
             "DETERMINISTIC"
             if default_provider is None
             else (
-                "OPENAI_COMPAT"
-                if default_provider.adapter_kind == "openai_compat"
-                else "CLAUDE_CODE_CLI"
+                "OPENAI_RESPONSES_STREAM"
+                if str(default_provider.type) == "openai_responses_stream"
+                else "OPENAI_RESPONSES_NON_STREAM"
             )
         ),
         effective_mode=effective_mode,
         provider_health_summary=health_summary,
         provider_id=default_provider.provider_id if default_provider is not None else None,
         base_url=default_provider.base_url if default_provider is not None else None,
-        model=default_provider.model if default_provider is not None else None,
+        alias=default_provider.alias if default_provider is not None else None,
+        model=default_provider.preferred_model if default_provider is not None else None,
+        max_context_window=default_provider.max_context_window if default_provider is not None else 0,
         timeout_sec=default_provider.timeout_sec if default_provider is not None else 30.0,
         reasoning_effort=default_provider.reasoning_effort if default_provider is not None else None,
         api_key_configured=bool(default_provider.api_key) if default_provider is not None else False,
@@ -263,13 +272,17 @@ def _build_runtime_provider_projection_data(
         providers=[
             {
                 "provider_id": provider.provider_id,
+                "type": provider.type.value if hasattr(provider.type, "value") else str(provider.type),
                 "adapter_kind": provider.adapter_kind,
                 "label": provider.label,
                 "enabled": provider.enabled,
                 "base_url": provider.base_url,
+                "alias": provider.alias,
                 "api_key_configured": bool(provider.api_key),
                 "api_key_masked": mask_api_key(provider.api_key),
-                "model": provider.model,
+                "model": provider.preferred_model,
+                "preferred_model": provider.preferred_model,
+                "max_context_window": provider.max_context_window,
                 "timeout_sec": provider.timeout_sec,
                 "reasoning_effort": provider.reasoning_effort,
                 "command_path": provider.command_path,
@@ -284,12 +297,30 @@ def _build_runtime_provider_projection_data(
             }
             for provider in config.providers
         ],
+        provider_model_entries=[
+            {
+                "entry_ref": entry.entry_ref,
+                "provider_id": entry.provider_id,
+                "provider_label": (
+                    find_provider_entry(config, entry.provider_id).alias
+                    if find_provider_entry(config, entry.provider_id) is not None
+                    else entry.provider_id
+                ),
+                "model_name": entry.model_name,
+                "max_context_window": (
+                    find_provider_entry(config, entry.provider_id).max_context_window
+                    if find_provider_entry(config, entry.provider_id) is not None
+                    else 0
+                ),
+            }
+            for entry in config.provider_model_entries
+        ],
         role_bindings=[
             {
                 "target_ref": binding.target_ref,
                 "target_label": runtime_target_label(binding.target_ref),
-                "provider_id": binding.provider_id,
-                "model": binding.model,
+                "provider_model_entry_refs": list(binding.provider_model_entry_refs),
+                "max_context_window_override": binding.max_context_window_override,
             }
             for binding in config.role_bindings
         ],
@@ -1318,9 +1349,9 @@ def build_dashboard_projection(
             runtime_status=DashboardRuntimeStatusProjection(
                 effective_mode=runtime_provider.effective_mode,
                 provider_label=(
-                    "OpenAI Compat"
-                    if runtime_provider.mode == "OPENAI_COMPAT"
-                    else ("Claude Code CLI" if runtime_provider.mode == "CLAUDE_CODE_CLI" else "Local Deterministic")
+                    runtime_provider.alias
+                    or runtime_provider.provider_id
+                    or "Local Deterministic"
                 ),
                 model=runtime_provider.model,
                 configured_worker_count=runtime_provider.configured_worker_count,

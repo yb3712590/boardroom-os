@@ -1695,7 +1695,7 @@
 - `P2-RET-006`：当前 execution package 在没有 direct dependent 时会回退到预期下游 reviewer，避免串行主线里因为 child 尚未物化而丢失最小组织认知；rendered `SYSTEM_CONTROLS` 会同步写出同一份 `organization_context`
 - `P2-RET-006`：新增回归覆盖 root ticket、parent/dependent/sibling 关系和 worker-runtime execution package signed URL 读面；本轮全量验证结果更新为 backend `437 passed`、frontend build passed、frontend `70 passed`
 
-### 4.2 Provider 增强 (P2-PRV-001 到 P2-PRV-008)
+### 4.2 Provider 增强 (P2-PRV-001 到 P2-PRV-010)
 
 | ID | 标题 | 预估 |
 |----|------|------|
@@ -1707,6 +1707,8 @@
 | P2-PRV-006 | 角色级默认模型绑定 | 4h |
 | P2-PRV-007 | 任务级模型覆盖与 preferred/actual model 追踪 | 4h |
 | P2-PRV-008 | 成本分层与高价模型低频路由 | 4h |
+| P2-PRV-009 | 多 provider 配置中心与模型条目落库 | 4h |
+| P2-PRV-010 | Responses 连通性回退、模型刷新与窗口继承 | 4h |
 
 完成补记（2026-04-07）：
 
@@ -1729,6 +1731,15 @@
 - `P2-PRV-008`：provider 选路顺序现已收口为 `任务级偏好 -> execution target / role 绑定 -> 员工 provider -> 默认 provider`；每一层都会继续校验能力标签、启用状态和参与策略。命中高价低频限制时，会自动降级到下一层可用 provider，而不是硬失败
 - `P2-PRV-008`：当前低频高杠杆分类直接复用主线语义：`ceo_shadow`、scope/governance 文档链、`architect / cto` 治理文档属于低频高杠杆；`BUILD / CHECK / REVIEW / CLOSEOUT` 属于高频执行或高频审查；本轮不引入预算自适应、成本统计报表或策略引擎
 - 本轮整体验证结果更新为 backend `508 passed`、frontend build passed、frontend `77 passed`
+
+完成补记（2026-04-09，P2-PRV-009 / P2-PRV-010，路线外特性开发）：
+
+- `P2-PRV-009`：Provider Settings 已从“固定 provider registry”继续收口成多 provider center；当前真实读写主形状是 `providers[] / provider_model_entries[] / role_bindings[]`，用户可以录入多个 provider，后端只保存用户勾选的模型条目，唯一键按 `provider_id + model_name`
+- `P2-PRV-009`：provider 落库时会自动补标准化信息：`alias` 为空时取 `base_url` 的二级域名，`max_context_window` 为空时默认 `1000000`；旧固定 provider 配置升级后按空配置处理，不再迁移保留
+- `P2-PRV-010`：CEO / role 绑定现在改成消费有序 `provider_model_entry_refs[]`，并支持 `max_context_window_override`；role 未配置时会继承 CEO 的模型条目和上下文窗口，运行时选路会同步写出 `provider_model_entry_ref / effective_max_context_window`
+- `P2-PRV-010`：OpenAI-compatible provider 当前固定先走 Responses 流式；连通性测试在“流式失败、非流式成功”时会自动回退到非流式 Responses，并把返回的标准化 provider 结果交给前端保存；模型刷新接口会保留仍存在的已勾选模型，静默剔除失效模型，不再走 `/chat/completions`
+- `P2-PRV-010`：这轮新配置体验只真实开放 `openai_responses_stream / openai_responses_non_stream`；`claude_stream / gemini_stream` 只保留类型占位。`Claude Code CLI` 兼容执行路径仍留在运行时兼容层，但不进入这轮配置主流程
+- 本轮整体验证结果更新为 backend `533 passed`、frontend build passed、frontend `84 passed`
 
 ### 4.3 治理模板与文档型角色 (P2-GOV-001 到 P2-GOV-006)
 

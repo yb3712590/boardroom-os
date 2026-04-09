@@ -6,70 +6,71 @@ import { ProviderSettingsDrawer } from '../../../components/overlays/ProviderSet
 
 function buildProviderData(baseUrl: string) {
   return {
-    mode: 'OPENAI_COMPAT',
-    effective_mode: 'OPENAI_COMPAT_LIVE',
+    mode: 'OPENAI_RESPONSES_STREAM',
+    effective_mode: 'OPENAI_RESPONSES_STREAM_LIVE',
     provider_health_summary: 'HEALTHY',
-    provider_id: 'prov_openai_compat',
+    provider_id: 'prov_primary',
     base_url: baseUrl,
+    alias: 'example',
     model: 'gpt-5.3-codex',
+    max_context_window: 1000000,
     timeout_sec: 30,
-    reasoning_effort: 'high',
+    reasoning_effort: null,
     api_key_configured: true,
     api_key_masked: 'sk-***cret',
     configured_worker_count: 1,
-    effective_reason: 'Runtime is using the saved OpenAI-compatible provider config.',
-    default_provider_id: 'prov_openai_compat',
+    effective_reason: 'example is ready with streaming Responses.',
+    default_provider_id: 'prov_primary',
     providers: [
       {
-        provider_id: 'prov_openai_compat',
+        provider_id: 'prov_primary',
+        type: 'openai_responses_stream',
         adapter_kind: 'openai_compat',
-        label: 'OpenAI Compat',
+        label: 'example',
+        alias: 'example',
         enabled: true,
         base_url: baseUrl,
         api_key_configured: true,
         api_key_masked: 'sk-***cret',
         model: 'gpt-5.3-codex',
-        timeout_sec: 30,
-        reasoning_effort: 'high',
-        command_path: null,
-        capability_tags: ['structured_output', 'planning', 'implementation'],
-        cost_tier: 'standard',
-        participation_policy: 'always_allowed',
-        fallback_provider_ids: [],
-        health_status: 'HEALTHY',
-        health_reason: 'OpenAI-compatible provider is healthy.',
-        configured_worker_count: 1,
-        is_default: true,
-      },
-      {
-        provider_id: 'prov_claude_code',
-        adapter_kind: 'claude_code_cli',
-        label: 'Claude Code CLI',
-        enabled: false,
-        base_url: null,
-        api_key_configured: false,
-        api_key_masked: null,
-        model: null,
+        preferred_model: 'gpt-5.3-codex',
+        max_context_window: 1000000,
         timeout_sec: 30,
         reasoning_effort: null,
         command_path: null,
         capability_tags: ['structured_output', 'planning', 'implementation', 'review'],
-        cost_tier: 'premium',
-        participation_policy: 'low_frequency_only',
+        cost_tier: 'standard',
+        participation_policy: 'always_allowed',
         fallback_provider_ids: [],
-        health_status: 'DISABLED',
-        health_reason: 'Claude Code CLI provider is disabled.',
-        configured_worker_count: 0,
-        is_default: false,
+        health_status: 'HEALTHY',
+        health_reason: 'example is ready with streaming Responses.',
+        configured_worker_count: 1,
+        is_default: true,
       },
     ],
-    role_bindings: [],
+    provider_model_entries: [
+      {
+        entry_ref: 'prov_primary::gpt-5.3-codex',
+        provider_id: 'prov_primary',
+        provider_label: 'example',
+        model_name: 'gpt-5.3-codex',
+        max_context_window: 1000000,
+      },
+    ],
+    role_bindings: [
+      {
+        target_ref: 'ceo_shadow',
+        target_label: 'CEO Shadow',
+        provider_model_entry_refs: ['prov_primary::gpt-5.3-codex'],
+        max_context_window_override: null,
+      },
+    ],
     future_binding_slots: [],
   } as const
 }
 
 describe('ProviderSettingsDrawer persistence', () => {
-  it('keeps unsaved draft input when parent projection refreshes while drawer is open', async () => {
+  it('keeps unsaved provider draft input when parent projection refreshes while drawer is open', async () => {
     const user = userEvent.setup()
     const commonProps = {
       isOpen: true,
@@ -78,6 +79,8 @@ describe('ProviderSettingsDrawer persistence', () => {
       submitting: false,
       onClose: vi.fn(),
       onSave: vi.fn().mockResolvedValue(undefined),
+      onConnectivityTest: vi.fn().mockResolvedValue({ ok: true, resolved_provider: null, response_id: null }),
+      onRefreshModels: vi.fn().mockResolvedValue([]),
     }
     const { rerender } = render(
       <ProviderSettingsDrawer
@@ -86,9 +89,9 @@ describe('ProviderSettingsDrawer persistence', () => {
       />,
     )
 
-    await user.clear(screen.getByLabelText('OpenAI Base URL'))
-    await user.type(screen.getByLabelText('OpenAI Base URL'), 'https://draft.example.test/v1')
-    await user.type(screen.getByLabelText('OpenAI API Key'), 'sk-local-draft')
+    await user.clear(screen.getByLabelText('Provider base URL prov_primary'))
+    await user.type(screen.getByLabelText('Provider base URL prov_primary'), 'https://draft.example.test/v1')
+    await user.type(screen.getByLabelText('Provider API key prov_primary'), 'sk-local-draft')
 
     rerender(
       <ProviderSettingsDrawer
@@ -97,7 +100,7 @@ describe('ProviderSettingsDrawer persistence', () => {
       />,
     )
 
-    expect(screen.getByLabelText('OpenAI Base URL')).toHaveValue('https://draft.example.test/v1')
-    expect(screen.getByLabelText('OpenAI API Key')).toHaveValue('sk-local-draft')
+    expect(screen.getByLabelText('Provider base URL prov_primary')).toHaveValue('https://draft.example.test/v1')
+    expect(screen.getByLabelText('Provider API key prov_primary')).toHaveValue('sk-local-draft')
   })
 })

@@ -34,7 +34,8 @@ Boardroom OS 更在意的是交付闭环：
 - `maker-checker` 已经落地，执行和审查分开，减少“自己写、自己评、自己过”的失真
 - 视觉结果已经被当成单独治理对象，董事会可以在 `Inbox` 和 `Review Room` 集中做决定
 - 前端已经提供 `Dashboard`、`Inbox`、`Review Room`、`Meeting Room`、`Workforce`、`Provider Settings` 等主界面
-- 运行时已支持本地 deterministic 路径，也已接入 `OpenAI Compat` 和 `Claude Code CLI` live path
+- `Provider Settings` 现在已是多 provider 配置中心：可录入多个 OpenAI-compatible Responses provider、测试连通性、拉取模型列表，并按 `provider + model` 组合给 CEO 和 role 绑定优先级
+- 运行时已支持本地 deterministic 路径；当前 provider center 真实执行 OpenAI-compatible Responses，`Claude Code CLI` 兼容执行路径仍保留，但不在这套新配置流程里开放录入
 - 团队组织不是写死的，系统已经支持招聘、冻结、恢复、替换员工
 
 ### 🟡 正在补齐

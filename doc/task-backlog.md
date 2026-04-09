@@ -13,10 +13,10 @@
 
 | 指标 | 数值 | 说明 |
 |------|------|------|
-| 总任务数 | 145 | 原始编号保留，新增编号继续用于路线重排、M7 首批、条件批次、角色纳入链、本轮前置解耦批次与 UI 回归收口批次 |
-| 已完成 / 已收口 | 143 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
+| 总任务数 | 147 | 原始编号保留，新增编号继续用于路线重排、M7 首批、条件批次、角色纳入链、本轮前置解耦批次、UI 回归收口批次与路线外 provider center 补记 |
+| 已完成 / 已收口 | 145 | 详细卡片与完成补记保存在 `task-backlog/done.md` |
 | 当前仍未关闭 | 2 | 当前工作集保存在 `task-backlog/active.md` |
-| 总预估工时 | 539h | 在原表基础上补入本轮新增前置解耦任务与 UI 回归收口任务 |
+| 总预估工时 | 547h | 在原表基础上补入本轮新增前置解耦任务、UI 回归收口任务与路线外 provider center 补记 |
 
 ## 当前活跃区域
 
@@ -24,7 +24,7 @@
 |------|----------|----------|------------|
 | 当前主线 | `无` | `P2-UI-009` 到 `P2-UI-010` 已于 2026-04-09 收口；当前没有新的可直接开启主线任务 | [task-backlog/active.md](task-backlog/active.md) |
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | [task-backlog/active.md](task-backlog/active.md) |
-| Provider 增强 | `P2-PRV-007` 到 `P2-PRV-008` | 已完成 | [task-backlog/done.md](task-backlog/done.md) |
+| Provider 增强 | `P2-PRV-007` 到 `P2-PRV-010` | 已完成（含 2026-04-09 路线外补记） | [task-backlog/done.md](task-backlog/done.md) |
 | 角色纳入链 | `P2-RLS-001` 到 `P2-RLS-003` | 已完成 | [task-backlog/done.md](task-backlog/done.md) |
 | UI 回归收口 | `P2-UI-009` 到 `P2-UI-010` | 已完成 | [task-backlog/done.md](task-backlog/done.md) |
 

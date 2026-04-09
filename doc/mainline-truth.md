@@ -23,15 +23,17 @@
 - 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
 - 当前 CEO 也能在窄触发条件下自动创建 `TECHNICAL_DECISION` 会议请求：只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重新对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会
 - CEO shadow snapshot 现在会暴露当前 workflow 内的 `reuse_candidates`：只读最近已完成 ticket 和已关闭会议的最小摘要；OpenAI Compat live prompt 会先检查这些复用候选，优先 `NO_ACTION / RETRY_TICKET / WAIT`，再考虑新建平行 ticket、额外会议或补招人；deterministic fallback 保持不变
-- runtime provider 配置现在已从单一 OpenAI 表单切成最小 registry：固定暴露 `default_provider_id / providers[] / role_bindings[]`，旧配置文件会自动迁移
-- 当前 registry 首版真实支持两个 adapter：`prov_openai_compat` 与 `prov_claude_code`；`runtime-provider` 投影和前端设置抽屉都会暴露 provider 列表、`capability_tags[]`、`fallback_provider_ids[]`、`cost_tier`、`participation_policy`、每个 provider 的 `health_status / health_reason` 和当前真实角色绑定；当前 `future_binding_slots` 已为空
+- runtime provider 配置现在已从固定 provider registry 收口成多 provider center：用户保存与前端投影的主形状是 `providers[] / provider_model_entries[] / role_bindings[]`；旧固定 provider 配置升级后按空配置处理，不再迁移保留
+- `providers[]` 当前会落库 `base_url / api_key / alias / preferred_model / max_context_window / type / enabled`；`alias` 为空时会从 `base_url` 推导二级域名，`max_context_window` 为空时默认 `1000000`
+- `provider_model_entries[]` 当前只保存用户勾选的模型，唯一键按 `provider_id + model_name`；`role_bindings[]` 现在绑定有序 `provider_model_entry_refs[]` 与 `max_context_window_override`，role 未配置时会继承 CEO 绑定；每次选路都会产出 `provider_model_entry_ref` 和 `effective_max_context_window`
+- Provider Settings 当前只真实开放 `openai_responses_stream / openai_responses_non_stream` 两种执行类型；`claude_stream / gemini_stream` 只保留枚举占位。运行时仍保留 `Claude Code CLI` 兼容路径给旧测试和兼容场景，但不在新配置中心开放录入
 - `TICKET_CREATED` payload 现在会补入 `execution_contract`，固定包含 `execution_target_ref / required_capability_tags / runtime_contract_version`；普通 ticket-create 路径即使没显式传，也会按 `role_profile_ref + output_schema_ref` 自动补齐
 - `TICKET_CREATED` payload 现在也可选携带 `runtime_preference`，最小支持 `preferred_provider_id / preferred_model`；CEO create-ticket 与内部兼容 `ticket-create` 走同一套字段，但这层只是任务级偏好，不能绕过能力底线、provider 启停状态、参与策略或现有 failover 约束
 - 当前 execution target catalog 已按主线收口为 12 类：`scope_consensus / scope_governance_document / frontend_governance_document / architect_governance_document / cto_governance_document / frontend_build / backend_build / database_build / platform_build / checker_delivery_check / frontend_review / frontend_closeout`
 - CEO create-ticket 当前必须显式带 `dispatch_intent.assignee_employee_id / selection_reason`；校验层会拒绝不存在、非激活或能力不匹配的 assignee，非法派单不会入队
 - CEO create-ticket 当前也接受五类治理文档输出：`architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation`；这类文档现在除了 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色，也可落到 `architect_primary / cto_primary`，但仍只限治理文档链；`backend / database / platform` 仍未进入 direct CEO create-ticket，`role_templates_catalog.default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单
 - `dispatch_intent` 现在已扩到最小 5 字段：`assignee_employee_id / selection_reason / dependency_gate_refs[] / selected_by / wakeup_policy`；scheduler 在该字段存在时只会尝试租约给指定 assignee，不再按 role 池重新挑人，但 assignee 仍必须出现在当前可用 worker 候选里
-- provider 选路顺序现在已统一收口为 `任务级偏好 -> execution target / role 绑定 -> 员工 provider -> 默认 provider`；每一层都会继续校验能力标签、启用状态和参与策略。命中高价低频限制时，会自动降级到下一层可用 provider，而不是硬失败
+- provider 选路顺序现在已统一收口为 `任务级偏好 -> execution target / role 绑定 -> 员工 provider -> 默认 provider`；role / CEO 绑定命中时会按有序 `provider_model_entry_refs[]` 解析，并同时得到 `provider_id / model_name / effective_max_context_window`；每一层都会继续校验能力标签、启用状态和参与策略。命中高价低频限制时，会自动降级到下一层可用 provider，而不是硬失败
 - `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化失败并触发 CEO 重决策
 - 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，不把当前 staged follow-up 主链写成“上游一失败就全部重规划”
 - `TICKET_CREATED` payload 现在可选携带 `input_process_asset_refs[]`；`Context Compiler` 会把旧 `input_artifact_refs[]` 兼容映射到同一入口，再统一走 `process asset resolver`
@@ -49,8 +51,9 @@
 - Board approve / meeting consensus 里的 staged follow-up 现在只按最小口径放宽：`backend / database / platform` 可进入 `BUILD` owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`，`architect / cto` 不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
 - provider 能力底线当前固定按运行目标收口：`ceo_shadow / ui_designer_primary / architect_primary / cto_primary` 需要 `structured_output + planning`，`frontend_engineer_primary / backend_engineer_primary / database_engineer_primary / platform_sre_primary` 需要 `structured_output + implementation`，`checker_primary` 需要 `structured_output + review`
 - provider 参与策略当前固定按主线语义收口：`ceo_shadow`、scope/governance 文档链、`architect / cto` 治理文档属于低频高杠杆；`BUILD / CHECK / REVIEW / CLOSEOUT` 属于高频执行或高频审查。标成 `low_frequency_only` 的高价 provider 只允许前一类目标命中
+- OpenAI-compatible provider 调用当前固定先走 Responses 流式；连通性测试如果确认流式不支持，会自动回退到 Responses 非流式并返回标准化 provider 结果；模型刷新接口会保留仍存在的已勾选模型并静默剔除失效模型，不再使用 `/chat/completions`
 - provider-to-provider failover 当前只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；运行时与 CEO live path 会按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径
-- 运行时、CEO live proposal、CEO shadow 审计和 provider fallback 失败明细现在都会统一写出 `preferred_provider_id / preferred_model / actual_provider_id / actual_model / selection_reason / policy_reason`；failover 或策略降级时保持 `preferred_*` 不变，只切换 `actual_*`
+- 运行时、CEO live proposal、CEO shadow 审计和 provider fallback 失败明细现在都会统一写出 `provider_model_entry_ref / preferred_provider_id / preferred_model / actual_provider_id / actual_model / selection_reason / policy_reason / effective_max_context_window`；failover 或策略降级时保持 `preferred_*` 不变，只切换 `actual_*`
 - 会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`；`MeetingRoom` 默认先展示压缩后的决策视图，再把 round timeline 留作 audit trail
 - 只有 `MEETING_ESCALATION` 批准后生成的 follow-up ticket 会额外把 ADR `decision + consequences` 注入后续执行输入；其他 `consensus_document` 来源路径不变
 - `delivery_closeout_package@1` 现在可选携带 `documentation_updates`；internal closeout review 已把文档同步纳入 soft checker 口径，但 `FOLLOW_UP_REQUIRED` 不会自动变成硬门禁

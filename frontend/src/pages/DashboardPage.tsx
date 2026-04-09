@@ -115,6 +115,8 @@ export function DashboardPage() {
     handleOpenIncident,
     handleProjectInit,
     handleRuntimeProviderSave,
+    handleRuntimeProviderConnectivityTest,
+    handleRuntimeProviderModelsRefresh,
     handleIncidentResolve,
     handleEmployeeFreeze,
     handleEmployeeRestore,
@@ -358,6 +360,8 @@ export function DashboardPage() {
           submitting={runtimeProviderSubmitting}
           onClose={() => setProviderSettingsOpen(false)}
           onSave={handleRuntimeProviderSave}
+          onConnectivityTest={handleRuntimeProviderConnectivityTest}
+          onRefreshModels={handleRuntimeProviderModelsRefresh}
         />
 
         <ArtifactPreviewDrawer

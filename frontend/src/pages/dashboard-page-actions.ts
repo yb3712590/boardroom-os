@@ -8,6 +8,8 @@ import {
   incidentResolve,
   modifyConstraints,
   projectInit,
+  runtimeProviderConnectivityTest,
+  runtimeProviderModelsRefresh,
   runtimeProviderUpsert,
 } from '../api/commands'
 import type { IncidentDetailData } from '../types/api'
@@ -103,35 +105,32 @@ export function useDashboardPageActions({
   }
 
   const handleRuntimeProviderSave = async (input: {
-    defaultProviderId: string | null
     providers: Array<{
       provider_id: string
-      adapter_kind: string
-      label: string
+      type: string
+      base_url: string
+      api_key: string
+      alias: string | null
+      preferred_model: string | null
+      max_context_window: number | null
       enabled: boolean
-      base_url: string | null
-      api_key: string | null
-      model: string | null
-      timeout_sec: number
-      reasoning_effort: string | null
-      command_path: string | null
-      capability_tags: string[]
-      cost_tier: string
-      participation_policy: string
-      fallback_provider_ids: string[]
+    }>
+    providerModelEntries: Array<{
+      provider_id: string
+      model_name: string
     }>
     roleBindings: Array<{
       target_ref: string
-      provider_id: string
-      model: string | null
+      provider_model_entry_refs: string[]
+      max_context_window_override: number | null
     }>
   }) => {
     setRuntimeProviderSubmitting(true)
     setRuntimeProviderError(null)
     try {
       await runtimeProviderUpsert({
-        default_provider_id: input.defaultProviderId,
         providers: input.providers,
+        provider_model_entries: input.providerModelEntries,
         role_bindings: input.roleBindings,
         idempotency_key: newPrefixedId('runtime-provider-upsert'),
       })
@@ -142,6 +141,24 @@ export function useDashboardPageActions({
     } finally {
       setRuntimeProviderSubmitting(false)
     }
+  }
+
+  const handleRuntimeProviderConnectivityTest = async (input: {
+    provider_id: string
+    type: string
+    base_url: string
+    api_key: string
+    alias: string | null
+    preferred_model: string | null
+    max_context_window: number | null
+    enabled: boolean
+  }) => {
+    return runtimeProviderConnectivityTest(input)
+  }
+
+  const handleRuntimeProviderModelsRefresh = async (providerId: string) => {
+    const result = await runtimeProviderModelsRefresh({ provider_id: providerId })
+    return result.models
   }
 
   const handleIncidentResolve = async (input: {
@@ -385,6 +402,8 @@ export function useDashboardPageActions({
     handleOpenIncident,
     handleProjectInit,
     handleRuntimeProviderSave,
+    handleRuntimeProviderConnectivityTest,
+    handleRuntimeProviderModelsRefresh,
     handleIncidentResolve,
     handleEmployeeFreeze,
     handleEmployeeRestore,

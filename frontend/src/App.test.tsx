@@ -1066,89 +1066,93 @@ function dependencyInspectorData(overrides: Partial<JsonRecord> = {}) {
 
 function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
   return {
-    mode: 'DETERMINISTIC',
-    effective_mode: 'LOCAL_DETERMINISTIC',
-    provider_health_summary: 'LOCAL_ONLY',
-    provider_id: null,
-    base_url: null,
-    model: null,
+    mode: 'OPENAI_RESPONSES_STREAM',
+    effective_mode: 'OPENAI_RESPONSES_STREAM_LIVE',
+    provider_health_summary: 'HEALTHY',
+    provider_id: 'prov_openai_compat',
+    base_url: 'https://api.example.test/v1',
+    alias: 'example',
+    model: 'gpt-5.3-codex',
+    max_context_window: 1000000,
     timeout_sec: 30,
     reasoning_effort: null,
-    api_key_configured: false,
-    api_key_masked: null,
+    api_key_configured: true,
+    api_key_masked: 'sk-***cret',
     configured_worker_count: 1,
-    effective_reason: 'Runtime is using the local deterministic path.',
-    default_provider_id: null,
+    effective_reason: 'example is ready with streaming Responses.',
+    default_provider_id: 'prov_openai_compat',
     providers: [
       {
         provider_id: 'prov_openai_compat',
+        type: 'openai_responses_stream',
         adapter_kind: 'openai_compat',
-        label: 'OpenAI Compat',
-        enabled: false,
-        base_url: null,
-        api_key_configured: false,
-        api_key_masked: null,
-        model: null,
-        timeout_sec: 30,
-        reasoning_effort: null,
-        command_path: null,
-        capability_tags: ['structured_output', 'planning', 'implementation'],
-        fallback_provider_ids: [],
-        health_status: 'DISABLED',
-        health_reason: 'OpenAI-compatible provider is disabled.',
-        configured_worker_count: 1,
-        is_default: false,
-      },
-      {
-        provider_id: 'prov_claude_code',
-        adapter_kind: 'claude_code_cli',
-        label: 'Claude Code CLI',
-        enabled: false,
-        base_url: null,
-        api_key_configured: false,
-        api_key_masked: null,
-        model: null,
+        label: 'example',
+        alias: 'example',
+        enabled: true,
+        base_url: 'https://api.example.test/v1',
+        api_key_configured: true,
+        api_key_masked: 'sk-***cret',
+        model: 'gpt-5.3-codex',
+        preferred_model: 'gpt-5.3-codex',
+        max_context_window: 1000000,
         timeout_sec: 30,
         reasoning_effort: null,
         command_path: null,
         capability_tags: ['structured_output', 'planning', 'implementation', 'review'],
+        cost_tier: 'standard',
+        participation_policy: 'always_allowed',
         fallback_provider_ids: [],
-        health_status: 'DISABLED',
-        health_reason: 'Claude Code CLI provider is disabled.',
-        configured_worker_count: 0,
-        is_default: false,
+        health_status: 'HEALTHY',
+        health_reason: 'example is ready with streaming Responses.',
+        configured_worker_count: 1,
+        is_default: true,
+      },
+    ],
+    provider_model_entries: [
+      {
+        entry_ref: 'prov_openai_compat::gpt-5.3-codex',
+        provider_id: 'prov_openai_compat',
+        provider_label: 'example',
+        model_name: 'gpt-5.3-codex',
+        max_context_window: 1000000,
       },
     ],
     role_bindings: [
       {
+        target_ref: 'ceo_shadow',
+        target_label: 'CEO Shadow',
+        provider_model_entry_refs: ['prov_openai_compat::gpt-5.3-codex'],
+        max_context_window_override: null,
+      },
+      {
         target_ref: 'role_profile:backend_engineer_primary',
         target_label: 'Backend Engineer / Service Delivery',
-        provider_id: 'prov_openai_compat',
-        model: 'gpt-5.3-codex',
+        provider_model_entry_refs: [],
+        max_context_window_override: null,
       },
       {
         target_ref: 'role_profile:database_engineer_primary',
         target_label: 'Database Engineer / Data Reliability',
-        provider_id: 'prov_openai_compat',
-        model: 'gpt-5.3-codex',
+        provider_model_entry_refs: [],
+        max_context_window_override: null,
       },
       {
         target_ref: 'role_profile:platform_sre_primary',
         target_label: 'Platform / SRE',
-        provider_id: 'prov_openai_compat',
-        model: 'gpt-5.3-codex',
+        provider_model_entry_refs: [],
+        max_context_window_override: null,
       },
       {
         target_ref: 'role_profile:architect_primary',
         target_label: 'Architect / Design Review',
-        provider_id: 'prov_openai_compat',
-        model: 'gpt-5.3-codex',
+        provider_model_entry_refs: [],
+        max_context_window_override: null,
       },
       {
         target_ref: 'role_profile:cto_primary',
         target_label: 'CTO / Architecture Governance',
-        provider_id: 'prov_openai_compat',
-        model: 'gpt-5.3-codex',
+        provider_model_entry_refs: [],
+        max_context_window_override: null,
       },
     ],
     future_binding_slots: [],
@@ -1910,15 +1914,12 @@ describe('Boardroom UI', () => {
     await user.click(await screen.findByRole('button', { name: /runtime settings/i }))
     expect(await screen.findByRole('heading', { name: /runtime provider/i })).toBeInTheDocument()
 
-    await user.selectOptions(screen.getByLabelText(/provider mode/i), 'OPENAI_COMPAT')
-    await user.clear(screen.getByLabelText(/openai base url/i))
-    await user.type(screen.getByLabelText(/openai base url/i), 'https://api.example.test/v1')
-    await user.clear(screen.getByLabelText(/openai api key/i))
-    await user.type(screen.getByLabelText(/openai api key/i), 'sk-test-secret')
-    await user.clear(screen.getByLabelText(/openai model/i))
-    await user.type(screen.getByLabelText(/openai model/i), 'gpt-5.3-codex')
-    await user.click(screen.getByLabelText(/openai compat capability planning/i))
-    await user.selectOptions(screen.getByLabelText(/openai compat fallback provider/i), 'prov_claude_code')
+    await user.clear(screen.getByLabelText(/provider base url prov_openai_compat/i))
+    await user.type(screen.getByLabelText(/provider base url prov_openai_compat/i), 'https://api.example.test/v1')
+    await user.clear(screen.getByLabelText(/provider api key prov_openai_compat/i))
+    await user.type(screen.getByLabelText(/provider api key prov_openai_compat/i), 'sk-test-secret')
+    await user.clear(screen.getByLabelText(/provider preferred model prov_openai_compat/i))
+    await user.type(screen.getByLabelText(/provider preferred model prov_openai_compat/i), 'gpt-5.3-codex')
     await user.click(screen.getByRole('button', { name: /save runtime settings/i }))
 
     await waitFor(() =>
@@ -1926,26 +1927,10 @@ describe('Boardroom UI', () => {
         '/api/v1/commands/runtime-provider-upsert',
         expect.objectContaining({
           method: 'POST',
-          body: expect.stringContaining('"default_provider_id":"prov_openai_compat"'),
+          body: expect.stringContaining('"provider_model_entries":[{"provider_id":"prov_openai_compat","model_name":"gpt-5.3-codex"}]'),
         }),
       ),
     )
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/commands/runtime-provider-upsert',
-      expect.objectContaining({
-        method: 'POST',
-        body: expect.stringContaining('"capability_tags":["structured_output","implementation"]'),
-      }),
-    )
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/commands/runtime-provider-upsert',
-      expect.objectContaining({
-        method: 'POST',
-        body: expect.stringContaining('"fallback_provider_ids":["prov_claude_code"]'),
-      }),
-    )
-    expect(await screen.findByText(/openai compat/i)).toBeInTheDocument()
-    expect(screen.getByText(/gpt-5.3-codex/i)).toBeInTheDocument()
   })
 
   it('shows newly live role bindings in runtime provider settings', async () => {
@@ -1958,11 +1943,11 @@ describe('Boardroom UI', () => {
 
     await user.click(await screen.findByRole('button', { name: /runtime settings/i }))
 
-    expect(await screen.findByLabelText('Backend Engineer / Service Delivery provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('Database Engineer / Data Reliability provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('Platform / SRE provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('Architect / Design Review provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('CTO / Architecture Governance provider')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Backend Engineer / Service Delivery context window override')).toBeInTheDocument()
+    expect(screen.getByLabelText('Database Engineer / Data Reliability context window override')).toBeInTheDocument()
+    expect(screen.getByLabelText('Platform / SRE context window override')).toBeInTheDocument()
+    expect(screen.getByLabelText('Architect / Design Review context window override')).toBeInTheDocument()
+    expect(screen.getByLabelText('CTO / Architecture Governance context window override')).toBeInTheDocument()
     expect(screen.queryByText('Reserved bindings')).not.toBeInTheDocument()
   })
 
