@@ -1022,7 +1022,7 @@ def _build_openai_compat_provider_config(selection: RuntimeProviderSelection) ->
         api_key=str(provider.api_key or ""),
         model=str(selection.actual_model or provider.model or ""),
         timeout_sec=float(provider.timeout_sec),
-        reasoning_effort=provider.reasoning_effort,
+        reasoning_effort=selection.effective_reasoning_effort,
     )
 
 

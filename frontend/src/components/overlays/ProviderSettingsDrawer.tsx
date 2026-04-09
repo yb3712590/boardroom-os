@@ -8,6 +8,9 @@ import type {
 } from '../../types/api'
 import { Drawer } from '../shared/Drawer'
 
+const REASONING_EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh'] as const
+const INHERIT_REASONING_VALUE = 'inherit'
+
 const CURRENT_ROLE_TARGETS = [
   { target_ref: 'ceo_shadow', target_label: 'CEO Shadow' },
   { target_ref: 'role_profile:ui_designer_primary', target_label: 'Scope Consensus' },
@@ -28,6 +31,7 @@ type EditableProvider = {
   alias: string
   preferred_model: string
   max_context_window: string
+  reasoning_effort: string
   enabled: boolean
 }
 
@@ -36,6 +40,7 @@ type EditableRoleBinding = {
   target_label: string
   provider_model_entry_refs: string[]
   max_context_window_override: string
+  reasoning_effort_override: string
 }
 
 type ProviderSettingsDrawerProps = {
@@ -55,6 +60,7 @@ type ProviderSettingsDrawerProps = {
       target_ref: string
       provider_model_entry_refs: string[]
       max_context_window_override: number | null
+      reasoning_effort_override: string | null
     }>
   }) => Promise<void>
   onConnectivityTest: (
@@ -75,6 +81,7 @@ function buildEditableProviders(providerData: RuntimeProviderData | null): Edita
     alias: provider.alias ?? '',
     preferred_model: provider.preferred_model ?? provider.model ?? '',
     max_context_window: String(provider.max_context_window ?? ''),
+    reasoning_effort: provider.reasoning_effort ?? 'high',
     enabled: provider.enabled,
   }))
 }
@@ -89,6 +96,7 @@ function buildEditableBindings(providerData: RuntimeProviderData | null): Editab
       provider_model_entry_refs: Array.from(binding?.provider_model_entry_refs ?? []),
       max_context_window_override:
         binding?.max_context_window_override == null ? '' : String(binding.max_context_window_override),
+      reasoning_effort_override: binding?.reasoning_effort_override ?? INHERIT_REASONING_VALUE,
     }
   })
 }
@@ -114,6 +122,7 @@ function buildProviderPayload(provider: EditableProvider): RuntimeProviderConfig
     alias: provider.alias.trim() || null,
     preferred_model: provider.preferred_model.trim() || null,
     max_context_window: Number.parseInt(provider.max_context_window, 10) || null,
+    reasoning_effort: provider.reasoning_effort,
     enabled: provider.enabled,
   }
 }
@@ -190,6 +199,7 @@ export function ProviderSettingsDrawer({
         alias: '',
         preferred_model: '',
         max_context_window: '',
+        reasoning_effort: 'high',
         enabled: true,
       },
     ])
@@ -208,6 +218,7 @@ export function ProviderSettingsDrawer({
         alias: result.resolved_provider.alias ?? '',
         preferred_model: result.resolved_provider.preferred_model ?? '',
         max_context_window: String(result.resolved_provider.max_context_window ?? ''),
+        reasoning_effort: result.resolved_provider.reasoning_effort ?? provider.reasoning_effort,
         enabled: result.resolved_provider.enabled,
       })
     }
@@ -253,6 +264,8 @@ export function ProviderSettingsDrawer({
         target_ref: binding.target_ref,
         provider_model_entry_refs: binding.provider_model_entry_refs,
         max_context_window_override: Number.parseInt(binding.max_context_window_override, 10) || null,
+        reasoning_effort_override:
+          binding.reasoning_effort_override === INHERIT_REASONING_VALUE ? null : binding.reasoning_effort_override,
       })),
     })
   }
@@ -368,6 +381,20 @@ export function ProviderSettingsDrawer({
                     onChange={(event) => updateProvider(provider.provider_id, { max_context_window: event.target.value })}
                   />
                 </label>
+                <label>
+                  <span className="field-label">Reasoning effort</span>
+                  <select
+                    aria-label={`Provider reasoning effort ${provider.provider_id}`}
+                    value={provider.reasoning_effort}
+                    onChange={(event) => updateProvider(provider.provider_id, { reasoning_effort: event.target.value })}
+                  >
+                    {REASONING_EFFORT_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <div className="provider-settings-grid">
                   <button
                     type="button"
@@ -442,6 +469,20 @@ export function ProviderSettingsDrawer({
                         updateBinding(binding.target_ref, { max_context_window_override: event.target.value })
                       }
                     />
+                    <select
+                      aria-label={`${binding.target_label} reasoning effort override`}
+                      value={binding.reasoning_effort_override}
+                      onChange={(event) =>
+                        updateBinding(binding.target_ref, { reasoning_effort_override: event.target.value })
+                      }
+                    >
+                      <option value={INHERIT_REASONING_VALUE}>Inherit provider</option>
+                      {REASONING_EFFORT_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 ))}
               </div>

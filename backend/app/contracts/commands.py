@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -111,6 +112,9 @@ class RuntimeProviderType(StrEnum):
     GEMINI_STREAM = "gemini_stream"
 
 
+RuntimeProviderReasoningEffort = Literal["low", "medium", "high", "xhigh"]
+
+
 class MeetingType(StrEnum):
     TECHNICAL_DECISION = "TECHNICAL_DECISION"
 
@@ -174,6 +178,7 @@ class RuntimeProviderConfigInput(StrictModel):
     alias: str | None = None
     preferred_model: str | None = None
     max_context_window: int | None = Field(default=None, ge=1)
+    reasoning_effort: RuntimeProviderReasoningEffort | None = "high"
     enabled: bool = False
 
 
@@ -186,6 +191,7 @@ class RuntimeProviderRoleBindingInput(StrictModel):
     target_ref: str = Field(min_length=1)
     provider_model_entry_refs: list[str] = Field(default_factory=list)
     max_context_window_override: int | None = Field(default=None, ge=1)
+    reasoning_effort_override: RuntimeProviderReasoningEffort | None = None
 
 
 class RuntimeSelectionPreference(StrictModel):

@@ -15,6 +15,7 @@ from app.contracts.commands import (
     RuntimeProviderCapabilityTag,
     RuntimeProviderCostTier,
     RuntimeProviderParticipationPolicy,
+    RuntimeProviderReasoningEffort,
     RuntimeProviderType,
     RuntimeSelectionPreference,
     RuntimeProviderUpsertCommand,
@@ -66,6 +67,7 @@ RUNTIME_TARGET_LABELS = {
 FUTURE_ROLE_BINDING_SLOTS: tuple[dict[str, object], ...] = ()
 DEFAULT_MAX_CONTEXT_WINDOW = 1_000_000
 DEFAULT_TIMEOUT_SEC = 30.0
+DEFAULT_REASONING_EFFORT: RuntimeProviderReasoningEffort = "high"
 DEFAULT_PROVIDER_CAPABILITY_TAGS = (
     RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
     RuntimeProviderCapabilityTag.PLANNING,
@@ -92,7 +94,7 @@ class RuntimeProviderConfigEntry(StrictModel):
     model: str | None = None
     max_context_window: int = Field(default=DEFAULT_MAX_CONTEXT_WINDOW, ge=1)
     timeout_sec: float = Field(default=DEFAULT_TIMEOUT_SEC, gt=0)
-    reasoning_effort: str | None = None
+    reasoning_effort: RuntimeProviderReasoningEffort = DEFAULT_REASONING_EFFORT
     command_path: str | None = None
     capability_tags: list[RuntimeProviderCapabilityTag] = Field(default_factory=list)
     cost_tier: RuntimeProviderCostTier = RuntimeProviderCostTier.STANDARD
@@ -112,6 +114,7 @@ class RuntimeProviderConfigEntry(StrictModel):
         object.__setattr__(self, "model", self.preferred_model or self.model)
         object.__setattr__(self, "preferred_model", self.preferred_model or self.model)
         object.__setattr__(self, "max_context_window", self.max_context_window or DEFAULT_MAX_CONTEXT_WINDOW)
+        object.__setattr__(self, "reasoning_effort", _normalize_reasoning_effort(self.reasoning_effort))
         return self
 
 
@@ -125,6 +128,7 @@ class RuntimeProviderRoleBinding(StrictModel):
     target_ref: str = Field(min_length=1)
     provider_model_entry_refs: list[str] = Field(default_factory=list)
     max_context_window_override: int | None = Field(default=None, ge=1)
+    reasoning_effort_override: RuntimeProviderReasoningEffort | None = None
     provider_id: str | None = None
     model: str | None = None
 
@@ -200,6 +204,7 @@ class RuntimeProviderSelection:
     selection_reason: str | None = None
     policy_reason: str | None = None
     effective_max_context_window: int = DEFAULT_MAX_CONTEXT_WINDOW
+    effective_reasoning_effort: RuntimeProviderReasoningEffort = DEFAULT_REASONING_EFFORT
 
 
 class RuntimeProviderConfigStore:
@@ -285,6 +290,15 @@ def _provider_label(provider: RuntimeProviderConfigEntry) -> str:
     return provider.alias or provider.label or provider.provider_id
 
 
+def _normalize_reasoning_effort(
+    reasoning_effort: RuntimeProviderReasoningEffort | str | None,
+) -> RuntimeProviderReasoningEffort:
+    normalized = str(reasoning_effort or "").strip().lower()
+    if normalized in {"low", "medium", "high", "xhigh"}:
+        return normalized  # type: ignore[return-value]
+    return DEFAULT_REASONING_EFFORT
+
+
 def _normalize_provider_type(provider_type: RuntimeProviderType) -> RuntimeProviderAdapterKind:
     if provider_type in {
         RuntimeProviderType.OPENAI_RESPONSES_STREAM,
@@ -320,7 +334,7 @@ def _normalize_provider_entry(provider: RuntimeProviderConfigEntry | dict[str, A
             model=preferred_model,
             max_context_window=int(payload.get("max_context_window") or DEFAULT_MAX_CONTEXT_WINDOW),
             timeout_sec=float(payload.get("timeout_sec") or DEFAULT_TIMEOUT_SEC),
-            reasoning_effort=(str(payload.get("reasoning_effort") or "").strip() or None),
+            reasoning_effort=_normalize_reasoning_effort(payload.get("reasoning_effort")),
             command_path=(str(payload.get("command_path") or "").strip() or None),
             capability_tags=list(payload.get("capability_tags") or DEFAULT_PROVIDER_CAPABILITY_TAGS),
             cost_tier=payload.get("cost_tier") or RuntimeProviderCostTier.STANDARD,
@@ -337,6 +351,7 @@ def _normalize_provider_entry(provider: RuntimeProviderConfigEntry | dict[str, A
             "model": provider.preferred_model,
             "max_context_window": provider.max_context_window or DEFAULT_MAX_CONTEXT_WINDOW,
             "timeout_sec": provider.timeout_sec or DEFAULT_TIMEOUT_SEC,
+            "reasoning_effort": _normalize_reasoning_effort(provider.reasoning_effort),
             "capability_tags": list(provider.capability_tags or DEFAULT_PROVIDER_CAPABILITY_TAGS),
             "cost_tier": provider.cost_tier or RuntimeProviderCostTier.STANDARD,
             "participation_policy": (
@@ -578,6 +593,7 @@ def _selection_from_entry(
     binding_target_ref: str | None,
     selection_reason: str,
     max_context_window_override: int | None = None,
+    reasoning_effort_override: RuntimeProviderReasoningEffort | None = None,
 ) -> RuntimeProviderSelection | None:
     entry = find_provider_model_entry(config, entry_ref)
     if entry is None:
@@ -596,6 +612,7 @@ def _selection_from_entry(
         selection_reason=selection_reason,
         policy_reason=None,
         effective_max_context_window=max_context_window_override or provider.max_context_window,
+        effective_reasoning_effort=reasoning_effort_override or provider.reasoning_effort,
     )
 
 
@@ -614,6 +631,7 @@ def _selection_from_binding(
         binding_target_ref=binding_target_ref,
         selection_reason=selection_reason,
         max_context_window_override=binding.max_context_window_override,
+        reasoning_effort_override=binding.reasoning_effort_override,
     )
 
 
@@ -662,6 +680,7 @@ def resolve_provider_selection(
                     selection_reason="ticket_runtime_preference",
                     policy_reason=None,
                     effective_max_context_window=preferred_provider.max_context_window,
+                    effective_reasoning_effort=preferred_provider.reasoning_effort,
                 )
 
     for candidate_ref in _binding_target_ref_candidates(target_ref):
@@ -704,6 +723,7 @@ def resolve_provider_selection(
             selection_reason="employee_provider",
             policy_reason=None,
             effective_max_context_window=employee_provider.max_context_window,
+            effective_reasoning_effort=employee_provider.reasoning_effort,
         )
     default_provider = find_provider_entry(config, config.default_provider_id)
     if default_provider is not None and default_provider.enabled and (default_provider.preferred_model or default_provider.model):
@@ -718,6 +738,7 @@ def resolve_provider_selection(
             selection_reason="default_provider",
             policy_reason=None,
             effective_max_context_window=default_provider.max_context_window,
+            effective_reasoning_effort=default_provider.reasoning_effort,
         )
     return None
 
@@ -754,6 +775,7 @@ def resolve_provider_failover_selections(
                 selection_reason="provider_failover",
                 policy_reason=primary_selection.policy_reason,
                 effective_max_context_window=fallback_provider.max_context_window,
+                effective_reasoning_effort=fallback_provider.reasoning_effort,
             )
         )
         attempted_provider_ids.add(fallback_provider.provider_id)
@@ -774,6 +796,7 @@ def save_runtime_provider_command(
                 "alias": item.alias,
                 "preferred_model": item.preferred_model,
                 "max_context_window": item.max_context_window or DEFAULT_MAX_CONTEXT_WINDOW,
+                "reasoning_effort": item.reasoning_effort,
                 "enabled": item.enabled,
             }
         )
@@ -792,6 +815,7 @@ def save_runtime_provider_command(
             target_ref=item.target_ref,
             provider_model_entry_refs=list(item.provider_model_entry_refs),
             max_context_window_override=item.max_context_window_override,
+            reasoning_effort_override=item.reasoning_effort_override,
         )
         for item in payload.role_bindings
     ]

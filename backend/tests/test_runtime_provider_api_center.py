@@ -14,6 +14,7 @@ def _upsert_payload() -> dict:
                 "alias": "",
                 "preferred_model": "gpt-5.3-codex",
                 "max_context_window": None,
+                "reasoning_effort": "high",
                 "enabled": True,
             }
         ],
@@ -28,11 +29,13 @@ def _upsert_payload() -> dict:
                 "target_ref": "ceo_shadow",
                 "provider_model_entry_refs": ["prov_primary::gpt-5.3-codex"],
                 "max_context_window_override": None,
+                "reasoning_effort_override": None,
             },
             {
                 "target_ref": "role_profile:frontend_engineer_primary",
                 "provider_model_entry_refs": [],
                 "max_context_window_override": 180000,
+                "reasoning_effort_override": "medium",
             },
         ],
         "idempotency_key": "runtime-provider-upsert:api-center",
@@ -59,6 +62,7 @@ def test_runtime_provider_projection_returns_provider_model_entries_and_role_bin
         assert data["providers"][0]["provider_id"] == "prov_primary"
         assert data["providers"][0]["alias"] == "example"
         assert data["providers"][0]["max_context_window"] == 1000000
+        assert data["providers"][0]["reasoning_effort"] == "high"
         assert data["provider_model_entries"] == [
             {
                 "entry_ref": "prov_primary::gpt-5.3-codex",
@@ -70,8 +74,10 @@ def test_runtime_provider_projection_returns_provider_model_entries_and_role_bin
         ]
         assert data["role_bindings"][0]["target_ref"] == "ceo_shadow"
         assert data["role_bindings"][0]["provider_model_entry_refs"] == ["prov_primary::gpt-5.3-codex"]
+        assert data["role_bindings"][0]["reasoning_effort_override"] is None
         assert data["role_bindings"][1]["target_ref"] == "role_profile:frontend_engineer_primary"
         assert data["role_bindings"][1]["max_context_window_override"] == 180000
+        assert data["role_bindings"][1]["reasoning_effort_override"] == "medium"
 
 
 def test_runtime_provider_connectivity_test_returns_resolved_provider_shape(
@@ -85,15 +91,15 @@ def test_runtime_provider_connectivity_test_returns_resolved_provider_shape(
     from app.core.provider_openai_compat import OpenAICompatConnectivityResult, OpenAICompatProviderType
     import app.api.commands as command_routes
 
-    monkeypatch.setattr(
-        command_routes,
-        "probe_openai_compat_connectivity",
-        lambda config, transport=None: OpenAICompatConnectivityResult(
+    def _probe(config, transport=None):
+        assert config.reasoning_effort == "high"
+        return OpenAICompatConnectivityResult(
             ok=True,
             provider_type=OpenAICompatProviderType.RESPONSES_NON_STREAM,
             response_id="resp_connectivity_test",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(command_routes, "probe_openai_compat_connectivity", _probe)
 
     with TestClient(create_app()) as client:
         response = client.post(
@@ -106,6 +112,7 @@ def test_runtime_provider_connectivity_test_returns_resolved_provider_shape(
                 "alias": "",
                 "preferred_model": "gpt-5.3-codex",
                 "max_context_window": None,
+                "reasoning_effort": "high",
                 "enabled": True,
             },
         )
@@ -116,6 +123,7 @@ def test_runtime_provider_connectivity_test_returns_resolved_provider_shape(
         assert payload["resolved_provider"]["type"] == "openai_responses_non_stream"
         assert payload["resolved_provider"]["alias"] == "example"
         assert payload["resolved_provider"]["max_context_window"] == 1000000
+        assert payload["resolved_provider"]["reasoning_effort"] == "high"
 
 
 def test_runtime_provider_models_refresh_returns_latest_models_for_saved_provider(

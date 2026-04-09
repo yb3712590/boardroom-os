@@ -399,6 +399,7 @@ def _runtime_provider_upsert_payload(
                 "alias": "",
                 "preferred_model": openai_model,
                 "max_context_window": None,
+                "reasoning_effort": "high",
             },
         ],
         "provider_model_entries": (
@@ -415,6 +416,7 @@ def _runtime_provider_upsert_payload(
                         [f"prov_openai_compat::{openai_model}"] if openai_model else []
                     ),
                     "max_context_window_override": None,
+                    "reasoning_effort_override": None,
                 }
             ]
         ),
@@ -4158,7 +4160,7 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert projection_data["model"] == "gpt-5.3-codex"
         assert projection_data["max_context_window"] == 1000000
         assert projection_data["timeout_sec"] == 30.0
-        assert projection_data["reasoning_effort"] is None
+        assert projection_data["reasoning_effort"] == "high"
         assert projection_data["default_provider_id"] == "prov_openai_compat"
         assert projection_data["api_key_configured"] is True
         assert projection_data["api_key_masked"] != "sk-test-secret"
@@ -4169,6 +4171,7 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert projection_data["providers"][0]["alias"] == "example"
         assert projection_data["providers"][0]["type"] == "openai_responses_stream"
         assert projection_data["providers"][0]["max_context_window"] == 1000000
+        assert projection_data["providers"][0]["reasoning_effort"] == "high"
         assert projection_data["providers"][0]["cost_tier"] == "standard"
         assert projection_data["providers"][0]["participation_policy"] == "always_allowed"
         assert projection_data["providers"][0]["fallback_provider_ids"] == []

@@ -96,6 +96,7 @@ def test_save_runtime_provider_command_normalizes_alias_window_and_model_entry_r
     assert loaded is not None
     assert loaded.providers[0].alias == "example"
     assert loaded.providers[0].max_context_window == 1000000
+    assert loaded.providers[0].reasoning_effort == "high"
     assert loaded.provider_model_entries[0].entry_ref == build_provider_model_entry_ref(
         "prov_primary",
         "gpt-5.3-codex",
@@ -118,6 +119,7 @@ def test_resolve_provider_selection_inherits_ceo_binding_and_provider_window(tmp
     assert selection.provider_model_entry_ref == build_provider_model_entry_ref("prov_primary", "gpt-5.3-codex")
     assert selection.actual_model == "gpt-5.3-codex"
     assert selection.effective_max_context_window == 1000000
+    assert selection.effective_reasoning_effort == "high"
 
 
 def test_resolve_provider_selection_prefers_role_binding_and_window_override(tmp_path: Path) -> None:
@@ -169,6 +171,7 @@ def test_resolve_provider_selection_prefers_role_binding_and_window_override(tmp
                     build_provider_model_entry_ref("prov_backup", "gpt-4.1")
                 ],
                 "max_context_window_override": 180000,
+                "reasoning_effort_override": "xhigh",
             },
         ],
         "idempotency_key": "runtime-provider-upsert:center-role-override",
@@ -187,3 +190,61 @@ def test_resolve_provider_selection_prefers_role_binding_and_window_override(tmp
     assert selection.provider.provider_id == "prov_backup"
     assert selection.actual_model == "gpt-4.1"
     assert selection.effective_max_context_window == 180000
+    assert selection.effective_reasoning_effort == "xhigh"
+
+
+def test_runtime_provider_store_normalizes_legacy_null_reasoning_to_high(tmp_path: Path) -> None:
+    config_path = tmp_path / "runtime-provider-config.json"
+    config_path.write_text(
+        """
+        {
+          "default_provider_id": "prov_primary",
+          "providers": [
+            {
+              "provider_id": "prov_primary",
+              "type": "openai_responses_stream",
+              "adapter_kind": "openai_compat",
+              "label": "example",
+              "enabled": true,
+              "base_url": "https://api.example.test/v1",
+              "api_key": "sk-test-secret",
+              "alias": "example",
+              "preferred_model": "gpt-5.3-codex",
+              "model": "gpt-5.3-codex",
+              "max_context_window": 1000000,
+              "timeout_sec": 30.0,
+              "reasoning_effort": null
+            }
+          ],
+          "provider_model_entries": [
+            {
+              "entry_ref": "prov_primary::gpt-5.3-codex",
+              "provider_id": "prov_primary",
+              "model_name": "gpt-5.3-codex"
+            }
+          ],
+          "role_bindings": [
+            {
+              "target_ref": "ceo_shadow",
+              "provider_model_entry_refs": ["prov_primary::gpt-5.3-codex"],
+              "max_context_window_override": null,
+              "reasoning_effort_override": null
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    store = RuntimeProviderConfigStore(config_path)
+
+    loaded = store.load_saved_config()
+    selection = resolve_provider_selection(
+        loaded,
+        target_ref="ceo_shadow",
+        employee_provider_id=None,
+    )
+
+    assert loaded is not None
+    assert loaded.providers[0].reasoning_effort == "high"
+    assert selection is not None
+    assert selection.effective_reasoning_effort == "high"

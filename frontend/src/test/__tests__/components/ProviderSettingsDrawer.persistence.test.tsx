@@ -15,7 +15,7 @@ function buildProviderData(baseUrl: string) {
     model: 'gpt-5.3-codex',
     max_context_window: 1000000,
     timeout_sec: 30,
-    reasoning_effort: null,
+    reasoning_effort: 'high',
     api_key_configured: true,
     api_key_masked: 'sk-***cret',
     configured_worker_count: 1,
@@ -36,7 +36,7 @@ function buildProviderData(baseUrl: string) {
         preferred_model: 'gpt-5.3-codex',
         max_context_window: 1000000,
         timeout_sec: 30,
-        reasoning_effort: null,
+        reasoning_effort: 'high',
         command_path: null,
         capability_tags: ['structured_output', 'planning', 'implementation', 'review'],
         cost_tier: 'standard',
@@ -63,6 +63,7 @@ function buildProviderData(baseUrl: string) {
         target_label: 'CEO Shadow',
         provider_model_entry_refs: ['prov_primary::gpt-5.3-codex'],
         max_context_window_override: null,
+        reasoning_effort_override: null,
       },
     ],
     future_binding_slots: [],
@@ -92,6 +93,7 @@ describe('ProviderSettingsDrawer persistence', () => {
     await user.clear(screen.getByLabelText('Provider base URL prov_primary'))
     await user.type(screen.getByLabelText('Provider base URL prov_primary'), 'https://draft.example.test/v1')
     await user.type(screen.getByLabelText('Provider API key prov_primary'), 'sk-local-draft')
+    await user.selectOptions(screen.getByLabelText('Provider reasoning effort prov_primary'), 'xhigh')
 
     rerender(
       <ProviderSettingsDrawer
@@ -102,5 +104,6 @@ describe('ProviderSettingsDrawer persistence', () => {
 
     expect(screen.getByLabelText('Provider base URL prov_primary')).toHaveValue('https://draft.example.test/v1')
     expect(screen.getByLabelText('Provider API key prov_primary')).toHaveValue('sk-local-draft')
+    expect(screen.getByLabelText('Provider reasoning effort prov_primary')).toHaveValue('xhigh')
   })
 })

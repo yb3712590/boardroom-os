@@ -134,6 +134,11 @@ def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict
         )
         or "gpt-5.3-codex",
         timeout_sec=30.0,
+        reasoning_effort=(
+            payload.reasoning_effort
+            if isinstance(payload, RuntimeProviderConfigInput)
+            else payload.get("reasoning_effort") or "high"
+        ),
         provider_type=OpenAICompatProviderType(provider_type.value if hasattr(provider_type, "value") else provider_type),
     )
 
@@ -154,6 +159,7 @@ def runtime_provider_connectivity_test(
             "alias": resolved_alias,
             "preferred_model": payload.preferred_model,
             "max_context_window": payload.max_context_window or 1000000,
+            "reasoning_effort": payload.reasoning_effort or "high",
             "enabled": payload.enabled,
         },
     }

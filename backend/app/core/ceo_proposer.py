@@ -864,7 +864,7 @@ def propose_ceo_action_batch(
                     api_key=str(current_selection.provider.api_key or ""),
                     model=str(current_selection.actual_model or current_selection.provider.model or ""),
                     timeout_sec=current_selection.provider.timeout_sec,
-                    reasoning_effort=current_selection.provider.reasoning_effort,
+                    reasoning_effort=current_selection.effective_reasoning_effort,
                 ),
                 rendered_payload,
             )

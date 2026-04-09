@@ -321,6 +321,7 @@ def _build_runtime_provider_projection_data(
                 "target_label": runtime_target_label(binding.target_ref),
                 "provider_model_entry_refs": list(binding.provider_model_entry_refs),
                 "max_context_window_override": binding.max_context_window_override,
+                "reasoning_effort_override": binding.reasoning_effort_override,
             }
             for binding in config.role_bindings
         ],

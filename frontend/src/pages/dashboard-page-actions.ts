@@ -113,6 +113,7 @@ export function useDashboardPageActions({
       alias: string | null
       preferred_model: string | null
       max_context_window: number | null
+      reasoning_effort: string | null
       enabled: boolean
     }>
     providerModelEntries: Array<{
@@ -123,6 +124,7 @@ export function useDashboardPageActions({
       target_ref: string
       provider_model_entry_refs: string[]
       max_context_window_override: number | null
+      reasoning_effort_override: string | null
     }>
   }) => {
     setRuntimeProviderSubmitting(true)
@@ -151,6 +153,7 @@ export function useDashboardPageActions({
     alias: string | null
     preferred_model: string | null
     max_context_window: number | null
+    reasoning_effort: string | null
     enabled: boolean
   }) => {
     return runtimeProviderConnectivityTest(input)

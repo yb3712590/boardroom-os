@@ -15,7 +15,7 @@ function buildProviderData() {
     model: 'gpt-5.3-codex',
     max_context_window: 1000000,
     timeout_sec: 30,
-    reasoning_effort: null,
+    reasoning_effort: 'high',
     api_key_configured: true,
     api_key_masked: 'sk-***cret',
     configured_worker_count: 1,
@@ -36,7 +36,7 @@ function buildProviderData() {
         preferred_model: 'gpt-5.3-codex',
         max_context_window: 1000000,
         timeout_sec: 30,
-        reasoning_effort: null,
+        reasoning_effort: 'high',
         command_path: null,
         capability_tags: ['structured_output', 'planning', 'implementation', 'review'],
         cost_tier: 'standard',
@@ -63,12 +63,14 @@ function buildProviderData() {
         target_label: 'CEO Shadow',
         provider_model_entry_refs: ['prov_primary::gpt-5.3-codex'],
         max_context_window_override: null,
+        reasoning_effort_override: null,
       },
       {
         target_ref: 'role_profile:frontend_engineer_primary',
         target_label: 'Frontend Engineer',
         provider_model_entry_refs: [],
         max_context_window_override: 180000,
+        reasoning_effort_override: 'medium',
       },
     ],
     future_binding_slots: [],
@@ -93,8 +95,11 @@ describe('ProviderSettingsDrawer', () => {
 
     expect(screen.getByRole('button', { name: /add provider/i })).toBeInTheDocument()
     expect(screen.getByLabelText('Provider alias prov_primary')).toHaveValue('example')
+    expect(screen.getByLabelText('Provider reasoning effort prov_primary')).toHaveValue('high')
     expect(screen.getByLabelText('CEO Shadow context window override')).toHaveValue(null)
+    expect(screen.getByLabelText('CEO Shadow reasoning effort override')).toHaveValue('inherit')
     expect(screen.getByLabelText('Frontend Engineer context window override')).toHaveValue(180000)
+    expect(screen.getByLabelText('Frontend Engineer reasoning effort override')).toHaveValue('medium')
   })
 
   it('applies connectivity fallback result before save', async () => {
@@ -110,6 +115,7 @@ describe('ProviderSettingsDrawer', () => {
         alias: 'example',
         preferred_model: 'gpt-5.3-codex',
         max_context_window: 1000000,
+        reasoning_effort: 'high',
         enabled: true,
       },
     })
@@ -141,6 +147,7 @@ describe('ProviderSettingsDrawer', () => {
             expect.objectContaining({
               provider_id: 'prov_primary',
               type: 'openai_responses_non_stream',
+              reasoning_effort: 'high',
             }),
           ]),
         }),
@@ -177,6 +184,52 @@ describe('ProviderSettingsDrawer', () => {
           providerModelEntries: expect.arrayContaining([
             { provider_id: 'prov_primary', model_name: 'gpt-4.1' },
             { provider_id: 'prov_primary', model_name: 'gpt-5.3-codex' },
+          ]),
+        }),
+      ),
+    )
+  })
+
+  it('submits provider reasoning effort and role reasoning override', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ProviderSettingsDrawer
+        isOpen
+        providerData={buildProviderData()}
+        loading={false}
+        error={null}
+        submitting={false}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onConnectivityTest={vi.fn().mockResolvedValue({ ok: true, resolved_provider: null, response_id: null })}
+        onRefreshModels={vi.fn().mockResolvedValue([])}
+      />,
+    )
+
+    await user.selectOptions(screen.getByLabelText('Provider reasoning effort prov_primary'), 'xhigh')
+    await user.selectOptions(screen.getByLabelText('CEO Shadow reasoning effort override'), 'high')
+    await user.click(screen.getByRole('button', { name: /save runtime settings/i }))
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providers: expect.arrayContaining([
+            expect.objectContaining({
+              provider_id: 'prov_primary',
+              reasoning_effort: 'xhigh',
+            }),
+          ]),
+          roleBindings: expect.arrayContaining([
+            expect.objectContaining({
+              target_ref: 'ceo_shadow',
+              reasoning_effort_override: 'high',
+            }),
+            expect.objectContaining({
+              target_ref: 'role_profile:frontend_engineer_primary',
+              reasoning_effort_override: 'medium',
+            }),
           ]),
         }),
       ),

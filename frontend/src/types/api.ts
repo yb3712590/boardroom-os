@@ -200,6 +200,7 @@ export type RuntimeProviderRoleBinding = {
   target_label: string
   provider_model_entry_refs: readonly string[]
   max_context_window_override: number | null
+  reasoning_effort_override: string | null
 }
 
 export type RuntimeProviderModelEntry = {
@@ -337,6 +338,7 @@ export type RuntimeProviderConfigRequest = {
   alias: string | null
   preferred_model: string | null
   max_context_window: number | null
+  reasoning_effort: string | null
   enabled: boolean
 }
 
@@ -349,6 +351,7 @@ export type RuntimeProviderRoleBindingRequest = {
   target_ref: string
   provider_model_entry_refs: string[]
   max_context_window_override: number | null
+  reasoning_effort_override: string | null
 }
 
 export type RuntimeProviderUpsertRequest = {
