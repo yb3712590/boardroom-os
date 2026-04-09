@@ -1,38 +1,58 @@
 # Boardroom OS
 
-> 一个本地优先、事件溯源、用无状态 Agent Team 推进交付的控制面原型。
+> 给团队一个目标、几条约束和验收标准，系统继续往下推进；需要拍板的时候，再回到董事会面前。
 
-## 当前是什么
+## 这是什么
 
-Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
+很多团队都有同一个难题。
+负责人能说清方向，也能说清底线，但很难一直盯着拆解、执行、检查、返工和收口。
 
-- 用户像董事会，只给目标、约束和验收标准
-- 后端按 `Board -> Worker -> Review` 的治理链推进工作
-- 事件流和投影是真相源，前端只读当前治理状态
-- Maker-Checker、Review Room 和最小 Meeting Room 都是主线治理，不是演示壳
+Boardroom OS 就是为这类场景准备的。
+它把交付过程接过去，把任务分下去，把结果收回来，把关键决定留给真正该拍板的人。
 
-路线边界见 [doc/roadmap-reset.md](doc/roadmap-reset.md)。
+现在的版本重点很明确：先把本地可运行、可验证、可演示的交付闭环做扎实。
 
-## 当前真实闭环
+## 核心竞争力
 
-- `project-init -> scope review -> BUILD -> CHECK -> REVIEW -> closeout` 已真实跑通
-- 当初始化输入明显不足，或董事会在启动时显式要求先澄清时，`project-init` 会先打开一次 `REQUIREMENT_ELICITATION` 板审，再继续进入首个 scope review
-- `BUILD`、`CHECK`、`closeout` 都带内部 maker-checker；最终董事会只看真正的 board-facing `REVIEW`
-- CEO 已真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
-- `ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
-- CEO 现在也可在当前 live 规划角色上先创建五类治理文档票；治理文档结果会写回统一 `GOVERNANCE_DOCUMENT` 过程资产，并可自动带入后续实施票
-- runtime provider 设置现在已升级为最小 registry：首版真实支持 `OpenAI Compat` 与 `Claude Code CLI`，并可给当前真实角色保存默认 provider / model 绑定、能力标签、健康明细和最小 fallback provider 链
-- `workforce` 与 runtime provider 设置现在都会暴露统一只读 `role_templates_catalog`：固定包含当前 live 执行角色、已纳入 runtime 的新增实施/治理角色、文档类型和模板片段；其中 `backend / database / platform / architect / cto` 现在都已进入 formal runtime live 路径与 provider 当前绑定区，`backend / database / platform` 仍未进入 direct CEO create-ticket，`architect / cto` 仍只进入治理文档 runtime
-- React 壳当前可看 `dashboard / inbox / review room / meeting room / incident / workforce / dependency inspector / completion`
+### ✅ done
 
-更细代码真相统一看 [doc/mainline-truth.md](doc/mainline-truth.md)。
+- 已经能把项目启动、需求补充、执行、检查、最终复核串成一条真实闭环
+- 负责人只在关键节点介入，平时不用盯着每一步
+- 执行、检查、复核已经拆开，减少“自己做、自己评、自己过”的失真
+- 每一步都有结构化记录，进度、决策和结果都能回看
+- 本地就能跑通主流程，不需要先搭一整套云端平台
+- 前端已经能看到仪表盘、收件箱、评审、会议、人员、依赖和交付结果
+- 多种角色和模型提供方已经接进主流程，团队编制和执行入口开始成形
 
-## 当前主线边界
+### 🟡 todo
 
-- 本地单机优先，不按公网多租户平台推进
-- Ticket 驱动无状态执行器，不按聊天式 Agent shell 推进
-- Context Compiler 负责受控执行包，不给 Worker 任意全局记忆
-- Web UI 继续做最薄治理壳，不接管工作流真相
+- 让更多角色直接进入正式执行入口，减少“已经接入但还不能直接派活”的情况
+- 把更多董事会升级动作做成正式能力，让高风险决策有更完整的处理面
+- 把证据包、文档更新和交付展示补得更完整，方便复核、留档和交接
+- 继续清理与当前 MVP 无关的旧能力和复杂边角，让系统更轻、更稳、更聚焦
+
+## 当前做到哪一步
+
+- 本地单机版本已经可以真实跑通，不再停留在概念演示
+- 当输入过于模糊时，系统会先把缺的信息补齐，再继续推进
+- 系统里的 CEO 已经能创建任务、重试任务、招人和发起会议
+- 检查和复核已经进入日常流程，不靠一次性产出直接交差
+- 董事会可以在 `Inbox` 和 `Review Room` 里集中做决定
+- 后端保存事件和状态，前端负责把当前情况清楚地展示出来
+
+更多当前真相见 [doc/mainline-truth.md](doc/mainline-truth.md)。
+
+## 当前边界
+
+- 当前重点仍在本地单机版本
+- 多租户公网平台、远程运维控制面、对象存储平台化都先不扩张
+- 前端负责展示和操作，真实流程以后端事件和投影为准
+- 一切优先级都围绕一件事展开：缩短从董事会指令到交付复核的路径
+
+## 技术栈
+
+- Backend: `FastAPI`、`Pydantic`、`pytest`
+- Frontend: `React`、`Vite`、`TypeScript`、`Vitest`
 
 ## 快速开始
 
@@ -67,28 +87,18 @@ npm run build
 npm run test:run
 ```
 
-## 默认先读
+## 推荐先读
 
 1. [doc/README.md](doc/README.md)
 2. [doc/mainline-truth.md](doc/mainline-truth.md)
 3. [doc/roadmap-reset.md](doc/roadmap-reset.md)
 4. [doc/TODO.md](doc/TODO.md)
 5. [doc/history/context-baseline.md](doc/history/context-baseline.md)
-6. [doc/history/memory-log.md](doc/history/memory-log.md)
-7. [doc/task-backlog.md](doc/task-backlog.md)
-
-## 当前不主动扩张
-
-- `worker-admin` 与更细的多租户运维面
-- 对象存储平台化与上传链路扩张
-- 远程 handoff / 远程控制面
-- 在没有明确证据前继续扩检索层、Provider 路由和发布复杂度
-- 任何不直接缩短本地 MVP 路径的远期愿景系统化能力
+6. [doc/task-backlog.md](doc/task-backlog.md)
 
 ## 项目原则
 
-- 治理比热闹重要
-- 审计比想象重要
-- 幂等比炫技重要
-- 结构化协作比自由群聊可靠
-- 本地可跑通，比过早远程化更重要
+- 先把真实交付跑通，再谈远期扩张
+- 先把关键决策和责任分清，再谈更炫的自动化
+- 先把记录留完整，再谈更复杂的能力拼装
+- 先让本地版本稳定可用，再谈远程化和平台化
