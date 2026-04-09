@@ -12,6 +12,8 @@ vi.mock('../../../api/commands', () => ({
   boardReject: vi.fn(),
   modifyConstraints: vi.fn(),
   projectInit: vi.fn(),
+  runtimeProviderConnectivityTest: vi.fn(),
+  runtimeProviderModelsRefresh: vi.fn(),
   runtimeProviderUpsert: vi.fn(),
   incidentResolve: vi.fn(),
   employeeFreeze: vi.fn(),

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request
 from pydantic import Field
 
+from app.contracts.common import StrictModel
 from app.contracts.commands import (
     ArtifactCleanupCommand,
     ArtifactDeleteCommand,
@@ -17,6 +18,7 @@ from app.contracts.commands import (
     MeetingRequestCommand,
     ModifyConstraintsCommand,
     ProjectInitCommand,
+    RuntimeProviderConfigInput,
     RuntimeProviderUpsertCommand,
     SchedulerTickCommand,
     TicketArtifactImportUploadCommand,
@@ -43,7 +45,18 @@ from app.core.approval_handlers import (
 )
 from app.core.artifact_store import ArtifactStore
 from app.core.command_handlers import handle_project_init
-from app.core.runtime_provider_config import RuntimeProviderConfigStore, save_runtime_provider_command
+from app.core.provider_openai_compat import (
+    OpenAICompatProviderConfig,
+    OpenAICompatProviderType,
+    list_openai_compat_models,
+    probe_openai_compat_connectivity,
+)
+from app.core.runtime_provider_config import (
+    RuntimeProviderConfigStore,
+    find_provider_entry,
+    resolve_runtime_provider_config,
+    save_runtime_provider_command,
+)
 from app.core.employee_handlers import (
     handle_employee_freeze,
     handle_employee_hire_request,
@@ -92,6 +105,10 @@ ProjectInitRequest.model_rebuild()
 TicketCreateRequest.model_rebuild()
 
 
+class RuntimeProviderModelsRefreshRequest(StrictModel):
+    provider_id: str = Field(min_length=1)
+
+
 @router.post("/project-init", response_model=CommandAckEnvelope)
 def project_init(request: Request, payload: ProjectInitRequest) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
@@ -105,6 +122,63 @@ def runtime_provider_upsert(
 ) -> CommandAckEnvelope:
     runtime_provider_store: RuntimeProviderConfigStore = request.app.state.runtime_provider_store
     return save_runtime_provider_command(runtime_provider_store, payload)
+
+
+def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict) -> OpenAICompatProviderConfig:
+    provider_type = payload.type if isinstance(payload, RuntimeProviderConfigInput) else payload["type"]
+    return OpenAICompatProviderConfig(
+        base_url=payload.base_url if isinstance(payload, RuntimeProviderConfigInput) else payload["base_url"],
+        api_key=payload.api_key if isinstance(payload, RuntimeProviderConfigInput) else payload["api_key"],
+        model=(
+            payload.preferred_model if isinstance(payload, RuntimeProviderConfigInput) else payload["preferred_model"]
+        )
+        or "gpt-5.3-codex",
+        timeout_sec=30.0,
+        provider_type=OpenAICompatProviderType(provider_type.value if hasattr(provider_type, "value") else provider_type),
+    )
+
+
+@router.post("/runtime-provider-connectivity-test")
+def runtime_provider_connectivity_test(
+    payload: RuntimeProviderConfigInput,
+) -> dict[str, object]:
+    result = probe_openai_compat_connectivity(_build_openai_connectivity_config(payload))
+    resolved_alias = payload.alias or payload.base_url.split("//")[-1].split(".")[-2]
+    return {
+        "ok": result.ok,
+        "response_id": result.response_id,
+        "resolved_provider": {
+            "provider_id": payload.provider_id,
+            "type": result.provider_type.value,
+            "base_url": payload.base_url,
+            "alias": resolved_alias,
+            "preferred_model": payload.preferred_model,
+            "max_context_window": payload.max_context_window or 1000000,
+            "enabled": payload.enabled,
+        },
+    }
+
+
+@router.post("/runtime-provider-models-refresh")
+def runtime_provider_models_refresh(
+    request: Request,
+    payload: RuntimeProviderModelsRefreshRequest,
+) -> dict[str, object]:
+    runtime_provider_store: RuntimeProviderConfigStore = request.app.state.runtime_provider_store
+    config = resolve_runtime_provider_config(runtime_provider_store)
+    provider = find_provider_entry(config, payload.provider_id)
+    if provider is None:
+        return {"provider_id": payload.provider_id, "models": []}
+    models = list_openai_compat_models(
+        OpenAICompatProviderConfig(
+            base_url=str(provider.base_url or ""),
+            api_key=str(provider.api_key or ""),
+            model=str(provider.preferred_model or provider.model or "gpt-5.3-codex"),
+            timeout_sec=float(provider.timeout_sec),
+            provider_type=OpenAICompatProviderType(provider.type.value),
+        )
+    )
+    return {"provider_id": payload.provider_id, "models": models}
 
 
 @router.post("/employee-hire-request", response_model=CommandAckEnvelope)

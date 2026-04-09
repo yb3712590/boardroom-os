@@ -122,7 +122,10 @@
 - `frontend/src/utils/format.ts` 已恢复英文 locale 和 fallback；`rg -n "[\\p{Han}]" frontend/src` 当前无命中，说明主线前端代码里没有残留中文 UI 硬编码
 - runtime/provider 前端契约这轮保持不回退：`CompletionCard` 已补空值分支，`frontend/src/types/api.ts` 已把 provider/incident 相关数组收正到 `readonly`，前端回归继续校验 `cost_tier / participation_policy / preferred_* / actual_* / selection_reason / policy_reason` 等当前真字段
 - `App.test.tsx`、`CompletionCard.test.tsx` 以及相关前端组件回归已切回英文断言；本轮还顺手把后端 `test_idle_ceo_maintenance_targets_pending_workflow_once_per_interval` 对齐到当前“最近状态变化冷却窗口”语义，避免旧断言继续把 workflow 刚更新的同一时刻误判成 idle maintenance 应立即 due
-- 当前验证基线更新为 backend `537 passed`、frontend build passed、frontend `84 passed`
+- `P2-PRV-009 / P2-PRV-010` 已完成：Provider Settings 现在已重构成多 provider center，读写主形状改为 `providers[] / provider_model_entries[] / role_bindings[]`；旧固定 provider 配置升级后按空配置处理，不再迁移保留
+- OpenAI-compatible provider 当前固定先走 Responses 流式；连通性测试在“流式失败、非流式成功”时会返回标准化 provider 结果并把类型收正为非流式。模型刷新只保留仍存在的已勾选模型，失效模型会静默剔除
+- CEO / role 绑定当前改成消费有序 `provider_model_entry_refs[]`，并支持 `max_context_window_override`；role 未配置时默认继承 CEO 的模型条目和上下文窗口，运行时审计也会补 `provider_model_entry_ref / effective_max_context_window`
+- 当前验证基线更新为 backend `533 passed`、frontend build passed、frontend `84 passed`
 
 ## Current Working Set
 

@@ -38,6 +38,8 @@ def test_collect_api_surface_groups_matches_current_route_families():
         "POST /api/v1/commands/meeting-request",
         "POST /api/v1/commands/modify-constraints",
         "POST /api/v1/commands/project-init",
+        "POST /api/v1/commands/runtime-provider-connectivity-test",
+        "POST /api/v1/commands/runtime-provider-models-refresh",
         "POST /api/v1/commands/runtime-provider-upsert",
         "POST /api/v1/commands/scheduler-tick",
         "POST /api/v1/commands/ticket-artifact-import-upload",

@@ -16,9 +16,12 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
     OpenAICompatProviderBadResponseError,
     OpenAICompatProviderConfig,
+    OpenAICompatProviderType,
     OpenAICompatProviderRateLimitedError,
     OpenAICompatProviderUnavailableError,
     invoke_openai_compat_response,
+    list_openai_compat_models,
+    probe_openai_compat_connectivity,
 )
 
 
@@ -67,6 +70,7 @@ def _config() -> OpenAICompatProviderConfig:
         api_key="test-key",
         model="gpt-5.3-codex",
         timeout_sec=30.0,
+        provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
     )
 
 
@@ -211,26 +215,26 @@ def test_invoke_openai_compat_response_rejects_bad_json_payloads() -> None:
     assert exc_info.value.failure_detail["provider_response_id"] == "resp_bad"
 
 
-def test_invoke_openai_compat_response_falls_back_to_streaming_chat_completions_when_responses_body_is_empty() -> None:
+def test_invoke_openai_compat_response_uses_streaming_responses_by_default() -> None:
     request_urls: list[str] = []
 
     def _handler(request: httpx.Request) -> httpx.Response:
         request_urls.append(str(request.url))
-        if request.url.path.endswith("/responses"):
-            return httpx.Response(200, content=b"")
-        if request.url.path.endswith("/chat/completions"):
-            body = (
-                'data: {"id":"resp_stream_001","choices":[{"index":0,"delta":{"role":"assistant","content":"{\\"ok\\""},"finish_reason":null}]}\n\n'
-                'data: {"id":"resp_stream_001","choices":[{"index":0,"delta":{"role":"assistant","content":":true}"},"finish_reason":null}]}\n\n'
-                'data: {"id":"resp_stream_001","choices":[{"index":0,"delta":{"role":null,"content":null},"finish_reason":"stop"}]}\n\n'
-                "data: [DONE]\n\n"
-            )
-            return httpx.Response(
-                200,
-                headers={"content-type": "text/event-stream"},
-                text=body,
-            )
-        raise AssertionError(f"Unexpected request URL: {request.url}")
+        assert request.url.path.endswith("/responses")
+        assert request.headers["Accept"] == "text/event-stream"
+        body = (
+            'event: response.output_text.delta\n'
+            'data: {"type":"response.output_text.delta","delta":"{\\"ok\\""}\n\n'
+            'event: response.output_text.delta\n'
+            'data: {"type":"response.output_text.delta","delta":":true}"}\n\n'
+            'event: response.completed\n'
+            'data: {"type":"response.completed","response":{"id":"resp_stream_001"}}\n\n'
+        )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=body,
+        )
 
     result = invoke_openai_compat_response(
         _config(),
@@ -240,7 +244,83 @@ def test_invoke_openai_compat_response_falls_back_to_streaming_chat_completions_
 
     assert request_urls == [
         "https://api-vip.codex-for.me/v1/responses",
-        "https://api-vip.codex-for.me/v1/chat/completions",
     ]
     assert result.response_id == "resp_stream_001"
     assert result.output_text == '{"ok":true}'
+
+
+def test_connectivity_test_falls_back_to_non_streaming_responses_when_streaming_is_not_supported() -> None:
+    request_urls: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        request_urls.append(str(request.url))
+        if request.headers.get("Accept") == "text/event-stream":
+            return httpx.Response(
+                400,
+                json={"error": {"message": "streaming not supported"}},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_non_stream_connectivity",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": '{"status":"ok"}',
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    result = probe_openai_compat_connectivity(
+        OpenAICompatProviderConfig(
+            base_url="https://api-vip.codex-for.me/v1",
+            api_key="test-key",
+            model="gpt-5.3-codex",
+            timeout_sec=30.0,
+            provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
+        ),
+        transport=httpx.MockTransport(_handler),
+    )
+
+    assert request_urls == [
+        "https://api-vip.codex-for.me/v1/responses",
+        "https://api-vip.codex-for.me/v1/responses",
+    ]
+    assert result.ok is True
+    assert result.provider_type == OpenAICompatProviderType.RESPONSES_NON_STREAM
+    assert result.response_id == "resp_non_stream_connectivity"
+
+
+def test_list_openai_compat_models_returns_sorted_model_ids() -> None:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("https://api-vip.codex-for.me/v1/models")
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "gpt-4.1"},
+                    {"id": "gpt-5.3-codex"},
+                    {"id": "gpt-4.1"},
+                ]
+            },
+        )
+
+    result = list_openai_compat_models(
+        OpenAICompatProviderConfig(
+            base_url="https://api-vip.codex-for.me/v1",
+            api_key="test-key",
+            model="gpt-5.3-codex",
+            timeout_sec=30.0,
+            provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
+        ),
+        transport=httpx.MockTransport(_handler),
+    )
+
+    assert result == ["gpt-4.1", "gpt-5.3-codex"]

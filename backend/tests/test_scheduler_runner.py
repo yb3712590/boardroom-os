@@ -1362,12 +1362,28 @@ def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
     config_path.write_text(
         json.dumps(
             {
-                "mode": "OPENAI_COMPAT",
-                "base_url": "https://api-vip.codex-for.me/v1",
-                "api_key": "provider-key",
-                "model": "gpt-5.3-codex",
-                "timeout_sec": 30.0,
-                "reasoning_effort": "medium",
+                "default_provider_id": "prov_openai_compat",
+                "providers": [
+                    {
+                        "provider_id": "prov_openai_compat",
+                        "type": "openai_responses_stream",
+                        "base_url": "https://api-vip.codex-for.me/v1",
+                        "api_key": "provider-key",
+                        "alias": "vip",
+                        "preferred_model": "gpt-5.3-codex",
+                        "max_context_window": 1000000,
+                        "enabled": True,
+                        "timeout_sec": 30.0,
+                        "reasoning_effort": "medium",
+                    }
+                ],
+                "provider_model_entries": [
+                    {
+                        "provider_id": "prov_openai_compat",
+                        "model_name": "gpt-5.3-codex",
+                    }
+                ],
+                "role_bindings": [],
             }
         ),
         encoding="utf-8",

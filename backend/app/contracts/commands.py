@@ -104,6 +104,13 @@ class RuntimeProviderParticipationPolicy(StrEnum):
     LOW_FREQUENCY_ONLY = "low_frequency_only"
 
 
+class RuntimeProviderType(StrEnum):
+    OPENAI_RESPONSES_STREAM = "openai_responses_stream"
+    OPENAI_RESPONSES_NON_STREAM = "openai_responses_non_stream"
+    CLAUDE_STREAM = "claude_stream"
+    GEMINI_STREAM = "gemini_stream"
+
+
 class MeetingType(StrEnum):
     TECHNICAL_DECISION = "TECHNICAL_DECISION"
 
@@ -161,25 +168,24 @@ class ProjectInitCommand(StrictModel):
 
 class RuntimeProviderConfigInput(StrictModel):
     provider_id: str = Field(min_length=1)
-    adapter_kind: str = Field(min_length=1)
-    label: str = Field(min_length=1)
+    type: RuntimeProviderType
+    base_url: str = Field(min_length=1)
+    api_key: str = Field(min_length=1)
+    alias: str | None = None
+    preferred_model: str | None = None
+    max_context_window: int | None = Field(default=None, ge=1)
     enabled: bool = False
-    base_url: str | None = None
-    api_key: str | None = None
-    model: str | None = None
-    timeout_sec: float = Field(default=30.0, gt=0)
-    reasoning_effort: str | None = None
-    command_path: str | None = None
-    capability_tags: list[RuntimeProviderCapabilityTag] = Field(default_factory=list)
-    cost_tier: RuntimeProviderCostTier = RuntimeProviderCostTier.STANDARD
-    participation_policy: RuntimeProviderParticipationPolicy = RuntimeProviderParticipationPolicy.ALWAYS_ALLOWED
-    fallback_provider_ids: list[str] = Field(default_factory=list)
+
+
+class RuntimeProviderModelEntryInput(StrictModel):
+    provider_id: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
 
 
 class RuntimeProviderRoleBindingInput(StrictModel):
     target_ref: str = Field(min_length=1)
-    provider_id: str = Field(min_length=1)
-    model: str | None = None
+    provider_model_entry_refs: list[str] = Field(default_factory=list)
+    max_context_window_override: int | None = Field(default=None, ge=1)
 
 
 class RuntimeSelectionPreference(StrictModel):
@@ -188,8 +194,8 @@ class RuntimeSelectionPreference(StrictModel):
 
 
 class RuntimeProviderUpsertCommand(StrictModel):
-    default_provider_id: str | None = None
     providers: list[RuntimeProviderConfigInput] = Field(default_factory=list)
+    provider_model_entries: list[RuntimeProviderModelEntryInput] = Field(default_factory=list)
     role_bindings: list[RuntimeProviderRoleBindingInput] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1)
 
@@ -198,23 +204,33 @@ class RuntimeProviderUpsertCommand(StrictModel):
         provider_ids = [provider.provider_id for provider in self.providers]
         if len(provider_ids) != len(set(provider_ids)):
             raise ValueError("providers must not contain duplicate provider_id values.")
-
         valid_provider_ids = set(provider_ids)
-        for provider in self.providers:
-            capability_values = [tag.value for tag in provider.capability_tags]
-            if len(capability_values) != len(set(capability_values)):
-                raise ValueError(f"{provider.provider_id} capability_tags must not contain duplicates.")
+        seen_provider_model_pairs: set[tuple[str, str]] = set()
+        provider_model_entry_refs: set[str] = set()
+        for entry in self.provider_model_entries:
+            if entry.provider_id not in valid_provider_ids:
+                raise ValueError(f"{entry.provider_id} is not a known provider_id.")
+            pair = (entry.provider_id, entry.model_name)
+            if pair in seen_provider_model_pairs:
+                raise ValueError("provider_model_entries must not contain duplicate provider_id + model_name pairs.")
+            seen_provider_model_pairs.add(pair)
+            provider_model_entry_refs.add(f"{entry.provider_id}::{entry.model_name}")
 
-            fallback_ids = list(provider.fallback_provider_ids)
-            if len(fallback_ids) != len(set(fallback_ids)):
-                raise ValueError(f"{provider.provider_id} fallback_provider_ids must not contain duplicates.")
-            if provider.provider_id in fallback_ids:
-                raise ValueError(f"{provider.provider_id} cannot list itself as a fallback provider.")
-
-            unknown_fallback_ids = [provider_id for provider_id in fallback_ids if provider_id not in valid_provider_ids]
-            if unknown_fallback_ids:
+        seen_target_refs: set[str] = set()
+        for binding in self.role_bindings:
+            if binding.target_ref in seen_target_refs:
+                raise ValueError("role_bindings must not contain duplicate target_ref values.")
+            seen_target_refs.add(binding.target_ref)
+            if len(binding.provider_model_entry_refs) != len(set(binding.provider_model_entry_refs)):
                 raise ValueError(
-                    f"{provider.provider_id} references unknown fallback providers: {', '.join(unknown_fallback_ids)}."
+                    f"{binding.target_ref} provider_model_entry_refs must not contain duplicates."
+                )
+            unknown_refs = [
+                ref for ref in binding.provider_model_entry_refs if ref not in provider_model_entry_refs
+            ]
+            if unknown_refs:
+                raise ValueError(
+                    f"{binding.target_ref} references unknown provider_model_entry_refs: {', '.join(unknown_refs)}."
                 )
         return self
 

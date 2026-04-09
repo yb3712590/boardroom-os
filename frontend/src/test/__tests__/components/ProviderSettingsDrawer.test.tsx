@@ -4,187 +4,179 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ProviderSettingsDrawer } from '../../../components/overlays/ProviderSettingsDrawer'
 
+function buildProviderData() {
+  return {
+    mode: 'OPENAI_RESPONSES_STREAM',
+    effective_mode: 'OPENAI_RESPONSES_STREAM_LIVE',
+    provider_health_summary: 'HEALTHY',
+    provider_id: 'prov_primary',
+    base_url: 'https://api.example.test/v1',
+    alias: 'example',
+    model: 'gpt-5.3-codex',
+    max_context_window: 1000000,
+    timeout_sec: 30,
+    reasoning_effort: null,
+    api_key_configured: true,
+    api_key_masked: 'sk-***cret',
+    configured_worker_count: 1,
+    effective_reason: 'example is ready with streaming Responses.',
+    default_provider_id: 'prov_primary',
+    providers: [
+      {
+        provider_id: 'prov_primary',
+        type: 'openai_responses_stream',
+        adapter_kind: 'openai_compat',
+        label: 'example',
+        alias: 'example',
+        enabled: true,
+        base_url: 'https://api.example.test/v1',
+        api_key_configured: true,
+        api_key_masked: 'sk-***cret',
+        model: 'gpt-5.3-codex',
+        preferred_model: 'gpt-5.3-codex',
+        max_context_window: 1000000,
+        timeout_sec: 30,
+        reasoning_effort: null,
+        command_path: null,
+        capability_tags: ['structured_output', 'planning', 'implementation', 'review'],
+        cost_tier: 'standard',
+        participation_policy: 'always_allowed',
+        fallback_provider_ids: [],
+        health_status: 'HEALTHY',
+        health_reason: 'example is ready with streaming Responses.',
+        configured_worker_count: 1,
+        is_default: true,
+      },
+    ],
+    provider_model_entries: [
+      {
+        entry_ref: 'prov_primary::gpt-5.3-codex',
+        provider_id: 'prov_primary',
+        provider_label: 'example',
+        model_name: 'gpt-5.3-codex',
+        max_context_window: 1000000,
+      },
+    ],
+    role_bindings: [
+      {
+        target_ref: 'ceo_shadow',
+        target_label: 'CEO Shadow',
+        provider_model_entry_refs: ['prov_primary::gpt-5.3-codex'],
+        max_context_window_override: null,
+      },
+      {
+        target_ref: 'role_profile:frontend_engineer_primary',
+        target_label: 'Frontend Engineer',
+        provider_model_entry_refs: [],
+        max_context_window_override: 180000,
+      },
+    ],
+    future_binding_slots: [],
+  } as const
+}
+
 describe('ProviderSettingsDrawer', () => {
-  it('renders reserved bindings as read-only future slots with blocked surfaces', () => {
+  it('renders multiple providers and role window overrides', () => {
     render(
       <ProviderSettingsDrawer
         isOpen
-        providerData={{
-          mode: 'DETERMINISTIC',
-          effective_mode: 'LOCAL_DETERMINISTIC',
-          provider_health_summary: 'LOCAL_ONLY',
-          provider_id: null,
-          base_url: null,
-          model: null,
-          timeout_sec: 30,
-          reasoning_effort: null,
-          api_key_configured: false,
-          api_key_masked: null,
-          configured_worker_count: 1,
-          effective_reason: 'Runtime is using the local deterministic path.',
-          default_provider_id: null,
-          providers: [],
-          role_bindings: [],
-          future_binding_slots: [
-            {
-              target_ref: 'role_profile:architect_primary',
-              label: 'Architect / Design Review',
-              status: 'NOT_ENABLED',
-              reason: 'The role template exists but is not on the current mainline yet.',
-              blocked_path_refs: ['runtime_execution'],
-            },
-          ],
-        }}
+        providerData={buildProviderData()}
         loading={false}
         error={null}
         submitting={false}
         onClose={vi.fn()}
         onSave={vi.fn().mockResolvedValue(undefined)}
+        onConnectivityTest={vi.fn().mockResolvedValue({ ok: true, resolved_provider: null, response_id: null })}
+        onRefreshModels={vi.fn().mockResolvedValue([])}
       />,
     )
 
-    expect(screen.getByText('Reserved bindings')).toBeInTheDocument()
-    expect(screen.getByText(/Catalog-only roles stay read-only here until a later mainline role intake round./i)).toBeInTheDocument()
-    expect(screen.getByDisplayValue(/NOT_ENABLED: The role template exists but is not on the current mainline yet./i)).toBeDisabled()
-    expect(screen.getByText(/Blocked surfaces: runtime execution/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add provider/i })).toBeInTheDocument()
+    expect(screen.getByLabelText('Provider alias prov_primary')).toHaveValue('example')
+    expect(screen.getByLabelText('CEO Shadow context window override')).toHaveValue(null)
+    expect(screen.getByLabelText('Frontend Engineer context window override')).toHaveValue(180000)
   })
 
-  it('renders newly live role bindings in the editable current bindings area', () => {
-    render(
-      <ProviderSettingsDrawer
-        isOpen
-        providerData={{
-          mode: 'DETERMINISTIC',
-          effective_mode: 'LOCAL_DETERMINISTIC',
-          provider_health_summary: 'LOCAL_ONLY',
-          provider_id: null,
-          base_url: null,
-          model: null,
-          timeout_sec: 30,
-          reasoning_effort: null,
-          api_key_configured: false,
-          api_key_masked: null,
-          configured_worker_count: 1,
-          effective_reason: 'Runtime is using the local deterministic path.',
-          default_provider_id: null,
-          providers: [],
-          role_bindings: [],
-          future_binding_slots: [],
-        }}
-        loading={false}
-        error={null}
-        submitting={false}
-        onClose={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
-      />,
-    )
-
-    expect(screen.getByLabelText('Backend Engineer / Service Delivery provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('Database Engineer / Data Reliability provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('Platform / SRE provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('Architect / Design Review provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('CTO / Architecture Governance provider')).toBeInTheDocument()
-    expect(screen.queryByText('Reserved bindings')).not.toBeInTheDocument()
-  })
-
-  it('renders cost policy controls and saves them back through onSave', async () => {
+  it('applies connectivity fallback result before save', async () => {
     const user = userEvent.setup()
     const onSave = vi.fn().mockResolvedValue(undefined)
+    const onConnectivityTest = vi.fn().mockResolvedValue({
+      ok: true,
+      response_id: 'resp_connectivity',
+      resolved_provider: {
+        provider_id: 'prov_primary',
+        type: 'openai_responses_non_stream',
+        base_url: 'https://api.example.test/v1',
+        alias: 'example',
+        preferred_model: 'gpt-5.3-codex',
+        max_context_window: 1000000,
+        enabled: true,
+      },
+    })
 
     render(
       <ProviderSettingsDrawer
         isOpen
-        providerData={{
-          mode: 'OPENAI_COMPAT',
-          effective_mode: 'OPENAI_COMPAT_LIVE',
-          provider_health_summary: 'HEALTHY',
-          provider_id: 'prov_openai_compat',
-          base_url: 'https://api.example.test/v1',
-          model: 'gpt-5.3-codex',
-          timeout_sec: 30,
-          reasoning_effort: 'high',
-          api_key_configured: true,
-          api_key_masked: 'sk-***cret',
-          configured_worker_count: 1,
-          effective_reason: 'Runtime is using the saved OpenAI-compatible provider config.',
-          default_provider_id: 'prov_openai_compat',
-          providers: [
-            {
-              provider_id: 'prov_openai_compat',
-              adapter_kind: 'openai_compat',
-              label: 'OpenAI Compat',
-              enabled: true,
-              base_url: 'https://api.example.test/v1',
-              api_key_configured: true,
-              api_key_masked: 'sk-***cret',
-              model: 'gpt-5.3-codex',
-              timeout_sec: 30,
-              reasoning_effort: 'high',
-              command_path: null,
-              capability_tags: ['structured_output', 'planning', 'implementation'],
-              cost_tier: 'standard',
-              participation_policy: 'always_allowed',
-              fallback_provider_ids: [],
-              health_status: 'HEALTHY',
-              health_reason: 'OpenAI-compatible provider is healthy.',
-              configured_worker_count: 1,
-              is_default: true,
-            },
-            {
-              provider_id: 'prov_claude_code',
-              adapter_kind: 'claude_code_cli',
-              label: 'Claude Code CLI',
-              enabled: true,
-              base_url: null,
-              api_key_configured: false,
-              api_key_masked: null,
-              model: 'claude-sonnet-4-6',
-              timeout_sec: 30,
-              reasoning_effort: null,
-              command_path: 'python',
-              capability_tags: ['structured_output', 'planning', 'implementation', 'review'],
-              cost_tier: 'premium',
-              participation_policy: 'low_frequency_only',
-              fallback_provider_ids: [],
-              health_status: 'HEALTHY',
-              health_reason: 'Claude Code CLI provider is healthy.',
-              configured_worker_count: 0,
-              is_default: false,
-            },
-          ],
-          role_bindings: [],
-          future_binding_slots: [],
-        }}
+        providerData={buildProviderData()}
         loading={false}
         error={null}
         submitting={false}
         onClose={vi.fn()}
         onSave={onSave}
+        onConnectivityTest={onConnectivityTest}
+        onRefreshModels={vi.fn().mockResolvedValue([])}
       />,
     )
 
-    expect(screen.getByLabelText('OpenAI cost tier')).toBeInTheDocument()
-    expect(screen.getByLabelText('OpenAI participation policy')).toBeInTheDocument()
-    expect(screen.getByLabelText('Claude cost tier')).toBeInTheDocument()
-    expect(screen.getByLabelText('Claude participation policy')).toBeInTheDocument()
-
-    await user.selectOptions(screen.getByLabelText('Claude participation policy'), 'always_allowed')
-    await user.click(screen.getByRole('button', { name: 'Save runtime settings' }))
+    await user.click(screen.getByRole('button', { name: /test prov_primary connectivity/i }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Provider type prov_primary')).toHaveValue('openai_responses_non_stream'),
+    )
+    await user.click(screen.getByRole('button', { name: /save runtime settings/i }))
 
     await waitFor(() =>
       expect(onSave).toHaveBeenCalledWith(
         expect.objectContaining({
           providers: expect.arrayContaining([
             expect.objectContaining({
-              provider_id: 'prov_openai_compat',
-              cost_tier: 'standard',
-              participation_policy: 'always_allowed',
+              provider_id: 'prov_primary',
+              type: 'openai_responses_non_stream',
             }),
-            expect.objectContaining({
-              provider_id: 'prov_claude_code',
-              cost_tier: 'premium',
-              participation_policy: 'always_allowed',
-            }),
+          ]),
+        }),
+      ),
+    )
+  })
+
+  it('loads provider models and submits only selected model entries', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const onRefreshModels = vi.fn().mockResolvedValue(['gpt-4.1', 'gpt-5.3-codex'])
+
+    render(
+      <ProviderSettingsDrawer
+        isOpen
+        providerData={buildProviderData()}
+        loading={false}
+        error={null}
+        submitting={false}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onConnectivityTest={vi.fn().mockResolvedValue({ ok: true, resolved_provider: null, response_id: null })}
+        onRefreshModels={onRefreshModels}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /load models for prov_primary/i }))
+    await user.click(screen.getByLabelText('Model gpt-4.1 for prov_primary'))
+    await user.click(screen.getByRole('button', { name: /save runtime settings/i }))
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerModelEntries: expect.arrayContaining([
+            { provider_id: 'prov_primary', model_name: 'gpt-4.1' },
+            { provider_id: 'prov_primary', model_name: 'gpt-5.3-codex' },
           ]),
         }),
       ),

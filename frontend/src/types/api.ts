@@ -171,13 +171,17 @@ export type DependencyInspectorData = {
 
 export type RuntimeProviderEntry = {
   provider_id: string
+  type: string
   adapter_kind: string
   label: string
+  alias: string | null
   enabled: boolean
   base_url: string | null
   api_key_configured: boolean
   api_key_masked: string | null
   model: string | null
+  preferred_model: string | null
+  max_context_window: number
   timeout_sec: number
   reasoning_effort: string | null
   command_path: string | null
@@ -194,8 +198,16 @@ export type RuntimeProviderEntry = {
 export type RuntimeProviderRoleBinding = {
   target_ref: string
   target_label: string
+  provider_model_entry_refs: readonly string[]
+  max_context_window_override: number | null
+}
+
+export type RuntimeProviderModelEntry = {
+  entry_ref: string
   provider_id: string
-  model: string | null
+  provider_label: string
+  model_name: string
+  max_context_window: number
 }
 
 export type RuntimeProviderFutureBindingSlot = {
@@ -212,7 +224,9 @@ export type RuntimeProviderData = {
   provider_health_summary: string
   provider_id: string | null
   base_url: string | null
+  alias: string | null
   model: string | null
+  max_context_window: number
   timeout_sec: number
   reasoning_effort: string | null
   api_key_configured: boolean
@@ -221,6 +235,7 @@ export type RuntimeProviderData = {
   effective_reason: string
   default_provider_id: string | null
   providers: readonly RuntimeProviderEntry[]
+  provider_model_entries: readonly RuntimeProviderModelEntry[]
   role_bindings: readonly RuntimeProviderRoleBinding[]
   future_binding_slots: readonly RuntimeProviderFutureBindingSlot[]
 }
@@ -316,32 +331,48 @@ export type ElicitationAnswerRequest = {
 
 export type RuntimeProviderConfigRequest = {
   provider_id: string
-  adapter_kind: string
-  label: string
+  type: string
+  base_url: string
+  api_key: string
+  alias: string | null
+  preferred_model: string | null
+  max_context_window: number | null
   enabled: boolean
-  base_url: string | null
-  api_key: string | null
-  model: string | null
-  timeout_sec: number
-  reasoning_effort: string | null
-  command_path: string | null
-  capability_tags: string[]
-  cost_tier: string
-  participation_policy: string
-  fallback_provider_ids: string[]
+}
+
+export type RuntimeProviderModelEntryRequest = {
+  provider_id: string
+  model_name: string
 }
 
 export type RuntimeProviderRoleBindingRequest = {
   target_ref: string
-  provider_id: string
-  model: string | null
+  provider_model_entry_refs: string[]
+  max_context_window_override: number | null
 }
 
 export type RuntimeProviderUpsertRequest = {
-  default_provider_id: string | null
   providers: RuntimeProviderConfigRequest[]
+  provider_model_entries: RuntimeProviderModelEntryRequest[]
   role_bindings: RuntimeProviderRoleBindingRequest[]
   idempotency_key: string
+}
+
+export type RuntimeProviderConnectivityTestRequest = RuntimeProviderConfigRequest
+
+export type RuntimeProviderConnectivityTestResult = {
+  ok: boolean
+  response_id: string | null
+  resolved_provider: RuntimeProviderConfigRequest | null
+}
+
+export type RuntimeProviderModelsRefreshRequest = {
+  provider_id: string
+}
+
+export type RuntimeProviderModelsRefreshResult = {
+  provider_id: string
+  models: string[]
 }
 
 export type BoardApproveRequest = {

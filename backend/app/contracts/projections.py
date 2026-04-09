@@ -448,7 +448,9 @@ class RuntimeProviderProjectionData(StrictModel):
     provider_health_summary: str
     provider_id: str | None = None
     base_url: str | None = None
+    alias: str | None = None
     model: str | None = None
+    max_context_window: int = 0
     timeout_sec: float
     reasoning_effort: str | None = None
     api_key_configured: bool
@@ -457,6 +459,7 @@ class RuntimeProviderProjectionData(StrictModel):
     effective_reason: str
     default_provider_id: str | None = None
     providers: list[dict[str, object]] = Field(default_factory=list)
+    provider_model_entries: list[dict[str, object]] = Field(default_factory=list)
     role_bindings: list[dict[str, object]] = Field(default_factory=list)
     future_binding_slots: list[dict[str, object]] = Field(default_factory=list)
 
