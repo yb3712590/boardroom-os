@@ -1332,6 +1332,67 @@ def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_alre
     assert "too similar" in result["rejected_actions"][0]["reason"].lower()
 
 
+def test_ceo_validator_accepts_seeded_variant_hire_when_live_staffing_seed_is_enabled(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    monkeypatch.setenv("BOARDROOM_OS_CEO_STAFFING_VARIANT_SEED", "17")
+    workflow_id = _project_init(client, "CEO validator seeded variant")
+    repository = client.app.state.repository
+    hire_template = clone_persona_template(get_hire_persona_template_id("frontend_engineer"))
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_HIRED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=None,
+            idempotency_key="test-seed-employee:emp_frontend_polish_seeded",
+            causation_id=None,
+            correlation_id=None,
+            payload={
+                "employee_id": "emp_frontend_polish_seeded",
+                "role_type": "frontend_engineer",
+                "skill_profile": hire_template["skill_profile"],
+                "personality_profile": hire_template["personality_profile"],
+                "aesthetic_profile": hire_template["aesthetic_profile"],
+                "state": "ACTIVE",
+                "board_approved": True,
+                "provider_id": "prov_openai_compat",
+                "role_profile_refs": ["frontend_engineer_primary"],
+            },
+            occurred_at=datetime.fromisoformat("2026-04-04T18:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    result = validate_ceo_action_batch(
+        repository,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Hire a seeded frontend backup.",
+                "actions": [
+                    {
+                        "action_type": "HIRE_EMPLOYEE",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "role_type": "frontend_engineer",
+                            "role_profile_refs": ["frontend_engineer_primary"],
+                            "request_summary": "Hire another frontend backup with a seeded variant.",
+                            "employee_id_hint": "emp_frontend_seeded_variant",
+                            "provider_id": "prov_openai_compat",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert result["rejected_actions"] == []
+    assert result["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+
+
 @pytest.mark.parametrize(
     ("role_type", "role_profile_refs", "employee_id_hint"),
     [

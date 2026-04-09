@@ -24,6 +24,7 @@ from app.contracts.runtime import CompiledAuditArtifacts, CompiledExecutionPacka
 from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     compile_and_persist_execution_artifacts,
+    export_latest_compile_artifacts_to_developer_inspector,
 )
 from app.core.constants import (
     EVENT_MEETING_CONCLUDED,
@@ -58,6 +59,7 @@ from app.core.runtime_provider_config import (
     resolve_runtime_provider_config,
 )
 from app.core.execution_targets import resolve_execution_target_ref_from_ticket_spec
+from app.core.ticket_context_archive import write_ticket_context_markdown
 from app.core.ticket_handlers import (
     _open_provider_incident,
     handle_ticket_result_submit,
@@ -135,6 +137,29 @@ def _build_runtime_developer_inspector_refs(ticket_id: str) -> DeveloperInspecto
         compile_manifest_ref=f"manifest://compile/{ticket_id}",
         rendered_execution_payload_ref=f"render://compile/{ticket_id}",
     )
+
+
+def _build_provider_selection_assumptions(
+    *,
+    execution_package: CompiledExecutionPackage,
+    selection: RuntimeProviderSelection,
+    provider_response_id: str | None,
+    provider_attempt_count: int,
+) -> list[str]:
+    return [
+        f"compiler_version={execution_package.meta.compiler_version}",
+        f"compile_request_id={execution_package.meta.compile_request_id}",
+        f"preferred_provider_id={selection.preferred_provider_id}",
+        f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
+        f"actual_provider_id={selection.provider.provider_id}",
+        f"actual_model={selection.actual_model or selection.provider.model or 'unknown'}",
+        f"effective_reasoning_effort={selection.effective_reasoning_effort}",
+        f"selection_reason={selection.selection_reason or 'provider_selection'}",
+        f"policy_reason={selection.policy_reason or 'none'}",
+        f"adapter_kind={selection.provider.adapter_kind}",
+        f"provider_response_id={provider_response_id or 'unknown'}",
+        f"provider_attempt_count={provider_attempt_count}",
+    ]
 
 
 def _resolve_ticket_provider_id(
@@ -1148,19 +1173,12 @@ def _execute_openai_compat_provider(
                 artifact_refs=artifact_refs,
                 result_payload=result_payload,
                 written_artifacts=written_artifacts,
-                assumptions=[
-                    f"compiler_version={execution_package.meta.compiler_version}",
-                    f"compile_request_id={execution_package.meta.compile_request_id}",
-                    f"preferred_provider_id={selection.preferred_provider_id}",
-                    f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
-                    f"actual_provider_id={selection.provider.provider_id}",
-                    f"actual_model={selection.actual_model or selection.provider.model or 'unknown'}",
-                    f"selection_reason={selection.selection_reason or 'provider_selection'}",
-                    f"policy_reason={selection.policy_reason or 'none'}",
-                    f"adapter_kind={selection.provider.adapter_kind}",
-                    f"provider_response_id={provider_result.response_id or 'unknown'}",
-                    f"provider_attempt_count={attempt_no}",
-                ],
+                assumptions=_build_provider_selection_assumptions(
+                    execution_package=execution_package,
+                    selection=selection,
+                    provider_response_id=provider_result.response_id,
+                    provider_attempt_count=attempt_no,
+                ),
                 issues=[],
                 confidence=0.82,
             )
@@ -1256,19 +1274,12 @@ def _execute_claude_code_provider(
             artifact_refs=artifact_refs,
             result_payload=result_payload,
             written_artifacts=written_artifacts,
-            assumptions=[
-                f"compiler_version={execution_package.meta.compiler_version}",
-                f"compile_request_id={execution_package.meta.compile_request_id}",
-                f"preferred_provider_id={selection.preferred_provider_id}",
-                f"preferred_model={selection.preferred_model or selection.provider.model or 'unknown'}",
-                f"actual_provider_id={selection.provider.provider_id}",
-                f"actual_model={selection.actual_model or selection.provider.model or 'unknown'}",
-                f"selection_reason={selection.selection_reason or 'provider_selection'}",
-                f"policy_reason={selection.policy_reason or 'none'}",
-                f"adapter_kind={selection.provider.adapter_kind}",
-                "provider_response_id=unknown",
-                "provider_attempt_count=1",
-            ],
+            assumptions=_build_provider_selection_assumptions(
+                execution_package=execution_package,
+                selection=selection,
+                provider_response_id=None,
+                provider_attempt_count=1,
+            ),
             issues=[],
             confidence=0.82,
         )
@@ -1746,10 +1757,12 @@ def run_leased_ticket_runtime(
     repository: ControlPlaneRepository,
 ) -> list[RuntimeExecutionOutcome]:
     outcomes: list[RuntimeExecutionOutcome] = []
-    developer_inspector_store = DeveloperInspectorStore(get_settings().developer_inspector_root)
+    settings = get_settings()
+    developer_inspector_store = DeveloperInspectorStore(settings.developer_inspector_root)
 
     for ticket in _list_runtime_startable_leased_tickets(repository):
         lease_owner = str(ticket["lease_owner"])
+        developer_inspector_refs = _build_runtime_developer_inspector_refs(str(ticket["ticket_id"]))
         start_ack = handle_ticket_start(
             repository,
             TicketStartCommand(
@@ -1775,6 +1788,18 @@ def run_leased_ticket_runtime(
         try:
             compiled_artifacts = _build_compiled_execution_artifacts(repository, ticket)
             execution_package = compiled_artifacts.compiled_execution_package
+            export_latest_compile_artifacts_to_developer_inspector(
+                repository,
+                developer_inspector_store,
+                str(ticket["ticket_id"]),
+                developer_inspector_refs,
+            )
+            if settings.ticket_context_archive_root is not None:
+                write_ticket_context_markdown(
+                    settings.ticket_context_archive_root,
+                    execution_package.model_dump(mode="json"),
+                    developer_inspector_refs=developer_inspector_refs,
+                )
             with repository.connection() as connection:
                 created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             execution_result = _execute_runtime_with_provider_if_configured(

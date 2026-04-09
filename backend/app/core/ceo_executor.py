@@ -5,7 +5,9 @@ from typing import Any
 
 from app.contracts.ceo_actions import CEOActionBatch, CEOActionType
 from app.contracts.commands import EmployeeHireRequestCommand, MeetingRequestCommand
+from app.config import get_settings
 from app.core.ceo_execution_presets import build_ceo_create_ticket_command
+from app.core.persona_profiles import build_seeded_persona_variant
 from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
 from app.db.repository import ControlPlaneRepository
 
@@ -153,6 +155,23 @@ def execute_ceo_action_batch(
                 )
                 continue
             employee_id = action.payload.employee_id_hint or str(template["employee_id_hint"])
+            variant_seed = get_settings().ceo_staffing_variant_seed
+            resolved_profiles = (
+                build_seeded_persona_variant(
+                    action.payload.role_type,
+                    variant_key=employee_id,
+                    seed=variant_seed,
+                    skill_profile=template.get("skill_profile"),
+                    personality_profile=template.get("personality_profile"),
+                    aesthetic_profile=template.get("aesthetic_profile"),
+                )
+                if variant_seed is not None
+                else {
+                    "skill_profile": dict(template.get("skill_profile") or {}),
+                    "personality_profile": dict(template.get("personality_profile") or {}),
+                    "aesthetic_profile": dict(template.get("aesthetic_profile") or {}),
+                }
+            )
             ack = handle_employee_hire_request(
                 repository,
                 EmployeeHireRequestCommand(
@@ -160,9 +179,9 @@ def execute_ceo_action_batch(
                     employee_id=employee_id,
                     role_type=action.payload.role_type,
                     role_profile_refs=list(action.payload.role_profile_refs),
-                    skill_profile=dict(template.get("skill_profile") or {}),
-                    personality_profile=dict(template.get("personality_profile") or {}),
-                    aesthetic_profile=dict(template.get("aesthetic_profile") or {}),
+                    skill_profile=dict(resolved_profiles.get("skill_profile") or {}),
+                    personality_profile=dict(resolved_profiles.get("personality_profile") or {}),
+                    aesthetic_profile=dict(resolved_profiles.get("aesthetic_profile") or {}),
                     provider_id=action.payload.provider_id or template.get("provider_id"),
                     request_summary=action.payload.request_summary,
                     idempotency_key=f"ceo-hire-request:{action.payload.workflow_id}:{employee_id}",

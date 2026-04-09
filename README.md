@@ -94,6 +94,21 @@ cd backend
 ./.venv/bin/pytest tests/ -q
 ```
 
+运行后端 live 集成场景：
+
+```bash
+cd backend
+export BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL="https://<your-openai-compatible-base-url>/v1"
+export BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY="<your-api-key>"
+python -m tests.live.library_management_autopilot_live
+```
+
+这条 live 场景不会进默认 `pytest`。
+
+它会把独立运行环境、artifact、provider 配置、developer inspector、每票 markdown 上下文留档和 `run_report.json` 全部收进：
+
+- `backend/data/scenarios/library_management_autopilot_live/`
+
 运行前端验证：
 
 ```bash
@@ -106,10 +121,11 @@ npm run test:run
 
 1. [doc/README.md](doc/README.md)
 2. [doc/mainline-truth.md](doc/mainline-truth.md)
-3. [doc/roadmap-reset.md](doc/roadmap-reset.md)
-4. [doc/TODO.md](doc/TODO.md)
-5. [doc/history/context-baseline.md](doc/history/context-baseline.md)
-6. [doc/task-backlog.md](doc/task-backlog.md)
+3. [doc/backend-runtime-guide.md](doc/backend-runtime-guide.md)
+4. [doc/roadmap-reset.md](doc/roadmap-reset.md)
+5. [doc/TODO.md](doc/TODO.md)
+6. [doc/history/context-baseline.md](doc/history/context-baseline.md)
+7. [doc/task-backlog.md](doc/task-backlog.md)
 
 ## 项目原则
 

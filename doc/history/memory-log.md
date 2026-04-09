@@ -127,6 +127,15 @@
 - CEO / role 绑定当前改成消费有序 `provider_model_entry_refs[]`，并支持 `max_context_window_override`；role 未配置时默认继承 CEO 的模型条目和上下文窗口，运行时审计也会补 `provider_model_entry_ref / effective_max_context_window`
 - 当前验证基线更新为 backend `533 passed`、frontend build passed、frontend `84 passed`
 
+### 2026-04-10
+
+- 新增一条独立的真实 LLM 长测入口：`python -m tests.live.library_management_autopilot_live`。它不进默认 `pytest`，专门跑“图书馆管理系统毕业设计”这条 CEO_AUTOPILOT_FINE_GRAINED 全链路
+- 这条场景会把 DB、runtime provider 配置、artifact、developer inspector、失败快照和每票 markdown 上下文留档全部重定向到 `backend/data/scenarios/library_management_autopilot_live/`
+- runtime 现在除了保留 `developer_inspector` JSON，还会在 compile 产物持久化后按 ticket 额外导出 markdown 上下文审阅档；live 场景可以直接从 `ticket_context_archives/` 复盘 CEO 派单时的真实上下文
+- CEO 招聘这轮补了 seeded persona variant：开 `BOARDROOM_OS_CEO_STAFFING_VARIANT_SEED` 后，会基于现有人格模板做可复现的画像变体，尽量避免多名同岗员工因为画像过于接近而被 overlap 校验拦下
+- live 场景固定把 `architect_primary` 绑定到 `gpt-5.4@xhigh`，其他 live 角色绑定到 `gpt-5.4@high`；runtime assumptions 也同步补入 `effective_reasoning_effort`，方便长测验收
+- 本轮相关验证结果：backend `129 passed`（覆盖 `persona_profiles / ticket_context_archive / live runner / ceo_scheduler / scheduler_runner / context_compiler` 这一组回归）
+
 ## Current Working Set
 
 - Prefer reading `README.md`, `doc/README.md`, `doc/mainline-truth.md`, `doc/roadmap-reset.md`, `doc/TODO.md`, `doc/history/context-baseline.md`, and then this file before touching the archive.

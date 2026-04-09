@@ -73,6 +73,31 @@ source .venv/bin/activate
 python -m app.scheduler_runner
 ```
 
+启动图书馆管理系统 live 集成场景：
+
+```bash
+cd backend
+source .venv/bin/activate
+export BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL="https://<your-openai-compatible-base-url>/v1"
+export BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY="<your-api-key>"
+python -m tests.live.library_management_autopilot_live
+```
+
+这条场景默认会先清空再重建：
+
+- `backend/data/scenarios/library_management_autopilot_live/`
+
+里面会单独保存：
+
+- `boardroom_os.db`
+- `runtime-provider-config.json`
+- `artifacts/`
+- `artifact_uploads/`
+- `developer_inspector/`
+- `ticket_context_archives/`
+- `run_report.json`
+- `failure_snapshots/`
+
 ## 4. 验证与当前 shell 现实
 
 后端目标验证命令仍是：
@@ -100,12 +125,26 @@ npm run build
 npm run test:run
 ```
 
+如果你要跑这条新的真实长测，单独用：
+
+```bash
+cd backend
+python -m tests.live.library_management_autopilot_live
+```
+
+它不进入默认 `pytest tests/ -q`。
+
 默认数据库和产物路径：
 
 - `backend/data/boardroom_os.db`
 - `backend/data/artifacts/`
 - `backend/data/artifact_uploads/`
 - `backend/data/runtime-provider-config.json`
+- `backend/data/developer_inspector/`
+
+live 集成场景会把这些路径整体重定向到：
+
+- `backend/data/scenarios/library_management_autopilot_live/`
 
 ## 5. 运行模式与 provider
 
@@ -158,6 +197,13 @@ npm run test:run
 - `frontend_engineer_primary -> delivery_closeout_package`
 - `checker_primary -> maker_checker_verdict`
 
+当前新增了一条真实长测约束：
+
+- `tests.live.library_management_autopilot_live` 会先把所有角色统一绑定到 `prov_openai_compat::gpt-5.4`
+- `architect_primary` 固定走 `xhigh`
+- 其他 live 角色固定走 `high`
+- runtime 结果现在会把 `effective_reasoning_effort` 一并写进 assumptions，方便长测验收
+
 失败映射：
 
 - `429 -> PROVIDER_RATE_LIMITED`
@@ -199,6 +245,11 @@ npm run test:run
 - `GET /api/v1/projections/workflows/{workflow_id}/ceo-shadow`
 - `GET /api/v1/projections/tickets/{ticket_id}/artifacts`
 - `GET /api/v1/projections/artifact-cleanup-candidates`
+
+如果你在查 live 场景为什么卡住，优先看这两个本地目录：
+
+- `backend/data/scenarios/library_management_autopilot_live/ticket_context_archives/`
+- `backend/data/scenarios/library_management_autopilot_live/failure_snapshots/`
 
 完整接口说明见 [api-reference.md](api-reference.md)。
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import random
 from copy import deepcopy
 from typing import Any, Iterable, Mapping
 
@@ -361,6 +363,83 @@ def build_default_employee_roster() -> tuple[dict[str, Any], ...]:
             "provider_id": "prov_openai_compat",
             "role_profile_refs_json": ["checker_primary"],
         },
+    )
+
+
+def _stable_variant_rng(*parts: object) -> random.Random:
+    digest = hashlib.sha256(
+        "::".join(str(part) for part in parts).encode("utf-8")
+    ).hexdigest()
+    return random.Random(int(digest[:16], 16))
+
+
+def _pick_alternative_value(
+    *,
+    dimension: str,
+    current_value: str,
+    rng: random.Random,
+) -> str:
+    choices = sorted(
+        value
+        for value in _ALLOWED_VALUES_BY_DIMENSION[dimension]
+        if value != current_value
+    )
+    return rng.choice(choices) if choices else current_value
+
+
+def build_seeded_persona_variant(
+    role_type: str,
+    *,
+    variant_key: str,
+    seed: int,
+    template_id: str | None = None,
+    skill_profile: Mapping[str, Any] | None = None,
+    personality_profile: Mapping[str, Any] | None = None,
+    aesthetic_profile: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    base = normalize_persona_profiles(
+        role_type,
+        template_id=template_id,
+        skill_profile=skill_profile,
+        personality_profile=personality_profile,
+        aesthetic_profile=aesthetic_profile,
+    )
+    rng = _stable_variant_rng(seed, role_type, variant_key, base["template_id"])
+
+    variant_skill_profile = dict(base["skill_profile"])
+    variant_personality_profile = dict(base["personality_profile"])
+    variant_aesthetic_profile = dict(base["aesthetic_profile"])
+
+    variant_skill_profile["validation_bias"] = _pick_alternative_value(
+        dimension="validation_bias",
+        current_value=variant_skill_profile["validation_bias"],
+        rng=rng,
+    )
+
+    personality_dimensions = list(PERSONALITY_PROFILE_DIMENSIONS)
+    rng.shuffle(personality_dimensions)
+    for dimension in personality_dimensions[:3]:
+        variant_personality_profile[dimension] = _pick_alternative_value(
+            dimension=dimension,
+            current_value=variant_personality_profile[dimension],
+            rng=rng,
+        )
+
+    aesthetic_dimensions = list(AESTHETIC_PROFILE_DIMENSIONS)
+    rng.shuffle(aesthetic_dimensions)
+    for dimension in aesthetic_dimensions[:2]:
+        variant_aesthetic_profile[dimension] = _pick_alternative_value(
+            dimension=dimension,
+            current_value=variant_aesthetic_profile[dimension],
+            rng=rng,
+        )
+
+    return normalize_persona_profiles(
+        role_type,
+        template_id=base["template_id"],
+        skill_profile=variant_skill_profile,
+        personality_profile=variant_personality_profile,
+        aesthetic_profile=variant_aesthetic_profile,
     )
 
 

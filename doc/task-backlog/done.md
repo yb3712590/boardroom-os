@@ -2222,6 +2222,17 @@
 - 本轮还把 `backend/tests/test_ceo_scheduler.py` 的 idle maintenance 断言对齐到当前冷却窗口语义，避免旧测试继续和 `P2-DEC-004` 的现状冲突
 - 本轮全量验证结果更新为 backend `537 passed`、frontend build passed、frontend `84 passed`
 
+### 2026-04-10
+
+- `P2-INT-LIVE-001` 已完成：后端新增独立真实 LLM 集成长测入口 `python -m tests.live.library_management_autopilot_live`，不进入默认 `pytest`
+- 这条场景固定落盘到 `backend/data/scenarios/library_management_autopilot_live/`，每次运行都会先清空再重建环境；`boardroom_os.db / runtime-provider-config.json / artifacts / artifact_uploads / developer_inspector / ticket_context_archives / run_report.json / failure_snapshots` 都会收进这个目录
+- 场景固定用 `runtime-provider-upsert` 把 live provider 绑定到 `prov_openai_compat::gpt-5.4`；`architect_primary` 走 `xhigh`，其他 live 角色走 `high`
+- runtime 现在在持久化 compile 产物后，会额外导出每票一份 markdown 上下文审阅档；原始 JSON 真相仍保留在 `developer_inspector`
+- CEO 招聘这轮补入 `BOARDROOM_OS_CEO_STAFFING_VARIANT_SEED` 支持：开启后会基于现有人格模板生成可复现的 seeded variant，降低同岗扩招撞上高重合拒绝的概率
+- 这条长测的验收口径已固定为：workflow 完成并进入 closeout、存在 `delivery_closeout_package` 与 workflow chain report、runtime ticket 全部有 markdown 审阅档、ticket 总数至少 30、真实招聘出 `governance_architect`，且架构师 runtime 审计显示 `gpt-5.4@xhigh`
+- 本轮新增回归覆盖：`test_persona_profiles.py`、`test_ticket_context_archive.py`、`test_live_library_management_runner.py`，并扩充 `test_ceo_scheduler.py`、`test_scheduler_runner.py`
+- 本轮相关验证结果：backend `129 passed`
+
 ## 五、关键依赖图
 
 ```

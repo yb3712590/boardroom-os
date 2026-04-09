@@ -2659,6 +2659,7 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
     assert "preferred_model=gpt-5.3-codex" in recorded_submit["assumptions"]
     assert "actual_provider_id=prov_claude_code" in recorded_submit["assumptions"]
     assert "actual_model=claude-sonnet-4-6" in recorded_submit["assumptions"]
+    assert "effective_reasoning_effort=high" in recorded_submit["assumptions"]
     assert "selection_reason=provider_failover" in recorded_submit["assumptions"]
     assert any("failover" in issue.lower() for issue in recorded_submit["issues"])
 

@@ -17,6 +17,7 @@ class Settings:
     developer_inspector_root: Path
     artifact_store_root: Path
     artifact_upload_staging_root: Path
+    ticket_context_archive_root: Path | None
     runtime_provider_config_path: Path
     runtime_execution_mode: RuntimeExecutionMode
     artifact_object_store_enabled: bool
@@ -30,6 +31,7 @@ class Settings:
     provider_openai_compat_model: str | None
     provider_openai_compat_timeout_sec: float
     provider_openai_compat_reasoning_effort: ProviderOpenAICompatReasoningEffort | None
+    ceo_staffing_variant_seed: int | None
     worker_bootstrap_signing_secret: str | None
     worker_admin_signing_secret: str | None
     worker_shared_secret: str | None
@@ -103,6 +105,12 @@ def get_settings() -> Settings:
             repo_root / "backend" / "data" / "artifact_uploads",
         )
     )
+    raw_ticket_context_archive_root = os.environ.get("BOARDROOM_OS_TICKET_CONTEXT_ARCHIVE_ROOT")
+    ticket_context_archive_root = (
+        Path(raw_ticket_context_archive_root)
+        if raw_ticket_context_archive_root is not None and raw_ticket_context_archive_root.strip()
+        else None
+    )
     runtime_provider_config_path = Path(
         os.environ.get(
             "BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH",
@@ -144,6 +152,12 @@ def get_settings() -> Settings:
     )
     if provider_openai_compat_timeout_sec <= 0:
         raise ValueError("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC must be greater than 0.")
+    raw_ceo_staffing_variant_seed = os.environ.get("BOARDROOM_OS_CEO_STAFFING_VARIANT_SEED")
+    ceo_staffing_variant_seed = (
+        int(raw_ceo_staffing_variant_seed.strip())
+        if raw_ceo_staffing_variant_seed is not None and raw_ceo_staffing_variant_seed.strip()
+        else None
+    )
     default_max_context_tokens = int(
         os.environ.get(
             "BOARDROOM_OS_DEFAULT_MAX_CONTEXT_TOKENS",
@@ -274,6 +288,7 @@ def get_settings() -> Settings:
         developer_inspector_root=developer_inspector_root,
         artifact_store_root=artifact_store_root,
         artifact_upload_staging_root=artifact_upload_staging_root,
+        ticket_context_archive_root=ticket_context_archive_root,
         runtime_provider_config_path=runtime_provider_config_path,
         runtime_execution_mode=runtime_execution_mode,
         artifact_object_store_enabled=artifact_object_store_enabled,
@@ -287,6 +302,7 @@ def get_settings() -> Settings:
         provider_openai_compat_model=provider_openai_compat_model,
         provider_openai_compat_timeout_sec=provider_openai_compat_timeout_sec,
         provider_openai_compat_reasoning_effort=provider_openai_compat_reasoning_effort,
+        ceo_staffing_variant_seed=ceo_staffing_variant_seed,
         worker_bootstrap_signing_secret=worker_bootstrap_signing_secret,
         worker_admin_signing_secret=worker_admin_signing_secret,
         worker_shared_secret=worker_shared_secret,

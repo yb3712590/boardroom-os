@@ -19,9 +19,11 @@ from app.core.execution_targets import (
 )
 from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY
 from app.core.persona_profiles import (
+    build_seeded_persona_variant,
     build_high_overlap_rejection_reason,
     find_same_role_high_overlap_conflict,
 )
+from app.config import get_settings
 from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
 from app.db.repository import ControlPlaneRepository
 
@@ -70,11 +72,29 @@ def validate_ceo_action_batch(
                     _action_entry(action, "Suggested employee_id_hint already exists in the current roster.")
                 )
                 continue
+            employee_id = action.payload.employee_id_hint or str(template["employee_id_hint"])
+            variant_seed = get_settings().ceo_staffing_variant_seed
+            resolved_profiles = (
+                build_seeded_persona_variant(
+                    action.payload.role_type,
+                    variant_key=employee_id,
+                    seed=variant_seed,
+                    skill_profile=template.get("skill_profile"),
+                    personality_profile=template.get("personality_profile"),
+                    aesthetic_profile=template.get("aesthetic_profile"),
+                )
+                if variant_seed is not None
+                else {
+                    "skill_profile": dict(template.get("skill_profile") or {}),
+                    "personality_profile": dict(template.get("personality_profile") or {}),
+                    "aesthetic_profile": dict(template.get("aesthetic_profile") or {}),
+                }
+            )
             conflict = find_same_role_high_overlap_conflict(
                 role_type=action.payload.role_type,
-                skill_profile=template.get("skill_profile") or {},
-                personality_profile=template.get("personality_profile") or {},
-                aesthetic_profile=template.get("aesthetic_profile") or {},
+                skill_profile=resolved_profiles.get("skill_profile") or {},
+                personality_profile=resolved_profiles.get("personality_profile") or {},
+                aesthetic_profile=resolved_profiles.get("aesthetic_profile") or {},
                 employees=repository.list_employee_projections(
                     states=["ACTIVE"],
                     board_approved_only=True,

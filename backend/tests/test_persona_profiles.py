@@ -1,6 +1,9 @@
 from app.core.persona_profiles import (
+    build_seeded_persona_variant,
     build_high_overlap_rejection_reason,
+    clone_persona_template,
     find_same_role_high_overlap_conflict,
+    get_hire_persona_template_id,
     normalize_persona_profiles,
 )
 
@@ -88,3 +91,40 @@ def test_normalize_persona_profiles_supports_reserved_and_governance_roles():
         "motion_tolerance": "restrained",
     }
     assert "architecture" in normalized["profile_summary"].lower()
+
+
+def test_build_seeded_persona_variant_is_deterministic_and_diverges_from_base_template():
+    template_id = get_hire_persona_template_id("frontend_engineer")
+    base_template = clone_persona_template(template_id)
+    base_normalized = normalize_persona_profiles(
+        "frontend_engineer",
+        template_id=template_id,
+        skill_profile=base_template["skill_profile"],
+        personality_profile=base_template["personality_profile"],
+        aesthetic_profile=base_template["aesthetic_profile"],
+    )
+
+    first = build_seeded_persona_variant(
+        "frontend_engineer",
+        template_id=template_id,
+        variant_key="emp_frontend_variant_01",
+        seed=17,
+    )
+    second = build_seeded_persona_variant(
+        "frontend_engineer",
+        template_id=template_id,
+        variant_key="emp_frontend_variant_01",
+        seed=17,
+    )
+    third = build_seeded_persona_variant(
+        "frontend_engineer",
+        template_id=template_id,
+        variant_key="emp_frontend_variant_02",
+        seed=17,
+    )
+
+    assert first == second
+    assert first["template_id"] == template_id
+    assert first["personality_profile"] != base_normalized["personality_profile"]
+    assert first["aesthetic_profile"] != base_normalized["aesthetic_profile"]
+    assert third["profile_summary"] != first["profile_summary"]
