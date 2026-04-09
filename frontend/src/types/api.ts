@@ -79,8 +79,8 @@ export type DashboardData = {
     summary: string
     selected_option_id: string | null
     board_comment: string | null
-    artifact_refs: string[]
-    closeout_artifact_refs: string[]
+    artifact_refs: readonly string[]
+    closeout_artifact_refs: readonly string[]
     documentation_sync_summary: string | null
     documentation_update_count: number
     documentation_follow_up_count: number
@@ -181,10 +181,10 @@ export type RuntimeProviderEntry = {
   timeout_sec: number
   reasoning_effort: string | null
   command_path: string | null
-  capability_tags: string[]
+  capability_tags: readonly string[]
   cost_tier: string
   participation_policy: string
-  fallback_provider_ids: string[]
+  fallback_provider_ids: readonly string[]
   health_status: string
   health_reason: string
   configured_worker_count: number
@@ -203,7 +203,7 @@ export type RuntimeProviderFutureBindingSlot = {
   label: string
   status: string
   reason: string
-  blocked_path_refs: string[]
+  blocked_path_refs: readonly string[]
 }
 
 export type RuntimeProviderData = {
@@ -220,9 +220,9 @@ export type RuntimeProviderData = {
   configured_worker_count: number
   effective_reason: string
   default_provider_id: string | null
-  providers: RuntimeProviderEntry[]
-  role_bindings: RuntimeProviderRoleBinding[]
-  future_binding_slots: RuntimeProviderFutureBindingSlot[]
+  providers: readonly RuntimeProviderEntry[]
+  role_bindings: readonly RuntimeProviderRoleBinding[]
+  future_binding_slots: readonly RuntimeProviderFutureBindingSlot[]
 }
 
 export type IncidentDetailData = {
@@ -241,7 +241,7 @@ export type IncidentDetailData = {
     closed_at: string | null
     payload: Record<string, unknown>
   }
-  available_followup_actions: string[]
+  available_followup_actions: readonly string[]
   recommended_followup_action: string | null
 }
 

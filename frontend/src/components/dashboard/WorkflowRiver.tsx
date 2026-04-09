@@ -40,7 +40,7 @@ export function WorkflowRiver({ phases, approvalsPending, loading = false }: Wor
     return (
       <section className="workflow-river workflow-river-loading" aria-label="Workflow River loading" aria-busy="true">
         <div className="workflow-river-loading-copy">
-          <p className="eyebrow">工作流河道</p>
+          <p className="eyebrow">Workflow river</p>
           <LoadingSkeleton lines={4} />
         </div>
       </section>
@@ -51,13 +51,13 @@ export function WorkflowRiver({ phases, approvalsPending, loading = false }: Wor
     <section className="workflow-river" aria-labelledby="workflow-river-title">
       <div className="river-header">
         <div>
-          <p className="eyebrow">工作流河道</p>
-          <h2 id="workflow-river-title">从董事会到评审闸门，一屏看清治理推进。</h2>
+          <p className="eyebrow">Workflow river</p>
+          <h2 id="workflow-river-title">Board to review, in one governance surface.</h2>
         </div>
         <div className={`board-gate-status ${approvalsPending > 0 ? 'is-armed' : 'is-clear'}`}>
           <span className="board-gate-light" aria-hidden="true" />
-          <p>{approvalsPending > 0 ? '董事会闸门已触发' : '董事会闸门已清空'}</p>
-          <span>{approvalsPending > 0 ? `待处理 ${approvalsPending} 项` : '当前无待处理项'}</span>
+          <p>{approvalsPending > 0 ? 'Board Gate armed' : 'Board Gate clear'}</p>
+          <span>{approvalsPending > 0 ? `${approvalsPending} item waiting` : 'No board items waiting'}</span>
         </div>
       </div>
 
@@ -85,9 +85,9 @@ export function WorkflowRiver({ phases, approvalsPending, loading = false }: Wor
                     <span className="river-stage-status">{phase.status.replaceAll('_', ' ')}</span>
                   </div>
                   <div className="river-stage-meta">
-                    <span>{total} 个节点</span>
+                    <span>{total} nodes</span>
                     <span>
-                      {phase.node_counts.executing > 0 ? '执行中' : phase.node_counts.completed > 0 ? '已稳定' : '待排队'}
+                      {phase.node_counts.executing > 0 ? 'Live' : phase.node_counts.completed > 0 ? 'Settled' : 'Queued'}
                     </span>
                   </div>
                 </div>

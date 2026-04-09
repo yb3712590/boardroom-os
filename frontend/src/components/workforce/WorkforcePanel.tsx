@@ -30,11 +30,11 @@ function formatRole(roleType: string) {
 function formatEmploymentState(value: string) {
   switch (value) {
     case 'ACTIVE':
-      return '在岗'
+      return 'Active'
     case 'FROZEN':
-      return '冻结'
+      return 'Frozen'
     case 'REPLACED':
-      return '已替换'
+      return 'Replaced'
     default:
       return value
   }
@@ -43,11 +43,11 @@ function formatEmploymentState(value: string) {
 function formatActivityState(value: string) {
   switch (value) {
     case 'IDLE':
-      return '空闲'
+      return 'Idle'
     case 'EXECUTING':
-      return '执行中'
+      return 'Executing'
     case 'REVIEWING':
-      return '评审中'
+      return 'Reviewing'
     default:
       return value
   }
@@ -72,22 +72,22 @@ function formatBoundarySummary(template: WorkforceData['role_templates_catalog']
   const activePaths = template.mainline_boundary.active_path_refs.map(formatBoundaryPathRef).join(', ')
   const hasCeoCreateTicket = template.mainline_boundary.active_path_refs.includes('ceo_create_ticket')
   if (template.mainline_boundary.boundary_status === 'LIVE_ON_MAINLINE') {
-    return `当前在线路径：${activePaths}`
+    return `Current live path: ${activePaths}`
   }
   if (hasCeoCreateTicket) {
-    return `部分主线路路径：${activePaths}`
+    return `Partial mainline path: ${activePaths}`
   }
-  return `仅目录可见 / 未纳入当前主线路：${activePaths}`
+  return `Catalog only / not on current mainline: ${activePaths}`
 }
 
 function formatTemplateKindLabel(templateKind: string) {
   switch (templateKind) {
     case 'live_execution':
-      return '在线执行模板'
+      return 'Live execution templates'
     case 'reserved_execution':
-      return '预留执行模板'
+      return 'Reserved execution templates'
     case 'governance':
-      return '治理模板'
+      return 'Governance templates'
     default:
       return templateKind.replaceAll('_', ' ')
   }
@@ -142,32 +142,32 @@ export function WorkforcePanel({
   return (
     <section className="support-panel" aria-labelledby="workforce-panel-title">
       <div className="section-heading">
-        <p className="eyebrow">人员池</p>
-        <h2 id="workforce-panel-title">在线执行团队</h2>
+        <p className="eyebrow">Workforce</p>
+        <h2 id="workforce-panel-title">Active delivery team</h2>
       </div>
       {loading ? <LoadingSkeleton lines={6} /> : null}
-      {!loading && workforce == null ? <p className="muted-copy">暂无人员池视图。</p> : null}
+      {!loading && workforce == null ? <p className="muted-copy">No workforce view is available yet.</p> : null}
       {workforce != null ? (
         <>
           <div className="support-summary-grid">
             <div>
-              <span>活跃</span>
+              <span>Active</span>
               <strong>{workforce.summary.active_workers}</strong>
             </div>
             <div>
-              <span>空闲</span>
+              <span>Idle</span>
               <strong>{workforce.summary.idle_workers}</strong>
             </div>
             <div>
-              <span>检查员</span>
+              <span>Checkers</span>
               <strong>{workforce.summary.active_checkers}</strong>
             </div>
             <div>
-              <span>返工循环</span>
+              <span>Rework loops</span>
               <strong>{workforce.summary.workers_in_rework_loop}</strong>
             </div>
             <div>
-              <span>隔离中</span>
+              <span>Contained</span>
               <strong>{workforce.summary.workers_in_staffing_containment}</strong>
             </div>
           </div>
@@ -181,8 +181,8 @@ export function WorkforcePanel({
           {(workforce.role_templates_catalog?.role_templates?.length ?? 0) > 0 ? (
             <section className="staffing-request-panel" aria-labelledby="role-templates-title">
               <div className="section-heading workforce-section-heading">
-                <p className="eyebrow">目录</p>
-                <h3 id="role-templates-title">角色模板目录</h3>
+                <p className="eyebrow">Catalog</p>
+                <h3 id="role-templates-title">Role template catalog</h3>
               </div>
               {Object.entries(roleTemplatesByKind).map(([templateKind, templates]) => (
                 <div key={templateKind}>
@@ -209,7 +209,7 @@ export function WorkforcePanel({
                         </p>
                         {template.mainline_boundary.blocked_path_refs.length > 0 ? (
                           <p className="muted-copy">
-                            {`受阻路径：${template.mainline_boundary.blocked_path_refs
+                            {`Blocked: ${template.mainline_boundary.blocked_path_refs
                               .map(formatBoundaryPathRef)
                               .join(', ')}`}
                           </p>
@@ -241,7 +241,7 @@ export function WorkforcePanel({
                   <div>
                     <strong>{formatRole(lane.role_type)}</strong>
                     <span>
-                      {lane.active_count} 活跃 / {lane.idle_count} 空闲
+                      {lane.active_count} active / {lane.idle_count} idle
                     </span>
                   </div>
                 </header>
@@ -262,16 +262,16 @@ export function WorkforcePanel({
                           <Badge variant={employmentVariant(worker.employment_state)}>{formatEmploymentState(worker.employment_state)}</Badge>
                         </div>
                         <div className="worker-card-state">
-                          <span>{`雇佣状态 ${formatEmploymentState(worker.employment_state)}`}</span>
-                          <span>{`活动状态 ${formatActivityState(worker.activity_state)}`}</span>
+                          <span>{`Employment ${formatEmploymentState(worker.employment_state)}`}</span>
+                          <span>{`Activity ${formatActivityState(worker.activity_state)}`}</span>
                         </div>
                         <div className="worker-card-meta">
-                          <span>{worker.current_node_id ?? '无当前节点'}</span>
-                          <span>{worker.current_ticket_id ?? '无当前工单'}</span>
-                          <span>{worker.provider_id ?? '无供应商绑定'}</span>
+                          <span>{worker.current_node_id ?? 'No current node'}</span>
+                          <span>{worker.current_ticket_id ?? 'No current ticket'}</span>
+                          <span>{worker.provider_id ?? 'No provider binding'}</span>
                         </div>
                         <ProfileSummary
-                          label="当前画像"
+                          label="Current profile"
                           summary={worker.profile_summary}
                           skillProfile={worker.skill_profile}
                           personalityProfile={worker.personality_profile}
@@ -279,7 +279,7 @@ export function WorkforcePanel({
                         />
                         {worker.source_template_id ? (
                           <p className="muted-copy">
-                            {`来源模板 ${worker.source_template_id}`}
+                            {`Source template ${worker.source_template_id}`}
                             {(worker.source_fragment_refs ?? []).length > 0
                               ? ` · ${formatFragmentRefs(worker.source_fragment_refs ?? [], roleTemplateFragmentsByRef)}`
                               : ''}
@@ -292,9 +292,9 @@ export function WorkforcePanel({
                               variant="danger"
                               onClick={() => void onFreeze(worker.employee_id)}
                               loading={submittingAction === `freeze:${worker.employee_id}`}
-                              aria-label={`冻结 ${worker.employee_id}`}
+                              aria-label={`Freeze ${worker.employee_id}`}
                             >
-                              {submittingAction === `freeze:${worker.employee_id}` ? '冻结中…' : '冻结'}
+                              {submittingAction === `freeze:${worker.employee_id}` ? 'Freezing…' : 'Freeze'}
                             </Button>
                           ) : null}
                           {restoreAction?.enabled ? (
@@ -303,9 +303,9 @@ export function WorkforcePanel({
                               variant="secondary"
                               onClick={() => void onRestore(worker.employee_id)}
                               loading={submittingAction === `restore:${worker.employee_id}`}
-                              aria-label={`恢复 ${worker.employee_id}`}
+                              aria-label={`Restore ${worker.employee_id}`}
                             >
-                              {submittingAction === `restore:${worker.employee_id}` ? '恢复中…' : '恢复'}
+                              {submittingAction === `restore:${worker.employee_id}` ? 'Restoring…' : 'Restore'}
                             </Button>
                           ) : null}
                           {replaceAction?.enabled && replaceTemplate != null ? (
@@ -327,9 +327,9 @@ export function WorkforcePanel({
                                 setReplaceOpenFor((current) => (current === worker.employee_id ? null : worker.employee_id))
                               }}
                               disabled={submittingAction === `replace:${worker.employee_id}`}
-                              aria-label={`为 ${worker.employee_id} 发起替换`}
+                              aria-label={`Request replacement for ${worker.employee_id}`}
                             >
-                              发起替换
+                              Request replacement
                             </Button>
                           ) : null}
                         </div>
@@ -347,7 +347,7 @@ export function WorkforcePanel({
                             }}
                           >
                             <label className="staffing-inline-field">
-                              <span>{`为 ${worker.employee_id} 填写替换员工编号`}</span>
+                              <span>{`Replacement employee ID for ${worker.employee_id}`}</span>
                               <input
                                 type="text"
                                 value={replaceValue}
@@ -364,9 +364,9 @@ export function WorkforcePanel({
                               variant="secondary"
                               loading={submittingAction === `replace:${worker.employee_id}`}
                               disabled={replaceValue.trim().length === 0}
-                              aria-label={`提交 ${worker.employee_id} 的替换请求`}
+                              aria-label={`Submit replacement request for ${worker.employee_id}`}
                             >
-                              {submittingAction === `replace:${worker.employee_id}` ? '提交中…' : '提交替换'}
+                              {submittingAction === `replace:${worker.employee_id}` ? 'Submitting…' : 'Submit replacement'}
                             </Button>
                           </form>
                         ) : null}

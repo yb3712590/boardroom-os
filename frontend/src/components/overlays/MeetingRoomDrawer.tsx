@@ -23,41 +23,41 @@ export function MeetingRoomDrawer({
     <Drawer
       isOpen={isOpen}
       onClose={onClose}
-      title={meetingData?.topic ?? '会议室加载中'}
-      subtitle="会议室"
+      title={meetingData?.topic ?? 'Loading meeting room'}
+      subtitle="Meeting room"
     >
       {loading ? (
-        <div className="review-room-state">正在加载当前会议室...</div>
+        <div className="review-room-state">Loading the current meeting room...</div>
       ) : error ? (
         <div className="review-room-state review-room-error">{error}</div>
       ) : meetingData == null ? (
-        <div className="review-room-state">当前条目暂无会议详情。</div>
+        <div className="review-room-state">No meeting details are available for this item.</div>
       ) : (
         <div className="review-room-content">
           <section className="review-room-overview">
             <div>
-              <span className="eyebrow">会议类型</span>
+              <span className="eyebrow">Meeting type</span>
               <p>{meetingData.meeting_type}</p>
             </div>
             <div>
-              <span className="eyebrow">状态</span>
+              <span className="eyebrow">Status</span>
               <p>{meetingData.status}</p>
             </div>
             <div>
-              <span className="eyebrow">评审状态</span>
-              <p>{meetingData.review_status ?? '未提交'}</p>
+              <span className="eyebrow">Review status</span>
+              <p>{meetingData.review_status ?? 'Not submitted'}</p>
             </div>
           </section>
 
           <section className="review-room-columns">
             <div className="review-room-column">
-              <h3>参与者</h3>
+              <h3>Participants</h3>
               <ul className="review-room-list">
                 {meetingData.participants.map((participant) => (
                   <li key={participant.employee_id}>
                     <strong>
                       {participant.employee_id}
-                      {participant.is_recorder ? '（记录员）' : ''}
+                      {participant.is_recorder ? ' (Recorder)' : ''}
                     </strong>
                     <span>
                       {participant.role_type} · {participant.meeting_responsibility}
@@ -67,23 +67,23 @@ export function MeetingRoomDrawer({
               </ul>
             </div>
             <div className="review-room-column">
-              <h3>关联记录</h3>
+              <h3>Linked records</h3>
               <ul className="review-room-list">
                 <li>
-                  <strong>记录员</strong>
+                  <strong>Recorder</strong>
                   <span>{meetingData.recorder_employee_id}</span>
                 </li>
                 <li>
-                  <strong>来源工单</strong>
+                  <strong>Source ticket</strong>
                   <span>{meetingData.source_ticket_id}</span>
                 </li>
                 <li>
-                  <strong>来源节点</strong>
+                  <strong>Source node</strong>
                   <span>{meetingData.source_node_id}</span>
                 </li>
                 <li>
-                  <strong>开启时间</strong>
-                  <span>{formatTimestamp(meetingData.opened_at, '未知')}</span>
+                  <strong>Opened at</strong>
+                  <span>{formatTimestamp(meetingData.opened_at, 'Unknown')}</span>
                 </li>
               </ul>
             </div>
@@ -92,44 +92,44 @@ export function MeetingRoomDrawer({
           {meetingData.decision_record ? (
             <section className="review-room-columns">
               <div className="review-room-column">
-                <h3>决策记录</h3>
+                <h3>Decision record</h3>
                 <ul className="review-room-list">
                   <li>
-                    <strong>格式</strong>
+                    <strong>Format</strong>
                     <span>{meetingData.decision_record.format}</span>
                   </li>
                   <li>
-                    <strong>上下文</strong>
+                    <strong>Context</strong>
                     <span>{meetingData.decision_record.context}</span>
                   </li>
                   <li>
-                    <strong>决策</strong>
+                    <strong>Decision</strong>
                     <span>{meetingData.decision_record.decision}</span>
                   </li>
                   <li>
-                    <strong>共识摘要</strong>
-                    <span>{meetingData.consensus_summary ?? '尚未生成共识摘要。'}</span>
+                    <strong>Consensus summary</strong>
+                    <span>{meetingData.consensus_summary ?? 'No consensus summary has been generated yet.'}</span>
                   </li>
                 </ul>
               </div>
               <div className="review-room-column">
-                <h3>实施依据</h3>
+                <h3>Implementation basis</h3>
                 <ul className="review-room-list">
                   {meetingData.decision_record.rationale.map((item) => (
                     <li key={`rationale:${item}`}>
-                      <strong>理由</strong>
+                      <strong>Rationale</strong>
                       <span>{item}</span>
                     </li>
                   ))}
                   {meetingData.decision_record.consequences.map((item) => (
                     <li key={`consequence:${item}`}>
-                      <strong>影响</strong>
+                      <strong>Consequence</strong>
                       <span>{item}</span>
                     </li>
                   ))}
                   {meetingData.decision_record.archived_context_refs.map((item) => (
                     <li key={`archive:${item}`}>
-                      <strong>归档上下文</strong>
+                      <strong>Archived context</strong>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -139,24 +139,24 @@ export function MeetingRoomDrawer({
           ) : (
             <section className="review-room-columns">
               <div className="review-room-column">
-                <h3>共识</h3>
+                <h3>Consensus</h3>
                 <p className="muted-copy">
-                  {meetingData.consensus_summary ?? '尚未生成共识摘要。'}
+                  {meetingData.consensus_summary ?? 'No consensus summary has been generated yet.'}
                 </p>
               </div>
               <div className="review-room-column">
-                <h3>未达成共识原因</h3>
+                <h3>No-consensus reason</h3>
                 <p className="muted-copy">
-                  {meetingData.no_consensus_reason ?? '会议已结束，但当前仅有候选结论。'}
+                  {meetingData.no_consensus_reason ?? 'The meeting ended, but only candidate conclusions are available right now.'}
                 </p>
               </div>
             </section>
           )}
 
           <section className="review-room-column">
-            <h3>审计轨迹</h3>
+            <h3>Audit trail</h3>
             <p className="muted-copy">
-              结构化回合会保留为审计材料；后续实施应遵循上方决策记录。
+              Structured rounds are kept as audit material. Follow the decision record above during implementation.
             </p>
             <ul className="review-room-list">
               {meetingData.rounds.map((round) => (
@@ -168,20 +168,20 @@ export function MeetingRoomDrawer({
                   {round.notes.map((note) => (
                     <span key={note}>{note}</span>
                   ))}
-                  <span>{formatTimestamp(round.completed_at, '未知')}</span>
+                  <span>{formatTimestamp(round.completed_at, 'Unknown')}</span>
                 </li>
               ))}
               {meetingData.rounds.length === 0 ? (
                 <li>
-                  <strong>会议回合</strong>
-                  <span>暂无回合摘要。</span>
+                  <strong>Meeting rounds</strong>
+                  <span>No round summaries yet.</span>
                 </li>
               ) : null}
             </ul>
           </section>
 
           <section className="review-room-action-panel">
-            <h3>下一步</h3>
+            <h3>Next step</h3>
             <button
               type="button"
               className="secondary-button"
@@ -193,7 +193,7 @@ export function MeetingRoomDrawer({
                 onOpenReview(meetingData.review_pack_id)
               }}
             >
-              打开关联评审室
+              Open linked review room
             </button>
           </section>
         </div>

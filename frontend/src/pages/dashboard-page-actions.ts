@@ -96,7 +96,7 @@ export function useDashboardPageActions({
       })
       await loadSnapshot()
     } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : '启动本地工作流失败。')
+      setSnapshotError(error instanceof Error ? error.message : 'Failed to launch the local workflow.')
     } finally {
       setProjectInitPending(false)
     }
@@ -138,7 +138,7 @@ export function useDashboardPageActions({
       await loadSnapshot()
       setProviderSettingsOpen(false)
     } catch (error) {
-      setRuntimeProviderError(error instanceof Error ? error.message : '保存运行时供应商设置失败。')
+      setRuntimeProviderError(error instanceof Error ? error.message : 'Failed to save runtime provider settings.')
     } finally {
       setRuntimeProviderSubmitting(false)
     }
@@ -163,7 +163,7 @@ export function useDashboardPageActions({
       await loadSnapshot()
       navigate('/')
     } catch (error) {
-      setIncidentError(error instanceof Error ? error.message : '故障恢复失败。')
+      setIncidentError(error instanceof Error ? error.message : 'Failed to resolve the incident.')
     } finally {
       setSubmittingIncidentAction(false)
     }
@@ -181,13 +181,13 @@ export function useDashboardPageActions({
         workflow_id: activeWorkflowId,
         employee_id: employeeId,
         frozen_by: DEFAULT_INCIDENT_OPERATOR,
-        reason: '暂停该员工接收新工单。',
+        reason: 'Pause this employee from receiving new tickets.',
         idempotency_key: newPrefixedId('employee-freeze'),
       })
-      assertAcceptedCommand(ack, '冻结员工失败。')
+      assertAcceptedCommand(ack, 'Failed to freeze employee.')
       await loadSnapshot()
     } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : '冻结员工失败。')
+      setSnapshotError(error instanceof Error ? error.message : 'Failed to freeze employee.')
     } finally {
       setSubmittingStaffingAction(null)
     }
@@ -205,13 +205,13 @@ export function useDashboardPageActions({
         workflow_id: activeWorkflowId,
         employee_id: employeeId,
         restored_by: DEFAULT_INCIDENT_OPERATOR,
-        reason: '恢复该员工到可执行状态。',
+        reason: 'Restore this employee to an executable state.',
         idempotency_key: newPrefixedId('employee-restore'),
       })
-      assertAcceptedCommand(ack, '恢复员工失败。')
+      assertAcceptedCommand(ack, 'Failed to restore employee.')
       await loadSnapshot()
     } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : '恢复员工失败。')
+      setSnapshotError(error instanceof Error ? error.message : 'Failed to restore employee.')
     } finally {
       setSubmittingStaffingAction(null)
     }
@@ -237,10 +237,10 @@ export function useDashboardPageActions({
         request_summary: template.request_summary,
         idempotency_key: newPrefixedId('employee-hire-request'),
       })
-      assertAcceptedCommand(ack, '发起招聘请求失败。')
+      assertAcceptedCommand(ack, 'Failed to request hire.')
       await loadSnapshot()
     } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : '发起招聘请求失败。')
+      setSnapshotError(error instanceof Error ? error.message : 'Failed to request hire.')
     } finally {
       setSubmittingStaffingAction(null)
     }
@@ -268,13 +268,13 @@ export function useDashboardPageActions({
         replacement_personality_profile: template.personality_profile,
         replacement_aesthetic_profile: template.aesthetic_profile,
         replacement_provider_id: template.provider_id,
-        request_summary: `将 ${employeeId} 替换为受支持的 ${template.label.toLowerCase()}，以保持本地交付链路持续推进。`,
+        request_summary: `Replace ${employeeId} with a supported ${template.label.toLowerCase()} so the local delivery path keeps moving.`,
         idempotency_key: newPrefixedId('employee-replace-request'),
       })
-      assertAcceptedCommand(ack, '发起替换请求失败。')
+      assertAcceptedCommand(ack, 'Failed to request replacement.')
       await loadSnapshot()
     } catch (error) {
-      setSnapshotError(error instanceof Error ? error.message : '发起替换请求失败。')
+      setSnapshotError(error instanceof Error ? error.message : 'Failed to request replacement.')
     } finally {
       setSubmittingStaffingAction(null)
     }
@@ -304,11 +304,11 @@ export function useDashboardPageActions({
         elicitation_answers: input.elicitationAnswers,
         idempotency_key: newPrefixedId('board-approve'),
       })
-      assertAcceptedCommand(ack, '董事会批准失败。')
+      assertAcceptedCommand(ack, 'Board approval failed.')
       await loadSnapshot()
       navigate('/')
     } catch (error) {
-      setReviewError(error instanceof Error ? error.message : '董事会批准失败。')
+      setReviewError(error instanceof Error ? error.message : 'Board approval failed.')
     } finally {
       setSubmittingAction(null)
     }
@@ -329,11 +329,11 @@ export function useDashboardPageActions({
         rejection_reasons: input.rejectionReasons,
         idempotency_key: newPrefixedId('board-reject'),
       })
-      assertAcceptedCommand(ack, '董事会驳回失败。')
+      assertAcceptedCommand(ack, 'Board rejection failed.')
       await loadSnapshot()
       navigate('/')
     } catch (error) {
-      setReviewError(error instanceof Error ? error.message : '董事会驳回失败。')
+      setReviewError(error instanceof Error ? error.message : 'Board rejection failed.')
     } finally {
       setSubmittingAction(null)
     }
@@ -369,11 +369,11 @@ export function useDashboardPageActions({
         elicitation_answers: input.elicitationAnswers,
         idempotency_key: newPrefixedId('modify-constraints'),
       })
-      assertAcceptedCommand(ack, '修改约束失败。')
+      assertAcceptedCommand(ack, 'Failed to modify constraints.')
       await loadSnapshot()
       navigate('/')
     } catch (error) {
-      setReviewError(error instanceof Error ? error.message : '修改约束失败。')
+      setReviewError(error instanceof Error ? error.message : 'Failed to modify constraints.')
     } finally {
       setSubmittingAction(null)
     }

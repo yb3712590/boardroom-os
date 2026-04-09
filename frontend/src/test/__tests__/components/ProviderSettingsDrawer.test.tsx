@@ -28,9 +28,9 @@ describe('ProviderSettingsDrawer', () => {
           future_binding_slots: [
             {
               target_ref: 'role_profile:architect_primary',
-              label: '架构师 / 设计评审',
+              label: 'Architect / Design Review',
               status: 'NOT_ENABLED',
-              reason: '角色模板已定义，但尚未纳入当前主线。',
+              reason: 'The role template exists but is not on the current mainline yet.',
               blocked_path_refs: ['runtime_execution'],
             },
           ],
@@ -45,7 +45,7 @@ describe('ProviderSettingsDrawer', () => {
 
     expect(screen.getByText('Reserved bindings')).toBeInTheDocument()
     expect(screen.getByText(/Catalog-only roles stay read-only here until a later mainline role intake round./i)).toBeInTheDocument()
-    expect(screen.getByDisplayValue(/NOT_ENABLED: 角色模板已定义，但尚未纳入当前主线。/i)).toBeDisabled()
+    expect(screen.getByDisplayValue(/NOT_ENABLED: The role template exists but is not on the current mainline yet./i)).toBeDisabled()
     expect(screen.getByText(/Blocked surfaces: runtime execution/i)).toBeInTheDocument()
   })
 
@@ -79,11 +79,11 @@ describe('ProviderSettingsDrawer', () => {
       />,
     )
 
-    expect(screen.getByLabelText('Backend Engineer / 服务交付 provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('Database Engineer / 数据可靠性 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Backend Engineer / Service Delivery provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Database Engineer / Data Reliability provider')).toBeInTheDocument()
     expect(screen.getByLabelText('Platform / SRE provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('架构师 / 设计评审 provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('CTO / 架构治理 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Architect / Design Review provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('CTO / Architecture Governance provider')).toBeInTheDocument()
     expect(screen.queryByText('Reserved bindings')).not.toBeInTheDocument()
   })
 

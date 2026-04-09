@@ -38,11 +38,11 @@ describe('CompletionCard', () => {
       />,
     )
 
-    expect(screen.getByText('交付已完成')).toBeInTheDocument()
-    expect(screen.getByText('文档同步')).toBeInTheDocument()
+    expect(screen.getByText('Delivery completed')).toBeInTheDocument()
+    expect(screen.getByText('Documentation sync')).toBeInTheDocument()
     expect(screen.getByText('2 documentation updates recorded; 1 follow-up item.')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /打开最终评审证据/i }))
+    await user.click(screen.getByRole('button', { name: /Open final review evidence/i }))
 
     expect(onOpenReview).toHaveBeenCalledWith('brp_001')
     expect(onOpenArtifact).not.toHaveBeenCalled()
@@ -80,10 +80,10 @@ describe('CompletionCard', () => {
       />,
     )
 
-    expect(screen.getByText(/工作流 wf_autopilot_001 于/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /打开最终评审证据/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/Workflow wf_autopilot_001 closed out on/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Open final review evidence/i })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /打开 workflow 链路报告/i }))
+    await user.click(screen.getByRole('button', { name: /Open workflow chain report/i }))
 
     expect(onOpenArtifact).toHaveBeenCalledWith(
       'art://workflow-chain/wf_autopilot_001/workflow-chain-report.json',

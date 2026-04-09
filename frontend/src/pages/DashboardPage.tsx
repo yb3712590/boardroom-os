@@ -189,9 +189,9 @@ export function DashboardPage() {
     <ErrorBoundary>
       <AppShell>
         <TopChrome
-          title={activeWorkflow?.title ?? '董事会治理控制台'}
+          title={activeWorkflow?.title ?? 'Boardroom governance console'}
           northStarGoal={
-            activeWorkflow?.north_star_goal ?? '当前等待下一条本地指令。'
+            activeWorkflow?.north_star_goal ?? 'Waiting for the next local directive.'
           }
           effectiveRuntimeMode={effectiveRuntimeMode}
           runtimeProviderLabel={runtimeProviderLabel}
@@ -223,7 +223,7 @@ export function DashboardPage() {
               {snapshotLoading && dashboard == null ? (
                 <>
                   <WorkflowRiver phases={[]} approvalsPending={0} loading={true} />
-                  <section className="center-detail-grid center-detail-grid-loading" aria-label="当前工作流加载中" aria-busy="true">
+                  <section className="center-detail-grid center-detail-grid-loading" aria-label="Loading current workflow" aria-busy="true">
                     <LoadingSkeleton lines={4} className="center-detail-skeleton" />
                     <LoadingSkeleton lines={4} className="center-detail-skeleton" />
                   </section>
@@ -240,11 +240,11 @@ export function DashboardPage() {
                   />
                   <section className="center-detail-grid">
                     <div>
-                      <p className="eyebrow">当前工作流</p>
+                      <p className="eyebrow">Current workflow</p>
                       <h2>{activeWorkflow.north_star_goal}</h2>
                       <p className="muted-copy">
-                        工作区 {dashboard.workspace.workspace_name} · 启动于{' '}
-                        {formatTimestamp(activeWorkflow.started_at, '未记录')}
+                        Workspace {dashboard.workspace.workspace_name} · Started{' '}
+                        {formatTimestamp(activeWorkflow.started_at, 'Not recorded')}
                       </p>
                       <Button
                         type="button"
@@ -252,24 +252,24 @@ export function DashboardPage() {
                         className="inspector-launch"
                         onClick={() => setDependencyInspectorOpen(true)}
                       >
-                        查看依赖链路
+                        Open dependency path
                       </Button>
                     </div>
                     <div className="center-detail-list">
                       <div>
-                        <span>供应商健康</span>
+                        <span>Provider health</span>
                         <strong>{dashboard.ops_strip.provider_health_summary}</strong>
                       </div>
                       <div>
-                        <span>空闲员工</span>
+                        <span>Idle workers</span>
                         <strong>{dashboard.workforce_summary.idle_workers}</strong>
                       </div>
                       <div>
-                        <span>活跃员工</span>
+                        <span>Active workers</span>
                         <strong>{dashboard.workforce_summary.active_workers}</strong>
                       </div>
                       <div>
-                        <span>故障数</span>
+                        <span>Incidents</span>
                         <strong>{dashboard.ops_strip.open_incidents}</strong>
                       </div>
                     </div>

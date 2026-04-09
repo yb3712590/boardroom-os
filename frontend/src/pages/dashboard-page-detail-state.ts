@@ -53,7 +53,7 @@ export function useDashboardPageDetailState({
       setIncidentDetail(payload)
     } catch (error) {
       if (!background) {
-        setIncidentError(error instanceof Error ? error.message : '加载当前故障详情失败。')
+        setIncidentError(error instanceof Error ? error.message : 'Failed to load the current incident detail.')
         setIncidentDetail(null)
       }
     } finally {
@@ -74,7 +74,7 @@ export function useDashboardPageDetailState({
     } catch (error) {
       if (!background) {
         setMeetingDetail(null)
-        setMeetingError(error instanceof Error ? error.message : '加载当前会议室失败。')
+        setMeetingError(error instanceof Error ? error.message : 'Failed to load the current meeting room.')
       }
     } finally {
       if (!background) {
@@ -97,7 +97,7 @@ export function useDashboardPageDetailState({
         setDependencyInspector(null)
       }
       setDependencyInspectorError(
-        error instanceof Error ? error.message : '加载当前依赖检查器失败。',
+        error instanceof Error ? error.message : 'Failed to load the current dependency inspector.',
       )
     } finally {
       if (!background) {

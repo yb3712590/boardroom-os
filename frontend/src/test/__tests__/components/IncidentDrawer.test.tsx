@@ -50,7 +50,7 @@ describe('IncidentDrawer', () => {
       />,
     )
 
-    await user.type(screen.getByLabelText('恢复说明'), 'Draft incident summary.')
+    await user.type(screen.getByLabelText('Resolution summary'), 'Draft incident summary.')
     await user.selectOptions(screen.getByRole('combobox'), 'ESCALATE_TO_BOARD')
 
     rerender(
@@ -61,7 +61,7 @@ describe('IncidentDrawer', () => {
       />,
     )
 
-    expect(screen.getByLabelText('恢复说明')).toHaveValue('Draft incident summary.')
+    expect(screen.getByLabelText('Resolution summary')).toHaveValue('Draft incident summary.')
     expect(screen.getByRole('combobox')).toHaveValue('ESCALATE_TO_BOARD')
 
     rerender(
@@ -79,10 +79,10 @@ describe('IncidentDrawer', () => {
       />,
     )
 
-    expect(screen.getByLabelText('恢复说明')).toHaveValue('')
+    expect(screen.getByLabelText('Resolution summary')).toHaveValue('')
     expect(screen.getByRole('combobox')).toHaveValue('RESTORE_AND_RETRY_LATEST_TIMEOUT')
     expect(
-      screen.getByText(/这次不是供应商故障，而是输入预算超限：必需输入 art:\/\/runtime\/tkt_closeout\/delivery-closeout-package\.json/i),
+      screen.getByText(/This is not a provider outage. The required input art:\/\/runtime\/tkt_closeout\/delivery-closeout-package\.json/i),
     ).toBeInTheDocument()
   })
 })

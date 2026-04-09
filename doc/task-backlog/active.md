@@ -10,6 +10,7 @@
 
 ## 当前判断
 
+- `P2-UI-009 / P2-UI-010` 已于 2026-04-09 完成：前端主线 UI 文案已恢复英文，`frontend/src` 当前不再残留中文硬编码；runtime/provider 前端契约、`CompletionCard` 空值分支和 `App.test.tsx` 等回归断言也已对齐当前真实字段与英文口径
 - `P2-M7-001` 到 `P2-M7-005` 已于 2026-04-06 收口：主线 evidence / completion 的最小证据消费面现在已经接到统一只读查看入口
 - `P2-RET-006` 已于 2026-04-06 显式纳入并收口：execution package 与 rendered `SYSTEM_CONTROLS` 现在会暴露结构化 `org_context`，继续保持 `L1` 边界，不引入新存储或新检索通道
 - `P2-CEO-001` 已于 2026-04-07 手动纳入并收口：`project-init` 现在可先打开 `REQUIREMENT_ELICITATION` 板审，董事会在现有 Review Room 里提交结构化答卷后，再继续 scope kickoff / scope review
@@ -33,7 +34,7 @@
 - `P2-RLS-001` 已于 2026-04-08 完成：Board/workforce staffing 现在已覆盖 `backend / database / platform / architect / cto` 五类新增角色；审批通过后这些角色会真实进入 workforce lane，并保留一致的 `FREEZE / RESTORE / REPLACE` 动作和模板来源字段
 - `P2-RLS-002` 已于 2026-04-08 完成：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role
 - `P2-RLS-003` 已于 2026-04-08 完成：五类新增角色现在都已进入 formal runtime live path。`backend / database / platform` 已补入正式 build execution target，`architect / cto` 已进入正式治理文档 runtime 支持矩阵；Provider 设置抽屉不再把它们放在 `Reserved bindings`，`runtime-provider.future_binding_slots` 当前为空
-- 当前没有新的可直接开启主线任务；剩余未关闭项都属于冻结后置
+- 当前没有新的可直接开启主线任务；`P2-UI-009 / P2-UI-010` 收口后，剩余未关闭项都属于冻结后置
 
 ## P1：冻结后置
 
@@ -52,6 +53,6 @@
 ## 依赖提醒
 
 - `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
-- `P2-DEC-*`、`P2-GOV-*` 与 `P2-RLS-*` 已全部完成；当前没有新的可直接开启主线任务
+- `P2-DEC-*`、`P2-GOV-*`、`P2-RLS-*` 与 `P2-UI-*` 已全部完成；当前没有新的可直接开启主线任务
 - `P2-PRV-*` 已全部完成；如果后续继续扩 provider 路由，仍应以后续 `P2-DEC-003/004` 已收口的边界为前置
 - 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`

@@ -27,7 +27,7 @@ async function parseError(response: Response): Promise<ApiError> {
   const message =
     typeof detail === 'string' && detail.trim().length > 0
       ? detail
-      : `请求失败：${response.status}`
+      : `Request failed: ${response.status}`
 
   return new ApiError(message, response.status, detail)
 }

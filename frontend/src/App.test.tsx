@@ -275,7 +275,7 @@ function hireTemplates() {
     },
     {
       template_id: 'backend_engineer_backup',
-      label: 'Backend Engineer / 服务交付',
+      label: 'Backend Engineer / Service Delivery',
       role_type: 'backend_engineer',
       role_profile_refs: ['backend_engineer_primary'],
       employee_id_hint: 'emp_backend_backup',
@@ -301,7 +301,7 @@ function hireTemplates() {
     },
     {
       template_id: 'database_engineer_backup',
-      label: 'Database Engineer / 数据可靠性',
+      label: 'Database Engineer / Data Reliability',
       role_type: 'database_engineer',
       role_profile_refs: ['database_engineer_primary'],
       employee_id_hint: 'emp_database_backup',
@@ -353,7 +353,7 @@ function hireTemplates() {
     },
     {
       template_id: 'architect_governance_backup',
-      label: '架构师 / 设计评审',
+      label: 'Architect / Design Review',
       role_type: 'governance_architect',
       role_profile_refs: ['architect_primary'],
       employee_id_hint: 'emp_architect_governance',
@@ -379,7 +379,7 @@ function hireTemplates() {
     },
     {
       template_id: 'cto_governance_backup',
-      label: 'CTO / 架构治理',
+      label: 'CTO / Architecture Governance',
       role_type: 'governance_cto',
       role_profile_refs: ['cto_primary'],
       employee_id_hint: 'emp_cto_governance',
@@ -422,17 +422,17 @@ function workforceData() {
         {
           template_id: 'scope_consensus_primary',
           template_kind: 'live_execution',
-          label: 'Scope Consensus / 需求澄清',
+          label: 'Scope Consensus / Requirement Elicitation',
           role_family: 'frontend_uiux',
           role_type: 'frontend_engineer',
           canonical_role_ref: 'ui_designer_primary',
           alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:ui_designer_primary',
           participation_mode: 'HIGH_FREQUENCY_DELIVERY',
-          execution_boundary: '当前用于初始化和 scope 共识链，不承担主线实施主力。',
+          execution_boundary: 'Currently used for project init and the scope consensus path. It is not a primary implementation role on the mainline.',
           status: 'LIVE',
           default_document_kind_refs: ['architecture_brief'],
-          responsibility_summary: '负责 scope 共识、需求澄清和早期界面方向收敛。',
+          responsibility_summary: 'Own scope consensus, requirement elicitation, and early UI direction alignment.',
           summary: 'Keep project-init and scope review aligned before implementation.',
           composition: {
             fragment_refs: ['skill_frontend_ui', 'delivery_document_first'],
@@ -446,17 +446,17 @@ function workforceData() {
         {
           template_id: 'frontend_delivery_primary',
           template_kind: 'live_execution',
-          label: 'Frontend Engineer / 实施交付',
+          label: 'Frontend Engineer / Delivery',
           role_family: 'frontend_uiux',
           role_type: 'frontend_engineer',
           canonical_role_ref: 'frontend_engineer_primary',
           alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:frontend_engineer_primary',
           participation_mode: 'HIGH_FREQUENCY_DELIVERY',
-          execution_boundary: '当前主线 BUILD / REVIEW / closeout 的 maker 实施角色。',
+          execution_boundary: 'Current maker implementation role for mainline BUILD / REVIEW / closeout.',
           status: 'LIVE',
           default_document_kind_refs: ['detailed_design'],
-          responsibility_summary: '负责前端实现、交付整理和最终 review 包。',
+          responsibility_summary: 'Own frontend implementation, delivery packaging, and the final review pack.',
           summary: 'Own the implementation path for the thin boardroom shell.',
           composition: {
             fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
@@ -476,17 +476,17 @@ function workforceData() {
         {
           template_id: 'quality_checker_primary',
           template_kind: 'live_execution',
-          label: 'Checker / 质量审查',
+          label: 'Checker / Quality Review',
           role_family: 'test_or_checker',
           role_type: 'checker',
           canonical_role_ref: 'checker_primary',
           alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:checker_primary',
           participation_mode: 'HIGH_FREQUENCY_REVIEW',
-          execution_boundary: '负责主线 maker-checker 质量门，不承担主实施。',
+          execution_boundary: 'Own the mainline maker-checker quality gate without being the primary implementer.',
           status: 'LIVE',
           default_document_kind_refs: [],
-          responsibility_summary: '负责交付检查、maker-checker verdict 和 closeout 审查。',
+          responsibility_summary: 'Own delivery checks, maker-checker verdicts, and closeout review.',
           summary: 'Keep implementation quality and auditability in check.',
           composition: {
             fragment_refs: ['skill_quality_validation', 'review_internal_gate'],
@@ -500,17 +500,17 @@ function workforceData() {
         {
           template_id: 'backend_execution_reserved',
           template_kind: 'reserved_execution',
-          label: 'Backend Engineer / 服务交付',
+          label: 'Backend Engineer / Service Delivery',
           role_family: 'backend_engineer',
           role_type: 'backend_engineer',
           canonical_role_ref: 'backend_engineer_primary',
           alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:backend_engineer_primary',
           participation_mode: 'HIGH_FREQUENCY_DELIVERY',
-          execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
+          execution_boundary: 'Defined as a future execution role, but not on current mainline staffing or runtime.',
           status: 'LIVE',
           default_document_kind_refs: ['detailed_design'],
-          responsibility_summary: '负责服务实现、接口落地和集成切片。',
+          responsibility_summary: 'Own service implementation, API delivery, and integration slices.',
           summary: 'Reserved for future backend delivery slices.',
           composition: {
             fragment_refs: ['skill_backend_services', 'delivery_execution_loop'],
@@ -524,17 +524,17 @@ function workforceData() {
         {
           template_id: 'database_execution_reserved',
           template_kind: 'reserved_execution',
-          label: 'Database Engineer / 数据可靠性',
+          label: 'Database Engineer / Data Reliability',
           role_family: 'database_engineer',
           role_type: 'database_engineer',
           canonical_role_ref: 'database_engineer_primary',
           alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:database_engineer_primary',
           participation_mode: 'HIGH_FREQUENCY_DELIVERY',
-          execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
+          execution_boundary: 'Defined as a future execution role, but not on current mainline staffing or runtime.',
           status: 'LIVE',
           default_document_kind_refs: ['detailed_design'],
-          responsibility_summary: '负责数据模型、迁移和数据库可靠性边界。',
+          responsibility_summary: 'Own data models, migrations, and database reliability boundaries.',
           summary: 'Reserved for future database-heavy slices.',
           composition: {
             fragment_refs: ['skill_database_reliability', 'delivery_execution_loop'],
@@ -555,10 +555,10 @@ function workforceData() {
           alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:platform_sre_primary',
           participation_mode: 'HIGH_FREQUENCY_DELIVERY',
-          execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
+          execution_boundary: 'Defined as a future execution role, but not on current mainline staffing or runtime.',
           status: 'LIVE',
           default_document_kind_refs: ['detailed_design'],
-          responsibility_summary: '负责部署、稳定性和运行环境治理。',
+          responsibility_summary: 'Own deployment, stability, and runtime environment governance.',
           summary: 'Reserved for future platform and reliability work.',
           composition: {
             fragment_refs: ['skill_platform_operations', 'delivery_execution_loop'],
@@ -572,17 +572,17 @@ function workforceData() {
         {
           template_id: 'architect_governance',
           template_kind: 'governance',
-          label: '架构师 / 设计评审',
+          label: 'Architect / Design Review',
           role_family: 'architect',
           role_type: 'governance_architect',
           canonical_role_ref: 'architect_primary',
           alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:architect_primary',
           participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
-          execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
+          execution_boundary: 'Does not own day-to-day coding, testing, or continuous implementation by default.',
           status: 'LIVE',
           default_document_kind_refs: ['architecture_brief', 'technology_decision', 'detailed_design'],
-          responsibility_summary: '负责设计评审、方案收敛和实现边界校准。',
+          responsibility_summary: 'Own design review, solution convergence, and implementation boundary alignment.',
           summary: 'Review design detail and keep implementation aligned to architecture.',
           composition: {
             fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
@@ -602,14 +602,14 @@ function workforceData() {
         {
           template_id: 'cto_governance',
           template_kind: 'governance',
-          label: 'CTO / 架构治理',
+          label: 'CTO / Architecture Governance',
           role_family: 'cto',
           role_type: 'governance_cto',
           canonical_role_ref: 'cto_primary',
           alias_role_profile_refs: [],
           provider_target_ref: 'role_profile:cto_primary',
           participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
-          execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
+          execution_boundary: 'Does not own day-to-day coding, testing, or continuous implementation by default.',
           status: 'LIVE',
           default_document_kind_refs: [
             'architecture_brief',
@@ -617,7 +617,7 @@ function workforceData() {
             'milestone_plan',
             'backlog_recommendation',
           ],
-          responsibility_summary: '负责高杠杆架构判断、关键治理决策和切片方向建议。',
+          responsibility_summary: 'Own high-leverage architecture judgment, key governance decisions, and slice direction guidance.',
           summary: 'Shape architecture, major decisions, and backlog direction.',
           composition: {
             fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
@@ -638,27 +638,27 @@ function workforceData() {
       document_kinds: [
         {
           kind_ref: 'architecture_brief',
-          label: '架构方案',
+          label: 'Architecture Brief',
           summary: 'Frame the target architecture and major tradeoffs.',
         },
         {
           kind_ref: 'technology_decision',
-          label: '技术选型',
+          label: 'Technology Decision',
           summary: 'Capture option comparisons and final decisions.',
         },
         {
           kind_ref: 'milestone_plan',
-          label: '里程碑拆解',
+          label: 'Milestone Plan',
           summary: 'Outline milestone sequence and delivery checkpoints.',
         },
         {
           kind_ref: 'detailed_design',
-          label: '详细设计',
+          label: 'Detailed Design',
           summary: 'Explain implementation boundaries and interface decisions.',
         },
         {
           kind_ref: 'backlog_recommendation',
-          label: 'TODO / Backlog 建议',
+          label: 'TODO / Backlog Recommendation',
           summary: 'Recommend next execution slices without opening runtime support.',
         },
       ],
@@ -1122,13 +1122,13 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
     role_bindings: [
       {
         target_ref: 'role_profile:backend_engineer_primary',
-        target_label: 'Backend Engineer / 服务交付',
+        target_label: 'Backend Engineer / Service Delivery',
         provider_id: 'prov_openai_compat',
         model: 'gpt-5.3-codex',
       },
       {
         target_ref: 'role_profile:database_engineer_primary',
-        target_label: 'Database Engineer / 数据可靠性',
+        target_label: 'Database Engineer / Data Reliability',
         provider_id: 'prov_openai_compat',
         model: 'gpt-5.3-codex',
       },
@@ -1140,13 +1140,13 @@ function runtimeProviderData(overrides: Partial<JsonRecord> = {}) {
       },
       {
         target_ref: 'role_profile:architect_primary',
-        target_label: '架构师 / 设计评审',
+        target_label: 'Architect / Design Review',
         provider_id: 'prov_openai_compat',
         model: 'gpt-5.3-codex',
       },
       {
         target_ref: 'role_profile:cto_primary',
-        target_label: 'CTO / 架构治理',
+        target_label: 'CTO / Architecture Governance',
         provider_id: 'prov_openai_compat',
         model: 'gpt-5.3-codex',
       },
@@ -1958,11 +1958,11 @@ describe('Boardroom UI', () => {
 
     await user.click(await screen.findByRole('button', { name: /runtime settings/i }))
 
-    expect(await screen.findByLabelText('Backend Engineer / 服务交付 provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('Database Engineer / 数据可靠性 provider')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Backend Engineer / Service Delivery provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Database Engineer / Data Reliability provider')).toBeInTheDocument()
     expect(screen.getByLabelText('Platform / SRE provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('架构师 / 设计评审 provider')).toBeInTheDocument()
-    expect(screen.getByLabelText('CTO / 架构治理 provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('Architect / Design Review provider')).toBeInTheDocument()
+    expect(screen.getByLabelText('CTO / Architecture Governance provider')).toBeInTheDocument()
     expect(screen.queryByText('Reserved bindings')).not.toBeInTheDocument()
   })
 
@@ -2056,7 +2056,7 @@ describe('Boardroom UI', () => {
       ),
     )
     expect(await screen.findByRole('heading', { name: /delivery completed/i })).toBeInTheDocument()
-    expect(screen.getByText(/closeout refs/i)).toBeInTheDocument()
+    expect(screen.getByText(/closeout artifacts/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /open final review evidence/i }))
 
@@ -2119,7 +2119,7 @@ describe('Boardroom UI', () => {
 
     render(<App />)
 
-    expect(await screen.findByText(/live workforce/i)).toBeInTheDocument()
+    expect(await screen.findByText(/active delivery team/i)).toBeInTheDocument()
     expect(screen.getByText('emp_frontend_2')).toBeInTheDocument()
     expect(screen.getAllByText('node_homepage_visual').length).toBeGreaterThan(0)
     expect(screen.getByText(/recent event pulse/i)).toBeInTheDocument()
@@ -2139,7 +2139,7 @@ describe('Boardroom UI', () => {
 
     render(<App />)
 
-    expect(await screen.findByText(/live workforce/i)).toBeInTheDocument()
+    expect(await screen.findByText(/active delivery team/i)).toBeInTheDocument()
     expect(screen.getByText('Rework loops')).toBeInTheDocument()
     expect(screen.getByText('7')).toBeInTheDocument()
   })
@@ -2149,7 +2149,7 @@ describe('Boardroom UI', () => {
 
     render(<App />)
 
-    expect(await screen.findByText(/request staffing/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /request hire/i })).toBeInTheDocument()
     expect(screen.getByDisplayValue('emp_frontend_backup')).toBeInTheDocument()
     expect(screen.getAllByText(/employment active/i).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: /freeze emp_frontend_2/i })).toBeInTheDocument()
@@ -2188,7 +2188,7 @@ describe('Boardroom UI', () => {
 
     await user.click(screen.getByRole('button', { name: /request replacement for emp_frontend_2/i }))
     await user.type(await screen.findByLabelText(/replacement employee id for emp_frontend_2/i), 'emp_frontend_swap')
-    await user.click(screen.getByRole('button', { name: /submit replacement for emp_frontend_2/i }))
+    await user.click(screen.getByRole('button', { name: /submit replacement/i }))
 
     expect(await screen.findByText('Approve replacement: emp_frontend_2')).toBeInTheDocument()
   })
@@ -2198,7 +2198,7 @@ describe('Boardroom UI', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('button', { name: /inspect dependency chain/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /open dependency path/i })).toBeInTheDocument()
   })
 
   it('opens the dependency inspector and routes from the blocked node back to review room', async () => {
@@ -2207,9 +2207,9 @@ describe('Boardroom UI', () => {
 
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: /inspect dependency chain/i }))
+    await user.click(await screen.findByRole('button', { name: /open dependency path/i }))
 
-    expect(await screen.findByRole('heading', { name: /dependency chain/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /dependency path/i })).toBeInTheDocument()
     expect(screen.getAllByText(/board review open/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText('tkt_homepage_review').length).toBeGreaterThan(0)
 
@@ -2224,7 +2224,7 @@ describe('Boardroom UI', () => {
 
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: /inspect dependency chain/i }))
+    await user.click(await screen.findByRole('button', { name: /open dependency path/i }))
     expect((await screen.findAllByText(/board review open/i)).length).toBeGreaterThan(0)
 
     const latestCall = fetchMock.mock.calls.find(
@@ -2445,14 +2445,14 @@ describe('Boardroom UI', () => {
     render(<App />)
 
     expect(within((await screen.findByText('Incidents')).closest('div') as HTMLElement).getByText('1')).toBeInTheDocument()
-    expect(within((await screen.findByText('Blocked')).closest('div') as HTMLElement).getByText('1')).toBeInTheDocument()
+    expect(within((await screen.findByText('Blocked nodes')).closest('div') as HTMLElement).getByText('1')).toBeInTheDocument()
     expect((await screen.findAllByText(/board gate clear/i)).length).toBeGreaterThan(0)
 
     await user.click(await screen.findByRole('button', { name: /repeated runtime timeout on homepage visual node/i }))
 
     expect(window.location.pathname).toBe('/incident/inc_093')
     expect(await screen.findByRole('heading', { name: /runtime timeout escalation/i })).toBeInTheDocument()
-    expect(screen.getByText(/execution timed out repeatedly and the breaker is now open/i)).toBeInTheDocument()
+    expect(screen.getByText(/execution timed out repeatedly and the circuit breaker is now open/i)).toBeInTheDocument()
     expect(screen.getByText(/timeout streak count/i)).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toHaveValue('RESTORE_AND_RETRY_LATEST_TIMEOUT')
 
@@ -2460,7 +2460,7 @@ describe('Boardroom UI', () => {
       await screen.findByLabelText(/resolution summary/i),
       'Restore execution and retry the latest timeout attempt.',
     )
-    await user.click(await screen.findByRole('button', { name: /apply recovery action/i }))
+    await user.click(await screen.findByRole('button', { name: /run recovery action/i }))
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -2476,9 +2476,9 @@ describe('Boardroom UI', () => {
     )
 
     expect(within(screen.getByText('Incidents').closest('div') as HTMLElement).getByText('0')).toBeInTheDocument()
-    expect(within(screen.getByText('Blocked').closest('div') as HTMLElement).getByText('0')).toBeInTheDocument()
+    expect(within(screen.getByText('Blocked nodes').closest('div') as HTMLElement).getByText('0')).toBeInTheDocument()
     expect((await screen.findAllByText(/board gate clear/i)).length).toBeGreaterThan(0)
-    expect(screen.getByText(/no board escalations are waiting right now/i)).toBeInTheDocument()
+    expect(screen.getByText(/there are no board escalations waiting right now/i)).toBeInTheDocument()
   })
 
   it('submits approve and refreshes the board gate state', async () => {
@@ -2589,7 +2589,7 @@ describe('Boardroom UI', () => {
     expect(screen.getByText(/proceed with option a/i)).toBeInTheDocument()
     expect(screen.getAllByText(/apr 1, 11:12 pm/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/apr 1, 11:18 pm/i).length).toBeGreaterThan(0)
-    expect(screen.getByText(/closeout refs/i)).toBeInTheDocument()
+    expect(screen.getByText(/closeout artifacts/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /open final review evidence/i }))
 
@@ -2672,7 +2672,7 @@ describe('Boardroom UI', () => {
     await waitFor(() =>
       expect(screen.queryByRole('heading', { name: /delivery completed/i })).not.toBeInTheDocument(),
     )
-    expect(screen.getByText(/live tickets/i)).toBeInTheDocument()
+    expect(screen.getByText(/active tickets/i)).toBeInTheDocument()
   })
 
   it('opens the artifact preview drawer from review evidence source refs', async () => {
@@ -2837,7 +2837,7 @@ describe('Boardroom UI', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: /open artifact option zip/i }))
-    expect(await screen.findByText(/download this artifact from the local backend/i)).toBeInTheDocument()
+    expect(await screen.findByText(/this artifact can be downloaded from the local backend/i)).toBeInTheDocument()
 
     await user.click(await screen.findByRole('button', { name: /close artifact preview/i }))
     await user.click(await screen.findByRole('button', { name: /open artifact option missing/i }))
@@ -2891,7 +2891,7 @@ describe('Boardroom UI', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: /review homepage visual milestone/i }))
-    await user.type(await screen.findByLabelText(/reject note/i), 'Needs a stronger hierarchy cue.')
+    await user.type(await screen.findByLabelText(/reject comment/i), 'Needs a stronger hierarchy cue.')
     await user.click(await screen.findByRole('button', { name: /reject and request rework/i }))
 
     await waitFor(() =>
@@ -2949,7 +2949,7 @@ describe('Boardroom UI', () => {
 
     await user.click(await screen.findByRole('button', { name: /review homepage visual milestone/i }))
     await user.type(await screen.findByLabelText(/add rules/i), 'Keep the board gate copy to one line.')
-    await user.click(await screen.findByRole('button', { name: /modify constraints/i }))
+    await user.click(await screen.findByRole('button', { name: /submit constraint changes/i }))
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(

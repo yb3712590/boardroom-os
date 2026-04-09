@@ -49,7 +49,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
         return
       }
       set({
-        error: error instanceof Error ? error.message : '加载当前评审包失败。',
+        error: error instanceof Error ? error.message : 'Failed to load the current review pack.',
         reviewRoom: null,
       })
     } finally {
@@ -69,7 +69,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
       set({ developerInspector })
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : '加载开发者检查器失败。',
+        error: error instanceof Error ? error.message : 'Failed to load the developer inspector.',
       })
     } finally {
       set({ inspectorLoading: false })

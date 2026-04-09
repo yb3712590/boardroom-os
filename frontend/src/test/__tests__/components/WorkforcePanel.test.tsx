@@ -39,17 +39,17 @@ describe('WorkforcePanel', () => {
               {
                 template_id: 'frontend_delivery_primary',
                 template_kind: 'live_execution',
-                label: 'Frontend Engineer / 实施交付',
+                label: 'Frontend Engineer / Delivery',
                 role_family: 'frontend_uiux',
                 role_type: 'frontend_engineer',
                 canonical_role_ref: 'frontend_engineer_primary',
                 alias_role_profile_refs: [],
                 provider_target_ref: 'role_profile:frontend_engineer_primary',
                 participation_mode: 'HIGH_FREQUENCY_DELIVERY',
-                execution_boundary: '负责当前主线 BUILD / REVIEW / closeout 的前端实施与交付整理。',
+                execution_boundary: 'Own current mainline BUILD / REVIEW / closeout implementation and delivery packaging.',
                 status: 'LIVE',
                 default_document_kind_refs: ['detailed_design'],
-                responsibility_summary: '承担前端实施、交付整理和视觉落地。',
+                responsibility_summary: 'Own frontend implementation, delivery packaging, and UI finish.',
                 summary: 'Own the thin boardroom shell implementation path.',
                 composition: {
                   fragment_refs: ['skill_frontend_ui', 'delivery_execution_loop'],
@@ -63,17 +63,17 @@ describe('WorkforcePanel', () => {
               {
                 template_id: 'backend_execution_reserved',
                 template_kind: 'reserved_execution',
-                label: 'Backend Engineer / 服务交付',
+                label: 'Backend Engineer / Service Delivery',
                 role_family: 'backend_engineer',
                 role_type: 'backend_engineer',
                 canonical_role_ref: 'backend_engineer_primary',
                 alias_role_profile_refs: [],
                 provider_target_ref: 'role_profile:backend_engineer_primary',
                 participation_mode: 'HIGH_FREQUENCY_DELIVERY',
-                execution_boundary: '已定义为未来执行角色，但当前不进入主线 staffing 或 runtime。',
+                execution_boundary: 'Defined as a future execution role, but not on current mainline staffing or runtime.',
                 status: 'LIVE',
                 default_document_kind_refs: ['detailed_design'],
-                responsibility_summary: '负责服务实现、接口落地和集成切片。',
+                responsibility_summary: 'Own service implementation, API delivery, and integration slices.',
                 summary: 'Reserved for future service delivery slices.',
                 composition: {
                   fragment_refs: ['skill_backend_services', 'delivery_execution_loop'],
@@ -87,17 +87,17 @@ describe('WorkforcePanel', () => {
               {
                 template_id: 'cto_governance',
                 template_kind: 'governance',
-                label: 'CTO / 架构治理',
+                label: 'CTO / Architecture Governance',
                 role_family: 'cto',
                 role_type: 'governance_cto',
                 canonical_role_ref: 'cto_primary',
                 alias_role_profile_refs: [],
                 provider_target_ref: 'role_profile:cto_primary',
                 participation_mode: 'LOW_FREQUENCY_HIGH_LEVERAGE',
-                execution_boundary: '默认不承担日常编码、测试或持续实施主力工作。',
+                execution_boundary: 'Does not own day-to-day coding, testing, or continuous implementation by default.',
                 status: 'LIVE',
                 default_document_kind_refs: ['architecture_brief', 'technology_decision'],
-                responsibility_summary: '负责高杠杆架构决策、治理边界和路线判断。',
+                responsibility_summary: 'Own high-leverage architecture decisions, governance boundaries, and roadmap judgment.',
                 summary: 'Own high-leverage architecture and governance decisions.',
                 composition: {
                   fragment_refs: ['skill_architecture_governance', 'delivery_document_first'],
@@ -118,12 +118,12 @@ describe('WorkforcePanel', () => {
             document_kinds: [
               {
                 kind_ref: 'architecture_brief',
-                label: '架构方案',
+                label: 'Architecture Brief',
                 summary: 'Frame the target architecture and tradeoffs.',
               },
               {
                 kind_ref: 'technology_decision',
-                label: '技术选型',
+                label: 'Technology Decision',
                 summary: 'Capture option comparisons and final decisions.',
               },
             ],
@@ -236,8 +236,8 @@ describe('WorkforcePanel', () => {
     expect(
       screen.getByText(/Source template frontend_delivery_primary.*Execution loop/i),
     ).toBeInTheDocument()
-    expect(screen.getByText(/CTO \/ 架构治理/i)).toBeInTheDocument()
-    expect(screen.getByText(/Backend Engineer \/ 服务交付/i)).toBeInTheDocument()
+    expect(screen.getByText(/CTO \/ Architecture Governance/i)).toBeInTheDocument()
+    expect(screen.getByText(/Backend Engineer \/ Service Delivery/i)).toBeInTheDocument()
     expect(screen.getByText(/architecture_brief/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Current live path/i)).toHaveLength(3)
     expect(screen.queryByText(/Partial mainline path/i)).not.toBeInTheDocument()

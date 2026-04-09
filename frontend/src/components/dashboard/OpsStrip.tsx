@@ -11,19 +11,19 @@ export function OpsStrip({ budgetRemaining, activeTickets, blockedNodes, deadlin
   return (
     <dl className="ops-strip">
       <div>
-        <dt>预算</dt>
+        <dt>Budget</dt>
         <dd>{formatNumber(budgetRemaining)}</dd>
       </div>
       <div>
-        <dt>进行中工单</dt>
+        <dt>Active tickets</dt>
         <dd>{activeTickets}</dd>
       </div>
       <div>
-        <dt>阻塞节点</dt>
+        <dt>Blocked nodes</dt>
         <dd>{blockedNodes}</dd>
       </div>
       <div>
-        <dt>截止时间</dt>
+        <dt>Deadline</dt>
         <dd>{formatTimestamp(deadlineAt)}</dd>
       </div>
     </dl>

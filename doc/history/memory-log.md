@@ -116,6 +116,14 @@
 - 当前低频高杠杆分类固定复用主线语义：`ceo_shadow`、scope/governance 文档链、`architect / cto` 治理文档属于低频高杠杆；`BUILD / CHECK / REVIEW / CLOSEOUT` 属于高频执行或高频审查
 - 当前验证基线更新为 backend `508 passed`、frontend build passed、frontend `77 passed`
 
+### 2026-04-09
+
+- `P2-UI-009 / P2-UI-010` 已完成：前端主线壳当前已恢复英文文案，`Dashboard / Inbox / Workflow River / Workforce / Review Room / Meeting Room / Incident / Dependency Inspector / Provider Settings / Project Init / Completion` 等主线读面、错误态、空态、时间文案都已与现有测试和 README 叙事对齐
+- `frontend/src/utils/format.ts` 已恢复英文 locale 和 fallback；`rg -n "[\\p{Han}]" frontend/src` 当前无命中，说明主线前端代码里没有残留中文 UI 硬编码
+- runtime/provider 前端契约这轮保持不回退：`CompletionCard` 已补空值分支，`frontend/src/types/api.ts` 已把 provider/incident 相关数组收正到 `readonly`，前端回归继续校验 `cost_tier / participation_policy / preferred_* / actual_* / selection_reason / policy_reason` 等当前真字段
+- `App.test.tsx`、`CompletionCard.test.tsx` 以及相关前端组件回归已切回英文断言；本轮还顺手把后端 `test_idle_ceo_maintenance_targets_pending_workflow_once_per_interval` 对齐到当前“最近状态变化冷却窗口”语义，避免旧断言继续把 workflow 刚更新的同一时刻误判成 idle maintenance 应立即 due
+- 当前验证基线更新为 backend `537 passed`、frontend build passed、frontend `84 passed`
+
 ## Current Working Set
 
 - Prefer reading `README.md`, `doc/README.md`, `doc/mainline-truth.md`, `doc/roadmap-reset.md`, `doc/TODO.md`, `doc/history/context-baseline.md`, and then this file before touching the archive.

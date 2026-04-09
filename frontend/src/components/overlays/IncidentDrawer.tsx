@@ -20,21 +20,21 @@ function formatIncidentLabel(value: string) {
 function describeIncident(incidentType: string) {
   switch (incidentType) {
     case 'RUNTIME_TIMEOUT_ESCALATION':
-      return '执行连续超时，熔断器已开启。'
+      return 'Execution timed out repeatedly and the circuit breaker is now open.'
     case 'REPEATED_FAILURE_ESCALATION':
-      return '同一节点以相同指纹连续失败。'
+      return 'The same node failed repeatedly with the same fingerprint.'
     case 'PROVIDER_EXECUTION_PAUSED':
-      return '供应商执行已暂停，下游流程被阻塞。'
+      return 'Provider execution is paused and downstream work is blocked.'
     case 'STAFFING_CONTAINMENT':
-      return '人员变更隔离中断了当前执行链路。'
+      return 'Staffing containment interrupted the current execution path.'
     default:
-      return '出现治理故障，需要人工处理。'
+      return 'A governance incident occurred and needs manual attention.'
   }
 }
 
 function formatPayloadValue(value: unknown) {
   if (value == null) {
-    return '空'
+    return 'Empty'
   }
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return String(value)
@@ -69,11 +69,11 @@ function buildIncidentInterpretation(incident: IncidentDetailData['incident']): 
   ) {
     const sourceMatch = latestFailureMessage.match(/Mandatory explicit source (.+?) cannot fit within/)
     const budgetMatch = latestFailureMessage.match(/remaining token budget \((\d+)\)/)
-    const sourceRef = sourceMatch?.[1] ?? '关键输入产物'
+    const sourceRef = sourceMatch?.[1] ?? 'the required input artifact'
     const remainingBudget = budgetMatch?.[1]
-    const budgetHint = remainingBudget ? `（剩余预算 ${remainingBudget} tokens）` : ''
-    const streakHint = streakCount != null ? `，并已连续失败 ${streakCount} 次` : ''
-    return `这次不是供应商故障，而是输入预算超限：必需输入 ${sourceRef} 在当前上下文里放不下${budgetHint}${streakHint}，系统触发了重复失败熔断。`
+    const budgetHint = remainingBudget ? ` (remaining budget ${remainingBudget} tokens)` : ''
+    const streakHint = streakCount != null ? ` after ${streakCount} repeated failures` : ''
+    return `This is not a provider outage. The required input ${sourceRef} could not fit into the current context${budgetHint}${streakHint}, so the system tripped the repeated-failure circuit breaker.`
   }
 
   return null
@@ -120,60 +120,60 @@ export function IncidentDrawer({
     <Drawer
       isOpen={isOpen}
       onClose={onClose}
-      title={incident ? formatIncidentLabel(incident.incident_type) : '故障加载中'}
-      subtitle="故障处理"
+      title={incident ? formatIncidentLabel(incident.incident_type) : 'Loading incident'}
+      subtitle="Incident response"
     >
       <p className="muted-copy">
-        {incident ? describeIncident(incident.incident_type) : '正在拉取当前故障负载。'}
+        {incident ? describeIncident(incident.incident_type) : 'Loading the current incident payload.'}
       </p>
 
       {loading ? (
-        <div className="review-room-state">正在加载故障详情...</div>
+        <div className="review-room-state">Loading incident details...</div>
       ) : error ? (
         <div className="review-room-state review-room-error">{error}</div>
       ) : incident == null ? (
-        <div className="review-room-state">当前条目暂无故障详情。</div>
+        <div className="review-room-state">No incident details are available for this item.</div>
       ) : (
         <div className="review-room-content">
           <section className="review-room-overview">
             <div>
-              <span className="eyebrow">状态</span>
+              <span className="eyebrow">Status</span>
               <p>{incident.status}</p>
             </div>
             <div>
-              <span className="eyebrow">熔断器</span>
-              <p>{incident.circuit_breaker_state ?? '未知'}</p>
+              <span className="eyebrow">Circuit breaker</span>
+              <p>{incident.circuit_breaker_state ?? 'Unknown'}</p>
             </div>
             <div>
-              <span className="eyebrow">严重级别</span>
-              <p>{incident.severity ?? '未知'}</p>
+              <span className="eyebrow">Severity</span>
+              <p>{incident.severity ?? 'Unknown'}</p>
             </div>
           </section>
 
           <section className="review-room-columns">
             <div className="review-room-column">
-              <h3>故障范围</h3>
+              <h3>Incident scope</h3>
               <ul className="review-room-list">
                 <li>
-                  <strong>工作流</strong>
+                  <strong>Workflow</strong>
                   <span>{incident.workflow_id}</span>
                 </li>
                 <li>
-                  <strong>节点</strong>
-                  <span>{incident.node_id ?? '未关联节点'}</span>
+                  <strong>Node</strong>
+                  <span>{incident.node_id ?? 'No linked node'}</span>
                 </li>
                 <li>
-                  <strong>工单</strong>
-                  <span>{incident.ticket_id ?? '未关联工单'}</span>
+                  <strong>Ticket</strong>
+                  <span>{incident.ticket_id ?? 'No linked ticket'}</span>
                 </li>
                 <li>
-                  <strong>供应商</strong>
-                  <span>{incident.provider_id ?? '未关联供应商'}</span>
+                  <strong>Provider</strong>
+                  <span>{incident.provider_id ?? 'No linked provider'}</span>
                 </li>
               </ul>
             </div>
             <div className="review-room-column">
-              <h3>故障负载</h3>
+              <h3>Incident payload</h3>
               <ul className="review-room-list">
                 {Object.entries(incident.payload).map(([key, value]) => (
                   <li key={key}>
@@ -183,8 +183,8 @@ export function IncidentDrawer({
                 ))}
                 {Object.keys(incident.payload).length === 0 ? (
                   <li>
-                    <strong>负载</strong>
-                    <span>未附带结构化负载。</span>
+                    <strong>Payload</strong>
+                    <span>No structured payload was attached.</span>
                   </li>
                 ) : null}
               </ul>
@@ -193,15 +193,15 @@ export function IncidentDrawer({
 
           {incidentInterpretation ? (
             <section className="review-room-action-panel incident-action-panel">
-              <h3>故障解读</h3>
+              <h3>Interpretation</h3>
               <p className="muted-copy">{incidentInterpretation}</p>
             </section>
           ) : null}
 
           <section className="review-room-action-panel incident-action-panel">
-            <h3>恢复动作</h3>
+            <h3>Recovery action</h3>
             <label>
-              <span className="field-label">后续动作</span>
+              <span className="field-label">Follow-up action</span>
               <select
                 value={followupAction}
                 onChange={(event) => setFollowupAction(event.target.value)}
@@ -215,9 +215,9 @@ export function IncidentDrawer({
               </select>
             </label>
             <label>
-              <span className="field-label">恢复说明</span>
+              <span className="field-label">Resolution summary</span>
               <textarea
-                aria-label="恢复说明"
+                aria-label="Resolution summary"
                 value={resolutionSummary}
                 onChange={(event) => setResolutionSummary(event.target.value)}
                 rows={4}
@@ -234,7 +234,7 @@ export function IncidentDrawer({
                 })
               }
             >
-              {submitting ? '提交中...' : '执行恢复动作'}
+              {submitting ? 'Submitting...' : 'Run recovery action'}
             </button>
           </section>
         </div>

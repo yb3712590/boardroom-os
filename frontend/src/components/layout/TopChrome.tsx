@@ -38,7 +38,7 @@ export function TopChrome({
   return (
     <header className="top-chrome">
       <div>
-        <p className="eyebrow">董事会系统</p>
+        <p className="eyebrow">Boardroom system</p>
         <h1>{title}</h1>
         <p className="top-chrome-copy">{northStarGoal}</p>
       </div>

@@ -48,15 +48,15 @@ export function ProfileSummary({
       <p className="profile-summary-copy">{effectiveSummary}</p>
       <dl className="profile-summary-grid">
         <div>
-          <dt>技能</dt>
+          <dt>Skill</dt>
           <dd>{formatGroup(skillProfile)}</dd>
         </div>
         <div>
-          <dt>性格</dt>
+          <dt>Personality</dt>
           <dd>{formatGroup(personalityProfile)}</dd>
         </div>
         <div>
-          <dt>审美</dt>
+          <dt>Aesthetic</dt>
           <dd>{formatGroup(aestheticProfile)}</dd>
         </div>
       </dl>

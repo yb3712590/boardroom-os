@@ -2140,6 +2140,77 @@
 - 本轮新增后端回归覆盖：recent-state-change cooldown、runner 编排顺序 trace、external runtime 模式下 trace 兼容、pending workflow 的 idle maintenance 命中与 executing ticket 的误触发保护
 - 本轮全量验证结果更新为 backend `475 passed`、frontend build passed、frontend `73 passed`
 
+#### P2-UI-009：前端主线英文文案恢复
+
+**状态**：已完成（2026-04-09，本轮实现）
+
+**描述**：把 React Boardroom 壳的主线用户可见文案恢复成英文，重新对齐现有 README 叙事、主线测试和 MVP 对外口径，不引入 i18n。
+
+**文件**：
+- 修改：`frontend/src/components/dashboard/*`
+- 修改：`frontend/src/components/overlays/*`
+- 修改：`frontend/src/components/shared/*`
+- 修改：`frontend/src/components/workforce/*`
+- 修改：`frontend/src/pages/*`
+- 修改：`frontend/src/stores/*`
+- 修改：`frontend/src/utils/format.ts`
+- 修改：`frontend/src/App.test.tsx`
+- 修改：`frontend/src/test/**/*`
+
+**依赖**：无
+
+**预估**：4h
+
+**feature-spec**：前端主线壳回到英文口径，并与当前主线运行方式、测试断言和时间格式保持一致
+
+**验收标准**：
+- 主线页面、drawer、空态、错误态、按钮与状态文案恢复英文
+- 时间与相对时间格式恢复英文 locale / fallback
+- 前端主线测试断言同步到英文
+- `frontend/src` 不再残留中文 UI 硬编码
+
+**风险**：低
+
+**完成补记（2026-04-09）**：
+- 这轮没有引入 i18n，也没有做双语切换；直接按最保守方案把当前主线 UI 文案、fixture 与断言统一回英文
+- `Dashboard / Inbox / Workflow River / Workforce / Review Room / Meeting Room / Incident / Dependency Inspector / Provider Settings / Project Init / Completion` 等主线读面已全部恢复英文
+- `frontend/src/utils/format.ts` 已恢复英文 locale 和 fallback；`rg -n "[\\p{Han}]" frontend/src` 当前无命中
+- 本轮前端验证结果更新为 build passed、Vitest `84 passed`
+
+#### P2-UI-010：runtime/provider 契约对齐与前端回归修复
+
+**状态**：已完成（2026-04-09，本轮实现）
+
+**描述**：保持 runtime/provider 归一化后的前端契约真实，修掉类型断点和 UI 回归，不为了过测回退后端字段。
+
+**文件**：
+- 修改：`frontend/src/types/api.ts`
+- 修改：`frontend/src/components/dashboard/CompletionCard.tsx`
+- 修改：`frontend/src/App.test.tsx`
+- 修改：`frontend/src/test/__tests__/components/CompletionCard.test.tsx`
+- 修改：`backend/tests/test_ceo_scheduler.py`
+
+**依赖**：`P2-PRV-007`、`P2-PRV-008`、`P2-RLS-003`
+
+**预估**：4h
+
+**feature-spec**：前端继续覆盖当前真实 runtime/provider 字段，build 与回归测试重新稳定，completion / incident / workforce / review / provider setting 等主线读面不再因为旧断言或类型口径失真
+
+**验收标准**：
+- `CompletionCard` 的空值分支不再导致 build 失败
+- provider/incident 相关只读数组口径与 fixture `as const` 用法一致
+- `App.test.tsx` 和相关组件测试继续校验当前真实字段，不回退 `cost_tier / participation_policy / preferred_* / actual_* / selection_reason / policy_reason`
+- 收尾时 backend pytest、frontend build、frontend test 全部通过
+
+**风险**：低
+
+**完成补记（2026-04-09）**：
+- `frontend/src/types/api.ts` 已把 `RuntimeProviderData.providers / role_bindings / future_binding_slots` 和 `IncidentDetailData.available_followup_actions` 等数组收正到 `readonly`
+- `frontend/src/components/dashboard/CompletionCard.tsx` 已收正 `final_review_pack_id` 空值分支，继续支持“有 final review”和“只靠 closeout + workflow chain report 完成”两条真实路径
+- `frontend/src/App.test.tsx` 与 `CompletionCard.test.tsx` 已同步到当前英文 UI 和真实读面文案；事故抽屉、completion 卡片、artifact preview、workforce 与主应用 smoke 回归都已恢复通过
+- 本轮还把 `backend/tests/test_ceo_scheduler.py` 的 idle maintenance 断言对齐到当前冷却窗口语义，避免旧测试继续和 `P2-DEC-004` 的现状冲突
+- 本轮全量验证结果更新为 backend `537 passed`、frontend build passed、frontend `84 passed`
+
 ## 五、关键依赖图
 
 ```

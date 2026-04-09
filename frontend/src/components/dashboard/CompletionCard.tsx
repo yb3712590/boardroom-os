@@ -14,41 +14,42 @@ export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: Comple
   const finalReviewApprovedAt = summary.final_review_approved_at ?? summary.approved_at ?? null
   const hasFinalReview = summary.final_review_pack_id !== null
   const chainReportArtifactRef = summary.workflow_chain_report_artifact_ref
+  const finalReviewPackId = summary.final_review_pack_id
 
   return (
     <section className="completion-card" aria-labelledby="completion-card-title">
       <div className="completion-card-copy">
-        <p className="eyebrow">工作流结果</p>
-        <h2 id="completion-card-title">交付已完成</h2>
+        <p className="eyebrow">Workflow result</p>
+        <h2 id="completion-card-title">Delivery completed</h2>
         <p className="muted-copy">
           {hasFinalReview
-            ? `董事会在 ${formatTimestamp(finalReviewApprovedAt, '未记录')} 批准，工作流 ${summary.workflow_id} 于 ${formatTimestamp(summary.closeout_completed_at, '未记录')} 完成收口。`
-            : `工作流 ${summary.workflow_id} 于 ${formatTimestamp(summary.closeout_completed_at, '未记录')} 完成收口，当前结果来自 closeout 包与 workflow 链路报告。`}
+            ? `The board approved this workflow on ${formatTimestamp(finalReviewApprovedAt, 'Not recorded')}, and workflow ${summary.workflow_id} closed out on ${formatTimestamp(summary.closeout_completed_at, 'Not recorded')}.`
+            : `Workflow ${summary.workflow_id} closed out on ${formatTimestamp(summary.closeout_completed_at, 'Not recorded')}. This completion came from the closeout package and workflow chain report.`}
         </p>
       </div>
       <div className="completion-card-grid">
         <div>
-          <span>最终标题</span>
+          <span>Final title</span>
           <strong>{summary.title}</strong>
         </div>
         <div>
-          <span>批准时间</span>
-          <strong>{hasFinalReview ? formatTimestamp(finalReviewApprovedAt, '未记录') : '未经过最终评审'}</strong>
+          <span>Approved at</span>
+          <strong>{hasFinalReview ? formatTimestamp(finalReviewApprovedAt, 'Not recorded') : 'No final review'}</strong>
         </div>
         <div>
-          <span>收口完成</span>
-          <strong>{formatTimestamp(summary.closeout_completed_at, '未记录')}</strong>
+          <span>Closeout completed</span>
+          <strong>{formatTimestamp(summary.closeout_completed_at, 'Not recorded')}</strong>
         </div>
         <div>
-          <span>选择方案</span>
-          <strong>{summary.selected_option_id ?? (hasFinalReview ? '未覆盖方案，按默认批准' : '未经过最终评审')}</strong>
+          <span>Selected option</span>
+          <strong>{summary.selected_option_id ?? (hasFinalReview ? 'Approved without an explicit option override' : 'No final review')}</strong>
         </div>
         <div>
-          <span>董事会备注</span>
-          <strong>{summary.board_comment ?? (hasFinalReview ? '暂无董事会备注。' : '本次完成态不依赖董事会最终评审。')}</strong>
+          <span>Board comment</span>
+          <strong>{summary.board_comment ?? (hasFinalReview ? 'No board comment recorded.' : 'This completion path did not require a final board review.')}</strong>
         </div>
         <div>
-          <span>证据产物</span>
+          <span>Evidence artifacts</span>
           <strong>{summary.artifact_refs.length}</strong>
           <div className="artifact-ref-list">
             {summary.artifact_refs.map((artifactRef) => (
@@ -58,13 +59,13 @@ export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: Comple
                 className="ghost-button artifact-ref-button"
                 onClick={() => onOpenArtifact(artifactRef)}
               >
-                打开产物 {artifactRefFilename(artifactRef)}
+                Open artifact {artifactRefFilename(artifactRef)}
               </button>
             ))}
           </div>
         </div>
         <div>
-          <span>收口产物</span>
+          <span>Closeout artifacts</span>
           <strong>{summary.closeout_artifact_refs.length}</strong>
           <div className="artifact-ref-list">
             {summary.closeout_artifact_refs.map((artifactRef) => (
@@ -74,34 +75,34 @@ export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: Comple
                 className="ghost-button artifact-ref-button"
                 onClick={() => onOpenArtifact(artifactRef)}
               >
-                打开产物 {artifactRefFilename(artifactRef)}
+                Open artifact {artifactRefFilename(artifactRef)}
               </button>
             ))}
           </div>
         </div>
         <div>
-          <span>文档更新数</span>
+          <span>Documentation updates</span>
           <strong>{summary.documentation_update_count}</strong>
         </div>
         <div>
-          <span>后续文档项</span>
+          <span>Documentation follow-ups</span>
           <strong>{summary.documentation_follow_up_count}</strong>
         </div>
       </div>
       <p className="completion-card-summary">
-        <strong>文档同步</strong>
+        <strong>Documentation sync</strong>
         {': '}
-        <span>{summary.documentation_sync_summary ?? '未记录文档同步更新。'}</span>
+        <span>{summary.documentation_sync_summary ?? 'No documentation sync update recorded.'}</span>
       </p>
       <p className="completion-card-summary">{summary.summary}</p>
       <div className="completion-card-actions">
-        {summary.final_review_pack_id ? (
-          <Button type="button" variant="secondary" onClick={() => onOpenReview(summary.final_review_pack_id)}>
-            打开最终评审证据
+        {finalReviewPackId != null ? (
+          <Button type="button" variant="secondary" onClick={() => onOpenReview(finalReviewPackId)}>
+            Open final review evidence
           </Button>
         ) : chainReportArtifactRef ? (
           <Button type="button" variant="secondary" onClick={() => onOpenArtifact(chainReportArtifactRef)}>
-            打开 workflow 链路报告
+            Open workflow chain report
           </Button>
         ) : null}
       </div>

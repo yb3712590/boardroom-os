@@ -1,4 +1,4 @@
-const DEFAULT_LOCALE = 'zh-CN'
+const DEFAULT_LOCALE = 'en-US'
 
 const TIMESTAMP_OPTIONS: Intl.DateTimeFormatOptions = {
   month: 'short',
@@ -13,7 +13,7 @@ export function formatNumber(value: number): string {
 
 export function formatTimestamp(
   value: string | null | undefined,
-  emptyLabel = '无截止时间',
+  emptyLabel = 'No deadline',
 ): string {
   if (!value) {
     return emptyLabel
@@ -27,20 +27,20 @@ export function formatRelativeTime(value: string): string {
   const seconds = Math.max(0, Math.floor(diff / 1000))
 
   if (seconds < 60) {
-    return `${seconds}秒前`
+    return `${seconds}s ago`
   }
 
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) {
-    return `${minutes}分钟前`
+    return `${minutes}m ago`
   }
 
   const hours = Math.floor(minutes / 60)
   if (hours < 24) {
-    return `${hours}小时前`
+    return `${hours}h ago`
   }
 
-  return formatTimestamp(value, '未知时间')
+  return formatTimestamp(value, 'Unknown time')
 }
 
 export function normalizeConstraints(value: string): string[] {

@@ -12,32 +12,32 @@ export function assertAcceptedCommand(ack: CommandAck, fallbackMessage: string) 
 export function runtimeModeLabel(value: string | null | undefined) {
   switch (value) {
     case 'OPENAI_COMPAT_LIVE':
-      return 'OpenAI 兼容'
+      return 'OpenAI Compat'
     case 'OPENAI_COMPAT_INCOMPLETE':
-      return 'OpenAI 兼容（配置不完整）'
+      return 'OpenAI Compat (incomplete)'
     case 'OPENAI_COMPAT_PAUSED':
-      return 'OpenAI 兼容（已暂停）'
+      return 'OpenAI Compat (paused)'
     case 'CLAUDE_CODE_CLI_LIVE':
       return 'Claude Code CLI'
     case 'CLAUDE_CODE_CLI_INCOMPLETE':
-      return 'Claude Code CLI（配置不完整）'
+      return 'Claude Code CLI (incomplete)'
     case 'CLAUDE_CODE_CLI_PAUSED':
-      return 'Claude Code CLI（已暂停）'
+      return 'Claude Code CLI (paused)'
     case 'LOCAL_DETERMINISTIC':
     default:
-      return '本地确定性执行'
+      return 'Local deterministic execution'
   }
 }
 
 export function runtimeReasonLabel(value: string | null | undefined) {
   if (!value) {
-    return '当前按已保存的本地执行设置运行。'
+    return 'Runtime is using the currently saved local execution settings.'
   }
   if (value === 'Runtime is using the local deterministic path.') {
-    return '当前使用本地确定性执行路径。'
+    return 'Runtime is using the local deterministic path.'
   }
   if (value === 'Runtime is using the currently saved local execution settings.') {
-    return '当前按已保存的本地执行设置运行。'
+    return 'Runtime is using the currently saved local execution settings.'
   }
   return value
 }

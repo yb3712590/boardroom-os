@@ -69,13 +69,13 @@ export const useBoardroomStore = create<BoardroomState>((set) => ({
           runtimeProviderError:
             runtimeProviderResult.reason instanceof Error
               ? runtimeProviderResult.reason.message
-              : '加载运行时供应商设置失败。',
+              : 'Failed to load runtime provider settings.',
         })
       }
     } catch (error) {
       set({
         snapshotError:
-          error instanceof Error ? error.message : '加载最新董事会快照失败。',
+          error instanceof Error ? error.message : 'Failed to load the latest board snapshot.',
       })
     } finally {
       if (!background) {

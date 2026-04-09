@@ -92,7 +92,7 @@ describe('StaffingActions', () => {
         templates={[
           {
             template_id: 'backend_engineer_backup',
-            label: 'Backend Engineer / 服务交付',
+            label: 'Backend Engineer / Service Delivery',
             role_type: 'backend_engineer',
             role_profile_refs: ['backend_engineer_primary'],
             employee_id_hint: 'emp_backend_backup',
@@ -118,7 +118,7 @@ describe('StaffingActions', () => {
           },
           {
             template_id: 'cto_governance_backup',
-            label: 'CTO / 架构治理',
+            label: 'CTO / Architecture Governance',
             role_type: 'governance_cto',
             role_profile_refs: ['cto_primary'],
             employee_id_hint: 'emp_cto_governance',
@@ -148,9 +148,9 @@ describe('StaffingActions', () => {
       />,
     )
 
-    expect(screen.getByLabelText('Backend Engineer / 服务交付 employee id')).toBeInTheDocument()
-    expect(screen.getByLabelText('CTO / 架构治理 employee id')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Request hire for Backend Engineer / 服务交付' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Request hire for CTO / 架构治理' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Backend Engineer / Service Delivery employee id')).toBeInTheDocument()
+    expect(screen.getByLabelText('CTO / Architecture Governance employee id')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request hire for Backend Engineer / Service Delivery' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request hire for CTO / Architecture Governance' })).toBeInTheDocument()
   })
 })

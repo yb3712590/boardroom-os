@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-08
+> 最后更新：2026-04-09
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
@@ -12,13 +12,21 @@
 - Maker-Checker 和 Review 闭环真实可用
 - React 只做最薄治理壳，不接管工作流真相
 
-## 当前基线（2026-04-08）
+## 当前基线（2026-04-09）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `508 passed`
-- frontend：`npm run build` -> passed，`npm run test:run` -> `77 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `537 passed`
+- frontend：`npm run build` -> passed，`npm run test:run` -> `84 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 
 ## 当前批次
+
+### `P2-UI`：前端英文恢复与 runtime UI 回归收口
+
+状态：`已完成（2026-04-09，2 项已全部收口；与主线关系：在当前主线任务空窗时，先把前端主线壳恢复到与 README / 测试 / runtime-provider 真相一致的英文口径，并补齐 runtime UI 回归，避免 UI 壳继续偏离当前 MVP 真相）`
+
+- `P2-UI-009` 已完成（2026-04-09）：`frontend/src` 当前主线可见文案已恢复英文，覆盖 `Dashboard / Inbox / Workflow River / Workforce / Review Room / Meeting Room / Incident / Dependency Inspector / Provider Settings / Project Init / Completion` 等主线读面；`frontend/src/utils/format.ts` 也已恢复英文 locale 与英文 fallback，`rg -n "[\\p{Han}]" frontend/src` 当前无命中
+- `P2-UI-010` 已完成（2026-04-09）：前端继续沿用当前真实 runtime/provider 契约，不回退后端字段；`CompletionCard` 已收正 `final_review_pack_id` 空值分支，`frontend/src/types/api.ts` 已把 `RuntimeProviderData.providers / role_bindings / future_binding_slots` 与 `IncidentDetailData.available_followup_actions` 等数组口径对齐到 `readonly`，前端回归测试与 `App.test.tsx` 也已同步到英文文案与当前真实字段
+- 本轮额外收口了一条后端测试真相差异：`test_idle_ceo_maintenance_targets_pending_workflow_once_per_interval` 现已按当前“最近状态变化冷却窗口”语义改成超过间隔后再断言 due，不再用 workflow 刚更新的同一时刻误判 idle maintenance 应立即触发
 
 ### `P2-DEC`：派单边界与 role/runtime 解耦前置
 

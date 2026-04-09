@@ -128,10 +128,10 @@ export function Drawer({
             type="button"
             className="ghost-button"
             onClick={onClose}
-            aria-label={`关闭${title}`}
+            aria-label={`Close ${title}`}
             ref={closeButtonRef}
           >
-            关闭
+            Close
           </button>
         </header>
         <div className="drawer-body">{children}</div>

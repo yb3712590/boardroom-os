@@ -2820,7 +2820,7 @@ def test_idle_ceo_maintenance_targets_pending_workflow_once_per_interval(
     )
     workflow_id = _project_init(client, "CEO idle maintenance pending scope")
     repository = client.app.state.repository
-    current_time = repository.get_active_workflow()["updated_at"]
+    current_time = datetime.fromisoformat("2026-04-04T10:01:05+08:00")
 
     due_before = {
         item["workflow_id"]

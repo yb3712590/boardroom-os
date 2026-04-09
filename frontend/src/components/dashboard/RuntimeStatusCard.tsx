@@ -26,9 +26,9 @@ function runtimeModeTone(value: string | null | undefined) {
 function runtimeHealthLabel(value: string) {
   switch (value) {
     case 'LOCAL_ONLY':
-      return '仅本地'
+      return 'LOCAL_ONLY'
     case 'HEALTHY':
-      return '健康'
+      return 'Healthy'
     default:
       return value.replaceAll('_', ' ')
   }
@@ -47,25 +47,25 @@ export function RuntimeStatusCard({
     <section className={`runtime-status-card runtime-status-${runtimeModeTone(effectiveMode)}`}>
       <div className="runtime-status-head">
         <div>
-          <p className="eyebrow">执行模式</p>
+          <p className="eyebrow">Execution mode</p>
           <strong>{providerLabel}</strong>
         </div>
         <Button type="button" variant="ghost" onClick={onOpenSettings}>
-          运行时设置
+          Runtime settings
         </Button>
       </div>
       <p className="runtime-status-copy">{reason}</p>
       <dl className="runtime-status-grid">
         <div>
-          <dt>模型</dt>
-          <dd>{model ?? '本地确定性运行时'}</dd>
+          <dt>Model</dt>
+          <dd>{model ?? 'Deterministic local runtime'}</dd>
         </div>
         <div>
-          <dt>执行人数</dt>
+          <dt>Workers</dt>
           <dd>{workerCount}</dd>
         </div>
         <div>
-          <dt>健康状态</dt>
+          <dt>Health</dt>
           <dd>{runtimeHealthLabel(healthSummary)}</dd>
         </div>
       </dl>
