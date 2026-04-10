@@ -42,6 +42,7 @@
 | 系统化文档治理引擎 | 远期储备 | 当前阶段只按治理规则和文档约束处理 |
 | “并发实施、串行收口”的系统化调度能力 | 远期储备 | 当前只作为治理原则记录，不做调度器改造 |
 | 交付完成的硬门禁 | 远期储备 | 当前只接受 checker / closeout 的软约束，不做硬状态机 gate |
+| 通用交付类型地图 | 远期储备 | 后续可把 `source_code_delivery / document_delivery / research_report / evidence_bundle / dataset_delivery / design_asset_delivery / media_asset_delivery / integration_payload` 做成正式 deliverable kind，再配 `governance_record / structured_control_artifact / working_artifact` 三类辅助件；但这不进入当前关键路径 |
 
 ## 使用方式
 

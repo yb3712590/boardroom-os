@@ -10,9 +10,9 @@ from app.core.output_schemas import (
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MILESTONE_PLAN_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
@@ -71,8 +71,8 @@ MAINLINE_WORKFLOW_STAGE_TRUTH: tuple[MainlineWorkflowStageTruth, ...] = (
         truth_status="REAL",
         actual_owner_roles=("frontend_engineer", "checker"),
         actual_role_profiles=("frontend_engineer_primary", "checker_primary"),
-        output_schema_refs=(IMPLEMENTATION_BUNDLE_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_REF),
-        notes="BUILD 先产出 implementation_bundle，再走内部 checker。frontend_engineer 现在已有独立 runtime worker。",
+        output_schema_refs=(SOURCE_CODE_DELIVERY_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_REF),
+        notes="BUILD 先产出 source_code_delivery，再走内部 checker。frontend_engineer 现在已有独立 runtime worker。",
     ),
     MainlineWorkflowStageTruth(
         stage_id="check_internal_maker_checker",
@@ -107,19 +107,19 @@ MAINLINE_WORKFLOW_STAGE_TRUTH: tuple[MainlineWorkflowStageTruth, ...] = (
 MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
     RuntimeSupportRow(
         role_profile_ref="backend_engineer_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
         notes="新增 backend 实施角色现在已进入正式 BUILD runtime 路径。",
     ),
     RuntimeSupportRow(
         role_profile_ref="database_engineer_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
         notes="新增 database 实施角色现在已进入正式 BUILD runtime 路径。",
     ),
     RuntimeSupportRow(
         role_profile_ref="platform_sre_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
         notes="新增 platform 实施角色现在已进入正式 BUILD runtime 路径。",
     ),
@@ -176,9 +176,9 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
     ),
     RuntimeSupportRow(
         role_profile_ref="frontend_engineer_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
-        notes="BUILD 阶段的实现包当前由 frontend_engineer_primary 产出。",
+        notes="BUILD 阶段的源码交付当前由 frontend_engineer_primary 产出。",
     ),
     RuntimeSupportRow(
         role_profile_ref="checker_primary",

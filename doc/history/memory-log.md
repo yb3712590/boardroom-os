@@ -26,8 +26,9 @@
 - `project-init` 现在会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE`
 - `ticket-create` 现在会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`，并为 workspace-managed ticket 创建 dossier
 - `Context Compiler` 现在会把 `required_read_refs` 并入 `input_process_asset_refs`，并给 workspace-managed ticket 写 `worker-preflight` 回执
-- workspace-managed `source_code_delivery` 票现在会在 `ticket-result-submit` 时硬校验 `documentation_updates / verification_evidence_refs / git_commit_record`，并写 `worker-postrun / evidence-capture / git-closeout` 回执
-- 当前还没做完的点：Review Gate merge 自动化、closeout 统一 gate、非代码票硬 gate、UI / projection 对 `00-boardroom` 和 `20-evidence` 的摘要读面，以及把 `BUILD` 主结果从 `implementation_bundle` 切到真实源码交付包
+- BUILD 主结果现在已经从占位式文档产物硬切到 `source_code_delivery`；deterministic / provider-backed runtime 都会直接落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产
+- workspace-managed `source_code_delivery` 票现在会在 `ticket-result-submit` 时硬校验 `source_file_refs / documentation_updates / verification_evidence_refs / git_commit_record`，并写 `worker-postrun / evidence-capture / git-closeout` 回执
+- 当前还没做完的点：Review Gate merge 自动化、closeout 统一 gate、非代码票硬 gate，以及 completion / projection 对源码文件数、测试证据数和 git 摘要的当前读面
 - 后端当前全量回归基线已更新为 `555 passed`
 
 ### 2026-04-10

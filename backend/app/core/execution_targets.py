@@ -12,8 +12,9 @@ from app.core.output_schemas import (
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MILESTONE_PLAN_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
@@ -30,6 +31,7 @@ EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT = "execution_target:frontend_gover
 EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT = "execution_target:architect_governance_document"
 EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT = "execution_target:cto_governance_document"
 EXECUTION_TARGET_CHECKER_DELIVERY_CHECK = "execution_target:checker_delivery_check"
+EXECUTION_TARGET_CHECKER_MAKER_CHECKER = "execution_target:checker_maker_checker"
 EXECUTION_TARGET_FRONTEND_REVIEW = "execution_target:frontend_review"
 EXECUTION_TARGET_FRONTEND_CLOSEOUT = "execution_target:frontend_closeout"
 
@@ -121,7 +123,7 @@ EXECUTION_TARGET_DEFINITIONS = (
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_FRONTEND_BUILD,
         role_profile_ref="frontend_engineer_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         required_capability_tags=(
             RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
             RuntimeProviderCapabilityTag.IMPLEMENTATION,
@@ -131,7 +133,7 @@ EXECUTION_TARGET_DEFINITIONS = (
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_BACKEND_BUILD,
         role_profile_ref="backend_engineer_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         required_capability_tags=(
             RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
             RuntimeProviderCapabilityTag.IMPLEMENTATION,
@@ -141,7 +143,7 @@ EXECUTION_TARGET_DEFINITIONS = (
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_DATABASE_BUILD,
         role_profile_ref="database_engineer_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         required_capability_tags=(
             RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
             RuntimeProviderCapabilityTag.IMPLEMENTATION,
@@ -151,7 +153,7 @@ EXECUTION_TARGET_DEFINITIONS = (
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_PLATFORM_BUILD,
         role_profile_ref="platform_sre_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         required_capability_tags=(
             RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
             RuntimeProviderCapabilityTag.IMPLEMENTATION,
@@ -167,6 +169,16 @@ EXECUTION_TARGET_DEFINITIONS = (
             RuntimeProviderCapabilityTag.REVIEW,
         ),
         label="Checker Delivery Check",
+    ),
+    ExecutionTargetDefinition(
+        execution_target_ref=EXECUTION_TARGET_CHECKER_MAKER_CHECKER,
+        role_profile_ref="checker_primary",
+        output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+        required_capability_tags=(
+            RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+            RuntimeProviderCapabilityTag.REVIEW,
+        ),
+        label="Checker Maker-Checker Verdict",
     ),
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_FRONTEND_REVIEW,

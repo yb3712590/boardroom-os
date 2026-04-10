@@ -94,7 +94,7 @@ def _ticket_create_payload(
     workflow_id: str,
     ticket_id: str,
     node_id: str,
-    output_schema_ref: str = "implementation_bundle",
+    output_schema_ref: str = "source_code_delivery",
 ) -> dict[str, object]:
     return {
         "ticket_id": ticket_id,

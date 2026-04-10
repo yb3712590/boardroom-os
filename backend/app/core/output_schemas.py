@@ -24,8 +24,8 @@ DETAILED_DESIGN_SCHEMA_REF = "detailed_design"
 DETAILED_DESIGN_SCHEMA_VERSION = 1
 BACKLOG_RECOMMENDATION_SCHEMA_REF = "backlog_recommendation"
 BACKLOG_RECOMMENDATION_SCHEMA_VERSION = 1
-IMPLEMENTATION_BUNDLE_SCHEMA_REF = "implementation_bundle"
-IMPLEMENTATION_BUNDLE_SCHEMA_VERSION = 1
+SOURCE_CODE_DELIVERY_SCHEMA_REF = "source_code_delivery"
+SOURCE_CODE_DELIVERY_SCHEMA_VERSION = 1
 DELIVERY_CHECK_REPORT_SCHEMA_REF = "delivery_check_report"
 DELIVERY_CHECK_REPORT_SCHEMA_VERSION = 1
 DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF = "delivery_closeout_package"
@@ -539,13 +539,13 @@ def _validate_governance_document_payload(
                 )
 
 
-def _implementation_bundle_schema_body() -> dict[str, Any]:
+def _source_code_delivery_schema_body() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["summary", "deliverable_artifact_refs"],
+        "required": ["summary", "source_file_refs"],
         "properties": {
             "summary": {"type": "string"},
-            "deliverable_artifact_refs": {
+            "source_file_refs": {
                 "type": "array",
                 "minItems": 1,
                 "items": {"type": "string"},
@@ -835,13 +835,13 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
                 )
 
 
-def _validate_implementation_bundle_payload(payload: dict[str, Any]) -> None:
+def _validate_source_code_delivery_payload(payload: dict[str, Any]) -> None:
     payload = _require_object(payload)
-    _require_non_empty_string(payload, "summary", label="Implementation bundle payload.summary")
+    _require_non_empty_string(payload, "summary", label="Source code delivery payload.summary")
     _require_string_array(
         payload,
-        "deliverable_artifact_refs",
-        label="Implementation bundle payload.deliverable_artifact_refs",
+        "source_file_refs",
+        label="Source code delivery payload.source_file_refs",
         non_empty=True,
     )
 
@@ -854,7 +854,7 @@ def _validate_implementation_bundle_payload(payload: dict[str, Any]) -> None:
             field_path="implementation_notes",
             expected="array of non-empty strings",
             actual_value=implementation_notes,
-            message="Implementation bundle payload.implementation_notes must be an array of strings.",
+            message="Source code delivery payload.implementation_notes must be an array of strings.",
         )
     _validate_documentation_updates(payload)
 
@@ -1063,9 +1063,9 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
             expected_document_kind_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
         ),
     },
-    (IMPLEMENTATION_BUNDLE_SCHEMA_REF, IMPLEMENTATION_BUNDLE_SCHEMA_VERSION): {
-        "body": _implementation_bundle_schema_body,
-        "validator": _validate_implementation_bundle_payload,
+    (SOURCE_CODE_DELIVERY_SCHEMA_REF, SOURCE_CODE_DELIVERY_SCHEMA_VERSION): {
+        "body": _source_code_delivery_schema_body,
+        "validator": _validate_source_code_delivery_payload,
     },
     (DELIVERY_CHECK_REPORT_SCHEMA_REF, DELIVERY_CHECK_REPORT_SCHEMA_VERSION): {
         "body": _delivery_check_report_schema_body,

@@ -66,7 +66,7 @@ def build_requirement_elicitation_questionnaire() -> list[ElicitationQuestion]:
                 ElicitationQuestionOption(
                     option_id="role_frontend_engineer",
                     label="Frontend engineer",
-                    summary="Own the main implementation bundle.",
+                    summary="Own the main source code delivery.",
                 ),
                 ElicitationQuestionOption(
                     option_id="role_checker",

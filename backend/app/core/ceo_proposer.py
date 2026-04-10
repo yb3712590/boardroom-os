@@ -38,7 +38,7 @@ from app.core.output_schemas import (
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
 from app.core.workflow_completion import ticket_has_delivery_mainline_evidence
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
@@ -624,7 +624,7 @@ def _build_backlog_followup_batch(
     assignee_employee_id = _select_default_assignee(
         snapshot,
         role_profile_ref=role_profile_ref,
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
     )
     if assignee_employee_id is None:
         return None
@@ -691,10 +691,10 @@ def _build_backlog_followup_batch(
                     "workflow_id": workflow_id,
                     "node_id": node_id,
                     "role_profile_ref": role_profile_ref,
-                    "output_schema_ref": IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+                    "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
                     "execution_contract": infer_execution_contract_payload(
                         role_profile_ref=role_profile_ref,
-                        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+                        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
                     ),
                     "dispatch_intent": {
                         "assignee_employee_id": assignee_employee_id,

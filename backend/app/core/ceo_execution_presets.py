@@ -22,10 +22,10 @@ from app.core.output_schemas import (
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
-    IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
     MILESTONE_PLAN_SCHEMA_REF,
     MILESTONE_PLAN_SCHEMA_VERSION,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
     TECHNOLOGY_DECISION_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_VERSION,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
@@ -56,10 +56,10 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
         priority="high",
         delivery_stage=None,
     ),
-    ("frontend_engineer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF): CEOCreateTicketPreset(
+    ("frontend_engineer_primary", SOURCE_CODE_DELIVERY_SCHEMA_REF): CEOCreateTicketPreset(
         role_profile_ref="frontend_engineer_primary",
-        output_schema_ref=IMPLEMENTATION_BUNDLE_SCHEMA_REF,
-        output_schema_version=IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        output_schema_version=SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
         constraints_ref="approved_scope_followup_build",
         priority="high",
         delivery_stage=DeliveryStage.BUILD,
@@ -287,14 +287,14 @@ def _build_consensus_review_request(summary: str) -> dict[str, Any]:
 
 
 def _build_internal_delivery_review_request(summary: str) -> dict[str, Any]:
-    clean_summary = summary.strip() or "Implementation bundle is ready for internal delivery review."
+    clean_summary = summary.strip() or "Source code delivery is ready for internal delivery review."
     return {
         "review_type": "INTERNAL_DELIVERY_REVIEW",
         "priority": "high",
-        "title": "Check approved implementation bundle",
+        "title": "Check approved source code delivery",
         "subtitle": "Internal checker should validate the build output before downstream checking starts.",
         "blocking_scope": "NODE_ONLY",
-        "trigger_reason": "Build bundle reached the internal checker gate.",
+        "trigger_reason": "Source code delivery reached the internal checker gate.",
         "why_now": "Downstream delivery check should only consume implementation that already passed peer review.",
         "recommended_action": "APPROVE",
         "recommended_option_id": "internal_delivery_ok",
@@ -302,7 +302,7 @@ def _build_internal_delivery_review_request(summary: str) -> dict[str, Any]:
         "options": [
             {
                 "option_id": "internal_delivery_ok",
-                "label": "Pass implementation bundle",
+                "label": "Pass source delivery",
                 "summary": clean_summary,
                 "artifact_refs": [],
                 "pros": ["Lets downstream checking continue without reopening scope."],
@@ -312,9 +312,9 @@ def _build_internal_delivery_review_request(summary: str) -> dict[str, Any]:
         ],
         "evidence_summary": [
             {
-                "evidence_id": "ev_internal_delivery_bundle",
-                "source_type": "IMPLEMENTATION_BUNDLE",
-                "headline": "Implementation bundle is ready for peer review",
+                "evidence_id": "ev_internal_source_code_delivery",
+                "source_type": "SOURCE_CODE_DELIVERY",
+                "headline": "Source code delivery is ready for peer review",
                 "summary": clean_summary,
                 "source_ref": None,
             }
@@ -471,8 +471,13 @@ def _allowed_write_set_for_preset(ticket_id: str, preset: CEOCreateTicketPreset)
         return ["reports/meeting/*"]
     if preset.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
         return [f"reports/governance/{ticket_id}/*"]
-    if preset.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
-        return [f"artifacts/ui/scope-followups/{ticket_id}/*"]
+    if preset.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+        return [
+            "10-project/src/*",
+            "10-project/docs/*",
+            "20-evidence/tests/*",
+            "20-evidence/git/*",
+        ]
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         return [f"reports/check/{ticket_id}/*"]
     if preset.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
@@ -496,7 +501,7 @@ def _context_keywords_for_preset(preset: CEOCreateTicketPreset) -> list[str]:
         return ["detailed design", "interfaces", "implementation boundary"]
     if preset.output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF:
         return ["backlog", "follow-up slices", "delivery recommendation"]
-    if preset.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
+    if preset.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         return ["approved scope", "implementation", "build"]
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         return ["approved scope", "internal check", "qa"]
@@ -519,16 +524,16 @@ def _acceptance_criteria_for_preset(summary: str, preset: CEOCreateTicketPreset)
             f"Must use document_kind_ref `{preset.output_schema_ref}` and keep the result auditable.",
             "Must keep downstream implementation explicit instead of jumping straight into code.",
         ]
-    if preset.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
+    if preset.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         return [
             f"Must implement this approved scope follow-up: {clean_summary}",
             "Must stay inside the locked scope from the approved consensus document.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery package.",
         ]
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         return [
             f"Must check this approved scope follow-up: {clean_summary}",
-            "Must verify the implementation bundle still stays inside the locked scope.",
+            "Must verify the source code delivery still stays inside the locked scope.",
             "Must produce a structured delivery check report.",
         ]
     if preset.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
@@ -551,7 +556,7 @@ def _review_request_for_preset(summary: str, preset: CEOCreateTicketPreset) -> d
         return _build_consensus_review_request(summary)
     if preset.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
         return None
-    if preset.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
+    if preset.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         return _build_internal_delivery_review_request(summary)
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         return _build_internal_check_review_request(summary)

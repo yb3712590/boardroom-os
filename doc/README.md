@@ -10,7 +10,7 @@
 
 ## 工作参考
 
-- [milestone-timeline.md](milestone-timeline.md)：后续顺序、条件批次和远期储备
+- [milestone-timeline.md](milestone-timeline.md)：后续顺序、条件批次、远期储备，以及未来可支持的交付类型方向
 - [task-backlog.md](task-backlog.md)：任务库入口，只放统计、状态索引和阅读说明
 - [task-backlog/active.md](task-backlog/active.md)：当前未关闭任务
 - [backend-runtime-guide.md](backend-runtime-guide.md)：当前后端运行、运维和排障指南

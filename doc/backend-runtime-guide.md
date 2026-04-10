@@ -204,7 +204,7 @@ live 集成场景会把这些路径整体重定向到：
 当前 live path 已覆盖主线需要的 6 组 role / schema 组合：
 
 - `ui_designer_primary -> consensus_document`
-- `frontend_engineer_primary -> implementation_bundle`
+- `frontend_engineer_primary -> source_code_delivery`
 - `checker_primary -> delivery_check_report`
 - `frontend_engineer_primary -> ui_milestone_review`
 - `frontend_engineer_primary -> delivery_closeout_package`

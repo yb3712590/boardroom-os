@@ -36,7 +36,7 @@ def _ticket_create_payload(*, workflow_id: str, ticket_id: str, node_id: str) ->
             "max_context_tokens": 3000,
         },
         "acceptance_criteria": ["Must produce a structured result"],
-        "output_schema_ref": "implementation_bundle",
+        "output_schema_ref": "source_code_delivery",
         "output_schema_version": 1,
         "allowed_tools": ["read_artifact", "write_artifact"],
         "allowed_write_set": [
@@ -148,7 +148,7 @@ def test_compile_persists_worker_preflight_receipt_and_required_reads(client) ->
     assert receipt["required_read_refs"] == created_spec["required_read_refs"]
 
 
-def _implementation_result_submit_payload(
+def _source_code_delivery_result_submit_payload(
     *,
     workflow_id: str,
     ticket_id: str,
@@ -156,16 +156,16 @@ def _implementation_result_submit_payload(
     include_documentation_updates: bool,
     include_git_evidence: bool,
 ) -> dict[str, object]:
-    bundle_ref = f"art://runtime/{ticket_id}/implementation-bundle.json"
+    source_file_ref = f"art://workspace/{ticket_id}/source.ts"
     payload: dict[str, object] = {
-        "summary": f"Implementation bundle prepared for {ticket_id}.",
-        "deliverable_artifact_refs": [bundle_ref],
+        "summary": f"Source code delivery prepared for {ticket_id}.",
+        "source_file_refs": [source_file_ref],
         "implementation_notes": ["Implementation stayed inside the approved scope lock."],
     }
     written_artifacts: list[dict[str, object]] = [
         {
             "path": f"10-project/src/{ticket_id}.ts",
-            "artifact_ref": f"art://workspace/{ticket_id}/source.ts",
+            "artifact_ref": source_file_ref,
             "kind": "TEXT",
             "content_text": "export const workspaceBuild = true;\n",
         },
@@ -193,12 +193,6 @@ def _implementation_result_submit_payload(
             "kind": "JSON",
             "content_json": {"commit_sha": "abc1234", "branch_ref": f"codex/{ticket_id}"},
         },
-        {
-            "path": f"10-project/docs/{ticket_id}-implementation-bundle.json",
-            "artifact_ref": bundle_ref,
-            "kind": "JSON",
-            "content_json": payload,
-        },
     ]
     if include_documentation_updates:
         payload["documentation_updates"] = [
@@ -219,20 +213,20 @@ def _implementation_result_submit_payload(
         "node_id": node_id,
         "submitted_by": "emp_frontend_2",
         "result_status": "completed",
-        "schema_version": "implementation_bundle_v1",
+        "schema_version": "source_code_delivery_v1",
         "payload": payload,
-        "artifact_refs": [bundle_ref],
+        "artifact_refs": [],
         "written_artifacts": written_artifacts,
         "verification_evidence_refs": [f"art://workspace/{ticket_id}/test-report.json"],
         "assumptions": ["Project workspace receipts are enabled."],
         "issues": [],
         "confidence": 0.91,
         "needs_escalation": False,
-        "summary": "Structured implementation bundle submitted.",
+        "summary": "Structured source code delivery submitted.",
         "failure_kind": None,
         "failure_message": None,
         "failure_detail": None,
-        "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:implementation",
+        "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:source-code-delivery",
     }
     if include_git_evidence:
         result["git_commit_record"] = {
@@ -322,7 +316,7 @@ def test_source_code_delivery_requires_documentation_updates(client) -> None:
 
     response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id=workflow_id,
             ticket_id=ticket_id,
             node_id=node_id,
@@ -357,7 +351,7 @@ def test_source_code_delivery_writes_postrun_and_git_receipts(client) -> None:
 
     response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id=workflow_id,
             ticket_id=ticket_id,
             node_id=node_id,
@@ -379,6 +373,41 @@ def test_source_code_delivery_writes_postrun_and_git_receipts(client) -> None:
     assert (dossier_root / "worker-postrun.json").is_file()
     assert (dossier_root / "evidence-capture.json").is_file()
     assert (dossier_root / "git-closeout.json").is_file()
+
+
+def test_source_code_delivery_requires_project_source_file_refs(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code source-file-ref demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_source_refs_001"
+    node_id = "node_code_source_refs_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    payload = _source_code_delivery_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        include_documentation_updates=True,
+        include_git_evidence=True,
+    )
+    payload["payload"]["source_file_refs"] = ["art://workspace/tkt_code_source_refs_001/active-task.md"]
+
+    response = client.post("/api/v1/commands/ticket-result-submit", json=payload)
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
 
 
 def test_structured_document_delivery_does_not_require_git_commit(client) -> None:

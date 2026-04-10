@@ -46,10 +46,27 @@ def _build_idle_maintenance_signals(tickets: list[dict[str, Any]]) -> list[str]:
     if any(ticket["status"] == "PENDING" for ticket in tickets):
         signals.append("READY_TICKET")
 
+    latest_ticket_id_by_node: dict[str, str] = {}
+    latest_ticket_sort_key_by_node: dict[str, tuple[float, str]] = {}
+    for ticket in tickets:
+        node_id = str(ticket.get("node_id") or "").strip()
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        updated_at = ticket.get("updated_at")
+        if not node_id or not ticket_id or not isinstance(updated_at, datetime):
+            continue
+        sort_key = (updated_at.timestamp(), ticket_id)
+        if sort_key >= latest_ticket_sort_key_by_node.get(node_id, (float("-inf"), "")):
+            latest_ticket_sort_key_by_node[node_id] = sort_key
+            latest_ticket_id_by_node[node_id] = ticket_id
+
     has_invalid_dependency = False
     has_failed_ticket = False
     for ticket in tickets:
         if ticket["status"] not in {"FAILED", "TIMED_OUT"}:
+            continue
+        node_id = str(ticket.get("node_id") or "").strip()
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        if node_id and latest_ticket_id_by_node.get(node_id) not in {None, ticket_id}:
             continue
         failure_kind = str(ticket.get("last_failure_kind") or "").strip().upper()
         if "DEPENDENCY" in failure_kind or failure_kind == "DISPATCH_INTENT_INVALID":

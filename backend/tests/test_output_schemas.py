@@ -88,14 +88,14 @@ def test_output_schema_registry_accepts_valid_consensus_document_payload() -> No
         )
 
 
-def test_output_schema_registry_accepts_valid_implementation_bundle_with_documentation_updates() -> None:
+def test_output_schema_registry_accepts_valid_source_code_delivery_with_documentation_updates() -> None:
     validate_output_payload(
-        schema_ref="implementation_bundle",
+        schema_ref="source_code_delivery",
         schema_version=1,
-        submitted_schema_version="implementation_bundle_v1",
+        submitted_schema_version="source_code_delivery_v1",
         payload={
-            "summary": "Prepared one code delivery bundle.",
-            "deliverable_artifact_refs": ["art://runtime/tkt_impl_001/implementation-bundle.json"],
+            "summary": "Prepared one source code delivery package.",
+            "source_file_refs": ["art://workspace/tkt_impl_001/source.ts"],
             "implementation_notes": ["Kept the scope inside the approved MVP slice."],
             "documentation_updates": [
                 {
@@ -257,25 +257,41 @@ def test_output_schema_registry_rejects_changes_required_without_blocking_findin
         )
 
 
-def test_output_schema_registry_exposes_implementation_bundle_schema() -> None:
-    schema = get_output_schema_body("implementation_bundle", 1)
+def test_output_schema_registry_exposes_source_code_delivery_schema() -> None:
+    schema = get_output_schema_body("source_code_delivery", 1)
 
     assert schema["type"] == "object"
     assert "summary" in schema["required"]
-    assert "deliverable_artifact_refs" in schema["required"]
+    assert "source_file_refs" in schema["required"]
 
 
-def test_output_schema_registry_accepts_valid_implementation_bundle_payload() -> None:
+def test_output_schema_registry_accepts_valid_source_code_delivery_payload() -> None:
     validate_output_payload(
-        schema_ref="implementation_bundle",
+        schema_ref="source_code_delivery",
         schema_version=1,
-        submitted_schema_version="implementation_bundle_v1",
+        submitted_schema_version="source_code_delivery_v1",
         payload={
-            "summary": "Homepage implementation bundle is ready for internal checking.",
-            "deliverable_artifact_refs": ["art://runtime/tkt_followup_scope_build/implementation-bundle.json"],
+            "summary": "Homepage source code delivery is ready for internal checking.",
+            "source_file_refs": [
+                "art://workspace/tkt_followup_scope_build/homepage.tsx",
+                "art://workspace/tkt_followup_scope_build/header.tsx",
+            ],
             "implementation_notes": ["Hero layout and CTA hierarchy now follow the approved scope lock."],
         },
     )
+
+
+def test_output_schema_registry_rejects_source_code_delivery_without_source_files() -> None:
+    with pytest.raises(ValueError, match="source_file_refs"):
+        validate_output_payload(
+            schema_ref="source_code_delivery",
+            schema_version=1,
+            submitted_schema_version="source_code_delivery_v1",
+            payload={
+                "summary": "Missing source files should fail schema validation.",
+                "source_file_refs": [],
+            },
+        )
 
 
 def test_output_schema_registry_exposes_delivery_check_report_schema() -> None:

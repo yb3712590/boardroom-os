@@ -38,22 +38,23 @@ Boardroom OS 更在意的是交付闭环：
 - 运行时已支持本地 deterministic 路径；当前 provider center 真实执行 OpenAI-compatible Responses，`Claude Code CLI` 兼容执行路径仍保留，但不在这套新配置流程里开放录入
 - 团队组织不是写死的，系统已经支持招聘、冻结、恢复、替换员工
 - `project-init` 现在会给每个项目创建独立工作区，固定三分区：`00-boardroom / 10-project / 20-evidence`，并支持 `AGILE / HYBRID / COMPLIANCE` 三种文档模板
-- 对受管项目工作区里的代码票，系统现在已经落下第一版文档 hook：编译前写 `worker-preflight` 回执，结果提交时强制校验文档更新、测试证据和 git commit，并写 `worker-postrun / evidence-capture / git-closeout` 回执
+- 对受管项目工作区里的代码票，`BUILD` 主结果现在已经硬切到 `source_code_delivery@1`：直接交 `source_file_refs`、源码写入、测试证据和 git 留痕，不再额外交一份占位 bundle JSON
+- 对受管项目工作区里的代码票，系统现在会在编译前写 `worker-preflight` 回执，结果提交时硬校验 `source_file_refs`、文档更新、测试证据和 git commit，并写 `worker-postrun / evidence-capture / git-closeout` 回执
 
 ### 🟡 正在补齐
 
 - 收正 canonical 协议，不再让 CEO action、provider config、runtime result、ticket deliverable 多口径并存
 - 收正单一 workflow controller，不再让 scheduler、CEO 和 deterministic fallback 各自维护主线语义
 - 把 architect / meeting / source-code deliverable 升成主线硬约束
-- 把 BUILD / CHECK / CLOSEOUT 从“artifact JSON 交付”改成真实代码交付；当前只对受管项目工作区里的代码票落了第一段文档 / 测试 / git gate
-- 把 Review Gate 的 merge 自动化、completion / projection 摘要和 closeout 统一 gate 接到这条新 workspace 主线
+- 把 `source_code_delivery` 继续往下游收口：当前 BUILD 已切到真实源码交付，但 checker / closeout 的 completion 摘要、projection 读面和非代码票 gate 还没补齐
+- 把 Review Gate 的 merge 自动化和 closeout 统一 gate 接到这条新 workspace 主线
 - 继续清理与当前 MVP 无关的旧能力和兼容壳，让主线更轻、更稳、更清楚
 
 ## 当前已经做到哪一步
 
 - 本地单机版本已经可以真实跑通，不再只是概念演示
-- 2026-04-10 的 live 长测已经确认：当前链路能跑到 closeout，但 `BUILD` 仍会退化成文档式 artifact 交付；当前主线已切到 `P0-COR` 大型纠偏
-- 2026-04-11 这轮已经补上项目工作区三分区和 workspace-managed 代码票的最小 hook 主线；旧的 artifact-path 代码票仍保持兼容
+- 2026-04-10 的 live 长测确认了主线偏差：当时链路能跑到 closeout，但 BUILD 还在交占位式文档产物；当前主线已切到 `P0-COR` 大型纠偏
+- 2026-04-11 这轮已经补上项目工作区三分区、workspace-managed 代码票 hook，并把 BUILD 主结果硬切到 `source_code_delivery`；旧的 artifact-path 代码票仍保持兼容
 - 当输入还不够清楚时，系统会先触发受控澄清，再继续推进主线
 - 系统里的 CEO 当前真实执行集是 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
 - 检查和复核已经进入日常流程，不靠一次性产出直接交差

@@ -97,11 +97,11 @@ from app.core.output_schemas import (
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
-    IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
     OutputSchemaValidationError,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
     validate_output_payload,
@@ -145,8 +145,8 @@ MAKER_CHECKER_SUPPORTED_TARGETS = {
     ),
     (
         "INTERNAL_DELIVERY_REVIEW",
-        IMPLEMENTATION_BUNDLE_SCHEMA_REF,
-        IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
+        SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
     ),
     (
         "INTERNAL_CHECK_REVIEW",
@@ -454,7 +454,7 @@ def _maker_checker_subject_label(review_request: TicketBoardReviewRequest | None
     if review_request.review_type.value == "MEETING_ESCALATION":
         return "submitted consensus document"
     if review_request.review_type.value == "INTERNAL_DELIVERY_REVIEW":
-        return "submitted implementation bundle"
+        return "submitted source code delivery"
     if review_request.review_type.value == "INTERNAL_CHECK_REVIEW":
         return "submitted delivery check report"
     if review_request.review_type.value == "INTERNAL_CLOSEOUT_REVIEW":
@@ -1116,6 +1116,32 @@ def _validate_source_code_delivery_hooks(
         return None
 
     result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+    written_artifacts_by_ref = {
+        str(item.artifact_ref): item
+        for item in payload.written_artifacts
+    }
+    source_file_refs = list(result_payload.get("source_file_refs") or [])
+    if not source_file_refs:
+        return "Code delivery tickets must include payload.source_file_refs."
+    project_source_artifact_refs = {
+        str(item.artifact_ref)
+        for item in payload.written_artifacts
+        if str(item.path or "").startswith("10-project/")
+        and not str(item.path or "").startswith("10-project/docs/")
+    }
+    if not project_source_artifact_refs:
+        return "Code delivery tickets must write at least one source artifact under 10-project/ outside docs."
+    for artifact_ref in source_file_refs:
+        written_artifact = written_artifacts_by_ref.get(str(artifact_ref))
+        if written_artifact is None:
+            return f"payload.source_file_refs includes unknown artifact_ref {artifact_ref}."
+        path = str(written_artifact.path or "")
+        if not path.startswith("10-project/") or path.startswith("10-project/docs/"):
+            return (
+                "Code delivery tickets must keep payload.source_file_refs inside "
+                f"10-project/ source paths; got {path}."
+            )
+
     documentation_updates = list(result_payload.get("documentation_updates") or [])
     updates_by_ref = {
         str(item.get("doc_ref") or "").strip(): item
@@ -1610,8 +1636,6 @@ def _evaluate_dispatch_dependency_gates(
 
 def _expected_primary_artifact_ref(created_spec: dict[str, Any], ticket_id: str) -> str | None:
     output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
-    if output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
-        return f"art://runtime/{ticket_id}/implementation-bundle.json"
     if output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         return f"art://runtime/{ticket_id}/delivery-check-report.json"
     if output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
@@ -4536,6 +4560,16 @@ def handle_ticket_result_submit(
         created_spec=created_spec,
         result_payload=payload.payload if isinstance(payload.payload, dict) else None,
         artifact_refs=completed_artifact_refs,
+        written_artifacts=[
+            item.model_dump(mode="json")
+            for item in payload.written_artifacts
+        ],
+        verification_evidence_refs=list(payload.verification_evidence_refs),
+        git_commit_record=(
+            payload.git_commit_record.model_dump(mode="json")
+            if payload.git_commit_record is not None
+            else None
+        ),
     )
     try:
         with repository.transaction() as connection:

@@ -49,8 +49,8 @@ from app.core.output_schemas import (
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
-    IMPLEMENTATION_BUNDLE_SCHEMA_VERSION,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
     schema_id,
     validate_output_payload,
@@ -369,14 +369,14 @@ def _build_scope_followup_review_request(summary: str) -> dict[str, Any]:
 
 
 def _build_scope_followup_internal_delivery_review_request(summary: str) -> dict[str, Any]:
-    clean_summary = summary.strip() or "Approved scope implementation bundle is ready for internal delivery review."
+    clean_summary = summary.strip() or "Approved scope source code delivery is ready for internal delivery review."
     return {
         "review_type": "INTERNAL_DELIVERY_REVIEW",
         "priority": "high",
-        "title": "Check approved implementation bundle",
+        "title": "Check approved source code delivery",
         "subtitle": "Internal checker should validate the build output before downstream checking starts.",
         "blocking_scope": "NODE_ONLY",
-        "trigger_reason": "Approved scope build bundle reached the internal checker gate.",
+        "trigger_reason": "Approved scope source delivery reached the internal checker gate.",
         "why_now": "Downstream delivery check should only consume implementation that already passed peer review.",
         "recommended_action": "APPROVE",
         "recommended_option_id": "internal_delivery_ok",
@@ -384,7 +384,7 @@ def _build_scope_followup_internal_delivery_review_request(summary: str) -> dict
         "options": [
             {
                 "option_id": "internal_delivery_ok",
-                "label": "Pass implementation bundle",
+                "label": "Pass source delivery",
                 "summary": clean_summary,
                 "artifact_refs": [],
                 "pros": ["Lets downstream checking continue without reopening scope."],
@@ -394,9 +394,9 @@ def _build_scope_followup_internal_delivery_review_request(summary: str) -> dict
         ],
         "evidence_summary": [
             {
-                "evidence_id": "ev_internal_delivery_bundle",
-                "source_type": "IMPLEMENTATION_BUNDLE",
-                "headline": "Implementation bundle is ready for peer review",
+                "evidence_id": "ev_internal_source_code_delivery",
+                "source_type": "SOURCE_CODE_DELIVERY",
+                "headline": "Source code delivery is ready for peer review",
                 "summary": clean_summary,
                 "source_ref": None,
             }
@@ -701,8 +701,6 @@ def _kickoff_scope_after_requirement_elicitation(
 
 
 def _scope_followup_expected_artifact_ref(ticket_id: str, delivery_stage: DeliveryStage) -> str | None:
-    if delivery_stage == DeliveryStage.BUILD:
-        return f"art://runtime/{ticket_id}/implementation-bundle.json"
     if delivery_stage == DeliveryStage.CHECK:
         return f"art://runtime/{ticket_id}/delivery-check-report.json"
     return None
@@ -710,7 +708,12 @@ def _scope_followup_expected_artifact_ref(ticket_id: str, delivery_stage: Delive
 
 def _build_scope_followup_allowed_write_set(ticket_id: str, delivery_stage: DeliveryStage) -> list[str]:
     if delivery_stage == DeliveryStage.BUILD:
-        return [f"artifacts/ui/scope-followups/{ticket_id}/*"]
+        return [
+            "10-project/src/*",
+            "10-project/docs/*",
+            "20-evidence/tests/*",
+            "20-evidence/git/*",
+        ]
     if delivery_stage == DeliveryStage.CHECK:
         return [f"reports/check/{ticket_id}/*"]
     return [
@@ -721,7 +724,7 @@ def _build_scope_followup_allowed_write_set(ticket_id: str, delivery_stage: Deli
 
 def _scope_followup_output_contract(delivery_stage: DeliveryStage) -> tuple[str, int]:
     if delivery_stage == DeliveryStage.BUILD:
-        return IMPLEMENTATION_BUNDLE_SCHEMA_REF, IMPLEMENTATION_BUNDLE_SCHEMA_VERSION
+        return SOURCE_CODE_DELIVERY_SCHEMA_REF, SOURCE_CODE_DELIVERY_SCHEMA_VERSION
     if delivery_stage == DeliveryStage.CHECK:
         return DELIVERY_CHECK_REPORT_SCHEMA_REF, DELIVERY_CHECK_REPORT_SCHEMA_VERSION
     return "ui_milestone_review", 1
@@ -752,12 +755,12 @@ def _scope_followup_acceptance_criteria(summary: str, delivery_stage: DeliverySt
         return [
             f"Must implement this approved scope follow-up: {summary}",
             "Must stay inside the locked scope from the approved consensus document.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery package.",
         ]
     if delivery_stage == DeliveryStage.CHECK:
         return [
             f"Must check this approved scope follow-up: {summary}",
-            "Must verify the implementation bundle still stays inside the locked scope.",
+            "Must verify the source code delivery still stays inside the locked scope.",
             "Must produce a structured delivery check report.",
         ]
     return [

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import datetime
@@ -19,7 +19,7 @@ from tests.test_api import (
     _create_lease_and_start_ticket,
     _delivery_closeout_package_result_submit_payload,
     _ensure_scoped_workflow,
-    _implementation_bundle_result_submit_payload,
+    _source_code_delivery_result_submit_payload,
     _maker_checker_result_submit_payload,
     _project_init_to_scope_approval,
     _seed_created_ticket,
@@ -218,7 +218,7 @@ def test_autopilot_auto_advance_resolves_provider_incident_and_retries_latest_fa
             ticket_id="tkt_autopilot_provider_failure",
             node_id="node_autopilot_provider_failure",
             role_profile_ref="frontend_engineer_primary",
-            output_schema_ref="implementation_bundle",
+            output_schema_ref="source_code_delivery",
         ),
     )
     lease_response = client.post(
@@ -295,7 +295,7 @@ def test_autopilot_auto_advance_resolves_provider_incident_and_retries_latest_fa
     assert followup_ticket["ticket_id"] != leased_ticket["ticket_id"]
     assert followup_ticket["retry_count"] == 1
     assert followup_ticket["status"] == "COMPLETED"
-    assert "implementation_bundle" in observed_schema_refs
+    assert "source_code_delivery" in observed_schema_refs
 
 
 def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_already_completed(
@@ -326,7 +326,7 @@ def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_al
             ticket_id="tkt_autopilot_provider_source_completed",
             node_id="node_autopilot_provider_source_completed",
             role_profile_ref="frontend_engineer_primary",
-            output_schema_ref="implementation_bundle",
+            output_schema_ref="source_code_delivery",
         ),
     )
     lease_source_response = client.post(
@@ -425,7 +425,7 @@ def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_al
             ticket_id="tkt_autopilot_provider_blocked",
             node_id="node_autopilot_provider_blocked",
             role_profile_ref="frontend_engineer_primary",
-            output_schema_ref="implementation_bundle",
+            output_schema_ref="source_code_delivery",
         ),
     )
 
@@ -457,7 +457,7 @@ def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_al
     assert recovered_incident["payload"]["followup_action"] == "RESTORE_ONLY"
     assert blocked_ticket is not None
     assert blocked_ticket["status"] == "COMPLETED"
-    assert "implementation_bundle" in observed_schema_refs
+    assert "source_code_delivery" in observed_schema_refs
 
 
 def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(client, set_ticket_time):
@@ -478,18 +478,18 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
         workflow_id=workflow_id,
         ticket_id="tkt_autopilot_build_rework",
         node_id="node_autopilot_build_rework",
-        output_schema_ref="implementation_bundle",
+        output_schema_ref="source_code_delivery",
         allowed_write_set=["artifacts/ui/scope-followups/tkt_autopilot_build_rework/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must implement the approved scope follow-up.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery.",
         ],
         delivery_stage="BUILD",
     )
     maker_response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id=workflow_id,
             ticket_id="tkt_autopilot_build_rework",
             node_id="node_autopilot_build_rework",
@@ -533,9 +533,9 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
                     "finding_id": "finding_build_scope_cap",
                     "severity": "high",
                     "category": "SCOPE_DISCIPLINE",
-                    "headline": "Implementation bundle drifted outside the locked scope.",
+                    "headline": "Source code delivery drifted outside the locked scope.",
                     "summary": "Build bundle still includes extra non-MVP sections.",
-                    "required_action": "Trim the implementation bundle back to the locked scope before downstream checks.",
+                    "required_action": "Trim the source code delivery back to the locked scope before downstream checks.",
                     "blocking": True,
                 }
             ],
@@ -569,13 +569,13 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
     )
     fix_result = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id=workflow_id,
             ticket_id=fix_ticket_id,
             node_id="node_autopilot_build_rework",
             submitted_by="emp_frontend_2",
             include_review_request=True,
-            written_artifact_path="artifacts/ui/scope-followups/tkt_autopilot_build_rework/implementation-bundle.json",
+            written_artifact_path="artifacts/ui/scope-followups/tkt_autopilot_build_rework/source-code.tsx",
             idempotency_key=f"ticket-result-submit:{workflow_id}:{fix_ticket_id}:implementation",
         ),
     )
@@ -616,7 +616,7 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
                     "finding_id": "finding_build_scope_cap_followup",
                     "severity": "high",
                     "category": "DELIVERY_CLARITY",
-                    "headline": "Implementation bundle still lacks a concise final handoff summary.",
+                    "headline": "Source code delivery still lacks a concise final handoff summary.",
                     "summary": "The second pass fixed the scope issue, but the handoff notes are still too diffuse.",
                     "required_action": "Compress the handoff summary to the final MVP deliverable only.",
                     "blocking": True,
@@ -707,18 +707,18 @@ def test_autopilot_closeout_without_visual_milestone_still_writes_chain_report_a
         workflow_id=workflow_id,
         ticket_id="tkt_autopilot_no_review_build",
         node_id="node_autopilot_no_review_build",
-        output_schema_ref="implementation_bundle",
+        output_schema_ref="source_code_delivery",
         allowed_write_set=["artifacts/ui/scope-followups/tkt_autopilot_no_review_build/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must implement the approved delivery slice.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery.",
         ],
         delivery_stage="BUILD",
     )
     build_response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id=workflow_id,
             ticket_id="tkt_autopilot_no_review_build",
             node_id="node_autopilot_no_review_build",

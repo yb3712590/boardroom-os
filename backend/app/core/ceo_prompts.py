@@ -60,7 +60,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "Governance document outputs available on the current live path are: "
         f"{', '.join(GOVERNANCE_DOCUMENT_CHAIN_ORDER)}.\n"
         "Before directly creating implementation tickets, consider whether one governance document should be created first.\n"
-        "Keep the minimal document-first order explicit: architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> implementation_bundle.\n"
+        "Keep the minimal document-first order explicit: architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> source_code_delivery.\n"
         "If workflow.workflow_profile is CEO_AUTOPILOT_FINE_GRAINED, keep task breakdown fine-grained and prefer atomic tasks with explicit dependency refs over large bundled tickets.\n"
         "Governance document kinds are a shared document family, not a hard role whitelist.\n"
         "Governance documents may stay on current live planning roles, or use architect_primary / cto_primary when those roles already exist in the active board-approved roster.\n"

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -17,9 +17,9 @@ from app.core.output_schemas import (
     DETAILED_DESIGN_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MILESTONE_PLAN_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
@@ -46,9 +46,9 @@ def test_mainline_runtime_support_matrix_matches_runtime_constants() -> None:
         (entry.role_profile_ref, entry.output_schema_ref)
         for entry in MAINLINE_RUNTIME_SUPPORT_MATRIX
     } == {
-        ("backend_engineer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
-        ("database_engineer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
-        ("platform_sre_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
+        ("backend_engineer_primary", SOURCE_CODE_DELIVERY_SCHEMA_REF),
+        ("database_engineer_primary", SOURCE_CODE_DELIVERY_SCHEMA_REF),
+        ("platform_sre_primary", SOURCE_CODE_DELIVERY_SCHEMA_REF),
         ("ui_designer_primary", ARCHITECTURE_BRIEF_SCHEMA_REF),
         ("ui_designer_primary", TECHNOLOGY_DECISION_SCHEMA_REF),
         ("ui_designer_primary", MILESTONE_PLAN_SCHEMA_REF),
@@ -67,7 +67,7 @@ def test_mainline_runtime_support_matrix_matches_runtime_constants() -> None:
         ("frontend_engineer_primary", MILESTONE_PLAN_SCHEMA_REF),
         ("frontend_engineer_primary", DETAILED_DESIGN_SCHEMA_REF),
         ("frontend_engineer_primary", BACKLOG_RECOMMENDATION_SCHEMA_REF),
-        ("frontend_engineer_primary", IMPLEMENTATION_BUNDLE_SCHEMA_REF),
+        ("frontend_engineer_primary", SOURCE_CODE_DELIVERY_SCHEMA_REF),
         ("frontend_engineer_primary", UI_MILESTONE_REVIEW_SCHEMA_REF),
         ("frontend_engineer_primary", DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF),
         ("checker_primary", DELIVERY_CHECK_REPORT_SCHEMA_REF),

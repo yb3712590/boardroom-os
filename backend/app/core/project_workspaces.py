@@ -12,8 +12,8 @@ from app.core.artifact_store import ArtifactStore
 from app.core.output_schemas import (
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 from app.core.time import now_local
@@ -76,7 +76,7 @@ def project_workspace_manifest_exists(workflow_id: str) -> bool:
 
 def infer_deliverable_kind(output_schema_ref: str | None) -> DeliverableKind:
     normalized = str(output_schema_ref or "").strip()
-    if normalized == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
+    if normalized == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         return DeliverableKind.SOURCE_CODE_DELIVERY
     if normalized in {
         DELIVERY_CHECK_REPORT_SCHEMA_REF,

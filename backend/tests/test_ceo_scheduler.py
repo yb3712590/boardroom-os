@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import datetime
@@ -339,7 +339,7 @@ def _create_and_complete_ticket(
                 node_id=node_id,
                 retry_budget=0,
             ),
-            "output_schema_ref": "implementation_bundle",
+            "output_schema_ref": "source_code_delivery",
         },
     )
     assert create_response.status_code == 200
@@ -370,7 +370,7 @@ def _create_and_complete_ticket(
     )
     assert start_response.status_code == 200
 
-    artifact_ref = f"art://runtime/{ticket_id}/implementation-bundle.json"
+    artifact_ref = f"art://runtime/{ticket_id}/source-code.tsx"
     submit_response = client.post(
         "/api/v1/commands/ticket-result-submit",
         json={
@@ -379,21 +379,21 @@ def _create_and_complete_ticket(
             "node_id": node_id,
             "submitted_by": "emp_frontend_2",
             "result_status": "completed",
-            "schema_version": "implementation_bundle_v1",
+            "schema_version": "source_code_delivery_v1",
             "payload": {
                 "summary": summary,
-                "deliverable_artifact_refs": [artifact_ref],
+                "source_file_refs": [artifact_ref],
                 "implementation_notes": ["Keep delivery inside the already approved scope."],
             },
             "artifact_refs": [artifact_ref],
             "written_artifacts": [
                 {
-                    "path": "artifacts/ui/homepage/implementation-bundle.json",
+                    "path": "artifacts/ui/homepage/source-code.tsx",
                     "artifact_ref": artifact_ref,
                     "kind": "JSON",
                     "content_json": {
                         "summary": summary,
-                        "deliverable_artifact_refs": [artifact_ref],
+                        "source_file_refs": [artifact_ref],
                         "implementation_notes": ["Keep delivery inside the already approved scope."],
                     },
                 }
@@ -970,9 +970,9 @@ def test_ceo_shadow_snapshot_includes_reuse_candidates(client):
     completed_ticket = reuse_candidates["recent_completed_tickets"][0]
     assert completed_ticket["ticket_id"] == "tkt_ceo_reuse_completed"
     assert completed_ticket["node_id"] == "node_ceo_reuse_completed"
-    assert completed_ticket["output_schema_ref"] == "implementation_bundle"
+    assert completed_ticket["output_schema_ref"] == "source_code_delivery"
     assert completed_ticket["summary"] == "Completed implementation slice ready for reuse."
-    assert completed_ticket["artifact_refs"] == ["art://runtime/tkt_ceo_reuse_completed/implementation-bundle.json"]
+    assert completed_ticket["artifact_refs"] == ["art://runtime/tkt_ceo_reuse_completed/source-code.tsx"]
     assert completed_ticket["completed_at"] is not None
 
     assert reuse_candidates["recent_closed_meetings"]
@@ -1637,7 +1637,7 @@ def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
                                 "workflow_id": workflow_id,
                                 "node_id": "node_ceo_create_bundle",
                                 "role_profile_ref": "frontend_engineer_primary",
-                                "output_schema_ref": "implementation_bundle",
+                                "output_schema_ref": "source_code_delivery",
                                 "execution_contract": {
                                     "execution_target_ref": "execution_target:frontend_build",
                                     "required_capability_tags": ["structured_output", "implementation"],
@@ -1647,7 +1647,7 @@ def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
                                     "assignee_employee_id": "emp_frontend_2",
                                     "selection_reason": "Use the active frontend delivery owner for the approved scope build ticket.",
                                 },
-                                "summary": "Create the implementation bundle for the approved scope slice.",
+                                "summary": "Create the source code delivery for the approved scope slice.",
                                 "parent_ticket_id": None,
                             },
                         }
@@ -1672,7 +1672,7 @@ def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
     created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
     with client.app.state.repository.connection() as connection:
         created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
-    assert created_spec["output_schema_ref"] == "implementation_bundle"
+    assert created_spec["output_schema_ref"] == "source_code_delivery"
     assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
     assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:frontend_build"
     assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
@@ -2030,7 +2030,7 @@ def test_ceo_shadow_run_normalizes_live_governance_followup_with_kind_field_and_
                                 "dispatch_intent": {
                                     "mode": "governance_document",
                                     "reason": "The workflow has completed architecture_brief and still needs the next governance document in sequence.",
-                                    "sequence_position": "architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> implementation_bundle",
+                                    "sequence_position": "architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> source_code_delivery",
                                 },
                             },
                         }
@@ -2367,7 +2367,7 @@ def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_
         ]
 
     assert all(spec is not None for spec in created_specs)
-    assert {spec["output_schema_ref"] for spec in created_specs if spec is not None} == {"implementation_bundle"}
+    assert {spec["output_schema_ref"] for spec in created_specs if spec is not None} == {"source_code_delivery"}
     assert {spec["role_profile_ref"] for spec in created_specs if spec is not None} == {
         "frontend_engineer_primary"
     }
@@ -2411,16 +2411,16 @@ def test_ceo_create_ticket_inherits_parent_governance_process_assets(client):
                             "workflow_id": workflow_id,
                             "node_id": "node_child_implementation_from_doc",
                             "role_profile_ref": "frontend_engineer_primary",
-                            "output_schema_ref": "implementation_bundle",
+                            "output_schema_ref": "source_code_delivery",
                             "execution_contract": infer_execution_contract_payload(
                                 role_profile_ref="frontend_engineer_primary",
-                                output_schema_ref="implementation_bundle",
+                                output_schema_ref="source_code_delivery",
                             ),
                             "dispatch_intent": {
                                 "assignee_employee_id": "emp_frontend_2",
                                 "selection_reason": "Keep the downstream implementation on the same live owner.",
                             },
-                            "summary": "Turn the architecture brief into the next implementation bundle.",
+                            "summary": "Turn the architecture brief into the next source code delivery.",
                             "parent_ticket_id": "tkt_parent_governance_doc",
                         },
                     }
@@ -2443,16 +2443,16 @@ def test_ceo_create_ticket_inherits_parent_governance_process_assets(client):
                         "workflow_id": workflow_id,
                         "node_id": "node_child_implementation_from_doc",
                         "role_profile_ref": "frontend_engineer_primary",
-                        "output_schema_ref": "implementation_bundle",
+                        "output_schema_ref": "source_code_delivery",
                         "execution_contract": infer_execution_contract_payload(
                             role_profile_ref="frontend_engineer_primary",
-                            output_schema_ref="implementation_bundle",
+                            output_schema_ref="source_code_delivery",
                         ),
                         "dispatch_intent": {
                             "assignee_employee_id": "emp_frontend_2",
                             "selection_reason": "Keep the downstream implementation on the same live owner.",
                         },
-                        "summary": "Turn the architecture brief into the next implementation bundle.",
+                        "summary": "Turn the architecture brief into the next source code delivery.",
                         "parent_ticket_id": "tkt_parent_governance_doc",
                     },
                 }
@@ -2488,7 +2488,7 @@ def test_ceo_validator_rejects_create_ticket_when_assignee_is_missing_or_incapab
                             "workflow_id": workflow_id,
                             "node_id": "node_missing_assignee",
                             "role_profile_ref": "frontend_engineer_primary",
-                            "output_schema_ref": "implementation_bundle",
+                            "output_schema_ref": "source_code_delivery",
                             "execution_contract": {
                                 "execution_target_ref": "execution_target:frontend_build",
                                 "required_capability_tags": ["structured_output", "implementation"],
@@ -2508,7 +2508,7 @@ def test_ceo_validator_rejects_create_ticket_when_assignee_is_missing_or_incapab
                             "workflow_id": workflow_id,
                             "node_id": "node_checker_assignee",
                             "role_profile_ref": "frontend_engineer_primary",
-                            "output_schema_ref": "implementation_bundle",
+                            "output_schema_ref": "source_code_delivery",
                             "execution_contract": {
                                 "execution_target_ref": "execution_target:frontend_build",
                                 "required_capability_tags": ["structured_output", "implementation"],

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import json
@@ -1183,20 +1183,20 @@ def _internal_delivery_review_request() -> dict:
     return {
         "review_type": "INTERNAL_DELIVERY_REVIEW",
         "priority": "high",
-        "title": "Check approved implementation bundle",
+        "title": "Check approved source code delivery",
         "subtitle": "Internal delivery review should pass before downstream checking starts.",
         "blocking_scope": "NODE_ONLY",
-        "trigger_reason": "Implementation bundle reached the internal checker gate.",
+        "trigger_reason": "Source code delivery reached the internal checker gate.",
         "why_now": "Build output should be checked by a separate checker before the next ticket consumes it.",
         "recommended_action": "APPROVE",
         "recommended_option_id": "internal_delivery_ok",
-        "recommendation_summary": "Implementation bundle stays inside the approved scope and is ready for the next stage.",
+        "recommendation_summary": "Source code delivery stays inside the approved scope and is ready for the next stage.",
         "options": [
             {
                 "option_id": "internal_delivery_ok",
-                "label": "Accept build bundle",
-                "summary": "Internal checker can pass this implementation bundle downstream.",
-                "artifact_refs": ["art://runtime/build/implementation-bundle.json"],
+                "label": "Accept source delivery",
+                "summary": "Internal checker can pass this source code delivery downstream.",
+                "artifact_refs": ["art://runtime/build/source-code.tsx"],
                 "pros": ["Lets downstream delivery check start immediately"],
                 "cons": ["Leaves only non-blocking polish for later"],
                 "risks": ["Minor implementation notes may still need follow-up"],
@@ -1204,11 +1204,11 @@ def _internal_delivery_review_request() -> dict:
         ],
         "evidence_summary": [
             {
-                "evidence_id": "ev_build_bundle",
-                "source_type": "IMPLEMENTATION_BUNDLE",
-                "headline": "Implementation bundle is ready for internal review",
-                "summary": "Maker produced the structured implementation bundle required by the approved scope.",
-                "source_ref": "art://runtime/build/implementation-bundle.json",
+                "evidence_id": "ev_source_code_delivery",
+                "source_type": "SOURCE_CODE_DELIVERY",
+                "headline": "Source code delivery is ready for internal review",
+                "summary": "Maker produced the structured source code delivery required by the approved scope.",
+                "source_ref": "art://runtime/build/source-code.tsx",
             }
         ],
         "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
@@ -1336,7 +1336,7 @@ def _staged_scope_followup_tickets(ticket_id_prefix: str = "tkt_followup_scope_l
             "ticket_id": f"{ticket_id_prefix}_check",
             "task_title": "检查首页基础版实现",
             "owner_role": "checker",
-            "summary": "Check the implementation bundle against the approved scope lock.",
+            "summary": "Check the source code delivery against the approved scope lock.",
             "delivery_stage": "CHECK",
             "dependency_ticket_ids": [f"{ticket_id_prefix}_build"],
         },
@@ -1466,7 +1466,7 @@ def _maker_checker_result_submit_payload(
     }
 
 
-def _implementation_bundle_result_submit_payload(
+def _source_code_delivery_result_submit_payload(
     workflow_id: str = "wf_seed",
     ticket_id: str = "tkt_build_001",
     node_id: str = "node_build_001",
@@ -1477,10 +1477,10 @@ def _implementation_bundle_result_submit_payload(
     written_artifact_path: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
-    bundle_ref = (artifact_refs or [f"art://runtime/{ticket_id}/implementation-bundle.json"])[0]
+    source_file_ref = (artifact_refs or [f"art://runtime/{ticket_id}/source-code.tsx"])[0]
     payload = {
-        "summary": f"Implementation bundle prepared for {ticket_id}.",
-        "deliverable_artifact_refs": [bundle_ref],
+        "summary": f"Source code delivery prepared for {ticket_id}.",
+        "source_file_refs": [source_file_ref],
         "implementation_notes": [
             "Homepage foundation stays inside the approved scope lock and is ready for internal checking."
         ],
@@ -1491,23 +1491,23 @@ def _implementation_bundle_result_submit_payload(
         "node_id": node_id,
         "submitted_by": submitted_by,
         "result_status": "completed",
-        "schema_version": "implementation_bundle_v1",
+        "schema_version": "source_code_delivery_v1",
         "payload": payload,
-        "artifact_refs": [bundle_ref],
+        "artifact_refs": [source_file_ref],
         "written_artifacts": [
             {
                 "path": written_artifact_path
-                or f"artifacts/ui/scope-followups/{ticket_id}/implementation-bundle.json",
-                "artifact_ref": bundle_ref,
-                "kind": "JSON",
-                "content_json": payload,
+                or f"artifacts/ui/scope-followups/{ticket_id}/source-code.tsx",
+                "artifact_ref": source_file_ref,
+                "kind": "TEXT",
+                "content_text": "export const sourceCodeDelivery = true;\n",
             }
         ],
-        "assumptions": ["Build bundle already includes the minimal approved homepage slice."],
+        "assumptions": ["Source delivery already includes the minimal approved homepage slice."],
         "issues": [],
         "confidence": 0.83,
         "needs_escalation": False,
-        "summary": "Structured implementation bundle submitted.",
+        "summary": "Structured source code delivery submitted.",
         "failure_kind": None,
         "failure_message": None,
         "failure_detail": None,
@@ -1521,13 +1521,13 @@ def _implementation_bundle_result_submit_payload(
                 "options": [
                     {
                         **resolved_review_request["options"][0],
-                        "artifact_refs": [bundle_ref],
+                        "artifact_refs": [source_file_ref],
                     }
                 ],
                 "evidence_summary": [
                     {
                         **resolved_review_request["evidence_summary"][0],
-                        "source_ref": bundle_ref,
+                        "source_ref": source_file_ref,
                     }
                 ],
             }
@@ -2567,7 +2567,7 @@ def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visu
     assert review_created_spec is not None
     assert build_created_spec["workflow_id"] == workflow_id
     assert build_created_spec["delivery_stage"] == "BUILD"
-    assert build_created_spec["output_schema_ref"] == "implementation_bundle"
+    assert build_created_spec["output_schema_ref"] == "source_code_delivery"
     assert build_created_spec["role_profile_ref"] == "frontend_engineer_primary"
     assert build_created_spec["auto_review_request"]["review_type"] == "INTERNAL_DELIVERY_REVIEW"
     assert any(ref.endswith("/board-brief.md") for ref in build_created_spec["input_artifact_refs"])
@@ -2576,11 +2576,11 @@ def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visu
     assert check_created_spec["output_schema_ref"] == "delivery_check_report"
     assert check_created_spec["role_profile_ref"] == "checker_primary"
     assert check_created_spec["auto_review_request"]["review_type"] == "INTERNAL_CHECK_REVIEW"
-    assert f"art://runtime/{build_ticket_id}/implementation-bundle.json" in check_created_spec["input_artifact_refs"]
+    assert check_created_spec["parent_ticket_id"] == build_ticket_id
     assert review_created_spec["delivery_stage"] == "REVIEW"
     assert review_created_spec["output_schema_ref"] == "ui_milestone_review"
     assert review_created_spec["role_profile_ref"] == "frontend_engineer_primary"
-    assert f"art://runtime/{build_ticket_id}/implementation-bundle.json" in review_created_spec["input_artifact_refs"]
+    assert review_created_spec["parent_ticket_id"] == check_ticket_id
     assert f"art://runtime/{check_ticket_id}/delivery-check-report.json" in review_created_spec["input_artifact_refs"]
     assert build_ticket["status"] == TICKET_STATUS_COMPLETED
     assert check_ticket["status"] == TICKET_STATUS_COMPLETED
@@ -2672,7 +2672,10 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
     assert check_created_spec["workflow_id"] == workflow_id
     assert review_created_spec["workflow_id"] == workflow_id
     assert build_created_spec["allowed_write_set"] == [
-        "artifacts/ui/scope-followups/tkt_followup_scope_build/*",
+        "10-project/src/*",
+        "10-project/docs/*",
+        "20-evidence/tests/*",
+        "20-evidence/git/*",
     ]
     assert check_created_spec["allowed_write_set"] == [
         "reports/check/tkt_followup_scope_check/*",
@@ -2686,7 +2689,7 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
         for item in build_created_spec["acceptance_criteria"]
     )
     assert any(
-        item.endswith("Check the implementation bundle against the approved scope lock.")
+        item.endswith("Check the source code delivery against the approved scope lock.")
         for item in check_created_spec["acceptance_criteria"]
     )
     assert any(
@@ -2702,9 +2705,7 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
     assert check_created_spec["workspace_id"] == "ws_default"
     assert review_created_spec["tenant_id"] == "tenant_default"
     assert review_created_spec["workspace_id"] == "ws_default"
-    assert f"art://runtime/tkt_followup_scope_build/implementation-bundle.json" in check_created_spec[
-        "input_artifact_refs"
-    ]
+    assert check_created_spec["parent_ticket_id"] == "tkt_followup_scope_build"
     assert f"art://runtime/tkt_followup_scope_check/delivery-check-report.json" in review_created_spec[
         "input_artifact_refs"
     ]
@@ -2768,19 +2769,19 @@ def test_internal_delivery_build_checker_approved_does_not_open_board_review(cli
         workflow_id="wf_build_internal_review",
         ticket_id="tkt_build_internal_review",
         node_id="node_build_internal_review",
-        output_schema_ref="implementation_bundle",
+        output_schema_ref="source_code_delivery",
         allowed_write_set=["artifacts/ui/scope-followups/tkt_build_internal_review/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must implement the approved scope follow-up.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery.",
         ],
         delivery_stage="BUILD",
     )
 
     maker_response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id="wf_build_internal_review",
             ticket_id="tkt_build_internal_review",
             node_id="node_build_internal_review",
@@ -2852,18 +2853,18 @@ def test_internal_delivery_build_checker_changes_required_creates_fix_ticket_and
         workflow_id="wf_build_rework",
         ticket_id="tkt_build_rework",
         node_id="node_build_rework",
-        output_schema_ref="implementation_bundle",
+        output_schema_ref="source_code_delivery",
         allowed_write_set=["artifacts/ui/scope-followups/tkt_build_rework/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must implement the approved scope follow-up.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery.",
         ],
         delivery_stage="BUILD",
     )
     maker_response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id="wf_build_rework",
             ticket_id="tkt_build_rework",
             node_id="node_build_rework",
@@ -2907,9 +2908,9 @@ def test_internal_delivery_build_checker_changes_required_creates_fix_ticket_and
                     "finding_id": "finding_build_scope_drift",
                     "severity": "high",
                     "category": "SCOPE_DISCIPLINE",
-                    "headline": "Implementation bundle drifted outside the locked scope.",
+                    "headline": "Source code delivery drifted outside the locked scope.",
                     "summary": "Build bundle still includes extra non-MVP sections.",
-                    "required_action": "Trim the implementation bundle back to the locked scope before downstream checks.",
+                    "required_action": "Trim the source code delivery back to the locked scope before downstream checks.",
                     "blocking": True,
                 }
             ],
@@ -2933,13 +2934,13 @@ def test_internal_delivery_build_checker_changes_required_creates_fix_ticket_and
     assert fix_ticket is not None
     assert fix_ticket["status"] == TICKET_STATUS_PENDING
     assert fix_created_spec is not None
-    assert fix_created_spec["output_schema_ref"] == "implementation_bundle"
+    assert fix_created_spec["output_schema_ref"] == "source_code_delivery"
     assert fix_created_spec["delivery_stage"] == "BUILD"
     assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
         "INTERNAL_DELIVERY_REVIEW"
     )
-    assert "Trim the implementation bundle back to the locked scope before downstream checks." in (
+    assert "Trim the source code delivery back to the locked scope before downstream checks." in (
         fix_created_spec["acceptance_criteria"][-1]
     )
     assert repository.list_open_approvals() == []
@@ -2957,12 +2958,12 @@ def test_internal_delivery_build_rework_keeps_downstream_check_pending_until_fix
         workflow_id="wf_build_rework_gate",
         ticket_id="tkt_build_rework_gate",
         node_id="node_build_rework_gate",
-        output_schema_ref="implementation_bundle",
+        output_schema_ref="source_code_delivery",
         allowed_write_set=["artifacts/ui/scope-followups/tkt_build_rework_gate/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must implement the approved scope follow-up.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery.",
         ],
         delivery_stage="BUILD",
     )
@@ -2977,10 +2978,10 @@ def test_internal_delivery_build_rework_keeps_downstream_check_pending_until_fix
             allowed_tools=["read_artifact", "write_artifact"],
             allowed_write_set=["reports/check/tkt_build_rework_gate_check/*"],
             acceptance_criteria=[
-                "Must check the implementation bundle against the approved scope lock.",
+                "Must check the source code delivery against the approved scope lock.",
                 "Must produce a structured delivery check report.",
             ],
-            input_artifact_refs=["art://runtime/tkt_build_rework_gate/implementation-bundle.json"],
+            input_artifact_refs=["art://runtime/tkt_build_rework_gate/source-code.tsx"],
             delivery_stage="CHECK",
             parent_ticket_id="tkt_build_rework_gate",
         ),
@@ -2990,7 +2991,7 @@ def test_internal_delivery_build_rework_keeps_downstream_check_pending_until_fix
 
     maker_response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id="wf_build_rework_gate",
             ticket_id="tkt_build_rework_gate",
             node_id="node_build_rework_gate",
@@ -3034,9 +3035,9 @@ def test_internal_delivery_build_rework_keeps_downstream_check_pending_until_fix
                     "finding_id": "finding_build_scope_drift_gate",
                     "severity": "high",
                     "category": "SCOPE_DISCIPLINE",
-                    "headline": "Implementation bundle drifted outside the locked scope.",
+                    "headline": "Source code delivery drifted outside the locked scope.",
                     "summary": "Build bundle still includes extra non-MVP sections.",
-                    "required_action": "Trim the implementation bundle back to the locked scope before downstream checks.",
+                    "required_action": "Trim the source code delivery back to the locked scope before downstream checks.",
                     "blocking": True,
                 }
             ],
@@ -3071,12 +3072,12 @@ def test_internal_delivery_build_fix_pass_releases_downstream_check(
         workflow_id="wf_build_rework_resume",
         ticket_id="tkt_build_rework_resume",
         node_id="node_build_rework_resume",
-        output_schema_ref="implementation_bundle",
+        output_schema_ref="source_code_delivery",
         allowed_write_set=["artifacts/ui/scope-followups/tkt_build_rework_resume/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must implement the approved scope follow-up.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery.",
         ],
         delivery_stage="BUILD",
     )
@@ -3091,10 +3092,10 @@ def test_internal_delivery_build_fix_pass_releases_downstream_check(
             allowed_tools=["read_artifact", "write_artifact"],
             allowed_write_set=["reports/check/tkt_build_rework_resume_check/*"],
             acceptance_criteria=[
-                "Must check the implementation bundle against the approved scope lock.",
+                "Must check the source code delivery against the approved scope lock.",
                 "Must produce a structured delivery check report.",
             ],
-            input_artifact_refs=["art://runtime/tkt_build_rework_resume/implementation-bundle.json"],
+            input_artifact_refs=["art://runtime/tkt_build_rework_resume/source-code.tsx"],
             delivery_stage="CHECK",
             parent_ticket_id="tkt_build_rework_resume",
         ),
@@ -3104,7 +3105,7 @@ def test_internal_delivery_build_fix_pass_releases_downstream_check(
 
     maker_response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id="wf_build_rework_resume",
             ticket_id="tkt_build_rework_resume",
             node_id="node_build_rework_resume",
@@ -3149,9 +3150,9 @@ def test_internal_delivery_build_fix_pass_releases_downstream_check(
                     "finding_id": "finding_build_scope_resume",
                     "severity": "high",
                     "category": "SCOPE_DISCIPLINE",
-                    "headline": "Implementation bundle drifted outside the locked scope.",
+                    "headline": "Source code delivery drifted outside the locked scope.",
                     "summary": "Build bundle still includes extra non-MVP sections.",
-                    "required_action": "Trim the implementation bundle back to the locked scope before downstream checks.",
+                    "required_action": "Trim the source code delivery back to the locked scope before downstream checks.",
                     "blocking": True,
                 }
             ],
@@ -3186,13 +3187,13 @@ def test_internal_delivery_build_fix_pass_releases_downstream_check(
     )
     fix_result = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id="wf_build_rework_resume",
             ticket_id=fix_ticket_id,
             node_id="node_build_rework_resume",
             submitted_by="emp_frontend_3",
             include_review_request=True,
-            written_artifact_path="artifacts/ui/scope-followups/tkt_build_rework_resume/implementation-bundle.json",
+            written_artifact_path="artifacts/ui/scope-followups/tkt_build_rework_resume/source-code.tsx",
             idempotency_key=f"ticket-result-submit:wf_build_rework_resume:{fix_ticket_id}:implementation",
         ),
     )
@@ -3261,18 +3262,18 @@ def test_internal_delivery_build_checker_escalated_opens_incident_without_board_
         workflow_id="wf_build_escalation",
         ticket_id="tkt_build_escalation",
         node_id="node_build_escalation",
-        output_schema_ref="implementation_bundle",
+        output_schema_ref="source_code_delivery",
         allowed_write_set=["artifacts/ui/scope-followups/tkt_build_escalation/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must implement the approved scope follow-up.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery.",
         ],
         delivery_stage="BUILD",
     )
     maker_response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id="wf_build_escalation",
             ticket_id="tkt_build_escalation",
             node_id="node_build_escalation",
@@ -3317,8 +3318,8 @@ def test_internal_delivery_build_checker_escalated_opens_incident_without_board_
                     "severity": "high",
                     "category": "DELIVERY_RISK",
                     "headline": "Checker cannot verify the bundle with current evidence.",
-                    "summary": "Implementation bundle needs CEO attention before downstream work continues.",
-                    "required_action": "Escalate this build bundle for deeper intervention.",
+                    "summary": "Source code delivery needs CEO attention before downstream work continues.",
+                    "required_action": "Escalate this source delivery for deeper intervention.",
                     "blocking": True,
                 }
             ],
@@ -3348,11 +3349,11 @@ def test_check_followup_result_creates_internal_checker_and_preserves_review_gat
         allowed_write_set=["reports/check/tkt_check_internal_review/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
-            "Must check the implementation bundle against the approved scope lock.",
+            "Must check the source code delivery against the approved scope lock.",
             "Must produce a structured delivery check report.",
         ],
         input_artifact_refs=[
-            "art://runtime/tkt_check_internal_review_build/implementation-bundle.json",
+            "art://runtime/tkt_check_internal_review_build/source-code.tsx",
             "art://meeting/consensus-document.json",
         ],
         delivery_stage="CHECK",
@@ -3374,7 +3375,7 @@ def test_check_followup_result_creates_internal_checker_and_preserves_review_gat
                 "Must prepare the final board-facing review package from the approved implementation.",
             ],
             input_artifact_refs=[
-                "art://runtime/tkt_check_internal_review_build/implementation-bundle.json",
+                "art://runtime/tkt_check_internal_review_build/source-code.tsx",
                 "art://runtime/tkt_check_internal_review/delivery-check-report.json",
             ],
             delivery_stage="REVIEW",
@@ -3415,7 +3416,7 @@ def test_check_followup_result_creates_internal_checker_and_preserves_review_gat
     )
     assert checker_created_spec["input_artifact_refs"] == [
         "art://runtime/tkt_check_internal_review/delivery-check-report.json",
-        "art://runtime/tkt_check_internal_review_build/implementation-bundle.json",
+        "art://runtime/tkt_check_internal_review_build/source-code.tsx",
         "art://meeting/consensus-document.json",
     ]
     assert review_ticket is not None
@@ -3435,11 +3436,11 @@ def test_check_internal_checker_approved_releases_final_review_ticket(client, se
         allowed_write_set=["reports/check/tkt_check_release_review/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
-            "Must check the implementation bundle against the approved scope lock.",
+            "Must check the source code delivery against the approved scope lock.",
             "Must produce a structured delivery check report.",
         ],
         input_artifact_refs=[
-            "art://runtime/tkt_check_release_review_build/implementation-bundle.json",
+            "art://runtime/tkt_check_release_review_build/source-code.tsx",
             "art://meeting/consensus-document.json",
         ],
         delivery_stage="CHECK",
@@ -3461,7 +3462,7 @@ def test_check_internal_checker_approved_releases_final_review_ticket(client, se
                 "Must prepare the final board-facing review package from the approved implementation.",
             ],
             input_artifact_refs=[
-                "art://runtime/tkt_check_release_review_build/implementation-bundle.json",
+                "art://runtime/tkt_check_release_review_build/source-code.tsx",
                 "art://runtime/tkt_check_release_review/delivery-check-report.json",
             ],
             delivery_stage="REVIEW",
@@ -3543,11 +3544,11 @@ def test_check_internal_checker_changes_required_creates_fix_ticket_and_counts_r
         allowed_write_set=["reports/check/tkt_check_rework/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
-            "Must check the implementation bundle against the approved scope lock.",
+            "Must check the source code delivery against the approved scope lock.",
             "Must produce a structured delivery check report.",
         ],
         input_artifact_refs=[
-            "art://runtime/tkt_check_rework_build/implementation-bundle.json",
+            "art://runtime/tkt_check_rework_build/source-code.tsx",
             "art://meeting/consensus-document.json",
         ],
         delivery_stage="CHECK",
@@ -3569,7 +3570,7 @@ def test_check_internal_checker_changes_required_creates_fix_ticket_and_counts_r
                 "Must prepare the final board-facing review package from the approved implementation.",
             ],
             input_artifact_refs=[
-                "art://runtime/tkt_check_rework_build/implementation-bundle.json",
+                "art://runtime/tkt_check_rework_build/source-code.tsx",
                 "art://runtime/tkt_check_rework/delivery-check-report.json",
             ],
             delivery_stage="REVIEW",
@@ -3622,7 +3623,7 @@ def test_check_internal_checker_changes_required_creates_fix_ticket_and_counts_r
                     "category": "SCOPE_DISCIPLINE",
                     "headline": "Delivery check report did not justify scope compliance.",
                     "summary": "Check report needs a clearer justification for the implementation staying in scope.",
-                    "required_action": "Rewrite the delivery check report with grounded evidence from the implementation bundle.",
+                    "required_action": "Rewrite the delivery check report with grounded evidence from the source code delivery.",
                     "blocking": True,
                 }
             ],
@@ -3672,11 +3673,11 @@ def test_check_internal_checker_escalated_opens_incident_and_marks_dependency_st
         allowed_write_set=["reports/check/tkt_check_escalation/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
-            "Must check the implementation bundle against the approved scope lock.",
+            "Must check the source code delivery against the approved scope lock.",
             "Must produce a structured delivery check report.",
         ],
         input_artifact_refs=[
-            "art://runtime/tkt_check_escalation_build/implementation-bundle.json",
+            "art://runtime/tkt_check_escalation_build/source-code.tsx",
             "art://meeting/consensus-document.json",
         ],
         delivery_stage="CHECK",
@@ -3698,7 +3699,7 @@ def test_check_internal_checker_escalated_opens_incident_and_marks_dependency_st
                 "Must prepare the final board-facing review package from the approved implementation.",
             ],
             input_artifact_refs=[
-                "art://runtime/tkt_check_escalation_build/implementation-bundle.json",
+                "art://runtime/tkt_check_escalation_build/source-code.tsx",
                 "art://runtime/tkt_check_escalation/delivery-check-report.json",
             ],
             delivery_stage="REVIEW",
@@ -4547,7 +4548,8 @@ def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(c
     assert review_node["is_blocked"] is True
     assert review_node["open_review_pack_id"] is not None
     assert review_node["open_incident_id"] is None
-    assert any(scope.endswith(f"{build_node['ticket_id']}/*") for scope in build_node["expected_artifact_scope"])
+    assert "10-project/src/*" in build_node["expected_artifact_scope"]
+    assert "20-evidence/tests/*" in build_node["expected_artifact_scope"]
     assert any(scope.endswith(f"{check_node['ticket_id']}/*") for scope in check_node["expected_artifact_scope"])
 
 
@@ -12412,18 +12414,18 @@ def test_dashboard_completion_summary_supports_autopilot_closeout_without_visual
         ticket_id="tkt_autopilot_dashboard_build",
         node_id="node_autopilot_dashboard_build",
         role_profile_ref="frontend_engineer_primary",
-        output_schema_ref="implementation_bundle",
+        output_schema_ref="source_code_delivery",
         delivery_stage="BUILD",
         allowed_write_set=["artifacts/ui/scope-followups/tkt_autopilot_dashboard_build/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must deliver the approved implementation slice.",
-            "Must produce a structured implementation bundle.",
+            "Must produce a structured source code delivery.",
         ],
     )
     build_response = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_implementation_bundle_result_submit_payload(
+        json=_source_code_delivery_result_submit_payload(
             workflow_id=workflow_id,
             ticket_id="tkt_autopilot_dashboard_build",
             node_id="node_autopilot_dashboard_build",

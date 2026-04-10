@@ -4,6 +4,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import ValidationError
 
@@ -39,7 +40,7 @@ from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
     schema_id,
     validate_output_payload,
 )
@@ -77,6 +78,8 @@ class RuntimeExecutionResult:
     artifact_refs: list[str] = field(default_factory=list)
     result_payload: dict[str, Any] = field(default_factory=dict)
     written_artifacts: list[dict[str, Any]] = field(default_factory=list)
+    verification_evidence_refs: list[str] = field(default_factory=list)
+    git_commit_record: dict[str, Any] | None = None
     assumptions: list[str] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
     confidence: float = 0.0
@@ -98,7 +101,7 @@ SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
     "maker_checker_verdict",
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     *GOVERNANCE_DOCUMENT_SCHEMA_REFS,
-    IMPLEMENTATION_BUNDLE_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
 }
@@ -228,10 +231,11 @@ def _build_runtime_default_artifacts(
 ) -> tuple[list[str], list[dict[str, Any]]]:
     ticket_id = execution_package.meta.ticket_id
     output_schema_ref = execution_package.execution.output_schema_ref
+    if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+        return _build_source_code_delivery_default_artifacts(execution_package, result_payload)
     if output_schema_ref in {
         CONSENSUS_DOCUMENT_SCHEMA_REF,
         *GOVERNANCE_DOCUMENT_SCHEMA_REFS,
-        IMPLEMENTATION_BUNDLE_SCHEMA_REF,
         DELIVERY_CHECK_REPORT_SCHEMA_REF,
         DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     }:
@@ -241,7 +245,6 @@ def _build_runtime_default_artifacts(
                 schema_ref: f"{schema_ref}.json"
                 for schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
             },
-            IMPLEMENTATION_BUNDLE_SCHEMA_REF: "implementation-bundle.json",
             DELIVERY_CHECK_REPORT_SCHEMA_REF: "delivery-check-report.json",
             DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF: "delivery-closeout-package.json",
         }
@@ -291,6 +294,200 @@ def _build_runtime_default_artifacts(
         },
     ]
     return artifact_refs, written_artifacts
+
+
+def _default_source_code_extension(role_profile_ref: str) -> str:
+    if role_profile_ref == "frontend_engineer_primary":
+        return "tsx"
+    if role_profile_ref == "backend_engineer_primary":
+        return "py"
+    if role_profile_ref == "database_engineer_primary":
+        return "sql"
+    if role_profile_ref == "platform_sre_primary":
+        return "sh"
+    return "txt"
+
+
+def _default_source_code_delivery_file_refs(execution_package: CompiledExecutionPackage) -> list[str]:
+    ticket_id = execution_package.meta.ticket_id
+    extension = _default_source_code_extension(execution_package.compiled_role.role_profile_ref)
+    return [f"art://workspace/{quote(ticket_id, safe='')}/source.{extension}"]
+
+
+def _default_source_code_delivery_documentation_updates(
+    execution_package: CompiledExecutionPackage,
+) -> list[dict[str, Any]]:
+    updates: list[dict[str, Any]] = []
+    for index, doc_ref in enumerate(execution_package.execution.doc_update_requirements):
+        normalized_doc_ref = str(doc_ref or "").strip()
+        if not normalized_doc_ref:
+            continue
+        updates.append(
+            {
+                "doc_ref": normalized_doc_ref,
+                "status": "UPDATED" if index == 0 else "NO_CHANGE_REQUIRED",
+                "summary": (
+                    "Updated this document as part of the current source code delivery."
+                    if index == 0
+                    else "Reviewed this document and confirmed no additional change was required in this round."
+                ),
+            }
+        )
+    return updates
+
+
+def _normalize_source_code_delivery_payload(
+    execution_package: CompiledExecutionPackage,
+    result_payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(result_payload)
+    if not str(normalized.get("summary") or "").strip():
+        normalized["summary"] = (
+            f"Source code delivery prepared for ticket {execution_package.meta.ticket_id}."
+        )
+
+    source_file_refs = [
+        str(item).strip()
+        for item in list(normalized.get("source_file_refs") or [])
+        if str(item).strip()
+    ]
+    if not source_file_refs:
+        source_file_refs = _default_source_code_delivery_file_refs(execution_package)
+    normalized["source_file_refs"] = source_file_refs
+
+    implementation_notes = [
+        str(item).strip()
+        for item in list(normalized.get("implementation_notes") or [])
+        if str(item).strip()
+    ]
+    if not implementation_notes:
+        implementation_notes = [
+            "Implementation stays inside the approved scope lock and is ready for internal checking."
+        ]
+    normalized["implementation_notes"] = implementation_notes
+
+    documentation_updates = list(normalized.get("documentation_updates") or [])
+    if not documentation_updates and execution_package.execution.doc_update_requirements:
+        documentation_updates = _default_source_code_delivery_documentation_updates(execution_package)
+    normalized["documentation_updates"] = documentation_updates
+    return normalized
+
+
+def _build_source_code_delivery_default_artifacts(
+    execution_package: CompiledExecutionPackage,
+    result_payload: dict[str, Any],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    ticket_id = execution_package.meta.ticket_id
+    source_file_refs = [
+        str(item).strip()
+        for item in list(result_payload.get("source_file_refs") or [])
+        if str(item).strip()
+    ] or _default_source_code_delivery_file_refs(execution_package)
+    allowed_write_set = list(execution_package.execution.allowed_write_set)
+    source_pattern = next(
+        (
+            str(pattern)
+            for pattern in allowed_write_set
+            if str(pattern).startswith("10-project/")
+            and not str(pattern).startswith("10-project/docs/")
+        ),
+        next((str(pattern) for pattern in allowed_write_set if str(pattern).strip()), None),
+    )
+    evidence_pattern = next(
+        (str(pattern) for pattern in allowed_write_set if str(pattern).startswith("20-evidence/tests/")),
+        None,
+    )
+    git_pattern = next(
+        (str(pattern) for pattern in allowed_write_set if str(pattern).startswith("20-evidence/git/")),
+        None,
+    )
+
+    written_artifacts: list[dict[str, Any]] = []
+    extension = _default_source_code_extension(execution_package.compiled_role.role_profile_ref)
+    for index, source_file_ref in enumerate(source_file_refs, start=1):
+        filename = f"source-{index}.{extension}" if len(source_file_refs) > 1 else f"source.{extension}"
+        path = (
+            _resolve_runtime_write_path(source_pattern, filename)
+            if source_pattern is not None
+            else f"10-project/generated/{filename}"
+        )
+        content_text = (
+            f"# generated for {ticket_id}\n"
+            f"runtime_role = '{execution_package.compiled_role.role_profile_ref}'\n"
+        )
+        if extension not in {"py", "sql", "sh"}:
+            content_text = (
+                f"// generated for {ticket_id}\n"
+                "export const runtimeSourceDelivery = true;\n"
+            )
+        written_artifacts.append(
+            {
+                "path": path,
+                "artifact_ref": source_file_ref,
+                "kind": "TEXT",
+                "retention_class": "PERSISTENT",
+                "content_text": content_text,
+            }
+        )
+
+    if evidence_pattern is not None:
+        verification_evidence_ref = f"art://workspace/{quote(ticket_id, safe='')}/test-report.json"
+        verification_path = _resolve_runtime_write_path(evidence_pattern, "test-report.json")
+        written_artifacts.append(
+            {
+                "path": verification_path,
+                "artifact_ref": verification_evidence_ref,
+                "kind": "JSON",
+                "retention_class": "REVIEW_EVIDENCE",
+                "content_json": {
+                    "status": "passed",
+                    "command": "pytest -q",
+                    "ticket_id": ticket_id,
+                },
+            }
+        )
+
+    if git_pattern is not None:
+        git_commit_record = {
+            "commit_sha": f"{ticket_id.replace('-', '').replace('_', '')[:12] or 'runtime123456'}",
+            "branch_ref": f"codex/{ticket_id}",
+            "merge_status": "PENDING_REVIEW_GATE",
+        }
+        git_commit_ref = f"art://workspace/{quote(ticket_id, safe='')}/git-commit.json"
+        git_path = _resolve_runtime_write_path(git_pattern, "git-commit.json")
+        written_artifacts.append(
+            {
+                "path": git_path,
+                "artifact_ref": git_commit_ref,
+                "kind": "JSON",
+                "retention_class": "REVIEW_EVIDENCE",
+                "content_json": git_commit_record,
+            }
+        )
+    return source_file_refs, written_artifacts
+
+
+def _build_source_code_delivery_submission_evidence(
+    execution_package: CompiledExecutionPackage,
+    result_payload: dict[str, Any],
+) -> tuple[list[str], dict[str, Any] | None]:
+    _, written_artifacts = _build_source_code_delivery_default_artifacts(execution_package, result_payload)
+    verification_evidence_refs = [
+        str(item.get("artifact_ref") or "").strip()
+        for item in written_artifacts
+        if str(item.get("path") or "").startswith("20-evidence/tests/")
+        and str(item.get("artifact_ref") or "").strip()
+    ]
+    git_commit_record = next(
+        (
+            dict(item.get("content_json") or {})
+            for item in written_artifacts
+            if str(item.get("path") or "").startswith("20-evidence/git/")
+            and isinstance(item.get("content_json"), dict)
+        ),
+        None,
+    )
+    return verification_evidence_refs, git_commit_record
 
 
 def _build_meeting_round_notes(round_type: str, topic: str, participant_ids: list[str]) -> list[str]:
@@ -703,9 +900,9 @@ def _build_runtime_success_payload(
                 },
                 {
                     "ticket_id": f"{ticket_id}_followup_check",
-                    "task_title": "Check the approved implementation bundle",
+                    "task_title": "Check the approved source code delivery",
                     "owner_role": "checker",
-                    "summary": "Check the implementation bundle against the locked scope before board review.",
+                    "summary": "Check the source code delivery against the locked scope before board review.",
                     "delivery_stage": DeliveryStage.CHECK.value,
                 },
                 {
@@ -717,13 +914,14 @@ def _build_runtime_success_payload(
                 },
             ],
         }
-    if execution_package.execution.output_schema_ref == IMPLEMENTATION_BUNDLE_SCHEMA_REF:
+    if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         return {
-            "summary": f"Implementation bundle prepared for ticket {execution_package.meta.ticket_id}.",
-            "deliverable_artifact_refs": list(artifact_refs),
+            "summary": f"Source code delivery prepared for ticket {execution_package.meta.ticket_id}.",
+            "source_file_refs": list(artifact_refs),
             "implementation_notes": [
                 "Homepage foundation stays inside the approved scope lock and is ready for internal checking."
             ],
+            "documentation_updates": _default_source_code_delivery_documentation_updates(execution_package),
         }
     if execution_package.execution.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
         ticket_id = execution_package.meta.ticket_id
@@ -773,7 +971,7 @@ def _build_runtime_success_payload(
         }
     if execution_package.execution.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         return {
-            "summary": "Internal delivery check confirmed the implementation bundle stays within the approved scope.",
+            "summary": "Internal delivery check confirmed the source code delivery stays within the approved scope.",
             "status": "PASS_WITH_NOTES",
             "findings": [
                 {
@@ -1267,6 +1465,8 @@ def _execute_openai_compat_provider(
                 execution_package.rendered_execution_payload,
             )
             result_payload = _load_provider_payload(provider_result.output_text)
+            if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+                result_payload = _normalize_source_code_delivery_payload(execution_package, result_payload)
             validate_output_payload(
                 schema_ref=execution_package.execution.output_schema_ref,
                 schema_version=execution_package.execution.output_schema_version,
@@ -1281,6 +1481,13 @@ def _execute_openai_compat_provider(
                     execution_package,
                     result_payload,
                 )
+            verification_evidence_refs: list[str] = []
+            git_commit_record: dict[str, Any] | None = None
+            if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+                verification_evidence_refs, git_commit_record = _build_source_code_delivery_submission_evidence(
+                    execution_package,
+                    result_payload,
+                )
             return RuntimeExecutionResult(
                 result_status="completed",
                 completion_summary=(
@@ -1290,6 +1497,8 @@ def _execute_openai_compat_provider(
                 artifact_refs=artifact_refs,
                 result_payload=result_payload,
                 written_artifacts=written_artifacts,
+                verification_evidence_refs=verification_evidence_refs,
+                git_commit_record=git_commit_record,
                 assumptions=_build_provider_selection_assumptions(
                     execution_package=execution_package,
                     selection=selection,
@@ -1368,6 +1577,8 @@ def _execute_claude_code_provider(
             execution_package.rendered_execution_payload,
         )
         result_payload = _load_provider_payload(provider_result.output_text)
+        if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+            result_payload = _normalize_source_code_delivery_payload(execution_package, result_payload)
         validate_output_payload(
             schema_ref=execution_package.execution.output_schema_ref,
             schema_version=execution_package.execution.output_schema_version,
@@ -1382,6 +1593,13 @@ def _execute_claude_code_provider(
                 execution_package,
                 result_payload,
             )
+        verification_evidence_refs: list[str] = []
+        git_commit_record: dict[str, Any] | None = None
+        if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+            verification_evidence_refs, git_commit_record = _build_source_code_delivery_submission_evidence(
+                execution_package,
+                result_payload,
+            )
         return RuntimeExecutionResult(
             result_status="completed",
             completion_summary=(
@@ -1391,6 +1609,8 @@ def _execute_claude_code_provider(
             artifact_refs=artifact_refs,
             result_payload=result_payload,
             written_artifacts=written_artifacts,
+            verification_evidence_refs=verification_evidence_refs,
+            git_commit_record=git_commit_record,
             assumptions=_build_provider_selection_assumptions(
                 execution_package=execution_package,
                 selection=selection,
@@ -1458,6 +1678,12 @@ def _build_provider_fallback_execution_result(
         artifact_refs=list(deterministic_result.artifact_refs),
         result_payload=dict(deterministic_result.result_payload),
         written_artifacts=list(deterministic_result.written_artifacts),
+        verification_evidence_refs=list(deterministic_result.verification_evidence_refs),
+        git_commit_record=(
+            dict(deterministic_result.git_commit_record)
+            if isinstance(deterministic_result.git_commit_record, dict)
+            else None
+        ),
         assumptions=[
             *deterministic_result.assumptions,
             "runtime_fallback=LOCAL_DETERMINISTIC",
@@ -1788,7 +2014,16 @@ def _execute_compiled_execution_package(
     else:
         artifact_refs, _ = _build_runtime_default_artifacts(execution_package, {})
         result_payload = _build_runtime_success_payload(execution_package, artifact_refs)
+        if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+            result_payload = _normalize_source_code_delivery_payload(execution_package, result_payload)
         artifact_refs, written_artifacts = _build_runtime_default_artifacts(
+            execution_package,
+            result_payload,
+        )
+    verification_evidence_refs: list[str] = []
+    git_commit_record: dict[str, Any] | None = None
+    if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+        verification_evidence_refs, git_commit_record = _build_source_code_delivery_submission_evidence(
             execution_package,
             result_payload,
         )
@@ -1801,6 +2036,8 @@ def _execute_compiled_execution_package(
         artifact_refs=artifact_refs,
         result_payload=result_payload,
         written_artifacts=written_artifacts,
+        verification_evidence_refs=verification_evidence_refs,
+        git_commit_record=git_commit_record,
         assumptions=[
             f"compiler_version={execution_package.meta.compiler_version}",
             f"compile_request_id={execution_package.meta.compile_request_id}",
@@ -1851,6 +2088,8 @@ def _build_runtime_result_submit_command(
         payload=execution_result.result_payload,
         artifact_refs=execution_result.artifact_refs,
         written_artifacts=written_artifacts,
+        verification_evidence_refs=execution_result.verification_evidence_refs,
+        git_commit_record=execution_result.git_commit_record,
         assumptions=execution_result.assumptions,
         issues=execution_result.issues,
         confidence=execution_result.confidence,

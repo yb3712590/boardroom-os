@@ -16,6 +16,7 @@ from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
 from app.db.repository import ControlPlaneRepository
 
@@ -60,6 +61,10 @@ def build_compiled_execution_package_process_asset_ref(ticket_id: str) -> str:
 
 def build_meeting_decision_process_asset_ref(ticket_id: str) -> str:
     return f"{_PROCESS_ASSET_PREFIX}meeting-decision-record/{quote(str(ticket_id), safe='')}"
+
+
+def build_source_code_delivery_process_asset_ref(ticket_id: str) -> str:
+    return f"{_PROCESS_ASSET_PREFIX}source-code-delivery/{quote(str(ticket_id), safe='')}"
 
 
 def build_closeout_summary_process_asset_ref(ticket_id: str) -> str:
@@ -134,6 +139,9 @@ def build_result_process_assets(
     created_spec: dict[str, Any],
     result_payload: dict[str, Any] | None,
     artifact_refs: list[str],
+    written_artifacts: list[dict[str, Any]] | None = None,
+    verification_evidence_refs: list[str] | None = None,
+    git_commit_record: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     produced_assets: list[ProcessAssetReference] = []
     output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
@@ -150,6 +158,27 @@ def build_result_process_assets(
                 summary=summary or artifact_ref,
                 consumable_by=["context_compiler", "review", "closeout"],
                 source_metadata={"artifact_ref": artifact_ref},
+            )
+        )
+
+    if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF and isinstance(result_payload, dict):
+        produced_assets.append(
+            ProcessAssetReference(
+                process_asset_ref=build_source_code_delivery_process_asset_ref(ticket_id),
+                process_asset_kind="SOURCE_CODE_DELIVERY",
+                producer_ticket_id=ticket_id,
+                summary=summary or "Source code delivery",
+                consumable_by=["context_compiler", "followup_ticket", "review", "closeout"],
+                source_metadata={
+                    "source_file_refs": list(result_payload.get("source_file_refs") or []),
+                    "written_artifact_refs": [
+                        str(item.get("artifact_ref") or "").strip()
+                        for item in list(written_artifacts or [])
+                        if isinstance(item, dict) and str(item.get("artifact_ref") or "").strip()
+                    ],
+                    "verification_evidence_refs": list(verification_evidence_refs or []),
+                    "git_commit_record": dict(git_commit_record or {}),
+                },
             )
         )
 
@@ -260,6 +289,13 @@ def resolve_process_asset(
         )
     if kind == "meeting-decision-record":
         return _resolve_meeting_decision_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            ticket_id=target,
+            connection=connection,
+        )
+    if kind == "source-code-delivery":
+        return _resolve_source_code_delivery_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             ticket_id=target,
@@ -486,6 +522,61 @@ def _resolve_meeting_decision_process_asset(
         if decision:
             base.summary = decision
     return base
+
+
+def _resolve_source_code_delivery_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    ticket_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(resolved_connection, ticket_id)
+        if terminal_event is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        payload = terminal_event.get("payload") or {}
+        if not isinstance(payload, dict):
+            raise ValueError(f"Process asset {process_asset_ref} source payload is invalid.")
+        result_payload = payload.get("payload") or {}
+        if not isinstance(result_payload, dict):
+            raise ValueError(f"Process asset {process_asset_ref} source payload is invalid.")
+        produced_assets = list(payload.get("produced_process_assets") or [])
+        asset_entry = next(
+            (
+                item
+                for item in produced_assets
+                if isinstance(item, dict)
+                and str(item.get("process_asset_ref") or "") == process_asset_ref
+                and str(item.get("process_asset_kind") or "") == "SOURCE_CODE_DELIVERY"
+            ),
+            None,
+        )
+        if asset_entry is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        source_metadata = dict(asset_entry.get("source_metadata") or {})
+        return ResolvedProcessAsset(
+            process_asset_ref=process_asset_ref,
+            process_asset_kind="SOURCE_CODE_DELIVERY",
+            producer_ticket_id=ticket_id,
+            summary=(
+                str(result_payload.get("summary") or "").strip()
+                or str(asset_entry.get("summary") or "").strip()
+                or f"Source code delivery for {ticket_id}"
+            ),
+            consumable_by=["context_compiler", "followup_ticket", "review", "closeout"],
+            source_metadata=source_metadata,
+            content_type="JSON",
+            json_content={
+                "summary": result_payload.get("summary"),
+                "source_file_refs": list(result_payload.get("source_file_refs") or []),
+                "implementation_notes": list(result_payload.get("implementation_notes") or []),
+                "documentation_updates": list(result_payload.get("documentation_updates") or []),
+                "verification_evidence_refs": list(payload.get("verification_evidence_refs") or []),
+                "git_commit_record": payload.get("git_commit_record"),
+            },
+            schema_ref="source_code_delivery@1",
+        )
 
 
 def _resolve_closeout_summary_process_asset(

@@ -54,7 +54,7 @@
 - 已吸收为当前主线能力
 - 当前主线已真实覆盖：
   - `consensus_document@1`
-  - `implementation_bundle@1`
+  - `source_code_delivery@1`
   - `delivery_check_report@1`
   - `ui_milestone_review@1`
   - `delivery_closeout_package@1`
@@ -131,12 +131,12 @@
 - 收正决策起点：CEO 先做 `task sensemaking + capability plan`，再决定派单、招聘、会议和交付路线，不再按角色池或现有员工静默 fallback
 - 收正单一 workflow controller：`workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 不再各自维护业务推进语义，而是统一消费 capability-driven 主线状态
 - 收正硬约束：任务需要什么能力、现有 roster 能不能覆盖、缺口该招聘还是开会，必须显式可见；`architect_primary` 只在任务现实确实需要时才成为硬约束
-- 收正交付形态：交付 contract 按 `deliverable_kind` 分流；代码型任务从 `implementation_bundle` 迁到“真实源码交付包”，非代码型任务补齐对应证据包，closeout 只接受与任务现实一致的证据
+- 收正交付形态：交付 contract 按 `deliverable_kind` 分流；代码型任务从旧的占位式文档产物迁到“真实源码交付包”，非代码型任务补齐对应证据包，closeout 只接受与任务现实一致的证据
 
 补充约束：
 
 - 不再默认接受“只写 `artifacts/...` JSON”作为 build 完成
-- 不再允许 deterministic fallback 用模板化 `implementation_bundle / checker verdict / closeout package` 伪成功推进主线
+- 不再允许 deterministic fallback 用模板化源码占位产物 / checker verdict / closeout package 伪成功推进主线
 - 不再允许 CEO、scheduler 或 deterministic fallback 因为现有员工池里刚好有人，就静默改写目标角色或直接改派给当前在线员工
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张
 - 这批任务不属于旧 `archive/specs/feature-spec.md #58-80` 的完整覆盖范围，属于 2026-04-10 live 集成测试新增纠偏项
@@ -263,6 +263,7 @@
 | `#74` 系统化文档治理引擎 | 远期储备 | 当前阶段只按治理规则和文档约束处理 |
 | `#67` 的系统化并行调度能力 | 远期储备 | 当前只作为治理原则记录，不做调度器改造 |
 | `#71-hard` / `#75-hard` | 远期储备 | 当前只接受 soft rule，不做硬 gate |
+| 通用交付类型地图 | 远期储备 | 当前主线只需要先收正代码交付与治理文档；后续再把 `document_delivery / research_report / evidence_bundle / dataset_delivery / design_asset_delivery / media_asset_delivery / integration_payload`，以及 `governance_record / structured_control_artifact / working_artifact` 收成一等交付语义 |
 
 ## 六、58–80 映射总表
 

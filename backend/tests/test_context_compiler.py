@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import datetime
@@ -584,7 +584,7 @@ def test_compile_execution_package_maps_new_runtime_live_role_types_in_org_conte
             node_id="node_backend_current",
             parent_ticket_id="tkt_architect_parent",
             role_profile_ref="backend_engineer_primary",
-            output_schema_ref="implementation_bundle",
+            output_schema_ref="source_code_delivery",
             delivery_stage="BUILD",
             input_artifact_refs=[],
         ),
@@ -596,7 +596,7 @@ def test_compile_execution_package_maps_new_runtime_live_role_types_in_org_conte
             node_id="node_platform_sibling",
             parent_ticket_id="tkt_architect_parent",
             role_profile_ref="platform_sre_primary",
-            output_schema_ref="implementation_bundle",
+            output_schema_ref="source_code_delivery",
             delivery_stage="BUILD",
             input_artifact_refs=[],
         ),

@@ -8,7 +8,7 @@
 | 阶段 | 当前状态 | 代码现实 | 直接结论 |
 |------|----------|----------|----------|
 | `project-init -> scope review` | 真实运行 | `project-init` 会先由 CEO 发起首个 kickoff scope 共识票，再自动推进到首个 scope review | 不是只建 workflow 的空壳 |
-| `BUILD` 内部 maker-checker | 真实运行 | 先产出 `implementation_bundle@1`，再走 `maker -> checker -> fix / incident` | `BUILD` 不会直接放行到 `CHECK` |
+| `BUILD` 内部 maker-checker | 真实运行 | 先产出 `source_code_delivery@1`，再走 `maker -> checker -> fix / incident` | `BUILD` 不会直接放行到 `CHECK` |
 | `CHECK` 内部 maker-checker | 真实运行 | `delivery_check_report@1` 也有独立内审闭环 | `CHECK` 不会直接放行到最终董事会 |
 | 最终 `REVIEW` | 真实运行 | 只有真正 board-facing 的 review 才进入 `Inbox -> Review Room` | 董事会只看真实审批点 |
 | `closeout` 内部 maker-checker | 真实运行 | final review 通过后会自动补 `delivery_closeout_package@1`；对 autopilot workflow，只要真实 closeout 已完成，即使没有 `VISUAL_MILESTONE` 也会被认成 workflow 完成 | completion 不是 board approve 就立刻出现，但也不再要求伪造 board review |
@@ -19,7 +19,7 @@
 - `project-init` 现在还会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE` 三种模板
 - 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
 - dashboard completion 现在同时支持两条真实完成路径：传统 `VISUAL_MILESTONE -> closeout`，以及 autopilot 的“closeout 已完成 + workflow-chain report 已落盘”路径；后者不会再伪造 `final_review_pack_id / approved_at`
-- deterministic autopilot closeout fallback 现在只会在 workflow 已经出现真实交付主线证据时触发：最小口径是 `BUILD / CHECK / REVIEW` 票、`implementation_bundle`、`ui_milestone_review`，或它们对应的 maker-checker verdict；纯治理文档流、纯规划流、只有 backlog recommendation 的流不会再被误判成可 closeout
+- deterministic autopilot closeout fallback 现在只会在 workflow 已经出现真实交付主线证据时触发：最小口径是 `BUILD / CHECK / REVIEW` 票、`source_code_delivery`、`ui_milestone_review`，或它们对应的 maker-checker verdict；纯治理文档流、纯规划流、只有 backlog recommendation 的流不会再被误判成可 closeout
 - deterministic autopilot closeout fallback 现在也会先检查 workflow 内是否已经存在正式 `delivery_closeout_package` 票；已有正式 closeout 时，不再补第二条 CEO closeout
 - 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
 - 当前 CEO 也能在窄触发条件下自动创建 `TECHNICAL_DECISION` 会议请求：只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重新对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会
@@ -31,7 +31,7 @@
 - `TICKET_CREATED` payload 现在会补入 `execution_contract`，固定包含 `execution_target_ref / required_capability_tags / runtime_contract_version`；普通 ticket-create 路径即使没显式传，也会按 `role_profile_ref + output_schema_ref` 自动补齐
 - `TICKET_CREATED` payload 现在也会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`；如果 workflow 不是由当前 `project-init` 建出来，这组字段会退成最小默认值，不会强开新的 workspace gate
 - `TICKET_CREATED` payload 现在也可选携带 `runtime_preference`，最小支持 `preferred_provider_id / preferred_model`；CEO create-ticket 与内部兼容 `ticket-create` 走同一套字段，但这层只是任务级偏好，不能绕过能力底线、provider 启停状态、参与策略或现有 failover 约束
-- 当前 execution target catalog 已按主线收口为 12 类：`scope_consensus / scope_governance_document / frontend_governance_document / architect_governance_document / cto_governance_document / frontend_build / backend_build / database_build / platform_build / checker_delivery_check / frontend_review / frontend_closeout`
+- 当前 execution target catalog 已按主线收口为 13 类：`scope_consensus / scope_governance_document / frontend_governance_document / architect_governance_document / cto_governance_document / frontend_build / backend_build / database_build / platform_build / checker_delivery_check / checker_maker_checker / frontend_review / frontend_closeout`
 - CEO create-ticket 当前必须显式带 `dispatch_intent.assignee_employee_id / selection_reason`；校验层会拒绝不存在、非激活或能力不匹配的 assignee，非法派单不会入队
 - CEO create-ticket 当前也接受五类治理文档输出：`architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation`；这类文档现在除了 `ui_designer_primary / frontend_engineer_primary` 两个 live 规划角色，也可落到 `architect_primary / cto_primary`，但仍只限治理文档链；`backend / database / platform` 仍未进入 direct CEO create-ticket，`role_templates_catalog.default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单
 - `dispatch_intent` 现在已扩到最小 5 字段：`assignee_employee_id / selection_reason / dependency_gate_refs[] / selected_by / wakeup_policy`；scheduler 在该字段存在时只会尝试租约给指定 assignee，不再按 role 池重新挑人，但 assignee 仍必须出现在当前可用 worker 候选里
@@ -40,12 +40,13 @@
 - 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，不把当前 staged follow-up 主链写成“上游一失败就全部重规划”
 - `TICKET_CREATED` payload 现在可选携带 `input_process_asset_refs[]`；`Context Compiler` 会把旧 `input_artifact_refs[]` 兼容映射到同一入口，再统一走 `process asset resolver`
 - 对受管项目工作区里的 ticket，`Context Compiler` 现在会把 `required_read_refs[]` 一并并入 `input_process_asset_refs[]`，并在 ticket dossier 里写 `worker-preflight` 回执
-- 当前 resolver 已按最小闭环纳入 7 类过程资产：`artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary / governance_document`
+- 当前 resolver 已按最小闭环纳入 8 类过程资产：`artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / source_code_delivery / meeting_decision_record / closeout_summary / governance_document`
 - 治理文档输出合同现在已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；每类文档都会保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / decisions / constraints / sections / followup_recommendations`
 - 当 CEO 创建的后续票显式挂在治理文档父票下时，建票路径会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产到 `input_process_asset_refs[]`
 - runtime 完成事件现在会额外写回 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 都会自动映射到后续 follow-up ticket 或 maker-checker checker ticket 的 `input_process_asset_refs[]`
-- `implementation_bundle@1` 现在也可选携带 `documentation_updates`；但当前硬 gate 只对 `allowed_write_set` 明确落在 `10-project/* / 20-evidence/* / 00-boardroom/*` 的 workspace-managed `source_code_delivery` 票生效
+- `source_code_delivery@1` 当前固定携带 `source_file_refs`，也可携带 `implementation_notes / documentation_updates`；对 `allowed_write_set` 明确落在 `10-project/* / 20-evidence/* / 00-boardroom/*` 的 workspace-managed 代码票，提交时还会交叉校验 `source_file_refs` 是否真的命中本次源码写入
 - 上述 workspace-managed 代码票在 `ticket-result-submit` 时，当前会硬校验 `documentation_updates / verification_evidence_refs / git_commit_record`，并在 dossier 里写 `worker-postrun / evidence-capture / git-closeout` 回执；旧 artifact-path 代码票继续兼容，不会误触这条新 gate
+- `source_code_delivery` 的 deterministic / provider-backed runtime 当前都会直接落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产；但 completion / projection 还没把源码文件数、测试证据数和 git 摘要展开成单独读面
 - `TICKET_COMPLETED` payload 现在也会带回 `verification_evidence_refs` 和 `git_commit_record`，给后续 review / closeout / projection 继续消费
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
@@ -74,10 +75,10 @@
 | `frontend_engineer` | `ui_designer_primary` | `consensus_document` | 支持 | 支持 | 支持 | 当前共识文档仍由旧 scope 共识链产出 |
 | `frontend_engineer` | `ui_designer_primary` | 五类治理文档 | 支持 | 支持 | 支持 | scope governance document 当前继续支持 live planning 角色 |
 | `frontend_engineer` | `frontend_engineer_primary` | 五类治理文档 | 支持 | 支持 | 支持 | frontend live 规划角色仍可产出治理文档 |
-| `frontend_engineer` | `frontend_engineer_primary` | `implementation_bundle` | 支持 | 支持 | 支持 | `BUILD` 产物当前由独立 frontend worker 产出 |
-| `backend_engineer` | `backend_engineer_primary` | `implementation_bundle` | 支持 | 支持 | 支持 | backend build 现在已进入正式 runtime live 路径 |
-| `database_engineer` | `database_engineer_primary` | `implementation_bundle` | 支持 | 支持 | 支持 | database build 现在已进入正式 runtime live 路径 |
-| `platform_sre` | `platform_sre_primary` | `implementation_bundle` | 支持 | 支持 | 支持 | platform build 现在已进入正式 runtime live 路径 |
+| `frontend_engineer` | `frontend_engineer_primary` | `source_code_delivery` | 支持 | 支持 | 支持 | `BUILD` 产物当前由独立 frontend worker 产出 |
+| `backend_engineer` | `backend_engineer_primary` | `source_code_delivery` | 支持 | 支持 | 支持 | backend build 现在已进入正式 runtime live 路径 |
+| `database_engineer` | `database_engineer_primary` | `source_code_delivery` | 支持 | 支持 | 支持 | database build 现在已进入正式 runtime live 路径 |
+| `platform_sre` | `platform_sre_primary` | `source_code_delivery` | 支持 | 支持 | 支持 | platform build 现在已进入正式 runtime live 路径 |
 | `architect` | `architect_primary` | `architecture_brief / technology_decision / detailed_design` | 支持 | 支持 | 支持 | architect 治理文档现在已进入正式 runtime live 路径 |
 | `cto` | `cto_primary` | `architecture_brief / technology_decision / milestone_plan / backlog_recommendation` | 支持 | 支持 | 支持 | cto 治理文档现在已进入正式 runtime live 路径 |
 | `checker` | `checker_primary` | `delivery_check_report` | 支持 | 支持 | 支持 | `CHECK` 报告当前由 checker 产出 |
