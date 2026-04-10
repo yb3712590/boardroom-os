@@ -1,35 +1,22 @@
 # 文档索引
 
-`doc/` 继续按“短入口 -> 详细页 -> 归档页”分层。默认先读短入口，不把大文件整篇塞进上下文。
-
-当前文档组织采用“混合版分层”：
-
-- `README / mainline-truth / roadmap-reset / TODO / task-backlog / history` 继续承担高频真相层
-- `design/*` 继续承担详细设计与实现规格层
-- 若后续新增 ADR / 决策记录，必须走独立目录并在索引里显式回链；不要把 ADR 混写进主线真相文件
-- 文档之间的依赖关系必须通过索引或“相关文档”显式保留，不靠文件名猜关系
+`doc/` 现在按“当前真相 -> 工作参考 -> 历史归档”三层收口。默认只读当前真相层，不把旧计划、旧分析、已完成流水和长历史日志塞进上下文。
 
 ## 默认首读
 
-1. [mainline-truth.md](mainline-truth.md)：当前代码真相表，先确认主链现实、runtime 支持矩阵和冻结边界
-2. [roadmap-reset.md](roadmap-reset.md)：当前阶段边界和判断规则
-3. [TODO.md](TODO.md)：当前批次与条件批次，不写远期愿景总表
-4. [history/context-baseline.md](history/context-baseline.md)：稳定不常变的产品模型、治理规则、文档约束
-5. [history/memory-log.md](history/memory-log.md)：最近几天仍影响判断的事实
+1. [mainline-truth.md](mainline-truth.md)：当前代码真相、runtime 支持矩阵和冻结边界
+2. [roadmap-reset.md](roadmap-reset.md)：当前阶段边界和开发判断规则
+3. [TODO.md](TODO.md)：当前批次、条件批次和当前阶段目标
 
-## 任务与路线
+## 工作参考
 
-- [task-backlog.md](task-backlog.md)：任务库入口，只放统计、状态索引和阅读说明
-- [task-backlog/active.md](task-backlog/active.md)：当前未关闭任务与开启条件
-- [task-backlog/done.md](task-backlog/done.md)：已完成任务卡片和详细补记
 - [milestone-timeline.md](milestone-timeline.md)：后续顺序、条件批次和远期储备
-- [todo/postponed.md](todo/postponed.md)：冻结范围与远期储备方向
-- [新愿景文档更新与路线重整计划.md](新愿景文档更新与路线重整计划.md)：本轮一次性 handoff 计划，不是默认真相源
-
-## 运行与接口
-
+- [task-backlog.md](task-backlog.md)：任务库入口，只放统计、状态索引和阅读说明
+- [task-backlog/active.md](task-backlog/active.md)：当前未关闭任务
 - [backend-runtime-guide.md](backend-runtime-guide.md)：当前后端运行、运维和排障指南
-- [api-reference.md](api-reference.md)：当前全部 HTTP 接口参考，已标注主线 / 冻结边界
+- [api-reference.md](api-reference.md)：当前 HTTP 接口参考
+- [history/context-baseline.md](history/context-baseline.md)：稳定不常变的规则和架构基线，只在需要时打开
+- [history/memory-log.md](history/memory-log.md)：最近仍影响实现判断的事实，只在需要近期原因时打开
 
 ## 设计文档
 
@@ -41,15 +28,19 @@
 - `design/boardroom-data-contracts.md`
 - `design/boardroom-ui-*.md`
 
-## 历史与附录
+## 历史归档
 
-- [todo/completed-capabilities.md](todo/completed-capabilities.md)：已完成主线能力和已收口批次
-- [roadmap-reset/rationale.md](roadmap-reset/rationale.md)：路线纠偏的长版背景
-- `history/archive/`：只有在需要精确历史原因、旧验证记录或兼容细节时才看
+- [archive/README.md](archive/README.md)：旧 spec、旧计划、旧分析和历史评估的入口
+- [task-backlog/done.md](task-backlog/done.md)：已完成任务卡片和完成补记
+- [todo/completed-capabilities.md](todo/completed-capabilities.md)：已落地主线能力清单
+- [history/archive/](history/archive/)：详细 memory log 和旧验证流水
+- [roadmap-reset/rationale.md](roadmap-reset/rationale.md)：路线纠偏长版背景，按需看
 
 ## 阅读规则
 
-- 默认固定顺序：`README.md -> doc/README.md -> mainline-truth.md -> roadmap-reset.md -> TODO.md -> history/context-baseline.md -> history/memory-log.md`
-- 需要任务细节时再进 `task-backlog/active.md` 或 `task-backlog/done.md`
+- 默认固定顺序：`README.md -> doc/README.md -> mainline-truth.md -> roadmap-reset.md -> TODO.md`
+- 需要当前任务时再进 `task-backlog/active.md`
 - 需要排后续顺序时再进 `milestone-timeline.md`
-- `TODO.md` 只保留当前批次与条件批次；远期储备统一看 `milestone-timeline.md` 与 `todo/postponed.md`
+- 需要稳定规则时再进 `history/context-baseline.md`
+- 需要最近几天的具体变化原因时再进 `history/memory-log.md`
+- 需要旧计划、旧评估或旧 spec 时，统一从 `archive/README.md` 进入

@@ -1,17 +1,18 @@
 # Boardroom OS 路线纠偏决议
 
 > 生效时间：2026-03-31
+> 当前阶段说明：本地单机 MVP 已跑通；自 2026-04-10 起，主线进入 `P0-COR` 大型纠偏重构。
 > 用法：这份短版只保留当前还会影响决策的规则。长版背景看 `roadmap-reset/rationale.md`，整段提示词看 `roadmap-reset/agent-reset-prompt.md`。
 
 ## 当前阶段唯一主线
 
-Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
+Boardroom OS 当前阶段固定为“本地单机 MVP 已跑通后的主线纠偏重构”：
 
-1. 本地单机可运行
-2. 事件流与投影是系统真相源
-3. Ticket 驱动无状态执行器推进工作
-4. Maker-Checker 与 Review Room 构成真实质量闭环
-5. React Boardroom UI 只做最薄治理控制壳
+1. 本地单机可运行仍是底座，不重开公网平台叙事
+2. canonical 协议要收成单一真相，不再多口径并存
+3. workflow 推进要收成单一 controller，不再让多套调度语义并行
+4. `BUILD / CHECK / CLOSEOUT` 要收正为真实源码交付和硬门禁
+5. React Boardroom UI 继续只做最薄治理控制壳
 
 任何不直接服务这条主线的新增复杂度，都默认延后。
 
@@ -30,9 +31,9 @@ Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 - 用结构化事件、结构化状态和结构化工单治理 Agent Team 的系统
 - 先把执行闭环和治理闭环做短、做稳，再补前端壳的产品
 
-## MVP 完成口径
+## 阶段切换事实
 
-只有下面几件事都成立，当前阶段才算真正收口：
+下面这些事实已经成立，所以当前阶段不再是“继续补 MVP”，而是“纠偏主线实现”：
 
 - 用户可以在本地启动系统并初始化一个 workflow
 - CEO / Worker 路径可以把任务拆分并推进到可交付结果
@@ -44,7 +45,8 @@ Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 当前补记：
 
 - 本地主闭环已经真实可跑，会议室最小版也已落地
-- 但冻结能力隔离、后置增强判断、UI/文档收口仍要继续按这套边界推进
+- 但 2026-04-10 live 长测已经证明：当前 `BUILD` 仍会退化成“文档式 artifact 交付”，closeout 也还没把真实源码交付设成硬门禁
+- 所以后续最高优先级不再是扩角色、扩 provider 或补治理壳，而是先完成 `P0-COR`
 
 ## 当前明确不做
 
@@ -83,7 +85,7 @@ Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 
 ## 新愿景吸收规则
 
-`feature-spec` 第 `58–75` 条的吸收方式固定按下面四类处理：
+已归档的 [archive/specs/feature-spec.md](archive/specs/feature-spec.md) 第 `58–75` 条，吸收方式固定按下面四类处理：
 
 - `已在规划内`：写回 `milestone-timeline.md` 和 `task-backlog/active.md`，不把远期愿景直接抬进 `TODO.md`
 - `条件纳入`：只在触发条件成立时进入 `TODO.md` 的 `C1` 条件批次，并在任务库里保持未开启或条件开启状态
@@ -111,10 +113,10 @@ Boardroom OS 当前阶段固定为“本地单机 Agent Delivery OS MVP”：
 3. `doc/mainline-truth.md`
 4. `doc/roadmap-reset.md`
 5. `doc/TODO.md`
-6. `doc/history/context-baseline.md`
-7. `doc/history/memory-log.md`
+6. 只有在需要稳定规则时，才读 `doc/history/context-baseline.md`
+7. 只有在需要最近变化原因时，才读 `doc/history/memory-log.md`
 8. 只按需读相关设计文档
-9. 只有在需要精确历史原因、原始验证记录或旧兼容细节时，才看 `doc/history/archive/*`
+9. 只有在需要旧计划、旧 spec、历史评估或旧兼容细节时，才看 `doc/archive/*` 和 `doc/history/archive/*`
 
 ## 延伸资料
 

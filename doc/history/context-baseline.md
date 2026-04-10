@@ -1,13 +1,13 @@
 # Context Baseline
 
-> Stable context that rarely changes. Read this after `doc/mainline-truth.md` and before `doc/history/memory-log.md`.
+> Stable context that rarely changes. Read this only after `doc/mainline-truth.md` and `doc/TODO.md`, and only when you need stable rules or architecture baseline.
 
 ## How To Use This File
 
 - Use this file for product model, governance rules, stable architecture, and frozen boundaries.
 - Use `doc/mainline-truth.md` for current executable truth.
 - Use `doc/TODO.md` for the current action list.
-- Use `doc/history/memory-log.md` only for recent changes that still affect implementation decisions.
+- Use `doc/history/memory-log.md` only when recent changes still affect implementation decisions.
 
 ## Product Model
 
@@ -24,6 +24,7 @@
 - CEO should remain outside the workflow state machine: it reads snapshots, emits controlled actions, and does not become a long-lived stateful node.
 - Formal dispatch intent should come from CEO based on the employee registry and projections; the scheduler should only execute deterministic readiness, lease, retry, and wakeup mechanics.
 - Runtime should keep work moving autonomously and escalate only on defined blocking, risk, or approval conditions.
+- Current large refactor priority is protocol/controller/source-deliverable convergence; do not reopen role/provider expansion ahead of that.
 - Parallel implementation / serial closeout is a governance preference, not current runtime scheduling policy.
 - Documentation governance currently lives in the maintained doc stack (`README` / `mainline-truth` / `roadmap-reset` / `TODO` / `task-backlog` / `history`), not in a separate system engine.
 - Completion currently means code, config, UI, tests, evidence, and affected docs should be aligned before downstream claims; for now this is a checker / closeout expectation, not a hard state-machine gate.
@@ -49,4 +50,4 @@
 - `doc/mainline-truth.md`: current code truth and support matrix
 - `doc/roadmap-reset.md`: current boundary and decision rules
 - `doc/TODO.md`: current pending work only
-- `doc/history/memory-log.md`: recent implementation memory only
+- `doc/history/memory-log.md`: recent implementation memory only, not default first-read

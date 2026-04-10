@@ -1,60 +1,33 @@
 # Active Task Backlog
 
-> 说明：这里只保留当前仍未关闭、仍可能被反复读取的任务。已完成的详细任务卡片和完成补记统一看 `done.md`。
+> 最后更新：2026-04-10
+> 说明：这里只保留当前仍未关闭、仍会影响当前主线实现的任务。已完成的详细任务卡片和完成补记统一看 `done.md`。
 
-## 快速定位
+## 当前主线：`P0-COR`
 
-| 方向 | 任务范围 | 默认状态 | 备注 |
-|------|----------|----------|------|
-| 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | blocker 仍在，但不再占用当前主线 |
-
-## 当前判断
-
-- `P2-UI-009 / P2-UI-010` 已于 2026-04-09 完成：前端主线 UI 文案已恢复英文，`frontend/src` 当前不再残留中文硬编码；runtime/provider 前端契约、`CompletionCard` 空值分支和 `App.test.tsx` 等回归断言也已对齐当前真实字段与英文口径
-- `P2-M7-001` 到 `P2-M7-005` 已于 2026-04-06 收口：主线 evidence / completion 的最小证据消费面现在已经接到统一只读查看入口
-- `P2-RET-006` 已于 2026-04-06 显式纳入并收口：execution package 与 rendered `SYSTEM_CONTROLS` 现在会暴露结构化 `org_context`，继续保持 `L1` 边界，不引入新存储或新检索通道
-- `P2-CEO-001` 已于 2026-04-07 手动纳入并收口：`project-init` 现在可先打开 `REQUIREMENT_ELICITATION` 板审，董事会在现有 Review Room 里提交结构化答卷后，再继续 scope kickoff / scope review
-- `P2-MTG-011` 已于 2026-04-07 手动纳入并收口：会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`，Meeting Room 默认先看决策视图，会议来源 follow-up ticket 会额外带 ADR 摘要
-- `P2-CEO-002` 已于 2026-04-07 手动纳入并收口：OpenAI Compat live CEO 现在会先消费当前 workflow 内 `reuse_candidates`，优先复用已有完成交付、已关闭会议或恢复现有工作；deterministic fallback 保持不变
-- `P2-PRV-001 / P2-PRV-005 / P2-PRV-006` 已于 2026-04-07 手动纳入并收口：runtime provider 已从单一 OpenAI 表单升级为最小 registry，当前真实支持 `OpenAI Compat / Claude Code CLI`，并开放现有真实角色的默认 provider / model 绑定
-- `P2-PRV-002 / P2-PRV-003 / P2-PRV-004` 已于 2026-04-07 手动纳入并收口：provider registry 现在会暴露结构化 `capability_tags[]`、每个 provider 的 `health_status / health_reason`，并支持最小 `fallback_provider_ids[]`；运行时与 CEO 只在 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE` 时尝试满足目标能力底线的备选 provider
-- `P2-PRV-007 / P2-PRV-008` 已于 2026-04-08 手动提升并收口：`ticket-create` 与 `CEO create-ticket` 现已补入可选 `runtime_preference`；provider registry / projection / 前端设置抽屉现已补入 `cost_tier / participation_policy`；运行时与 CEO shadow 审计现在都会记录 `preferred_* / actual_* / selection_reason / policy_reason`
-- `P2-PRV-009 / P2-PRV-010` 已于 2026-04-09 完成（路线外补记）：Provider Settings 已重构成多 provider center，当前读写主形状为 `providers[] / provider_model_entries[] / role_bindings[]`；旧固定 provider 配置升级后按空配置处理，不再迁移保留
-- 当前新配置流程只真实开放 OpenAI-compatible Responses provider；连通性测试会在流式不支持时自动回退到非流式并返回标准化 provider 结果，模型刷新只保留仍存在的已勾选模型；CEO / role 绑定改成消费有序 `provider_model_entry_refs[]`，并支持 `max_context_window_override`
-- `P2-GOV-001` 已于 2026-04-07 手动纳入并收口：后端先补了治理模板基础目录，给后续角色目录和文档链打底
-- `P2-GOV-002` 已于 2026-04-07 手动纳入并收口：当前统一只读 `role_templates_catalog` 已覆盖 `3` 个 live 执行模板、`3` 个未来执行模板、`2` 个治理模板、`5` 类文档 metadata ref 和 `9` 个模板片段；`workforce` worker 还会返回 `source_template_id / source_fragment_refs`
-- `runtime-provider.future_binding_slots` 现在不再只看治理角色，而是从统一目录筛出未启用模板；当前最小覆盖 `backend_engineer / database_engineer / platform_sre / architect / cto`
-- `P2-GOV-003` 已于 2026-04-07 完成：后端现已补齐 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类治理文档 schema，统一保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / sections / followup_recommendations` 这组结构化关联；`ticket-result-submit` 会额外写回 `GOVERNANCE_DOCUMENT` 过程资产，`Context Compiler` 也能直接消费
-- `P2-DEC-001` 已于 2026-04-07 完成：ticket create spec 现已补入 `execution_contract / dispatch_intent`，CEO create-ticket 校验会拒绝不存在、非激活或能力不匹配的 assignee，runtime/provider 会优先按 `execution_contract.execution_target_ref` 选路，同时兼容 legacy `role_profile:*` binding
-- `P2-DEC-002` 已于 2026-04-07 完成：scheduler 现在会在 `dispatch_intent.assignee_employee_id` 存在时只租约给该 assignee，并把 `dependency_gate_refs / selected_by / wakeup_policy` 收进 `dispatch_intent`；ticket-create 会拒绝自依赖、缺失依赖和简单 dependency cycle；显式 dependency gate 的坏依赖会被 scheduler 转成结构化失败并触发 CEO 重决策
-- 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，不提前把下游 staged ticket 全部打死
-- `P2-DEC-003` 已于 2026-04-07 完成：ticket create spec 与 compile request 现已补入 `input_process_asset_refs[]`，`Context Compiler` 会先把 `input_artifact_refs[]` 兼容映射到过程资产，再统一走 resolver；当前已纳入 `artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary / governance_document` 七类过程资产
-- runtime 完成事件现在会写回结构化 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 都会自动映射回 follow-up / maker-checker 输入，避免 Context Compiler 继续直接猜底层存储类型
-- `P2-DEC-004` 已于 2026-04-07 完成：idle wakeup 现在只会在没有 open approval / incident、没有 active runtime、存在明确重决策信号且最近 ticket / node / approval / incident 变化已过冷却窗口时触发；runner 也已固定按 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace` 编排，并追加 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
-- `P2-GOV-004` 已于 2026-04-08 完成：CEO 现在可在当前 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不再作为硬白名单；五类治理文档当前已进入 runtime 支持矩阵，但仍只落在 `ui_designer_primary / frontend_engineer_primary` 两个 live 角色；当 CEO 创建的后续票显式挂在治理文档父票下时，会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产
-- `P2-GOV-005 / P2-GOV-006` 已于 2026-04-08 完成：`role_templates_catalog.role_templates[]` 现在会暴露结构化 `mainline_boundary`，明确区分 `LIVE_ON_MAINLINE / CATALOG_ONLY`；`workforce` 目录卡片和 `runtime-provider.future_binding_slots` 现在都会直接展示哪些 surface 仍被挡住，前端 provider 抽屉也改成 `Reserved bindings`
-- `P2-RLS-001` 已于 2026-04-08 完成：Board/workforce staffing 现在已覆盖 `backend / database / platform / architect / cto` 五类新增角色；审批通过后这些角色会真实进入 workforce lane，并保留一致的 `FREEZE / RESTORE / REPLACE` 动作和模板来源字段
-- `P2-RLS-002` 已于 2026-04-08 完成：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role
-- `P2-RLS-003` 已于 2026-04-08 完成：五类新增角色现在都已进入 formal runtime live path。`backend / database / platform` 已补入正式 build execution target，`architect / cto` 已进入正式治理文档 runtime 支持矩阵；Provider 设置抽屉不再把它们放在 `Reserved bindings`，`runtime-provider.future_binding_slots` 当前为空
-- 当前没有新的可直接开启主线任务；`P2-UI-009 / P2-UI-010` 收口后，剩余未关闭项都属于冻结后置
-
-## P1：冻结后置
-
-### 3.3 代码清理
-
-当前这两条任务仍未关闭，但已降级为冻结后置：
-
-- `P1-CLN-002`：主线 command 已经不再直接依赖 `tenant_id/workspace_id`，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留这组 data shape
-- `P1-CLN-003`：主线结果提交已与 upload session 解耦，但 upload 导入入口和 upload session 存储仍保留
-
-| ID | 标题 | 预估 | 状态 |
+| ID | 标题 | 状态 | 说明 |
 |----|------|------|------|
-| P1-CLN-002 | 移动多租户代码到 _frozen/ | 2h | 冻结后置 |
-| P1-CLN-003 | 移动对象存储代码到 _frozen/ | 2h | 冻结后置 |
+| `P0-COR-001` | canonical 协议收口 | 进行中 | 收正 CEO action、provider config、runtime result、ticket deliverable 的单一主线真相 |
+| `P0-COR-002` | 单一 workflow controller | 待开始 | 合并 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义 |
+| `P0-COR-003` | architect / meeting 硬约束 | 待开始 | 把 architect 真实参与和必要 meeting 证据升成主线门禁 |
+| `P0-COR-004` | 源码交付 contract 与 write set 重构 | 待开始 | 把 `BUILD` 从 `implementation_bundle` 迁到真实代码交付包，并放开真实工作区写入 |
+| `P0-COR-005` | checker / closeout 硬门禁 | 待开始 | 禁掉模板化成功包和宽松默认放行，强制校验源码、测试、构建和治理证据 |
+| `P0-COR-006` | live 场景回归与退出标准重建 | 待开始 | 用真实代码交付口径重跑 live 场景，重建通过标准 |
+
+## 冻结后置
+
+| ID | 标题 | 状态 | 说明 |
+|----|------|------|------|
+| `P1-CLN-002` | 移动多租户代码到 `_frozen/` | 冻结后置 | 主线 command 已解耦，但 runtime、`worker-admin / worker-runtime` contracts 和共享读面仍保留 `tenant_id/workspace_id` shape |
+| `P1-CLN-003` | 移动对象存储代码到 `_frozen/` | 冻结后置 | 结果提交流程已解耦，但 upload 导入入口和 upload session 存储仍保留 |
+
+## 条件批次
+
+- 当前没有新增开启的 `C1` 条件批次。
+- 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`。
 
 ## 依赖提醒
 
-- `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移
-- `P2-DEC-*`、`P2-GOV-*`、`P2-RLS-*` 与 `P2-UI-*` 已全部完成；当前没有新的可直接开启主线任务
-- `P2-PRV-*` 已全部完成；如果后续继续扩 provider 路由，仍应以后续 `P2-DEC-003/004` 已收口的边界为前置，并继续保持“新配置主流程只写已验证的 OpenAI-compatible Responses 能力”
-- 条件纳入任务进入执行前，必须先把触发原因写回 `TODO.md`
+- `P0-COR` 优先级高于 `M6`、`C1` 和所有新角色扩张。
+- `P1-CLN-*` 只有在 blocker 真正松动后才重新打开物理迁移。
+- 已完成的 `P2-DEC-* / P2-GOV-* / P2-RLS-* / P2-PRV-* / P2-UI-*` 只保留在 `done.md`，不再占用 active 视图。

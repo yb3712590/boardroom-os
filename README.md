@@ -40,17 +40,18 @@ Boardroom OS 更在意的是交付闭环：
 
 ### 🟡 正在补齐
 
-- 让后端、数据库、平台等更多角色拿到更直接的正式派工入口
-- 把技术决策、治理文档和高级角色能力接进更完整的正式主线
-- 把证据包、文档同步、交接材料做得更完整，让复核、留档和交接更省心
-- 把过程资产、项目地图、组织学习这些长期能力做成系统级能力
+- 收正 canonical 协议，不再让 CEO action、provider config、runtime result、ticket deliverable 多口径并存
+- 收正单一 workflow controller，不再让 scheduler、CEO 和 deterministic fallback 各自维护主线语义
+- 把 architect / meeting / source-code deliverable 升成主线硬约束
+- 把 BUILD / CHECK / CLOSEOUT 从“artifact JSON 交付”改成真实代码交付
 - 继续清理与当前 MVP 无关的旧能力和兼容壳，让主线更轻、更稳、更清楚
 
 ## 当前已经做到哪一步
 
 - 本地单机版本已经可以真实跑通，不再只是概念演示
+- 2026-04-10 的 live 长测已经确认：当前链路能跑到 closeout，但 `BUILD` 仍会退化成文档式 artifact 交付；当前主线已切到 `P0-COR` 大型纠偏
 - 当输入还不够清楚时，系统会先触发受控澄清，再继续推进主线
-- 系统里的 CEO 已经能创建任务、重试任务、招人、换人、冻结成员、恢复成员和发起会议
+- 系统里的 CEO 当前真实执行集是 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
 - 检查和复核已经进入日常流程，不靠一次性产出直接交差
 - 董事会可以在 `Inbox` 和 `Review Room` 里集中审批，不需要被零散流程反复打断
 - 后端保存事件和状态，前端负责把当前情况讲清楚，真实流程以后端投影为准
@@ -121,11 +122,9 @@ npm run test:run
 
 1. [doc/README.md](doc/README.md)
 2. [doc/mainline-truth.md](doc/mainline-truth.md)
-3. [doc/backend-runtime-guide.md](doc/backend-runtime-guide.md)
-4. [doc/roadmap-reset.md](doc/roadmap-reset.md)
-5. [doc/TODO.md](doc/TODO.md)
-6. [doc/history/context-baseline.md](doc/history/context-baseline.md)
-7. [doc/task-backlog.md](doc/task-backlog.md)
+3. [doc/roadmap-reset.md](doc/roadmap-reset.md)
+4. [doc/TODO.md](doc/TODO.md)
+5. [doc/backend-runtime-guide.md](doc/backend-runtime-guide.md)
 
 ## 项目原则
 

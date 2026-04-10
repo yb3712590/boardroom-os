@@ -1,24 +1,40 @@
 # TODO
 
-> 最后更新：2026-04-09
+> 最后更新：2026-04-10
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
 
-把项目继续收敛成一个本地单机可运行、可验证、可演示的 Agent Delivery OS MVP：
+先把项目从“文档式 artifact 交付闭环”收正成一个本地单机可运行、可验证、可演示，而且真正产出源码的 Agent Delivery OS MVP：
 
-- 事件溯源状态总线是真相源
-- Ticket 驱动无状态执行器推进工作
-- Maker-Checker 和 Review 闭环真实可用
+- canonical 协议是真相源，CEO action、provider config、runtime result、ticket deliverable 不再多口径并存
+- 单一 workflow controller 推进工作，scheduler / CEO / fallback 不再各自维护主线语义
+- BUILD / CHECK / CLOSEOUT 必须交真实源码、测试和构建证据，不再只交 artifact JSON
+- architect / meeting / source-code deliverable 是主线硬约束，不再只是“允许发生”
 - React 只做最薄治理壳，不接管工作流真相
 
-## 当前基线（2026-04-09）
+## 当前基线（最后一次静态验证：2026-04-09；2026-04-10 live 长测新增主线偏差）
 
 - backend：`./backend/.venv/bin/pytest tests/ -q` -> `533 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `84 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
+- 2026-04-10 live 集成测试新增确认：当前主线虽然能跑到 closeout，但 `BUILD` 仍以 `implementation_bundle` 为核心产物，默认 write set 仍偏 `artifacts/...`，closeout 收口的也还是结构化交付物，不是真实源码交付
 
 ## 当前批次
+
+### `P0-COR`：主线纠偏与真实代码交付重构
+
+状态：`进行中（2026-04-10，新纳入；与主线关系：live 集成测试已经证明当前默认主线会退化成文档式 artifact 交付，必须先重写协议、控制器和硬门禁，再继续新角色、新 provider 和后续治理增强）`
+
+- `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；alias、兼容字段和隐式补推只允许留在兼容入口，不再进入主运行链
+- `P0-COR-002` 待开始：收正单一 workflow controller，统一 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义、状态来源和完成定义，避免多控制器并存
+- `P0-COR-003` 待开始：把 `architect_primary` 真实招聘、真实 runtime 使用和必要治理 meeting 证据升成硬约束；满足特定 profile 或主线条件时，缺失即阻断 build / closeout
+- `P0-COR-004` 待开始：重写源码交付 contract，用“真实代码交付包”替换 `implementation_bundle` 独占主线；补齐 changed files、patch/diff、test/build outputs、文档同步和必要截图/API 证据，并把 write target 从仅 `artifacts/...` 扩到真实工作区或隔离 worktree
+- `P0-COR-005` 待开始：把 checker / closeout 改成硬门禁，不再接受模板化成功包、宽松 `APPROVED_WITH_NOTES` 默认放行，closeout 必须校验源码、测试、构建和治理证据
+- `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，要求真实代码落地、证据闭环和长链执行不退化
+- 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
+
+以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。
 
 ### `P2-UI`：前端英文恢复与 runtime UI 回归收口
 
@@ -30,7 +46,7 @@
 
 ### `P2-DEC`：派单边界与 role/runtime 解耦前置
 
-状态：`已完成（2026-04-07，新纳入后已于同日完成四个实现切片；与主线关系：在继续纳入新角色前，先把 role 模板、runtime 执行键、CEO 派单、过程资产闭环与 scheduler 的确定性执行边界收正到原子 Ticket 模型）`
+状态：`已完成（2026-04-07，新纳入后已于同日完成四个实现切片；与主线关系：这批只完成第一层解耦，先把 role 模板、runtime 执行键、CEO 派单、过程资产闭环与 scheduler 的确定性执行边界收正到原子 Ticket 模型；但 canonical 协议分裂、多 workflow controller 并存、BUILD 仍是 artifact 交付这些主线问题没有在这里解决，现已由 P0-COR 接管）`
 
 - `P2-DEC-001` 已完成（2026-04-07）：执行 target contract 与 role/runtime 解耦；ticket create spec 现已补入 `execution_contract / dispatch_intent`，CEO create-ticket 校验会拒绝不存在、非激活或能力不匹配的 assignee，runtime/provider 会优先按 `execution_contract.execution_target_ref` 选路，同时保留 legacy `role_profile:*` binding 兼容
 - `P2-DEC-002` 已完成（2026-04-07）：scheduler 现在会在 `dispatch_intent.assignee_employee_id` 存在时只租约给该 assignee，并把 `dependency_gate_refs / selected_by / wakeup_policy` 收进 `dispatch_intent`；ticket-create 会拒绝自依赖、缺失依赖和简单 dependency cycle；scheduler 会把显式 dependency gate 的坏依赖直接转成结构化失败并触发 CEO 重决策。对现有 `delivery_stage + parent_ticket_id` 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖，`FAILED / TIMED_OUT` 仍继续等待节点级 retry / recovery，避免打断 staged follow-up 主链
