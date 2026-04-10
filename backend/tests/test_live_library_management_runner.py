@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
-from tests.live.library_management_autopilot_live import build_scenario_paths, reset_scenario_root
+from tests.live.library_management_autopilot_live import (
+    _write_json,
+    build_scenario_paths,
+    reset_scenario_root,
+)
 
 
 def test_reset_scenario_root_recreates_expected_layout(tmp_path: Path):
@@ -19,3 +24,19 @@ def test_reset_scenario_root_recreates_expected_layout(tmp_path: Path):
     assert paths.developer_inspector_root.exists()
     assert paths.ticket_context_archive_root.exists()
     assert not stale_file.exists()
+
+
+def test_write_json_serializes_datetime_payloads(tmp_path: Path):
+    target_path = tmp_path / "report.json"
+
+    _write_json(
+        target_path,
+        {
+            "generated_at": datetime.fromisoformat("2026-04-10T03:36:00+08:00"),
+            "status": "FAILED",
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert '"generated_at": "2026-04-10 03:36:00+08:00"' in body
+    assert '"status": "FAILED"' in body

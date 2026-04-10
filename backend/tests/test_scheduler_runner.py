@@ -3134,6 +3134,168 @@ def test_scheduler_runner_routes_success_results_through_write_set_validation(
     ]
 
 
+def test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_workflow(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    project_response = client.post(
+        "/api/v1/commands/project-init",
+        json={
+            "north_star_goal": "Autopilot runner provider recovery",
+            "hard_constraints": [
+                "Keep governance explicit.",
+                "Allow CEO delegate to keep the workflow moving.",
+            ],
+            "budget_cap": 500000,
+            "deadline_at": None,
+            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+            "force_requirement_elicitation": False,
+        },
+    )
+    assert project_response.status_code == 200
+    assert project_response.json()["status"] == "ACCEPTED"
+    workflow_id = project_response.json()["causation_hint"].split(":", 1)[1]
+
+    repository = client.app.state.repository
+    create_source_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_provider_source_completed",
+            node_id="node_runner_provider_source_completed",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    lease_source_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json={
+            "max_dispatches": 10,
+            "idempotency_key": "scheduler-tick:runner-provider-source",
+        },
+    )
+    source_ticket = repository.get_current_ticket_projection("tkt_runner_provider_source_completed")
+    assert source_ticket is not None
+    start_source_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": source_ticket["ticket_id"],
+            "node_id": source_ticket["node_id"],
+            "started_by": source_ticket["lease_owner"],
+            "idempotency_key": f"ticket-start:{workflow_id}:{source_ticket['ticket_id']}",
+        },
+    )
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="INCIDENT_OPENED",
+            actor_type="system",
+            actor_id="runtime",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:provider-open",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_runner_provider_open",
+                "ticket_id": source_ticket["ticket_id"],
+                "node_id": source_ticket["node_id"],
+                "provider_id": "prov_openai_compat",
+                "incident_type": "PROVIDER_EXECUTION_PAUSED",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "provider:prov_openai_compat",
+                "pause_reason": "UPSTREAM_UNAVAILABLE",
+                "latest_failure_kind": "UPSTREAM_UNAVAILABLE",
+                "latest_failure_message": "Provider transport failed after fallback completion.",
+                "latest_failure_fingerprint": "UPSTREAM_UNAVAILABLE",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type="CIRCUIT_BREAKER_OPENED",
+            actor_type="system",
+            actor_id="runtime",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:provider-open",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_runner_provider_open",
+                "ticket_id": source_ticket["ticket_id"],
+                "node_id": source_ticket["node_id"],
+                "provider_id": "prov_openai_compat",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": "provider:prov_openai_compat",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type="TICKET_COMPLETED",
+            actor_type="worker",
+            actor_id=str(source_ticket["lease_owner"]),
+            workflow_id=workflow_id,
+            idempotency_key=f"test-ticket-completed:{workflow_id}:{source_ticket['ticket_id']}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": source_ticket["ticket_id"],
+                "node_id": source_ticket["node_id"],
+                "completion_summary": "Source ticket completed through fallback execution.",
+                "artifact_refs": [],
+                "produced_process_assets": [],
+                "documentation_updates": [],
+                "board_review_requested": False,
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:01+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    create_blocked_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_provider_blocked",
+            node_id="node_runner_provider_blocked",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_execute_compiled_execution_package",
+        lambda _execution_package: _runtime_success_result(),
+    )
+
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-autopilot-provider-recovery",
+        max_dispatches=10,
+    )
+
+    recovered_incident = repository.get_incident_projection("inc_runner_provider_open")
+    blocked_ticket = repository.get_current_ticket_projection("tkt_runner_provider_blocked")
+
+    assert create_source_response.status_code == 200
+    assert create_source_response.json()["status"] == "ACCEPTED"
+    assert lease_source_response.status_code == 200
+    assert lease_source_response.json()["status"] == "ACCEPTED"
+    assert start_source_response.status_code == 200
+    assert start_source_response.json()["status"] == "ACCEPTED"
+    assert create_blocked_response.status_code == 200
+    assert create_blocked_response.json()["status"] == "ACCEPTED"
+    assert recovered_incident is not None
+    assert recovered_incident["status"] == "RECOVERING"
+    assert recovered_incident["circuit_breaker_state"] == "CLOSED"
+    assert recovered_incident["payload"]["followup_action"] == "RESTORE_ONLY"
+    assert blocked_ticket is not None
+    assert blocked_ticket["status"] == "COMPLETED"
+
+
 def test_scheduler_skips_excluded_employee_ids_and_leases_backup_worker(client):
     workflow_id = _project_init(client, "Excluded worker routing")
     _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")

@@ -34,6 +34,7 @@ from app.core.constants import (
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -570,6 +571,113 @@ def _build_runtime_success_payload(
     execution_package: CompiledExecutionPackage,
     artifact_refs: list[str],
 ) -> dict[str, Any]:
+    def _process_asset_source_refs() -> list[str]:
+        seen_refs: set[str] = set()
+        refs: list[str] = []
+        for block in execution_package.atomic_context_bundle.context_blocks:
+            if getattr(block, "source_kind", None) != "PROCESS_ASSET":
+                continue
+            source_ref = str(getattr(block, "source_ref", "") or "").strip()
+            if not source_ref or source_ref in seen_refs:
+                continue
+            seen_refs.add(source_ref)
+            refs.append(source_ref)
+        return refs
+
+    def _default_backlog_ticket_specs() -> list[dict[str, Any]]:
+        return [
+            {"ticket_id": "BR-T01", "name": "认证与 RBAC 基础", "priority": "P0", "scope": ["认证入口", "权限模型", "会话守卫"]},
+            {"ticket_id": "BR-T02", "name": "前端壳层与设计系统底座", "priority": "P0", "scope": ["主布局", "导航骨架", "基础组件"]},
+            {"ticket_id": "BR-T03", "name": "服务与 API 基础骨架", "priority": "P0", "scope": ["服务骨架", "接口约定", "错误规范"]},
+            {"ticket_id": "BR-T04", "name": "数据模型与迁移底座", "priority": "P0", "scope": ["核心表设计", "迁移脚本", "索引约束"]},
+            {"ticket_id": "BR-T05", "name": "部署与观测基础能力", "priority": "P0", "scope": ["环境配置", "日志追踪", "健康检查"]},
+            {"ticket_id": "BR-T06", "name": "读者档案模块", "priority": "P1", "scope": ["读者档案", "状态管理", "权限挂接"]},
+            {"ticket_id": "BR-T07", "name": "馆藏目录维护模块", "priority": "P1", "scope": ["馆藏录入", "分类信息", "馆藏状态"]},
+            {"ticket_id": "BR-T08", "name": "目录检索与筛选", "priority": "P1", "scope": ["关键字检索", "筛选器", "结果分页"]},
+            {"ticket_id": "BR-T09", "name": "借阅办理主流程", "priority": "P1", "scope": ["借阅创建", "库存校验", "借阅记录"]},
+            {"ticket_id": "BR-T10", "name": "归还与续借流程", "priority": "P1", "scope": ["归还处理", "续借规则", "状态同步"]},
+            {"ticket_id": "BR-T11", "name": "预约排队能力", "priority": "P1", "scope": ["预约创建", "队列顺序", "预约释放"]},
+            {"ticket_id": "BR-T12", "name": "罚金与逾期规则", "priority": "P1", "scope": ["罚金规则", "账单记录", "状态提醒"]},
+            {"ticket_id": "BR-T13", "name": "库存调整与馆藏异动", "priority": "P1", "scope": ["库存调整", "损坏遗失", "异动记录"]},
+            {"ticket_id": "BR-T14", "name": "盘点工作流", "priority": "P1", "scope": ["盘点任务", "差异确认", "盘点结果"]},
+            {"ticket_id": "BR-T15", "name": "公告中心", "priority": "P2", "scope": ["公告发布", "展示位", "过期管理"]},
+            {"ticket_id": "BR-T16", "name": "管理员工作台", "priority": "P1", "scope": ["运营看板", "快捷入口", "关键提醒"]},
+            {"ticket_id": "BR-T17", "name": "读者端首页与个人中心", "priority": "P1", "scope": ["读者首页", "个人借阅状态", "操作入口"]},
+            {"ticket_id": "BR-T18", "name": "审计日志主链路", "priority": "P1", "scope": ["操作日志", "关键事件留痕", "查询接口"]},
+            {"ticket_id": "BR-T19", "name": "统计报表聚合", "priority": "P1", "scope": ["借阅统计", "库存统计", "预约罚金统计"]},
+            {"ticket_id": "BR-T20", "name": "统计可视化仪表盘", "priority": "P2", "scope": ["图表组件", "指标卡片", "趋势视图"]},
+            {"ticket_id": "BR-T21", "name": "通知与提醒编排", "priority": "P2", "scope": ["预约提醒", "逾期提醒", "公告触达"]},
+            {"ticket_id": "BR-T22", "name": "导入导出能力", "priority": "P2", "scope": ["批量导入", "导出报表", "失败回执"]},
+            {"ticket_id": "BR-T23", "name": "演示数据与初始化脚本", "priority": "P2", "scope": ["演示种子数据", "初始化脚本", "场景覆盖"]},
+            {"ticket_id": "BR-T24", "name": "无障碍与响应式修整", "priority": "P2", "scope": ["键盘访问", "对比度", "移动端适配"]},
+            {"ticket_id": "BR-T25", "name": "核心 API 集成测试", "priority": "P1", "scope": ["认证集成", "借阅链路", "预约罚金链路"]},
+            {"ticket_id": "BR-T26", "name": "关键页面回归测试", "priority": "P1", "scope": ["首页回归", "馆藏检索回归", "借阅归还回归"]},
+            {"ticket_id": "BR-T27", "name": "权限与安全审计", "priority": "P1", "scope": ["权限校验", "越权场景", "敏感操作审计"]},
+            {"ticket_id": "BR-T28", "name": "发布流水线与部署脚本", "priority": "P1", "scope": ["构建发布", "环境变量", "部署步骤"]},
+            {"ticket_id": "BR-T29", "name": "运行监控与运维手册", "priority": "P1", "scope": ["监控指标", "告警规则", "运行手册"]},
+            {"ticket_id": "BR-T30", "name": "验收演示与交付证据整理", "priority": "P1", "scope": ["验收脚本", "演示路径", "交付证据"]},
+        ]
+
+    def _default_backlog_dependency_graph() -> list[dict[str, Any]]:
+        return [
+            {"ticket_id": "BR-T01", "depends_on": [], "reason": "先把认证与角色边界定住。"},
+            {"ticket_id": "BR-T02", "depends_on": [], "reason": "前端壳层和设计系统可以先行。"},
+            {"ticket_id": "BR-T03", "depends_on": [], "reason": "服务骨架需要尽早稳定。"},
+            {"ticket_id": "BR-T04", "depends_on": [], "reason": "数据结构是业务主链的底座。"},
+            {"ticket_id": "BR-T05", "depends_on": [], "reason": "部署与观测基础能力先行，后续可复用。"},
+            {"ticket_id": "BR-T06", "depends_on": ["BR-T01", "BR-T03", "BR-T04"], "reason": "读者档案依赖认证、服务和数据底座。"},
+            {"ticket_id": "BR-T07", "depends_on": ["BR-T03", "BR-T04"], "reason": "馆藏目录依赖服务与数据底座。"},
+            {"ticket_id": "BR-T08", "depends_on": ["BR-T02", "BR-T03", "BR-T04", "BR-T07"], "reason": "检索能力需要界面壳层和目录主数据。"},
+            {"ticket_id": "BR-T09", "depends_on": ["BR-T01", "BR-T03", "BR-T04", "BR-T07"], "reason": "借阅主流程依赖权限、服务、数据和馆藏目录。"},
+            {"ticket_id": "BR-T10", "depends_on": ["BR-T09"], "reason": "归还与续借建立在借阅主流程上。"},
+            {"ticket_id": "BR-T11", "depends_on": ["BR-T07", "BR-T09"], "reason": "预约依赖馆藏与借阅状态。"},
+            {"ticket_id": "BR-T12", "depends_on": ["BR-T09", "BR-T10"], "reason": "罚金规则依赖借阅与归还状态。"},
+            {"ticket_id": "BR-T13", "depends_on": ["BR-T07", "BR-T04"], "reason": "库存异动依赖目录和库存数据。"},
+            {"ticket_id": "BR-T14", "depends_on": ["BR-T13"], "reason": "盘点在库存异动能力之上。"},
+            {"ticket_id": "BR-T15", "depends_on": ["BR-T02", "BR-T03"], "reason": "公告中心依赖前端壳层和服务骨架。"},
+            {"ticket_id": "BR-T16", "depends_on": ["BR-T02", "BR-T03", "BR-T07"], "reason": "管理员工作台需要基础界面和核心目录数据。"},
+            {"ticket_id": "BR-T17", "depends_on": ["BR-T01", "BR-T02", "BR-T07"], "reason": "读者端首页依赖登录态、前端壳层和目录数据。"},
+            {"ticket_id": "BR-T18", "depends_on": ["BR-T03", "BR-T04", "BR-T05"], "reason": "审计日志依赖服务、数据和观测基础。"},
+            {"ticket_id": "BR-T19", "depends_on": ["BR-T03", "BR-T04", "BR-T18"], "reason": "统计报表依赖业务数据和审计链路。"},
+            {"ticket_id": "BR-T20", "depends_on": ["BR-T02", "BR-T19"], "reason": "可视化仪表盘依赖前端壳层和统计聚合。"},
+            {"ticket_id": "BR-T21", "depends_on": ["BR-T03", "BR-T05", "BR-T11", "BR-T12", "BR-T15"], "reason": "通知编排依赖服务基础、观测和业务触发点。"},
+            {"ticket_id": "BR-T22", "depends_on": ["BR-T03", "BR-T04", "BR-T07", "BR-T13"], "reason": "导入导出建立在主数据和库存能力上。"},
+            {"ticket_id": "BR-T23", "depends_on": ["BR-T04", "BR-T07", "BR-T09", "BR-T13"], "reason": "演示数据需要核心领域完成后统一整理。"},
+            {"ticket_id": "BR-T24", "depends_on": ["BR-T02", "BR-T17", "BR-T20"], "reason": "无障碍与响应式修整放在关键页面成型后。"},
+            {"ticket_id": "BR-T25", "depends_on": ["BR-T03", "BR-T06", "BR-T09", "BR-T11", "BR-T12", "BR-T13"], "reason": "API 集成测试依赖核心业务链路落地。"},
+            {"ticket_id": "BR-T26", "depends_on": ["BR-T17", "BR-T09", "BR-T10", "BR-T11", "BR-T15", "BR-T20"], "reason": "关键页面回归测试依赖主要页面和交互完成。"},
+            {"ticket_id": "BR-T27", "depends_on": ["BR-T01", "BR-T06", "BR-T09", "BR-T11", "BR-T18"], "reason": "权限与安全审计要在核心链路和日志链路完成后做。"},
+            {"ticket_id": "BR-T28", "depends_on": ["BR-T05", "BR-T25", "BR-T26"], "reason": "发布流水线放在测试主链稳定后。"},
+            {"ticket_id": "BR-T29", "depends_on": ["BR-T05", "BR-T18", "BR-T28"], "reason": "运维手册依赖观测和发布链路定型。"},
+            {"ticket_id": "BR-T30", "depends_on": ["BR-T23", "BR-T26", "BR-T28", "BR-T29"], "reason": "最终验收证据需要演示数据、回归结果和发布运维资料。"},
+        ]
+
+    def _default_backlog_recommendation_sections() -> list[dict[str, Any]]:
+        ticket_specs = _default_backlog_ticket_specs()
+        return [
+            {
+                "section_id": "recommended_ticket_split",
+                "label": "推荐工单拆分",
+                "summary": "把治理链收敛为可执行的原子实施任务。",
+                "content_markdown": "先补基础底座，再按业务模块推进，最后收口测试、发布、运维和验收证据。",
+                "content_json": {
+                    "tickets": ticket_specs,
+                },
+            },
+            {
+                "section_id": "dependency_and_sequence_plan",
+                "label": "依赖关系与实施顺序",
+                "summary": "基础能力先行，业务能力并行，质量与发布最后收口。",
+                "content_markdown": "认证、前端壳层、服务、数据、观测是底座；其上展开认证、目录、借阅、预约、罚金、库存、报表、测试、发布和 closeout 前证据整理。",
+                "content_json": {
+                    "dependency_graph": _default_backlog_dependency_graph(),
+                    "recommended_sequence": [
+                        f"{item['ticket_id']} {item['name']}" for item in ticket_specs
+                    ],
+                },
+            },
+        ]
+
     if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
         owner_role = execution_package.compiled_role.employee_role_type
         build_owner_role = _default_build_followup_owner_role(owner_role)
@@ -620,6 +728,7 @@ def _build_runtime_success_payload(
     if execution_package.execution.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
         ticket_id = execution_package.meta.ticket_id
         output_schema_ref = execution_package.execution.output_schema_ref
+        source_process_asset_refs = _process_asset_source_refs()
         return {
             "document_kind_ref": output_schema_ref,
             "title": f"{output_schema_ref} for ticket {ticket_id}",
@@ -628,28 +737,36 @@ def _build_runtime_success_payload(
             ),
             "linked_document_refs": ["doc://governance/upstream/current"],
             "linked_artifact_refs": list(artifact_refs),
-            "source_process_asset_refs": [],
+            "source_process_asset_refs": source_process_asset_refs,
             "decisions": [
                 "Keep the next delivery step explicit and document-first.",
             ],
             "constraints": [
                 "Do not widen the current MVP boundary while preparing governance documents.",
             ],
-            "sections": [
-                {
-                    "section_id": "section_summary",
-                    "label": "Summary",
-                    "summary": f"Document-first guidance for {ticket_id}.",
-                    "content_markdown": (
-                        f"Prepared `{output_schema_ref}` so the next ticket can consume structured guidance "
-                        "instead of improvising from raw context."
-                    ),
-                }
-            ],
+            "sections": (
+                _default_backlog_recommendation_sections()
+                if output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF
+                else [
+                    {
+                        "section_id": "section_summary",
+                        "label": "Summary",
+                        "summary": f"Document-first guidance for {ticket_id}.",
+                        "content_markdown": (
+                            f"Prepared `{output_schema_ref}` so the next ticket can consume structured guidance "
+                            "instead of improvising from raw context."
+                        ),
+                    }
+                ]
+            ),
             "followup_recommendations": [
                 {
                     "recommendation_id": "rec_document_first_followup",
-                    "summary": "Compile this governance document into the next implementation-facing ticket.",
+                    "summary": (
+                        "Compile this governance document into the next implementation-facing ticket split."
+                        if output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF
+                        else "Compile this governance document into the next implementation-facing ticket."
+                    ),
                     "target_role": execution_package.compiled_role.employee_role_type,
                 }
             ],

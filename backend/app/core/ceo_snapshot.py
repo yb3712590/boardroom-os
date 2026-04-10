@@ -20,6 +20,10 @@ _WORKING_TICKET_STATUSES = {
     "LEASED",
     "EXECUTING",
 }
+_TERMINAL_TICKET_STATUSES = {
+    "COMPLETED",
+    "CANCELLED",
+}
 _RECENT_COMPLETED_TICKET_LIMIT = 5
 _RECENT_CLOSED_MEETING_LIMIT = 3
 
@@ -36,7 +40,7 @@ def _enum_value(value: Any) -> Any:
 
 def _build_idle_maintenance_signals(tickets: list[dict[str, Any]]) -> list[str]:
     signals: list[str] = []
-    if not tickets:
+    if not tickets or all(ticket["status"] in _TERMINAL_TICKET_STATUSES for ticket in tickets):
         signals.append("NO_TICKET_STARTED")
 
     if any(ticket["status"] == "PENDING" for ticket in tickets):

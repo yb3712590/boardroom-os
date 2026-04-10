@@ -178,6 +178,20 @@ def _extract_streaming_responses_output(
     output_parts: list[str] = []
     buffer = ""
 
+    def _finalize_output(response_payload: dict[str, object] | None = None) -> tuple[str, str | None]:
+        combined = "".join(output_parts).strip()
+        if combined:
+            return combined, response_id
+        if isinstance(response_payload, dict):
+            return _extract_output_text(response_payload), response_id
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="PROVIDER_BAD_RESPONSE",
+            message="Streaming responses call did not return any assistant text output.",
+            failure_detail={
+                "provider_response_id": response_id,
+            },
+        )
+
     for chunk in response.iter_text():
         if not chunk:
             continue
@@ -191,16 +205,7 @@ def _extract_streaming_responses_output(
             if not data:
                 continue
             if data == "[DONE]":
-                combined = "".join(output_parts).strip()
-                if not combined:
-                    raise OpenAICompatProviderBadResponseError(
-                        failure_kind="PROVIDER_BAD_RESPONSE",
-                        message="Streaming chat completion did not return any assistant text output.",
-                        failure_detail={
-                            "provider_response_id": response_id,
-                        },
-                    )
-                return combined, response_id
+                return _finalize_output()
             try:
                 event_payload = json.loads(data)
             except ValueError as exc:
@@ -226,17 +231,10 @@ def _extract_streaming_responses_output(
             response_payload = event_payload.get("response")
             if isinstance(response_payload, dict) and response_id is None and response_payload.get("id") is not None:
                 response_id = str(response_payload.get("id"))
+            if event_type == "response.completed":
+                return _finalize_output(response_payload if isinstance(response_payload, dict) else None)
 
-    combined = "".join(output_parts).strip()
-    if combined:
-        return combined, response_id
-    raise OpenAICompatProviderBadResponseError(
-        failure_kind="PROVIDER_BAD_RESPONSE",
-        message="Streaming responses call ended without any assistant text output.",
-        failure_detail={
-            "provider_response_id": response_id,
-        },
-    )
+    return _finalize_output()
 
 
 def _responses_request_payload(

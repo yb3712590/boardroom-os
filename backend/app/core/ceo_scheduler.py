@@ -91,6 +91,8 @@ def list_due_ceo_maintenance_workflows(
 
     due_workflows: list[dict[str, Any]] = []
     for workflow in repository.list_workflow_projections():
+        if str(workflow.get("status") or "") != "EXECUTING":
+            continue
         snapshot = build_ceo_shadow_snapshot(
             repository,
             workflow_id=str(workflow["workflow_id"]),

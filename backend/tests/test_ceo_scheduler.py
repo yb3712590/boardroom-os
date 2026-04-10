@@ -888,6 +888,7 @@ def test_ceo_autopilot_project_init_kicks_off_architecture_brief_before_scope_co
     assert created_events
     assert created_events[0]["payload"]["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
     assert created_events[0]["payload"]["node_id"] == "node_ceo_architecture_brief"
+    assert any(ref.endswith("/board-brief.md") for ref in created_events[0]["payload"]["input_artifact_refs"])
 
 
 def test_ceo_shadow_snapshot_includes_normalized_profiles_and_summary(client):
@@ -2169,6 +2170,143 @@ def test_ceo_shadow_run_normalizes_flat_create_ticket_action_shape_from_live_pro
     ]
 
 
+def test_ceo_shadow_run_normalizes_live_action_type_alias_field(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_live_type_alias", "CEO live action type alias normalization")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Create the next governance ticket using a loose type field.",
+                    "actions": [
+                        {
+                            "type": "CREATE_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_ceo_architecture_brief",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                                "summary": "Write the architecture brief with the normalized action type alias.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_type_alias_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:type-alias",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["provider_response_id"] == "resp_ceo_type_alias_1"
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+
+def test_ceo_shadow_run_idle_governance_followup_infers_dependency_chain_and_process_assets(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_idle_gov_chain", "CEO idle governance chain inference")
+    _set_deterministic_mode(client)
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_architecture_doc",
+        node_id="node_parent_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete.",
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_technology_decision",
+        node_id="node_parent_technology_decision",
+        output_schema_ref=TECHNOLOGY_DECISION_SCHEMA_REF,
+        summary="Technology decision is complete.",
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_milestone_plan",
+        node_id="node_parent_milestone_plan",
+        output_schema_ref="milestone_plan",
+        summary="Milestone plan is complete.",
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_detailed_design",
+        node_id="node_parent_detailed_design",
+        output_schema_ref=DETAILED_DESIGN_SCHEMA_REF,
+        summary="Detailed design is complete.",
+    )
+
+    _set_live_provider(client)
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Advance to backlog recommendation using the existing governance chain.",
+                    "actions": [
+                        {
+                            "type": "CREATE_TICKET",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_ceo_backlog_recommendation",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+                                "summary": "Create backlog recommendation from the completed governance chain.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_idle_gov_chain_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-idle-gov-chain",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["provider_response_id"] == "resp_ceo_idle_gov_chain_1"
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+
+    assert created_spec["output_schema_ref"] == BACKLOG_RECOMMENDATION_SCHEMA_REF
+    assert created_spec["dispatch_intent"]["dependency_gate_refs"] == [
+        "tkt_parent_architecture_doc",
+        "tkt_parent_technology_decision",
+        "tkt_parent_milestone_plan",
+        "tkt_parent_detailed_design",
+    ]
+    assert created_spec["parent_ticket_id"] == "tkt_parent_detailed_design"
+    assert "pa://governance-document/tkt_parent_architecture_doc" in created_spec["input_process_asset_refs"]
+    assert "pa://governance-document/tkt_parent_technology_decision" in created_spec["input_process_asset_refs"]
+    assert "pa://governance-document/tkt_parent_milestone_plan" in created_spec["input_process_asset_refs"]
+    assert "pa://governance-document/tkt_parent_detailed_design" in created_spec["input_process_asset_refs"]
+
+
 def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_leaves_fields_blank(
     client,
     monkeypatch,
@@ -2246,6 +2384,8 @@ def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_
         "node_backlog_followup_br_t01",
         "node_backlog_followup_br_t02",
     }
+
+
 
 
 def test_ceo_create_ticket_inherits_parent_governance_process_assets(client):
@@ -2909,6 +3049,48 @@ def test_idle_ceo_maintenance_targets_pending_workflow_once_per_interval(
     assert workflow_id in due_before
     assert runs[0]["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER
     assert workflow_id not in due_after
+
+
+def test_idle_ceo_maintenance_targets_workflow_with_only_completed_tickets(client, set_ticket_time):
+    set_ticket_time("2026-04-04T10:00:00+08:00")
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_completed_only", goal="CEO idle maintenance completed tickets")
+
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_completed_architecture",
+        node_id="node_completed_architecture",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_completed_technology",
+        node_id="node_completed_technology",
+        output_schema_ref=TECHNOLOGY_DECISION_SCHEMA_REF,
+    )
+
+    repository = client.app.state.repository
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-completed-only",
+    )
+    due_workflow_ids = {
+        item["workflow_id"]
+        for item in list_due_ceo_maintenance_workflows(
+            repository,
+            current_time=datetime.fromisoformat("2026-04-04T10:01:05+08:00"),
+            interval_sec=60,
+        )
+    }
+
+    assert snapshot["ticket_summary"]["completed_count"] == 2
+    assert snapshot["ticket_summary"]["working_count"] == 0
+    assert "NO_TICKET_STARTED" in snapshot["idle_maintenance"]["signal_types"]
+    assert workflow_id in due_workflow_ids
 
 
 def test_idle_ceo_maintenance_skips_workflow_waiting_for_board_review(client, set_ticket_time):

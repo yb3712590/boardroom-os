@@ -249,6 +249,34 @@ def test_invoke_openai_compat_response_uses_streaming_responses_by_default() -> 
     assert result.output_text == '{"ok":true}'
 
 
+def test_invoke_openai_compat_response_returns_after_response_completed_without_done_sentinel() -> None:
+    class _HangingStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield (
+                b'event: response.output_text.delta\n'
+                b'data: {"type":"response.output_text.delta","delta":"{\\"ok\\":true}"}\n\n'
+                b'event: response.completed\n'
+                b'data: {"type":"response.completed","response":{"id":"resp_stream_completed_only"}}\n\n'
+            )
+            raise httpx.ReadTimeout("stream left open after response.completed")
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_HangingStream(),
+        )
+
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        transport=httpx.MockTransport(_handler),
+    )
+
+    assert result.response_id == "resp_stream_completed_only"
+    assert result.output_text == '{"ok":true}'
+
+
 def test_connectivity_test_falls_back_to_non_streaming_responses_when_streaming_is_not_supported() -> None:
     request_urls: list[str] = []
 

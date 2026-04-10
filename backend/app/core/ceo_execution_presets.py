@@ -573,6 +573,11 @@ def build_ceo_create_ticket_command(
         role_profile_ref=payload.role_profile_ref,
         output_schema_ref=payload.output_schema_ref,
     )
+    is_autopilot_architecture_kickoff = (
+        payload.node_id == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
+        and payload.output_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF
+        and payload.parent_ticket_id is None
+    )
     ticket_id = (
         build_project_init_scope_ticket_id(payload.workflow_id)
         if is_project_init_scope
@@ -581,19 +586,31 @@ def build_ceo_create_ticket_command(
     node_id = PROJECT_INIT_SCOPE_NODE_ID if is_project_init_scope else payload.node_id
     input_artifact_refs = (
         [build_project_init_brief_artifact_ref(payload.workflow_id)]
-        if is_project_init_scope
+        if is_project_init_scope or is_autopilot_architecture_kickoff
         else []
     )
     inherited_process_asset_refs: list[str] = []
-    if repository is not None and payload.parent_ticket_id and preset.output_schema_ref != CONSENSUS_DOCUMENT_SCHEMA_REF:
+    if repository is not None and preset.output_schema_ref != CONSENSUS_DOCUMENT_SCHEMA_REF:
+        source_ticket_ids: list[str] = []
+        if payload.parent_ticket_id:
+            source_ticket_ids.append(payload.parent_ticket_id)
+        if payload.dispatch_intent is not None:
+            for dependency_ticket_id in list(payload.dispatch_intent.dependency_gate_refs or []):
+                normalized_ticket_id = str(dependency_ticket_id).strip()
+                if normalized_ticket_id and normalized_ticket_id not in source_ticket_ids:
+                    source_ticket_ids.append(normalized_ticket_id)
         with repository.connection() as connection:
-            parent_created_spec = repository.get_latest_ticket_created_payload(connection, payload.parent_ticket_id) or {}
-            if str(parent_created_spec.get("output_schema_ref") or "").strip() in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
-                inherited_process_asset_refs = get_ticket_output_process_asset_refs(
+            for source_ticket_id in source_ticket_ids:
+                source_created_spec = repository.get_latest_ticket_created_payload(connection, source_ticket_id) or {}
+                if str(source_created_spec.get("output_schema_ref") or "").strip() not in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+                    continue
+                for process_asset_ref in get_ticket_output_process_asset_refs(
                     repository,
                     connection,
-                    payload.parent_ticket_id,
-                )
+                    source_ticket_id,
+                ):
+                    if process_asset_ref not in inherited_process_asset_refs:
+                        inherited_process_asset_refs.append(process_asset_ref)
     semantic_queries = [
         str(workflow.get("north_star_goal") or payload.summary).strip() or payload.summary
     ]

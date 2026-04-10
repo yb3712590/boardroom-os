@@ -15,6 +15,7 @@ from app.contracts.ceo_actions import (
     CEONoActionPayload,
 )
 from app.core.ceo_execution_presets import (
+    GOVERNANCE_DOCUMENT_CHAIN_ORDER,
     PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
     PROJECT_INIT_SCOPE_NODE_ID,
     build_autopilot_architecture_brief_summary,
@@ -302,6 +303,33 @@ def _normalized_runtime_preference(raw_payload: dict[str, Any]) -> dict[str, Any
     return payload
 
 
+def _recent_completed_governance_ticket_ids_by_schema(snapshot: dict) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for item in list((snapshot.get("reuse_candidates") or {}).get("recent_completed_tickets") or []):
+        output_schema_ref = str(item.get("output_schema_ref") or "").strip()
+        ticket_id = str(item.get("ticket_id") or "").strip()
+        if not output_schema_ref or not ticket_id or output_schema_ref in mapping:
+            continue
+        if output_schema_ref not in GOVERNANCE_DOCUMENT_CHAIN_ORDER:
+            continue
+        mapping[output_schema_ref] = ticket_id
+    return mapping
+
+
+def _infer_governance_dependency_gate_refs(snapshot: dict, output_schema_ref: str) -> list[str]:
+    if output_schema_ref not in GOVERNANCE_DOCUMENT_CHAIN_ORDER:
+        return []
+    completed_ticket_ids_by_schema = _recent_completed_governance_ticket_ids_by_schema(snapshot)
+    dependency_gate_refs: list[str] = []
+    for prerequisite_schema_ref in GOVERNANCE_DOCUMENT_CHAIN_ORDER[
+        : GOVERNANCE_DOCUMENT_CHAIN_ORDER.index(output_schema_ref)
+    ]:
+        ticket_id = completed_ticket_ids_by_schema.get(prerequisite_schema_ref)
+        if ticket_id:
+            dependency_gate_refs.append(ticket_id)
+    return dependency_gate_refs
+
+
 def _normalize_create_ticket_payload(raw_payload: dict[str, Any], snapshot: dict) -> dict[str, Any]:
     workflow = snapshot.get("workflow") or {}
     workflow_id = str(raw_payload.get("workflow_id") or workflow.get("workflow_id") or "").strip()
@@ -373,6 +401,10 @@ def _normalize_create_ticket_payload(raw_payload: dict[str, Any], snapshot: dict
         or raw_payload.get("depends_on_ticket_ids")
         or raw_payload.get("depends_on")
     )
+    inferred_governance_dependency_gate_refs: list[str] = []
+    if not dependency_gate_refs and output_schema_ref in GOVERNANCE_DOCUMENT_CHAIN_ORDER:
+        inferred_governance_dependency_gate_refs = _infer_governance_dependency_gate_refs(snapshot, output_schema_ref)
+        dependency_gate_refs = inferred_governance_dependency_gate_refs
     assignee_employee_id = str(raw_dispatch_intent.get("assignee_employee_id") or "").strip()
     if not assignee_employee_id and role_profile_ref and output_schema_ref:
         assignee_employee_id = (
@@ -397,6 +429,8 @@ def _normalize_create_ticket_payload(raw_payload: dict[str, Any], snapshot: dict
         or f"Prepare the next {output_schema_ref} ticket."
     ).strip()
     parent_ticket_id = str(raw_payload.get("parent_ticket_id") or "").strip() or None
+    if parent_ticket_id is None and inferred_governance_dependency_gate_refs:
+        parent_ticket_id = inferred_governance_dependency_gate_refs[-1]
     if parent_ticket_id is None and dependency_gate_refs:
         parent_ticket_id = dependency_gate_refs[0]
     if parent_ticket_id is None:
@@ -433,14 +467,14 @@ def _normalize_provider_action_batch_payload(raw_payload: dict[str, Any], snapsh
     for action in list(raw_payload.get("actions") or []):
         if not isinstance(action, dict):
             continue
-        action_type = str(action.get("action_type") or "").strip()
+        action_type = str(action.get("action_type") or action.get("type") or "").strip()
         action_payload = action.get("payload")
         if action_type == CEOActionType.CREATE_TICKET:
             if not isinstance(action_payload, dict):
                 action_payload = {
                     key: value
                     for key, value in action.items()
-                    if key != "action_type"
+                    if key not in {"action_type", "type"}
                 }
             if not isinstance(action_payload, dict):
                 continue
@@ -448,6 +482,14 @@ def _normalize_provider_action_batch_payload(raw_payload: dict[str, Any], snapsh
                 {
                     "action_type": action_type,
                     "payload": _normalize_create_ticket_payload(action_payload, snapshot),
+                }
+            )
+            continue
+        if action_type:
+            normalized_actions.append(
+                {
+                    **action,
+                    "action_type": action_type,
                 }
             )
             continue
@@ -578,11 +620,6 @@ def _build_backlog_followup_batch(
     if not recommended_tickets:
         return None
 
-    existing_ticket_ids_by_node_id = {
-        str(node.get("node_id") or ""): str(node.get("latest_ticket_id") or "")
-        for node in list(snapshot.get("nodes") or [])
-        if str(node.get("node_id") or "").strip() and str(node.get("latest_ticket_id") or "").strip()
-    }
     role_profile_ref = "frontend_engineer_primary"
     assignee_employee_id = _select_default_assignee(
         snapshot,
@@ -593,12 +630,39 @@ def _build_backlog_followup_batch(
         return None
 
     actions: list[dict[str, Any]] = []
+    with repository.connection() as connection:
+        node_rows = connection.execute(
+            """
+            SELECT node_id, latest_ticket_id
+            FROM node_projection
+            WHERE workflow_id = ?
+            """,
+            (workflow_id,),
+        ).fetchall()
+        existing_ticket_ids_by_node_id = {
+            str(row["node_id"]): str(row["latest_ticket_id"])
+            for row in node_rows
+            if str(row["node_id"] or "").strip() and str(row["latest_ticket_id"] or "").strip()
+        }
+        existing_node_ids = {
+            str(row["node_id"])
+            for row in connection.execute(
+                """
+                SELECT DISTINCT node_id
+                FROM ticket_projection
+                WHERE workflow_id = ?
+                """,
+                (workflow_id,),
+            ).fetchall()
+            if str(row["node_id"] or "").strip()
+        }
+
     for ticket_key in ordered_ticket_keys:
         recommended_ticket = recommended_tickets.get(ticket_key)
         if not isinstance(recommended_ticket, dict):
             continue
         node_id = _backlog_followup_key_to_node_id(ticket_key)
-        if node_id in existing_ticket_ids_by_node_id:
+        if node_id in existing_ticket_ids_by_node_id or node_id in existing_node_ids:
             continue
 
         dependency_gate_refs: list[str] = []

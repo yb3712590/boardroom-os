@@ -25,6 +25,7 @@ DEFAULT_SCENARIO_SLUG = "library_management_autopilot_live"
 DEFAULT_SCENARIO_SEED = 17
 DEFAULT_MAX_TICKS = 180
 DEFAULT_TIMEOUT_SEC = 7200
+DEFAULT_LIVE_PROVIDER_TIMEOUT_SEC = 180
 MAX_STALL_TICKS = 25
 SCENARIO_GOAL = "全自动开发一个计算机系毕业设计-有精美设计的图书馆管理系统"
 SCENARIO_CONSTRAINTS = [
@@ -108,6 +109,7 @@ def scenario_environment(
         "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY": api_key,
         "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL": "gpt-5.4",
         "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT": "high",
+        "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC": str(DEFAULT_LIVE_PROVIDER_TIMEOUT_SEC),
         "BOARDROOM_OS_CEO_STAFFING_VARIANT_SEED": str(seed),
     }
     previous = {key: os.environ.get(key) for key in overrides}
@@ -277,7 +279,10 @@ def _artifact_exists(repository, artifact_ref: str) -> bool:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_failure_snapshot(paths: ScenarioPaths, repository, workflow_id: str, *, label: str) -> Path:

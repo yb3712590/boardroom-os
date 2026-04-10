@@ -14,6 +14,10 @@ from app.core.ceo_scheduler import run_due_ceo_maintenance
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.ticket_handlers import run_scheduler_tick
 from app.core.time import now_local
+from app.core.workflow_auto_advance import (
+    auto_advance_workflow_to_next_stop,
+    workflow_uses_ceo_board_delegate,
+)
 from app.db.repository import ControlPlaneRepository
 
 _SCHEDULER_ORCHESTRATION_WORKFLOW_ID = "wf_scheduler_orchestration"
@@ -168,6 +172,29 @@ def build_repository(settings: Settings | None = None) -> ControlPlaneRepository
     )
 
 
+def _recover_ceo_delegate_blockers(
+    repository: ControlPlaneRepository,
+    *,
+    runner_idempotency_key: str,
+    max_dispatches: int,
+) -> None:
+    workflow_ids: set[str] = set()
+    workflow_ids.update(str(item["workflow_id"]) for item in repository.list_open_incidents())
+    workflow_ids.update(str(item["workflow_id"]) for item in repository.list_open_approvals())
+
+    for workflow_id in sorted(workflow_ids):
+        workflow = repository.get_workflow_projection(workflow_id)
+        if not workflow_uses_ceo_board_delegate(workflow):
+            continue
+        auto_advance_workflow_to_next_stop(
+            repository,
+            workflow_id=workflow_id,
+            idempotency_key_prefix=f"{runner_idempotency_key}:ceo-delegate-recovery:{workflow_id}",
+            max_steps=1,
+            max_dispatches=max_dispatches,
+        )
+
+
 def run_scheduler_once(
     repository: ControlPlaneRepository,
     *,
@@ -177,6 +204,12 @@ def run_scheduler_once(
 ):
     settings = get_settings()
     runner_idempotency_key = idempotency_key or _build_runner_idempotency_key(tick_index)
+    effective_max_dispatches = max_dispatches or settings.scheduler_max_dispatches
+    _recover_ceo_delegate_blockers(
+        repository,
+        runner_idempotency_key=runner_idempotency_key,
+        max_dispatches=effective_max_dispatches,
+    )
     ceo_runs = run_due_ceo_maintenance(
         repository,
         current_time=now_local(),
@@ -186,7 +219,7 @@ def run_scheduler_once(
     scheduler_ack = run_scheduler_tick(
         repository,
         idempotency_key=runner_idempotency_key,
-        max_dispatches=max_dispatches or settings.scheduler_max_dispatches,
+        max_dispatches=effective_max_dispatches,
     )
     runtime_outcomes = []
     if settings.runtime_execution_mode == "INPROCESS":
