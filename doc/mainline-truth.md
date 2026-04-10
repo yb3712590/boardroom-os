@@ -1,6 +1,6 @@
 # 主线真相表
 
-> 最后更新：2026-04-09
+> 最后更新：2026-04-11
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
@@ -16,6 +16,7 @@
 补充差异：
 
 - `project-init -> scope review` 这条共识链仍保留 `ui_designer_primary`，但首个 scope kickoff 票已经不再由命令处理器硬编码创建，而是由 `BOARD_DIRECTIVE_RECEIVED` 的 CEO shadow run 发起
+- `project-init` 现在还会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE` 三种模板
 - 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
 - dashboard completion 现在同时支持两条真实完成路径：传统 `VISUAL_MILESTONE -> closeout`，以及 autopilot 的“closeout 已完成 + workflow-chain report 已落盘”路径；后者不会再伪造 `final_review_pack_id / approved_at`
 - deterministic autopilot closeout fallback 现在只会在 workflow 已经出现真实交付主线证据时触发：最小口径是 `BUILD / CHECK / REVIEW` 票、`implementation_bundle`、`ui_milestone_review`，或它们对应的 maker-checker verdict；纯治理文档流、纯规划流、只有 backlog recommendation 的流不会再被误判成可 closeout
@@ -28,6 +29,7 @@
 - `provider_model_entries[]` 当前只保存用户勾选的模型，唯一键按 `provider_id + model_name`；`role_bindings[]` 现在绑定有序 `provider_model_entry_refs[]` 与 `max_context_window_override`，role 未配置时会继承 CEO 绑定；每次选路都会产出 `provider_model_entry_ref` 和 `effective_max_context_window`
 - Provider Settings 当前只真实开放 `openai_responses_stream / openai_responses_non_stream` 两种执行类型；`claude_stream / gemini_stream` 只保留枚举占位。运行时仍保留 `Claude Code CLI` 兼容路径给旧测试和兼容场景，但不在新配置中心开放录入
 - `TICKET_CREATED` payload 现在会补入 `execution_contract`，固定包含 `execution_target_ref / required_capability_tags / runtime_contract_version`；普通 ticket-create 路径即使没显式传，也会按 `role_profile_ref + output_schema_ref` 自动补齐
+- `TICKET_CREATED` payload 现在也会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`；如果 workflow 不是由当前 `project-init` 建出来，这组字段会退成最小默认值，不会强开新的 workspace gate
 - `TICKET_CREATED` payload 现在也可选携带 `runtime_preference`，最小支持 `preferred_provider_id / preferred_model`；CEO create-ticket 与内部兼容 `ticket-create` 走同一套字段，但这层只是任务级偏好，不能绕过能力底线、provider 启停状态、参与策略或现有 failover 约束
 - 当前 execution target catalog 已按主线收口为 12 类：`scope_consensus / scope_governance_document / frontend_governance_document / architect_governance_document / cto_governance_document / frontend_build / backend_build / database_build / platform_build / checker_delivery_check / frontend_review / frontend_closeout`
 - CEO create-ticket 当前必须显式带 `dispatch_intent.assignee_employee_id / selection_reason`；校验层会拒绝不存在、非激活或能力不匹配的 assignee，非法派单不会入队
@@ -37,10 +39,14 @@
 - `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化失败并触发 CEO 重决策
 - 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，不把当前 staged follow-up 主链写成“上游一失败就全部重规划”
 - `TICKET_CREATED` payload 现在可选携带 `input_process_asset_refs[]`；`Context Compiler` 会把旧 `input_artifact_refs[]` 兼容映射到同一入口，再统一走 `process asset resolver`
+- 对受管项目工作区里的 ticket，`Context Compiler` 现在会把 `required_read_refs[]` 一并并入 `input_process_asset_refs[]`，并在 ticket dossier 里写 `worker-preflight` 回执
 - 当前 resolver 已按最小闭环纳入 7 类过程资产：`artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / meeting_decision_record / closeout_summary / governance_document`
 - 治理文档输出合同现在已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；每类文档都会保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / decisions / constraints / sections / followup_recommendations`
 - 当 CEO 创建的后续票显式挂在治理文档父票下时，建票路径会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产到 `input_process_asset_refs[]`
 - runtime 完成事件现在会额外写回 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 都会自动映射到后续 follow-up ticket 或 maker-checker checker ticket 的 `input_process_asset_refs[]`
+- `implementation_bundle@1` 现在也可选携带 `documentation_updates`；但当前硬 gate 只对 `allowed_write_set` 明确落在 `10-project/* / 20-evidence/* / 00-boardroom/*` 的 workspace-managed `source_code_delivery` 票生效
+- 上述 workspace-managed 代码票在 `ticket-result-submit` 时，当前会硬校验 `documentation_updates / verification_evidence_refs / git_commit_record`，并在 dossier 里写 `worker-postrun / evidence-capture / git-closeout` 回执；旧 artifact-path 代码票继续兼容，不会误触这条新 gate
+- `TICKET_COMPLETED` payload 现在也会带回 `verification_evidence_refs` 和 `git_commit_record`，给后续 review / closeout / projection 继续消费
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
 - 当前已把原治理模板扩成统一 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary / backend_execution_reserved / database_execution_reserved / platform_sre_reserved / architect_governance / cto_governance` 八个当前 live 模板，同时附带五类文档 metadata ref 和九个模板片段

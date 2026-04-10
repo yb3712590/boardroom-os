@@ -72,6 +72,7 @@ from app.core.constants import (
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, get_output_schema_body
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.project_workspaces import project_workspace_manifest_exists, write_worker_preflight_receipt
 from app.core.process_assets import merge_input_process_asset_refs, resolve_process_asset
 from app.core.time import now_local
 from app.core.workflow_relationships import WorkflowTicketSnapshot, list_workflow_ticket_snapshots
@@ -1632,8 +1633,19 @@ def build_compile_request(
 
     input_process_asset_refs = merge_input_process_asset_refs(
         existing_process_asset_refs=list(created_spec.get("input_process_asset_refs") or []),
-        artifact_refs=list(created_spec.get("input_artifact_refs") or []),
+        artifact_refs=list(created_spec.get("input_artifact_refs") or [])
+        + list(created_spec.get("required_read_refs") or []),
     )
+    if project_workspace_manifest_exists(str(ticket["workflow_id"])):
+        write_worker_preflight_receipt(
+            repository,
+            workflow_id=ticket["workflow_id"],
+            ticket_id=ticket["ticket_id"],
+            node_id=ticket["node_id"],
+            required_read_refs=list(created_spec.get("required_read_refs") or []),
+            input_process_asset_refs=input_process_asset_refs,
+            connection=connection,
+        )
     explicit_sources = []
     for source_ref in input_process_asset_refs:
         resolved_asset = resolve_process_asset(repository, str(source_ref), connection=connection)
@@ -1723,6 +1735,11 @@ def build_compile_request(
             allowed_tools=list(created_spec.get("allowed_tools") or []),
             allowed_write_set=list(created_spec.get("allowed_write_set") or []),
             input_process_asset_refs=input_process_asset_refs,
+            required_read_refs=list(created_spec.get("required_read_refs") or []),
+            doc_update_requirements=list(created_spec.get("doc_update_requirements") or []),
+            project_workspace_ref=created_spec.get("project_workspace_ref"),
+            deliverable_kind=created_spec.get("deliverable_kind"),
+            git_policy=created_spec.get("git_policy"),
         ),
         governance=CompileRequestGovernance(
             retry_budget=int(created_spec.get("retry_budget") or 0),
@@ -2012,6 +2029,12 @@ def compile_audit_artifacts(
             acceptance_criteria=compile_request.execution.acceptance_criteria,
             allowed_tools=compile_request.execution.allowed_tools,
             allowed_write_set=compile_request.execution.allowed_write_set,
+            input_process_asset_refs=compile_request.execution.input_process_asset_refs,
+            required_read_refs=compile_request.execution.required_read_refs,
+            doc_update_requirements=compile_request.execution.doc_update_requirements,
+            project_workspace_ref=compile_request.execution.project_workspace_ref,
+            deliverable_kind=compile_request.execution.deliverable_kind,
+            git_policy=compile_request.execution.git_policy,
             output_schema_ref=compile_request.control_refs.output_schema_ref,
             output_schema_version=compile_request.control_refs.output_schema_version,
         ),

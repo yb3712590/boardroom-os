@@ -17,6 +17,7 @@ class Settings:
     developer_inspector_root: Path
     artifact_store_root: Path
     artifact_upload_staging_root: Path
+    project_workspace_root: Path
     ticket_context_archive_root: Path | None
     runtime_provider_config_path: Path
     runtime_execution_mode: RuntimeExecutionMode
@@ -103,6 +104,12 @@ def get_settings() -> Settings:
         os.environ.get(
             "BOARDROOM_OS_ARTIFACT_UPLOAD_STAGING_ROOT",
             repo_root / "backend" / "data" / "artifact_uploads",
+        )
+    )
+    project_workspace_root = Path(
+        os.environ.get(
+            "BOARDROOM_OS_PROJECT_WORKSPACE_ROOT",
+            repo_root / "backend" / "data" / "project_workspaces",
         )
     )
     raw_ticket_context_archive_root = os.environ.get("BOARDROOM_OS_TICKET_CONTEXT_ARCHIVE_ROOT")
@@ -288,6 +295,7 @@ def get_settings() -> Settings:
         developer_inspector_root=developer_inspector_root,
         artifact_store_root=artifact_store_root,
         artifact_upload_staging_root=artifact_upload_staging_root,
+        project_workspace_root=project_workspace_root,
         ticket_context_archive_root=ticket_context_archive_root,
         runtime_provider_config_path=runtime_provider_config_path,
         runtime_execution_mode=runtime_execution_mode,

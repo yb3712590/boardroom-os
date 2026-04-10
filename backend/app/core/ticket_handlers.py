@@ -113,6 +113,14 @@ from app.core.process_assets import (
     merge_input_process_asset_refs,
 )
 from app.core.runtime_provider_config import find_provider_entry, resolve_runtime_provider_config
+from app.core.project_workspaces import (
+    bootstrap_ticket_dossier,
+    infer_ticket_workspace_bootstrap,
+    project_workspace_manifest_exists,
+    write_evidence_capture_receipt,
+    write_git_closeout_receipt,
+    write_worker_postrun_receipt,
+)
 from app.core.ticket_artifacts import (
     PreparedTicketArtifact,
     cleanup_materialized_artifacts,
@@ -1037,6 +1045,14 @@ def _ensure_ticket_execution_contract_payload(ticket_payload: dict[str, Any]) ->
         )
         if inferred_execution_contract is not None:
             resolved_payload["execution_contract"] = inferred_execution_contract
+    workspace_bootstrap = infer_ticket_workspace_bootstrap(resolved_payload)
+    resolved_payload["project_workspace_ref"] = workspace_bootstrap.project_workspace_ref
+    resolved_payload["project_methodology_profile"] = workspace_bootstrap.project_methodology_profile.value
+    resolved_payload["deliverable_kind"] = workspace_bootstrap.deliverable_kind.value
+    resolved_payload["canonical_doc_refs"] = list(workspace_bootstrap.canonical_doc_refs)
+    resolved_payload["required_read_refs"] = list(workspace_bootstrap.required_read_refs)
+    resolved_payload["doc_update_requirements"] = list(workspace_bootstrap.doc_update_requirements)
+    resolved_payload["git_policy"] = workspace_bootstrap.git_policy.value
     return resolved_payload
 
 
@@ -1078,11 +1094,55 @@ DISPATCH_INTENT_INVALID_FAILURE_KIND = "DISPATCH_INTENT_INVALID"
 DEPENDENCY_GATE_INVALID_FAILURE_KIND = "DEPENDENCY_GATE_INVALID"
 DEPENDENCY_GATE_UNHEALTHY_FAILURE_KIND = "DEPENDENCY_GATE_UNHEALTHY"
 UPSTREAM_DEPENDENCY_UNHEALTHY_FAILURE_KIND = "UPSTREAM_DEPENDENCY_UNHEALTHY"
+WORKSPACE_HOOK_VALIDATION_FAILURE_KIND = "WORKSPACE_HOOK_VALIDATION_ERROR"
 DEPENDENCY_TERMINAL_FAILURE_STATUSES = {
     TICKET_STATUS_FAILED,
     TICKET_STATUS_TIMED_OUT,
     TICKET_STATUS_CANCELLED,
 }
+
+
+def _validate_source_code_delivery_hooks(
+    *,
+    created_spec: dict[str, Any],
+    payload: TicketResultSubmitCommand,
+) -> str | None:
+    if str(created_spec.get("deliverable_kind") or "") != "source_code_delivery":
+        return None
+    if not any(
+        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
+        for pattern in list(created_spec.get("allowed_write_set") or [])
+    ):
+        return None
+
+    result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+    documentation_updates = list(result_payload.get("documentation_updates") or [])
+    updates_by_ref = {
+        str(item.get("doc_ref") or "").strip(): item
+        for item in documentation_updates
+        if isinstance(item, dict) and str(item.get("doc_ref") or "").strip()
+    }
+    for doc_ref in list(created_spec.get("doc_update_requirements") or []):
+        update = updates_by_ref.get(str(doc_ref))
+        if update is None:
+            return f"Code delivery tickets must report documentation_updates for {doc_ref}."
+        if str(update.get("status") or "") not in {"UPDATED", "NO_CHANGE_REQUIRED"}:
+            return (
+                "Code delivery tickets must mark required documentation updates as "
+                f"UPDATED or NO_CHANGE_REQUIRED; got {update.get('status')} for {doc_ref}."
+            )
+
+    available_artifact_refs = set(payload.artifact_refs)
+    available_artifact_refs.update(str(item.artifact_ref) for item in payload.written_artifacts)
+    if not payload.verification_evidence_refs:
+        return "Code delivery tickets must include verification_evidence_refs."
+    for artifact_ref in payload.verification_evidence_refs:
+        if artifact_ref not in available_artifact_refs:
+            return f"verification_evidence_refs includes unknown artifact_ref {artifact_ref}."
+
+    if payload.git_commit_record is None:
+        return "Code delivery tickets must include git_commit_record."
+    return None
 
 
 def _resolve_dispatch_intent(created_spec: dict[str, Any] | None) -> dict[str, Any]:
@@ -3599,6 +3659,20 @@ def handle_ticket_create(
 
         repository.refresh_projections(connection)
 
+    if project_workspace_manifest_exists(payload.workflow_id):
+        bootstrap_ticket_dossier(
+            repository,
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            node_id=payload.node_id,
+            summary=str(event_payload.get("acceptance_criteria", [""])[0] or payload.ticket_id),
+            required_read_refs=list(event_payload.get("required_read_refs") or []),
+            doc_update_requirements=list(event_payload.get("doc_update_requirements") or []),
+            git_policy=event_payload.get("git_policy"),
+            deliverable_kind=event_payload.get("deliverable_kind"),
+            allowed_write_set=list(event_payload.get("allowed_write_set") or []),
+        )
+
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -4371,6 +4445,25 @@ def handle_ticket_result_submit(
             ),
         )
 
+    hook_validation_error = _validate_source_code_delivery_hooks(
+        created_spec=created_spec,
+        payload=payload,
+    )
+    if hook_validation_error is not None:
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind=WORKSPACE_HOOK_VALIDATION_FAILURE_KIND,
+                failure_message=hook_validation_error,
+                failure_detail={},
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+
     allowed_write_set = list(created_spec.get("allowed_write_set") or [])
     violating_paths = [
         item.path for item in payload.written_artifacts if not _match_allowed_write_set(item.path, allowed_write_set)
@@ -4480,6 +4573,8 @@ def handle_ticket_result_submit(
                     completion_summary=payload.summary,
                     artifact_refs=completed_artifact_refs,
                     produced_process_assets=produced_process_assets,
+                    verification_evidence_refs=list(payload.verification_evidence_refs),
+                    git_commit_record=payload.git_commit_record,
                     review_request=payload.review_request,
                     idempotency_key=payload.idempotency_key,
                 ),
@@ -4526,6 +4621,32 @@ def handle_ticket_result_submit(
             for artifact in persisted_inspector_artifacts:
                 developer_inspector_store.delete_ref(artifact.ref)
         raise
+
+    if (
+        str(created_spec.get("deliverable_kind") or "") == "source_code_delivery"
+        and project_workspace_manifest_exists(payload.workflow_id)
+        and any(
+            str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
+            for pattern in list(created_spec.get("allowed_write_set") or [])
+        )
+    ):
+        result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+        write_worker_postrun_receipt(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            documentation_updates=list(result_payload.get("documentation_updates") or []),
+        )
+        write_evidence_capture_receipt(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            verification_evidence_refs=list(payload.verification_evidence_refs),
+        )
+        if payload.git_commit_record is not None:
+            write_git_closeout_receipt(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                git_commit_record=payload.git_commit_record.model_dump(mode="json"),
+            )
 
     _trigger_ceo_shadow_safely(
         repository,
@@ -4651,6 +4772,12 @@ def _complete_ticket_locked(
             "node_id": payload.node_id,
             "completion_summary": payload.completion_summary,
             "artifact_refs": payload.artifact_refs,
+            "verification_evidence_refs": list(payload.verification_evidence_refs),
+            "git_commit_record": (
+                payload.git_commit_record.model_dump(mode="json")
+                if payload.git_commit_record is not None
+                else None
+            ),
             "produced_process_assets": [
                 item.model_dump(mode="json") for item in payload.produced_process_assets
             ],

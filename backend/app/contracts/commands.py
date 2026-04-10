@@ -135,6 +135,24 @@ class MeetingRound(StrEnum):
     CONVERGENCE = "CONVERGENCE"
 
 
+class ProjectMethodologyProfile(StrEnum):
+    AGILE = "AGILE"
+    HYBRID = "HYBRID"
+    COMPLIANCE = "COMPLIANCE"
+
+
+class DeliverableKind(StrEnum):
+    SOURCE_CODE_DELIVERY = "source_code_delivery"
+    STRUCTURED_DOCUMENT_DELIVERY = "structured_document_delivery"
+    REVIEW_EVIDENCE = "review_evidence"
+    CLOSEOUT_EVIDENCE = "closeout_evidence"
+
+
+class GitPolicy(StrEnum):
+    NO_GIT_REQUIRED = "no_git_required"
+    PER_TICKET_COMMIT_REQUIRED = "per_ticket_commit_required"
+
+
 class ElicitationResponseKind(StrEnum):
     SINGLE_SELECT = "SINGLE_SELECT"
     MULTI_SELECT = "MULTI_SELECT"
@@ -168,6 +186,7 @@ class ProjectInitCommand(StrictModel):
     deadline_at: datetime | None = None
     force_requirement_elicitation: bool = False
     workflow_profile: str = Field(default="STANDARD", min_length=1)
+    project_methodology_profile: ProjectMethodologyProfile = ProjectMethodologyProfile.AGILE
 
 
 class RuntimeProviderConfigInput(StrictModel):
@@ -337,6 +356,13 @@ class TicketCreateCommand(StrictModel):
     execution_contract: ExecutionContract | None = None
     dispatch_intent: DispatchIntent | None = None
     runtime_preference: RuntimeSelectionPreference | None = None
+    project_workspace_ref: str | None = None
+    project_methodology_profile: ProjectMethodologyProfile | None = None
+    deliverable_kind: DeliverableKind | None = None
+    canonical_doc_refs: list[str] = Field(default_factory=list)
+    required_read_refs: list[str] = Field(default_factory=list)
+    doc_update_requirements: list[str] = Field(default_factory=list)
+    git_policy: GitPolicy | None = None
     escalation_policy: TicketEscalationPolicy
     idempotency_key: str = Field(min_length=1)
 
@@ -398,6 +424,18 @@ class TicketWrittenArtifact(StrictModel):
     retention_ttl_sec: int | None = Field(default=None, ge=1)
 
 
+class GitMergeStatus(StrEnum):
+    PENDING_REVIEW_GATE = "PENDING_REVIEW_GATE"
+    MERGED = "MERGED"
+    NOT_REQUESTED = "NOT_REQUESTED"
+
+
+class TicketGitCommitRecord(StrictModel):
+    commit_sha: str = Field(min_length=1)
+    branch_ref: str = Field(min_length=1)
+    merge_status: GitMergeStatus = GitMergeStatus.PENDING_REVIEW_GATE
+
+
 class TicketResultSubmitCommand(StrictModel):
     workflow_id: str = Field(min_length=1)
     ticket_id: str = Field(min_length=1)
@@ -408,6 +446,8 @@ class TicketResultSubmitCommand(StrictModel):
     payload: dict
     artifact_refs: list[str] = Field(default_factory=list)
     written_artifacts: list[TicketWrittenArtifact] = Field(default_factory=list)
+    verification_evidence_refs: list[str] = Field(default_factory=list)
+    git_commit_record: TicketGitCommitRecord | None = None
     assumptions: list[str] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
@@ -615,6 +655,8 @@ class TicketCompletedCommand(StrictModel):
     completion_summary: str = Field(min_length=1)
     artifact_refs: list[str] = Field(default_factory=list)
     produced_process_assets: list[ProcessAssetReference] = Field(default_factory=list)
+    verification_evidence_refs: list[str] = Field(default_factory=list)
+    git_commit_record: TicketGitCommitRecord | None = None
     review_request: TicketBoardReviewRequest | None = None
     idempotency_key: str = Field(min_length=1)
 

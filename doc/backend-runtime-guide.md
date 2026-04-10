@@ -20,7 +20,9 @@
 - 命令入口、投影视图和 SSE 事件流
 - `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` 完整闭环
 - `project-init` 先物化 `board-brief`，再由 CEO 发起首个 kickoff scope 共识票
+- `project-init` 现在还会创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE`
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消、人工恢复
+- workspace-managed 代码票现在会走最小文档 hook：编译前写 `worker-preflight` 回执，结果提交时硬校验文档更新、测试证据和 git commit，并写 `worker-postrun / evidence-capture / git-closeout` 回执
 - 员工治理最小闭环：`employee-hire-request / employee-replace-request / employee-freeze / employee-restore`
 - meeting room 最小版：既可手动发起，也支持 CEO 在窄触发条件下自动发起 `TECHNICAL_DECISION`
 - artifact upload/import、artifact cleanup、dashboard cleanup 状态读面
@@ -125,6 +127,10 @@ npm run build
 npm run test:run
 ```
 
+当前后端全量回归基线：
+
+- `./.venv/bin/pytest tests/ -q -> 555 passed`
+
 如果你要跑这条新的真实长测，单独用：
 
 ```bash
@@ -139,12 +145,19 @@ python -m tests.live.library_management_autopilot_live
 - `backend/data/boardroom_os.db`
 - `backend/data/artifacts/`
 - `backend/data/artifact_uploads/`
+- `backend/data/project_workspaces/`
 - `backend/data/runtime-provider-config.json`
 - `backend/data/developer_inspector/`
 
 live 集成场景会把这些路径整体重定向到：
 
 - `backend/data/scenarios/library_management_autopilot_live/`
+
+项目工作区相关补记：
+
+- 默认项目工作区根目录由 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 控制；未显式覆盖时落到 `backend/data/project_workspaces/`
+- 当前只有带 workspace manifest 的 workflow 会启用新的 workspace-managed 文档 / git gate
+- 旧的 artifact-path 代码票仍保持兼容，不会被这条新 gate 误伤
 
 ## 5. 运行模式与 provider
 

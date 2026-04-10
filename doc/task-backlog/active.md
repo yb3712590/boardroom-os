@@ -1,17 +1,17 @@
 # Active Task Backlog
 
-> 最后更新：2026-04-10
+> 最后更新：2026-04-11
 > 说明：这里只保留当前仍未关闭、仍会影响当前主线实现的任务。已完成的详细任务卡片和完成补记统一看 `done.md`。
 
 ## 当前主线：`P0-COR`
 
 | ID | 标题 | 状态 | 说明 |
 |----|------|------|------|
-| `P0-COR-001` | canonical 协议收口 | 进行中 | 收正 CEO action、provider config、runtime result、ticket deliverable 的单一主线真相 |
+| `P0-COR-001` | canonical 协议收口 | 进行中 | 已落第一段：`project-init` 会创建三分区项目工作区，`ticket-create` 会自动补 project workspace / deliverable / 文档 / git 相关真相，并生成 ticket dossier |
 | `P0-COR-002` | 单一 workflow controller | 待开始 | 合并 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义 |
 | `P0-COR-003` | architect / meeting 硬约束 | 待开始 | 把 architect 真实参与和必要 meeting 证据升成主线门禁 |
-| `P0-COR-004` | 源码交付 contract 与 write set 重构 | 待开始 | 把 `BUILD` 从 `implementation_bundle` 迁到真实代码交付包，并放开真实工作区写入 |
-| `P0-COR-005` | checker / closeout 硬门禁 | 待开始 | 禁掉模板化成功包和宽松默认放行，强制校验源码、测试、构建和治理证据 |
+| `P0-COR-004` | 源码交付 contract 与 write set 重构 | 进行中 | 已落第一段：workspace-managed 代码票允许写 `10-project/* / 20-evidence/* / 00-boardroom/*`；但 `BUILD` 仍未切到真实 `source_code_delivery` 包 |
+| `P0-COR-005` | checker / closeout 硬门禁 | 进行中 | 已落第一段：workspace-managed 代码票会硬校验文档更新、测试证据和 git commit；但 merge 自动化、closeout 统一 gate 和非代码票 gate 还没完成 |
 | `P0-COR-006` | live 场景回归与退出标准重建 | 待开始 | 用真实代码交付口径重跑 live 场景，重建通过标准 |
 
 ## 冻结后置

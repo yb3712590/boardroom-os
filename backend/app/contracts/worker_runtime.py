@@ -8,6 +8,7 @@ from pydantic import Field, model_validator
 from app.contracts.commands import (
     TicketArtifactImportUploadCommand,
     TicketBoardReviewRequest,
+    TicketGitCommitRecord,
     TicketResultStatus,
     TicketWrittenArtifact,
 )
@@ -88,6 +89,8 @@ class WorkerTicketResultSubmitCommand(StrictModel):
     payload: dict[str, Any]
     artifact_refs: list[str] = Field(default_factory=list)
     written_artifacts: list[TicketWrittenArtifact] = Field(default_factory=list)
+    verification_evidence_refs: list[str] = Field(default_factory=list)
+    git_commit_record: TicketGitCommitRecord | None = None
     assumptions: list[str] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)

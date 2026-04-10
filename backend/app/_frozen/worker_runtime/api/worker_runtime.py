@@ -434,6 +434,8 @@ def worker_ticket_result_submit(
             payload=payload.payload,
             artifact_refs=payload.artifact_refs,
             written_artifacts=payload.written_artifacts,
+            verification_evidence_refs=payload.verification_evidence_refs,
+            git_commit_record=payload.git_commit_record,
             assumptions=payload.assumptions,
             issues=payload.issues,
             confidence=payload.confidence,

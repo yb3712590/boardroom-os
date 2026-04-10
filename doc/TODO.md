@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-10
+> 最后更新：2026-04-11
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
@@ -15,10 +15,11 @@
 
 ## 当前基线（最后一次静态验证：2026-04-09；2026-04-10 live 长测新增主线偏差）
 
-- backend：`./backend/.venv/bin/pytest tests/ -q` -> `533 passed`
+- backend：`./backend/.venv/bin/pytest tests/ -q` -> `555 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `84 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 - 2026-04-10 live 集成测试新增确认：当前主线虽然能跑到 closeout，但 `BUILD` 仍以 `implementation_bundle` 为核心产物，默认 write set 仍偏 `artifacts/...`，closeout 收口的也还是结构化交付物，不是真实源码交付
+- 2026-04-11 第一段纠偏已落地：`project-init` 会创建三分区项目工作区；`ticket-create` 会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`；workspace-managed 代码票已启用文档 / 测试 / git commit 最小 gate
 
 ## 当前批次
 
@@ -45,11 +46,11 @@
 6. 按 `deliverable_kind` 重写 review gate：代码型任务校验源码、测试、构建和文档同步；调研/分析型任务校验事实来源、结论链、风险边界和决策记录。
 7. 重建 live 回归矩阵：至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，确保 CEO 是按任务现实决策，而不是按现有角色池静默派单。
 
-- `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；alias、兼容字段和隐式补推只允许留在兼容入口，不再进入主运行链
+- `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；当前已落第一段 project workspace 真相：`project-init` 现在会创建三分区项目工作区，`ticket-create` 会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`，workspace-managed ticket 也会生成 dossier
 - `P0-COR-002` 待开始：收正单一 workflow controller，把 `task_kind / deliverable_kind / capability_plan / staffing_gaps / coordination_mode` 变成统一控制输入，统一 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义、状态来源和完成定义，禁止再按现有员工池静默改写 role 或 assignee
 - `P0-COR-003` 待开始：收正 capability gap 驱动的招聘、协作和阻断逻辑。当任务现实需要架构设计、系统分析、实现、测试或治理能力，而 active roster 无法覆盖时，系统必须显式招聘、显式开会或显式阻断；`architect_primary` 只是其中一种可能结果，不再是所有项目的默认前置
-- `P0-COR-004` 待开始：按 `deliverable_kind` 重写交付 contract。代码型任务使用“真实代码交付包”替换 `implementation_bundle` 独占主线；调研、分析、治理类任务补齐各自的结构化证据包，并把 write target 从仅 `artifacts/...` 扩到匹配任务现实的工作区或隔离 worktree
-- `P0-COR-005` 待开始：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁，不再接受模板化成功包、宽松 `APPROVED_WITH_NOTES` 默认放行；代码型任务必须校验源码、测试、构建和文档同步，非代码型任务必须校验事实来源、结论链、风险边界和治理证据
+- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第一段已允许 workspace-managed 代码票把 write target 落到 `10-project/* / 20-evidence/* / 00-boardroom/*`；但 `BUILD` 主结果仍是 `implementation_bundle`，真实 `source_code_delivery` 包、真实 worktree 分发，以及调研 / 分析 / 治理类证据包还没重写
+- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第一段已对 workspace-managed `source_code_delivery` 票启用 `documentation_updates / verification_evidence_refs / git_commit_record` 硬 gate，并写 `worker-preflight / worker-postrun / evidence-capture / git-closeout` 回执；但 Review Gate merge 自动化、closeout 统一 gate、非代码票硬 gate 和 UI / projection 摘要还没落
 - `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，要求 CEO 基于任务现实做 capability plan，不再按角色池静默 fallback，且证据闭环可追溯
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 

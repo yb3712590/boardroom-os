@@ -23,6 +23,7 @@ from app.core.time import now_local
 from app.core.workflow_scope import default_workflow_scope
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
+from app.core.project_workspaces import bootstrap_project_workspace
 from app.db.repository import ControlPlaneRepository
 
 PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS = 6
@@ -203,6 +204,14 @@ def handle_project_init(
         workflow_id=workflow_id,
         ticket_id=build_project_init_scope_ticket_id(workflow_id),
         payload=payload,
+    )
+    bootstrap_project_workspace(
+        repository,
+        workflow_id=workflow_id,
+        ticket_id=build_project_init_scope_ticket_id(workflow_id),
+        node_id=PROJECT_INIT_SCOPE_NODE_ID,
+        north_star_goal=payload.north_star_goal,
+        methodology_profile=payload.project_methodology_profile,
     )
     require_elicitation, weak_signals = should_require_requirement_elicitation(payload)
     if require_elicitation:

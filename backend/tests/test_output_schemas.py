@@ -85,6 +85,31 @@ def test_output_schema_registry_accepts_valid_consensus_document_payload() -> No
                 }
             ],
         },
+        )
+
+
+def test_output_schema_registry_accepts_valid_implementation_bundle_with_documentation_updates() -> None:
+    validate_output_payload(
+        schema_ref="implementation_bundle",
+        schema_version=1,
+        submitted_schema_version="implementation_bundle_v1",
+        payload={
+            "summary": "Prepared one code delivery bundle.",
+            "deliverable_artifact_refs": ["art://runtime/tkt_impl_001/implementation-bundle.json"],
+            "implementation_notes": ["Kept the scope inside the approved MVP slice."],
+            "documentation_updates": [
+                {
+                    "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                    "status": "UPDATED",
+                    "summary": "Recorded the ticket outcome in active tasks.",
+                },
+                {
+                    "doc_ref": "10-project/docs/history/memory-recent.md",
+                    "status": "NO_CHANGE_REQUIRED",
+                    "summary": "No new cross-ticket memory had to be recorded.",
+                },
+            ],
+        },
     )
 
 

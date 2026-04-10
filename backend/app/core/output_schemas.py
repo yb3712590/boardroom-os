@@ -554,6 +554,21 @@ def _implementation_bundle_schema_body() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
             },
+            "documentation_updates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["doc_ref", "status", "summary"],
+                    "properties": {
+                        "doc_ref": {"type": "string"},
+                        "status": {
+                            "type": "string",
+                            "enum": sorted(DOCUMENTATION_UPDATE_STATUSES),
+                        },
+                        "summary": {"type": "string"},
+                    },
+                },
+            },
         },
     }
 
@@ -841,6 +856,7 @@ def _validate_implementation_bundle_payload(payload: dict[str, Any]) -> None:
             actual_value=implementation_notes,
             message="Implementation bundle payload.implementation_notes must be an array of strings.",
         )
+    _validate_documentation_updates(payload)
 
 
 def _validate_delivery_check_report_payload(payload: dict[str, Any]) -> None:

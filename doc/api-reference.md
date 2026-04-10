@@ -59,20 +59,20 @@ worker-runtime 是单独一套受限接口：
 
 | 接口 | 边界标签 | 默认是否建议使用 | 用途 | 关键请求字段 |
 |------|----------|------------------|------|--------------|
-| `POST /api/v1/commands/project-init` | 当前主线 | 是 | 初始化 workflow；默认继续触发首个 scope review 链路，必要时先打开初始化需求澄清板审 | `north_star_goal`、`hard_constraints`、`budget_cap`、`deadline_at`、`force_requirement_elicitation`、`idempotency_key` |
+| `POST /api/v1/commands/project-init` | 当前主线 | 是 | 初始化 workflow；默认继续触发首个 scope review 链路，必要时先打开初始化需求澄清板审，并创建受管项目工作区 | `north_star_goal`、`hard_constraints`、`budget_cap`、`deadline_at`、`force_requirement_elicitation`、`project_methodology_profile?`、`idempotency_key` |
 | `POST /api/v1/commands/runtime-provider-upsert` | 当前主线 | 是 | 保存本地 runtime provider registry | `default_provider_id`、`providers[]`、`role_bindings[]` |
 | `POST /api/v1/commands/employee-hire-request` | 当前主线 | 是 | 发起员工招聘审批 | `workflow_id`、`employee_id`、`role_type`、`role_profile_refs`、人格画像、`provider_id` |
 | `POST /api/v1/commands/employee-replace-request` | 当前主线 | 是 | 发起换人审批 | `workflow_id`、`replaced_employee_id`、`replacement_employee_id`、替代员工画像 |
 | `POST /api/v1/commands/employee-freeze` | 当前主线 | 是 | 立即冻结员工，阻止新 dispatch / lease / start | `workflow_id`、`employee_id`、`frozen_by`、`reason` |
 | `POST /api/v1/commands/employee-restore` | 当前主线 | 是 | 立即恢复 `FROZEN -> ACTIVE` | `workflow_id`、`employee_id`、`restored_by`、`reason` |
 | `POST /api/v1/commands/meeting-request` | 当前主线 | 是 | 手动创建 `TECHNICAL_DECISION` 会议请求 | `workflow_id`、`ticket_id`、`meeting_type`、`topic`、`participant_ids` |
-| `POST /api/v1/commands/ticket-create` | 当前主线 | 是 | 创建普通 ticket | `workflow_id`、`node_id`、`role_profile_ref`、`output_schema_ref`、`allowed_write_set`、`runtime_preference?` |
+| `POST /api/v1/commands/ticket-create` | 当前主线 | 是 | 创建普通 ticket | `workflow_id`、`node_id`、`role_profile_ref`、`output_schema_ref`、`allowed_write_set`、`runtime_preference?`、`deliverable_kind?`、`required_read_refs?`、`doc_update_requirements?`、`git_policy?` |
 | `POST /api/v1/commands/ticket-lease` | 当前主线 | 是 | 显式 lease 一个待执行 ticket | `workflow_id`、`ticket_id`、`node_id`、`leased_by` |
 | `POST /api/v1/commands/ticket-start` | 当前主线 | 是 | 把 `LEASED` ticket 切到执行中 | `workflow_id`、`ticket_id`、`node_id`、`started_by` |
 | `POST /api/v1/commands/ticket-heartbeat` | 当前主线 | 是 | 给执行中 ticket 续活 | `workflow_id`、`ticket_id`、`node_id`、`reported_by` |
 | `POST /api/v1/commands/ticket-fail` | 当前主线 | 是 | 显式记录失败并触发既有恢复链 | `workflow_id`、`ticket_id`、`node_id`、`failure_kind`、`failure_message` |
 | `POST /api/v1/commands/ticket-complete` | 当前主线 | 保守使用 | 旧完成接口，仍保留兼容 | `workflow_id`、`ticket_id`、`node_id`、结果摘要 |
-| `POST /api/v1/commands/ticket-result-submit` | 当前主线 | 是 | 当前统一的结构化结果写回入口 | `workflow_id`、`ticket_id`、`node_id`、`result_status`、`schema_version`、`payload`、`written_artifacts` |
+| `POST /api/v1/commands/ticket-result-submit` | 当前主线 | 是 | 当前统一的结构化结果写回入口 | `workflow_id`、`ticket_id`、`node_id`、`result_status`、`schema_version`、`payload`、`written_artifacts`、`verification_evidence_refs?`、`git_commit_record?` |
 | `POST /api/v1/commands/scheduler-tick` | 当前主线 | 是 | 显式推动一次调度 tick | `workers`、`max_dispatches`、`idempotency_key` |
 | `POST /api/v1/commands/incident-resolve` | 当前主线 | 是 | 关闭 incident 并按策略恢复 | `incident_id`、`resolved_by`、`resolution_type`、`resolution_summary` |
 | `POST /api/v1/commands/artifact-delete` | 当前主线 | 按需 | 逻辑删除 artifact | `artifact_ref`、`deleted_by`、`delete_reason` |
@@ -87,9 +87,12 @@ worker-runtime 是单独一套受限接口：
 
 - `project-init` 和 `ticket-create` 当前仍接受弃用兼容输入 `tenant_id / workspace_id`，但它们已不再驱动主线行为
 - `project-init` 当前新增可选 `force_requirement_elicitation`；开启后会先进入一次 `REQUIREMENT_ELICITATION` 板审，而不是直接 kickoff scope review
+- `project-init` 当前还会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区；`project_methodology_profile` 第一版支持 `AGILE / HYBRID / COMPLIANCE`
 - `runtime-provider-upsert` 当前已从单一表单切到 registry 快照；`providers[]` 首版只开放 `prov_openai_compat` 与 `prov_claude_code`，并额外支持 `capability_tags[]`、`fallback_provider_ids[]`、`cost_tier` 与 `participation_policy`；`role_bindings[]` 当前只建议写现有真实角色
 - `runtime-provider-upsert` 当前会拒绝未知能力标签、重复标签、未知 fallback provider、自引用和重复 fallback 项
 - `ticket-create` 当前可选支持 `runtime_preference.preferred_provider_id / preferred_model`；它只表达任务级 runtime 偏好，不提供绕过能力底线、provider 启停状态、参与策略或现有 failover 约束的硬覆盖
+- `ticket-create` 对由当前 `project-init` 建出来的 workflow，会自动补 project workspace / methodology / deliverable / 文档 / git 相关真相，并创建 ticket dossier；legacy / seeded workflow 没有 workspace manifest 时只会补最小默认值
+- `ticket-result-submit` 对 workspace-managed `source_code_delivery` 票，当前会硬要求 `payload.documentation_updates`、`verification_evidence_refs` 和 `git_commit_record`；旧 artifact-path 代码票继续兼容
 - `ticket-result-submit` 现在不再直接消费 `upload_session_id`；中大文件必须先走 `ticket-artifact-import-upload`
 
 ## 5. Projections
