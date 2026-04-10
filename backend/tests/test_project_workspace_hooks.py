@@ -4,7 +4,10 @@ import json
 
 from app.config import get_settings
 from app.core.context_compiler import compile_and_persist_execution_artifacts
-from app.core.process_assets import build_artifact_process_asset_ref
+from app.core.process_assets import (
+    build_artifact_process_asset_ref,
+    build_source_code_delivery_process_asset_ref,
+)
 
 
 def _project_init_payload(goal: str) -> dict[str, object]:
@@ -77,6 +80,16 @@ def _ticket_start_payload(*, workflow_id: str, ticket_id: str, node_id: str) -> 
         "started_by": "emp_frontend_2",
         "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
     }
+
+
+def _active_worktree_index_path(workflow_id: str):
+    return (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "00-boardroom"
+        / "workflow"
+        / "active-worktree-index.md"
+    )
 
 
 def test_compile_persists_worker_preflight_receipt_and_required_reads(client) -> None:
@@ -373,6 +386,100 @@ def test_source_code_delivery_writes_postrun_and_git_receipts(client) -> None:
     assert (dossier_root / "worker-postrun.json").is_file()
     assert (dossier_root / "evidence-capture.json").is_file()
     assert (dossier_root / "git-closeout.json").is_file()
+
+
+def test_source_code_delivery_ticket_start_updates_active_worktree_index(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code worktree start demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_worktree_start_001"
+    node_id = "node_code_worktree_start_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    index_path = _active_worktree_index_path(workflow_id)
+    assert index_path.is_file()
+    index_body = index_path.read_text(encoding="utf-8")
+    assert "| ticket_id | node_id | worker | status | branch_ref | commit_sha | merge_status | updated_at |" in index_body
+    assert ticket_id in index_body
+    assert node_id in index_body
+    assert "emp_frontend_2" in index_body
+    assert "EXECUTING" in index_body
+    assert f"codex/{ticket_id}" in index_body
+
+
+def test_source_code_delivery_submit_updates_active_worktree_index_with_git_status(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code worktree submit demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_worktree_submit_001"
+    node_id = "node_code_worktree_submit_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_documentation_updates=True,
+            include_git_evidence=True,
+        ),
+    )
+
+    index_path = _active_worktree_index_path(workflow_id)
+    index_body = index_path.read_text(encoding="utf-8")
+    assert ticket_id in index_body
+    assert "abc1234" in index_body
+    assert "PENDING_REVIEW_GATE" in index_body
+
+
+def test_governance_ticket_does_not_enter_active_worktree_index(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Governance worktree exclusion demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_governance_worktree_001"
+    node_id = "node_governance_worktree_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "architecture_brief",
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:governance-worktree",
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_governance_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+
+    index_path = _active_worktree_index_path(workflow_id)
+    index_body = index_path.read_text(encoding="utf-8")
+    assert ticket_id not in index_body
+    assert "No active worktree recorded yet." in index_body
 
 
 def test_source_code_delivery_requires_project_source_file_refs(client) -> None:

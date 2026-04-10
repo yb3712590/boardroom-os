@@ -56,7 +56,11 @@ from app.core.output_schemas import (
     validate_output_payload,
 )
 from app.core.persona_profiles import normalize_persona_profiles
-from app.core.process_assets import get_ticket_output_process_asset_refs, merge_input_process_asset_refs
+from app.core.process_assets import (
+    build_source_code_delivery_process_asset_ref,
+    get_ticket_output_process_asset_refs,
+    merge_input_process_asset_refs,
+)
 from app.core.requirement_elicitation import (
     build_enriched_board_brief_markdown,
     build_requirement_elicitation_markdown,
@@ -1068,6 +1072,7 @@ def _build_scope_followup_ticket_payloads(
     ticket_payloads: list[dict[str, Any]] = []
     prior_ticket_id = source_ticket_id
     chained_artifact_refs: list[str] = []
+    chained_process_asset_refs: list[str] = []
     extra_semantic_queries: list[str] = []
     extra_acceptance_criteria: list[str] = []
     if approval["approval_type"] == "MEETING_ESCALATION":
@@ -1134,6 +1139,7 @@ def _build_scope_followup_ticket_payloads(
             input_process_asset_refs=merge_input_process_asset_refs(
                 existing_process_asset_refs=input_process_asset_refs,
                 artifact_refs=chained_artifact_refs,
+                produced_process_asset_refs=chained_process_asset_refs,
             ),
             context_query_plan={
                 "keywords": _scope_followup_context_keywords(delivery_stage),
@@ -1192,6 +1198,10 @@ def _build_scope_followup_ticket_payloads(
         expected_artifact_ref = _scope_followup_expected_artifact_ref(followup_ticket_id, delivery_stage)
         if expected_artifact_ref is not None:
             chained_artifact_refs.append(expected_artifact_ref)
+        if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+            chained_process_asset_refs.append(
+                build_source_code_delivery_process_asset_ref(followup_ticket_id)
+            )
 
     return ticket_payloads
 

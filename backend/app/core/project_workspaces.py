@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -804,3 +805,162 @@ def write_git_closeout_receipt(
         },
     )
     return str(receipt_path)
+
+
+def _active_worktree_index_path(workflow_id: str) -> Path:
+    return resolve_project_workspace_root(workflow_id) / "00-boardroom" / "workflow" / "active-worktree-index.md"
+
+
+def _load_git_closeout_receipt(workflow_id: str, ticket_id: str) -> dict[str, Any]:
+    receipt_path = (
+        resolve_project_workspace_root(workflow_id)
+        / "00-boardroom"
+        / "tickets"
+        / ticket_id
+        / "hook-receipts"
+        / "git-closeout.json"
+    )
+    if not receipt_path.exists():
+        return {}
+    try:
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(payload.get("git_commit_record") or {}) if isinstance(payload, dict) else {}
+
+
+def _latest_started_by(
+    repository: ControlPlaneRepository,
+    *,
+    connection: sqlite3.Connection,
+    ticket_id: str,
+) -> str | None:
+    row = connection.execute(
+        """
+        SELECT actor_id, payload_json
+        FROM events
+        WHERE event_type = 'TICKET_STARTED' AND json_extract(payload_json, '$.ticket_id') = ?
+        ORDER BY occurred_at DESC, event_id DESC
+        LIMIT 1
+        """,
+        (ticket_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    actor_id = str(row["actor_id"] or "").strip()
+    if actor_id:
+        return actor_id
+    try:
+        payload = json.loads(row["payload_json"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    started_by = str((payload or {}).get("started_by") or "").strip()
+    return started_by or None
+
+
+def _is_workspace_managed_source_code_ticket(created_spec: dict[str, Any]) -> bool:
+    if str(created_spec.get("deliverable_kind") or "") != DeliverableKind.SOURCE_CODE_DELIVERY.value:
+        return False
+    return any(
+        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
+        for pattern in list(created_spec.get("allowed_write_set") or [])
+    )
+
+
+def _serialize_worktree_index_timestamp(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    serialized = str(value or "").strip()
+    return serialized
+
+
+def sync_active_worktree_index(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection: sqlite3.Connection | None = None,
+) -> str:
+    index_path = _active_worktree_index_path(workflow_id)
+    if not project_workspace_manifest_exists(workflow_id):
+        return str(index_path)
+
+    owns_connection = connection is None
+    context = repository.connection() if owns_connection else None
+    resolved_connection = context.__enter__() if context is not None else connection
+    try:
+        assert resolved_connection is not None
+        rows = resolved_connection.execute(
+            """
+            SELECT *
+            FROM ticket_projection
+            WHERE workflow_id = ?
+            ORDER BY updated_at ASC, ticket_id ASC
+            """,
+            (workflow_id,),
+        ).fetchall()
+        entries: list[dict[str, str]] = []
+        for row in rows:
+            ticket = repository._convert_ticket_projection_row(row)
+            ticket_id = str(ticket["ticket_id"])
+            created_spec = repository.get_latest_ticket_created_payload(resolved_connection, ticket_id) or {}
+            if not _is_workspace_managed_source_code_ticket(created_spec):
+                continue
+
+            status = str(ticket.get("status") or "").strip()
+            worker = str(ticket.get("lease_owner") or "").strip() or (_latest_started_by(
+                repository,
+                connection=resolved_connection,
+                ticket_id=ticket_id,
+            ) or "")
+            branch_ref = f"codex/{ticket_id}"
+            commit_sha = ""
+            merge_status = ""
+            display_status = ""
+
+            if status == "EXECUTING":
+                display_status = "EXECUTING"
+            elif status == "COMPLETED":
+                git_commit_record = _load_git_closeout_receipt(workflow_id, ticket_id)
+                branch_ref = str(git_commit_record.get("branch_ref") or branch_ref).strip()
+                commit_sha = str(git_commit_record.get("commit_sha") or "").strip()
+                merge_status = str(git_commit_record.get("merge_status") or "").strip()
+                if merge_status != "PENDING_REVIEW_GATE":
+                    continue
+                display_status = "PENDING_REVIEW_GATE"
+            else:
+                continue
+
+            entries.append(
+                {
+                    "ticket_id": ticket_id,
+                    "node_id": str(ticket.get("node_id") or "").strip(),
+                    "worker": worker,
+                    "status": display_status,
+                    "branch_ref": branch_ref,
+                    "commit_sha": commit_sha,
+                    "merge_status": merge_status,
+                    "updated_at": _serialize_worktree_index_timestamp(ticket.get("updated_at")),
+                }
+            )
+
+        if not entries:
+            content = "# Active Worktrees\n\n- No active worktree recorded yet.\n"
+        else:
+            lines = [
+                "# Active Worktrees",
+                "",
+                "| ticket_id | node_id | worker | status | branch_ref | commit_sha | merge_status | updated_at |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            ]
+            for entry in entries:
+                lines.append(
+                    "| {ticket_id} | {node_id} | {worker} | {status} | {branch_ref} | {commit_sha} | {merge_status} | {updated_at} |".format(
+                        **entry
+                    )
+                )
+            content = "\n".join(lines) + "\n"
+        _write_text(index_path, content)
+        return str(index_path)
+    finally:
+        if context is not None:
+            context.__exit__(None, None, None)

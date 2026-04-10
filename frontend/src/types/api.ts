@@ -84,6 +84,17 @@ export type DashboardData = {
     documentation_sync_summary: string | null
     documentation_update_count: number
     documentation_follow_up_count: number
+    source_delivery_summary?: {
+      ticket_id: string
+      summary: string
+      source_file_refs: readonly string[]
+      source_file_count: number
+      verification_evidence_refs: readonly string[]
+      verification_evidence_count: number
+      git_commit_sha: string | null
+      git_branch_ref: string | null
+      git_merge_status: string | null
+    } | null
     workflow_chain_report_artifact_ref: string | null
   } | null
   event_stream_preview: Array<{

@@ -540,7 +540,7 @@ def _resolve_source_code_delivery_process_asset(
             raise ValueError(f"Process asset {process_asset_ref} source payload is invalid.")
         result_payload = payload.get("payload") or {}
         if not isinstance(result_payload, dict):
-            raise ValueError(f"Process asset {process_asset_ref} source payload is invalid.")
+            result_payload = {}
         produced_assets = list(payload.get("produced_process_assets") or [])
         asset_entry = next(
             (
@@ -555,6 +555,27 @@ def _resolve_source_code_delivery_process_asset(
         if asset_entry is None:
             raise ValueError(f"Process asset {process_asset_ref} is missing.")
         source_metadata = dict(asset_entry.get("source_metadata") or {})
+        source_file_refs = list(result_payload.get("source_file_refs") or [])
+        if not source_file_refs:
+            source_file_refs = [
+                str(item).strip()
+                for item in list(source_metadata.get("source_file_refs") or [])
+                if str(item).strip()
+            ] or [
+                str(item).strip()
+                for item in list(source_metadata.get("written_artifact_refs") or [])
+                if str(item).strip()
+            ]
+        verification_evidence_refs = list(payload.get("verification_evidence_refs") or [])
+        if not verification_evidence_refs:
+            verification_evidence_refs = [
+                str(item).strip()
+                for item in list(source_metadata.get("verification_evidence_refs") or [])
+                if str(item).strip()
+            ]
+        git_commit_record = payload.get("git_commit_record")
+        if not isinstance(git_commit_record, dict):
+            git_commit_record = dict(source_metadata.get("git_commit_record") or {})
         return ResolvedProcessAsset(
             process_asset_ref=process_asset_ref,
             process_asset_kind="SOURCE_CODE_DELIVERY",
@@ -568,12 +589,16 @@ def _resolve_source_code_delivery_process_asset(
             source_metadata=source_metadata,
             content_type="JSON",
             json_content={
-                "summary": result_payload.get("summary"),
-                "source_file_refs": list(result_payload.get("source_file_refs") or []),
+                "summary": (
+                    result_payload.get("summary")
+                    or asset_entry.get("summary")
+                    or f"Source code delivery for {ticket_id}"
+                ),
+                "source_file_refs": source_file_refs,
                 "implementation_notes": list(result_payload.get("implementation_notes") or []),
                 "documentation_updates": list(result_payload.get("documentation_updates") or []),
-                "verification_evidence_refs": list(payload.get("verification_evidence_refs") or []),
-                "git_commit_record": payload.get("git_commit_record"),
+                "verification_evidence_refs": verification_evidence_refs,
+                "git_commit_record": git_commit_record,
             },
             schema_ref="source_code_delivery@1",
         )

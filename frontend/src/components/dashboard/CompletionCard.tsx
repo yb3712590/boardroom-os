@@ -15,6 +15,7 @@ export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: Comple
   const hasFinalReview = summary.final_review_pack_id !== null
   const chainReportArtifactRef = summary.workflow_chain_report_artifact_ref
   const finalReviewPackId = summary.final_review_pack_id
+  const sourceDeliverySummary = summary.source_delivery_summary ?? null
 
   return (
     <section className="completion-card" aria-labelledby="completion-card-title">
@@ -94,6 +95,62 @@ export function CompletionCard({ summary, onOpenReview, onOpenArtifact }: Comple
         {': '}
         <span>{summary.documentation_sync_summary ?? 'No documentation sync update recorded.'}</span>
       </p>
+      {sourceDeliverySummary ? (
+        <div className="completion-card-summary">
+          <strong>Source delivery evidence</strong>
+          <div className="completion-card-grid">
+            <div>
+              <span>Source ticket</span>
+              <strong>{sourceDeliverySummary.ticket_id}</strong>
+            </div>
+            <div>
+              <span>Source files</span>
+              <strong>{sourceDeliverySummary.source_file_count}</strong>
+              <div className="artifact-ref-list">
+                {sourceDeliverySummary.source_file_refs.map((artifactRef) => (
+                  <button
+                    key={artifactRef}
+                    type="button"
+                    className="ghost-button artifact-ref-button"
+                    onClick={() => onOpenArtifact(artifactRef)}
+                  >
+                    Open artifact {artifactRefFilename(artifactRef)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span>Verification evidence</span>
+              <strong>{sourceDeliverySummary.verification_evidence_count}</strong>
+              <div className="artifact-ref-list">
+                {sourceDeliverySummary.verification_evidence_refs.map((artifactRef) => (
+                  <button
+                    key={artifactRef}
+                    type="button"
+                    className="ghost-button artifact-ref-button"
+                    onClick={() => onOpenArtifact(artifactRef)}
+                  >
+                    Open artifact {artifactRefFilename(artifactRef)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span>Git branch</span>
+              <strong>{sourceDeliverySummary.git_branch_ref ?? 'Not recorded'}</strong>
+            </div>
+            <div>
+              <span>Commit</span>
+              <strong>{sourceDeliverySummary.git_commit_sha ?? 'Not recorded'}</strong>
+            </div>
+            <div>
+              <span>Merge status</span>
+              <strong>{sourceDeliverySummary.git_merge_status ?? 'Not recorded'}</strong>
+            </div>
+          </div>
+          <span>{sourceDeliverySummary.summary}</span>
+        </div>
+      ) : null}
       <p className="completion-card-summary">{summary.summary}</p>
       <div className="completion-card-actions">
         {finalReviewPackId != null ? (

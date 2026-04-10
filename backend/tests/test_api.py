@@ -15,6 +15,7 @@ from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.process_assets import (
     build_closeout_summary_process_asset_ref,
     build_meeting_decision_process_asset_ref,
+    build_source_code_delivery_process_asset_ref,
 )
 from app.core.constants import (
     APPROVAL_STATUS_APPROVED,
@@ -228,6 +229,7 @@ def _seed_created_ticket(
     allowed_tools: list[str] | None = None,
     acceptance_criteria: list[str] | None = None,
     input_artifact_refs: list[str] | None = None,
+    input_process_asset_refs: list[str] | None = None,
     parent_ticket_id: str | None = None,
 ) -> None:
     repository = client.app.state.repository
@@ -244,6 +246,8 @@ def _seed_created_ticket(
         input_artifact_refs=input_artifact_refs,
         parent_ticket_id=parent_ticket_id,
     )
+    if input_process_asset_refs is not None:
+        payload["input_process_asset_refs"] = input_process_asset_refs
     with repository.transaction() as connection:
         repository.insert_event(
             connection,
@@ -12318,7 +12322,8 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
 
     dashboard_response = client.get("/api/v1/projections/dashboard")
 
-    _, expected_closeout_ticket_id, _ = _expected_closeout_ids(repository, approval)
+    logical_review_ticket_id, expected_closeout_ticket_id, _ = _expected_closeout_ids(repository, approval)
+    expected_build_ticket_id = f"{logical_review_ticket_id.removesuffix('_review')}_build"
     completion_summary = dashboard_response.json()["data"]["completion_summary"]
     assert completion_summary["workflow_id"] == workflow_id
     assert completion_summary["final_review_pack_id"] == approval["review_pack_id"]
@@ -12333,6 +12338,17 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
     assert completion_summary["documentation_sync_summary"] == "2 documentation updates recorded; 0 follow-up items."
     assert completion_summary["documentation_update_count"] == 2
     assert completion_summary["documentation_follow_up_count"] == 0
+    source_delivery_summary = completion_summary["source_delivery_summary"]
+    assert source_delivery_summary is not None
+    assert source_delivery_summary["ticket_id"] == expected_build_ticket_id
+    assert source_delivery_summary["summary"]
+    assert source_delivery_summary["source_file_count"] == len(source_delivery_summary["source_file_refs"])
+    assert source_delivery_summary["verification_evidence_count"] == len(
+        source_delivery_summary["verification_evidence_refs"]
+    )
+    assert source_delivery_summary["git_branch_ref"] == f"codex/{expected_build_ticket_id}"
+    assert source_delivery_summary["git_merge_status"] == "PENDING_REVIEW_GATE"
+    assert source_delivery_summary["git_commit_sha"]
     stored_artifact = repository.get_artifact_by_ref(
         f"art://runtime/{expected_closeout_ticket_id}/delivery-closeout-package.json"
     )
@@ -12446,6 +12462,9 @@ def test_dashboard_completion_summary_supports_autopilot_closeout_without_visual
             "Must produce a structured delivery closeout package.",
         ],
         parent_ticket_id="tkt_autopilot_dashboard_build",
+        input_process_asset_refs=[
+            build_source_code_delivery_process_asset_ref("tkt_autopilot_dashboard_build"),
+        ],
     )
     lease_response = client.post(
         "/api/v1/commands/ticket-lease",
@@ -12506,6 +12525,17 @@ def test_dashboard_completion_summary_supports_autopilot_closeout_without_visual
     assert completion_summary["closeout_artifact_refs"] == [
         "art://runtime/tkt_autopilot_dashboard_closeout/delivery-closeout-package.json"
     ]
+    source_delivery_summary = completion_summary["source_delivery_summary"]
+    assert source_delivery_summary is not None
+    assert source_delivery_summary["ticket_id"] == "tkt_autopilot_dashboard_build"
+    assert source_delivery_summary["summary"] == "Source code delivery prepared for tkt_autopilot_dashboard_build."
+    assert source_delivery_summary["source_file_refs"] == ["art://runtime/tkt_autopilot_dashboard_build/source-code.tsx"]
+    assert source_delivery_summary["source_file_count"] == 1
+    assert source_delivery_summary["verification_evidence_refs"] == []
+    assert source_delivery_summary["verification_evidence_count"] == 0
+    assert source_delivery_summary["git_commit_sha"] is None
+    assert source_delivery_summary["git_branch_ref"] is None
+    assert source_delivery_summary["git_merge_status"] is None
     assert completion_summary["workflow_chain_report_artifact_ref"] == (
         f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"
     )
@@ -12608,6 +12638,56 @@ def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_
     assert current_ticket is not None
     assert current_ticket["ticket_id"] == checker_ticket_id
     assert current_ticket["status"] == TICKET_STATUS_COMPLETED
+
+
+def test_completion_summary_returns_null_source_delivery_summary_when_closeout_lacks_source_delivery_asset(client):
+    workflow_id, scope_approval = _project_init_to_scope_approval(client)
+    _approve_open_review(client, scope_approval, idempotency_suffix="closeout-null-source-scope")
+    repository = client.app.state.repository
+    approval = next(
+        item
+        for item in repository.list_open_approvals()
+        if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
+    )
+
+    client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": "option_a",
+            "board_comment": "Proceed without source delivery summary.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:closeout-null-source-final",
+        },
+    )
+
+    _, expected_closeout_ticket_id, _ = _expected_closeout_ids(repository, approval)
+    with repository.connection() as connection:
+        closeout_created_event = repository.get_latest_ticket_created_payload(connection, expected_closeout_ticket_id)
+        assert closeout_created_event is not None
+        closeout_created_event["input_process_asset_refs"] = []
+        ticket_created_event = connection.execute(
+            """
+            SELECT event_id
+            FROM events
+            WHERE event_type = 'TICKET_CREATED' AND json_extract(payload_json, '$.ticket_id') = ?
+            ORDER BY occurred_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (expected_closeout_ticket_id,),
+        ).fetchone()
+        assert ticket_created_event is not None
+        connection.execute(
+            "UPDATE events SET payload_json = ? WHERE event_id = ?",
+            (json.dumps(closeout_created_event, sort_keys=True), ticket_created_event["event_id"]),
+        )
+        repository.refresh_projections(connection)
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+    assert completion_summary["source_delivery_summary"] is None
 
 
 def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_blocks_completion(client):

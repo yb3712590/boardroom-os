@@ -13,6 +13,7 @@ from app.contracts.projections import (
     ArtifactCleanupCandidatesProjectionFilters,
     ArtifactMaintenanceProjection,
     DashboardCompletionSummaryProjection,
+    DashboardSourceDeliverySummaryProjection,
     DashboardProjectionData,
     DashboardProjectionEnvelope,
     DashboardRuntimeStatusProjection,
@@ -83,6 +84,7 @@ from app.contracts.projections import (
     WorkforceWorkerProjection,
     WorkspaceSummary,
 )
+from app.core.process_assets import resolve_process_asset
 from app.contracts.runtime import RenderedExecutionPayloadSummary
 from app.contracts.commands import IncidentFollowupAction
 from app.config import get_settings
@@ -549,6 +551,11 @@ def _build_dashboard_completion_summary(
         ).fetchone()
         closeout_ticket = closeout_completion.closeout_ticket
         closeout_terminal_event = closeout_completion.closeout_terminal_event
+        source_delivery_summary = _build_closeout_source_delivery_summary(
+            repository,
+            connection=connection,
+            closeout_ticket_id=str(closeout_ticket["ticket_id"]),
+        )
 
     approval = repository._convert_approval_row(final_review_row) if final_review_row is not None else None
     payload = approval.get("payload") or {} if approval is not None else {}
@@ -609,8 +616,55 @@ def _build_dashboard_completion_summary(
         documentation_sync_summary=documentation_sync_summary,
         documentation_update_count=documentation_update_count,
         documentation_follow_up_count=documentation_follow_up_count,
+        source_delivery_summary=source_delivery_summary,
         workflow_chain_report_artifact_ref=chain_report_ref,
     )
+
+
+def _build_closeout_source_delivery_summary(
+    repository: ControlPlaneRepository,
+    *,
+    connection,
+    closeout_ticket_id: str,
+) -> DashboardSourceDeliverySummaryProjection | None:
+    created_spec = repository.get_latest_ticket_created_payload(connection, closeout_ticket_id) or {}
+    for process_asset_ref in reversed(list(created_spec.get("input_process_asset_refs") or [])):
+        try:
+            resolved_asset = resolve_process_asset(
+                repository,
+                process_asset_ref=str(process_asset_ref),
+                connection=connection,
+            )
+        except ValueError:
+            continue
+        if resolved_asset.process_asset_kind != "SOURCE_CODE_DELIVERY":
+            continue
+        payload = dict(resolved_asset.json_content or {})
+        source_file_refs = [
+            str(item).strip()
+            for item in list(payload.get("source_file_refs") or [])
+            if str(item).strip()
+        ]
+        verification_evidence_refs = [
+            str(item).strip()
+            for item in list(payload.get("verification_evidence_refs") or [])
+            if str(item).strip()
+        ]
+        git_commit_record = payload.get("git_commit_record") or {}
+        if not isinstance(git_commit_record, dict):
+            git_commit_record = {}
+        return DashboardSourceDeliverySummaryProjection(
+            ticket_id=str(resolved_asset.producer_ticket_id or closeout_ticket_id),
+            summary=str(payload.get("summary") or resolved_asset.summary or ""),
+            source_file_refs=source_file_refs,
+            source_file_count=len(source_file_refs),
+            verification_evidence_refs=verification_evidence_refs,
+            verification_evidence_count=len(verification_evidence_refs),
+            git_commit_sha=str(git_commit_record.get("commit_sha") or "").strip() or None,
+            git_branch_ref=str(git_commit_record.get("branch_ref") or "").strip() or None,
+            git_merge_status=str(git_commit_record.get("merge_status") or "").strip() or None,
+        )
+    return None
 
 
 def _summarize_closeout_documentation_updates(documentation_updates: Any) -> tuple[str | None, int, int]:

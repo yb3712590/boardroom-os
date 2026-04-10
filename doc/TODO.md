@@ -49,8 +49,8 @@
 - `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；当前已落第一段 project workspace 真相：`project-init` 现在会创建三分区项目工作区，`ticket-create` 会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`，workspace-managed ticket 也会生成 dossier
 - `P0-COR-002` 待开始：收正单一 workflow controller，把 `task_kind / deliverable_kind / capability_plan / staffing_gaps / coordination_mode` 变成统一控制输入，统一 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义、状态来源和完成定义，禁止再按现有员工池静默改写 role 或 assignee
 - `P0-COR-003` 待开始：收正 capability gap 驱动的招聘、协作和阻断逻辑。当任务现实需要架构设计、系统分析、实现、测试或治理能力，而 active roster 无法覆盖时，系统必须显式招聘、显式开会或显式阻断；`architect_primary` 只是其中一种可能结果，不再是所有项目的默认前置
-- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第二段已把 BUILD 主结果硬切到 `source_code_delivery`，并让 deterministic / provider-backed runtime 直接交源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产；但真实 worktree 分发，以及调研 / 分析 / 治理类证据包还没重写
-- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第二段已让 staged BUILD follow-up 也走 workspace-managed write set，并对 workspace-managed `source_code_delivery` 票硬校验 `source_file_refs / documentation_updates / verification_evidence_refs / git_commit_record`；但 Review Gate merge 自动化、closeout 统一 gate、非代码票硬 gate，以及 completion / projection 的源码 / 证据 / git 摘要还没落
+- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第三段已补上 workspace-managed 代码票的 active worktree 索引，执行中和待 review gate 的代码票都会回写 `ticket / worker / branch / commit / merge_status`；但真实 git worktree 分配/清理，以及调研 / 分析 / 治理类证据包还没重写
+- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第三段已让 closeout completion / dashboard projection / 完成卡展开源码文件、测试证据和 git 摘要；但 Review Gate merge 自动化、closeout 统一 gate 和非代码票硬 gate 还没落
 - `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，要求 CEO 基于任务现实做 capability plan，不再按角色池静默 fallback，且证据闭环可追溯
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 

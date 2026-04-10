@@ -117,6 +117,7 @@ from app.core.project_workspaces import (
     bootstrap_ticket_dossier,
     infer_ticket_workspace_bootstrap,
     project_workspace_manifest_exists,
+    sync_active_worktree_index,
     write_evidence_capture_receipt,
     write_git_closeout_receipt,
     write_worker_postrun_receipt,
@@ -3549,6 +3550,9 @@ def handle_ticket_cancel(
 
         repository.refresh_projections(connection)
 
+    if project_workspace_manifest_exists(payload.workflow_id):
+        sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
+
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -3843,6 +3847,9 @@ def handle_ticket_lease(
 
         repository.refresh_projections(connection)
 
+    if project_workspace_manifest_exists(payload.workflow_id):
+        sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
+
     return CommandAckEnvelope(
         command_id=command_id,
         idempotency_key=payload.idempotency_key,
@@ -4005,6 +4012,9 @@ def handle_ticket_start(
             )
 
         repository.refresh_projections(connection)
+
+    if project_workspace_manifest_exists(payload.workflow_id):
+        sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 
     return CommandAckEnvelope(
         command_id=command_id,
@@ -4300,6 +4310,9 @@ def handle_ticket_fail(
                 )
 
         repository.refresh_projections(connection)
+
+    if project_workspace_manifest_exists(payload.workflow_id):
+        sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 
     _trigger_ceo_shadow_safely(
         repository,
@@ -4681,6 +4694,8 @@ def handle_ticket_result_submit(
                 ticket_id=payload.ticket_id,
                 git_commit_record=payload.git_commit_record.model_dump(mode="json"),
             )
+    if project_workspace_manifest_exists(payload.workflow_id):
+        sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 
     _trigger_ceo_shadow_safely(
         repository,

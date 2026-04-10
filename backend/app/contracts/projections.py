@@ -46,6 +46,18 @@ class DashboardRuntimeStatusProjection(StrictModel):
     reason: str
 
 
+class DashboardSourceDeliverySummaryProjection(StrictModel):
+    ticket_id: str
+    summary: str
+    source_file_refs: list[str]
+    source_file_count: int
+    verification_evidence_refs: list[str]
+    verification_evidence_count: int
+    git_commit_sha: str | None = None
+    git_branch_ref: str | None = None
+    git_merge_status: str | None = None
+
+
 class DashboardCompletionSummaryProjection(StrictModel):
     workflow_id: str
     final_review_pack_id: str | None = None
@@ -62,6 +74,7 @@ class DashboardCompletionSummaryProjection(StrictModel):
     documentation_sync_summary: str | None = None
     documentation_update_count: int = 0
     documentation_follow_up_count: int = 0
+    source_delivery_summary: DashboardSourceDeliverySummaryProjection | None = None
     workflow_chain_report_artifact_ref: str | None = None
 
 
