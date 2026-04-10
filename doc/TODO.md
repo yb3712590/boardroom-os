@@ -22,16 +22,35 @@
 
 ## 当前批次
 
-### `P0-COR`：主线纠偏与真实代码交付重构
+### `P0-COR`：主线纠偏、能力驱动决策与真实交付重构
 
 状态：`进行中（2026-04-10，新纳入；与主线关系：live 集成测试已经证明当前默认主线会退化成文档式 artifact 交付，必须先重写协议、控制器和硬门禁，再继续新角色、新 provider 和后续治理增强）`
 
+#### `P0-COR` 总框架补记（2026-04-10）
+
+- 这批任务先收正 CEO 的决策起点：从 `role-first` 改成 `task-first / capability-first / resource-binding-last`。CEO 先判断任务现实，再决定能力缺口、协作方式和交付物，不再先找某个角色。
+- CEO 的第一层真相要变成结构化 `task sensemaking + capability plan`：最小要能说明 `task_kind / deliverable_kind / uncertainty_level / required_capabilities / optional_capabilities / recommended_team_shape / staffing_gaps / need_meeting`。
+- 角色、招聘、会议、ticket 派发都只能是 capability plan 的结果。不能再因为员工池里刚好有谁在线，就静默把任务改派给这个角色；也不能把 `architect_primary` 写成所有项目的默认前置。
+- `architect_primary`、系统分析师、开发测试团队都只是特定任务下的可能结果。需求调研类任务可以落到分析/调研能力，模块化实施任务可以直接落到开发/测试能力，复杂架构拆解任务才需要架构设计能力。
+- multi-agent 协作也要跟着任务边界走：先由主控 agent 做任务分解，再决定是否启用 focused subagent 或 parallel agent team。只有互相独立的 domain 才允许并行，且每个 subagent / worktree 只负责清晰边界内的一段任务。
+- 代码实施只是 `deliverable_kind=source_code_delivery` 的一个分支。需求调研、系统分析、治理设计、代码实施要按各自 deliverable contract 收口，不能把“真实代码交付”误写成所有项目的默认完成定义。
+
+#### `P0-COR` 优先整改顺序（2026-04-10）
+
+1. 先补 `task sensemaking`：让 CEO 在任何建票、招聘、开会之前，先判断任务类型、交付物类型、不确定性和风险。
+2. 再补 `capability plan`：把所需能力、可选能力、建议 team shape、staffing gap 和是否需要 meeting 固化成显式中间真相。
+3. 把 controller 收成单一主线：`workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 都只消费同一套 `task sensemaking + capability plan`，禁止静默改写 role 或 assignee。
+4. 把招聘和会议改成缺口驱动：现有员工能覆盖就派单，覆盖不全就显式招聘，分歧高或不确定性高就显式开会，三者都不再靠隐式 fallback。
+5. 按 `deliverable_kind` 重写交付 contract：代码型任务走真实源码交付包，调研/分析/治理型任务走各自证据包，不再只认 `implementation_bundle`。
+6. 按 `deliverable_kind` 重写 review gate：代码型任务校验源码、测试、构建和文档同步；调研/分析型任务校验事实来源、结论链、风险边界和决策记录。
+7. 重建 live 回归矩阵：至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，确保 CEO 是按任务现实决策，而不是按现有角色池静默派单。
+
 - `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；alias、兼容字段和隐式补推只允许留在兼容入口，不再进入主运行链
-- `P0-COR-002` 待开始：收正单一 workflow controller，统一 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义、状态来源和完成定义，避免多控制器并存
-- `P0-COR-003` 待开始：把 `architect_primary` 真实招聘、真实 runtime 使用和必要治理 meeting 证据升成硬约束；满足特定 profile 或主线条件时，缺失即阻断 build / closeout
-- `P0-COR-004` 待开始：重写源码交付 contract，用“真实代码交付包”替换 `implementation_bundle` 独占主线；补齐 changed files、patch/diff、test/build outputs、文档同步和必要截图/API 证据，并把 write target 从仅 `artifacts/...` 扩到真实工作区或隔离 worktree
-- `P0-COR-005` 待开始：把 checker / closeout 改成硬门禁，不再接受模板化成功包、宽松 `APPROVED_WITH_NOTES` 默认放行，closeout 必须校验源码、测试、构建和治理证据
-- `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，要求真实代码落地、证据闭环和长链执行不退化
+- `P0-COR-002` 待开始：收正单一 workflow controller，把 `task_kind / deliverable_kind / capability_plan / staffing_gaps / coordination_mode` 变成统一控制输入，统一 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义、状态来源和完成定义，禁止再按现有员工池静默改写 role 或 assignee
+- `P0-COR-003` 待开始：收正 capability gap 驱动的招聘、协作和阻断逻辑。当任务现实需要架构设计、系统分析、实现、测试或治理能力，而 active roster 无法覆盖时，系统必须显式招聘、显式开会或显式阻断；`architect_primary` 只是其中一种可能结果，不再是所有项目的默认前置
+- `P0-COR-004` 待开始：按 `deliverable_kind` 重写交付 contract。代码型任务使用“真实代码交付包”替换 `implementation_bundle` 独占主线；调研、分析、治理类任务补齐各自的结构化证据包，并把 write target 从仅 `artifacts/...` 扩到匹配任务现实的工作区或隔离 worktree
+- `P0-COR-005` 待开始：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁，不再接受模板化成功包、宽松 `APPROVED_WITH_NOTES` 默认放行；代码型任务必须校验源码、测试、构建和文档同步，非代码型任务必须校验事实来源、结论链、风险边界和治理证据
+- `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，要求 CEO 基于任务现实做 capability plan，不再按角色池静默 fallback，且证据闭环可追溯
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。
