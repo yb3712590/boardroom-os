@@ -72,7 +72,11 @@ from app.core.constants import (
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, get_output_schema_body
 from app.core.persona_profiles import normalize_persona_profiles
-from app.core.project_workspaces import project_workspace_manifest_exists, write_worker_preflight_receipt
+from app.core.project_workspaces import (
+    project_workspace_manifest_exists,
+    resolve_ticket_checkout_truth,
+    write_worker_preflight_receipt,
+)
 from app.core.process_assets import merge_input_process_asset_refs, resolve_process_asset
 from app.core.time import now_local
 from app.core.workflow_relationships import WorkflowTicketSnapshot, list_workflow_ticket_snapshots
@@ -1692,6 +1696,11 @@ def build_compile_request(
         connection=connection,
     )
 
+    checkout_truth = resolve_ticket_checkout_truth(
+        str(ticket["workflow_id"]),
+        str(ticket["ticket_id"]),
+        created_spec,
+    )
     return CompileRequest(
         meta=CompileRequestMeta(
             compile_request_id=new_prefixed_id("creq"),
@@ -1738,6 +1747,9 @@ def build_compile_request(
             required_read_refs=list(created_spec.get("required_read_refs") or []),
             doc_update_requirements=list(created_spec.get("doc_update_requirements") or []),
             project_workspace_ref=created_spec.get("project_workspace_ref"),
+            project_checkout_ref=created_spec.get("project_checkout_ref") or checkout_truth["project_checkout_ref"],
+            project_checkout_path=checkout_truth["project_checkout_path"],
+            git_branch_ref=created_spec.get("git_branch_ref") or checkout_truth["git_branch_ref"],
             deliverable_kind=created_spec.get("deliverable_kind"),
             git_policy=created_spec.get("git_policy"),
         ),
@@ -2033,6 +2045,9 @@ def compile_audit_artifacts(
             required_read_refs=compile_request.execution.required_read_refs,
             doc_update_requirements=compile_request.execution.doc_update_requirements,
             project_workspace_ref=compile_request.execution.project_workspace_ref,
+            project_checkout_ref=compile_request.execution.project_checkout_ref,
+            project_checkout_path=compile_request.execution.project_checkout_path,
+            git_branch_ref=compile_request.execution.git_branch_ref,
             deliverable_kind=compile_request.execution.deliverable_kind,
             git_policy=compile_request.execution.git_policy,
             output_schema_ref=compile_request.control_refs.output_schema_ref,

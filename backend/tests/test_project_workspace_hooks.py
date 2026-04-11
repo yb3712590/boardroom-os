@@ -534,7 +534,7 @@ def test_source_code_delivery_submit_updates_active_worktree_index_with_git_stat
     index_path = _active_worktree_index_path(workflow_id)
     index_body = index_path.read_text(encoding="utf-8")
     assert ticket_id in index_body
-    assert "abc1234" in index_body
+    assert _git_output(_checkout_path(workflow_id, ticket_id), "rev-parse", "HEAD") in index_body
     assert "PENDING_REVIEW_GATE" in index_body
 
 

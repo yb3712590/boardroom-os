@@ -20,6 +20,7 @@
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
 - 2026-04-10 live 集成测试新增确认：当时主线虽然能跑到 closeout，但 BUILD 还在交占位式文档产物，不是真实源码交付；这也是 `P0-COR` 被提升为最高优先级的直接原因
 - 2026-04-11 第二段纠偏已落地：`BUILD` 主结果已经硬切到 `source_code_delivery`，workspace-managed staged follow-up build 也已改成 `10-project / 20-evidence` write set；runtime 会落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产
+- 2026-04-11 第三段纠偏已落地：`10-project/` 现在会初始化成真实 git repo；workspace-managed 代码票在 `ticket-start` 时会分配真实 worktree，在 `ticket-result-submit` 时会真实写盘并生成服务端 git commit 记录；final review approve 会先做真实 merge，成功后才继续 closeout
 
 ## 当前批次
 
@@ -49,8 +50,8 @@
 - `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；当前已落第一段 project workspace 真相：`project-init` 现在会创建三分区项目工作区，`ticket-create` 会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`，workspace-managed ticket 也会生成 dossier
 - `P0-COR-002` 待开始：收正单一 workflow controller，把 `task_kind / deliverable_kind / capability_plan / staffing_gaps / coordination_mode` 变成统一控制输入，统一 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义、状态来源和完成定义，禁止再按现有员工池静默改写 role 或 assignee
 - `P0-COR-003` 待开始：收正 capability gap 驱动的招聘、协作和阻断逻辑。当任务现实需要架构设计、系统分析、实现、测试或治理能力，而 active roster 无法覆盖时，系统必须显式招聘、显式开会或显式阻断；`architect_primary` 只是其中一种可能结果，不再是所有项目的默认前置
-- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第三段已补上 workspace-managed 代码票的 active worktree 索引，执行中和待 review gate 的代码票都会回写 `ticket / worker / branch / commit / merge_status`；但真实 git worktree 分配/清理，以及调研 / 分析 / 治理类证据包还没重写
-- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第三段已让 closeout completion / dashboard projection / 完成卡展开源码文件、测试证据和 git 摘要；但 Review Gate merge 自动化、closeout 统一 gate 和非代码票硬 gate 还没落
+- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第四段已把 workspace-managed 代码票收成真实 git repo / worktree / 写盘 / commit 主线；但调研 / 分析 / 治理类 deliverable contract 还没重写
+- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第四段已把 Review Gate merge 自动化和 workspace-managed 代码链的 closeout gate 接上；但非代码票硬 gate 还没落
 - `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，要求 CEO 基于任务现实做 capability plan，不再按角色池静默 fallback，且证据闭环可追溯
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 

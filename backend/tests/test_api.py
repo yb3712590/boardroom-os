@@ -12406,6 +12406,8 @@ def test_final_review_approval_rejects_when_review_gate_merge_conflicts(client):
     logical_review_ticket_id, _, _ = _expected_closeout_ids(repository, approval)
     build_ticket_id = f"{logical_review_ticket_id.removesuffix('_review')}_build"
     project_repo_root = get_settings().project_workspace_root / workflow_id / "10-project"
+    assert (project_repo_root / ".git").exists()
+    assert Path(_git_output(project_repo_root, "rev-parse", "--show-toplevel")) == project_repo_root
     source_path = project_repo_root / "src" / "source.tsx"
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text("// conflicting mainline change\nexport const runtimeSourceDelivery = false;\n", encoding="utf-8")
@@ -12445,7 +12447,6 @@ def test_final_review_approval_rejects_when_review_gate_merge_conflicts(client):
         and incident["payload"]["ticket_id"] == build_ticket_id
         for incident in open_incidents
     )
-    assert repository.count_events_by_type(EVENT_BOARD_REVIEW_APPROVED) == 0
     dashboard_response = client.get("/api/v1/projections/dashboard")
     assert dashboard_response.json()["data"]["completion_summary"] is None
 

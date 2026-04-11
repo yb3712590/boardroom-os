@@ -17,7 +17,8 @@
 
 - `project-init -> scope review` 这条共识链仍保留 `ui_designer_primary`，但首个 scope kickoff 票已经不再由命令处理器硬编码创建，而是由 `BOARD_DIRECTIVE_RECEIVED` 的 CEO shadow run 发起
 - `project-init` 现在还会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE` 三种模板
-- 上述受管项目工作区现在还会维护 `00-boardroom/workflow/active-worktree-index.md`：只收 workspace-managed `source_code_delivery` 票，执行中显示默认 `codex/<ticket_id>` 分支，占住 review gate 的代码票显示真实 `branch_ref / commit_sha / merge_status`
+- `project-init` 现在还会把 `10-project/` 初始化成真实 git repo：固定 `main` 分支、repo-local `user.boardroom / boardroom-os@local` 和 bootstrap commit
+- 上述受管项目工作区现在还会维护 `00-boardroom/workflow/active-worktree-index.md`：只收 workspace-managed `source_code_delivery` 票，执行中显示真实 checkout 的 `branch_ref`，占住 review gate 的代码票显示真实 `branch_ref / commit_sha / merge_status`
 - 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
 - dashboard completion 现在同时支持两条真实完成路径：传统 `VISUAL_MILESTONE -> closeout`，以及 autopilot 的“closeout 已完成 + workflow-chain report 已落盘”路径；后者不会再伪造 `final_review_pack_id / approved_at`
 - deterministic autopilot closeout fallback 现在只会在 workflow 已经出现真实交付主线证据时触发：最小口径是 `BUILD / CHECK / REVIEW` 票、`source_code_delivery`、`ui_milestone_review`，或它们对应的 maker-checker verdict；纯治理文档流、纯规划流、只有 backlog recommendation 的流不会再被误判成可 closeout
@@ -45,11 +46,15 @@
 - 治理文档输出合同现在已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；每类文档都会保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / decisions / constraints / sections / followup_recommendations`
 - 当 CEO 创建的后续票显式挂在治理文档父票下时，建票路径会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产到 `input_process_asset_refs[]`
 - runtime 完成事件现在会额外写回 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 都会自动映射到后续 follow-up ticket 或 maker-checker checker ticket 的 `input_process_asset_refs[]`
-- `source_code_delivery@1` 当前固定携带 `source_file_refs`，也可携带 `implementation_notes / documentation_updates`；对 `allowed_write_set` 明确落在 `10-project/* / 20-evidence/* / 00-boardroom/*` 的 workspace-managed 代码票，提交时还会交叉校验 `source_file_refs` 是否真的命中本次源码写入
-- 上述 workspace-managed 代码票在 `ticket-result-submit` 时，当前会硬校验 `documentation_updates / verification_evidence_refs / git_commit_record`，并在 dossier 里写 `worker-postrun / evidence-capture / git-closeout` 回执；旧 artifact-path 代码票继续兼容，不会误触这条新 gate
-- `source_code_delivery` 的 deterministic / provider-backed runtime 当前都会直接落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产；dashboard completion / 完成卡现在也会从 closeout 输入链反查最后一条可解析的 `SOURCE_CODE_DELIVERY` 过程资产，展开 `source_file_refs / verification_evidence_refs / git_commit_record`
+- `TICKET_CREATED` payload 对 workspace-managed `source_code_delivery` 票现在还会自动补 `project_checkout_ref=worktree://<workflow>/<ticket>` 和 `git_branch_ref=codex/<ticket>`；编译出来的 `CompileRequestExecution / CompiledExecution` 也会继续带 `project_checkout_ref / project_checkout_path / git_branch_ref`
+- 上述 workspace-managed 代码票在 `ticket-start` 时会创建真实 git worktree 到 `20-evidence/worktrees/<ticket_id>/`，并在 dossier 里写 `worktree-checkout` 回执
+- `source_code_delivery@1` 当前固定携带 `source_file_refs`，也可携带 `implementation_notes / documentation_updates`；对 `allowed_write_set` 明确落在 `10-project/* / 20-evidence/* / 00-boardroom/*` 的 workspace-managed 代码票，提交时会交叉校验 `source_file_refs` 是否真的命中本次源码写入，并把 `10-project/*` 真写进 checkout、把 `00-boardroom/* / 20-evidence/*` 写回 canonical workspace
+- 上述 workspace-managed 代码票在 `ticket-result-submit` 时，当前会硬校验 `documentation_updates / verification_evidence_refs / git_commit_record`，并改成服务端生成真实 `commit_sha / branch_ref / merge_status=PENDING_REVIEW_GATE`；dossier 会继续写 `worker-postrun / evidence-capture / git-closeout` 回执；旧 artifact-path 代码票继续兼容，不会误触这条新 gate
+- `source_code_delivery` 的 deterministic / provider-backed runtime 当前都会直接落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产；dashboard completion / 完成卡现在也会从 closeout 输入链反查最后一条可解析的 `SOURCE_CODE_DELIVERY` 过程资产，并优先用最新 git receipt 覆盖原始 `git_commit_record`
 - `TICKET_COMPLETED` payload 现在也会带回 `verification_evidence_refs` 和 `git_commit_record`，给后续 review / closeout / projection 继续消费
-- 这轮还没做真实 `git worktree` 创建/清理，也没做 Review Gate merge 自动化；`active-worktree-index.md` 当前记录的是 branch/work-status 真相，不是假装已经有物理 worktree manager
+- 最终 `VISUAL_MILESTONE` 批准时，workspace-managed 代码链路现在会先把 review gate 分支真实 merge 回 `10-project/main`，merge 成功才写 `BOARD_REVIEW_APPROVED` 和 closeout follow-up；merge 冲突会 fail-closed，打开 `REVIEW_GATE_MERGE_FAILED` incident，review 继续保持 open
+- checker 打回生成 fix 票、ticket fail、直接 cancel、board reject 和 modify constraints，当前都会把原代码票的 git receipt 改成 `NOT_REQUESTED`，并清理物理 worktree
+- non-code deliverable contract / hard gate 这轮还没补；`P0-COR-006` live 回归和退出标准也还没按这套真实 merge gate 重建
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
 - 当前已把原治理模板扩成统一 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary / backend_execution_reserved / database_execution_reserved / platform_sre_reserved / architect_governance / cto_governance` 八个当前 live 模板，同时附带五类文档 metadata ref 和九个模板片段

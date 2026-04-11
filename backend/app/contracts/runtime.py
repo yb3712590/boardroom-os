@@ -150,6 +150,9 @@ class CompileRequestExecution(StrictModel):
     required_read_refs: list[str] = Field(default_factory=list)
     doc_update_requirements: list[str] = Field(default_factory=list)
     project_workspace_ref: str | None = None
+    project_checkout_ref: str | None = None
+    project_checkout_path: str | None = None
+    git_branch_ref: str | None = None
     deliverable_kind: str | None = None
     git_policy: str | None = None
 
@@ -457,6 +460,9 @@ class CompiledExecution(StrictModel):
     required_read_refs: list[str] = Field(default_factory=list)
     doc_update_requirements: list[str] = Field(default_factory=list)
     project_workspace_ref: str | None = None
+    project_checkout_ref: str | None = None
+    project_checkout_path: str | None = None
+    git_branch_ref: str | None = None
     deliverable_kind: str | None = None
     git_policy: str | None = None
     output_schema_ref: str = Field(min_length=1)

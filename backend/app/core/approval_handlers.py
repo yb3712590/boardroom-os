@@ -36,7 +36,10 @@ from app.core.constants import (
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_EMPLOYEE_HIRED,
     EVENT_EMPLOYEE_REPLACED,
+    EVENT_INCIDENT_OPENED,
     EVENT_TICKET_CREATED,
+    INCIDENT_STATUS_OPEN,
+    INCIDENT_TYPE_REVIEW_GATE_MERGE_FAILED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
 )
@@ -56,6 +59,14 @@ from app.core.output_schemas import (
     validate_output_payload,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.project_workspaces import (
+    finalize_workspace_ticket_git_status,
+    infer_ticket_workspace_bootstrap,
+    is_workspace_managed_source_code_ticket,
+    merge_ticket_branch_into_main,
+    resolve_source_code_ticket_from_chain,
+    resolve_ticket_checkout_truth,
+)
 from app.core.process_assets import (
     build_source_code_delivery_process_asset_ref,
     get_ticket_output_process_asset_refs,
@@ -859,6 +870,75 @@ def _closeout_node_id_for_ticket(closeout_ticket_id: str) -> str:
     return f"node_followup_{closeout_ticket_id.removeprefix('tkt_')}"
 
 
+def _resolve_review_gate_source_code_ticket(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None]:
+    _, _, logical_source_ticket_id, logical_created_spec = _resolve_approval_source_ticket_specs(
+        repository,
+        connection,
+        approval=approval,
+    )
+    if not logical_source_ticket_id or logical_created_spec is None:
+        return None, None
+    source_code_ticket_id = resolve_source_code_ticket_from_chain(
+        repository,
+        connection=connection,
+        ticket_id=logical_source_ticket_id,
+    )
+    if source_code_ticket_id is None:
+        return None, None
+    source_created_spec = repository.get_latest_ticket_created_payload(connection, source_code_ticket_id) or {}
+    return source_code_ticket_id, source_created_spec
+
+
+def _open_review_gate_merge_failed_incident(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    command_id: str,
+    occurred_at,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    git_branch_ref: str,
+    merge_error: str,
+    idempotency_key: str,
+) -> str:
+    existing_incident = repository.get_open_incident_for_node(workflow_id, node_id, connection=connection)
+    if existing_incident is not None:
+        return str(existing_incident["incident_id"])
+
+    incident_id = new_prefixed_id("inc")
+    incident_event = repository.insert_event(
+        connection,
+        event_type=EVENT_INCIDENT_OPENED,
+        actor_type="system",
+        actor_id="review-gate",
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "incident_id": incident_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "incident_type": INCIDENT_TYPE_REVIEW_GATE_MERGE_FAILED,
+            "status": INCIDENT_STATUS_OPEN,
+            "severity": "high",
+            "fingerprint": f"review-gate-merge:{workflow_id}:{ticket_id}",
+            "git_branch_ref": git_branch_ref,
+            "merge_error": merge_error,
+        },
+        occurred_at=occurred_at,
+    )
+    if incident_event is None:
+        raise RuntimeError("Review gate merge incident opening idempotency conflict.")
+    return incident_id
+
+
 def _build_post_review_closeout_ticket_payload(
     repository: ControlPlaneRepository,
     connection,
@@ -1216,6 +1296,31 @@ def _insert_scope_followup_ticket_created_event(
     idempotency_key: str,
     ticket_payload: dict[str, Any],
 ) -> str:
+    resolved_ticket_payload = dict(ticket_payload)
+    if resolved_ticket_payload.get("execution_contract") is None:
+        inferred_execution_contract = infer_execution_contract_payload(
+            role_profile_ref=resolved_ticket_payload.get("role_profile_ref"),
+            output_schema_ref=resolved_ticket_payload.get("output_schema_ref"),
+        )
+        if inferred_execution_contract is not None:
+            resolved_ticket_payload["execution_contract"] = inferred_execution_contract
+    workspace_bootstrap = infer_ticket_workspace_bootstrap(
+        {
+            **resolved_ticket_payload,
+            "workflow_id": workflow_id,
+        }
+    )
+    resolved_ticket_payload["project_workspace_ref"] = workspace_bootstrap.project_workspace_ref
+    resolved_ticket_payload["project_methodology_profile"] = workspace_bootstrap.project_methodology_profile.value
+    resolved_ticket_payload["deliverable_kind"] = workspace_bootstrap.deliverable_kind.value
+    resolved_ticket_payload["canonical_doc_refs"] = list(workspace_bootstrap.canonical_doc_refs)
+    resolved_ticket_payload["required_read_refs"] = list(workspace_bootstrap.required_read_refs)
+    resolved_ticket_payload["doc_update_requirements"] = list(workspace_bootstrap.doc_update_requirements)
+    resolved_ticket_payload["git_policy"] = workspace_bootstrap.git_policy.value
+    if workspace_bootstrap.project_checkout_ref is not None:
+        resolved_ticket_payload["project_checkout_ref"] = workspace_bootstrap.project_checkout_ref
+    if workspace_bootstrap.git_branch_ref is not None:
+        resolved_ticket_payload["git_branch_ref"] = workspace_bootstrap.git_branch_ref
     event_row = repository.insert_event(
         connection,
         event_type=EVENT_TICKET_CREATED,
@@ -1226,14 +1331,14 @@ def _insert_scope_followup_ticket_created_event(
         causation_id=command_id,
         correlation_id=workflow_id,
         payload=with_workflow_scope(
-            ticket_payload,
+            resolved_ticket_payload,
             repository.get_workflow_projection(workflow_id, connection=connection),
         ),
         occurred_at=occurred_at,
     )
     if event_row is None:
         raise RuntimeError("Scope follow-up ticket creation idempotency conflict.")
-    return str(ticket_payload["ticket_id"])
+    return str(resolved_ticket_payload["ticket_id"])
 
 
 def _handle_board_approve(
@@ -1289,6 +1394,8 @@ def _handle_board_approve(
         subject = approval["payload"].get("review_pack", {}).get("subject", {})
         followup_ticket_payloads: list[dict[str, Any]] = []
         normalized_elicitation_answers: list[ElicitationAnswer] = []
+        review_gate_source_ticket_id: str | None = None
+        review_gate_source_created_spec: dict[str, Any] | None = None
         if approval["approval_type"] == "REQUIREMENT_ELICITATION":
             try:
                 normalized_elicitation_answers, _ = _normalize_requirement_elicitation_answers(
@@ -1318,6 +1425,58 @@ def _handle_board_approve(
                     reason=str(exc),
                     causation_hint=f"approval:{payload.approval_id}",
                 )
+            if approval["approval_type"] == "VISUAL_MILESTONE":
+                (
+                    review_gate_source_ticket_id,
+                    review_gate_source_created_spec,
+                ) = _resolve_review_gate_source_code_ticket(
+                    repository,
+                    connection,
+                    approval=approval,
+                )
+                if (
+                    review_gate_source_ticket_id is not None
+                    and review_gate_source_created_spec is not None
+                    and is_workspace_managed_source_code_ticket(review_gate_source_created_spec)
+                ):
+                    checkout_truth = resolve_ticket_checkout_truth(
+                        approval["workflow_id"],
+                        review_gate_source_ticket_id,
+                        review_gate_source_created_spec,
+                    )
+                    try:
+                        merge_ticket_branch_into_main(
+                            workflow_id=approval["workflow_id"],
+                            ticket_id=review_gate_source_ticket_id,
+                            git_branch_ref=checkout_truth["git_branch_ref"],
+                        )
+                    except RuntimeError as exc:
+                        incident_id = _open_review_gate_merge_failed_incident(
+                            repository,
+                            connection,
+                            command_id=command_id,
+                            occurred_at=received_at,
+                            workflow_id=approval["workflow_id"],
+                            ticket_id=review_gate_source_ticket_id,
+                            node_id=str(subject.get("source_node_id") or ""),
+                            git_branch_ref=checkout_truth["git_branch_ref"],
+                            merge_error=str(exc),
+                            idempotency_key=f"{payload.idempotency_key}:review-gate-merge-incident",
+                        )
+                        repository.refresh_projections(connection)
+                        return _rejected_ack(
+                            command_id=command_id,
+                            idempotency_key=payload.idempotency_key,
+                            received_at=received_at,
+                            reason=f"Review gate merge failed: {exc}",
+                            causation_hint=f"incident:{incident_id}",
+                        )
+                    finalize_workspace_ticket_git_status(
+                        workflow_id=approval["workflow_id"],
+                        ticket_id=review_gate_source_ticket_id,
+                        created_spec=review_gate_source_created_spec,
+                        merge_status="MERGED",
+                    )
 
         event_row = repository.insert_event(
             connection,
@@ -1587,6 +1746,25 @@ def handle_board_reject(
         )
         repository.refresh_projections(connection)
 
+    if approval["approval_type"] == "VISUAL_MILESTONE":
+        with repository.connection() as connection:
+            source_code_ticket_id, source_created_spec = _resolve_review_gate_source_code_ticket(
+                repository,
+                connection,
+                approval=approval,
+            )
+        if (
+            source_code_ticket_id is not None
+            and source_created_spec is not None
+            and is_workspace_managed_source_code_ticket(source_created_spec)
+        ):
+            finalize_workspace_ticket_git_status(
+                workflow_id=approval["workflow_id"],
+                ticket_id=source_code_ticket_id,
+                created_spec=source_created_spec,
+                merge_status="NOT_REQUESTED",
+            )
+
     _trigger_ceo_shadow_safely(
         repository,
         workflow_id=approval["workflow_id"],
@@ -1741,6 +1919,25 @@ def handle_modify_constraints(
                 idempotency_key=f"{payload.idempotency_key}:reopen-requirement-elicitation",
             )
         repository.refresh_projections(connection)
+
+    if approval["approval_type"] == "VISUAL_MILESTONE":
+        with repository.connection() as connection:
+            source_code_ticket_id, source_created_spec = _resolve_review_gate_source_code_ticket(
+                repository,
+                connection,
+                approval=approval,
+            )
+        if (
+            source_code_ticket_id is not None
+            and source_created_spec is not None
+            and is_workspace_managed_source_code_ticket(source_created_spec)
+        ):
+            finalize_workspace_ticket_git_status(
+                workflow_id=approval["workflow_id"],
+                ticket_id=source_code_ticket_id,
+                created_spec=source_created_spec,
+                merge_status="NOT_REQUESTED",
+            )
 
     if approval["approval_type"] != "REQUIREMENT_ELICITATION":
         _trigger_ceo_shadow_safely(
