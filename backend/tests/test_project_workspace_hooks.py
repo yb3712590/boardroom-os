@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 
 from app.config import get_settings
 from app.core.context_compiler import compile_and_persist_execution_artifacts
@@ -92,6 +94,28 @@ def _active_worktree_index_path(workflow_id: str):
     )
 
 
+def _checkout_path(workflow_id: str, ticket_id: str) -> Path:
+    return (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "20-evidence"
+        / "worktrees"
+        / ticket_id
+    )
+
+
+def _git_output(cwd: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return completed.stdout.strip()
+
+
 def test_compile_persists_worker_preflight_receipt_and_required_reads(client) -> None:
     init_response = client.post(
         "/api/v1/commands/project-init",
@@ -159,6 +183,57 @@ def test_compile_persists_worker_preflight_receipt_and_required_reads(client) ->
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt["ticket_id"] == ticket_id
     assert receipt["required_read_refs"] == created_spec["required_read_refs"]
+
+
+def test_ticket_start_allocates_checkout_and_compile_carries_checkout_truth(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Checkout truth demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_checkout_truth_001"
+    node_id = "node_checkout_truth_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+
+    assert start_response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    compiled_artifacts = compile_and_persist_execution_artifacts(repository, ticket)
+    checkout_path = _checkout_path(workflow_id, ticket_id)
+
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id)
+    assert created_spec is not None
+    assert created_spec["project_checkout_ref"] == f"worktree://{workflow_id}/{ticket_id}"
+    assert created_spec["git_branch_ref"] == f"codex/{ticket_id}"
+    assert checkout_path.is_dir()
+    assert _git_output(checkout_path, "rev-parse", "--abbrev-ref", "HEAD") == f"codex/{ticket_id}"
+    assert compiled_artifacts.compiled_execution_package.execution.project_checkout_ref == (
+        f"worktree://{workflow_id}/{ticket_id}"
+    )
+    assert compiled_artifacts.compiled_execution_package.execution.project_checkout_path == str(checkout_path)
+    assert compiled_artifacts.compiled_execution_package.execution.git_branch_ref == f"codex/{ticket_id}"
+
+    checkout_receipt_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "00-boardroom"
+        / "tickets"
+        / ticket_id
+        / "hook-receipts"
+        / "worktree-checkout.json"
+    )
+    assert checkout_receipt_path.is_file()
 
 
 def _source_code_delivery_result_submit_payload(
@@ -386,6 +461,21 @@ def test_source_code_delivery_writes_postrun_and_git_receipts(client) -> None:
     assert (dossier_root / "worker-postrun.json").is_file()
     assert (dossier_root / "evidence-capture.json").is_file()
     assert (dossier_root / "git-closeout.json").is_file()
+    checkout_path = _checkout_path(workflow_id, ticket_id)
+    canonical_workspace_root = get_settings().project_workspace_root / workflow_id
+    assert (checkout_path / "src" / f"{ticket_id}.ts").is_file()
+    assert (checkout_path / "docs" / "tracking" / f"{ticket_id}-active.md").is_file()
+    assert (checkout_path / "docs" / "history" / f"{ticket_id}-memory.md").is_file()
+    assert not (canonical_workspace_root / "10-project" / "src" / f"{ticket_id}.ts").exists()
+    assert (canonical_workspace_root / "20-evidence" / "tests" / f"{ticket_id}-report.json").is_file()
+    assert (canonical_workspace_root / "20-evidence" / "git" / f"{ticket_id}-commit.json").is_file()
+    receipt = json.loads((dossier_root / "git-closeout.json").read_text(encoding="utf-8"))
+    git_commit_record = receipt["git_commit_record"]
+    assert git_commit_record["branch_ref"] == f"codex/{ticket_id}"
+    assert git_commit_record["merge_status"] == "PENDING_REVIEW_GATE"
+    assert git_commit_record["commit_sha"] != "abc1234"
+    assert git_commit_record["commit_sha"] == _git_output(checkout_path, "rev-parse", "HEAD")
+    assert _git_output(checkout_path, "status", "--short") == ""
 
 
 def test_source_code_delivery_ticket_start_updates_active_worktree_index(client) -> None:

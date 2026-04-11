@@ -3,13 +3,16 @@
 import base64
 import json
 import sqlite3
+import subprocess
 from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.process_assets import (
@@ -126,6 +129,18 @@ def _project_init_payload(
         "deadline_at": deadline_at,
         "force_requirement_elicitation": force_requirement_elicitation,
     }
+
+
+def _git_output(cwd: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return completed.stdout.strip()
 
 
 def _elicitation_answers() -> list[dict]:
@@ -12347,8 +12362,16 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
         source_delivery_summary["verification_evidence_refs"]
     )
     assert source_delivery_summary["git_branch_ref"] == f"codex/{expected_build_ticket_id}"
-    assert source_delivery_summary["git_merge_status"] == "PENDING_REVIEW_GATE"
+    assert source_delivery_summary["git_merge_status"] == "MERGED"
     assert source_delivery_summary["git_commit_sha"]
+    worktree_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "20-evidence"
+        / "worktrees"
+        / expected_build_ticket_id
+    )
+    assert not worktree_path.exists()
     stored_artifact = repository.get_artifact_by_ref(
         f"art://runtime/{expected_closeout_ticket_id}/delivery-closeout-package.json"
     )
@@ -12368,6 +12391,63 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
             "summary": "No public capability or runtime flow changed in this round.",
         },
     ]
+
+
+def test_final_review_approval_rejects_when_review_gate_merge_conflicts(client):
+    workflow_id, scope_approval = _project_init_to_scope_approval(client)
+    _approve_open_review(client, scope_approval, idempotency_suffix="merge-conflict-scope")
+    repository = client.app.state.repository
+    approval = next(
+        item
+        for item in repository.list_open_approvals()
+        if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
+    )
+
+    logical_review_ticket_id, _, _ = _expected_closeout_ids(repository, approval)
+    build_ticket_id = f"{logical_review_ticket_id.removesuffix('_review')}_build"
+    project_repo_root = get_settings().project_workspace_root / workflow_id / "10-project"
+    source_path = project_repo_root / "src" / "source.tsx"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text("// conflicting mainline change\nexport const runtimeSourceDelivery = false;\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=project_repo_root, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "test: introduce conflicting mainline change"],
+        cwd=project_repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": "option_a",
+            "board_comment": "Proceed with option A.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:merge-conflict-final",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "merge" in (response.json()["reason"] or "").lower()
+    refreshed_approval = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    assert refreshed_approval is not None
+    assert refreshed_approval["status"] == APPROVAL_STATUS_OPEN
+    open_incidents = repository.list_open_incidents()
+    assert any(
+        incident["workflow_id"] == workflow_id
+        and incident["payload"]["incident_type"] == "REVIEW_GATE_MERGE_FAILED"
+        and incident["payload"]["ticket_id"] == build_ticket_id
+        for incident in open_incidents
+    )
+    assert repository.count_events_by_type(EVENT_BOARD_REVIEW_APPROVED) == 0
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    assert dashboard_response.json()["data"]["completion_summary"] is None
 
 
 def test_completion_summary_handles_missing_closeout_documentation_updates(client):
