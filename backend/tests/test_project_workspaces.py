@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,18 @@ def _project_init_payload(
     }
 
 
+def _git_output(cwd: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return completed.stdout.strip()
+
+
 def test_project_init_creates_agile_project_workspace_layout(client) -> None:
     response = client.post(
         "/api/v1/commands/project-init",
@@ -44,6 +57,24 @@ def test_project_init_creates_agile_project_workspace_layout(client) -> None:
     assert (workspace_root / "10-project" / "docs" / "L0-context" / "project-brief.md").is_file()
     assert (workspace_root / "10-project" / "docs" / "tracking" / "task-index.md").is_file()
     assert (workspace_root / "20-evidence" / "git").is_dir()
+
+
+def test_project_init_bootstraps_git_repo_for_project_directory(client) -> None:
+    response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Workspace git bootstrap demo"),
+    )
+
+    assert response.status_code == 200
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    project_root = get_settings().project_workspace_root / workflow_id / "10-project"
+
+    assert (project_root / ".git").exists()
+    assert _git_output(project_root, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+    assert _git_output(project_root, "config", "user.name") == "user.boardroom"
+    assert _git_output(project_root, "config", "user.email") == "boardroom-os@local"
+    assert _git_output(project_root, "rev-list", "--count", "HEAD") == "1"
+    assert _git_output(project_root, "status", "--short") == ""
 
 
 @pytest.mark.parametrize(
@@ -162,6 +193,8 @@ def test_ticket_create_bootstraps_dossier_and_workspace_truth(client) -> None:
     assert created_spec["project_workspace_ref"] == f"workspace://{workflow_id}"
     assert created_spec["project_methodology_profile"] == "AGILE"
     assert created_spec["deliverable_kind"] == "source_code_delivery"
+    assert created_spec["project_checkout_ref"] == f"worktree://{workflow_id}/{ticket_id}"
+    assert created_spec["git_branch_ref"] == f"codex/{ticket_id}"
     assert created_spec["canonical_doc_refs"]
     assert created_spec["required_read_refs"]
     assert created_spec["doc_update_requirements"] == [

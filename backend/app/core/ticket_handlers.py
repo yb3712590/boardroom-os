@@ -20,10 +20,12 @@ from app.contracts.commands import (
     TicketCompletedCommand,
     TicketCreateCommand,
     TicketFailCommand,
+    TicketGitCommitRecord,
     TicketHeartbeatCommand,
     TicketLeaseCommand,
     TicketResultStatus,
     TicketResultSubmitCommand,
+    TicketWrittenArtifact,
     TicketStartCommand,
 )
 from app.core.artifact_store import ArtifactStore, MaterializedArtifact, normalize_artifact_logical_path
@@ -107,17 +109,35 @@ from app.core.output_schemas import (
     validate_output_payload,
 )
 from app.core.process_assets import (
+    build_closeout_summary_process_asset_ref,
+    build_compiled_context_bundle_process_asset_ref,
+    build_compiled_execution_package_process_asset_ref,
+    build_compile_manifest_process_asset_ref,
+    build_governance_document_process_asset_ref,
+    build_meeting_decision_process_asset_ref,
     build_result_process_assets,
+    build_source_code_delivery_process_asset_ref,
     dedupe_process_asset_refs,
     get_ticket_output_process_asset_refs,
     merge_input_process_asset_refs,
+    parse_process_asset_ref,
 )
 from app.core.runtime_provider_config import find_provider_entry, resolve_runtime_provider_config
 from app.core.project_workspaces import (
+    build_effective_workspace_written_artifacts,
     bootstrap_ticket_dossier,
+    commit_project_checkout,
+    ensure_project_checkout,
+    finalize_workspace_ticket_git_status,
     infer_ticket_workspace_bootstrap,
+    is_workspace_managed_source_code_ticket,
+    materialize_workspace_delivery_files,
     project_workspace_manifest_exists,
+    resolve_ticket_checkout_truth,
+    resolve_source_code_ticket_from_chain,
     sync_active_worktree_index,
+    update_ticket_git_closeout_notes,
+    write_worktree_checkout_receipt,
     write_evidence_capture_receipt,
     write_git_closeout_receipt,
     write_worker_postrun_receipt,
@@ -1054,6 +1074,10 @@ def _ensure_ticket_execution_contract_payload(ticket_payload: dict[str, Any]) ->
     resolved_payload["required_read_refs"] = list(workspace_bootstrap.required_read_refs)
     resolved_payload["doc_update_requirements"] = list(workspace_bootstrap.doc_update_requirements)
     resolved_payload["git_policy"] = workspace_bootstrap.git_policy.value
+    if workspace_bootstrap.project_checkout_ref is not None:
+        resolved_payload["project_checkout_ref"] = workspace_bootstrap.project_checkout_ref
+    if workspace_bootstrap.git_branch_ref is not None:
+        resolved_payload["git_branch_ref"] = workspace_bootstrap.git_branch_ref
     return resolved_payload
 
 
@@ -1656,6 +1680,44 @@ def _delivery_stage_rank(created_spec: dict[str, Any]) -> int:
     }.get(delivery_stage, 99)
 
 
+def _replace_process_asset_refs_for_ticket_replacements(
+    refs: list[str],
+    *,
+    ticket_replacements: dict[str, str],
+) -> list[str]:
+    replaced_refs: list[str] = []
+    for process_asset_ref in refs:
+        normalized_ref = str(process_asset_ref).strip()
+        if not normalized_ref:
+            continue
+        try:
+            kind, target = parse_process_asset_ref(normalized_ref)
+        except ValueError:
+            replaced_refs.append(normalized_ref)
+            continue
+        replacement_ticket_id = ticket_replacements.get(target)
+        if replacement_ticket_id is None:
+            replaced_refs.append(normalized_ref)
+            continue
+        if kind == "compiled-context-bundle":
+            replaced_refs.append(build_compiled_context_bundle_process_asset_ref(replacement_ticket_id))
+        elif kind == "compile-manifest":
+            replaced_refs.append(build_compile_manifest_process_asset_ref(replacement_ticket_id))
+        elif kind == "compiled-execution-package":
+            replaced_refs.append(build_compiled_execution_package_process_asset_ref(replacement_ticket_id))
+        elif kind == "meeting-decision-record":
+            replaced_refs.append(build_meeting_decision_process_asset_ref(replacement_ticket_id))
+        elif kind == "source-code-delivery":
+            replaced_refs.append(build_source_code_delivery_process_asset_ref(replacement_ticket_id))
+        elif kind == "closeout-summary":
+            replaced_refs.append(build_closeout_summary_process_asset_ref(replacement_ticket_id))
+        elif kind == "governance-document":
+            replaced_refs.append(build_governance_document_process_asset_ref(replacement_ticket_id))
+        else:
+            replaced_refs.append(normalized_ref)
+    return dedupe_process_asset_refs(replaced_refs)
+
+
 def _recreate_pending_delivery_descendants_for_retry(
     *,
     repository: ControlPlaneRepository,
@@ -1741,13 +1803,17 @@ def _recreate_pending_delivery_descendants_for_retry(
                 for artifact_ref in (created_spec.get("input_artifact_refs") or [])
             ],
             "input_process_asset_refs": merge_input_process_asset_refs(
-                existing_process_asset_refs=list(created_spec.get("input_process_asset_refs") or []),
+                existing_process_asset_refs=_replace_process_asset_refs_for_ticket_replacements(
+                    list(created_spec.get("input_process_asset_refs") or []),
+                    ticket_replacements=ticket_replacements,
+                ),
                 artifact_refs=[
                     artifact_replacements.get(str(artifact_ref), str(artifact_ref))
                     for artifact_ref in (created_spec.get("input_artifact_refs") or [])
                 ],
             ),
         }
+        next_created_spec = _ensure_ticket_execution_contract_payload(next_created_spec)
         created_event = repository.insert_event(
             connection,
             event_type=EVENT_TICKET_CREATED,
@@ -2045,6 +2111,7 @@ def _schedule_staffing_recovery_followup(
         "recovered_from_ticket_id": source_ticket_id,
         "recovered_at": occurred_at.isoformat(),
     }
+    next_ticket_payload = _ensure_ticket_execution_contract_payload(next_ticket_payload)
     created_event = repository.insert_event(
         connection,
         event_type=EVENT_TICKET_CREATED,
@@ -2125,6 +2192,7 @@ def _schedule_retry(
             _resolve_timeout_backoff_multiplier(created_spec),
             _resolve_timeout_backoff_cap_multiplier(created_spec),
         )
+    next_ticket_payload = _ensure_ticket_execution_contract_payload(next_ticket_payload)
     created_event = repository.insert_event(
         connection,
         event_type=EVENT_TICKET_CREATED,
@@ -3551,6 +3619,19 @@ def handle_ticket_cancel(
         repository.refresh_projections(connection)
 
     if project_workspace_manifest_exists(payload.workflow_id):
+        with repository.connection() as connection:
+            created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
+            current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection) or {}
+        if (
+            is_workspace_managed_source_code_ticket(created_spec)
+            and str(current_ticket.get("status") or "") == TICKET_STATUS_CANCELLED
+        ):
+            finalize_workspace_ticket_git_status(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                created_spec=created_spec,
+                merge_status="NOT_REQUESTED",
+            )
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 
     return CommandAckEnvelope(
@@ -3699,6 +3780,8 @@ def handle_ticket_create(
             git_policy=event_payload.get("git_policy"),
             deliverable_kind=event_payload.get("deliverable_kind"),
             allowed_write_set=list(event_payload.get("allowed_write_set") or []),
+            project_checkout_ref=event_payload.get("project_checkout_ref"),
+            git_branch_ref=event_payload.get("git_branch_ref"),
         )
 
     return CommandAckEnvelope(
@@ -3848,6 +3931,35 @@ def handle_ticket_lease(
         repository.refresh_projections(connection)
 
     if project_workspace_manifest_exists(payload.workflow_id):
+        with repository.connection() as connection:
+            created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
+        if is_workspace_managed_source_code_ticket(created_spec):
+            checkout_truth = resolve_ticket_checkout_truth(
+                payload.workflow_id,
+                payload.ticket_id,
+                created_spec,
+            )
+            checkout_path = ensure_project_checkout(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                branch_ref=checkout_truth["git_branch_ref"],
+            )
+            write_worktree_checkout_receipt(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                project_checkout_ref=checkout_truth["project_checkout_ref"],
+                project_checkout_path=checkout_path,
+                git_branch_ref=checkout_truth["git_branch_ref"],
+            )
+            update_ticket_git_closeout_notes(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                git_policy=str(created_spec.get("git_policy") or ""),
+                git_branch_ref=checkout_truth["git_branch_ref"],
+                project_checkout_ref=checkout_truth["project_checkout_ref"],
+                project_checkout_path=str(checkout_path),
+                merge_status="EXECUTING",
+            )
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 
     return CommandAckEnvelope(
@@ -4156,6 +4268,7 @@ def handle_ticket_fail(
 ) -> CommandAckEnvelope:
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
+    failed_created_spec: dict[str, Any] | None = None
 
     with repository.transaction() as connection:
         existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
@@ -4212,6 +4325,7 @@ def handle_ticket_fail(
             )
 
         created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
+        failed_created_spec = dict(created_spec or {}) if created_spec is not None else None
 
         failure_payload = _build_failure_payload(
             failure_kind=payload.failure_kind,
@@ -4312,6 +4426,13 @@ def handle_ticket_fail(
         repository.refresh_projections(connection)
 
     if project_workspace_manifest_exists(payload.workflow_id):
+        if failed_created_spec is not None and is_workspace_managed_source_code_ticket(failed_created_spec):
+            finalize_workspace_ticket_git_status(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                created_spec=failed_created_spec,
+                merge_status="NOT_REQUESTED",
+            )
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 
     _trigger_ceo_shadow_safely(
@@ -4526,11 +4647,72 @@ def handle_ticket_result_submit(
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
     resolved_artifact_store = artifact_store or repository.artifact_store
+    effective_written_artifacts = list(payload.written_artifacts)
+    effective_git_commit_record = payload.git_commit_record
+
+    if is_workspace_managed_source_code_ticket(created_spec):
+        checkout_truth = resolve_ticket_checkout_truth(
+            payload.workflow_id,
+            payload.ticket_id,
+            created_spec,
+        )
+        checkout_path = ensure_project_checkout(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            branch_ref=checkout_truth["git_branch_ref"],
+        )
+        materialize_workspace_delivery_files(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            project_checkout_path=checkout_path,
+            written_artifacts=[
+                item.model_dump(mode="json") for item in effective_written_artifacts
+            ],
+        )
+        actual_git_commit_record = commit_project_checkout(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            project_checkout_path=checkout_path,
+            git_branch_ref=checkout_truth["git_branch_ref"],
+        )
+        effective_git_commit_record = TicketGitCommitRecord.model_validate(actual_git_commit_record)
+        effective_written_artifacts = [
+            TicketWrittenArtifact.model_validate(item)
+            for item in build_effective_workspace_written_artifacts(
+                effective_written_artifacts,
+                git_commit_record=actual_git_commit_record,
+            )
+        ]
+        materialize_workspace_delivery_files(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            project_checkout_path=checkout_path,
+            written_artifacts=[
+                item.model_dump(mode="json") for item in effective_written_artifacts
+            ],
+        )
+        write_worktree_checkout_receipt(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            project_checkout_ref=checkout_truth["project_checkout_ref"],
+            project_checkout_path=checkout_path,
+            git_branch_ref=checkout_truth["git_branch_ref"],
+        )
+        update_ticket_git_closeout_notes(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            git_policy=str(created_spec.get("git_policy") or ""),
+            git_branch_ref=checkout_truth["git_branch_ref"],
+            project_checkout_ref=checkout_truth["project_checkout_ref"],
+            project_checkout_path=str(checkout_path),
+            merge_status="PENDING_REVIEW_GATE",
+        )
+
     materialized_artifacts: list[MaterializedArtifact] = []
     try:
         prepared_artifacts, materialized_artifacts = _prepare_ticket_artifacts(
             artifact_store=resolved_artifact_store,
-            written_artifacts=payload.written_artifacts,
+            written_artifacts=effective_written_artifacts,
             created_at=received_at,
             workflow_id=payload.workflow_id,
             ticket_id=payload.ticket_id,
@@ -4575,12 +4757,12 @@ def handle_ticket_result_submit(
         artifact_refs=completed_artifact_refs,
         written_artifacts=[
             item.model_dump(mode="json")
-            for item in payload.written_artifacts
+            for item in effective_written_artifacts
         ],
         verification_evidence_refs=list(payload.verification_evidence_refs),
         git_commit_record=(
-            payload.git_commit_record.model_dump(mode="json")
-            if payload.git_commit_record is not None
+            effective_git_commit_record.model_dump(mode="json")
+            if effective_git_commit_record is not None
             else None
         ),
     )
@@ -4621,7 +4803,7 @@ def handle_ticket_result_submit(
                     artifact_refs=completed_artifact_refs,
                     produced_process_assets=produced_process_assets,
                     verification_evidence_refs=list(payload.verification_evidence_refs),
-                    git_commit_record=payload.git_commit_record,
+                    git_commit_record=effective_git_commit_record,
                     review_request=payload.review_request,
                     idempotency_key=payload.idempotency_key,
                 ),
@@ -4688,11 +4870,11 @@ def handle_ticket_result_submit(
             ticket_id=payload.ticket_id,
             verification_evidence_refs=list(payload.verification_evidence_refs),
         )
-        if payload.git_commit_record is not None:
+        if effective_git_commit_record is not None:
             write_git_closeout_receipt(
                 workflow_id=payload.workflow_id,
                 ticket_id=payload.ticket_id,
-                git_commit_record=payload.git_commit_record.model_dump(mode="json"),
+                git_commit_record=effective_git_commit_record.model_dump(mode="json") if effective_git_commit_record is not None else {},
             )
     if project_workspace_manifest_exists(payload.workflow_id):
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
@@ -4875,6 +5057,11 @@ def _complete_ticket_locked(
     ):
         if created_spec is None or not isinstance(result_payload, dict):
             raise RuntimeError("Checker rework routing requires created spec and checker verdict payload.")
+        source_code_ticket_id = resolve_source_code_ticket_from_chain(
+            repository,
+            connection=connection,
+            ticket_id=payload.ticket_id,
+        )
         blocking_findings = _extract_blocking_checker_findings(result_payload)
         rework_fingerprint = _build_rework_fingerprint(blocking_findings)
         rework_streak_count = _calculate_maker_checker_rework_streak(
@@ -4926,6 +5113,15 @@ def _complete_ticket_locked(
                 actor_id="maker-checker-router",
             )
             causation_hint = f"ticket:{next_ticket_id}"
+        if source_code_ticket_id is not None:
+            source_created_spec = repository.get_latest_ticket_created_payload(connection, source_code_ticket_id) or {}
+            if is_workspace_managed_source_code_ticket(source_created_spec):
+                finalize_workspace_ticket_git_status(
+                    workflow_id=payload.workflow_id,
+                    ticket_id=source_code_ticket_id,
+                    created_spec=source_created_spec,
+                    merge_status="NOT_REQUESTED",
+                )
     elif effective_review_request is not None:
         if _is_internal_only_review_request(effective_review_request):
             pass

@@ -18,6 +18,7 @@ from app.core.output_schemas import (
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
+from app.core.project_workspaces import load_git_closeout_receipt
 from app.db.repository import ControlPlaneRepository
 
 _PROCESS_ASSET_PREFIX = "pa://"
@@ -576,6 +577,10 @@ def _resolve_source_code_delivery_process_asset(
         git_commit_record = payload.get("git_commit_record")
         if not isinstance(git_commit_record, dict):
             git_commit_record = dict(source_metadata.get("git_commit_record") or {})
+        if terminal_event.get("workflow_id"):
+            latest_git_closeout = load_git_closeout_receipt(str(terminal_event["workflow_id"]), ticket_id)
+            if latest_git_closeout:
+                git_commit_record = latest_git_closeout
         return ResolvedProcessAsset(
             process_asset_ref=process_asset_ref,
             process_asset_kind="SOURCE_CODE_DELIVERY",
