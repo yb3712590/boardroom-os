@@ -18,7 +18,7 @@ from app.contracts.commands import (
 )
 from app.contracts.ceo_actions import CEOCreateTicketPayload
 from app.core.ceo_execution_presets import (
-    PROJECT_INIT_SCOPE_NODE_ID,
+    build_project_init_scope_ticket_id,
     build_ceo_create_ticket_command,
 )
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
@@ -603,8 +603,10 @@ def _record_requirement_elicitation_artifacts(
     occurred_at,
 ) -> tuple[str, str]:
     workflow_id = approval["workflow_id"]
-    source_ticket_id = f"tkt_{workflow_id}_scope_decision"
-    source_node_id = PROJECT_INIT_SCOPE_NODE_ID
+    source_ticket_id = build_project_init_scope_ticket_id(workflow_id)
+    workflow_projection = repository.get_workflow_projection(workflow_id, connection=connection)
+    kickoff_spec = build_project_init_kickoff_spec(workflow_projection)
+    source_node_id = str(kickoff_spec["node_id"])
     directive_payload = _load_project_init_directive_payload(
         repository,
         connection,
@@ -1577,7 +1579,7 @@ def _handle_board_approve(
             artifact_refs=kickoff_artifact_refs,
             idempotency_key_prefix=payload.idempotency_key,
         )
-        created_followup_ticket_ids.append(f"tkt_{approval['workflow_id']}_scope_decision")
+        created_followup_ticket_ids.append(build_project_init_scope_ticket_id(approval["workflow_id"]))
 
     if (
         approval["approval_type"] != "REQUIREMENT_ELICITATION"

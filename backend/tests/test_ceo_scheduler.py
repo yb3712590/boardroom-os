@@ -1177,7 +1177,7 @@ def test_autopilot_completed_atomic_task_does_not_auto_create_closeout_ticket_be
         summary="Atomic implementation slice is complete and ready for final closeout.",
     )
     with repository.connection() as connection:
-        closeout_ticket = next(
+        pending_ticket = next(
             (
                 ticket
                 for ticket in repository.list_ticket_projections_by_statuses(connection, ["PENDING"])
@@ -1185,7 +1185,12 @@ def test_autopilot_completed_atomic_task_does_not_auto_create_closeout_ticket_be
             ),
             None,
         )
-    assert closeout_ticket is None
+        pending_created_spec = (
+            repository.get_latest_ticket_created_payload(connection, str(pending_ticket["ticket_id"]))
+            if pending_ticket is not None
+            else None
+        )
+    assert pending_created_spec is None or pending_created_spec["output_schema_ref"] != "delivery_closeout_package"
 
 
 def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket(client, monkeypatch):
@@ -1251,16 +1256,16 @@ def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(cli
     assert any(run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED for run in runs)
     assert scope_ticket is not None
     assert created_spec is not None
-    assert created_spec["node_id"] == PROJECT_INIT_SCOPE_NODE_ID
-    assert created_spec["role_profile_ref"] == "ui_designer_primary"
+    assert created_spec["node_id"] == "node_ceo_architecture_brief"
+    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
     assert created_spec["execution_contract"] == {
-        "execution_target_ref": "execution_target:scope_consensus",
+        "execution_target_ref": "execution_target:frontend_governance_document",
         "required_capability_tags": ["structured_output", "planning"],
         "runtime_contract_version": "execution_contract_v1",
     }
     assert created_spec["dispatch_intent"] == {
         "assignee_employee_id": "emp_frontend_2",
-        "selection_reason": "Use the active frontend delivery owner for the kickoff scope consensus ticket.",
+        "selection_reason": "Keep the first governance document on the current live frontend owner.",
         "dependency_gate_refs": [],
         "selected_by": "ceo",
         "wakeup_policy": "default",
@@ -1438,7 +1443,7 @@ def test_ceo_shadow_snapshot_excludes_unapproved_consensus_ticket_from_reuse_can
     consensus_candidates = [
         item
         for item in snapshot["reuse_candidates"]["recent_completed_tickets"]
-        if item["ticket_id"] == build_project_init_scope_ticket_id(workflow_id)
+        if item["output_schema_ref"] == "consensus_document"
     ]
     assert consensus_candidates == []
 
@@ -2103,7 +2108,7 @@ def test_ceo_shadow_run_executes_retry_ticket(client, monkeypatch):
 
 
 def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
-    workflow_id = _project_init(client, "CEO limited create execution")
+    workflow_id = _seed_workflow(client, "wf_ceo_create_execution", "CEO limited create execution")
     _set_live_provider(client)
 
     from app.core import ceo_proposer
@@ -2163,7 +2168,7 @@ def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
 
 
 def test_ceo_shadow_run_executes_governance_document_create_ticket_for_live_role(client, monkeypatch):
-    workflow_id = _project_init(client, "CEO governance create execution")
+    workflow_id = _seed_workflow(client, "wf_ceo_gov_create_execution", "CEO governance create execution")
     _set_live_provider(client)
 
     from app.core import ceo_proposer
@@ -2325,7 +2330,7 @@ def test_ceo_validator_accepts_governance_document_create_ticket_for_architect_r
 
 
 def test_ceo_shadow_run_executes_governance_document_create_ticket_for_cto_role(client, monkeypatch):
-    workflow_id = _project_init(client, "CEO governance create execution for cto")
+    workflow_id = _seed_workflow(client, "wf_ceo_cto_gov_create_execution", "CEO governance create execution for cto")
     _seed_board_approved_employee(
         client,
         employee_id="emp_cto_1",
@@ -2569,13 +2574,14 @@ def test_ceo_shadow_run_normalizes_flat_create_ticket_action_shape_from_live_pro
                             "title": "Produce detailed design for the library management system graduation project",
                             "priority": "medium",
                             "node_id": "node_ceo_detailed_design",
-                            "role_type": "architect_primary",
+                            "role_type": "frontend_engineer_primary",
                             "output_schema_ref": DETAILED_DESIGN_SCHEMA_REF,
                             "depends_on": [
                                 "tkt_parent_architecture_doc",
                                 "tkt_parent_technology_decision",
                                 "tkt_parent_milestone_plan",
                             ],
+                            "parent_ticket_id": "tkt_parent_milestone_plan",
                             "execution_contract": {
                                 "goal": "Generate a detailed design document for the next implementation stage.",
                                 "deliverable_schema_ref": DETAILED_DESIGN_SCHEMA_REF,
@@ -2640,7 +2646,7 @@ def test_ceo_shadow_run_normalizes_flat_create_ticket_action_shape_from_live_pro
 
     assert created_spec["output_schema_ref"] == DETAILED_DESIGN_SCHEMA_REF
     assert created_spec["node_id"] == "node_ceo_detailed_design"
-    assert created_spec["role_profile_ref"] == "architect_primary"
+    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
     assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
     assert created_spec["dispatch_intent"]["dependency_gate_refs"] == [
         "tkt_parent_architecture_doc",
@@ -3063,16 +3069,18 @@ def test_ceo_shadow_snapshot_exposes_required_governance_ticket_plan_when_archit
     assert "architect governance brief" in required_plan["summary"].lower()
 
 
+@pytest.mark.parametrize("workflow_profile", ["CEO_AUTOPILOT_FINE_GRAINED", "STANDARD"])
 def test_ceo_shadow_snapshot_requires_next_governance_document_before_backlog_fanout(
     client,
     monkeypatch,
+    workflow_profile,
 ):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_governance_chain_next_doc", "Governance chain next doc")
     _persist_workflow_directive_details(
         client.app.state.repository,
         workflow_id,
-        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        workflow_profile=workflow_profile,
         hard_constraints=["Keep governance explicit."],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
@@ -3159,16 +3167,18 @@ def test_ceo_shadow_snapshot_builds_full_dependency_chain_for_next_governance_do
     ]
 
 
+@pytest.mark.parametrize("workflow_profile", ["CEO_AUTOPILOT_FINE_GRAINED", "STANDARD"])
 def test_ceo_validator_rejects_implementation_before_governance_chain_completes(
     client,
     monkeypatch,
+    workflow_profile,
 ):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_validate_governance_chain", "Validate governance chain")
     _persist_workflow_directive_details(
         client.app.state.repository,
         workflow_id,
-        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        workflow_profile=workflow_profile,
         hard_constraints=["Keep governance explicit."],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
@@ -4146,8 +4156,13 @@ def test_meeting_escalation_reject_does_not_trigger_recursive_ceo_meeting(client
 
 def test_board_approve_triggers_ceo_shadow_projection_route(client):
     _set_deterministic_mode(client)
-    workflow_id = _project_init(client, "CEO shadow approval trigger")
-    _approve_scope_review(client, workflow_id)
+    workflow_id = _seed_workflow(client, "wf_ceo_projection_route", "CEO shadow approval trigger")
+    _create_and_board_approve_consensus_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_projection_consensus",
+        node_id="node_ceo_projection_consensus",
+    )
 
     response = client.get(f"/api/v1/projections/workflows/{workflow_id}/ceo-shadow")
 
@@ -4349,7 +4364,7 @@ def test_idle_ceo_maintenance_targets_workflow_with_only_completed_tickets(clien
 
     assert snapshot["ticket_summary"]["completed_count"] == 4
     assert snapshot["ticket_summary"]["working_count"] == 0
-    assert "NO_TICKET_STARTED" in snapshot["idle_maintenance"]["signal_types"]
+    assert "READY_TICKET" in snapshot["idle_maintenance"]["signal_types"]
     assert workflow_id in due_workflow_ids
 
 

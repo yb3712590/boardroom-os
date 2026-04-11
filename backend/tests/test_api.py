@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
+from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.process_assets import (
@@ -2198,8 +2199,75 @@ def _project_init_to_scope_approval(client) -> tuple[str, dict]:
     assert response.json()["status"] == "ACCEPTED"
 
     workflow_id = response.json()["causation_hint"].split(":", 1)[1]
-    approvals = client.app.state.repository.list_open_approvals()
 
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scope_review_001",
+        node_id="node_scope_review",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=[
+            f"art://project-init/{workflow_id}/board-brief.md",
+            "art://inputs/scope-notes.md",
+        ],
+        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_scope_review_001",
+            node_id="node_scope_review",
+            include_review_request=True,
+            review_request=_meeting_escalation_review_request(),
+        ),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_review")["latest_ticket_id"]
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_review",
+            leased_by="emp_checker_1",
+        ),
+    )
+    assert checker_lease_response.status_code == 200
+    assert checker_lease_response.json()["status"] == "ACCEPTED"
+    checker_start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_review",
+            started_by="emp_checker_1",
+        ),
+    )
+    assert checker_start_response.status_code == 200
+    assert checker_start_response.json()["status"] == "ACCEPTED"
+    checker_result_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_scope_review",
+        ),
+    )
+    assert checker_result_response.status_code == 200
+    assert checker_result_response.json()["status"] == "ACCEPTED"
+
+    approvals = client.app.state.repository.list_open_approvals()
     assert len(approvals) == 1
     assert approvals[0]["workflow_id"] == workflow_id
     assert approvals[0]["approval_type"] == "MEETING_ESCALATION"
@@ -2400,7 +2468,7 @@ def test_governance_checker_changes_required_creates_fix_ticket(client):
 
 def _approve_open_review(client, approval: dict, *, idempotency_suffix: str = "1"):
     option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
-    return client.post(
+    response = client.post(
         "/api/v1/commands/board-approve",
         json={
             "review_pack_id": approval["review_pack_id"],
@@ -2412,6 +2480,17 @@ def _approve_open_review(client, approval: dict, *, idempotency_suffix: str = "1
             "idempotency_key": f"board-approve:{approval['approval_id']}:{idempotency_suffix}",
         },
     )
+    if response.status_code == 200 and response.json()["status"] == "ACCEPTED":
+        approval_type = approval.get("approval_type")
+        if approval_type == "MEETING_ESCALATION":
+            auto_advance_workflow_to_next_stop(
+                client.app.state.repository,
+                workflow_id=approval["workflow_id"],
+                idempotency_key_prefix=f"test-auto-advance:{approval['approval_id']}:{idempotency_suffix}",
+                max_steps=8,
+                max_dispatches=8,
+            )
+    return response
 
 
 def _artifact_storage_path(client, artifact_ref: str):
@@ -2641,20 +2720,14 @@ def test_project_init_auto_advances_to_scope_review(client, set_ticket_time):
     workflow_id = response.json()["causation_hint"].split(":", 1)[1]
     repository = client.app.state.repository
     approvals = repository.list_open_approvals()
+    kickoff_ticket = repository.get_current_ticket_projection(build_project_init_scope_ticket_id(workflow_id))
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    assert len(approvals) == 1
-    assert approvals[0]["workflow_id"] == workflow_id
-    assert approvals[0]["approval_type"] == "MEETING_ESCALATION"
-
-    review_room_response = client.get(f"/api/v1/projections/review-room/{approvals[0]['review_pack_id']}")
-    review_pack = review_room_response.json()["data"]["review_pack"]
-
-    assert review_room_response.status_code == 200
-    assert review_pack["meta"]["review_type"] == "MEETING_ESCALATION"
-    assert review_pack["subject"]["title"] == "Review scope decision consensus"
-    assert review_pack["maker_checker_summary"]["review_status"] == "APPROVED_WITH_NOTES"
+    assert approvals == []
+    assert kickoff_ticket is not None
+    assert kickoff_ticket["workflow_id"] == workflow_id
+    assert kickoff_ticket["status"] == TICKET_STATUS_COMPLETED
 
 
 def test_project_init_force_requirement_elicitation_opens_init_review(client, set_ticket_time):
@@ -2671,7 +2744,7 @@ def test_project_init_force_requirement_elicitation_opens_init_review(client, se
     workflow_id = response.json()["causation_hint"].split(":", 1)[1]
     repository = client.app.state.repository
     approvals = repository.list_open_approvals()
-    scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+    legacy_scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
@@ -2680,7 +2753,7 @@ def test_project_init_force_requirement_elicitation_opens_init_review(client, se
     assert approvals[0]["payload"]["review_pack"]["meta"]["review_type"] == "REQUIREMENT_ELICITATION"
     assert approvals[0]["payload"]["review_pack"]["elicitation_questionnaire"] is not None
     assert approvals[0]["payload"]["available_actions"] == ["APPROVE", "MODIFY_CONSTRAINTS"]
-    assert scope_ticket is None
+    assert legacy_scope_ticket is None
 
 
 def test_project_init_weak_signal_requirement_elicitation_stays_before_scope_kickoff(client, set_ticket_time):
@@ -2699,16 +2772,16 @@ def test_project_init_weak_signal_requirement_elicitation_stays_before_scope_kic
     workflow_id = response.json()["causation_hint"].split(":", 1)[1]
     repository = client.app.state.repository
     approvals = repository.list_open_approvals()
-    scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+    legacy_scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert len(approvals) == 1
     assert approvals[0]["approval_type"] == "REQUIREMENT_ELICITATION"
-    assert scope_ticket is None
+    assert legacy_scope_ticket is None
 
 
-def test_board_approve_requirement_elicitation_generates_answers_artifact_and_starts_scope_kickoff(
+def test_board_approve_requirement_elicitation_generates_answers_artifact_and_starts_governance_kickoff(
     client,
     set_ticket_time,
 ):
@@ -2737,12 +2810,27 @@ def test_board_approve_requirement_elicitation_generates_answers_artifact_and_st
 
     repository = client.app.state.repository
     approvals = repository.list_open_approvals()
-    scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+    legacy_scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+    with repository.connection() as connection:
+        created_rows = connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE workflow_id = ? AND event_type = ?
+            ORDER BY sequence_no ASC
+            """,
+            (workflow_id, EVENT_TICKET_CREATED),
+        ).fetchall()
+    created_specs = [json.loads(row["payload_json"]) for row in created_rows]
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    assert any(item["approval_type"] == "MEETING_ESCALATION" for item in approvals)
-    assert scope_ticket is not None
+    assert legacy_scope_ticket is None
+    assert not any(item["approval_type"] == "MEETING_ESCALATION" for item in approvals)
+    assert any(
+        item["node_id"] == "node_ceo_architecture_brief" and item["output_schema_ref"] == "architecture_brief"
+        for item in created_specs
+    )
     with repository.connection() as connection:
         artifact_rows = connection.execute(
             "SELECT artifact_ref FROM artifact_index WHERE workflow_id = ? AND logical_path LIKE ?",
@@ -3008,7 +3096,7 @@ def test_board_approve_scope_review_creates_all_supported_followups_and_isolates
         item.endswith("Prepare the final board-facing homepage review package from the approved implementation.")
         for item in review_created_spec["acceptance_criteria"]
     )
-    assert build_created_spec["parent_ticket_id"] == f"tkt_{workflow_id}_scope_decision"
+    assert build_created_spec["parent_ticket_id"] == "tkt_scope_review_001"
     assert check_created_spec["parent_ticket_id"] == "tkt_followup_scope_build"
     assert review_created_spec["parent_ticket_id"] == "tkt_followup_scope_check"
     assert build_created_spec["tenant_id"] == "tenant_default"
@@ -4336,8 +4424,8 @@ def test_duplicate_project_init_does_not_duplicate_first_scope_review(client, se
     assert duplicate.status_code == 200
     assert duplicate.json()["status"] == "DUPLICATE"
     assert duplicate.json()["causation_hint"] == f"workflow:{workflow_id}"
-    assert len(approvals) == 1
-    assert len(created_events) == 2
+    assert approvals == []
+    assert len(created_events) == 1
 
 
 def test_project_init_stops_auto_advance_when_no_worker_is_available(client, monkeypatch, set_ticket_time):
@@ -4352,14 +4440,13 @@ def test_project_init_stops_auto_advance_when_no_worker_is_available(client, mon
 
     workflow_id = response.json()["causation_hint"].split(":", 1)[1]
     repository = client.app.state.repository
-    ticket_projection = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+    ticket_projection = repository.get_current_ticket_projection(build_project_init_scope_ticket_id(workflow_id))
     approvals = [approval for approval in repository.list_open_approvals() if approval["workflow_id"] == workflow_id]
     incidents = [incident for incident in repository.list_open_incidents() if incident["workflow_id"] == workflow_id]
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    assert ticket_projection is not None
-    assert ticket_projection["status"] == "PENDING"
+    assert ticket_projection is None
     assert approvals == []
     assert incidents == []
 
@@ -4698,7 +4785,7 @@ def test_dashboard_pipeline_summary_shows_review_stage_after_project_init_auto_a
     intake_phase = phases[0]
     assert intake_phase["status"] == "COMPLETED"
     assert intake_phase["node_counts"]["completed"] == 1
-    assert phases[1]["status"] == "BLOCKED_FOR_BOARD"
+    assert phases[1]["status"] == "PENDING"
     assert phases[2]["status"] == "PENDING"
     assert phases[3]["status"] == "PENDING"
     assert phases[4]["status"] == "PENDING"

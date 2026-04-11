@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.core.ceo_execution_presets import PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_WORKFLOW_CREATED
 from app.core.execution_targets import infer_execution_contract_payload, employee_supports_execution_contract
 from app.core.output_schemas import (
@@ -15,8 +16,10 @@ from app.core.output_schemas import (
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
 )
+from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.core.workflow_progression import (
     AUTOPILOT_GOVERNANCE_CHAIN,
+    build_project_init_kickoff_spec,
     build_governance_followup_node_id,
     build_governance_followup_summary,
     governance_dependency_gate_refs,
@@ -343,6 +346,16 @@ def _build_governance_progression_ticket_plan(
         workflow_id=workflow_id,
         connection=connection,
     )
+    has_project_init_governance_node = any(
+        str(node.get("node_id") or "").strip() == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
+        for node in workflow_nodes
+    )
+    if (
+        not completed_ticket_ids_by_schema
+        and not has_project_init_governance_node
+        and not workflow_uses_ceo_board_delegate(workflow)
+    ):
+        return None
     next_schema_ref = resolve_next_governance_schema(completed_ticket_ids_by_schema)
     if next_schema_ref is None:
         return None
@@ -372,6 +385,14 @@ def _build_governance_progression_ticket_plan(
         role_profile_ref=role_profile_ref,
         output_schema_ref=next_schema_ref,
     ) or {}
+    summary = build_governance_followup_summary(next_schema_ref)
+    selection_reason = (
+        f"Follow the current governance progression and create the next {next_schema_ref} document."
+    )
+    if not completed_ticket_ids_by_schema and next_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF:
+        kickoff_spec = build_project_init_kickoff_spec(workflow)
+        summary = str(kickoff_spec["summary"])
+        selection_reason = "Keep the first governance document on the current live frontend owner."
     return {
         "node_id": node_id,
         "role_profile_ref": role_profile_ref,
@@ -381,10 +402,8 @@ def _build_governance_progression_ticket_plan(
         "assignee_employee_id": assignee_employee_id,
         "parent_ticket_id": parent_ticket_id,
         "dependency_gate_refs": dependency_gate_refs,
-        "summary": build_governance_followup_summary(next_schema_ref),
-        "selection_reason": (
-            f"Follow the current governance progression and create the next {next_schema_ref} document."
-        ),
+        "summary": summary,
+        "selection_reason": selection_reason,
         "source_ticket_id": parent_ticket_id,
         "source_node_id": build_governance_followup_node_id(next_schema_ref),
         "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),

@@ -26,7 +26,8 @@
 - 当前已新增 `workflow_progression` shared abstraction：`AUTOPILOT_GOVERNANCE_CHAIN / STANDARD_LEGACY_SCOPE_CHAIN` 两个 adapter 现在开始承接 kickoff、requirement elicitation 后续 kickoff、controller 下一步判断，以及 standard scope follow-up 选路
 - `CEO_AUTOPILOT_FINE_GRAINED` 当前已切 governance-first：治理链未走完时，snapshot 会暴露 `task_sensemaking=governance_followup`、`deliverable_kind=structured_document_delivery`、`coordination_mode=document_chain`，controller state 也会切到 `GOVERNANCE_REQUIRED`
 - `required_governance_ticket_plan` 当前不再只补 architect `architecture_brief`；它现在也会表示下一张治理文档票，最小覆盖 `technology_decision / milestone_plan / detailed_design / backlog_recommendation`
-- `STANDARD` 当前已挂到 shared abstraction 的 legacy adapter 上，分叉点已经从 scattered hardcode 收成单点；但 STANDARD 还没迁到 governance-first，这块已经明确留到下一轮优先处理
+- `STANDARD` 这轮也已切到 governance-first：project-init 会稳定创建 `node_ceo_architecture_brief / tkt_<workflow>_ceo_architecture_brief`，requirement elicitation 回流、controller、deterministic fallback 和 validator 现在都共用这条治理链真相
+- legacy scope follow-up 这轮没有被硬删：它只退出了 `STANDARD project-init` 主线，继续保留给非 autopilot 的手工 `consensus_document` 兼容链
 - 已完成真实 closeout 的 autopilot workflow，controller 不会再被 governance-first 补票重新拉起
 - 当前测试环境如果跑在 Git linked worktree 里，`backend/tests/conftest.py` 会自动把 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 改到系统临时目录，避免测试里再建项目 worktree 时触发 Git 的 `$GIT_DIR too big`
 - `project-init` 现在会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE`

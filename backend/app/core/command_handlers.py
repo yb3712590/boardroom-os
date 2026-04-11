@@ -10,7 +10,6 @@ from app.contracts.commands import (
 )
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_SYSTEM_INITIALIZED, EVENT_WORKFLOW_CREATED, SYSTEM_INITIALIZED_KEY
 from app.core.ceo_execution_presets import (
-    PROJECT_INIT_SCOPE_NODE_ID,
     build_project_init_scope_ticket_id,
 )
 from app.core.requirement_elicitation import (
@@ -22,7 +21,11 @@ from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.core.workflow_scope import default_workflow_scope
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
-from app.core.workflow_progression import AUTOPILOT_GOVERNANCE_CHAIN, resolve_workflow_progression_adapter
+from app.core.workflow_progression import (
+    AUTOPILOT_GOVERNANCE_CHAIN,
+    build_project_init_kickoff_spec,
+    resolve_workflow_progression_adapter,
+)
 from app.core.project_workspaces import bootstrap_project_workspace
 from app.db.repository import ControlPlaneRepository
 
@@ -44,6 +47,7 @@ def _create_project_init_brief_artifact(
     *,
     workflow_id: str,
     ticket_id: str,
+    node_id: str,
     payload: ProjectInitCommand,
 ) -> str:
     artifact_store = repository.artifact_store
@@ -80,7 +84,7 @@ def _create_project_init_brief_artifact(
             artifact_ref=artifact_ref,
             workflow_id=workflow_id,
             ticket_id=ticket_id,
-            node_id=PROJECT_INIT_SCOPE_NODE_ID,
+            node_id=node_id,
             logical_path=logical_path,
             kind="MARKDOWN",
             media_type="text/markdown",
@@ -199,17 +203,29 @@ def handle_project_init(
 
         repository.refresh_projections(connection)
 
+    kickoff_spec = build_project_init_kickoff_spec(
+        {
+            "workflow_id": workflow_id,
+            "workflow_profile": payload.workflow_profile,
+            "north_star_goal": payload.north_star_goal,
+            "title": payload.north_star_goal,
+        }
+    )
+    kickoff_ticket_id = build_project_init_scope_ticket_id(workflow_id)
+    kickoff_node_id = str(kickoff_spec["node_id"])
+
     board_brief_artifact_ref = _create_project_init_brief_artifact(
         repository,
         workflow_id=workflow_id,
-        ticket_id=build_project_init_scope_ticket_id(workflow_id),
+        ticket_id=kickoff_ticket_id,
+        node_id=kickoff_node_id,
         payload=payload,
     )
     bootstrap_project_workspace(
         repository,
         workflow_id=workflow_id,
-        ticket_id=build_project_init_scope_ticket_id(workflow_id),
-        node_id=PROJECT_INIT_SCOPE_NODE_ID,
+        ticket_id=kickoff_ticket_id,
+        node_id=kickoff_node_id,
         north_star_goal=payload.north_star_goal,
         methodology_profile=payload.project_methodology_profile,
     )

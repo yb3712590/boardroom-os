@@ -9,6 +9,7 @@ from app.contracts.ceo_actions import (
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_SCOPE_NODE_ID,
     build_project_init_scope_ticket_id,
+    is_project_init_governance_kickoff,
     is_project_init_scope_preset,
     supports_ceo_create_ticket_preset,
 )
@@ -272,6 +273,10 @@ def validate_ceo_action_batch(
             if is_project_init_scope_preset(
                 role_profile_ref=action.payload.role_profile_ref,
                 output_schema_ref=action.payload.output_schema_ref,
+            ) or is_project_init_governance_kickoff(
+                node_id=action.payload.node_id,
+                output_schema_ref=action.payload.output_schema_ref,
+                parent_ticket_id=action.payload.parent_ticket_id,
             ):
                 if action.payload.node_id != PROJECT_INIT_SCOPE_NODE_ID:
                     rejected_actions.append(

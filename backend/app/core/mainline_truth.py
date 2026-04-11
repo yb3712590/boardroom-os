@@ -57,13 +57,13 @@ class FrozenCapabilityBoundary:
 
 MAINLINE_WORKFLOW_STAGE_TRUTH: tuple[MainlineWorkflowStageTruth, ...] = (
     MainlineWorkflowStageTruth(
-        stage_id="project_init_to_scope_review",
-        label="Project init -> scope review",
+        stage_id="project_init_to_governance_kickoff",
+        label="Project init -> governance kickoff",
         truth_status="REAL",
         actual_owner_roles=("frontend_engineer",),
-        actual_role_profiles=("ui_designer_primary",),
-        output_schema_refs=(CONSENSUS_DOCUMENT_SCHEMA_REF,),
-        notes="project-init 已自动推进到首个 scope review，scope 审批是真实董事会停点。",
+        actual_role_profiles=("frontend_engineer_primary",),
+        output_schema_refs=(ARCHITECTURE_BRIEF_SCHEMA_REF,),
+        notes="project-init 现在会稳定创建 architecture_brief kickoff，并把 STANDARD 与 AUTOPILOT 一起推进到 governance-first 主线。",
     ),
     MainlineWorkflowStageTruth(
         stage_id="build_internal_maker_checker",

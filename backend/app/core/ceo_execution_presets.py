@@ -156,12 +156,12 @@ for role_profile_ref, output_schema_refs in _GOVERNANCE_DOCUMENT_ROLE_PROFILES.i
         )
 
 
-PROJECT_INIT_SCOPE_NODE_ID = "node_scope_decision"
 PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID = "node_ceo_architecture_brief"
+PROJECT_INIT_SCOPE_NODE_ID = PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
 
 
 def build_project_init_scope_ticket_id(workflow_id: str) -> str:
-    return f"tkt_{workflow_id}_scope_decision"
+    return f"tkt_{workflow_id}_ceo_architecture_brief"
 
 
 def build_project_init_scope_summary(north_star_goal: str) -> str:
@@ -186,6 +186,19 @@ def build_project_init_brief_artifact_ref(workflow_id: str) -> str:
 
 def is_project_init_scope_preset(*, role_profile_ref: str, output_schema_ref: str) -> bool:
     return role_profile_ref == "ui_designer_primary" and output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF
+
+
+def is_project_init_governance_kickoff(
+    *,
+    node_id: str,
+    output_schema_ref: str,
+    parent_ticket_id: str | None,
+) -> bool:
+    return (
+        node_id == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
+        and output_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF
+        and parent_ticket_id is None
+    )
 
 
 def supports_ceo_create_ticket_preset(*, role_profile_ref: str, output_schema_ref: str) -> bool:
@@ -671,20 +684,24 @@ def build_ceo_create_ticket_command(
         role_profile_ref=payload.role_profile_ref,
         output_schema_ref=payload.output_schema_ref,
     )
-    is_autopilot_architecture_kickoff = (
-        payload.node_id == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
-        and payload.output_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF
-        and payload.parent_ticket_id is None
+    is_initial_governance_kickoff = is_project_init_governance_kickoff(
+        node_id=payload.node_id,
+        output_schema_ref=payload.output_schema_ref,
+        parent_ticket_id=payload.parent_ticket_id,
     )
     ticket_id = (
         build_project_init_scope_ticket_id(payload.workflow_id)
-        if is_project_init_scope
+        if is_project_init_scope or is_initial_governance_kickoff
         else new_prefixed_id("tkt")
     )
-    node_id = PROJECT_INIT_SCOPE_NODE_ID if is_project_init_scope else payload.node_id
+    node_id = (
+        PROJECT_INIT_SCOPE_NODE_ID
+        if is_project_init_scope or is_initial_governance_kickoff
+        else payload.node_id
+    )
     input_artifact_refs = (
         [build_project_init_brief_artifact_ref(payload.workflow_id)]
-        if is_project_init_scope or is_autopilot_architecture_kickoff
+        if is_project_init_scope or is_initial_governance_kickoff
         else []
     )
     for artifact_ref in _inherit_input_artifact_refs_for_preset(
