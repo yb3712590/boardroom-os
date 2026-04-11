@@ -418,6 +418,7 @@ def _create_and_complete_governance_ticket(
     node_id: str,
     output_schema_ref: str = ARCHITECTURE_BRIEF_SCHEMA_REF,
     summary: str = "Structured governance document is ready for downstream delivery.",
+    approve_internal_gate: bool = True,
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -517,6 +518,65 @@ def _create_and_complete_governance_ticket(
     assert submit_response.status_code == 200
     assert submit_response.json()["status"] == "ACCEPTED"
 
+    if not approve_internal_gate:
+        return
+
+    repository = client.app.state.repository
+    current_node = repository.get_current_node_projection(workflow_id, node_id)
+    if current_node is None or current_node["latest_ticket_id"] == ticket_id:
+        return
+
+    checker_ticket_id = current_node["latest_ticket_id"]
+    lease_checker_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_checker_1",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:governance-checker",
+        },
+    )
+    assert lease_checker_response.status_code == 200
+    start_checker_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_checker_1",
+            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:governance-checker",
+        },
+    )
+    assert start_checker_response.status_code == 200
+    approve_checker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_checker_1",
+            "result_status": "completed",
+            "schema_version": "maker_checker_verdict_v1",
+            "payload": {
+                "summary": "Checker approved the governance document.",
+                "review_status": "APPROVED_WITH_NOTES",
+                "findings": [],
+            },
+            "artifact_refs": [],
+            "written_artifacts": [],
+            "assumptions": [],
+            "issues": [],
+            "confidence": 0.9,
+            "needs_escalation": False,
+            "summary": "Governance checker verdict submitted.",
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:governance-approved",
+        },
+    )
+    assert approve_checker_response.status_code == 200
+    assert approve_checker_response.json()["status"] == "ACCEPTED"
+
 
 def _create_and_complete_backlog_recommendation_ticket(
     client,
@@ -524,6 +584,7 @@ def _create_and_complete_backlog_recommendation_ticket(
     workflow_id: str,
     ticket_id: str,
     node_id: str,
+    approve_internal_gate: bool = True,
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -674,6 +735,63 @@ def _create_and_complete_backlog_recommendation_ticket(
     )
     assert submit_response.status_code == 200
     assert submit_response.json()["status"] == "ACCEPTED"
+
+    if not approve_internal_gate:
+        return
+
+    repository = client.app.state.repository
+    current_node = repository.get_current_node_projection(workflow_id, node_id)
+    if current_node is None or current_node["latest_ticket_id"] == ticket_id:
+        return
+
+    checker_ticket_id = current_node["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_checker_1",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:backlog-checker",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_checker_1",
+            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:backlog-checker",
+        },
+    )
+    approve_checker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_checker_1",
+            "result_status": "completed",
+            "schema_version": "maker_checker_verdict_v1",
+            "payload": {
+                "summary": "Checker approved the backlog recommendation.",
+                "review_status": "APPROVED_WITH_NOTES",
+                "findings": [],
+            },
+            "artifact_refs": [],
+            "written_artifacts": [],
+            "assumptions": [],
+            "issues": [],
+            "confidence": 0.9,
+            "needs_escalation": False,
+            "summary": "Backlog checker verdict submitted.",
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:backlog-approved",
+        },
+    )
+    assert approve_checker_response.status_code == 200
+    assert approve_checker_response.json()["status"] == "ACCEPTED"
 
 
 def _seed_closed_meeting(
@@ -984,6 +1102,35 @@ def test_ceo_shadow_snapshot_includes_reuse_candidates(client):
     assert closed_meeting["consensus_summary"] == "Meeting already resolved the technical trade-off."
     assert closed_meeting["review_status"] == "APPROVED"
     assert closed_meeting["closed_at"] is not None
+
+
+def test_ceo_shadow_snapshot_excludes_unreviewed_governance_ticket_from_reuse_candidates(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_unreviewed_governance")
+
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_unreviewed_architecture_doc",
+        node_id="node_unreviewed_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is still waiting for governance checker approval.",
+        approve_internal_gate=False,
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:unreviewed-governance",
+    )
+
+    governance_candidates = [
+        item
+        for item in snapshot["reuse_candidates"]["recent_completed_tickets"]
+        if item["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    ]
+    assert governance_candidates == []
 
 
 def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(client, monkeypatch):
@@ -1969,9 +2116,7 @@ def test_ceo_shadow_run_normalizes_loose_governance_followup_create_ticket_from_
 
     repository = client.app.state.repository
     runs = repository.list_ceo_shadow_runs(workflow_id)
-
-    assert len(runs) == 1
-    run = runs[0]
+    run = next(run for run in reversed(runs) if run["executed_actions"])
     assert run["trigger_type"] == "TICKET_COMPLETED"
     assert run["provider_response_id"] == "resp_ceo_loose_gov_followup_1"
     assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
@@ -2053,9 +2198,7 @@ def test_ceo_shadow_run_normalizes_live_governance_followup_with_kind_field_and_
 
     repository = client.app.state.repository
     runs = repository.list_ceo_shadow_runs(workflow_id)
-
-    assert len(runs) == 1
-    run = runs[0]
+    run = next(run for run in reversed(runs) if run["executed_actions"])
     assert run["provider_response_id"] == "resp_ceo_live_kind_1"
     assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
     assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
@@ -3087,7 +3230,7 @@ def test_idle_ceo_maintenance_targets_workflow_with_only_completed_tickets(clien
         )
     }
 
-    assert snapshot["ticket_summary"]["completed_count"] == 2
+    assert snapshot["ticket_summary"]["completed_count"] == 4
     assert snapshot["ticket_summary"]["working_count"] == 0
     assert "NO_TICKET_STARTED" in snapshot["idle_maintenance"]["signal_types"]
     assert workflow_id in due_workflow_ids

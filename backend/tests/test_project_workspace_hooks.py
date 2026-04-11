@@ -642,3 +642,77 @@ def test_structured_document_delivery_does_not_require_git_commit(client) -> Non
     ticket = repository.get_current_ticket_projection(ticket_id)
     assert ticket is not None
     assert ticket["status"] == "COMPLETED"
+
+
+def test_governance_document_requires_declared_artifact_ref(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Governance artifact contract demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_governance_artifact_contract_001"
+    node_id = "node_governance_artifact_contract_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "architecture_brief",
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:governance-contract",
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    payload = _governance_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+    )
+    payload["artifact_refs"] = []
+
+    response = client.post("/api/v1/commands/ticket-result-submit", json=payload)
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+
+
+def test_governance_document_requires_written_artifact_for_declared_ref(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Governance artifact alignment demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_governance_artifact_alignment_001"
+    node_id = "node_governance_artifact_alignment_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "architecture_brief",
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:governance-alignment",
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    payload = _governance_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+    )
+    payload["written_artifacts"][0]["artifact_ref"] = f"art://runtime/{ticket_id}/other-architecture-brief.json"
+
+    response = client.post("/api/v1/commands/ticket-result-submit", json=payload)
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"

@@ -50,8 +50,8 @@
 - `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；当前已落第一段 project workspace 真相：`project-init` 现在会创建三分区项目工作区，`ticket-create` 会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`，workspace-managed ticket 也会生成 dossier
 - `P0-COR-002` 待开始：收正单一 workflow controller，把 `task_kind / deliverable_kind / capability_plan / staffing_gaps / coordination_mode` 变成统一控制输入，统一 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义、状态来源和完成定义，禁止再按现有员工池静默改写 role 或 assignee
 - `P0-COR-003` 待开始：收正 capability gap 驱动的招聘、协作和阻断逻辑。当任务现实需要架构设计、系统分析、实现、测试或治理能力，而 active roster 无法覆盖时，系统必须显式招聘、显式开会或显式阻断；`architect_primary` 只是其中一种可能结果，不再是所有项目的默认前置
-- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第四段已把 workspace-managed 代码票收成真实 git repo / worktree / 写盘 / commit 主线；但调研 / 分析 / 治理类 deliverable contract 还没重写
-- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第四段已把 Review Gate merge 自动化和 workspace-managed 代码链的 closeout gate 接上；但非代码票硬 gate 还没落
+- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第五段已把五类治理文档票补上最小 contract：建票时自动挂 `INTERNAL_GOVERNANCE_REVIEW`，提交时硬校验 declared artifact 和 written artifact 对齐；但 `consensus_document` 等其它非代码 deliverable contract 还没重写
+- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第五段已把五类治理文档票接进 internal governance maker-checker，CEO 只复用过 gate 文档；但 `consensus_document` 等其它非代码票硬 gate 还没落
 - `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，要求 CEO 基于任务现实做 capability plan，不再按角色池静默 fallback，且证据闭环可追溯
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 

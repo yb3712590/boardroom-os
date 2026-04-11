@@ -326,6 +326,46 @@ def _build_internal_delivery_review_request(summary: str) -> dict[str, Any]:
     }
 
 
+def build_internal_governance_review_request(summary: str) -> dict[str, Any]:
+    clean_summary = summary.strip() or "Governance document is ready for internal review."
+    return {
+        "review_type": "INTERNAL_GOVERNANCE_REVIEW",
+        "priority": "high",
+        "title": "Check governance document",
+        "subtitle": "Internal checker should validate the document chain before downstream tickets consume it.",
+        "blocking_scope": "NODE_ONLY",
+        "trigger_reason": "Governance document reached the internal governance checker gate.",
+        "why_now": "Downstream planning and implementation should only consume governance guidance that already passed internal review.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "internal_governance_ok",
+        "recommendation_summary": clean_summary,
+        "options": [
+            {
+                "option_id": "internal_governance_ok",
+                "label": "Pass governance doc",
+                "summary": clean_summary,
+                "artifact_refs": [],
+                "pros": ["Lets downstream tickets consume a checked governance document."],
+                "cons": ["Leaves only non-blocking polish outside the current governance gate."],
+                "risks": ["Weakly linked decisions or constraints may still need one more rework pass."],
+            }
+        ],
+        "evidence_summary": [
+            {
+                "evidence_id": "ev_internal_governance_document",
+                "source_type": "GOVERNANCE_DOCUMENT",
+                "headline": "Governance document is ready for peer review",
+                "summary": clean_summary,
+                "source_ref": None,
+            }
+        ],
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "internal_governance_ok",
+        "comment_template": "",
+        "badges": ["internal_governance", "document_gate"],
+    }
+
+
 def _build_internal_check_review_request(summary: str) -> dict[str, Any]:
     clean_summary = summary.strip() or "Delivery check report is ready for internal review."
     return {
@@ -555,7 +595,7 @@ def _review_request_for_preset(summary: str, preset: CEOCreateTicketPreset) -> d
     if preset.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
         return _build_consensus_review_request(summary)
     if preset.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
-        return None
+        return build_internal_governance_review_request(summary)
     if preset.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         return _build_internal_delivery_review_request(summary)
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:

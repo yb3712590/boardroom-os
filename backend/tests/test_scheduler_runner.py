@@ -1351,6 +1351,55 @@ def test_runtime_completes_governance_document_ticket_on_live_role(client, set_t
     ]
 
 
+def test_runtime_governance_document_completion_routes_to_internal_governance_checker(client, set_ticket_time):
+    set_ticket_time("2026-04-07T19:05:00+08:00")
+    repository = client.app.state.repository
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runtime_governance_gate",
+            ticket_id="tkt_runtime_governance_gate",
+            node_id="node_runtime_governance_gate",
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=["reports/governance/tkt_runtime_governance_gate/*"],
+            acceptance_criteria=["Must produce a structured architecture_brief governance document."],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runtime_governance_gate",
+            "ticket_id": "tkt_runtime_governance_gate",
+            "node_id": "node_runtime_governance_gate",
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runtime_governance_gate:tkt_runtime_governance_gate",
+        },
+    )
+
+    outcomes = run_leased_ticket_runtime(repository)
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runtime_governance_gate"]
+    current_node = repository.get_current_node_projection("wf_runtime_governance_gate", "node_runtime_governance_gate")
+    assert current_node is not None
+    assert current_node["latest_ticket_id"] != "tkt_runtime_governance_gate"
+    with repository.connection() as connection:
+        checker_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            current_node["latest_ticket_id"],
+        )
+
+    assert checker_created_spec is not None
+    assert checker_created_spec["output_schema_ref"] == "maker_checker_verdict"
+    assert checker_created_spec["maker_checker_context"]["maker_ticket_id"] == "tkt_runtime_governance_gate"
+    assert checker_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
+        "INTERNAL_GOVERNANCE_REVIEW"
+    )
+
+
 def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
     client,
     set_ticket_time,

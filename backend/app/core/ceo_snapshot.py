@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from app.core.ceo_meeting_policy import build_ceo_meeting_candidates
+from app.core.output_schemas import GOVERNANCE_DOCUMENT_SCHEMA_REFS, MAKER_CHECKER_VERDICT_SCHEMA_REF
 from app.core.persona_profiles import normalize_persona_profiles
 from app.db.repository import ControlPlaneRepository
 
@@ -26,6 +27,7 @@ _TERMINAL_TICKET_STATUSES = {
 }
 _RECENT_COMPLETED_TICKET_LIMIT = 5
 _RECENT_CLOSED_MEETING_LIMIT = 3
+_APPROVED_INTERNAL_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
 
 
 def _serialize_timestamp(value: datetime | None) -> str | None:
@@ -109,18 +111,66 @@ def _build_recent_completed_ticket_reuse_candidates(
     connection,
 ) -> list[dict[str, Any]]:
     completed_tickets = [ticket for ticket in tickets if ticket["status"] == "COMPLETED"]
+    latest_ticket_id_by_node: dict[str, str] = {}
+    latest_ticket_sort_key_by_node: dict[str, tuple[float, str]] = {}
+    for ticket in tickets:
+        node_id = str(ticket.get("node_id") or "").strip()
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        updated_at = ticket.get("updated_at")
+        if not node_id or not ticket_id or not isinstance(updated_at, datetime):
+            continue
+        sort_key = (updated_at.timestamp(), ticket_id)
+        if sort_key >= latest_ticket_sort_key_by_node.get(node_id, (float("-inf"), "")):
+            latest_ticket_sort_key_by_node[node_id] = sort_key
+            latest_ticket_id_by_node[node_id] = ticket_id
     candidates: list[dict[str, Any]] = []
-    for ticket in completed_tickets[:_RECENT_COMPLETED_TICKET_LIMIT]:
+    seen_logical_ticket_ids: set[str] = set()
+    for ticket in completed_tickets:
+        if len(candidates) >= _RECENT_COMPLETED_TICKET_LIMIT:
+            break
         ticket_id = str(ticket["ticket_id"])
         created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
         terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+        output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+        logical_ticket_id = ticket_id
+        logical_created_spec = created_spec
+        logical_terminal_event = terminal_event
+        if output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+            continue
+        if output_schema_ref == MAKER_CHECKER_VERDICT_SCHEMA_REF:
+            maker_checker_context = created_spec.get("maker_checker_context") or {}
+            maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
+            maker_created_spec = maker_checker_context.get("maker_ticket_spec")
+            if not isinstance(maker_created_spec, dict) or not maker_created_spec:
+                maker_created_spec = (
+                    repository.get_latest_ticket_created_payload(connection, maker_ticket_id)
+                    if maker_ticket_id
+                    else {}
+                ) or {}
+            maker_output_schema_ref = str(maker_created_spec.get("output_schema_ref") or "").strip()
+            if maker_output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+                if latest_ticket_id_by_node.get(str(ticket.get("node_id") or "").strip()) != ticket_id:
+                    continue
+                completion_payload = terminal_event.get("payload") if terminal_event is not None else {}
+                review_status = str(
+                    (completion_payload or {}).get("maker_checker_summary", {}).get("review_status")
+                    or (completion_payload or {}).get("review_status")
+                    or ""
+                ).strip()
+                if review_status not in _APPROVED_INTERNAL_REVIEW_STATUSES:
+                    continue
+                logical_ticket_id = maker_ticket_id or ticket_id
+                logical_created_spec = maker_created_spec
+                logical_terminal_event = repository.get_latest_ticket_terminal_event(connection, logical_ticket_id)
+        if not logical_ticket_id or logical_ticket_id in seen_logical_ticket_ids:
+            continue
         artifact_refs = [
             str(artifact.get("artifact_ref") or "")
-            for artifact in repository.list_ticket_artifacts(ticket_id, connection=connection)
+            for artifact in repository.list_ticket_artifacts(logical_ticket_id, connection=connection)
             if str(artifact.get("artifact_ref") or "").strip()
         ]
-        completion_payload = terminal_event.get("payload") if terminal_event is not None else {}
-        summary = str(created_spec.get("summary") or "").strip() or str(
+        completion_payload = logical_terminal_event.get("payload") if logical_terminal_event is not None else {}
+        summary = str(logical_created_spec.get("summary") or "").strip() or str(
             (completion_payload or {}).get("completion_summary") or ""
         ).strip()
         completed_at = (
@@ -130,14 +180,15 @@ def _build_recent_completed_ticket_reuse_candidates(
         )
         candidates.append(
             {
-                "ticket_id": ticket_id,
+                "ticket_id": logical_ticket_id,
                 "node_id": str(ticket["node_id"]),
-                "output_schema_ref": str(created_spec.get("output_schema_ref") or ""),
+                "output_schema_ref": str(logical_created_spec.get("output_schema_ref") or ""),
                 "summary": summary,
                 "artifact_refs": artifact_refs,
                 "completed_at": _serialize_timestamp(completed_at),
             }
         )
+        seen_logical_ticket_ids.add(logical_ticket_id)
     return candidates
 
 
