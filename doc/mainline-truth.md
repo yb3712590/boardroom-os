@@ -1,6 +1,6 @@
 # 主线真相表
 
-> 最后更新：2026-04-11
+> 最后更新：2026-04-12
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
@@ -23,6 +23,7 @@
 - 对 project-init / requirement elicitation 这条主线，`ui_designer_primary + consensus_document` 已不再是 `STANDARD` 的默认 kickoff 预设；但 meeting 与其他手工共识场景里的 `consensus_document` 仍继续保留
 - `project-init` 现在还会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE` 三种模板
 - `project-init` 现在还会把 `10-project/` 初始化成真实 git repo：固定 `main` 分支、repo-local `user.boardroom / boardroom-os@local` 和 bootstrap commit
+- 上述项目工作区的 Git 子进程现在统一会带 `stdin=DEVNULL`；在这台 Windows + Python 3.14 机器上，`git init / worktree / commit / rev-parse` 不再因为句柄继承报 `WinError 6`
 - 上述受管项目工作区现在还会维护 `00-boardroom/workflow/active-worktree-index.md`：只收 workspace-managed `source_code_delivery` 票，执行中显示真实 checkout 的 `branch_ref`，占住 review gate 的代码票显示真实 `branch_ref / commit_sha / merge_status`
 - 但 `BUILD / REVIEW / closeout` 这条 maker 主线已经切到独立的 `frontend_engineer_primary`
 - dashboard completion 现在同时支持两条真实完成路径：传统 `VISUAL_MILESTONE -> closeout`，以及 autopilot 的“closeout 已完成 + workflow-chain report 已落盘”路径；后者不会再伪造 `final_review_pack_id / approved_at`
@@ -92,7 +93,11 @@
 - 只有 `MEETING_ESCALATION` 批准后生成的 follow-up ticket 会额外把 ADR `decision + consequences` 注入后续执行输入；其他 `consensus_document` 来源路径不变
 - `delivery_closeout_package@1` 现在可选携带 `documentation_updates`；internal closeout review 已把文档同步纳入 soft checker 口径，但 `FOLLOW_UP_REQUIRED` 不会自动变成硬门禁
 - `project-init` 现在新增初始化澄清分支：当董事会显式传入 `force_requirement_elicitation=true`，或初始化输入同时命中保守阈值下的明显弱信号时，系统会先打开一次 workflow 级 `REQUIREMENT_ELICITATION` 板审；董事会在现有 Review Room 中提交结构化答卷后，`APPROVE` 才会继续创建首个 scope kickoff 票，`MODIFY_CONSTRAINTS` 会重新打开一版澄清板审
-- live runner 现在已抽成共享 harness，当前主线保留 3 条真实入口：`library_management_autopilot_live`、`requirement_elicitation_autopilot_live`、`architecture_governance_autopilot_live`；这轮只补脚本和最小单测，真实 provider 长测尚未在这台机器重跑
+- live runner 现在已抽成共享 harness；当前保留 3 条 full live 入口：`library_management_autopilot_live`、`requirement_elicitation_autopilot_live`、`architecture_governance_autopilot_live`
+- 上述 harness 现在还额外补了一条 `architecture_governance_autopilot_smoke` checkpoint smoke：只验证“CEO 招聘架构师 -> 技术决策会议 -> 架构治理文档批准”这段真实 provider 链，不等待 `source_code_delivery`
+- `run_report.json` 现在会显式区分 `completion_mode=full / checkpoint_smoke`；checkpoint smoke 不会再被误写成整条 workflow 已完成
+- 但这台机器上刚补跑真实 smoke 时，provider 仍反复命中 `UPSTREAM_UNAVAILABLE / timed out`，当前还没落出成功的 checkpoint `run_report.json`
+- 当前环境仍未补齐 `requirement_elicitation` 和 `library_management` 的 full real-provider 长测；`architecture_governance` 也只新增了 checkpoint smoke，不代表 full 长测已经重跑通过
 
 ## 2. Runtime 支持矩阵
 

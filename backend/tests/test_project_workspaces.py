@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.config import get_settings
+from app.core import project_workspaces
 
 
 def _project_init_payload(
@@ -30,11 +31,33 @@ def _git_output(cwd: Path, *args: str) -> str:
         ["git", *args],
         cwd=cwd,
         check=True,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
     return completed.stdout.strip()
+
+
+def test_run_git_uses_windows_safe_subprocess_defaults(monkeypatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+
+    def _fake_run(command, **kwargs):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(project_workspaces.subprocess, "run", _fake_run)
+
+    project_workspaces._run_git(tmp_path, "status", "--short")
+
+    assert observed["command"] == ["git", "status", "--short"]
+    assert observed["kwargs"]["cwd"] == tmp_path
+    assert observed["kwargs"]["check"] is True
+    assert observed["kwargs"]["capture_output"] is True
+    assert observed["kwargs"]["text"] is True
+    assert observed["kwargs"]["encoding"] == "utf-8"
+    assert observed["kwargs"]["stdin"] == subprocess.DEVNULL
 
 
 def test_project_init_creates_agile_project_workspace_layout(client) -> None:

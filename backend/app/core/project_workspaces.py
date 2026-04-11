@@ -133,6 +133,7 @@ def _run_git(
         ["git", *args],
         cwd=cwd,
         check=check,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",

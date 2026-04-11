@@ -109,6 +109,7 @@ def _git_output(cwd: Path, *args: str) -> str:
         ["git", *args],
         cwd=cwd,
         check=True,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",

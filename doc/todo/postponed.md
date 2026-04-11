@@ -44,6 +44,10 @@
 | 交付完成的硬门禁 | 远期储备 | 当前只接受 checker / closeout 的软约束，不做硬状态机 gate |
 | 通用交付类型地图 | 远期储备 | 后续可把 `source_code_delivery / document_delivery / research_report / evidence_bundle / dataset_delivery / design_asset_delivery / media_asset_delivery / integration_payload` 做成正式 deliverable kind，再配 `governance_record / structured_control_artifact / working_artifact` 三类辅助件；但这不进入当前关键路径 |
 
+当前补记：
+
+- 2026-04-12 重新确认后，`通用交付类型地图` 继续留在 `R1`。这轮只补了 Windows 下的源码交付 Git 底座和 architecture governance smoke，没有新增足够证据把它前移到当前任务清单
+
 ## 使用方式
 
 - 这些内容不是“马上做”，也不是“彻底删除”

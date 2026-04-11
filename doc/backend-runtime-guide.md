@@ -86,17 +86,22 @@ export BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY="<your-api-key>"
 python -m tests.live.library_management_autopilot_live
 ```
 
-当前主线 live 入口有 3 条：
+当前主线 full live 入口有 3 条：
 
 - `python -m tests.live.library_management_autopilot_live`
 - `python -m tests.live.requirement_elicitation_autopilot_live`
 - `python -m tests.live.architecture_governance_autopilot_live`
+
+当前还额外补了一条更轻的 governance smoke：
+
+- `python -m tests.live.architecture_governance_autopilot_smoke`
 
 每条场景默认都会先清空再重建自己的目录：
 
 - `backend/data/scenarios/library_management_autopilot_live/`
 - `backend/data/scenarios/requirement_elicitation_autopilot_live/`
 - `backend/data/scenarios/architecture_governance_autopilot_live/`
+- `backend/data/scenarios/architecture_governance_autopilot_smoke/`
 
 里面会单独保存：
 
@@ -143,6 +148,7 @@ npm run test:run
 当前这轮补记：
 
 - 如果仓库本身跑在 Git linked worktree 里，`backend/tests/conftest.py` 现在会自动把测试用 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 放到系统临时目录，避免测试中的项目 worktree 再嵌 Git worktree 时触发 Git 的 `$GIT_DIR too big`
+- `backend/app/core/project_workspaces.py` 的 Git 子进程现在会统一带 `stdin=DEVNULL`；这台 Windows + Python 3.14 机器上，`project-init / ticket-start / ticket-result-submit` 相关的 `git init / worktree / rev-parse` 已不再因为句柄继承报 `WinError 6`
 - Windows 下 `pytest` 的临时目录权限仍可能有系统级噪声；这时继续建议显式带 repo 内 `--basetemp`，例如：
 
 ```powershell
@@ -157,6 +163,7 @@ cd backend
 python -m tests.live.library_management_autopilot_live
 python -m tests.live.requirement_elicitation_autopilot_live
 python -m tests.live.architecture_governance_autopilot_live
+python -m tests.live.architecture_governance_autopilot_smoke
 ```
 
 它不进入默认 `pytest tests/ -q`。
@@ -232,17 +239,19 @@ live 集成场景会把这些路径整体重定向到各自场景目录：
 - `frontend_engineer_primary -> delivery_closeout_package`
 - `checker_primary -> maker_checker_verdict`
 
-当前 live runner 已收成共享 harness，3 条主线入口共用同一套 provider 配置与目录骨架：
+当前 live runner 已收成共享 harness，3 条 full 入口和 1 条 checkpoint smoke 共用同一套 provider 配置与目录骨架：
 
 - `tests.live.library_management_autopilot_live`
 - `tests.live.requirement_elicitation_autopilot_live`
 - `tests.live.architecture_governance_autopilot_live`
+- `tests.live.architecture_governance_autopilot_smoke`
 - provider 模板固定从 `backend/data/integration-test-provider-config.json` 读取；后续要追加 provider，直接改这一个文件里的 `providers[] / provider_model_entries[] / role_bindings[]`
 - 会先把所有角色统一绑定到 `prov_openai_compat::gpt-5.4`
 - `architect_primary` 固定走 `xhigh`
 - 其他 live 角色固定走 `high`
 - runtime 结果现在会把 `effective_reasoning_effort` 一并写进 assumptions，方便长测验收
 - 每条场景都会产出 `run_report.json`、`ticket_context_archives/` 和 `failure_snapshots/`
+- `run_report.json` 现在会带 `completion_mode`：full 长测写 `full`，checkpoint smoke 写 `checkpoint_smoke`
 
 失败映射：
 

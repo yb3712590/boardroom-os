@@ -52,6 +52,8 @@ class LiveScenarioDefinition:
     goal: str
     constraints: list[str]
     assert_outcome: Callable[[ScenarioPaths, Any, str, dict[str, Any]], dict[str, Any]]
+    checkpoint_assertion: Callable[[ScenarioPaths | None, Any, str, dict[str, Any]], dict[str, Any] | None] | None = None
+    checkpoint_label: str | None = None
     force_requirement_elicitation: bool = False
     budget_cap: int = 1_500_000
     workflow_profile: str = "CEO_AUTOPILOT_FINE_GRAINED"
@@ -139,7 +141,8 @@ def load_integration_test_provider_payload(
     scenario_slug: str,
     config_path: Path | None = None,
 ) -> dict[str, Any]:
-    resolved_path = Path(config_path or integration_test_provider_template_path())
+    env_override = str(os.environ.get("BOARDROOM_OS_INTEGRATION_TEST_PROVIDER_CONFIG_PATH") or "").strip()
+    resolved_path = Path(config_path or env_override or integration_test_provider_template_path())
     if not resolved_path.exists():
         raise RuntimeError(
             "Integration test provider config is missing. "
@@ -389,6 +392,36 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _build_success_report(
+    *,
+    workflow_id: str,
+    scenario_root: str,
+    seed: int,
+    ticks_used: int,
+    elapsed_sec: float,
+    base_report: dict[str, Any],
+    assertions: dict[str, Any],
+    completion_mode: str,
+    checkpoint_label: str | None = None,
+) -> dict[str, Any]:
+    report = {
+        "success": True,
+        "workflow_id": workflow_id,
+        "scenario_root": scenario_root,
+        "seed": seed,
+        "ticks_used": ticks_used,
+        "elapsed_sec": elapsed_sec,
+        "completion_mode": completion_mode,
+        "assertions": {
+            **base_report,
+            **assertions,
+        },
+    }
+    if checkpoint_label is not None:
+        report["checkpoint_label"] = checkpoint_label
+    return report
+
+
 def write_failure_snapshot(paths: ScenarioPaths, repository, workflow_id: str, *, label: str) -> Path:
     snapshot = {
         "workflow": repository.get_workflow_projection(workflow_id),
@@ -434,6 +467,48 @@ def collect_common_outcome(paths: ScenarioPaths, repository, workflow_id: str) -
     ):
         raise AssertionError("No delivery_closeout_package ticket was recorded.")
 
+    employees = [
+        employee
+        for employee in repository.list_employee_projections(states=["ACTIVE"])
+        if bool(employee.get("board_approved"))
+    ]
+
+    return {
+        "workflow": workflow,
+        "tickets": tickets,
+        "created_specs": created_specs,
+        "terminals": terminals,
+        "approvals": approvals,
+        "audits": audits,
+        "architect_ticket_ids": architect_ticket_ids,
+        "employees": employees,
+        "compiled_ticket_ids": compiled_ids,
+        "archived_ticket_ids": archived_ids,
+        "base_report": {
+            "workflow_id": workflow_id,
+            "workflow_status": workflow["status"],
+            "workflow_stage": workflow["current_stage"],
+            "ticket_count": len(tickets),
+            "compiled_ticket_ids": compiled_ids,
+            "archived_ticket_ids": archived_ids,
+            "employee_ids": [str(employee["employee_id"]) for employee in employees],
+        },
+    }
+
+
+def collect_progress_snapshot(paths: ScenarioPaths, repository, workflow_id: str) -> dict[str, Any]:
+    workflow = repository.get_workflow_projection(workflow_id)
+    if workflow is None:
+        raise AssertionError("Workflow projection is missing.")
+
+    tickets = workflow_ticket_rows(repository, workflow_id)
+    created_specs = workflow_created_specs(repository, workflow_id)
+    terminals = workflow_terminal_events(repository, workflow_id)
+    approvals = workflow_approvals(repository, workflow_id)
+    audits = build_runtime_ticket_audit(repository, workflow_id)
+    architect_ticket_ids = approved_architect_governance_ticket_ids(repository, workflow_id)
+    compiled_ids = compiled_ticket_ids(repository, workflow_id)
+    archived_ids = sorted(path.stem for path in paths.ticket_context_archive_root.glob("*.md"))
     employees = [
         employee
         for employee in repository.list_employee_projections(states=["ACTIVE"])
@@ -528,20 +603,36 @@ def run_live_scenario(
                 if workflow is not None and workflow["status"] == "COMPLETED":
                     common = collect_common_outcome(paths, repository, workflow_id)
                     assertions = scenario.assert_outcome(paths, repository, workflow_id, common)
-                    report = {
-                        "success": True,
-                        "workflow_id": workflow_id,
-                        "scenario_root": str(paths.root),
-                        "seed": seed,
-                        "ticks_used": tick_index + 1,
-                        "elapsed_sec": round(time.monotonic() - started_at, 2),
-                        "assertions": {
-                            **common["base_report"],
-                            **assertions,
-                        },
-                    }
+                    report = _build_success_report(
+                        workflow_id=workflow_id,
+                        scenario_root=str(paths.root),
+                        seed=seed,
+                        ticks_used=tick_index + 1,
+                        elapsed_sec=round(time.monotonic() - started_at, 2),
+                        base_report=common["base_report"],
+                        assertions=assertions,
+                        completion_mode="full",
+                    )
                     _write_json(paths.run_report_path, report)
                     return report
+
+                if scenario.checkpoint_assertion is not None:
+                    snapshot = collect_progress_snapshot(paths, repository, workflow_id)
+                    checkpoint_assertions = scenario.checkpoint_assertion(paths, repository, workflow_id, snapshot)
+                    if checkpoint_assertions is not None:
+                        report = _build_success_report(
+                            workflow_id=workflow_id,
+                            scenario_root=str(paths.root),
+                            seed=seed,
+                            ticks_used=tick_index + 1,
+                            elapsed_sec=round(time.monotonic() - started_at, 2),
+                            base_report=snapshot["base_report"],
+                            assertions=checkpoint_assertions,
+                            completion_mode="checkpoint_smoke",
+                            checkpoint_label=scenario.checkpoint_label,
+                        )
+                        _write_json(paths.run_report_path, report)
+                        return report
 
                 if time.monotonic() - started_at > timeout_sec:
                     snapshot_path = write_failure_snapshot(paths, repository, workflow_id, label="timeout")
