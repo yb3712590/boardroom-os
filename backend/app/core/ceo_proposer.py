@@ -16,10 +16,6 @@ from app.contracts.ceo_actions import (
 )
 from app.core.ceo_execution_presets import (
     GOVERNANCE_DOCUMENT_CHAIN_ORDER,
-    PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
-    PROJECT_INIT_SCOPE_NODE_ID,
-    build_autopilot_architecture_brief_summary,
-    build_project_init_scope_summary,
     supports_ceo_create_ticket_preset,
 )
 from app.core.ceo_prompts import build_ceo_shadow_rendered_payload
@@ -41,6 +37,10 @@ from app.core.output_schemas import (
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
 from app.core.workflow_completion import ticket_has_delivery_mainline_evidence
+from app.core.workflow_progression import (
+    build_project_init_kickoff_spec,
+    governance_dependency_gate_refs as shared_governance_dependency_gate_refs,
+)
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.core.runtime_provider_config import (
     RuntimeProviderAdapterKind,
@@ -89,7 +89,7 @@ def build_no_action_batch(reason: str) -> CEOActionBatch:
     )
 
 
-def _should_fallback_to_project_init_scope_kickoff(snapshot: dict) -> bool:
+def _should_fallback_to_project_init_kickoff(snapshot: dict) -> bool:
     trigger = snapshot.get("trigger") or {}
     ticket_summary = snapshot.get("ticket_summary") or {}
     return (
@@ -98,13 +98,6 @@ def _should_fallback_to_project_init_scope_kickoff(snapshot: dict) -> bool:
         and not snapshot.get("approvals")
         and not snapshot.get("incidents")
     )
-
-
-def _should_fallback_to_autopilot_governance_kickoff(snapshot: dict) -> bool:
-    return _should_fallback_to_project_init_scope_kickoff(snapshot) and workflow_uses_ceo_board_delegate(
-        snapshot.get("workflow")
-    )
-
 
 def _select_default_assignee(
     snapshot: dict,
@@ -135,14 +128,13 @@ def _select_default_assignee(
     return None
 
 
-def _build_project_init_scope_kickoff_batch(snapshot: dict, reason: str) -> CEOActionBatch:
+def _build_project_init_kickoff_batch(snapshot: dict, reason: str) -> CEOActionBatch:
     workflow = snapshot.get("workflow") or {}
-    north_star_goal = str(workflow.get("north_star_goal") or workflow.get("title") or "").strip()
-    summary = build_project_init_scope_summary(north_star_goal)
+    kickoff_spec = build_project_init_kickoff_spec(workflow)
     assignee_employee_id = _select_default_assignee(
         snapshot,
-        role_profile_ref="ui_designer_primary",
-        output_schema_ref="consensus_document",
+        role_profile_ref=str(kickoff_spec["role_profile_ref"]),
+        output_schema_ref=str(kickoff_spec["output_schema_ref"]),
     )
     if assignee_employee_id is None:
         return build_no_action_batch("No active assignee satisfies the kickoff execution contract yet.")
@@ -153,55 +145,22 @@ def _build_project_init_scope_kickoff_batch(snapshot: dict, reason: str) -> CEOA
                 action_type=CEOActionType.CREATE_TICKET,
                 payload=CEOCreateTicketPayload(
                     workflow_id=str(workflow["workflow_id"]),
-                    node_id=PROJECT_INIT_SCOPE_NODE_ID,
-                    role_profile_ref="ui_designer_primary",
-                    output_schema_ref="consensus_document",
+                    node_id=str(kickoff_spec["node_id"]),
+                    role_profile_ref=str(kickoff_spec["role_profile_ref"]),
+                    output_schema_ref=str(kickoff_spec["output_schema_ref"]),
                     execution_contract=infer_execution_contract_payload(
-                        role_profile_ref="ui_designer_primary",
-                        output_schema_ref="consensus_document",
+                        role_profile_ref=str(kickoff_spec["role_profile_ref"]),
+                        output_schema_ref=str(kickoff_spec["output_schema_ref"]),
                     ),
                     dispatch_intent={
                         "assignee_employee_id": assignee_employee_id,
-                        "selection_reason": "Use the active frontend delivery owner for the kickoff scope consensus ticket.",
+                        "selection_reason": (
+                            "Keep the first governance document on the current live frontend owner."
+                            if str(kickoff_spec["output_schema_ref"]) == "architecture_brief"
+                            else "Use the active frontend delivery owner for the kickoff scope consensus ticket."
+                        ),
                     },
-                    summary=summary,
-                    parent_ticket_id=None,
-                ),
-            )
-        ],
-    )
-
-
-def _build_autopilot_governance_kickoff_batch(snapshot: dict, reason: str) -> CEOActionBatch:
-    workflow = snapshot.get("workflow") or {}
-    north_star_goal = str(workflow.get("north_star_goal") or workflow.get("title") or "").strip()
-    summary = build_autopilot_architecture_brief_summary(north_star_goal)
-    assignee_employee_id = _select_default_assignee(
-        snapshot,
-        role_profile_ref="frontend_engineer_primary",
-        output_schema_ref="architecture_brief",
-    )
-    if assignee_employee_id is None:
-        return build_no_action_batch("No active assignee satisfies the autopilot governance kickoff contract yet.")
-    return CEOActionBatch(
-        summary=reason,
-        actions=[
-            CEOCreateTicketAction(
-                action_type=CEOActionType.CREATE_TICKET,
-                payload=CEOCreateTicketPayload(
-                    workflow_id=str(workflow["workflow_id"]),
-                    node_id=PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
-                    role_profile_ref="frontend_engineer_primary",
-                    output_schema_ref="architecture_brief",
-                    execution_contract=infer_execution_contract_payload(
-                        role_profile_ref="frontend_engineer_primary",
-                        output_schema_ref="architecture_brief",
-                    ),
-                    dispatch_intent={
-                        "assignee_employee_id": assignee_employee_id,
-                        "selection_reason": "Keep the first governance document on the current live frontend owner.",
-                    },
-                    summary=summary,
+                    summary=str(kickoff_spec["summary"]),
                     parent_ticket_id=None,
                 ),
             )
@@ -320,15 +279,10 @@ def _recent_completed_governance_ticket_ids_by_schema(snapshot: dict) -> dict[st
 def _infer_governance_dependency_gate_refs(snapshot: dict, output_schema_ref: str) -> list[str]:
     if output_schema_ref not in GOVERNANCE_DOCUMENT_CHAIN_ORDER:
         return []
-    completed_ticket_ids_by_schema = _recent_completed_governance_ticket_ids_by_schema(snapshot)
-    dependency_gate_refs: list[str] = []
-    for prerequisite_schema_ref in GOVERNANCE_DOCUMENT_CHAIN_ORDER[
-        : GOVERNANCE_DOCUMENT_CHAIN_ORDER.index(output_schema_ref)
-    ]:
-        ticket_id = completed_ticket_ids_by_schema.get(prerequisite_schema_ref)
-        if ticket_id:
-            dependency_gate_refs.append(ticket_id)
-    return dependency_gate_refs
+    return shared_governance_dependency_gate_refs(
+        _recent_completed_governance_ticket_ids_by_schema(snapshot),
+        output_schema_ref,
+    )
 
 
 def _normalize_create_ticket_payload(raw_payload: dict[str, Any], snapshot: dict) -> dict[str, Any]:
@@ -891,6 +845,9 @@ def build_deterministic_fallback_batch(
 ) -> CEOActionBatch:
     controller_state = snapshot.get("controller_state") or {}
     recommended_action = str(controller_state.get("recommended_action") or "").strip()
+    closeout_batch = _build_autopilot_closeout_batch(repository, snapshot, reason)
+    if closeout_batch is not None:
+        return closeout_batch
     if recommended_action == "HIRE_EMPLOYEE":
         hire_batch = _build_capability_hire_batch(snapshot, reason)
         if hire_batch is not None:
@@ -919,13 +876,8 @@ def build_deterministic_fallback_batch(
     backlog_followup_batch = _build_backlog_followup_batch(repository, snapshot, reason)
     if backlog_followup_batch is not None:
         return backlog_followup_batch
-    closeout_batch = _build_autopilot_closeout_batch(repository, snapshot, reason)
-    if closeout_batch is not None:
-        return closeout_batch
-    if _should_fallback_to_autopilot_governance_kickoff(snapshot):
-        return _build_autopilot_governance_kickoff_batch(snapshot, reason)
-    if _should_fallback_to_project_init_scope_kickoff(snapshot):
-        return _build_project_init_scope_kickoff_batch(snapshot, reason)
+    if _should_fallback_to_project_init_kickoff(snapshot):
+        return _build_project_init_kickoff_batch(snapshot, reason)
     eligible_meeting_candidates = _eligible_meeting_candidates(snapshot)
     if len(eligible_meeting_candidates) == 1:
         candidate = {

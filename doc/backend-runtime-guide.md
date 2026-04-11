@@ -140,6 +140,16 @@ npm run test:run
 
 - `./.venv/bin/pytest tests/ -q -> 555 passed`
 
+当前这轮补记：
+
+- 如果仓库本身跑在 Git linked worktree 里，`backend/tests/conftest.py` 现在会自动把测试用 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 放到系统临时目录，避免测试中的项目 worktree 再嵌 Git worktree 时触发 Git 的 `$GIT_DIR too big`
+- Windows 下 `pytest` 的临时目录权限仍可能有系统级噪声；这时继续建议显式带 repo 内 `--basetemp`，例如：
+
+```powershell
+cd backend
+py -m pytest tests/test_ceo_scheduler.py -q --basetemp D:\Projects\boardroom-os\.tmp\pytest-ceo
+```
+
 如果你要跑这条新的真实长测，单独用：
 
 ```bash
@@ -169,6 +179,7 @@ live 集成场景会把这些路径整体重定向到各自场景目录：
 - 默认项目工作区根目录由 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 控制；未显式覆盖时落到 `backend/data/project_workspaces/`
 - 当前只有带 workspace manifest 的 workflow 会启用新的 workspace-managed 文档 / git gate
 - 旧的 artifact-path 代码票仍保持兼容，不会被这条新 gate 误伤
+- 测试环境下如果仓库位于 linked worktree，fixture 会临时把 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 切到系统临时目录；这只是测试防噪，不改变线上默认路径
 
 ## 5. 运行模式与 provider
 

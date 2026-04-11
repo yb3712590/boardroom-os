@@ -14,7 +14,7 @@ import pytest
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED, EVENT_TICKET_CREATED
-from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF
+from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF, TECHNOLOGY_DECISION_SCHEMA_REF
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
@@ -1750,6 +1750,7 @@ def test_scheduler_runner_idle_ceo_maintenance_hires_architect_for_controller_ga
 ):
     from tests.test_ceo_scheduler import (
         _create_and_complete_backlog_recommendation_ticket,
+        _create_and_complete_minimum_governance_chain,
         _persist_workflow_directive_details,
         _seed_workflow,
         _set_deterministic_mode,
@@ -1767,6 +1768,11 @@ def test_scheduler_runner_idle_ceo_maintenance_hires_architect_for_controller_ga
         ],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="scheduler_architect_gate",
+    )
     _create_and_complete_backlog_recommendation_ticket(
         client,
         workflow_id=workflow_id,
@@ -1810,6 +1816,7 @@ def test_scheduler_runner_idle_ceo_maintenance_creates_architect_governance_tick
 ):
     from tests.test_ceo_scheduler import (
         _create_and_complete_backlog_recommendation_ticket,
+        _create_and_complete_minimum_governance_chain,
         _persist_workflow_directive_details,
         _seed_board_approved_employee,
         _seed_workflow,
@@ -1840,6 +1847,11 @@ def test_scheduler_runner_idle_ceo_maintenance_creates_architect_governance_tick
         role_profile_refs=["backend_engineer_primary"],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="scheduler_architect_doc_gate",
+    )
     _create_and_complete_backlog_recommendation_ticket(
         client,
         workflow_id=workflow_id,
@@ -1883,6 +1895,58 @@ def test_scheduler_runner_idle_ceo_maintenance_creates_architect_governance_tick
     assert created_spec["role_profile_ref"] == "architect_primary"
     assert created_spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
     assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_architect_scheduler_gate"
+
+
+def test_scheduler_runner_idle_ceo_maintenance_creates_next_governance_document_ticket(
+    client,
+    monkeypatch,
+    set_ticket_time,
+):
+    from tests.test_ceo_scheduler import (
+        _create_and_complete_governance_ticket,
+        _persist_workflow_directive_details,
+        _seed_workflow,
+        _set_deterministic_mode,
+    )
+
+    set_ticket_time("2026-04-04T10:00:00+08:00")
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_scheduler_governance_followup", "Scheduler governance followup")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=["Keep governance explicit."],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scheduler_architecture_doc",
+        node_id="node_scheduler_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete.",
+    )
+
+    set_ticket_time("2026-04-04T10:01:05+08:00")
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:governance-followup",
+        max_dispatches=10,
+    )
+
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+    idle_run = next(run for run in runs if run["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER)
+
+    assert idle_run["snapshot"]["controller_state"]["state"] == "GOVERNANCE_REQUIRED"
+    assert idle_run["snapshot"]["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert idle_run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+
+    created_ticket_id = idle_run["executed_actions"][0]["payload"]["ticket_id"]
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+
+    assert created_spec["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
 
 
 def test_scheduler_runner_skips_idle_ceo_maintenance_when_ticket_is_executing(
@@ -3328,23 +3392,25 @@ def test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_wor
     monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    project_response = client.post(
-        "/api/v1/commands/project-init",
-        json={
-            "north_star_goal": "Autopilot runner provider recovery",
-            "hard_constraints": [
-                "Keep governance explicit.",
-                "Allow CEO delegate to keep the workflow moving.",
-            ],
-            "budget_cap": 500000,
-            "deadline_at": None,
-            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
-            "force_requirement_elicitation": False,
-        },
+    from tests.test_ceo_scheduler import (
+        _persist_workflow_directive_details,
+        _seed_workflow,
     )
-    assert project_response.status_code == 200
-    assert project_response.json()["status"] == "ACCEPTED"
-    workflow_id = project_response.json()["causation_hint"].split(":", 1)[1]
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_runner_provider_recovery",
+        goal="Autopilot runner provider recovery",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "Keep governance explicit.",
+            "Allow CEO delegate to keep the workflow moving.",
+        ],
+    )
 
     repository = client.app.state.repository
     create_source_response = client.post(

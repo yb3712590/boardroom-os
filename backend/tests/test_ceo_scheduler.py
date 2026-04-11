@@ -18,6 +18,7 @@ from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
     DETAILED_DESIGN_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
 )
 from app.core.ceo_scheduler import (
@@ -1062,6 +1063,33 @@ def _create_and_complete_backlog_recommendation_ticket(
     assert approve_checker_response.json()["status"] == "ACCEPTED"
 
 
+def _create_and_complete_minimum_governance_chain(
+    client,
+    *,
+    workflow_id: str,
+    ticket_prefix: str,
+    existing_schema_refs: set[str] | None = None,
+) -> None:
+    existing = set(existing_schema_refs or set())
+    chain = [
+        (ARCHITECTURE_BRIEF_SCHEMA_REF, "architecture_brief"),
+        (TECHNOLOGY_DECISION_SCHEMA_REF, "technology_decision"),
+        (MILESTONE_PLAN_SCHEMA_REF, "milestone_plan"),
+        (DETAILED_DESIGN_SCHEMA_REF, "detailed_design"),
+    ]
+    for schema_ref, suffix in chain:
+        if schema_ref in existing:
+            continue
+        _create_and_complete_governance_ticket(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=f"tkt_{ticket_prefix}_{suffix}",
+            node_id=f"node_{ticket_prefix}_{suffix}",
+            output_schema_ref=schema_ref,
+            summary=f"{schema_ref} is complete.",
+        )
+
+
 def _seed_closed_meeting(
     client,
     *,
@@ -1135,7 +1163,7 @@ def test_ceo_shadow_run_records_fallback_without_touching_mainline_state(client)
     assert run["deterministic_fallback_reason"] is not None
 
 
-def test_autopilot_completed_atomic_task_auto_creates_closeout_ticket(client):
+def test_autopilot_completed_atomic_task_does_not_auto_create_closeout_ticket_before_full_delivery_chain(client):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_ceo_autopilot_closeout", goal="Autopilot closeout fallback")
     repository = client.app.state.repository
@@ -1148,7 +1176,6 @@ def test_autopilot_completed_atomic_task_auto_creates_closeout_ticket(client):
         node_id="node_backlog_followup_demo",
         summary="Atomic implementation slice is complete and ready for final closeout.",
     )
-
     with repository.connection() as connection:
         closeout_ticket = next(
             (
@@ -1158,18 +1185,7 @@ def test_autopilot_completed_atomic_task_auto_creates_closeout_ticket(client):
             ),
             None,
         )
-        assert closeout_ticket is not None
-        closeout_created_spec = repository.get_latest_ticket_created_payload(
-            connection,
-            closeout_ticket["ticket_id"],
-        )
-    assert closeout_created_spec is not None
-    assert closeout_created_spec["output_schema_ref"] == "delivery_closeout_package"
-    assert closeout_created_spec["delivery_stage"] == "CLOSEOUT"
-    assert closeout_created_spec["parent_ticket_id"] == "tkt_autopilot_impl_done"
-    assert closeout_created_spec["deliverable_kind"] == "structured_document_delivery"
-    assert closeout_created_spec["allowed_write_set"] == [f"20-evidence/closeout/{closeout_ticket['ticket_id']}/*"]
-    assert closeout_created_spec["input_artifact_refs"] == ["art://runtime/tkt_autopilot_impl_done/source-code.tsx"]
+    assert closeout_ticket is None
 
 
 def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket(client, monkeypatch):
@@ -1212,9 +1228,13 @@ def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket
             None,
         )
 
-    assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
-    assert run["executed_actions"][0]["action_type"] == "NO_ACTION"
+    assert run["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
     assert closeout_ticket is None
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+    assert created_spec["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
 
 
 def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(client):
@@ -2790,6 +2810,11 @@ def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_
     )
     _set_live_provider(client)
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="live_backlog_blank",
+    )
     _create_and_complete_backlog_recommendation_ticket(
         client,
         workflow_id=workflow_id,
@@ -2907,6 +2932,11 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
         role_profile_refs=["database_engineer_primary"],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="capability_plan",
+    )
     _create_and_complete_backlog_recommendation_ticket(
         client,
         workflow_id=workflow_id,
@@ -2986,6 +3016,11 @@ def test_ceo_shadow_snapshot_exposes_required_governance_ticket_plan_when_archit
         role_profile_refs=["backend_engineer_primary"],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="architect_doc_gap",
+    )
     _create_and_complete_backlog_recommendation_ticket(
         client,
         workflow_id=workflow_id,
@@ -3026,6 +3061,166 @@ def test_ceo_shadow_snapshot_exposes_required_governance_ticket_plan_when_archit
     assert required_plan["parent_ticket_id"] == "tkt_backlog_architect_doc_gap"
     assert required_plan["existing_ticket_id"] is None
     assert "architect governance brief" in required_plan["summary"].lower()
+
+
+def test_ceo_shadow_snapshot_requires_next_governance_document_before_backlog_fanout(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_governance_chain_next_doc", "Governance chain next doc")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=["Keep governance explicit."],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_architecture_doc",
+        node_id="node_parent_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete.",
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_parent_architecture_doc",
+    )
+    required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
+
+    assert snapshot["task_sensemaking"]["task_type"] == "governance_followup"
+    assert snapshot["task_sensemaking"]["deliverable_kind"] == "structured_document_delivery"
+    assert snapshot["task_sensemaking"]["coordination_mode"] == "document_chain"
+    assert snapshot["controller_state"]["state"] == "GOVERNANCE_REQUIRED"
+    assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert required_plan["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
+    assert required_plan["parent_ticket_id"] == "tkt_parent_architecture_doc"
+    assert required_plan["dependency_gate_refs"] == ["tkt_parent_architecture_doc"]
+
+
+def test_ceo_shadow_snapshot_builds_full_dependency_chain_for_next_governance_document(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_governance_chain_detailed_design", "Governance chain detailed design")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=["Keep governance explicit."],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_architecture_doc",
+        node_id="node_parent_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete.",
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_technology_decision",
+        node_id="node_parent_technology_decision",
+        output_schema_ref=TECHNOLOGY_DECISION_SCHEMA_REF,
+        summary="Technology decision is complete.",
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_milestone_plan",
+        node_id="node_parent_milestone_plan",
+        output_schema_ref=MILESTONE_PLAN_SCHEMA_REF,
+        summary="Milestone plan is complete.",
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_parent_milestone_plan",
+    )
+    required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
+
+    assert snapshot["controller_state"]["state"] == "GOVERNANCE_REQUIRED"
+    assert required_plan["output_schema_ref"] == DETAILED_DESIGN_SCHEMA_REF
+    assert required_plan["parent_ticket_id"] == "tkt_parent_milestone_plan"
+    assert required_plan["dependency_gate_refs"] == [
+        "tkt_parent_architecture_doc",
+        "tkt_parent_technology_decision",
+        "tkt_parent_milestone_plan",
+    ]
+
+
+def test_ceo_validator_rejects_implementation_before_governance_chain_completes(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_validate_governance_chain", "Validate governance chain")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=["Keep governance explicit."],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_architecture_doc",
+        node_id="node_parent_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete.",
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_parent_architecture_doc",
+    )
+
+    result = validate_ceo_action_batch(
+        client.app.state.repository,
+        snapshot=snapshot,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Try to skip governance and create implementation directly.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "node_id": "node_impl_direct",
+                            "role_profile_ref": "frontend_engineer_primary",
+                            "output_schema_ref": "source_code_delivery",
+                            "execution_contract": infer_execution_contract_payload(
+                                role_profile_ref="frontend_engineer_primary",
+                                output_schema_ref="source_code_delivery",
+                            ),
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_frontend_2",
+                                "selection_reason": "Try to skip the remaining governance chain.",
+                            },
+                            "summary": "Skip governance and implement directly.",
+                            "parent_ticket_id": "tkt_parent_architecture_doc",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert result["accepted_actions"] == []
+    assert "required_governance_ticket_plan" in result["rejected_actions"][0]["reason"]
 
 
 @pytest.mark.parametrize(
@@ -3075,6 +3270,12 @@ def test_ceo_shadow_snapshot_treats_any_approved_architect_governance_document_a
         role_profile_ref="architect_primary",
         leased_by="emp_architect_ready",
     )
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix=f"architect_ready_{ticket_id}",
+        existing_schema_refs={approved_schema_ref},
+    )
     _create_and_complete_backlog_recommendation_ticket(
         client,
         workflow_id=workflow_id,
@@ -3121,6 +3322,11 @@ def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(cl
         ],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="architect_gate",
+    )
     _create_and_complete_backlog_recommendation_ticket(
         client,
         workflow_id=workflow_id,
@@ -3185,6 +3391,11 @@ def test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_follo
         role_profile_refs=["backend_engineer_primary"],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="architect_doc_ticket",
+    )
     _create_and_complete_backlog_recommendation_ticket(
         client,
         workflow_id=workflow_id,
@@ -3264,6 +3475,12 @@ def test_ceo_shadow_run_requests_meeting_before_backlog_followup_when_required(c
         output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
         role_profile_ref="architect_primary",
         leased_by="emp_architect_gate",
+    )
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="meeting_gate",
+        existing_schema_refs={ARCHITECTURE_BRIEF_SCHEMA_REF},
     )
     _create_and_complete_backlog_recommendation_ticket(
         client,

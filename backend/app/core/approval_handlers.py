@@ -18,11 +18,8 @@ from app.contracts.commands import (
 )
 from app.contracts.ceo_actions import CEOCreateTicketPayload
 from app.core.ceo_execution_presets import (
-    PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
     PROJECT_INIT_SCOPE_NODE_ID,
-    build_autopilot_architecture_brief_summary,
     build_ceo_create_ticket_command,
-    build_project_init_scope_summary,
 )
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.constants import (
@@ -86,7 +83,10 @@ from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.workflow_autopilot import (
     build_ceo_delegate_board_approval_command,
-    workflow_uses_ceo_board_delegate,
+)
+from app.core.workflow_progression import (
+    build_project_init_kickoff_spec,
+    workflow_progression_supports_legacy_scope_followups,
 )
 from app.core.workflow_scope import with_workflow_scope
 from app.db.repository import ControlPlaneRepository
@@ -672,27 +672,15 @@ def _kickoff_scope_after_requirement_elicitation(
     workflow = repository.get_workflow_projection(workflow_id)
     if workflow is None:
         raise ValueError("Workflow projection missing during requirement elicitation approval.")
-    uses_autopilot_governance = workflow_uses_ceo_board_delegate(workflow)
+    kickoff_spec = build_project_init_kickoff_spec(workflow)
     command = build_ceo_create_ticket_command(
         workflow=workflow,
         payload=CEOCreateTicketPayload(
             workflow_id=workflow_id,
-            node_id=(
-                PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
-                if uses_autopilot_governance
-                else PROJECT_INIT_SCOPE_NODE_ID
-            ),
-            role_profile_ref="frontend_engineer_primary" if uses_autopilot_governance else "ui_designer_primary",
-            output_schema_ref="architecture_brief" if uses_autopilot_governance else "consensus_document",
-            summary=(
-                build_autopilot_architecture_brief_summary(
-                    str(workflow.get("north_star_goal") or workflow.get("title") or "")
-                )
-                if uses_autopilot_governance
-                else build_project_init_scope_summary(
-                    str(workflow.get("north_star_goal") or workflow.get("title") or "")
-                )
-            ),
+            node_id=str(kickoff_spec["node_id"]),
+            role_profile_ref=str(kickoff_spec["role_profile_ref"]),
+            output_schema_ref=str(kickoff_spec["output_schema_ref"]),
+            summary=str(kickoff_spec["summary"]),
             parent_ticket_id=None,
         ),
         repository=repository,
@@ -1411,12 +1399,16 @@ def _handle_board_approve(
                     causation_hint=f"approval:{payload.approval_id}",
                 )
         else:
+            workflow = repository.get_workflow_projection(approval["workflow_id"], connection=connection)
             try:
-                followup_ticket_payloads = _build_scope_followup_ticket_payloads(
-                    repository,
-                    connection,
-                    approval=approval,
-                )
+                if workflow_progression_supports_legacy_scope_followups(workflow):
+                    followup_ticket_payloads = _build_scope_followup_ticket_payloads(
+                        repository,
+                        connection,
+                        approval=approval,
+                    )
+                else:
+                    followup_ticket_payloads = []
             except ValueError as exc:
                 return _rejected_ack(
                     command_id=command_id,
@@ -1587,7 +1579,10 @@ def _handle_board_approve(
         )
         created_followup_ticket_ids.append(f"tkt_{approval['workflow_id']}_scope_decision")
 
-    if approval["approval_type"] != "REQUIREMENT_ELICITATION":
+    if (
+        approval["approval_type"] != "REQUIREMENT_ELICITATION"
+        and repository.get_workflow_projection(approval["workflow_id"]) is not None
+    ):
         auto_advance_workflow_to_next_stop(
             repository,
             workflow_id=approval["workflow_id"],

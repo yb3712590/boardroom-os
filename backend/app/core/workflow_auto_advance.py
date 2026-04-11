@@ -160,7 +160,8 @@ def auto_advance_workflow_to_next_stop(
             trigger_ref=f"{idempotency_key_prefix}:{step_index}:controller-probe",
         )
         if (
-            workflow_controller_effect(snapshot) in {"ARCHITECT_REQUIRED", "MEETING_REQUIRED", "STAFFING_REQUIRED"}
+            workflow_controller_effect(snapshot)
+            in {"GOVERNANCE_REQUIRED", "ARCHITECT_REQUIRED", "MEETING_REQUIRED", "STAFFING_REQUIRED"}
             and int((snapshot.get("ticket_summary") or {}).get("active_count") or 0) == 0
         ):
             return

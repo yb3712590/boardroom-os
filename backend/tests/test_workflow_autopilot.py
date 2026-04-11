@@ -640,7 +640,7 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
     assert repository.list_open_approvals() == []
 
 
-def test_autopilot_workflow_writes_human_readable_atomic_chain_report_after_closeout(client, set_ticket_time):
+def test_late_profile_flip_does_not_retrofit_standard_scope_chain_into_autopilot_report(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id, scope_approval = _project_init_to_scope_approval(client)
     repository = client.app.state.repository
@@ -675,17 +675,7 @@ def test_autopilot_workflow_writes_human_readable_atomic_chain_report_after_clos
     artifact_ref = f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"
     artifact = repository.get_artifact_by_ref(artifact_ref)
 
-    assert artifact is not None
-    assert artifact["logical_path"] == f"reports/workflow-chain/{workflow_id}/workflow-chain-report.json"
-    payload = json.loads(
-        repository.artifact_store.read_bytes(
-            artifact["storage_relpath"],
-            storage_object_key=artifact.get("storage_object_key"),
-        ).decode("utf-8")
-    )
-    assert payload["workflow_id"] == workflow_id
-    assert payload["sections"][0]["section_id"] == "project_overview"
-    assert any(item["dependency_gate_refs"] for item in payload["atomic_tasks"])
+    assert artifact is None
 
 
 def test_autopilot_closeout_without_visual_milestone_still_writes_chain_report_and_marks_workflow_completed(

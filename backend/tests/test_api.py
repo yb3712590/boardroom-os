@@ -2751,6 +2751,43 @@ def test_board_approve_requirement_elicitation_generates_answers_artifact_and_st
     assert artifact_rows
 
 
+def test_project_init_force_requirement_elicitation_autopilot_starts_governance_kickoff(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json={
+            **_project_init_payload("Ship MVP A", force_requirement_elicitation=True),
+            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+        },
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+
+    repository = client.app.state.repository
+    legacy_scope_ticket = repository.get_current_ticket_projection(f"tkt_{workflow_id}_scope_decision")
+    with repository.connection() as connection:
+        created_rows = connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE workflow_id = ? AND event_type = ?
+            ORDER BY sequence_no ASC
+            """,
+            (workflow_id, EVENT_TICKET_CREATED),
+        ).fetchall()
+    created_specs = [json.loads(row["payload_json"]) for row in created_rows]
+
+    assert init_response.status_code == 200
+    assert init_response.json()["status"] == "ACCEPTED"
+    assert legacy_scope_ticket is None
+    assert any(
+        item["node_id"] == "node_ceo_architecture_brief" and item["output_schema_ref"] == "architecture_brief"
+        for item in created_specs
+    )
+
+
 def test_modify_constraints_requirement_elicitation_reopens_same_stage_with_saved_answers(
     client,
     set_ticket_time,

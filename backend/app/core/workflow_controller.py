@@ -9,10 +9,23 @@ from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
     DETAILED_DESIGN_SCHEMA_REF,
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
+    MILESTONE_PLAN_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
 )
+from app.core.workflow_progression import (
+    AUTOPILOT_GOVERNANCE_CHAIN,
+    build_governance_followup_node_id,
+    build_governance_followup_summary,
+    governance_dependency_gate_refs,
+    governance_parent_ticket_id,
+    resolve_next_governance_schema,
+    resolve_workflow_progression_adapter,
+    select_governance_role_and_assignee,
+)
+from app.core.workflow_completion import resolve_workflow_closeout_completion
 from app.db.repository import ControlPlaneRepository
 
 _APPROVED_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
@@ -87,7 +100,7 @@ def workflow_controller_effect(snapshot: dict[str, Any]) -> str:
         return "RUN_SCHEDULER_TICK"
     if state == "WAIT_FOR_RUNTIME":
         return "WAIT_FOR_RUNTIME"
-    if state in {"ARCHITECT_REQUIRED", "MEETING_REQUIRED", "STAFFING_REQUIRED"}:
+    if state in {"GOVERNANCE_REQUIRED", "ARCHITECT_REQUIRED", "MEETING_REQUIRED", "STAFFING_REQUIRED"}:
         return state
     if state == "READY_FOR_FANOUT":
         return "READY_FOR_FANOUT"
@@ -257,6 +270,125 @@ def _latest_completed_backlog_ticket(
         if isinstance(payload, dict):
             return maker_ticket_id, maker_ticket_spec, payload
     return None, {}, None
+
+
+def _latest_completed_governance_ticket_ids_by_schema(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> dict[str, str]:
+    rows = connection.execute(
+        """
+        SELECT ticket_id
+        FROM ticket_projection
+        WHERE workflow_id = ? AND status = ?
+        ORDER BY updated_at DESC, ticket_id DESC
+        """,
+        (workflow_id, "COMPLETED"),
+    ).fetchall()
+    completed_ticket_ids_by_schema: dict[str, str] = {}
+    for row in rows:
+        ticket_id = str(row["ticket_id"])
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
+        output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+        if output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+            completed_ticket_ids_by_schema.setdefault(output_schema_ref, ticket_id)
+            continue
+        if output_schema_ref != MAKER_CHECKER_VERDICT_SCHEMA_REF:
+            continue
+        maker_checker_context = created_spec.get("maker_checker_context") or {}
+        maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
+        maker_ticket_spec = maker_checker_context.get("maker_ticket_spec")
+        if not isinstance(maker_ticket_spec, dict) or not maker_ticket_spec:
+            maker_ticket_spec = (
+                repository.get_latest_ticket_created_payload(connection, maker_ticket_id)
+                if maker_ticket_id
+                else {}
+            ) or {}
+        maker_output_schema_ref = str(maker_ticket_spec.get("output_schema_ref") or "").strip()
+        if maker_output_schema_ref not in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+            continue
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+        completion_payload = terminal_event.get("payload") if terminal_event is not None else {}
+        review_status = str(
+            (completion_payload or {}).get("maker_checker_summary", {}).get("review_status")
+            or (completion_payload or {}).get("review_status")
+            or ""
+        ).strip()
+        if review_status not in _APPROVED_REVIEW_STATUSES:
+            continue
+        completed_ticket_ids_by_schema.setdefault(maker_output_schema_ref, maker_ticket_id or ticket_id)
+    return completed_ticket_ids_by_schema
+
+
+def _build_governance_progression_ticket_plan(
+    repository: ControlPlaneRepository,
+    *,
+    workflow: dict[str, Any],
+    workflow_nodes: list[dict[str, Any]],
+    employees: list[dict[str, Any]],
+    connection,
+) -> dict[str, Any] | None:
+    adapter_id = resolve_workflow_progression_adapter(workflow)
+    if adapter_id != AUTOPILOT_GOVERNANCE_CHAIN:
+        return None
+
+    workflow_id = str(workflow.get("workflow_id") or "").strip()
+    if not workflow_id:
+        return None
+
+    completed_ticket_ids_by_schema = _latest_completed_governance_ticket_ids_by_schema(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
+    next_schema_ref = resolve_next_governance_schema(completed_ticket_ids_by_schema)
+    if next_schema_ref is None:
+        return None
+
+    role_profile_ref, assignee_employee_id = select_governance_role_and_assignee(
+        employees,
+        output_schema_ref=next_schema_ref,
+    )
+    if role_profile_ref is None:
+        return None
+
+    node_id = build_governance_followup_node_id(next_schema_ref)
+    existing_ticket_ids_by_node_id = {
+        str(node.get("node_id") or ""): str(node.get("latest_ticket_id") or "")
+        for node in workflow_nodes
+        if str(node.get("node_id") or "").strip() and str(node.get("latest_ticket_id") or "").strip()
+    }
+    dependency_gate_refs = governance_dependency_gate_refs(
+        completed_ticket_ids_by_schema,
+        next_schema_ref,
+    )
+    parent_ticket_id = governance_parent_ticket_id(
+        completed_ticket_ids_by_schema,
+        next_schema_ref,
+    )
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=next_schema_ref,
+    ) or {}
+    return {
+        "node_id": node_id,
+        "role_profile_ref": role_profile_ref,
+        "output_schema_ref": next_schema_ref,
+        "execution_contract": execution_contract,
+        "required_capability_tags": list(execution_contract.get("required_capability_tags") or []),
+        "assignee_employee_id": assignee_employee_id,
+        "parent_ticket_id": parent_ticket_id,
+        "dependency_gate_refs": dependency_gate_refs,
+        "summary": build_governance_followup_summary(next_schema_ref),
+        "selection_reason": (
+            f"Follow the current governance progression and create the next {next_schema_ref} document."
+        ),
+        "source_ticket_id": parent_ticket_id,
+        "source_node_id": build_governance_followup_node_id(next_schema_ref),
+        "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
+    }
 
 
 def _build_followup_ticket_plans(
@@ -554,18 +686,50 @@ def build_workflow_controller_view(
     connection,
 ) -> dict[str, Any]:
     workflow_id = str(workflow.get("workflow_id") or "").strip()
+    progression_adapter_id = resolve_workflow_progression_adapter(workflow)
     hard_constraints = _load_workflow_hard_constraints(connection, workflow_id)
+    created_specs_by_ticket = {
+        str(ticket["ticket_id"]): repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+        for ticket in tickets
+    }
+    ticket_terminal_events_by_ticket = {
+        str(ticket["ticket_id"]): repository.get_latest_ticket_terminal_event(connection, str(ticket["ticket_id"]))
+        for ticket in tickets
+    }
+    closeout_completion = resolve_workflow_closeout_completion(
+        tickets=tickets,
+        nodes=nodes,
+        has_open_approval=bool(approvals),
+        has_open_incident=bool(incidents),
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+    )
     backlog_ticket_id, backlog_created_spec, backlog_payload = _latest_completed_backlog_ticket(
         repository,
         workflow_id=workflow_id,
         trigger_ref=trigger_ref,
         connection=connection,
     )
+    governance_ticket_plan = (
+        None
+        if closeout_completion is not None
+        else _build_governance_progression_ticket_plan(
+            repository,
+            workflow=workflow,
+            workflow_nodes=nodes,
+            employees=employees,
+            connection=connection,
+        )
+    )
     followup_ticket_plans: list[dict[str, Any]] = []
     task_type = "steady_state"
     deliverable_kind = None
     coordination_mode = "wait"
-    if backlog_ticket_id and isinstance(backlog_payload, dict):
+    if governance_ticket_plan is not None:
+        task_type = "governance_followup"
+        deliverable_kind = "structured_document_delivery"
+        coordination_mode = "document_chain"
+    elif backlog_ticket_id and isinstance(backlog_payload, dict):
         followup_ticket_plans = _build_followup_ticket_plans(
             backlog_ticket_id=backlog_ticket_id,
             backlog_created_spec=backlog_created_spec,
@@ -594,7 +758,7 @@ def build_workflow_controller_view(
         "blocking_reason": None,
     }
     controller_meeting_candidate = None
-    required_governance_ticket_plan = None
+    required_governance_ticket_plan = governance_ticket_plan
 
     if approvals:
         controller_state = {
@@ -619,6 +783,22 @@ def build_workflow_controller_view(
             "state": "READY_TICKET",
             "recommended_action": "NO_ACTION",
             "blocking_reason": "Pending tickets already exist on the current mainline.",
+        }
+    elif required_governance_ticket_plan is not None:
+        controller_state = {
+            "state": "GOVERNANCE_REQUIRED",
+            "recommended_action": (
+                "CREATE_TICKET"
+                if required_governance_ticket_plan.get("existing_ticket_id") is None
+                else "NO_ACTION"
+            ),
+            "blocking_reason": (
+                f"The governance-first progression requires {required_governance_ticket_plan['output_schema_ref']} before implementation fanout."
+                if required_governance_ticket_plan.get("existing_ticket_id") is None
+                else (
+                    "The next governance ticket already exists and must finish or be recovered before the progression continues."
+                )
+            ),
         }
     elif followup_ticket_plans:
         active_architects = _active_board_approved_employees(employees, role_profile_ref="architect_primary")
@@ -692,9 +872,18 @@ def build_workflow_controller_view(
         "task_type": task_type,
         "deliverable_kind": deliverable_kind,
         "coordination_mode": coordination_mode,
-        "source_ticket_id": backlog_ticket_id,
-        "source_node_id": str(backlog_created_spec.get("node_id") or "").strip() or None,
+        "source_ticket_id": (
+            backlog_ticket_id
+            if task_type == "implementation_fanout"
+            else str((required_governance_ticket_plan or {}).get("source_ticket_id") or "").strip() or None
+        ),
+        "source_node_id": (
+            str(backlog_created_spec.get("node_id") or "").strip() or None
+            if task_type == "implementation_fanout"
+            else str((required_governance_ticket_plan or {}).get("source_node_id") or "").strip() or None
+        ),
         "hard_constraints": hard_constraints,
+        "progression_adapter_id": progression_adapter_id,
     }
     capability_plan = {
         "required_capabilities": sorted(
@@ -710,7 +899,13 @@ def build_workflow_controller_view(
         "requires_meeting": requires_meeting,
         "required_governance_ticket_plan": required_governance_ticket_plan,
         "followup_ticket_plans": followup_ticket_plans,
+        "progression_adapter_id": progression_adapter_id,
     }
+    if required_governance_ticket_plan is not None:
+        capability_plan["required_capabilities"] = sorted(
+            set(capability_plan["required_capabilities"])
+            | set(required_governance_ticket_plan.get("required_capability_tags") or [])
+        )
     if controller_state["recommended_action"] == "HIRE_EMPLOYEE":
         if controller_state["state"] == "ARCHITECT_REQUIRED":
             capability_plan["recommended_hire"] = {

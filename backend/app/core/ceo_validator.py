@@ -352,7 +352,7 @@ def validate_ceo_action_batch(
             if snapshot is not None and action.payload.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
                 controller_state = snapshot.get("controller_state") or {}
                 controller_gate_state = str(controller_state.get("state") or "").strip()
-                if controller_gate_state in {"ARCHITECT_REQUIRED", "MEETING_REQUIRED"}:
+                if controller_gate_state in {"GOVERNANCE_REQUIRED", "ARCHITECT_REQUIRED", "MEETING_REQUIRED"}:
                     rejected_actions.append(
                         _action_entry(
                             action,

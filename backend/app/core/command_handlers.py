@@ -22,7 +22,7 @@ from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.core.workflow_scope import default_workflow_scope
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
-from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
+from app.core.workflow_progression import AUTOPILOT_GOVERNANCE_CHAIN, resolve_workflow_progression_adapter
 from app.core.project_workspaces import bootstrap_project_workspace
 from app.db.repository import ControlPlaneRepository
 
@@ -238,7 +238,10 @@ def handle_project_init(
                 idempotency_key=f"{command_key}:requirement-elicitation",
             )
             repository.refresh_projections(connection)
-        if workflow_uses_ceo_board_delegate({"workflow_profile": payload.workflow_profile}):
+        if (
+            resolve_workflow_progression_adapter({"workflow_profile": payload.workflow_profile})
+            == AUTOPILOT_GOVERNANCE_CHAIN
+        ):
             _auto_advance_project_init_to_first_review(
                 repository,
                 workflow_id=workflow_id,

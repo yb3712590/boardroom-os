@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import tempfile
 from uuid import uuid4
 
 import pytest
@@ -10,7 +11,12 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def db_path(monkeypatch):
-    base_dir = Path(__file__).resolve().parents[2] / ".tmp" / "test-db"
+    repo_root = Path(__file__).resolve().parents[2]
+    git_metadata_path = repo_root / ".git"
+    if git_metadata_path.is_file():
+        base_dir = Path(tempfile.gettempdir()) / "boardroom-os-test-db"
+    else:
+        base_dir = repo_root / ".tmp" / "test-db"
     base_dir.mkdir(parents=True, exist_ok=True)
     run_id = uuid4().hex
     path = base_dir / f"boardroom_os_test_{run_id}.db"

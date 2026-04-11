@@ -7,7 +7,7 @@
 
 | 阶段 | 当前状态 | 代码现实 | 直接结论 |
 |------|----------|----------|----------|
-| `project-init -> scope review` | 真实运行 | `project-init` 会先由 CEO 发起首个 kickoff scope 共识票，再自动推进到首个 scope review | 不是只建 workflow 的空壳 |
+| `project-init -> 首个治理停点` | 真实运行 | `STANDARD` 仍会先创建 kickoff scope 共识票并推进到首个 scope review；`CEO_AUTOPILOT_FINE_GRAINED` 现在先创建 `architecture_brief` kickoff，再按治理文档链推进 | 第一跳已由 shared progression abstraction 收成单点接口，不再到处分叉 |
 | `BUILD` 内部 maker-checker | 真实运行 | 先产出 `source_code_delivery@1`，再走 `maker -> checker -> fix / incident` | `BUILD` 不会直接放行到 `CHECK` |
 | `CHECK` 内部 maker-checker | 真实运行 | `delivery_check_report@1` 也有独立内审闭环 | `CHECK` 不会直接放行到最终董事会 |
 | 最终 `REVIEW` | 真实运行 | 只有真正 board-facing 的 review 才进入 `Inbox -> Review Room` | 董事会只看真实审批点 |
@@ -16,6 +16,11 @@
 补充差异：
 
 - `project-init -> scope review` 这条共识链仍保留 `ui_designer_primary`，但首个 scope kickoff 票已经不再由命令处理器硬编码创建，而是由 `BOARD_DIRECTIVE_RECEIVED` 的 CEO shadow run 发起
+- 当前新增 `workflow_progression` shared abstraction：固定暴露 `AUTOPILOT_GOVERNANCE_CHAIN / STANDARD_LEGACY_SCOPE_CHAIN` 两个 adapter；`project-init` kickoff、requirement elicitation 后续 kickoff、controller 下一步判断，以及 standard scope follow-up builder 都开始走这层单点抽象
+- `CEO_AUTOPILOT_FINE_GRAINED` 当前已经切到 governance-first：controller 在治理链未走完时会暴露 `controller_state.state=GOVERNANCE_REQUIRED`，`task_sensemaking` 会切到 `governance_followup + structured_document_delivery + document_chain`，deterministic fallback / validator / workflow_auto_advance 也会跟着这条真相走
+- 上述治理链当前固定顺序是 `architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> source_code_delivery`；只有 backlog recommendation 已过治理 gate 后，autopilot 才会放行实现 fanout
+- `capability_plan.required_governance_ticket_plan` 当前不再只表示 architect `architecture_brief` 补票：它也会承载 governance-first 主线里的下一张治理文档票，最小会补 `node_id / role_profile_ref / output_schema_ref / dependency_gate_refs / parent_ticket_id`
+- `STANDARD` 当前已经挂到 `STANDARD_LEGACY_SCOPE_CHAIN` adapter：scope consensus kickoff、requirement elicitation 后续 kickoff 和 board-approved scope follow-up 现在都通过 shared abstraction 选路；但 STANDARD 还没迁到 governance-first，这块已明确留到下一轮继续做
 - `project-init` 现在还会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE` 三种模板
 - `project-init` 现在还会把 `10-project/` 初始化成真实 git repo：固定 `main` 分支、repo-local `user.boardroom / boardroom-os@local` 和 bootstrap commit
 - 上述受管项目工作区现在还会维护 `00-boardroom/workflow/active-worktree-index.md`：只收 workspace-managed `source_code_delivery` 票，执行中显示真实 checkout 的 `branch_ref`，占住 review gate 的代码票显示真实 `branch_ref / commit_sha / merge_status`
@@ -65,12 +70,13 @@
 - non-code deliverable contract / hard gate 这轮已经补到当前主线里的 `structured_document_delivery`：`consensus_document`、五类治理文档和 `delivery_closeout_package` 都走统一 contract；更广义的 research / analysis 类 deliverable kind 还没正式进入当前主线
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
-- CEO shadow snapshot 现在会额外暴露 `task_sensemaking / capability_plan / controller_state`；`ceo_scheduler` comparison、deterministic fallback 和 `workflow_auto_advance` 的 idle gate 已开始共用这套 controller truth。当前首段只覆盖 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation` 的实现 fanout，不代表旧 scope-consensus 主链已经全部切完
+- CEO shadow snapshot 现在会额外暴露 `task_sensemaking / capability_plan / controller_state`；`ceo_scheduler` comparison、deterministic fallback 和 `workflow_auto_advance` 的 idle gate 已开始共用这套 controller truth。当前已经从“只覆盖 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation` fanout”扩到 shared progression abstraction，但 `STANDARD` 仍先走 legacy adapter，不代表旧 scope-consensus 兼容链已经完全删掉
 - 上述 capability plan 当前会先读取 backlog recommendation 里的结构化 ticket split；如果票项显式带 `target_role / owner_role`，controller 会把 `backend / database / platform` 映射到对应 `source_code_delivery` build 票，不再默认全部落到前端。active roster 覆盖不到时，controller 会先暴露 `staffing_gaps`，不会静默改派给现有 frontend
 - 当 autopilot workflow 的硬约束显式提到 `architect_primary` 时，实现 fanout 现在有两段 architect gate：没有 active architect 时，controller 会先建议 `HIRE_EMPLOYEE`
 - architect 已在岗但还没有过 governance gate 的 `architect_primary` 文档时，`workflow_controller` 现在会在 `capability_plan.required_governance_ticket_plan` 暴露一条稳定的 architect `architecture_brief` 补票计划；deterministic fallback 和 CEO `CREATE_TICKET` 校验都会先对齐这条计划，再允许实现 fanout
 - 上述 architect gate 的满足口径现在已放宽到任意已过 internal governance gate 的 `architect_primary` 文档：`architecture_brief / technology_decision / detailed_design` 任一成立都算放行；自动补票默认仍只补 `architecture_brief`
 - 当 autopilot workflow 的硬约束显式要求技术决策会议时，controller 现在会为 backlog fanout 追加专用 meeting candidate；只有关闭且已批准的 meeting evidence 出现后，controller 才会放行实现票。缺 meeting evidence 时，deterministic/live path 会先 `REQUEST_MEETING` 或保持阻断
+- 已经完成真实 closeout 的 autopilot workflow，controller 现在不会再被 governance-first 补票重新拉起；closeout completion 继续优先于后续治理补票
 - 当前已把原治理模板扩成统一 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary / backend_execution_reserved / database_execution_reserved / platform_sre_reserved / architect_governance / cto_governance` 八个当前 live 模板，同时附带五类文档 metadata ref 和九个模板片段
 - `role_templates_catalog.role_templates[]` 现在会额外暴露结构化 `mainline_boundary`：`boundary_status` 只会是 `LIVE_ON_MAINLINE / CATALOG_ONLY`；当前 8 个模板都已标成 `LIVE_ON_MAINLINE`，再通过 `active_path_refs / blocked_path_refs` 表达各自仍保留的 CEO / staged follow-up 边界
 - `workforce` 投影现在会返回 `role_templates_catalog`、扩展后的 staffing hire templates，以及每个 worker 的 `source_template_id / source_fragment_refs`；`backend / database / platform / architect / cto` 五类模板现在都已进入 Board/workforce staffing 动作、workforce lane 与 formal runtime live path，CEO `HIRE_EMPLOYEE` 也已放宽到这五类模板
