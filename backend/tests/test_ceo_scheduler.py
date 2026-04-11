@@ -2956,6 +2956,156 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
     ]
 
 
+def test_ceo_shadow_snapshot_exposes_required_governance_ticket_plan_when_architect_doc_missing(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_backlog_architect_doc_gap", "Architect governance gap")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
+        ],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_doc_gap",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_doc_gap",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_architect_doc_gap",
+        node_id="node_ceo_backlog_architect_doc_gap",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_architect_doc_gap",
+    )
+
+    required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
+
+    assert snapshot["controller_state"]["state"] == "ARCHITECT_REQUIRED"
+    assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert required_plan["node_id"] == "node_architect_governance_gate_node_ceo_backlog_architect_doc_gap"
+    assert required_plan["role_profile_ref"] == "architect_primary"
+    assert required_plan["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert required_plan["assignee_employee_id"] == "emp_architect_doc_gap"
+    assert required_plan["parent_ticket_id"] == "tkt_backlog_architect_doc_gap"
+    assert required_plan["existing_ticket_id"] is None
+    assert "architect governance brief" in required_plan["summary"].lower()
+
+
+@pytest.mark.parametrize(
+    ("approved_schema_ref", "ticket_id", "node_id"),
+    [
+        (ARCHITECTURE_BRIEF_SCHEMA_REF, "tkt_architect_ready_arch", "node_architect_ready_arch"),
+        (TECHNOLOGY_DECISION_SCHEMA_REF, "tkt_architect_ready_td", "node_architect_ready_td"),
+        (DETAILED_DESIGN_SCHEMA_REF, "tkt_architect_ready_dd", "node_architect_ready_dd"),
+    ],
+)
+def test_ceo_shadow_snapshot_treats_any_approved_architect_governance_document_as_gate_satisfied(
+    client,
+    monkeypatch,
+    approved_schema_ref,
+    ticket_id,
+    node_id,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, f"wf_architect_ready_{ticket_id}", "Architect governance ready")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
+        ],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_ready",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_ready",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref=approved_schema_ref,
+        role_profile_ref="architect_primary",
+        leased_by="emp_architect_ready",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_architect_ready",
+        node_id="node_ceo_backlog_architect_ready",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_architect_ready",
+    )
+
+    assert snapshot["controller_state"]["state"] == "READY_FOR_FANOUT"
+    assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert snapshot["capability_plan"]["required_governance_ticket_plan"] is None
+
+
 def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(client, monkeypatch):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_backlog_architect_gate", "Architect gate")
@@ -3003,6 +3153,79 @@ def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(cl
     assert run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
     assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
     assert run["executed_actions"][0]["payload"]["role_profile_refs"] == ["architect_primary"]
+
+
+def test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_followup_when_doc_is_missing(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_backlog_architect_doc_ticket", "Architect document ticket")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
+        ],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_doc_ticket",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_doc_ticket",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_architect_doc_ticket",
+        node_id="node_ceo_backlog_architect_doc_ticket",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_architect_doc_ticket",
+    )
+
+    assert run["snapshot"]["controller_state"]["state"] == "ARCHITECT_REQUIRED"
+    assert run["snapshot"]["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert run["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+
+    assert created_spec["node_id"] == "node_architect_governance_gate_node_ceo_backlog_architect_doc_ticket"
+    assert created_spec["role_profile_ref"] == "architect_primary"
+    assert created_spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_architect_doc_ticket"
+    assert created_spec["parent_ticket_id"] == "tkt_backlog_architect_doc_ticket"
 
 
 def test_ceo_shadow_run_requests_meeting_before_backlog_followup_when_required(client, monkeypatch):
@@ -3224,6 +3447,130 @@ def test_ceo_validator_rejects_create_ticket_when_assignee_is_missing_or_incapab
     assert len(result["rejected_actions"]) == 2
     assert "does not exist" in result["rejected_actions"][0]["reason"].lower()
     assert "required capability tags" in result["rejected_actions"][1]["reason"].lower()
+
+
+def test_ceo_validator_accepts_required_architect_governance_ticket_plan_and_rejects_other_create_ticket(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_validate_architect_gate_doc", "Validate architect governance gate")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
+        ],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_validate",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_validate",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_validate_architect_doc",
+        node_id="node_ceo_backlog_validate_architect_doc",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_validate_architect_doc",
+    )
+    required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
+
+    rejected_result = validate_ceo_action_batch(
+        client.app.state.repository,
+        snapshot=snapshot,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Try to bypass the architect governance gate.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "node_id": "node_backlog_followup_br_be_01",
+                            "role_profile_ref": "backend_engineer_primary",
+                            "output_schema_ref": "source_code_delivery",
+                            "execution_contract": infer_execution_contract_payload(
+                                role_profile_ref="backend_engineer_primary",
+                                output_schema_ref="source_code_delivery",
+                            ),
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_backend_validate",
+                                "selection_reason": "Try to force implementation before the architect document exists.",
+                            },
+                            "summary": "Bypass the architect gate with an implementation ticket.",
+                            "parent_ticket_id": "tkt_backlog_validate_architect_doc",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+    assert rejected_result["accepted_actions"] == []
+    assert "required_governance_ticket_plan" in rejected_result["rejected_actions"][0]["reason"]
+
+    accepted_result = validate_ceo_action_batch(
+        client.app.state.repository,
+        snapshot=snapshot,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Create the required architect governance document.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "node_id": required_plan["node_id"],
+                            "role_profile_ref": required_plan["role_profile_ref"],
+                            "output_schema_ref": required_plan["output_schema_ref"],
+                            "execution_contract": infer_execution_contract_payload(
+                                role_profile_ref=required_plan["role_profile_ref"],
+                                output_schema_ref=required_plan["output_schema_ref"],
+                            ),
+                            "dispatch_intent": {
+                                "assignee_employee_id": required_plan["assignee_employee_id"],
+                                "selection_reason": "Follow the required architect governance ticket plan exactly.",
+                            },
+                            "summary": required_plan["summary"],
+                            "parent_ticket_id": required_plan["parent_ticket_id"],
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+    assert len(accepted_result["accepted_actions"]) == 1
+    assert accepted_result["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert accepted_result["rejected_actions"] == []
 
 
 def test_ceo_shadow_run_marks_deferred_board_escalation(client, monkeypatch):

@@ -298,6 +298,57 @@ def validate_ceo_action_batch(
             if repository.get_current_node_projection(action.payload.workflow_id, action.payload.node_id) is not None:
                 rejected_actions.append(_action_entry(action, "node_id already exists in the current workflow."))
                 continue
+            if snapshot is not None:
+                required_governance_ticket_plan = (
+                    (snapshot.get("capability_plan") or {}).get("required_governance_ticket_plan")
+                )
+                if isinstance(required_governance_ticket_plan, dict):
+                    matching_required_governance_plan = (
+                        str(required_governance_ticket_plan.get("node_id") or "") == action.payload.node_id
+                        and str(required_governance_ticket_plan.get("role_profile_ref") or "")
+                        == action.payload.role_profile_ref
+                        and str(required_governance_ticket_plan.get("output_schema_ref") or "")
+                        == action.payload.output_schema_ref
+                    )
+                    planned_assignee_employee_id = str(
+                        required_governance_ticket_plan.get("assignee_employee_id") or ""
+                    ).strip()
+                    planned_parent_ticket_id = str(
+                        required_governance_ticket_plan.get("parent_ticket_id") or ""
+                    ).strip()
+                    if matching_required_governance_plan:
+                        if planned_assignee_employee_id and planned_assignee_employee_id != assignee_employee_id:
+                            rejected_actions.append(
+                                _action_entry(
+                                    action,
+                                    "CREATE_TICKET assignee does not match the current capability_plan.required_governance_ticket_plan.",
+                                )
+                            )
+                            continue
+                        if planned_parent_ticket_id and planned_parent_ticket_id != str(
+                            action.payload.parent_ticket_id or ""
+                        ).strip():
+                            rejected_actions.append(
+                                _action_entry(
+                                    action,
+                                    "CREATE_TICKET parent_ticket_id does not match the current capability_plan.required_governance_ticket_plan.",
+                                )
+                            )
+                            continue
+                        accepted_actions.append(
+                            _action_entry(
+                                action,
+                                "CREATE_TICKET matches the current capability_plan.required_governance_ticket_plan.",
+                            )
+                        )
+                        continue
+                    rejected_actions.append(
+                        _action_entry(
+                            action,
+                            "CREATE_TICKET does not match the current capability_plan.required_governance_ticket_plan.",
+                        )
+                    )
+                    continue
             if snapshot is not None and action.payload.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
                 controller_state = snapshot.get("controller_state") or {}
                 controller_gate_state = str(controller_state.get("state") or "").strip()

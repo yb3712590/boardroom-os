@@ -28,6 +28,9 @@
 - `Context Compiler` 现在会把 `required_read_refs` 并入 `input_process_asset_refs`，并给 workspace-managed ticket 写 `worker-preflight` 回执
 - BUILD 主结果现在已经从占位式文档产物硬切到 `source_code_delivery`；deterministic / provider-backed runtime 都会直接落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产
 - workspace-managed `source_code_delivery` 票现在会在 `ticket-result-submit` 时硬校验 `source_file_refs / documentation_updates / verification_evidence_refs / git_commit_record`，并写 `worker-postrun / evidence-capture / git-closeout` 回执
+- architect gate 这轮已从“只阻断”推进到“可补票”：当 `architect_primary` 已在岗但还没有过 governance gate 的文档时，controller 现在会暴露 `required_governance_ticket_plan`，deterministic fallback 会优先创建一张稳定 node_id 的 `architect_primary + architecture_brief` 治理票
+- architect gate 的满足口径这轮也已放宽：`architecture_brief / technology_decision / detailed_design` 任一已过 internal governance gate 的 `architect_primary` 文档都算满足，不再只认 `architecture_brief`
+- 本轮已补 deterministic 回归和 live 脚本断言，要求最终结果里能看见已过 governance gate 的 architect 文档证据；但当前还没有在这台机器上重跑真实 live provider 长测
 - 当前还没做完的点：Review Gate merge 自动化、closeout 统一 gate、非代码票硬 gate，以及 completion / projection 对源码文件数、测试证据数和 git 摘要的当前读面
 - 后端当前全量回归基线已更新为 `555 passed`
 

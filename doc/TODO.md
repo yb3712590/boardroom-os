@@ -49,11 +49,11 @@
 7. 重建 live 回归矩阵：至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，确保 CEO 是按任务现实决策，而不是按现有角色池静默派单。
 
 - `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；当前已落第一段 project workspace 真相：`project-init` 现在会创建三分区项目工作区，`ticket-create` 会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`，workspace-managed ticket 也会生成 dossier
-- `P0-COR-002` 进行中：收正单一 workflow controller。当前第一段已落：`workflow_controller` 会从 snapshot 产出 `task_sensemaking / capability_plan / controller_state`，并开始统一 `ceo_scheduler / deterministic fallback / validator / workflow_auto_advance` 的实现 fanout判断；但覆盖面目前只到 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation`，旧 scope-consensus 主链和更广义 deliverable 还没切完
-- `P0-COR-003` 进行中：收正 capability gap 驱动的招聘、协作和阻断逻辑。当前第一段已落：autopilot backlog fanout 遇到 `architect_primary` / 技术决策会议硬约束时，会先走 `HIRE_EMPLOYEE / REQUEST_MEETING / fail-close`，不再静默 fallback 到现有 frontend；但 architect 已在岗但缺治理文档时，当前还只会阻断，不会自动补 architect 文档票
+- `P0-COR-002` 进行中：收正单一 workflow controller。当前第二段已落：`workflow_controller` 会在 architect gate 场景额外产出 `capability_plan.required_governance_ticket_plan`，并继续统一 `ceo_scheduler / deterministic fallback / validator / workflow_auto_advance` 的下一步动作；当前覆盖面仍以 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation` 为主，旧 scope-consensus 主链和更广义 deliverable 还没切完
+- `P0-COR-003` 进行中：收正 capability gap 驱动的招聘、协作和阻断逻辑。当前第二段已落：autopilot backlog fanout 遇到 `architect_primary` / 技术决策会议硬约束时，会先走 `HIRE_EMPLOYEE / REQUEST_MEETING / fail-close`，不再静默 fallback 到现有 frontend；当 architect 已在岗但缺治理文档时，系统现在会自动补一张稳定 node_id 的 `architect_primary + architecture_brief` 票，而不是继续停在 `NO_ACTION`
 - `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第六段已把最小 contract 扩到当前主线全部 `structured_document_delivery`：`ticket-result-submit` 会统一硬校验 declared artifact / written artifact 对齐，`consensus_document` 与五类治理文档都已纳入；治理文档继续保留 `document_kind_ref` 对齐专属校验。但更广义的 research / analysis deliverable kind 还没正式引入
 - `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第六段已把 `consensus_document` 的 CEO reuse gate 收正到 `MEETING_ESCALATION` 批准后才可复用，五类治理文档继续只复用过 internal governance gate 的逻辑文档；architect / meeting gate 现在已先在 autopilot backlog fanout 落第一段，但 closeout 口径扩展和 live 退出标准重建还没做
-- `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，要求 CEO 基于任务现实做 capability plan，不再按角色池静默 fallback，且证据闭环可追溯
+- `P0-COR-006` 进行中：当前已补 deterministic 回归，覆盖 architect gate -> 治理补票 -> implementation fanout 这条主线；`backend/tests/live/library_management_autopilot_live.py` 也已补上“必须出现已过 governance gate 的 architect 文档证据”断言。但本轮还没有在当前环境重跑真实 live provider 长测，需求调研 / 系统架构拆解 / 模块化实施三类退出口径仍在继续补齐
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

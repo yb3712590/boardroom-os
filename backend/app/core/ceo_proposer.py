@@ -659,6 +659,63 @@ def _build_backlog_followup_batch(
     )
 
 
+def _build_required_governance_ticket_batch(
+    repository: ControlPlaneRepository,
+    snapshot: dict,
+    reason: str,
+) -> CEOActionBatch | None:
+    workflow_id = str((snapshot.get("workflow") or {}).get("workflow_id") or "").strip()
+    capability_plan = snapshot.get("capability_plan") or {}
+    required_governance_ticket_plan = capability_plan.get("required_governance_ticket_plan")
+    if not workflow_id or not isinstance(required_governance_ticket_plan, dict):
+        return None
+
+    node_id = str(required_governance_ticket_plan.get("node_id") or "").strip()
+    role_profile_ref = str(required_governance_ticket_plan.get("role_profile_ref") or "").strip()
+    output_schema_ref = str(required_governance_ticket_plan.get("output_schema_ref") or "").strip()
+    assignee_employee_id = str(required_governance_ticket_plan.get("assignee_employee_id") or "").strip()
+    parent_ticket_id = str(required_governance_ticket_plan.get("parent_ticket_id") or "").strip() or None
+    summary = str(required_governance_ticket_plan.get("summary") or "").strip()
+    selection_reason = str(required_governance_ticket_plan.get("selection_reason") or "").strip()
+    if not node_id or not role_profile_ref or not output_schema_ref or not assignee_employee_id:
+        return None
+
+    with repository.connection() as connection:
+        existing_node = repository.get_current_node_projection(workflow_id, node_id, connection=connection)
+    if existing_node is not None:
+        return None
+
+    return CEOActionBatch.model_validate(
+        {
+            "summary": reason,
+            "actions": [
+                {
+                    "action_type": CEOActionType.CREATE_TICKET,
+                    "payload": {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                        "role_profile_ref": role_profile_ref,
+                        "output_schema_ref": output_schema_ref,
+                        "execution_contract": infer_execution_contract_payload(
+                            role_profile_ref=role_profile_ref,
+                            output_schema_ref=output_schema_ref,
+                        ),
+                        "dispatch_intent": {
+                            "assignee_employee_id": assignee_employee_id,
+                            "selection_reason": selection_reason,
+                            "dependency_gate_refs": list(
+                                required_governance_ticket_plan.get("dependency_gate_refs") or []
+                            ),
+                        },
+                        "summary": summary,
+                        "parent_ticket_id": parent_ticket_id,
+                    },
+                }
+            ],
+        }
+    )
+
+
 def _build_capability_hire_batch(snapshot: dict, reason: str) -> CEOActionBatch | None:
     workflow_id = str((snapshot.get("workflow") or {}).get("workflow_id") or "").strip()
     capability_plan = snapshot.get("capability_plan") or {}
@@ -851,6 +908,14 @@ def build_deterministic_fallback_batch(
                     "Open one bounded technical decision meeting because the controller state requires it before implementation fanout."
                 ),
             )
+    if recommended_action == "CREATE_TICKET":
+        required_governance_ticket_batch = _build_required_governance_ticket_batch(
+            repository,
+            snapshot,
+            reason,
+        )
+        if required_governance_ticket_batch is not None:
+            return required_governance_ticket_batch
     backlog_followup_batch = _build_backlog_followup_batch(repository, snapshot, reason)
     if backlog_followup_batch is not None:
         return backlog_followup_batch

@@ -67,6 +67,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "Do not use backend_engineer_primary, database_engineer_primary, or platform_sre_primary for direct CEO CREATE_TICKET unless snapshot.capability_plan.followup_ticket_plans explicitly routes a backlog follow-up there.\n"
         "Read snapshot.task_sensemaking, snapshot.capability_plan, and snapshot.controller_state before proposing anything.\n"
         "When snapshot.controller_state.state is ARCHITECT_REQUIRED, MEETING_REQUIRED, or STAFFING_REQUIRED, satisfy that gate first instead of forcing implementation tickets through.\n"
+        "If snapshot.capability_plan.required_governance_ticket_plan exists, only CREATE_TICKET that exact governance ticket before implementation fanout resumes.\n"
         "If snapshot.capability_plan.followup_ticket_plans exists, keep CREATE_TICKET proposals aligned with those planned node_id / role_profile_ref pairs.\n"
         "Before proposing any action, inspect snapshot.reuse_candidates.\n"
         "If recent completed tickets or closed meetings already cover the current need, prefer NO_ACTION.\n"

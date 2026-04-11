@@ -27,6 +27,11 @@ DEFAULT_MAX_TICKS = 180
 DEFAULT_TIMEOUT_SEC = 7200
 DEFAULT_LIVE_PROVIDER_TIMEOUT_SEC = 180
 MAX_STALL_TICKS = 25
+APPROVED_ARCHITECT_GOVERNANCE_SCHEMA_REFS = {
+    "architecture_brief",
+    "technology_decision",
+    "detailed_design",
+}
 SCENARIO_GOAL = "全自动开发一个计算机系毕业设计-有精美设计的图书馆管理系统"
 SCENARIO_CONSTRAINTS = [
     (
@@ -273,6 +278,44 @@ def _build_runtime_ticket_audit(repository, workflow_id: str) -> list[dict[str, 
     return audits
 
 
+def _approved_architect_governance_ticket_ids(repository, workflow_id: str) -> list[str]:
+    approved_ticket_ids: list[str] = []
+    seen_ticket_ids: set[str] = set()
+    for ticket in _workflow_ticket_rows(repository, workflow_id):
+        ticket_id = str(ticket["ticket_id"])
+        created_spec = repository.get_latest_ticket_created_payload(ticket_id) or {}
+        output_schema_ref = str(created_spec.get("output_schema_ref") or "")
+        if output_schema_ref != "maker_checker_verdict":
+            continue
+        maker_checker_context = created_spec.get("maker_checker_context") or {}
+        maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
+        maker_ticket_spec = maker_checker_context.get("maker_ticket_spec")
+        if not isinstance(maker_ticket_spec, dict) or not maker_ticket_spec:
+            maker_ticket_spec = repository.get_latest_ticket_created_payload(maker_ticket_id) or {}
+        if str(maker_ticket_spec.get("role_profile_ref") or "").strip() != "architect_primary":
+            continue
+        if (
+            str(maker_ticket_spec.get("output_schema_ref") or "").strip()
+            not in APPROVED_ARCHITECT_GOVERNANCE_SCHEMA_REFS
+        ):
+            continue
+        terminal_event = repository.get_latest_ticket_terminal_event(ticket_id)
+        completion_payload = terminal_event.get("payload") if terminal_event is not None else {}
+        review_status = str(
+            (completion_payload or {}).get("maker_checker_summary", {}).get("review_status")
+            or (completion_payload or {}).get("review_status")
+            or ""
+        ).strip()
+        if review_status not in {"APPROVED", "APPROVED_WITH_NOTES"}:
+            continue
+        approved_ticket_ref = maker_ticket_id or ticket_id
+        if approved_ticket_ref in seen_ticket_ids:
+            continue
+        seen_ticket_ids.add(approved_ticket_ref)
+        approved_ticket_ids.append(approved_ticket_ref)
+    return approved_ticket_ids
+
+
 def _artifact_exists(repository, artifact_ref: str) -> bool:
     return repository.get_artifact_by_ref(artifact_ref) is not None
 
@@ -348,6 +391,12 @@ def _assert_scenario_outcome(paths: ScenarioPaths, repository, workflow_id: str)
         for audit in architect_audits
     ):
         raise AssertionError("Architect runtime audit did not record gpt-5.4 @ xhigh.")
+    approved_architect_governance_ticket_ids = _approved_architect_governance_ticket_ids(
+        repository,
+        workflow_id,
+    )
+    if not approved_architect_governance_ticket_ids:
+        raise AssertionError("No approved architect_primary governance document evidence was recorded.")
 
     non_architect_audits = [item for item in audits if item["role_profile_ref"] != "architect_primary"]
     if not non_architect_audits:
@@ -369,6 +418,7 @@ def _assert_scenario_outcome(paths: ScenarioPaths, repository, workflow_id: str)
         "compiled_ticket_ids": compiled_ticket_ids,
         "archived_ticket_ids": archived_ticket_ids,
         "architect_ticket_ids": [item["ticket_id"] for item in architect_audits],
+        "approved_architect_governance_ticket_ids": approved_architect_governance_ticket_ids,
         "employee_ids": [str(employee["employee_id"]) for employee in employees],
     }
 

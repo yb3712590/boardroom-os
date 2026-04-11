@@ -1803,6 +1803,88 @@ def test_scheduler_runner_idle_ceo_maintenance_hires_architect_for_controller_ga
     assert idle_run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
 
 
+def test_scheduler_runner_idle_ceo_maintenance_creates_architect_governance_ticket_for_controller_gate(
+    client,
+    monkeypatch,
+    set_ticket_time,
+):
+    from tests.test_ceo_scheduler import (
+        _create_and_complete_backlog_recommendation_ticket,
+        _persist_workflow_directive_details,
+        _seed_board_approved_employee,
+        _seed_workflow,
+        _set_deterministic_mode,
+    )
+
+    set_ticket_time("2026-04-04T10:00:00+08:00")
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_scheduler_architect_doc_gate", "Scheduler architect doc gate")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
+        ],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_scheduler_gate",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_scheduler_gate",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scheduler_architect_doc_parent",
+        node_id="node_scheduler_architect_doc_parent",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    set_ticket_time("2026-04-04T10:01:05+08:00")
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:architect-doc-gate",
+        max_dispatches=10,
+    )
+
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+    idle_run = next(run for run in runs if run["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER)
+
+    assert idle_run["snapshot"]["controller_state"]["state"] == "ARCHITECT_REQUIRED"
+    assert idle_run["snapshot"]["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert idle_run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+
+    created_ticket_id = idle_run["executed_actions"][0]["payload"]["ticket_id"]
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+
+    assert created_spec["role_profile_ref"] == "architect_primary"
+    assert created_spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_architect_scheduler_gate"
+
+
 def test_scheduler_runner_skips_idle_ceo_maintenance_when_ticket_is_executing(
     client,
     monkeypatch,

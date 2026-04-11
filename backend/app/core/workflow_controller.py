@@ -8,12 +8,19 @@ from app.core.execution_targets import infer_execution_contract_payload, employe
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
 )
 from app.db.repository import ControlPlaneRepository
 
 _APPROVED_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
+_APPROVED_ARCHITECT_DOCUMENT_SCHEMA_REFS = {
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
+}
 _ROLE_PROFILE_BY_TARGET_ROLE = {
     "frontend_engineer": "frontend_engineer_primary",
     "frontend_engineer_primary": "frontend_engineer_primary",
@@ -49,12 +56,25 @@ _MEETING_REQUIRED_HINTS = (
 )
 
 
-def backlog_followup_key_to_node_id(ticket_key: str) -> str:
-    normalized = "".join(
+def _normalize_identifier(value: str) -> str:
+    return "".join(
         character.lower() if character.isalnum() else "_"
-        for character in str(ticket_key).strip()
+        for character in str(value).strip()
     ).strip("_")
+
+
+def backlog_followup_key_to_node_id(ticket_key: str) -> str:
+    normalized = _normalize_identifier(ticket_key)
     return f"node_backlog_followup_{normalized}" if normalized else "node_backlog_followup"
+
+
+def _architect_governance_gate_node_id(source_node_id: str | None, source_ticket_id: str | None) -> str:
+    normalized = _normalize_identifier(source_node_id or source_ticket_id or "workflow")
+    return (
+        f"node_architect_governance_gate_{normalized}"
+        if normalized
+        else "node_architect_governance_gate"
+    )
 
 
 def workflow_controller_effect(snapshot: dict[str, Any]) -> str:
@@ -394,7 +414,10 @@ def _has_approved_architect_document(
             )
         if str(maker_ticket_spec.get("role_profile_ref") or "").strip() != "architect_primary":
             continue
-        if str(maker_ticket_spec.get("output_schema_ref") or "").strip() != ARCHITECTURE_BRIEF_SCHEMA_REF:
+        if (
+            str(maker_ticket_spec.get("output_schema_ref") or "").strip()
+            not in _APPROVED_ARCHITECT_DOCUMENT_SCHEMA_REFS
+        ):
             continue
         terminal_event = repository.get_latest_ticket_terminal_event(connection, str(row["ticket_id"]))
         completion_payload = terminal_event.get("payload") if terminal_event is not None else {}
@@ -406,6 +429,46 @@ def _has_approved_architect_document(
         if review_status in _APPROVED_REVIEW_STATUSES:
             return True
     return False
+
+
+def _build_required_governance_ticket_plan(
+    *,
+    backlog_ticket_id: str,
+    backlog_created_spec: dict[str, Any],
+    workflow_nodes: list[dict[str, Any]],
+    employees: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_node_id = str(backlog_created_spec.get("node_id") or "").strip() or None
+    node_id = _architect_governance_gate_node_id(source_node_id, backlog_ticket_id)
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref="architect_primary",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+    ) or {}
+    existing_ticket_ids_by_node_id = {
+        str(node.get("node_id") or ""): str(node.get("latest_ticket_id") or "")
+        for node in workflow_nodes
+        if str(node.get("node_id") or "").strip() and str(node.get("latest_ticket_id") or "").strip()
+    }
+    return {
+        "node_id": node_id,
+        "role_profile_ref": "architect_primary",
+        "role_type": _ROLE_TYPE_BY_ROLE_PROFILE["architect_primary"],
+        "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+        "execution_contract": execution_contract,
+        "required_capability_tags": list(execution_contract.get("required_capability_tags") or []),
+        "assignee_employee_id": _select_default_assignee(
+            employees,
+            role_profile_ref="architect_primary",
+            output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        ),
+        "parent_ticket_id": backlog_ticket_id,
+        "dependency_gate_refs": [],
+        "summary": "Prepare the architect governance brief before implementation fanout continues.",
+        "selection_reason": "Satisfy the current architect governance gate before implementation fanout continues.",
+        "source_ticket_id": backlog_ticket_id,
+        "source_node_id": source_node_id,
+        "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
+    }
 
 
 def _has_approved_meeting_evidence(*, workflow_id: str, connection) -> bool:
@@ -531,6 +594,7 @@ def build_workflow_controller_view(
         "blocking_reason": None,
     }
     controller_meeting_candidate = None
+    required_governance_ticket_plan = None
 
     if approvals:
         controller_state = {
@@ -569,10 +633,27 @@ def build_workflow_controller_view(
             workflow_id=workflow_id,
             connection=connection,
         ):
+            required_governance_ticket_plan = _build_required_governance_ticket_plan(
+                backlog_ticket_id=backlog_ticket_id,
+                backlog_created_spec=backlog_created_spec,
+                workflow_nodes=nodes,
+                employees=employees,
+            )
             controller_state = {
                 "state": "ARCHITECT_REQUIRED",
-                "recommended_action": "NO_ACTION",
-                "blocking_reason": "At least one approved architect_primary governance document is required before implementation fanout.",
+                "recommended_action": (
+                    "CREATE_TICKET"
+                    if required_governance_ticket_plan.get("existing_ticket_id") is None
+                    else "NO_ACTION"
+                ),
+                "blocking_reason": (
+                    "At least one approved architect_primary governance document is required before implementation fanout."
+                    if required_governance_ticket_plan.get("existing_ticket_id") is None
+                    else (
+                        "A required architect governance ticket already exists and must finish or be recovered before "
+                        "implementation fanout."
+                    )
+                ),
             }
         elif requires_meeting and not _has_approved_meeting_evidence(workflow_id=workflow_id, connection=connection):
             controller_meeting_candidate = _build_controller_meeting_candidate(
@@ -627,6 +708,7 @@ def build_workflow_controller_view(
         "staffing_gaps": staffing_gaps,
         "requires_architect": requires_architect,
         "requires_meeting": requires_meeting,
+        "required_governance_ticket_plan": required_governance_ticket_plan,
         "followup_ticket_plans": followup_ticket_plans,
     }
     if controller_state["recommended_action"] == "HIRE_EMPLOYEE":
