@@ -3,8 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.core.constants import NODE_STATUS_COMPLETED
 from app.core.ceo_meeting_policy import build_ceo_meeting_candidates
-from app.core.output_schemas import GOVERNANCE_DOCUMENT_SCHEMA_REFS, MAKER_CHECKER_VERDICT_SCHEMA_REF
+from app.core.output_schemas import (
+    CONSENSUS_DOCUMENT_SCHEMA_REF,
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
+    MAKER_CHECKER_VERDICT_SCHEMA_REF,
+)
 from app.core.persona_profiles import normalize_persona_profiles
 from app.db.repository import ControlPlaneRepository
 
@@ -108,9 +113,15 @@ def _build_recent_completed_ticket_reuse_candidates(
     repository: ControlPlaneRepository,
     *,
     tickets: list[dict[str, Any]],
+    nodes: list[dict[str, Any]],
     connection,
 ) -> list[dict[str, Any]]:
     completed_tickets = [ticket for ticket in tickets if ticket["status"] == "COMPLETED"]
+    nodes_by_id = {
+        str(node.get("node_id") or "").strip(): node
+        for node in nodes
+        if str(node.get("node_id") or "").strip()
+    }
     latest_ticket_id_by_node: dict[str, str] = {}
     latest_ticket_sort_key_by_node: dict[str, tuple[float, str]] = {}
     for ticket in tickets:
@@ -135,6 +146,11 @@ def _build_recent_completed_ticket_reuse_candidates(
         logical_ticket_id = ticket_id
         logical_created_spec = created_spec
         logical_terminal_event = terminal_event
+        if output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
+            node_id = str(ticket.get("node_id") or "").strip()
+            node_projection = nodes_by_id.get(node_id) or {}
+            if str(node_projection.get("status") or "").strip() != NODE_STATUS_COMPLETED:
+                continue
         if output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
             continue
         if output_schema_ref == MAKER_CHECKER_VERDICT_SCHEMA_REF:
@@ -270,6 +286,7 @@ def build_ceo_shadow_snapshot(
             "recent_completed_tickets": _build_recent_completed_ticket_reuse_candidates(
                 repository,
                 tickets=tickets,
+                nodes=nodes,
                 connection=connection,
             ),
             "recent_closed_meetings": _build_recent_closed_meeting_reuse_candidates(

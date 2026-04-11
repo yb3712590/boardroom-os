@@ -26,6 +26,7 @@
 - 为了不打断还没迁走的 scope 共识链，调度层会把 `frontend_engineer_primary` 兼容匹配到旧的 `ui_designer_primary` 票型；这只是收口期兼容，不代表又回到了“没有独立 worker”
 - 当前 CEO 也能在窄触发条件下自动创建 `TECHNICAL_DECISION` 会议请求：只覆盖决策/评审型票的失败恢复，或董事会 `REJECT / MODIFY_CONSTRAINTS` 后的重新对齐；不会在 idle maintenance 里泛化自动开会，也不会对 `MEETING_ESCALATION` 再递归开会
 - CEO shadow snapshot 现在会暴露当前 workflow 内的 `reuse_candidates`：只读最近已完成 ticket 和已关闭会议的最小摘要；OpenAI Compat live prompt 会先检查这些复用候选，优先 `NO_ACTION / RETRY_TICKET / WAIT`，再考虑新建平行 ticket、额外会议或补招人；deterministic fallback 保持不变
+- `reuse_candidates.recent_completed_tickets` 现在对 `consensus_document` 也补了最小 gate：只有 source node 已经走到 `MEETING_ESCALATION` 批准完成态的共识票，才会暴露成可复用真相；还停在 maker 完成、checker 完成或待板审的共识票，不会提前进入 CEO 复用候选
 - runtime provider 配置现在已从固定 provider registry 收口成多 provider center：用户保存与前端投影的主形状是 `providers[] / provider_model_entries[] / role_bindings[]`；旧固定 provider 配置升级后按空配置处理，不再迁移保留
 - `providers[]` 当前会落库 `base_url / api_key / alias / preferred_model / max_context_window / type / enabled`；`alias` 为空时会从 `base_url` 推导二级域名，`max_context_window` 为空时默认 `1000000`
 - `provider_model_entries[]` 当前只保存用户勾选的模型，唯一键按 `provider_id + model_name`；`role_bindings[]` 现在绑定有序 `provider_model_entry_refs[]` 与 `max_context_window_override`，role 未配置时会继承 CEO 绑定；每次选路都会产出 `provider_model_entry_ref` 和 `effective_max_context_window`
@@ -45,7 +46,8 @@
 - 当前 resolver 已按最小闭环纳入 8 类过程资产：`artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / source_code_delivery / meeting_decision_record / closeout_summary / governance_document`
 - 治理文档输出合同现在已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；每类文档都会保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / decisions / constraints / sections / followup_recommendations`
 - 五类治理文档票现在会自动补 `auto_review_request=INTERNAL_GOVERNANCE_REVIEW`；不管是普通 `ticket-create` 还是 CEO create-ticket，只要是这五类文档，都会先过 internal governance gate，再允许下游消费
-- `ticket-result-submit` 对五类治理文档票现在会硬校验：至少要声明一条 `artifact_ref`，而且至少有一条要和本次 `written_artifacts` 对上；这条 gate 目前不要求 git commit，也不要求 verification evidence
+- `ticket-result-submit` 对 `deliverable_kind=structured_document_delivery` 的票现在会统一硬校验：至少要声明一条 `artifact_ref`，至少要落一条 `written_artifact`，而且至少有一条 declared `artifact_ref` 要和本次 `written_artifacts` 对上；这条 gate 目前不要求 git commit，也不要求 verification evidence
+- 五类治理文档票在上述统一 gate 之外，仍继续保留 `payload.document_kind_ref == output_schema_ref` 这条专属校验，不会因为 contract 收口回退到“只要写了文件就算过”
 - 当 CEO 创建的后续票显式挂在治理文档父票下时，建票路径会自动继承父票输出的 `GOVERNANCE_DOCUMENT` 过程资产到 `input_process_asset_refs[]`
 - runtime 完成事件现在会额外写回 `produced_process_assets[]`；meeting ADR、closeout summary、治理文档和 runtime 默认 artifact 都会自动映射到后续 follow-up ticket 或 maker-checker checker ticket 的 `input_process_asset_refs[]`
 - 五类治理文档票现在也会走 maker-checker：checker 通过后不开 board review，但 CEO snapshot / reuse_candidates 只会把已经过 governance gate 的逻辑治理文档票暴露成可复用真相；maker 首次完成、或 checker `CHANGES_REQUIRED / ESCALATED` 的治理文档不会被提前当成“已完成”
@@ -57,7 +59,7 @@
 - `TICKET_COMPLETED` payload 现在也会带回 `verification_evidence_refs` 和 `git_commit_record`，给后续 review / closeout / projection 继续消费
 - 最终 `VISUAL_MILESTONE` 批准时，workspace-managed 代码链路现在会先把 review gate 分支真实 merge 回 `10-project/main`，merge 成功才写 `BOARD_REVIEW_APPROVED` 和 closeout follow-up；merge 冲突会 fail-closed，打开 `REVIEW_GATE_MERGE_FAILED` incident，review 继续保持 open
 - checker 打回生成 fix 票、ticket fail、直接 cancel、board reject 和 modify constraints，当前都会把原代码票的 git receipt 改成 `NOT_REQUESTED`，并清理物理 worktree
-- non-code deliverable contract / hard gate 这轮只补到了五类治理文档；`consensus_document` 等其它非代码票还没按同一口径补完，`P0-COR-006` live 回归和退出标准也还没按这套新 gate 重建
+- non-code deliverable contract / hard gate 这轮已经补到当前主线里的 `structured_document_delivery`：`consensus_document` 和五类治理文档都走 declared artifact / written artifact 对齐 gate；但更广义的 research / analysis 类 deliverable kind 还没正式进入当前主线，`P0-COR-002 / 003 / 006` 也还没启动这部分收口
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
 - 当前已把原治理模板扩成统一 `role_templates_catalog`：固定暴露 `scope_consensus_primary / frontend_delivery_primary / quality_checker_primary / backend_execution_reserved / database_execution_reserved / platform_sre_reserved / architect_governance / cto_governance` 八个当前 live 模板，同时附带五类文档 metadata ref 和九个模板片段

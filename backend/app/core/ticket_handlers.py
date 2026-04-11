@@ -1248,6 +1248,39 @@ def _validate_source_code_delivery_hooks(
     return None
 
 
+def _validate_structured_document_delivery_hooks(
+    *,
+    created_spec: dict[str, Any],
+    payload: TicketResultSubmitCommand,
+) -> str | None:
+    if str(created_spec.get("deliverable_kind") or "") != "structured_document_delivery":
+        return None
+
+    declared_artifact_refs = [
+        str(item).strip()
+        for item in payload.artifact_refs
+        if str(item).strip()
+    ]
+    if not declared_artifact_refs:
+        return "Structured document tickets must include at least one declared artifact_ref."
+
+    written_artifacts_by_ref = {
+        str(item.artifact_ref): item
+        for item in payload.written_artifacts
+        if str(item.artifact_ref)
+    }
+    if not written_artifacts_by_ref:
+        return "Structured document tickets must persist at least one written artifact."
+
+    if not any(artifact_ref in written_artifacts_by_ref for artifact_ref in declared_artifact_refs):
+        return (
+            "Structured document tickets must persist at least one declared artifact_ref "
+            "inside written_artifacts."
+        )
+
+    return None
+
+
 def _validate_governance_document_hooks(
     *,
     created_spec: dict[str, Any],
@@ -1263,28 +1296,6 @@ def _validate_governance_document_hooks(
         return (
             "Governance document tickets must keep payload.document_kind_ref aligned with "
             f"{output_schema_ref}; got {document_kind_ref or '<missing>'}."
-        )
-
-    declared_artifact_refs = [
-        str(item).strip()
-        for item in payload.artifact_refs
-        if str(item).strip()
-    ]
-    if not declared_artifact_refs:
-        return "Governance document tickets must include at least one declared artifact_ref."
-
-    written_artifacts_by_ref = {
-        str(item.artifact_ref): item
-        for item in payload.written_artifacts
-        if str(item.artifact_ref)
-    }
-    if not written_artifacts_by_ref:
-        return "Governance document tickets must persist at least one written artifact."
-
-    if not any(artifact_ref in written_artifacts_by_ref for artifact_ref in declared_artifact_refs):
-        return (
-            "Governance document tickets must persist at least one declared artifact_ref "
-            "inside written_artifacts."
         )
 
     return None
@@ -4701,6 +4712,11 @@ def handle_ticket_result_submit(
         created_spec=created_spec,
         payload=payload,
     )
+    if hook_validation_error is None:
+        hook_validation_error = _validate_structured_document_delivery_hooks(
+            created_spec=created_spec,
+            payload=payload,
+        )
     if hook_validation_error is None:
         hook_validation_error = _validate_governance_document_hooks(
             created_spec=created_spec,

@@ -578,6 +578,231 @@ def _create_and_complete_governance_ticket(
     assert approve_checker_response.json()["status"] == "ACCEPTED"
 
 
+def _create_and_board_approve_consensus_ticket(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    summary: str = "Board-approved consensus is ready for reuse.",
+) -> None:
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=node_id,
+                retry_budget=0,
+                role_profile_ref="ui_designer_primary",
+                output_schema_ref="consensus_document",
+            ),
+            "allowed_write_set": [f"reports/meeting/{ticket_id}/*"],
+            "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+            "acceptance_criteria": [
+                "Must produce a consensus document.",
+                "Must include follow-up tickets.",
+            ],
+            "allowed_tools": ["read_artifact", "write_artifact"],
+            "context_query_plan": {
+                "keywords": ["scope", "decision", "meeting"],
+                "semantic_queries": ["current scope tradeoffs"],
+                "max_context_tokens": 3000,
+            },
+        },
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:consensus",
+        },
+    )
+    assert lease_response.status_code == 200
+
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:consensus",
+        },
+    )
+    assert start_response.status_code == 200
+
+    artifact_ref = f"art://meeting/{ticket_id}/consensus-document.json"
+    result_payload = {
+        "topic": f"Consensus for {ticket_id}",
+        "participants": ["emp_frontend_2", "emp_checker_1"],
+        "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        "consensus_summary": summary,
+        "rejected_options": ["Do not widen the MVP scope in this round."],
+        "open_questions": ["Whether polish should move after board approval."],
+        "followup_tickets": [
+            {
+                "ticket_id": f"{ticket_id}_followup_review",
+                "task_title": "Prepare the board review package",
+                "owner_role": "frontend_engineer",
+                "summary": "Prepare the board-facing review package without widening scope.",
+                "delivery_stage": "REVIEW",
+            }
+        ],
+    }
+    review_request = {
+        "review_type": "MEETING_ESCALATION",
+        "priority": "high",
+        "title": "Review scope decision consensus",
+        "subtitle": "Meeting output is ready for board lock-in.",
+        "blocking_scope": "WORKFLOW",
+        "trigger_reason": "Cross-role scope decision needs explicit board confirmation.",
+        "why_now": "Implementation should not continue before this decision is locked.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "consensus_scope_lock",
+        "recommendation_summary": summary,
+        "options": [
+            {
+                "option_id": "consensus_scope_lock",
+                "label": "Lock consensus scope",
+                "summary": summary,
+                "artifact_refs": [artifact_ref],
+                "pros": ["Keeps the next step aligned."],
+                "cons": ["Defers non-critical stretch ideas."],
+                "risks": ["A later change needs a fresh governance pass."],
+            }
+        ],
+        "evidence_summary": [
+            {
+                "evidence_id": "ev_meeting_consensus",
+                "source_type": "CONSENSUS_DOCUMENT",
+                "headline": "Meeting converged on one scope",
+                "summary": summary,
+                "source_ref": artifact_ref,
+            }
+        ],
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "consensus_scope_lock",
+        "comment_template": "",
+        "inbox_title": "Review scope decision consensus",
+        "inbox_summary": "A consensus document is ready for board review.",
+        "badges": ["meeting", "board_gate", "scope"],
+    }
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": "consensus_document_v1",
+            "payload": result_payload,
+            "artifact_refs": [artifact_ref],
+            "written_artifacts": [
+                {
+                    "path": f"reports/meeting/{ticket_id}/consensus-document.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": result_payload,
+                }
+            ],
+            "assumptions": ["Consensus already reflects the final facilitator summary."],
+            "issues": [],
+            "confidence": 0.86,
+            "needs_escalation": False,
+            "summary": summary,
+            "review_request": review_request,
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:consensus",
+        },
+    )
+    assert submit_response.status_code == 200
+    assert submit_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_checker_1",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:checker",
+        },
+    )
+    assert checker_lease_response.status_code == 200
+
+    checker_start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_checker_1",
+            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:checker",
+        },
+    )
+    assert checker_start_response.status_code == 200
+
+    checker_submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_checker_1",
+            "result_status": "completed",
+            "schema_version": "maker_checker_verdict_v1",
+            "payload": {
+                "summary": "Checker approved the consensus output.",
+                "review_status": "APPROVED_WITH_NOTES",
+                "findings": [],
+            },
+            "artifact_refs": [],
+            "written_artifacts": [],
+            "assumptions": [],
+            "issues": [],
+            "confidence": 0.9,
+            "needs_escalation": False,
+            "summary": "Checker verdict submitted.",
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved",
+        },
+    )
+    assert checker_submit_response.status_code == 200
+    assert checker_submit_response.json()["status"] == "ACCEPTED"
+
+    approval = next(
+        item
+        for item in repository.list_open_approvals()
+        if item["workflow_id"] == workflow_id and item["approval_type"] == "MEETING_ESCALATION"
+    )
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    approve_response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve consensus and keep it reusable.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:consensus",
+        },
+    )
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "ACCEPTED"
+
+
 def _create_and_complete_backlog_recommendation_ticket(
     client,
     *,
@@ -1131,6 +1356,51 @@ def test_ceo_shadow_snapshot_excludes_unreviewed_governance_ticket_from_reuse_ca
         if item["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
     ]
     assert governance_candidates == []
+
+
+def test_ceo_shadow_snapshot_excludes_unapproved_consensus_ticket_from_reuse_candidates(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "Consensus reuse should wait for board approval")
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:unapproved-consensus",
+    )
+
+    consensus_candidates = [
+        item
+        for item in snapshot["reuse_candidates"]["recent_completed_tickets"]
+        if item["ticket_id"] == build_project_init_scope_ticket_id(workflow_id)
+    ]
+    assert consensus_candidates == []
+
+
+def test_ceo_shadow_snapshot_includes_board_approved_consensus_ticket_in_reuse_candidates(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_approved_consensus")
+    _create_and_board_approve_consensus_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_board_approved_consensus",
+        node_id="node_ceo_board_approved_consensus",
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:approved-consensus",
+    )
+
+    consensus_candidates = [
+        item
+        for item in snapshot["reuse_candidates"]["recent_completed_tickets"]
+        if item["ticket_id"] == "tkt_ceo_board_approved_consensus"
+    ]
+    assert len(consensus_candidates) == 1
+    assert consensus_candidates[0]["output_schema_ref"] == "consensus_document"
 
 
 def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(client, monkeypatch):

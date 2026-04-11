@@ -72,7 +72,7 @@ worker-runtime 是单独一套受限接口：
 | `POST /api/v1/commands/ticket-heartbeat` | 当前主线 | 是 | 给执行中 ticket 续活 | `workflow_id`、`ticket_id`、`node_id`、`reported_by` |
 | `POST /api/v1/commands/ticket-fail` | 当前主线 | 是 | 显式记录失败并触发既有恢复链 | `workflow_id`、`ticket_id`、`node_id`、`failure_kind`、`failure_message` |
 | `POST /api/v1/commands/ticket-complete` | 当前主线 | 保守使用 | 旧完成接口，仍保留兼容 | `workflow_id`、`ticket_id`、`node_id`、结果摘要 |
-| `POST /api/v1/commands/ticket-result-submit` | 当前主线 | 是 | 当前统一的结构化结果写回入口 | `workflow_id`、`ticket_id`、`node_id`、`result_status`、`schema_version`、`payload`、`written_artifacts`、`verification_evidence_refs?`、`git_commit_record?` |
+| `POST /api/v1/commands/ticket-result-submit` | 当前主线 | 是 | 当前统一的结构化结果写回入口；代码票和结构化文档票都会在这里走各自 hard gate | `workflow_id`、`ticket_id`、`node_id`、`result_status`、`schema_version`、`payload`、`artifact_refs`、`written_artifacts`、`verification_evidence_refs?`、`git_commit_record?` |
 | `POST /api/v1/commands/scheduler-tick` | 当前主线 | 是 | 显式推动一次调度 tick | `workers`、`max_dispatches`、`idempotency_key` |
 | `POST /api/v1/commands/incident-resolve` | 当前主线 | 是 | 关闭 incident 并按策略恢复 | `incident_id`、`resolved_by`、`resolution_type`、`resolution_summary` |
 | `POST /api/v1/commands/artifact-delete` | 当前主线 | 按需 | 逻辑删除 artifact | `artifact_ref`、`deleted_by`、`delete_reason` |
@@ -93,6 +93,8 @@ worker-runtime 是单独一套受限接口：
 - `ticket-create` 当前可选支持 `runtime_preference.preferred_provider_id / preferred_model`；它只表达任务级 runtime 偏好，不提供绕过能力底线、provider 启停状态、参与策略或现有 failover 约束的硬覆盖
 - `ticket-create` 对由当前 `project-init` 建出来的 workflow，会自动补 project workspace / methodology / deliverable / 文档 / git 相关真相，并创建 ticket dossier；legacy / seeded workflow 没有 workspace manifest 时只会补最小默认值
 - `ticket-result-submit` 对 workspace-managed `source_code_delivery` 票，当前会硬要求 `payload.documentation_updates`、`verification_evidence_refs` 和 `git_commit_record`；旧 artifact-path 代码票继续兼容
+- `ticket-result-submit` 对 `deliverable_kind=structured_document_delivery` 的票，当前会硬要求至少一条 `artifact_ref`、至少一条 `written_artifact`，以及至少一条 declared `artifact_ref` 和本次写盘对齐
+- `ticket-result-submit` 对五类治理文档票，除了上面的统一 gate，还会继续硬校验 `payload.document_kind_ref == output_schema_ref`
 - `ticket-result-submit` 现在不再直接消费 `upload_session_id`；中大文件必须先走 `ticket-artifact-import-upload`
 
 ## 5. Projections
@@ -104,7 +106,7 @@ worker-runtime 是单独一套受限接口：
 | `GET /api/v1/projections/dashboard` | 当前主线 | 是 | 首页聚合快照 | 无 |
 | `GET /api/v1/projections/runtime-provider` | 当前主线 | 是 | 读取当前 provider registry、默认 provider、角色绑定、每个 provider 的能力标签、fallback 链、成本层级、参与策略与健康明细 | 无 |
 | `GET /api/v1/projections/workflows/{workflow_id}/dependency-inspector` | 当前主线 | 是 | 查看当前 workflow 链路依赖和停点原因 | `workflow_id` |
-| `GET /api/v1/projections/workflows/{workflow_id}/ceo-shadow` | 当前主线 | 按需 | 查看 CEO 审计提议与执行摘要，包括 `preferred_* / actual_* / selection_reason / policy_reason` | `workflow_id`、`limit` |
+| `GET /api/v1/projections/workflows/{workflow_id}/ceo-shadow` | 当前主线 | 按需 | 查看 CEO 审计提议与执行摘要，包括 `preferred_* / actual_* / selection_reason / policy_reason`，以及当前 `reuse_candidates` | `workflow_id`、`limit` |
 | `GET /api/v1/projections/artifact-cleanup-candidates` | 当前主线 | 按需 | 查看 cleanup 候选明细 | `ticket_id`、`retention_class`、`limit` |
 | `GET /api/v1/projections/inbox` | 当前主线 | 是 | 读取董事会 inbox | 无 |
 | `GET /api/v1/projections/meetings/{meeting_id}` | 当前主线 | 是 | 读取会议详情 | `meeting_id` |

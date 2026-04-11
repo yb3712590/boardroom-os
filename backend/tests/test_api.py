@@ -10138,6 +10138,143 @@ def test_meeting_escalation_consensus_result_submit_routes_to_checker_ticket_bef
     assert inbox_response.json()["data"]["items"] == []
 
 
+def test_meeting_escalation_consensus_result_submit_requires_declared_artifact_ref(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_scope_meeting_missing_declared_artifact",
+        ticket_id="tkt_scope_meeting_missing_declared_artifact",
+        node_id="node_scope_meeting_missing_declared_artifact",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=[
+            "Must produce a consensus document",
+            "Must include follow-up tickets",
+        ],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+
+    payload = _consensus_document_result_submit_payload(
+        workflow_id="wf_scope_meeting_missing_declared_artifact",
+        ticket_id="tkt_scope_meeting_missing_declared_artifact",
+        node_id="node_scope_meeting_missing_declared_artifact",
+        include_review_request=True,
+        review_request=_meeting_escalation_review_request(),
+    )
+    payload["artifact_refs"] = []
+
+    response = client.post("/api/v1/commands/ticket-result-submit", json=payload)
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_scope_meeting_missing_declared_artifact")
+
+    assert response.status_code == 200
+    assert ticket is not None
+    assert ticket["status"] == TICKET_STATUS_FAILED
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert repository.list_open_approvals() == []
+
+
+def test_meeting_escalation_consensus_result_submit_requires_written_artifact(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_scope_meeting_missing_written_artifact",
+        ticket_id="tkt_scope_meeting_missing_written_artifact",
+        node_id="node_scope_meeting_missing_written_artifact",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=[
+            "Must produce a consensus document",
+            "Must include follow-up tickets",
+        ],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+
+    payload = _consensus_document_result_submit_payload(
+        workflow_id="wf_scope_meeting_missing_written_artifact",
+        ticket_id="tkt_scope_meeting_missing_written_artifact",
+        node_id="node_scope_meeting_missing_written_artifact",
+        include_review_request=True,
+        review_request=_meeting_escalation_review_request(),
+    )
+    payload["written_artifacts"] = []
+
+    response = client.post("/api/v1/commands/ticket-result-submit", json=payload)
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_scope_meeting_missing_written_artifact")
+    assert response.status_code == 200
+    assert ticket is not None
+    assert ticket["status"] == TICKET_STATUS_FAILED
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert repository.list_open_approvals() == []
+
+
+def test_meeting_escalation_consensus_result_submit_requires_declared_artifact_to_be_persisted(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_scope_meeting_declared_artifact_not_persisted",
+        ticket_id="tkt_scope_meeting_declared_artifact_not_persisted",
+        node_id="node_scope_meeting_declared_artifact_not_persisted",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        acceptance_criteria=[
+            "Must produce a consensus document",
+            "Must include follow-up tickets",
+        ],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+
+    payload = _consensus_document_result_submit_payload(
+        workflow_id="wf_scope_meeting_declared_artifact_not_persisted",
+        ticket_id="tkt_scope_meeting_declared_artifact_not_persisted",
+        node_id="node_scope_meeting_declared_artifact_not_persisted",
+        include_review_request=True,
+        review_request=_meeting_escalation_review_request(),
+    )
+    payload["artifact_refs"] = ["art://meeting/missing-consensus-document.json"]
+
+    response = client.post("/api/v1/commands/ticket-result-submit", json=payload)
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_scope_meeting_declared_artifact_not_persisted")
+
+    assert response.status_code == 200
+    assert ticket is not None
+    assert ticket["status"] == TICKET_STATUS_FAILED
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert repository.list_open_approvals() == []
+
+
 def test_meeting_escalation_checker_approved_opens_review_pack_with_maker_checker_summary(
     client,
     set_ticket_time,

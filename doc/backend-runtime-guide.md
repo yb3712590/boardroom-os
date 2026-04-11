@@ -259,6 +259,11 @@ live 集成场景会把这些路径整体重定向到：
 - `GET /api/v1/projections/tickets/{ticket_id}/artifacts`
 - `GET /api/v1/projections/artifact-cleanup-candidates`
 
+这两个点现在要先记住：
+
+- `ceo-shadow.reuse_candidates.recent_completed_tickets` 不会再提前暴露未过 `MEETING_ESCALATION` 的 `consensus_document`
+- 五类治理文档仍然只会在 internal governance gate 通过后进入复用候选
+
 如果你在查 live 场景为什么卡住，优先看这两个本地目录：
 
 - `backend/data/scenarios/library_management_autopilot_live/ticket_context_archives/`
@@ -284,6 +289,8 @@ live 集成场景会把这些路径整体重定向到：
 - 小文件继续在 `ticket-result-submit.written_artifacts[*]` 里走 inline 内容
 - 中大文件先走 upload session，再调用 `ticket-artifact-import-upload`
 - `ticket-result-submit` 现在只接 inline 内容或已有 `artifact_ref`
+- `deliverable_kind=structured_document_delivery` 的票现在必须声明至少一条 `artifact_ref`、落至少一条 `written_artifact`，而且 declared `artifact_ref` 至少有一条要和本次写盘对上
+- 五类治理文档在上面这层统一 gate 之外，还要继续满足 `payload.document_kind_ref == output_schema_ref`
 
 artifact cleanup 当前真实行为：
 
