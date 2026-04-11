@@ -1485,6 +1485,69 @@ def _maker_checker_result_submit_payload(
     }
 
 
+def _governance_document_result_submit_payload(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    output_schema_ref: str = "architecture_brief",
+    summary: str = "Structured governance document submitted.",
+) -> dict:
+    artifact_ref = f"art://runtime/{ticket_id}/{output_schema_ref}.json"
+    payload = {
+        "title": f"{output_schema_ref} for {ticket_id}",
+        "summary": summary,
+        "document_kind_ref": output_schema_ref,
+        "linked_document_refs": ["doc://governance/upstream/current"],
+        "linked_artifact_refs": [artifact_ref],
+        "source_process_asset_refs": [],
+        "decisions": ["Keep the governance chain explicit before implementation."],
+        "constraints": ["Do not widen the local MVP boundary."],
+        "sections": [
+            {
+                "section_id": "section_governance_context",
+                "label": "Context",
+                "summary": summary,
+                "content_markdown": "Keep the next slice document-first and auditable.",
+            }
+        ],
+        "followup_recommendations": [
+            {
+                "recommendation_id": "rec_governance_followup",
+                "summary": "Turn this governance document into the next controlled delivery step.",
+                "target_role": "frontend_engineer",
+            }
+        ],
+    }
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "submitted_by": "emp_frontend_2",
+        "result_status": "completed",
+        "schema_version": f"{output_schema_ref}_v1",
+        "payload": payload,
+        "artifact_refs": [artifact_ref],
+        "written_artifacts": [
+            {
+                "path": f"reports/governance/{ticket_id}/{output_schema_ref}.json",
+                "artifact_ref": artifact_ref,
+                "kind": "JSON",
+                "content_json": payload,
+            }
+        ],
+        "assumptions": ["Governance output should stay reviewable before downstream tickets consume it."],
+        "issues": [],
+        "confidence": 0.84,
+        "needs_escalation": False,
+        "summary": summary,
+        "failure_kind": None,
+        "failure_message": None,
+        "failure_detail": None,
+        "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:governance",
+    }
+
+
 def _source_code_delivery_result_submit_payload(
     workflow_id: str = "wf_seed",
     ticket_id: str = "tkt_build_001",
@@ -2140,6 +2203,198 @@ def _project_init_to_scope_approval(client) -> tuple[str, dict]:
     assert approvals[0]["workflow_id"] == workflow_id
     assert approvals[0]["approval_type"] == "MEETING_ESCALATION"
     return workflow_id, approvals[0]
+
+
+def test_ticket_create_infers_internal_governance_review_request_for_governance_document(client):
+    workflow_id = "wf_governance_auto_review"
+    ticket_id = "tkt_governance_auto_review"
+    node_id = "node_governance_auto_review"
+
+    response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="architecture_brief",
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=[f"reports/governance/{ticket_id}/*"],
+            acceptance_criteria=["Must produce a structured architecture brief."],
+        ),
+    )
+
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert created_spec is not None
+    assert created_spec["auto_review_request"]["review_type"] == "INTERNAL_GOVERNANCE_REVIEW"
+    assert "governance" in created_spec["auto_review_request"]["title"].lower()
+
+
+def test_governance_document_completion_routes_to_internal_checker_and_stays_off_board(client):
+    workflow_id = "wf_governance_internal_gate"
+    ticket_id = "tkt_governance_internal_gate"
+    node_id = "node_governance_internal_gate"
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="architecture_brief",
+        allowed_tools=["read_artifact", "write_artifact"],
+        allowed_write_set=[f"reports/governance/{ticket_id}/*"],
+        acceptance_criteria=["Must produce a structured architecture brief."],
+    )
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_governance_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+
+    repository = client.app.state.repository
+    current_node = repository.get_current_node_projection(workflow_id, node_id)
+    assert current_node is not None
+    checker_ticket_id = current_node["latest_ticket_id"]
+    with repository.connection() as connection:
+        checker_created_spec = repository.get_latest_ticket_created_payload(connection, checker_ticket_id)
+
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:governance-approved",
+        ),
+    )
+
+    current_node = repository.get_current_node_projection(workflow_id, node_id)
+    approvals = [item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id]
+
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+    assert checker_created_spec is not None
+    assert checker_created_spec["output_schema_ref"] == "maker_checker_verdict"
+    assert checker_created_spec["maker_checker_context"]["maker_ticket_id"] == ticket_id
+    assert checker_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
+        "INTERNAL_GOVERNANCE_REVIEW"
+    )
+    assert checker_response.status_code == 200
+    assert checker_response.json()["status"] == "ACCEPTED"
+    assert approvals == []
+    assert current_node["status"] == NODE_STATUS_COMPLETED
+
+
+def test_governance_checker_changes_required_creates_fix_ticket(client):
+    workflow_id = "wf_governance_rework_gate"
+    ticket_id = "tkt_governance_rework_gate"
+    node_id = "node_governance_rework_gate"
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="architecture_brief",
+        allowed_tools=["read_artifact", "write_artifact"],
+        allowed_write_set=[f"reports/governance/{ticket_id}/*"],
+        acceptance_criteria=["Must produce a structured architecture brief."],
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_governance_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_governance_gap",
+                    "severity": "high",
+                    "category": "GOVERNANCE_TRACEABILITY",
+                    "headline": "Governance document still leaves one blocking decision undocumented.",
+                    "summary": "The document misses the explicit downstream boundary for the next delivery slice.",
+                    "required_action": "Add the missing decision boundary before re-submitting the governance document.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:governance-rework",
+        ),
+    )
+
+    fix_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+    with repository.connection() as connection:
+        fix_created_spec = repository.get_latest_ticket_created_payload(connection, fix_ticket_id)
+
+    assert checker_response.status_code == 200
+    assert checker_response.json()["status"] == "ACCEPTED"
+    assert fix_created_spec is not None
+    assert fix_created_spec["output_schema_ref"] == "architecture_brief"
+    assert fix_created_spec["ticket_kind"] == "MAKER_REWORK_FIX"
+    assert fix_created_spec["maker_checker_context"]["checker_ticket_id"] == checker_ticket_id
+    assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
+        "INTERNAL_GOVERNANCE_REVIEW"
+    )
 
 
 def _approve_open_review(client, approval: dict, *, idempotency_suffix: str = "1"):

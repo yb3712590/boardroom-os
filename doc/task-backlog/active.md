@@ -10,8 +10,8 @@
 | `P0-COR-001` | canonical 协议收口 | 进行中 | 已落第一段：`project-init` 会创建三分区项目工作区，`ticket-create` 会自动补 project workspace / deliverable / 文档 / git 相关真相，并生成 ticket dossier |
 | `P0-COR-002` | 单一 workflow controller | 待开始 | 合并 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义 |
 | `P0-COR-003` | architect / meeting 硬约束 | 待开始 | 把 architect 真实参与和必要 meeting 证据升成主线门禁 |
-| `P0-COR-004` | 源码交付 contract 与 write set 重构 | 进行中 | 已落第四段：`10-project/` 已变成真实 git repo，workspace-managed `source_code_delivery` 票会分配真实 worktree、真实写盘、真实 commit，并继续维护 active worktree 索引；但非代码 deliverable contract 还没收完 |
-| `P0-COR-005` | checker / closeout 硬门禁 | 进行中 | 已落第四段：workspace-managed `source_code_delivery` 票会在 final review approve 前真实 merge，closeout / completion 只继续消费 `MERGED` 的源码交付；merge 冲突会 fail-closed 打开 incident；但非代码票 gate 还没完成 |
+| `P0-COR-004` | 源码交付 contract 与 write set 重构 | 进行中 | 已落第五段：workspace-managed `source_code_delivery` 票已是真实 git repo / worktree / 写盘 / commit 主线；五类治理文档票也已补上 declared artifact 对齐 contract 和 `INTERNAL_GOVERNANCE_REVIEW`；但 `consensus_document` 等其它非代码 deliverable contract 还没收完 |
+| `P0-COR-005` | checker / closeout 硬门禁 | 进行中 | 已落第五段：workspace-managed `source_code_delivery` 票会在 final review approve 前真实 merge；五类治理文档票也已接进 internal governance maker-checker，CEO 只复用过 gate 文档；但 `consensus_document` 等其它非代码票 gate 还没完成 |
 | `P0-COR-006` | live 场景回归与退出标准重建 | 待开始 | 用真实代码交付口径重跑 live 场景，重建通过标准 |
 
 ## 冻结后置

@@ -42,6 +42,7 @@ Boardroom OS 更在意的是交付闭环：
 - 对受管项目工作区里的代码票，`BUILD` 主结果现在已经硬切到 `source_code_delivery@1`：直接交 `source_file_refs`、源码写入、测试证据和 git 留痕，不再额外交一份占位 bundle JSON
 - 对受管项目工作区里的代码票，系统现在会在编译前写 `worker-preflight` 回执，结果提交时硬校验 `source_file_refs`、文档更新、测试证据和 git commit，并写 `worker-postrun / evidence-capture / git-closeout` 回执
 - 对受管项目工作区里的 workspace-managed 代码票，`ticket-start` 现在会分配真实 git worktree；`ticket-result-submit` 会把 `10-project/*` 真写进 checkout、做真实 commit，再把 `00-boardroom/* / 20-evidence/*` 写回 canonical workspace
+- 五类治理文档票现在也开始走独立 internal governance gate：建票会自动挂 `INTERNAL_GOVERNANCE_REVIEW`，提交时要交对齐的 artifact，先过 checker，CEO 才会把它当成后续治理票或实现票的前置真相
 - 项目工作区现在会维护 `00-boardroom/workflow/active-worktree-index.md`：执行中的代码票和待 review gate 的代码票都会显示 `ticket / worker / branch / commit / merge_status`
 - 最终 `VISUAL_MILESTONE` 通过后，系统现在会先把待 review gate 的代码分支自动 merge 回 `main`，merge 成功才继续建 closeout；冲突会 fail-closed，打开 merge incident，不会假装已经通过
 - dashboard completion 和完成卡现在会直接展开源码交付摘要：能看到 source file 数、测试证据数、git 摘要，并直接打开源码和测试 artifact
@@ -51,7 +52,7 @@ Boardroom OS 更在意的是交付闭环：
 - 收正 canonical 协议，不再让 CEO action、provider config、runtime result、ticket deliverable 多口径并存
 - 收正单一 workflow controller，不再让 scheduler、CEO 和 deterministic fallback 各自维护主线语义
 - 把 architect / meeting / source-code deliverable 升成主线硬约束
-- 把 `source_code_delivery` 继续往下游收口：当前真实 git repo / worktree / merge gate 已接上；但调研、分析、治理类 deliverable contract 和硬 gate 还没补齐
+- 把 `source_code_delivery` 继续往下游收口：当前真实 git repo / worktree / merge gate 已接上，五类治理文档票也已接进独立 gate；但 `consensus_document` 等其它非代码 deliverable contract 和硬 gate 还没补齐
 - `P0-COR-006` 还没开：live 场景回归和退出标准还没按这套真实 merge gate 口径重建
 - 继续清理与当前 MVP 无关的旧能力和兼容壳，让主线更轻、更稳、更清楚
 
@@ -59,7 +60,7 @@ Boardroom OS 更在意的是交付闭环：
 
 - 本地单机版本已经可以真实跑通，不再只是概念演示
 - 2026-04-10 的 live 长测确认了主线偏差：当时链路能跑到 closeout，但 BUILD 还在交占位式文档产物；当前主线已切到 `P0-COR` 大型纠偏
-- 2026-04-11 这轮已经补上项目工作区三分区、workspace-managed 代码票 hook、active worktree 索引、真实 git repo/worktree、review gate 自动 merge，以及 completion 的源码/测试/git 摘要读面；旧的 artifact-path 代码票仍保持兼容
+- 2026-04-11 这轮已经补上项目工作区三分区、workspace-managed 代码票 hook、active worktree 索引、真实 git repo/worktree、review gate 自动 merge、completion 的源码/测试/git 摘要读面，以及五类治理文档票的 internal governance gate；旧的 artifact-path 代码票仍保持兼容
 - 当输入还不够清楚时，系统会先触发受控澄清，再继续推进主线
 - 系统里的 CEO 当前真实执行集是 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`
 - 检查和复核已经进入日常流程，不靠一次性产出直接交差

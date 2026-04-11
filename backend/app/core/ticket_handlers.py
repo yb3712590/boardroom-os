@@ -89,21 +89,32 @@ from app.core.constants import (
 )
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
+from app.core.ceo_execution_presets import build_internal_governance_review_request
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    ARCHITECTURE_BRIEF_SCHEMA_VERSION,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     CONSENSUS_DOCUMENT_SCHEMA_VERSION,
+    DETAILED_DESIGN_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_VERSION,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
+    MILESTONE_PLAN_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_VERSION,
     OutputSchemaValidationError,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
     SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_VERSION,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
     validate_output_payload,
@@ -157,6 +168,20 @@ from app.db.repository import ControlPlaneRepository
 
 MAKER_CHECKER_REVIEW_TICKET_KIND = "MAKER_CHECKER_REVIEW"
 MAKER_REWORK_FIX_TICKET_KIND = "MAKER_REWORK_FIX"
+GOVERNANCE_DOCUMENT_REVIEW_TARGETS = {
+    ("INTERNAL_GOVERNANCE_REVIEW", ARCHITECTURE_BRIEF_SCHEMA_REF, ARCHITECTURE_BRIEF_SCHEMA_VERSION),
+    ("INTERNAL_GOVERNANCE_REVIEW", TECHNOLOGY_DECISION_SCHEMA_REF, TECHNOLOGY_DECISION_SCHEMA_VERSION),
+    ("INTERNAL_GOVERNANCE_REVIEW", MILESTONE_PLAN_SCHEMA_REF, MILESTONE_PLAN_SCHEMA_VERSION),
+    ("INTERNAL_GOVERNANCE_REVIEW", DETAILED_DESIGN_SCHEMA_REF, DETAILED_DESIGN_SCHEMA_VERSION),
+    ("INTERNAL_GOVERNANCE_REVIEW", BACKLOG_RECOMMENDATION_SCHEMA_REF, BACKLOG_RECOMMENDATION_SCHEMA_VERSION),
+}
+GOVERNANCE_DOCUMENT_SCHEMA_REFS = {
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+}
 MAKER_CHECKER_SUPPORTED_TARGETS = {
     ("VISUAL_MILESTONE", UI_MILESTONE_REVIEW_SCHEMA_REF, UI_MILESTONE_REVIEW_SCHEMA_VERSION),
     (
@@ -179,7 +204,7 @@ MAKER_CHECKER_SUPPORTED_TARGETS = {
         DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
         DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
     ),
-}
+} | GOVERNANCE_DOCUMENT_REVIEW_TARGETS
 
 
 def _match_allowed_write_set(path: str, allowed_write_set: list[str]) -> bool:
@@ -474,6 +499,8 @@ def _maker_checker_subject_label(review_request: TicketBoardReviewRequest | None
         return "submitted visual milestone"
     if review_request.review_type.value == "MEETING_ESCALATION":
         return "submitted consensus document"
+    if review_request.review_type.value == "INTERNAL_GOVERNANCE_REVIEW":
+        return "submitted governance document"
     if review_request.review_type.value == "INTERNAL_DELIVERY_REVIEW":
         return "submitted source code delivery"
     if review_request.review_type.value == "INTERNAL_CHECK_REVIEW":
@@ -501,7 +528,12 @@ def _is_internal_only_review_request(review_request: TicketBoardReviewRequest | 
     return bool(
         review_request is not None
         and review_request.review_type.value
-        in {"INTERNAL_DELIVERY_REVIEW", "INTERNAL_CHECK_REVIEW", "INTERNAL_CLOSEOUT_REVIEW"}
+        in {
+            "INTERNAL_GOVERNANCE_REVIEW",
+            "INTERNAL_DELIVERY_REVIEW",
+            "INTERNAL_CHECK_REVIEW",
+            "INTERNAL_CLOSEOUT_REVIEW",
+        }
     )
 
 
@@ -511,7 +543,11 @@ def _build_maker_checker_input_artifact_refs(
     review_request: TicketBoardReviewRequest,
     maker_artifact_refs: list[str],
 ) -> list[str]:
-    if review_request.review_type.value in {"INTERNAL_CHECK_REVIEW", "INTERNAL_CLOSEOUT_REVIEW"}:
+    if review_request.review_type.value in {
+        "INTERNAL_GOVERNANCE_REVIEW",
+        "INTERNAL_CHECK_REVIEW",
+        "INTERNAL_CLOSEOUT_REVIEW",
+    }:
         return _dedupe_artifact_refs(
             list(maker_artifact_refs) + list(created_spec.get("input_artifact_refs") or [])
         )
@@ -527,7 +563,11 @@ def _build_maker_checker_input_process_asset_refs(
     maker_process_asset_refs: list[str],
 ) -> list[str]:
     existing_process_asset_refs = list(created_spec.get("input_process_asset_refs") or [])
-    if review_request.review_type.value in {"INTERNAL_CHECK_REVIEW", "INTERNAL_CLOSEOUT_REVIEW"}:
+    if review_request.review_type.value in {
+        "INTERNAL_GOVERNANCE_REVIEW",
+        "INTERNAL_CHECK_REVIEW",
+        "INTERNAL_CLOSEOUT_REVIEW",
+    }:
         return dedupe_process_asset_refs(
             list(maker_process_asset_refs) + existing_process_asset_refs
         )
@@ -553,6 +593,11 @@ def _resolve_original_review_request(
         return payload.review_request
     if created_spec is None:
         return None
+    auto_review_request = created_spec.get("auto_review_request")
+    if isinstance(auto_review_request, dict):
+        parsed_auto_review_request = TicketBoardReviewRequest.model_validate(auto_review_request)
+        if parsed_auto_review_request.review_type.value == "INTERNAL_GOVERNANCE_REVIEW":
+            return parsed_auto_review_request
     maker_checker_context = created_spec.get("maker_checker_context") or {}
     original_review_request = maker_checker_context.get("original_review_request")
     if not isinstance(original_review_request, dict):
@@ -1066,6 +1111,13 @@ def _ensure_ticket_execution_contract_payload(ticket_payload: dict[str, Any]) ->
         )
         if inferred_execution_contract is not None:
             resolved_payload["execution_contract"] = inferred_execution_contract
+    if (
+        resolved_payload.get("auto_review_request") is None
+        and str(resolved_payload.get("output_schema_ref") or "") in GOVERNANCE_DOCUMENT_SCHEMA_REFS
+    ):
+        resolved_payload["auto_review_request"] = build_internal_governance_review_request(
+            str(resolved_payload.get("summary") or "")
+        )
     workspace_bootstrap = infer_ticket_workspace_bootstrap(resolved_payload)
     resolved_payload["project_workspace_ref"] = workspace_bootstrap.project_workspace_ref
     resolved_payload["project_methodology_profile"] = workspace_bootstrap.project_methodology_profile.value
@@ -1193,6 +1245,48 @@ def _validate_source_code_delivery_hooks(
 
     if payload.git_commit_record is None:
         return "Code delivery tickets must include git_commit_record."
+    return None
+
+
+def _validate_governance_document_hooks(
+    *,
+    created_spec: dict[str, Any],
+    payload: TicketResultSubmitCommand,
+) -> str | None:
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    if output_schema_ref not in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+        return None
+
+    result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+    document_kind_ref = str(result_payload.get("document_kind_ref") or "").strip()
+    if document_kind_ref != output_schema_ref:
+        return (
+            "Governance document tickets must keep payload.document_kind_ref aligned with "
+            f"{output_schema_ref}; got {document_kind_ref or '<missing>'}."
+        )
+
+    declared_artifact_refs = [
+        str(item).strip()
+        for item in payload.artifact_refs
+        if str(item).strip()
+    ]
+    if not declared_artifact_refs:
+        return "Governance document tickets must include at least one declared artifact_ref."
+
+    written_artifacts_by_ref = {
+        str(item.artifact_ref): item
+        for item in payload.written_artifacts
+        if str(item.artifact_ref)
+    }
+    if not written_artifacts_by_ref:
+        return "Governance document tickets must persist at least one written artifact."
+
+    if not any(artifact_ref in written_artifacts_by_ref for artifact_ref in declared_artifact_refs):
+        return (
+            "Governance document tickets must persist at least one declared artifact_ref "
+            "inside written_artifacts."
+        )
+
     return None
 
 
@@ -4607,6 +4701,11 @@ def handle_ticket_result_submit(
         created_spec=created_spec,
         payload=payload,
     )
+    if hook_validation_error is None:
+        hook_validation_error = _validate_governance_document_hooks(
+            created_spec=created_spec,
+            payload=payload,
+        )
     if hook_validation_error is not None:
         return handle_ticket_fail(
             repository,
@@ -5016,6 +5115,12 @@ def _complete_ticket_locked(
                 list(result_payload.get("documentation_updates") or [])
                 if isinstance(result_payload, dict)
                 else []
+            ),
+            "review_status": (
+                result_payload.get("review_status")
+                if isinstance(result_payload, dict)
+                and str((created_spec or {}).get("output_schema_ref") or "") == MAKER_CHECKER_VERDICT_SCHEMA_REF
+                else None
             ),
             "board_review_requested": open_board_review_now,
         },
