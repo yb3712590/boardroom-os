@@ -54,6 +54,7 @@ from app.core.runtime_provider_config import (
     runtime_provider_effective_mode,
     runtime_provider_health_summary,
 )
+from app.core.workflow_controller import backlog_followup_key_to_node_id as controller_backlog_followup_key_to_node_id
 from app.db.repository import ControlPlaneRepository
 
 
@@ -501,11 +502,7 @@ def _normalize_provider_action_batch_payload(raw_payload: dict[str, Any], snapsh
 
 
 def _backlog_followup_key_to_node_id(ticket_key: str) -> str:
-    normalized = "".join(
-        character.lower() if character.isalnum() else "_"
-        for character in str(ticket_key).strip()
-    ).strip("_")
-    return f"node_backlog_followup_{normalized}" if normalized else "node_backlog_followup"
+    return controller_backlog_followup_key_to_node_id(ticket_key)
 
 
 def _read_ticket_json_artifact(
@@ -561,72 +558,9 @@ def _build_backlog_followup_batch(
     workflow_id = str(workflow.get("workflow_id") or "").strip()
     if not workflow_id:
         return None
-
-    with repository.connection() as connection:
-        backlog_ticket_id = _backlog_recommendation_ticket_id(snapshot, repository, connection)
-        if not backlog_ticket_id:
-            return None
-        backlog_payload = _read_ticket_json_artifact(
-            repository,
-            ticket_id=backlog_ticket_id,
-            connection=connection,
-        )
-        if not isinstance(backlog_payload, dict):
-            return None
-
-    sections = list(backlog_payload.get("sections") or [])
-    recommended_tickets: dict[str, dict[str, Any]] = {}
-    dependency_map: dict[str, list[str]] = {}
-    ordered_ticket_keys: list[str] = []
-
-    for section in sections:
-        if not isinstance(section, dict):
-            continue
-        content_json = section.get("content_json")
-        if not isinstance(content_json, dict):
-            continue
-        raw_tickets = content_json.get("tickets")
-        if isinstance(raw_tickets, list):
-            for raw_ticket in raw_tickets:
-                if not isinstance(raw_ticket, dict):
-                    continue
-                ticket_key = str(raw_ticket.get("ticket_id") or "").strip()
-                if not ticket_key:
-                    continue
-                recommended_tickets[ticket_key] = raw_ticket
-                if ticket_key not in ordered_ticket_keys:
-                    ordered_ticket_keys.append(ticket_key)
-        raw_dependency_graph = content_json.get("dependency_graph")
-        if isinstance(raw_dependency_graph, list):
-            for raw_dependency in raw_dependency_graph:
-                if not isinstance(raw_dependency, dict):
-                    continue
-                ticket_key = str(raw_dependency.get("ticket_id") or "").strip()
-                if not ticket_key:
-                    continue
-                dependency_map[ticket_key] = _normalize_dependency_gate_refs(
-                    raw_dependency.get("depends_on")
-                )
-        raw_sequence = content_json.get("recommended_sequence")
-        if isinstance(raw_sequence, list):
-            sequence_ticket_keys: list[str] = []
-            for item in raw_sequence:
-                prefix = str(item or "").strip().split(" ", 1)[0]
-                if prefix:
-                    sequence_ticket_keys.append(prefix)
-            if sequence_ticket_keys:
-                ordered_ticket_keys = list(dict.fromkeys(sequence_ticket_keys + ordered_ticket_keys))
-
-    if not recommended_tickets:
-        return None
-
-    role_profile_ref = "frontend_engineer_primary"
-    assignee_employee_id = _select_default_assignee(
-        snapshot,
-        role_profile_ref=role_profile_ref,
-        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
-    )
-    if assignee_employee_id is None:
+    capability_plan = snapshot.get("capability_plan") or {}
+    followup_ticket_plans = list(capability_plan.get("followup_ticket_plans") or [])
+    if not followup_ticket_plans:
         return None
 
     actions: list[dict[str, Any]] = []
@@ -657,30 +591,35 @@ def _build_backlog_followup_batch(
             if str(row["node_id"] or "").strip()
         }
 
-    for ticket_key in ordered_ticket_keys:
-        recommended_ticket = recommended_tickets.get(ticket_key)
-        if not isinstance(recommended_ticket, dict):
+    for followup_plan in followup_ticket_plans:
+        node_id = str(followup_plan.get("node_id") or "").strip()
+        ticket_key = str(followup_plan.get("ticket_key") or "").strip()
+        role_profile_ref = str(followup_plan.get("role_profile_ref") or "").strip()
+        output_schema_ref = str(followup_plan.get("output_schema_ref") or "").strip()
+        assignee_employee_id = str(followup_plan.get("assignee_employee_id") or "").strip()
+        backlog_ticket_id = str(followup_plan.get("source_ticket_id") or "").strip()
+        if not node_id or not role_profile_ref or not output_schema_ref or not assignee_employee_id:
             continue
-        node_id = _backlog_followup_key_to_node_id(ticket_key)
         if node_id in existing_ticket_ids_by_node_id or node_id in existing_node_ids:
             continue
 
-        dependency_gate_refs: list[str] = []
+        dependency_gate_refs = _normalize_dependency_gate_refs(followup_plan.get("dependency_gate_refs"))
         ready_to_create = True
-        for dependency_key in dependency_map.get(ticket_key, []):
-            dependency_node_id = _backlog_followup_key_to_node_id(dependency_key)
+        for dependency_key in list(followup_plan.get("dependency_ticket_keys") or []):
+            dependency_node_id = _backlog_followup_key_to_node_id(str(dependency_key))
             dependency_ticket_id = existing_ticket_ids_by_node_id.get(dependency_node_id)
             if not dependency_ticket_id:
                 ready_to_create = False
                 break
-            dependency_gate_refs.append(dependency_ticket_id)
+            if dependency_ticket_id not in dependency_gate_refs:
+                dependency_gate_refs.append(dependency_ticket_id)
         if not ready_to_create:
             continue
 
-        task_name = str(recommended_ticket.get("name") or ticket_key).strip() or ticket_key
+        task_name = str(followup_plan.get("task_name") or followup_plan.get("summary") or ticket_key).strip() or ticket_key
         task_scope = [
             str(item).strip()
-            for item in list(recommended_ticket.get("scope") or [])
+            for item in list(followup_plan.get("scope") or [])
             if str(item).strip()
         ]
         scope_suffix = f"；范围：{'、'.join(task_scope)}" if task_scope else ""
@@ -691,15 +630,15 @@ def _build_backlog_followup_batch(
                     "workflow_id": workflow_id,
                     "node_id": node_id,
                     "role_profile_ref": role_profile_ref,
-                    "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    "output_schema_ref": output_schema_ref,
                     "execution_contract": infer_execution_contract_payload(
                         role_profile_ref=role_profile_ref,
-                        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                        output_schema_ref=output_schema_ref,
                     ),
                     "dispatch_intent": {
                         "assignee_employee_id": assignee_employee_id,
                         "selection_reason": (
-                            "Translate the approved backlog recommendation into an auditable implementation ticket."
+                            "Follow the current capability plan and translate the approved backlog recommendation into an auditable implementation ticket."
                         ),
                         "dependency_gate_refs": dependency_gate_refs,
                     },
@@ -717,6 +656,39 @@ def _build_backlog_followup_batch(
             "summary": reason,
             "actions": actions,
         }
+    )
+
+
+def _build_capability_hire_batch(snapshot: dict, reason: str) -> CEOActionBatch | None:
+    workflow_id = str((snapshot.get("workflow") or {}).get("workflow_id") or "").strip()
+    capability_plan = snapshot.get("capability_plan") or {}
+    recommended_hire = capability_plan.get("recommended_hire")
+    if not workflow_id or not isinstance(recommended_hire, dict):
+        return None
+    role_type = str(recommended_hire.get("role_type") or "").strip()
+    role_profile_refs = [
+        str(item).strip()
+        for item in list(recommended_hire.get("role_profile_refs") or [])
+        if str(item).strip()
+    ]
+    request_summary = str(recommended_hire.get("request_summary") or "").strip() or (
+        f"Hire {role_type} so the current capability plan can continue."
+    )
+    if not role_type or not role_profile_refs:
+        return None
+    return CEOActionBatch(
+        summary=reason,
+        actions=[
+            {
+                "action_type": CEOActionType.HIRE_EMPLOYEE,
+                "payload": {
+                    "workflow_id": workflow_id,
+                    "role_type": role_type,
+                    "role_profile_refs": role_profile_refs,
+                    "request_summary": request_summary,
+                },
+            }
+        ],
     )
 
 
@@ -860,6 +832,25 @@ def build_deterministic_fallback_batch(
     snapshot: dict,
     reason: str,
 ) -> CEOActionBatch:
+    controller_state = snapshot.get("controller_state") or {}
+    recommended_action = str(controller_state.get("recommended_action") or "").strip()
+    if recommended_action == "HIRE_EMPLOYEE":
+        hire_batch = _build_capability_hire_batch(snapshot, reason)
+        if hire_batch is not None:
+            return hire_batch
+    if recommended_action == "REQUEST_MEETING":
+        eligible_meeting_candidates = _eligible_meeting_candidates(snapshot)
+        if len(eligible_meeting_candidates) == 1:
+            candidate = {
+                **eligible_meeting_candidates[0],
+                "workflow_id": str((snapshot.get("workflow") or {}).get("workflow_id") or ""),
+            }
+            return _build_request_meeting_batch(
+                candidate,
+                reason=(
+                    "Open one bounded technical decision meeting because the controller state requires it before implementation fanout."
+                ),
+            )
     backlog_followup_batch = _build_backlog_followup_batch(repository, snapshot, reason)
     if backlog_followup_batch is not None:
         return backlog_followup_batch

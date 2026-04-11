@@ -8,10 +8,10 @@
 | ID | 标题 | 状态 | 说明 |
 |----|------|------|------|
 | `P0-COR-001` | canonical 协议收口 | 进行中 | 已落第一段：`project-init` 会创建三分区项目工作区，`ticket-create` 会自动补 project workspace / deliverable / 文档 / git 相关真相，并生成 ticket dossier |
-| `P0-COR-002` | 单一 workflow controller | 待开始 | 合并 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义 |
-| `P0-COR-003` | architect / meeting 硬约束 | 待开始 | 把 architect 真实参与和必要 meeting 证据升成主线门禁 |
+| `P0-COR-002` | 单一 workflow controller | 进行中 | 已落第一段：新增 `workflow_controller` truth，`ceo_scheduler / deterministic fallback / validator / workflow_auto_advance` 已开始共用 `task_sensemaking / capability_plan / controller_state`；当前先覆盖 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation` 的实现 fanout |
+| `P0-COR-003` | architect / meeting 硬约束 | 进行中 | 已落第一段：autopilot backlog fanout 遇到 `architect_primary` / 技术决策会议硬约束时，会先走 `HIRE_EMPLOYEE / REQUEST_MEETING / fail-close`，不再静默 fallback；但 architect 文档票的自动补齐和更广覆盖面还没做 |
 | `P0-COR-004` | 源码交付 contract 与 write set 重构 | 进行中 | 已落第六段：workspace-managed `source_code_delivery` 票已是真实 git repo / worktree / 写盘 / commit 主线；`structured_document_delivery` 也已统一补上 declared artifact / written artifact 对齐 contract，覆盖 `consensus_document` 与五类治理文档；但更广义的非代码 deliverable kind 还没正式进入主线 |
-| `P0-COR-005` | checker / closeout 硬门禁 | 进行中 | 已落第六段：workspace-managed `source_code_delivery` 票会在 final review approve 前真实 merge；五类治理文档继续只复用过 internal governance gate 的逻辑文档，`consensus_document` 也已补到 `MEETING_ESCALATION` 批准后才进入 CEO reuse；但 architect / meeting 硬约束和 live 退出标准还没完成 |
+| `P0-COR-005` | checker / closeout 硬门禁 | 进行中 | 已落第六段：workspace-managed `source_code_delivery` 票会在 final review approve 前真实 merge；五类治理文档继续只复用过 internal governance gate 的逻辑文档，`consensus_document` 也已补到 `MEETING_ESCALATION` 批准后才进入 CEO reuse；architect / meeting gate 已先在 autopilot backlog fanout 落第一段，但 closeout 扩展和 live 退出标准还没完成 |
 | `P0-COR-006` | live 场景回归与退出标准重建 | 待开始 | 用真实代码交付口径重跑 live 场景，重建通过标准 |
 
 ## 冻结后置

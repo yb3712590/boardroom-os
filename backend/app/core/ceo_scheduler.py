@@ -15,21 +15,14 @@ from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.runtime_provider_config import RuntimeProviderConfigStore
 from app.core.time import now_local
+from app.core.workflow_controller import workflow_controller_effect
 from app.db.repository import ControlPlaneRepository
 
 SCHEDULER_IDLE_MAINTENANCE_TRIGGER = "SCHEDULER_IDLE_MAINTENANCE"
 
 
 def _build_mainline_effect(snapshot: dict[str, Any]) -> str:
-    if snapshot["approvals"]:
-        return "WAIT_FOR_BOARD"
-    if snapshot["incidents"]:
-        return "WAIT_FOR_INCIDENT"
-    if snapshot["ticket_summary"]["ready_count"] > 0:
-        return "RUN_SCHEDULER_TICK"
-    if snapshot["ticket_summary"]["active_count"] > 0:
-        return "WAIT_FOR_RUNTIME"
-    return "NO_IMMEDIATE_FOLLOWUP"
+    return workflow_controller_effect(snapshot)
 
 
 def _build_comparison(
@@ -39,15 +32,19 @@ def _build_comparison(
     rejected_actions: list[dict[str, Any]],
 ) -> dict[str, Any]:
     deterministic_effect = _build_mainline_effect(snapshot)
+    expected_action = str((snapshot.get("controller_state") or {}).get("recommended_action") or "").strip()
     accepted_action_types = [item["action_type"] for item in accepted_actions]
     mainline_waiting_states = {"WAIT_FOR_BOARD", "WAIT_FOR_INCIDENT", "WAIT_FOR_RUNTIME", "NO_IMMEDIATE_FOLLOWUP"}
     if deterministic_effect in mainline_waiting_states:
         diverges_from_mainline = any(action_type != "NO_ACTION" for action_type in accepted_action_types)
+    elif expected_action in {"CREATE_TICKET", "HIRE_EMPLOYEE", "REQUEST_MEETING"}:
+        diverges_from_mainline = expected_action not in accepted_action_types
     else:
         diverges_from_mainline = not bool(accepted_actions)
     return {
         "mainline_controller": "workflow_auto_advance",
         "deterministic_effect": deterministic_effect,
+        "expected_action": expected_action,
         "accepted_action_types": accepted_action_types,
         "accepted_action_count": len(accepted_actions),
         "rejected_action_count": len(rejected_actions),
