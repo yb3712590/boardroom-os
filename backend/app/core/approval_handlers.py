@@ -1037,7 +1037,7 @@ def _build_post_review_closeout_ticket_payload(
         output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
         output_schema_version=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
         allowed_tools=["read_artifact", "write_artifact"],
-        allowed_write_set=[f"reports/closeout/{closeout_ticket_id}/*"],
+        allowed_write_set=[f"20-evidence/closeout/{closeout_ticket_id}/*"],
         retry_budget=1,
         priority="high",
         timeout_sla_sec=1800,

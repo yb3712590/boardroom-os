@@ -1167,6 +1167,9 @@ def test_autopilot_completed_atomic_task_auto_creates_closeout_ticket(client):
     assert closeout_created_spec["output_schema_ref"] == "delivery_closeout_package"
     assert closeout_created_spec["delivery_stage"] == "CLOSEOUT"
     assert closeout_created_spec["parent_ticket_id"] == "tkt_autopilot_impl_done"
+    assert closeout_created_spec["deliverable_kind"] == "structured_document_delivery"
+    assert closeout_created_spec["allowed_write_set"] == [f"20-evidence/closeout/{closeout_ticket['ticket_id']}/*"]
+    assert closeout_created_spec["input_artifact_refs"] == ["art://runtime/tkt_autopilot_impl_done/source-code.tsx"]
 
 
 def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket(client, monkeypatch):

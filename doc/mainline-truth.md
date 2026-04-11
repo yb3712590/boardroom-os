@@ -42,6 +42,7 @@
 - `ticket-create` 现在会拒绝显式 dependency gate 的自依赖、缺失依赖和简单 cycle；scheduler 遇到显式 dependency gate 指向 `FAILED / TIMED_OUT / CANCELLED` ticket 时，会直接记结构化失败并触发 CEO 重决策
 - 对现有 `delivery_stage + parent_ticket_id` staged follow-up 主链，这轮按最保守口径只把 `missing / cancelled` 视为硬坏依赖；`FAILED / TIMED_OUT` 仍继续等待同节点 retry / recovery，不把当前 staged follow-up 主链写成“上游一失败就全部重规划”
 - `TICKET_CREATED` payload 现在可选携带 `input_process_asset_refs[]`；`Context Compiler` 会把旧 `input_artifact_refs[]` 兼容映射到同一入口，再统一走 `process asset resolver`
+- `CompileRequestExecution / CompiledExecution` 现在也会继续带 `input_artifact_refs[]`；closeout runtime 默认会优先用这组上游证据生成 `final_artifact_refs`
 - 对受管项目工作区里的 ticket，`Context Compiler` 现在会把 `required_read_refs[]` 一并并入 `input_process_asset_refs[]`，并在 ticket dossier 里写 `worker-preflight` 回执
 - 当前 resolver 已按最小闭环纳入 8 类过程资产：`artifact / compiled_context_bundle / compile_manifest / compiled_execution_package / source_code_delivery / meeting_decision_record / closeout_summary / governance_document`
 - 治理文档输出合同现在已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；每类文档都会保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / decisions / constraints / sections / followup_recommendations`
@@ -59,7 +60,9 @@
 - `TICKET_COMPLETED` payload 现在也会带回 `verification_evidence_refs` 和 `git_commit_record`，给后续 review / closeout / projection 继续消费
 - 最终 `VISUAL_MILESTONE` 批准时，workspace-managed 代码链路现在会先把 review gate 分支真实 merge 回 `10-project/main`，merge 成功才写 `BOARD_REVIEW_APPROVED` 和 closeout follow-up；merge 冲突会 fail-closed，打开 `REVIEW_GATE_MERGE_FAILED` incident，review 继续保持 open
 - checker 打回生成 fix 票、ticket fail、直接 cancel、board reject 和 modify constraints，当前都会把原代码票的 git receipt 改成 `NOT_REQUESTED`，并清理物理 worktree
-- non-code deliverable contract / hard gate 这轮已经补到当前主线里的 `structured_document_delivery`：`consensus_document` 和五类治理文档都走 declared artifact / written artifact 对齐 gate；更广义的 research / analysis 类 deliverable kind 还没正式进入当前主线，`P0-COR-006` 也还没启动这部分收口
+- `delivery_closeout_package` 现在也已并回 `structured_document_delivery` 主线：board-approved closeout 和 autopilot closeout 都默认写到 `20-evidence/closeout/<ticket>/delivery-closeout-package.json`，并继承 canonical docs、doc update 要求与上游 input artifact/process asset
+- closeout `ticket-result-submit` 现在会在 declared artifact / written artifact 对齐 gate 之外，再硬校验 `payload.final_artifact_refs` 必须对齐已知 delivery evidence；`FOLLOW_UP_REQUIRED` 仍只留给 checker 判断，不自动升成 schema 级硬失败
+- non-code deliverable contract / hard gate 这轮已经补到当前主线里的 `structured_document_delivery`：`consensus_document`、五类治理文档和 `delivery_closeout_package` 都走统一 contract；更广义的 research / analysis 类 deliverable kind 还没正式进入当前主线
 - `scheduler_runner` / `inprocess_scheduler` 现在已按固定编排顺序收口为 `CEO idle maintenance -> scheduler tick -> leased runtime -> orchestration trace`，artifact cleanup 保持为这条主链之后的 sidecar；每轮会额外写一条 `SCHEDULER_ORCHESTRATION_RECORDED` 审计事件
 - idle maintenance 现在只会在没有 open approval / incident、没有 leased 或 executing ticket、存在 `NO_TICKET_STARTED / READY_TICKET / INVALID_DEPENDENCY_OR_DISPATCH / FAILED_TICKET` 这类重决策信号，且最近 ticket / node / approval / incident 变化已经过最短重查间隔时触发；不会因为 workflow 行本身的旧时间戳误触发
 - CEO shadow snapshot 现在会额外暴露 `task_sensemaking / capability_plan / controller_state`；`ceo_scheduler` comparison、deterministic fallback 和 `workflow_auto_advance` 的 idle gate 已开始共用这套 controller truth。当前首段只覆盖 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation` 的实现 fanout，不代表旧 scope-consensus 主链已经全部切完
@@ -83,6 +86,7 @@
 - 只有 `MEETING_ESCALATION` 批准后生成的 follow-up ticket 会额外把 ADR `decision + consequences` 注入后续执行输入；其他 `consensus_document` 来源路径不变
 - `delivery_closeout_package@1` 现在可选携带 `documentation_updates`；internal closeout review 已把文档同步纳入 soft checker 口径，但 `FOLLOW_UP_REQUIRED` 不会自动变成硬门禁
 - `project-init` 现在新增初始化澄清分支：当董事会显式传入 `force_requirement_elicitation=true`，或初始化输入同时命中保守阈值下的明显弱信号时，系统会先打开一次 workflow 级 `REQUIREMENT_ELICITATION` 板审；董事会在现有 Review Room 中提交结构化答卷后，`APPROVE` 才会继续创建首个 scope kickoff 票，`MODIFY_CONSTRAINTS` 会重新打开一版澄清板审
+- live runner 现在已抽成共享 harness，当前主线保留 3 条真实入口：`library_management_autopilot_live`、`requirement_elicitation_autopilot_live`、`architecture_governance_autopilot_live`；这轮只补脚本和最小单测，真实 provider 长测尚未在这台机器重跑
 
 ## 2. Runtime 支持矩阵
 

@@ -1281,6 +1281,81 @@ def _validate_structured_document_delivery_hooks(
     return None
 
 
+def _closeout_known_final_artifact_refs(
+    repository: ControlPlaneRepository,
+    *,
+    created_spec: dict[str, Any],
+) -> set[str]:
+    known_artifact_refs = {
+        str(item).strip()
+        for item in list(created_spec.get("input_artifact_refs") or [])
+        if str(item).strip()
+    }
+    with repository.connection() as connection:
+        parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
+        if parent_ticket_id:
+            parent_terminal_event = repository.get_latest_ticket_terminal_event(connection, parent_ticket_id)
+            parent_terminal_payload = parent_terminal_event.get("payload") if parent_terminal_event is not None else {}
+            if isinstance(parent_terminal_payload, dict):
+                for artifact_ref in list(parent_terminal_payload.get("artifact_refs") or []):
+                    normalized_artifact_ref = str(artifact_ref).strip()
+                    if normalized_artifact_ref:
+                        known_artifact_refs.add(normalized_artifact_ref)
+        for process_asset_ref in list(created_spec.get("input_process_asset_refs") or []):
+            try:
+                kind, ticket_id = parse_process_asset_ref(str(process_asset_ref))
+            except ValueError:
+                continue
+            if kind != "source-code-delivery":
+                continue
+            terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+            terminal_payload = terminal_event.get("payload") if terminal_event is not None else {}
+            if not isinstance(terminal_payload, dict):
+                continue
+            for artifact_ref in list(terminal_payload.get("artifact_refs") or []):
+                normalized_artifact_ref = str(artifact_ref).strip()
+                if normalized_artifact_ref:
+                    known_artifact_refs.add(normalized_artifact_ref)
+            for artifact_ref in list(terminal_payload.get("verification_evidence_refs") or []):
+                normalized_artifact_ref = str(artifact_ref).strip()
+                if normalized_artifact_ref:
+                    known_artifact_refs.add(normalized_artifact_ref)
+    return known_artifact_refs
+
+
+def _validate_closeout_delivery_hooks(
+    repository: ControlPlaneRepository,
+    *,
+    created_spec: dict[str, Any],
+    payload: TicketResultSubmitCommand,
+) -> str | None:
+    if str(created_spec.get("output_schema_ref") or "").strip() != DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        return None
+
+    result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+    final_artifact_refs = [
+        str(item).strip()
+        for item in list(result_payload.get("final_artifact_refs") or [])
+        if str(item).strip()
+    ]
+    if not final_artifact_refs:
+        return "Closeout tickets must include payload.final_artifact_refs."
+
+    known_artifact_refs = _closeout_known_final_artifact_refs(
+        repository,
+        created_spec=created_spec,
+    )
+    if not known_artifact_refs:
+        return "Closeout tickets must reference known delivery evidence before completion."
+    for artifact_ref in final_artifact_refs:
+        if artifact_ref not in known_artifact_refs:
+            return (
+                "Closeout tickets must keep payload.final_artifact_refs aligned with known delivery evidence; "
+                f"got {artifact_ref}."
+            )
+    return None
+
+
 def _validate_governance_document_hooks(
     *,
     created_spec: dict[str, Any],
@@ -4718,6 +4793,12 @@ def handle_ticket_result_submit(
             payload=payload,
         )
     if hook_validation_error is None:
+        hook_validation_error = _validate_closeout_delivery_hooks(
+            repository,
+            created_spec=created_spec,
+            payload=payload,
+        )
+    if hook_validation_error is None:
         hook_validation_error = _validate_governance_document_hooks(
             created_spec=created_spec,
             payload=payload,
@@ -4966,13 +5047,13 @@ def handle_ticket_result_submit(
                 developer_inspector_store.delete_ref(artifact.ref)
         raise
 
+    workspace_has_managed_paths = project_workspace_manifest_exists(payload.workflow_id) and any(
+        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
+        for pattern in list(created_spec.get("allowed_write_set") or [])
+    )
     if (
         str(created_spec.get("deliverable_kind") or "") == "source_code_delivery"
-        and project_workspace_manifest_exists(payload.workflow_id)
-        and any(
-            str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
-            for pattern in list(created_spec.get("allowed_write_set") or [])
-        )
+        and workspace_has_managed_paths
     ):
         result_payload = payload.payload if isinstance(payload.payload, dict) else {}
         write_worker_postrun_receipt(
@@ -4991,6 +5072,15 @@ def handle_ticket_result_submit(
                 ticket_id=payload.ticket_id,
                 git_commit_record=effective_git_commit_record.model_dump(mode="json") if effective_git_commit_record is not None else {},
             )
+    elif workspace_has_managed_paths:
+        materialize_workspace_delivery_files(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            project_checkout_path=get_settings().project_workspace_root / payload.workflow_id / "10-project",
+            written_artifacts=[
+                item.model_dump(mode="json") for item in effective_written_artifacts
+            ],
+        )
     if project_workspace_manifest_exists(payload.workflow_id):
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 

@@ -732,13 +732,14 @@ def test_autopilot_closeout_without_visual_milestone_still_writes_chain_report_a
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref="delivery_closeout_package",
         delivery_stage="CLOSEOUT",
-        allowed_write_set=["reports/closeout/tkt_autopilot_no_review_closeout/*"],
+        allowed_write_set=["20-evidence/closeout/tkt_autopilot_no_review_closeout/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must capture the final delivery evidence.",
             "Must produce a structured closeout package.",
         ],
         parent_ticket_id="tkt_autopilot_no_review_build",
+        input_artifact_refs=["art://runtime/tkt_autopilot_no_review_build/source-code.tsx"],
     )
     lease_response = client.post(
         "/api/v1/commands/ticket-lease",
@@ -765,6 +766,7 @@ def test_autopilot_closeout_without_visual_milestone_still_writes_chain_report_a
                 workflow_id=workflow_id,
                 ticket_id="tkt_autopilot_no_review_closeout",
                 node_id="node_ceo_delivery_closeout",
+                final_artifact_refs=["art://runtime/tkt_autopilot_no_review_build/source-code.tsx"],
             ),
             "idempotency_key": (
                 "ticket-result-submit:wf_autopilot_closeout_without_review:"

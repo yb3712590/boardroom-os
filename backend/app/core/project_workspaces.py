@@ -107,14 +107,14 @@ def infer_deliverable_kind(output_schema_ref: str | None) -> DeliverableKind:
     normalized = str(output_schema_ref or "").strip()
     if normalized == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         return DeliverableKind.SOURCE_CODE_DELIVERY
+    if normalized == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        return DeliverableKind.STRUCTURED_DOCUMENT_DELIVERY
     if normalized in {
         DELIVERY_CHECK_REPORT_SCHEMA_REF,
         UI_MILESTONE_REVIEW_SCHEMA_REF,
         MAKER_CHECKER_VERDICT_SCHEMA_REF,
     }:
         return DeliverableKind.REVIEW_EVIDENCE
-    if normalized == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
-        return DeliverableKind.CLOSEOUT_EVIDENCE
     return DeliverableKind.STRUCTURED_DOCUMENT_DELIVERY
 
 
@@ -1075,7 +1075,10 @@ def infer_ticket_workspace_bootstrap(ticket_payload: dict[str, Any]) -> TicketWo
         manifest.get("canonical_doc_refs") or []
     )
     doc_update_requirements = list(ticket_payload.get("doc_update_requirements") or [])
-    if not doc_update_requirements and deliverable_kind == DeliverableKind.SOURCE_CODE_DELIVERY:
+    if not doc_update_requirements and (
+        deliverable_kind == DeliverableKind.SOURCE_CODE_DELIVERY
+        or str(ticket_payload.get("output_schema_ref") or "").strip() == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
+    ):
         doc_update_requirements = list(manifest.get("default_doc_update_requirements") or [])
     git_policy = (
         GitPolicy(str(ticket_payload["git_policy"]))

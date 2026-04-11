@@ -1700,6 +1700,7 @@ def _delivery_closeout_package_result_submit_payload(
     include_review_request: bool = False,
     review_request: dict | None = None,
     artifact_refs: list[str] | None = None,
+    final_artifact_refs: list[str] | None = None,
     documentation_updates: list[dict] | None = None,
     written_artifact_path: str | None = None,
     idempotency_key: str | None = None,
@@ -1707,7 +1708,7 @@ def _delivery_closeout_package_result_submit_payload(
     closeout_ref = (artifact_refs or [f"art://runtime/{ticket_id}/delivery-closeout-package.json"])[0]
     payload = {
         "summary": f"Delivery closeout package prepared for {ticket_id}.",
-        "final_artifact_refs": [closeout_ref],
+        "final_artifact_refs": list(final_artifact_refs or ["art://runtime/tkt_review_final/option-a.json"]),
         "handoff_notes": [
             "Board-approved final option is captured in this closeout package.",
             "Final evidence remains linked back to the board review pack.",
@@ -1737,7 +1738,7 @@ def _delivery_closeout_package_result_submit_payload(
         "artifact_refs": [closeout_ref],
         "written_artifacts": [
             {
-                "path": written_artifact_path or f"reports/closeout/{ticket_id}/delivery-closeout-package.json",
+                "path": written_artifact_path or f"20-evidence/closeout/{ticket_id}/delivery-closeout-package.json",
                 "artifact_ref": closeout_ref,
                 "kind": "JSON",
                 "content_json": payload,
@@ -12685,10 +12686,22 @@ def test_final_review_approval_creates_closeout_ticket_and_completion_summary_us
     assert closeout_created_spec["delivery_stage"] == "CLOSEOUT"
     assert closeout_created_spec["ticket_id"] == closeout_ticket_id
     assert closeout_created_spec["parent_ticket_id"] == logical_review_ticket_id
+    assert closeout_created_spec["deliverable_kind"] == "structured_document_delivery"
+    assert closeout_created_spec["allowed_write_set"] == [f"20-evidence/closeout/{closeout_ticket_id}/*"]
     assert closeout_created_spec["auto_review_request"]["review_type"] == "INTERNAL_CLOSEOUT_REVIEW"
     assert any(
         "documentation updates" in criterion.lower() for criterion in closeout_created_spec["acceptance_criteria"]
     )
+    manifest_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "00-boardroom"
+        / "workflow"
+        / "workspace-manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert closeout_created_spec["required_read_refs"] == manifest["canonical_doc_refs"]
+    assert closeout_created_spec["doc_update_requirements"] == manifest["default_doc_update_requirements"]
     assert closeout_created_spec["input_process_asset_refs"]
     assert "documentation sync" in closeout_created_spec["auto_review_request"]["why_now"].lower()
     assert closeout_ticket["status"] == TICKET_STATUS_COMPLETED
@@ -12928,13 +12941,14 @@ def test_dashboard_completion_summary_supports_autopilot_closeout_without_visual
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref="delivery_closeout_package",
         delivery_stage="CLOSEOUT",
-        allowed_write_set=["reports/closeout/tkt_autopilot_dashboard_closeout/*"],
+        allowed_write_set=["20-evidence/closeout/tkt_autopilot_dashboard_closeout/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must capture the approved final delivery choice.",
             "Must produce a structured delivery closeout package.",
         ],
         parent_ticket_id="tkt_autopilot_dashboard_build",
+        input_artifact_refs=["art://runtime/tkt_autopilot_dashboard_build/source-code.tsx"],
         input_process_asset_refs=[
             build_source_code_delivery_process_asset_ref("tkt_autopilot_dashboard_build"),
         ],
@@ -12963,6 +12977,7 @@ def test_dashboard_completion_summary_supports_autopilot_closeout_without_visual
             workflow_id=workflow_id,
             ticket_id="tkt_autopilot_dashboard_closeout",
             node_id="node_ceo_delivery_closeout",
+            final_artifact_refs=["art://runtime/tkt_autopilot_dashboard_build/source-code.tsx"],
         ),
     )
     auto_advance_workflow_to_next_stop(
@@ -13033,7 +13048,7 @@ def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_
         node_id=closeout_node_id,
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref="delivery_closeout_package",
-        allowed_write_set=[f"reports/closeout/{closeout_ticket_id}/*"],
+        allowed_write_set=[f"20-evidence/closeout/{closeout_ticket_id}/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must capture the approved final delivery choice.",
@@ -13176,7 +13191,7 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
         node_id=closeout_node_id,
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref="delivery_closeout_package",
-        allowed_write_set=[f"reports/closeout/{closeout_ticket_id}/*"],
+        allowed_write_set=[f"20-evidence/closeout/{closeout_ticket_id}/*"],
         allowed_tools=["read_artifact", "write_artifact"],
         acceptance_criteria=[
             "Must capture the approved final delivery choice.",

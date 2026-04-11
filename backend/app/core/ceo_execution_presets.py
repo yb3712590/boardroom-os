@@ -545,7 +545,7 @@ def _allowed_write_set_for_preset(ticket_id: str, preset: CEOCreateTicketPreset)
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         return [f"reports/check/{ticket_id}/*"]
     if preset.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
-        return [f"reports/closeout/{ticket_id}/*"]
+        return [f"20-evidence/closeout/{ticket_id}/*"]
     return [
         f"artifacts/ui/scope-followups/{ticket_id}/*",
         f"reports/review/{ticket_id}/*",
@@ -631,6 +631,35 @@ def _review_request_for_preset(summary: str, preset: CEOCreateTicketPreset) -> d
     return None
 
 
+def _inherit_input_artifact_refs_for_preset(
+    repository: "ControlPlaneRepository" | None,
+    *,
+    payload: CEOCreateTicketPayload,
+    preset: CEOCreateTicketPreset,
+) -> list[str]:
+    if repository is None or preset.output_schema_ref != DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        return []
+
+    inherited_artifact_refs: list[str] = []
+    source_ticket_ids: list[str] = []
+    if payload.parent_ticket_id:
+        source_ticket_ids.append(payload.parent_ticket_id)
+    if payload.dispatch_intent is not None:
+        for dependency_ticket_id in list(payload.dispatch_intent.dependency_gate_refs or []):
+            normalized_ticket_id = str(dependency_ticket_id).strip()
+            if normalized_ticket_id and normalized_ticket_id not in source_ticket_ids:
+                source_ticket_ids.append(normalized_ticket_id)
+    with repository.connection() as connection:
+        for source_ticket_id in source_ticket_ids:
+            terminal_event = repository.get_latest_ticket_terminal_event(connection, source_ticket_id)
+            terminal_payload = terminal_event.get("payload") if terminal_event is not None else {}
+            for artifact_ref in list((terminal_payload or {}).get("artifact_refs") or []):
+                normalized_artifact_ref = str(artifact_ref).strip()
+                if normalized_artifact_ref and normalized_artifact_ref not in inherited_artifact_refs:
+                    inherited_artifact_refs.append(normalized_artifact_ref)
+    return inherited_artifact_refs
+
+
 def build_ceo_create_ticket_command(
     *,
     workflow: dict[str, Any],
@@ -658,6 +687,13 @@ def build_ceo_create_ticket_command(
         if is_project_init_scope or is_autopilot_architecture_kickoff
         else []
     )
+    for artifact_ref in _inherit_input_artifact_refs_for_preset(
+        repository,
+        payload=payload,
+        preset=preset,
+    ):
+        if artifact_ref not in input_artifact_refs:
+            input_artifact_refs.append(artifact_ref)
     inherited_process_asset_refs: list[str] = []
     if repository is not None and preset.output_schema_ref != CONSENSUS_DOCUMENT_SCHEMA_REF:
         source_ticket_ids: list[str] = []

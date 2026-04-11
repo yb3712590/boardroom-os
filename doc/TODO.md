@@ -22,6 +22,8 @@
 - 2026-04-11 第二段纠偏已落地：`BUILD` 主结果已经硬切到 `source_code_delivery`，workspace-managed staged follow-up build 也已改成 `10-project / 20-evidence` write set；runtime 会落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产
 - 2026-04-11 第三段纠偏已落地：`10-project/` 现在会初始化成真实 git repo；workspace-managed 代码票在 `ticket-start` 时会分配真实 worktree，在 `ticket-result-submit` 时会真实写盘并生成服务端 git commit 记录；final review approve 会先做真实 merge，成功后才继续 closeout
 - 2026-04-11 第四段纠偏已落地：CEO shadow snapshot 现已补上 `task_sensemaking / capability_plan / controller_state`，`ceo_scheduler` comparison、deterministic fallback、validator 和 `workflow_auto_advance` 的 idle gate 已开始共用这套 controller truth；当前先覆盖 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation` 的实现 fanout
+- 2026-04-11 第五段纠偏已落地：`delivery_closeout_package` 已收回 current `structured_document_delivery` 主线，closeout 票默认写入 `20-evidence/closeout/<ticket>/`，并会继承 canonical docs、doc update 要求与上游交付证据；`ticket-result-submit` 现在会额外硬校验 `payload.final_artifact_refs` 必须对齐已知 delivery evidence
+- 2026-04-11 第六段纠偏已落地：live runner 已抽成共享 harness，当前主线保留 3 条真实入口：`library_management_autopilot_live`、`requirement_elicitation_autopilot_live`、`architecture_governance_autopilot_live`；这轮已补齐脚本和最小单测，但当前环境还没重跑真实 provider 长测
 
 ## 当前批次
 
@@ -51,9 +53,9 @@
 - `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；当前已落第一段 project workspace 真相：`project-init` 现在会创建三分区项目工作区，`ticket-create` 会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`，workspace-managed ticket 也会生成 dossier
 - `P0-COR-002` 进行中：收正单一 workflow controller。当前第二段已落：`workflow_controller` 会在 architect gate 场景额外产出 `capability_plan.required_governance_ticket_plan`，并继续统一 `ceo_scheduler / deterministic fallback / validator / workflow_auto_advance` 的下一步动作；当前覆盖面仍以 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation` 为主，旧 scope-consensus 主链和更广义 deliverable 还没切完
 - `P0-COR-003` 进行中：收正 capability gap 驱动的招聘、协作和阻断逻辑。当前第二段已落：autopilot backlog fanout 遇到 `architect_primary` / 技术决策会议硬约束时，会先走 `HIRE_EMPLOYEE / REQUEST_MEETING / fail-close`，不再静默 fallback 到现有 frontend；当 architect 已在岗但缺治理文档时，系统现在会自动补一张稳定 node_id 的 `architect_primary + architecture_brief` 票，而不是继续停在 `NO_ACTION`
-- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第六段已把最小 contract 扩到当前主线全部 `structured_document_delivery`：`ticket-result-submit` 会统一硬校验 declared artifact / written artifact 对齐，`consensus_document` 与五类治理文档都已纳入；治理文档继续保留 `document_kind_ref` 对齐专属校验。但更广义的 research / analysis deliverable kind 还没正式引入
-- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第六段已把 `consensus_document` 的 CEO reuse gate 收正到 `MEETING_ESCALATION` 批准后才可复用，五类治理文档继续只复用过 internal governance gate 的逻辑文档；architect / meeting gate 现在已先在 autopilot backlog fanout 落第一段，但 closeout 口径扩展和 live 退出标准重建还没做
-- `P0-COR-006` 进行中：当前已补 deterministic 回归，覆盖 architect gate -> 治理补票 -> implementation fanout 这条主线；`backend/tests/live/library_management_autopilot_live.py` 也已补上“必须出现已过 governance gate 的 architect 文档证据”断言。但本轮还没有在当前环境重跑真实 live provider 长测，需求调研 / 系统架构拆解 / 模块化实施三类退出口径仍在继续补齐
+- `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第七段已把 `delivery_closeout_package` 也并回 `structured_document_delivery` 主线：closeout 票默认写到 `20-evidence/closeout/<ticket>/`，继续复用 declared artifact / written artifact 对齐 gate，并把 closeout 需要的 canonical docs / doc update 要求一起补齐；更广义的 research / analysis deliverable kind 还没正式引入
+- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第七段已把 closeout 提交口径收正到“final_artifact_refs 必须对齐已知 delivery evidence”，并统一 board-approved closeout、autopilot closeout 与 dashboard completion 的真相链；`FOLLOW_UP_REQUIRED` 继续只作为 checker 可见风险，不自动升成 schema 级硬失败
+- `P0-COR-006` 进行中：当前已把 live runner 抽成共享 harness，并补齐 3 条真实入口：`backend/tests/live/requirement_elicitation_autopilot_live.py`、`backend/tests/live/architecture_governance_autopilot_live.py`、`backend/tests/live/library_management_autopilot_live.py`。这轮只完成脚本与最小单测收口，真实 live provider 长测仍待在当前环境重跑
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

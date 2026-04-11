@@ -386,6 +386,64 @@ def _governance_result_submit_payload(
     }
 
 
+def _closeout_result_submit_payload(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    final_artifact_refs: list[str] | None = None,
+    written_artifact_path: str | None = None,
+) -> dict[str, object]:
+    closeout_artifact_ref = f"art://runtime/{ticket_id}/delivery-closeout-package.json"
+    payload = {
+        "summary": f"Delivery closeout package prepared for {ticket_id}.",
+        "final_artifact_refs": list(final_artifact_refs or [f"art://runtime/{ticket_id}/approved-final.json"]),
+        "handoff_notes": [
+            "Board-approved final option is captured in this closeout package.",
+            "Final evidence remains linked back to the approved delivery artifacts.",
+        ],
+        "documentation_updates": [
+            {
+                "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                "status": "UPDATED",
+                "summary": "Recorded the final closeout handoff state.",
+            },
+            {
+                "doc_ref": "10-project/docs/history/memory-recent.md",
+                "status": "NO_CHANGE_REQUIRED",
+                "summary": "No new cross-ticket memory needed during closeout.",
+            },
+        ],
+    }
+    return {
+        "workflow_id": workflow_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "submitted_by": "emp_frontend_2",
+        "result_status": "completed",
+        "schema_version": "delivery_closeout_package_v1",
+        "payload": payload,
+        "artifact_refs": [closeout_artifact_ref],
+        "written_artifacts": [
+            {
+                "path": written_artifact_path or f"20-evidence/closeout/{ticket_id}/delivery-closeout-package.json",
+                "artifact_ref": closeout_artifact_ref,
+                "kind": "JSON",
+                "content_json": payload,
+            }
+        ],
+        "assumptions": ["Closeout package stays inside the approved delivery boundary."],
+        "issues": [],
+        "confidence": 0.9,
+        "needs_escalation": False,
+        "summary": "Structured delivery closeout package submitted.",
+        "failure_kind": None,
+        "failure_message": None,
+        "failure_detail": None,
+        "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:closeout",
+    }
+
+
 def test_source_code_delivery_requires_documentation_updates(client) -> None:
     init_response = client.post(
         "/api/v1/commands/project-init",
@@ -642,6 +700,134 @@ def test_structured_document_delivery_does_not_require_git_commit(client) -> Non
     ticket = repository.get_current_ticket_projection(ticket_id)
     assert ticket is not None
     assert ticket["status"] == "COMPLETED"
+
+
+def test_closeout_ticket_create_uses_structured_document_workspace_bootstrap(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Closeout workspace bootstrap demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_closeout_workspace_bootstrap_001"
+    node_id = "node_closeout_workspace_bootstrap_001"
+
+    response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "delivery_closeout_package",
+            "allowed_write_set": [f"20-evidence/closeout/{ticket_id}/*"],
+            "input_artifact_refs": ["art://runtime/tkt_build_001/source-code.tsx"],
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:closeout-workspace-bootstrap",
+        },
+    )
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id)
+    assert created_spec is not None
+    manifest_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "00-boardroom"
+        / "workflow"
+        / "workspace-manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert created_spec["deliverable_kind"] == "structured_document_delivery"
+    assert created_spec["required_read_refs"] == manifest["canonical_doc_refs"]
+    assert created_spec["doc_update_requirements"] == manifest["default_doc_update_requirements"]
+
+
+def test_closeout_ticket_requires_final_artifact_refs_to_match_known_delivery_evidence(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Closeout final artifact gate demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_closeout_final_artifact_gate_001"
+    node_id = "node_closeout_final_artifact_gate_001"
+    known_final_artifact_ref = "art://runtime/tkt_build_001/source-code.tsx"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "delivery_closeout_package",
+            "allowed_write_set": [f"20-evidence/closeout/{ticket_id}/*"],
+            "input_artifact_refs": [known_final_artifact_ref],
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:closeout-final-artifact-gate",
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_closeout_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            final_artifact_refs=["art://runtime/tkt_unknown_build/source-code.tsx"],
+        ),
+    )
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+
+
+def test_closeout_ticket_result_submit_materializes_workspace_evidence_files(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Closeout workspace evidence demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_closeout_workspace_evidence_001"
+    node_id = "node_closeout_workspace_evidence_001"
+    known_final_artifact_ref = "art://runtime/tkt_build_001/source-code.tsx"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "delivery_closeout_package",
+            "allowed_write_set": [f"20-evidence/closeout/{ticket_id}/*"],
+            "input_artifact_refs": [known_final_artifact_ref],
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:closeout-workspace-evidence",
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_closeout_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            final_artifact_refs=[known_final_artifact_ref],
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    closeout_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "20-evidence"
+        / "closeout"
+        / ticket_id
+        / "delivery-closeout-package.json"
+    )
+    assert closeout_path.is_file()
+    closeout_payload = json.loads(closeout_path.read_text(encoding="utf-8"))
+    assert closeout_payload["final_artifact_refs"] == [known_final_artifact_ref]
 
 
 def test_governance_document_requires_declared_artifact_ref(client) -> None:

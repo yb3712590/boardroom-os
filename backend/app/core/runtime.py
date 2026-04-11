@@ -982,12 +982,17 @@ def _build_runtime_success_payload(
             ],
         }
     if execution_package.execution.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        final_artifact_refs = [
+            str(item).strip()
+            for item in list(execution_package.execution.input_artifact_refs)
+            if str(item).strip()
+        ] or list(artifact_refs)
         return {
             "summary": (
                 "Final delivery closeout package captures the approved board choice and the handoff notes "
                 "needed to close the workflow."
             ),
-            "final_artifact_refs": list(artifact_refs),
+            "final_artifact_refs": final_artifact_refs,
             "handoff_notes": [
                 "Board-approved final option is captured in the closeout package.",
                 "Final evidence remains linked back to the board review pack for audit.",

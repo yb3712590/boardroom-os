@@ -23,6 +23,7 @@
 - `project-init` 现在还会创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE`
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消、人工恢复
 - workspace-managed 代码票现在会走最小文档 hook：编译前写 `worker-preflight` 回执，结果提交时硬校验文档更新、测试证据和 git commit，并写 `worker-postrun / evidence-capture / git-closeout` 回执
+- `delivery_closeout_package` 现在也走 `structured_document_delivery` 主线：默认写到 `20-evidence/closeout/<ticket>/`，并额外校验 `payload.final_artifact_refs` 必须对齐已知 delivery evidence
 - 员工治理最小闭环：`employee-hire-request / employee-replace-request / employee-freeze / employee-restore`
 - meeting room 最小版：既可手动发起，也支持 CEO 在窄触发条件下自动发起 `TECHNICAL_DECISION`
 - artifact upload/import、artifact cleanup、dashboard cleanup 状态读面
@@ -85,9 +86,17 @@ export BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY="<your-api-key>"
 python -m tests.live.library_management_autopilot_live
 ```
 
-这条场景默认会先清空再重建：
+当前主线 live 入口有 3 条：
+
+- `python -m tests.live.library_management_autopilot_live`
+- `python -m tests.live.requirement_elicitation_autopilot_live`
+- `python -m tests.live.architecture_governance_autopilot_live`
+
+每条场景默认都会先清空再重建自己的目录：
 
 - `backend/data/scenarios/library_management_autopilot_live/`
+- `backend/data/scenarios/requirement_elicitation_autopilot_live/`
+- `backend/data/scenarios/architecture_governance_autopilot_live/`
 
 里面会单独保存：
 
@@ -136,6 +145,8 @@ npm run test:run
 ```bash
 cd backend
 python -m tests.live.library_management_autopilot_live
+python -m tests.live.requirement_elicitation_autopilot_live
+python -m tests.live.architecture_governance_autopilot_live
 ```
 
 它不进入默认 `pytest tests/ -q`。
@@ -149,9 +160,9 @@ python -m tests.live.library_management_autopilot_live
 - `backend/data/runtime-provider-config.json`
 - `backend/data/developer_inspector/`
 
-live 集成场景会把这些路径整体重定向到：
+live 集成场景会把这些路径整体重定向到各自场景目录：
 
-- `backend/data/scenarios/library_management_autopilot_live/`
+- `backend/data/scenarios/<scenario-slug>/`
 
 项目工作区相关补记：
 
@@ -210,12 +221,17 @@ live 集成场景会把这些路径整体重定向到：
 - `frontend_engineer_primary -> delivery_closeout_package`
 - `checker_primary -> maker_checker_verdict`
 
-当前新增了一条真实长测约束：
+当前 live runner 已收成共享 harness，3 条主线入口共用同一套 provider 配置与目录骨架：
 
-- `tests.live.library_management_autopilot_live` 会先把所有角色统一绑定到 `prov_openai_compat::gpt-5.4`
+- `tests.live.library_management_autopilot_live`
+- `tests.live.requirement_elicitation_autopilot_live`
+- `tests.live.architecture_governance_autopilot_live`
+- provider 模板固定从 `backend/data/integration-test-provider-config.json` 读取；后续要追加 provider，直接改这一个文件里的 `providers[] / provider_model_entries[] / role_bindings[]`
+- 会先把所有角色统一绑定到 `prov_openai_compat::gpt-5.4`
 - `architect_primary` 固定走 `xhigh`
 - 其他 live 角色固定走 `high`
 - runtime 结果现在会把 `effective_reasoning_effort` 一并写进 assumptions，方便长测验收
+- 每条场景都会产出 `run_report.json`、`ticket_context_archives/` 和 `failure_snapshots/`
 
 失败映射：
 
@@ -264,10 +280,10 @@ live 集成场景会把这些路径整体重定向到：
 - `ceo-shadow.reuse_candidates.recent_completed_tickets` 不会再提前暴露未过 `MEETING_ESCALATION` 的 `consensus_document`
 - 五类治理文档仍然只会在 internal governance gate 通过后进入复用候选
 
-如果你在查 live 场景为什么卡住，优先看这两个本地目录：
+如果你在查 live 场景为什么卡住，优先看当前场景目录下这两个位置：
 
-- `backend/data/scenarios/library_management_autopilot_live/ticket_context_archives/`
-- `backend/data/scenarios/library_management_autopilot_live/failure_snapshots/`
+- `backend/data/scenarios/<scenario-slug>/ticket_context_archives/`
+- `backend/data/scenarios/<scenario-slug>/failure_snapshots/`
 
 完整接口说明见 [api-reference.md](api-reference.md)。
 

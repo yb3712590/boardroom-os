@@ -550,7 +550,7 @@ def _mock_provider_payload_for_schema(schema_ref: str) -> dict:
     if schema_ref == "delivery_closeout_package":
         return {
             "summary": "Provider-backed closeout package captured the approved board choice.",
-            "final_artifact_refs": ["art://runtime/provider/delivery-closeout-package.json"],
+            "final_artifact_refs": ["art://runtime/tkt_scope_provider_review/option-a.json"],
             "handoff_notes": [
                 "Approved board choice is captured in the closeout package.",
                 "Final evidence stays linked to the board review pack for audit.",
