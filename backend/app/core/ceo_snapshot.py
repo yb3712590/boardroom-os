@@ -11,6 +11,7 @@ from app.core.output_schemas import (
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.workflow_controller import build_workflow_controller_view
 from app.db.repository import ControlPlaneRepository
 
 
@@ -263,6 +264,7 @@ def build_ceo_shadow_snapshot(
         if incident["workflow_id"] == workflow_id
     ]
 
+    employees = repository.list_employee_projections()
     with repository.connection() as connection:
         ticket_rows = connection.execute(
             """
@@ -295,16 +297,26 @@ def build_ceo_shadow_snapshot(
                 connection=connection,
             ),
         }
-    employees = repository.list_employee_projections()
+        controller_view = build_workflow_controller_view(
+            repository,
+            workflow=workflow,
+            tickets=tickets,
+            nodes=nodes,
+            approvals=open_approvals,
+            incidents=open_incidents,
+            employees=employees,
+            trigger_ref=trigger_ref,
+            meeting_candidates=build_ceo_meeting_candidates(
+                repository,
+                workflow_id=workflow_id,
+                trigger_type=trigger_type,
+                trigger_ref=trigger_ref,
+                approvals=open_approvals,
+                incidents=open_incidents,
+            ),
+            connection=connection,
+        )
     ready_tickets = [ticket for ticket in tickets if ticket["status"] == "PENDING"]
-    meeting_candidates = build_ceo_meeting_candidates(
-        repository,
-        workflow_id=workflow_id,
-        trigger_type=trigger_type,
-        trigger_ref=trigger_ref,
-        approvals=open_approvals,
-        incidents=open_incidents,
-    )
 
     return {
         "trigger": {
@@ -422,5 +434,8 @@ def build_ceo_shadow_snapshot(
             for preview in repository.get_recent_event_previews()
         ],
         "reuse_candidates": reuse_candidates,
-        "meeting_candidates": meeting_candidates,
+        "meeting_candidates": controller_view["meeting_candidates"],
+        "task_sensemaking": controller_view["task_sensemaking"],
+        "capability_plan": controller_view["capability_plan"],
+        "controller_state": controller_view["controller_state"],
     }

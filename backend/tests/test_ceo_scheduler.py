@@ -153,6 +153,41 @@ def _persist_autopilot_workflow_profile(repository, workflow_id: str) -> None:
         repository.refresh_projections(connection)
 
 
+def _persist_workflow_directive_details(
+    repository,
+    workflow_id: str,
+    *,
+    workflow_profile: str | None = None,
+    hard_constraints: list[str] | None = None,
+) -> None:
+    with repository.transaction() as connection:
+        rows = connection.execute(
+            """
+            SELECT event_id, payload_json
+            FROM events
+            WHERE workflow_id = ? AND event_type IN (?, ?)
+            ORDER BY sequence_no ASC
+            """,
+            (workflow_id, EVENT_WORKFLOW_CREATED, EVENT_BOARD_DIRECTIVE_RECEIVED),
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if workflow_profile is not None:
+                payload["workflow_profile"] = workflow_profile
+            if hard_constraints is not None:
+                payload["hard_constraints"] = list(hard_constraints)
+            connection.execute(
+                "UPDATE events SET payload_json = ? WHERE event_id = ?",
+                (json.dumps(payload, sort_keys=True), row["event_id"]),
+            )
+        if workflow_profile is not None:
+            connection.execute(
+                "UPDATE workflow_projection SET workflow_profile = ? WHERE workflow_id = ?",
+                (workflow_profile, workflow_id),
+            )
+        repository.refresh_projections(connection)
+
+
 def _approve_scope_review(client, workflow_id: str) -> None:
     approval = next(
         item for item in client.app.state.repository.list_open_approvals() if item["workflow_id"] == workflow_id
@@ -419,6 +454,8 @@ def _create_and_complete_governance_ticket(
     output_schema_ref: str = ARCHITECTURE_BRIEF_SCHEMA_REF,
     summary: str = "Structured governance document is ready for downstream delivery.",
     approve_internal_gate: bool = True,
+    role_profile_ref: str = "frontend_engineer_primary",
+    leased_by: str = "emp_frontend_2",
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -429,7 +466,7 @@ def _create_and_complete_governance_ticket(
                 node_id=node_id,
                 retry_budget=0,
             ),
-            "role_profile_ref": "frontend_engineer_primary",
+            "role_profile_ref": role_profile_ref,
             "output_schema_ref": output_schema_ref,
             "allowed_write_set": [f"reports/governance/{ticket_id}/*"],
         },
@@ -443,7 +480,7 @@ def _create_and_complete_governance_ticket(
             "workflow_id": workflow_id,
             "ticket_id": ticket_id,
             "node_id": node_id,
-            "leased_by": "emp_frontend_2",
+            "leased_by": leased_by,
             "lease_timeout_sec": 600,
             "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:governance",
         },
@@ -456,7 +493,7 @@ def _create_and_complete_governance_ticket(
             "workflow_id": workflow_id,
             "ticket_id": ticket_id,
             "node_id": node_id,
-            "started_by": "emp_frontend_2",
+            "started_by": leased_by,
             "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:governance",
         },
     )
@@ -494,7 +531,7 @@ def _create_and_complete_governance_ticket(
             "workflow_id": workflow_id,
             "ticket_id": ticket_id,
             "node_id": node_id,
-            "submitted_by": "emp_frontend_2",
+            "submitted_by": leased_by,
             "result_status": "completed",
             "schema_version": f"{output_schema_ref}_v1",
             "payload": governance_payload,
@@ -810,6 +847,9 @@ def _create_and_complete_backlog_recommendation_ticket(
     ticket_id: str,
     node_id: str,
     approve_internal_gate: bool = True,
+    tickets: list[dict] | None = None,
+    dependency_graph: list[dict] | None = None,
+    recommended_sequence: list[str] | None = None,
 ) -> None:
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -870,7 +910,8 @@ def _create_and_complete_backlog_recommendation_ticket(
                 "summary": "把 backlog recommendation 变成实现工单。",
                 "content_markdown": "先做底座，再做登录，再做仪表盘。",
                 "content_json": {
-                    "tickets": [
+                    "tickets": tickets
+                    or [
                         {
                             "ticket_id": "BR-T01",
                             "name": "登录能力交付",
@@ -898,7 +939,8 @@ def _create_and_complete_backlog_recommendation_ticket(
                 "summary": "先底座，再登录，再仪表盘。",
                 "content_markdown": "BR-T02 和 BR-T01 先行，BR-T03 依赖 BR-T02。",
                 "content_json": {
-                    "dependency_graph": [
+                    "dependency_graph": dependency_graph
+                    or [
                         {
                             "ticket_id": "BR-T01",
                             "depends_on": [],
@@ -915,7 +957,8 @@ def _create_and_complete_backlog_recommendation_ticket(
                             "reason": "仪表盘需要布局承载。",
                         },
                     ],
-                    "recommended_sequence": [
+                    "recommended_sequence": recommended_sequence
+                    or [
                         "BR-T02 主布局与通用组件底座",
                         "BR-T01 登录能力交付",
                         "BR-T03 首页仪表盘交付",
@@ -2725,6 +2768,23 @@ def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_
     monkeypatch,
 ):
     workflow_id = _seed_workflow(client, "wf_live_backlog_followup_fallback", "CEO backlog follow-up fallback")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_gate",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_platform_gate",
+        role_type="platform_sre",
+        role_profile_refs=["platform_sre_primary"],
+    )
     _set_live_provider(client)
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     _create_and_complete_backlog_recommendation_ticket(
@@ -2732,6 +2792,30 @@ def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_
         workflow_id=workflow_id,
         ticket_id="tkt_backlog_followup_parent",
         node_id="node_ceo_backlog_recommendation",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            },
+            {
+                "ticket_id": "BR-OPS-01",
+                "name": "发布与监控底座",
+                "priority": "P0",
+                "target_role": "platform_sre",
+                "scope": ["部署流水线", "监控告警"],
+            },
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+            {"ticket_id": "BR-OPS-01", "depends_on": [], "reason": "平台底座可并行先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+            "BR-OPS-01 发布与监控底座",
+        ],
     )
 
     from app.core import ceo_proposer
@@ -2781,22 +2865,218 @@ def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_
 
     assert all(spec is not None for spec in created_specs)
     assert {spec["output_schema_ref"] for spec in created_specs if spec is not None} == {"source_code_delivery"}
-    assert {spec["role_profile_ref"] for spec in created_specs if spec is not None} == {
-        "frontend_engineer_primary"
-    }
     assert {spec["parent_ticket_id"] for spec in created_specs if spec is not None} == {
         "tkt_backlog_followup_parent"
     }
-    assert {spec["dispatch_intent"]["assignee_employee_id"] for spec in created_specs if spec is not None} == {
-        "emp_frontend_2"
+    specs_by_node_id = {
+        spec["node_id"]: spec
+        for spec in created_specs
+        if spec is not None
     }
-    assert {tuple(spec["dispatch_intent"]["dependency_gate_refs"]) for spec in created_specs if spec is not None} == {
-        ()
+    assert set(specs_by_node_id) == {
+        "node_backlog_followup_br_be_01",
+        "node_backlog_followup_br_ops_01",
     }
-    assert {spec["node_id"] for spec in created_specs if spec is not None} == {
-        "node_backlog_followup_br_t01",
-        "node_backlog_followup_br_t02",
-    }
+    assert specs_by_node_id["node_backlog_followup_br_be_01"]["role_profile_ref"] == "backend_engineer_primary"
+    assert specs_by_node_id["node_backlog_followup_br_ops_01"]["role_profile_ref"] == "platform_sre_primary"
+    assert specs_by_node_id["node_backlog_followup_br_be_01"]["dispatch_intent"]["dependency_gate_refs"] == []
+    assert specs_by_node_id["node_backlog_followup_br_ops_01"]["dispatch_intent"]["dependency_gate_refs"] == []
+
+
+def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_backlog_capability_plan", "Capability-driven backlog fanout")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_plan",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_database_plan",
+        role_type="database_engineer",
+        role_profile_refs=["database_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_capability_parent",
+        node_id="node_ceo_backlog_capability",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            },
+            {
+                "ticket_id": "BR-DB-01",
+                "name": "库存数据库建模",
+                "priority": "P0",
+                "target_role": "database_engineer",
+                "scope": ["数据库 schema", "索引优化"],
+            },
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+            {"ticket_id": "BR-DB-01", "depends_on": ["BR-BE-01"], "reason": "数据库结构依赖服务边界。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+            "BR-DB-01 库存数据库建模",
+        ],
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_capability_parent",
+    )
+
+    assert snapshot["task_sensemaking"]["task_type"] == "implementation_fanout"
+    assert snapshot["task_sensemaking"]["deliverable_kind"] == "source_code_delivery"
+    assert snapshot["controller_state"]["state"] == "READY_FOR_FANOUT"
+    assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert [item["ticket_key"] for item in snapshot["capability_plan"]["followup_ticket_plans"]] == [
+        "BR-BE-01",
+        "BR-DB-01",
+    ]
+    assert [item["role_profile_ref"] for item in snapshot["capability_plan"]["followup_ticket_plans"]] == [
+        "backend_engineer_primary",
+        "database_engineer_primary",
+    ]
+
+
+def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_backlog_architect_gate", "Architect gate")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
+        ],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_architect_parent",
+        node_id="node_ceo_backlog_architect",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_architect_parent",
+    )
+
+    assert run["snapshot"]["controller_state"]["state"] == "ARCHITECT_REQUIRED"
+    assert run["snapshot"]["controller_state"]["recommended_action"] == "HIRE_EMPLOYEE"
+    assert run["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    assert run["executed_actions"][0]["payload"]["role_profile_refs"] == ["architect_primary"]
+
+
+def test_ceo_shadow_run_requests_meeting_before_backlog_followup_when_required(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_backlog_meeting_gate", "Meeting gate")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
+            "关键实现前必须先通过技术决策会议锁定实现边界。",
+        ],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_gate",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_meeting",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_architect_gate_doc",
+        node_id="node_architect_gate_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        role_profile_ref="architect_primary",
+        leased_by="emp_architect_gate",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_meeting_parent",
+        node_id="node_ceo_backlog_meeting",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_meeting_parent",
+    )
+
+    assert run["snapshot"]["controller_state"]["state"] == "MEETING_REQUIRED"
+    assert run["snapshot"]["controller_state"]["recommended_action"] == "REQUEST_MEETING"
+    assert any(
+        item["source_ticket_id"] == "tkt_backlog_meeting_parent" and item["eligible"] is True
+        for item in run["snapshot"]["meeting_candidates"]
+    )
+    assert run["accepted_actions"][0]["action_type"] == "REQUEST_MEETING"
+    assert run["executed_actions"][0]["action_type"] == "REQUEST_MEETING"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
 
 
 

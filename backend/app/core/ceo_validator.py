@@ -17,7 +17,7 @@ from app.core.execution_targets import (
     infer_execution_contract_payload,
     employee_supports_execution_contract,
 )
-from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY
+from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY, SOURCE_CODE_DELIVERY_SCHEMA_REF
 from app.core.persona_profiles import (
     build_seeded_persona_variant,
     build_high_overlap_rejection_reason,
@@ -298,6 +298,45 @@ def validate_ceo_action_batch(
             if repository.get_current_node_projection(action.payload.workflow_id, action.payload.node_id) is not None:
                 rejected_actions.append(_action_entry(action, "node_id already exists in the current workflow."))
                 continue
+            if snapshot is not None and action.payload.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+                controller_state = snapshot.get("controller_state") or {}
+                controller_gate_state = str(controller_state.get("state") or "").strip()
+                if controller_gate_state in {"ARCHITECT_REQUIRED", "MEETING_REQUIRED"}:
+                    rejected_actions.append(
+                        _action_entry(
+                            action,
+                            str(controller_state.get("blocking_reason") or "Controller gate must be satisfied first."),
+                        )
+                    )
+                    continue
+                planned_followups = list((snapshot.get("capability_plan") or {}).get("followup_ticket_plans") or [])
+                if planned_followups:
+                    matching_plan = next(
+                        (
+                            item
+                            for item in planned_followups
+                            if str(item.get("node_id") or "") == action.payload.node_id
+                            and str(item.get("role_profile_ref") or "") == action.payload.role_profile_ref
+                        ),
+                        None,
+                    )
+                    if matching_plan is None:
+                        rejected_actions.append(
+                            _action_entry(
+                                action,
+                                "CREATE_TICKET does not match the current capability_plan followup ticket routing.",
+                            )
+                        )
+                        continue
+                    planned_assignee_employee_id = str(matching_plan.get("assignee_employee_id") or "").strip()
+                    if planned_assignee_employee_id and planned_assignee_employee_id != assignee_employee_id:
+                        rejected_actions.append(
+                            _action_entry(
+                                action,
+                                "CREATE_TICKET assignee does not match the current capability_plan routing.",
+                            )
+                        )
+                        continue
             accepted_actions.append(
                 _action_entry(
                     action,

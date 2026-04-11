@@ -21,6 +21,7 @@
 - 2026-04-10 live 集成测试新增确认：当时主线虽然能跑到 closeout，但 BUILD 还在交占位式文档产物，不是真实源码交付；这也是 `P0-COR` 被提升为最高优先级的直接原因
 - 2026-04-11 第二段纠偏已落地：`BUILD` 主结果已经硬切到 `source_code_delivery`，workspace-managed staged follow-up build 也已改成 `10-project / 20-evidence` write set；runtime 会落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产
 - 2026-04-11 第三段纠偏已落地：`10-project/` 现在会初始化成真实 git repo；workspace-managed 代码票在 `ticket-start` 时会分配真实 worktree，在 `ticket-result-submit` 时会真实写盘并生成服务端 git commit 记录；final review approve 会先做真实 merge，成功后才继续 closeout
+- 2026-04-11 第四段纠偏已落地：CEO shadow snapshot 现已补上 `task_sensemaking / capability_plan / controller_state`，`ceo_scheduler` comparison、deterministic fallback、validator 和 `workflow_auto_advance` 的 idle gate 已开始共用这套 controller truth；当前先覆盖 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation` 的实现 fanout
 
 ## 当前批次
 
@@ -48,10 +49,10 @@
 7. 重建 live 回归矩阵：至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，确保 CEO 是按任务现实决策，而不是按现有角色池静默派单。
 
 - `P0-COR-001` 进行中：收正 canonical 协议，把 `CEO action / provider config / runtime result / ticket deliverable` 统一到单一主线真相；当前已落第一段 project workspace 真相：`project-init` 现在会创建三分区项目工作区，`ticket-create` 会自动补 `project_workspace_ref / project_methodology_profile / deliverable_kind / canonical_doc_refs / required_read_refs / doc_update_requirements / git_policy`，workspace-managed ticket 也会生成 dossier
-- `P0-COR-002` 待开始：收正单一 workflow controller，把 `task_kind / deliverable_kind / capability_plan / staffing_gaps / coordination_mode` 变成统一控制输入，统一 `workflow_auto_advance / scheduler_runner / ceo_scheduler / deterministic fallback` 的推进语义、状态来源和完成定义，禁止再按现有员工池静默改写 role 或 assignee
-- `P0-COR-003` 待开始：收正 capability gap 驱动的招聘、协作和阻断逻辑。当任务现实需要架构设计、系统分析、实现、测试或治理能力，而 active roster 无法覆盖时，系统必须显式招聘、显式开会或显式阻断；`architect_primary` 只是其中一种可能结果，不再是所有项目的默认前置
+- `P0-COR-002` 进行中：收正单一 workflow controller。当前第一段已落：`workflow_controller` 会从 snapshot 产出 `task_sensemaking / capability_plan / controller_state`，并开始统一 `ceo_scheduler / deterministic fallback / validator / workflow_auto_advance` 的实现 fanout判断；但覆盖面目前只到 `CEO_AUTOPILOT_FINE_GRAINED + backlog_recommendation`，旧 scope-consensus 主链和更广义 deliverable 还没切完
+- `P0-COR-003` 进行中：收正 capability gap 驱动的招聘、协作和阻断逻辑。当前第一段已落：autopilot backlog fanout 遇到 `architect_primary` / 技术决策会议硬约束时，会先走 `HIRE_EMPLOYEE / REQUEST_MEETING / fail-close`，不再静默 fallback 到现有 frontend；但 architect 已在岗但缺治理文档时，当前还只会阻断，不会自动补 architect 文档票
 - `P0-COR-004` 进行中：按 `deliverable_kind` 重写交付 contract。当前第六段已把最小 contract 扩到当前主线全部 `structured_document_delivery`：`ticket-result-submit` 会统一硬校验 declared artifact / written artifact 对齐，`consensus_document` 与五类治理文档都已纳入；治理文档继续保留 `document_kind_ref` 对齐专属校验。但更广义的 research / analysis deliverable kind 还没正式引入
-- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第六段已把 `consensus_document` 的 CEO reuse gate 收正到 `MEETING_ESCALATION` 批准后才可复用，五类治理文档继续只复用过 internal governance gate 的逻辑文档；但 architect / meeting 硬约束本身、closeout 口径扩展和 live 退出标准重建还没做
+- `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第六段已把 `consensus_document` 的 CEO reuse gate 收正到 `MEETING_ESCALATION` 批准后才可复用，五类治理文档继续只复用过 internal governance gate 的逻辑文档；architect / meeting gate 现在已先在 autopilot backlog fanout 落第一段，但 closeout 口径扩展和 live 退出标准重建还没做
 - `P0-COR-006` 待开始：重建 live 场景回归口径，重新定义通过标准、失败样例和退出条件，至少覆盖需求调研、系统/架构拆解、模块化实施三类任务，要求 CEO 基于任务现实做 capability plan，不再按角色池静默 fallback，且证据闭环可追溯
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
@@ -79,18 +80,18 @@
 状态：`已完成（2026-04-08，6 项已收口；与主线关系：在派单/runtime/过程资产边界收正后，把文档/设计型角色的产物契约、CEO 触发边界和文档真相收进现有 Ticket 主链，不提前打开新增执行角色；当前主线已转入 P2-RLS 角色纳入链）`
 
 - `P2-GOV-003` 已完成（2026-04-07）：治理文档合同现已按最小统一骨架收口为 `architecture_brief / technology_decision / milestone_plan / detailed_design / backlog_recommendation` 五类 schema；`ticket-result-submit` 会把这类结果额外写成 `GOVERNANCE_DOCUMENT` 过程资产，`Context Compiler` 也已能把它们当作一等显式输入消费，同时保留 `linked_document_refs / linked_artifact_refs / source_process_asset_refs / sections / followup_recommendations` 这组结构化关联，不改 runtime 支持矩阵，也不提前启用治理角色 live 执行
-- `P2-GOV-004` 已完成（2026-04-08）：CEO 现在可在当前 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单；后续 `P2-RLS-002` 又把 `architect_primary / cto_primary` 纳入 CEO 治理文档建票入口，但 `backend / database / platform` 仍未进入 direct CEO create-ticket；治理文档父票输出的 `GOVERNANCE_DOCUMENT` 过程资产也会继续自动继承给后续票
-- `P2-GOV-005` 已完成（2026-04-08）：`role_templates_catalog.role_templates[]` 现在会暴露结构化 `mainline_boundary`；这层边界在 `P2-RLS-003` 后已进一步收口为全部 8 个模板都标成 `LIVE_ON_MAINLINE`，其中 `backend / database / platform` 仍保留 `ceo_create_ticket` blocked surface，`architect / cto` 继续只走治理文档 live path
+- `P2-GOV-004` 已完成（2026-04-08）：CEO 现在可在当前 live 规划角色上创建五类治理文档票；`default_document_kind_refs` 继续只表示建议默认文档，不是硬白名单；后续 `P2-RLS-002` 又把 `architect_primary / cto_primary` 纳入 CEO 治理文档建票入口。`backend / database / platform` 原先只停在 blocked surface，后续 `P0-COR-002/003` 又把 capability-approved backlog follow-up 这条 direct create-ticket 打开
+- `P2-GOV-005` 已完成（2026-04-08）：`role_templates_catalog.role_templates[]` 现在会暴露结构化 `mainline_boundary`；这层边界在 `P2-RLS-003` 后已进一步收口为全部 8 个模板都标成 `LIVE_ON_MAINLINE`。`backend / database / platform` 的 blocked surface 现已缩到“一般代码票仍关闭，但 capability-approved backlog follow-up 可直达”，`architect / cto` 继续只走治理文档 live path
 - `P2-GOV-006` 已完成（2026-04-08）：`workforce` 目录卡片和 `runtime-provider` 设置抽屉现在都会直接展示这套边界；`P2-RLS-003` 后五类新增角色已从 `Reserved bindings` 移到当前可编辑绑定区，`future_binding_slots` 当前为空
 - 当前主线已完成 `P2-RLS`
 
 ### `P2-RLS`：新增角色真实纳入链
 
-状态：`已完成（2026-04-08，3 项已全部收口；与主线关系：按最小闭环把五类新增角色从 staffing / CEO partial path 收正到 formal runtime live path，不扩 direct CEO create-ticket 或 staged review/check/closeout 边界）`
+状态：`已完成（2026-04-08，3 项已全部收口；与主线关系：按最小闭环把五类新增角色从 staffing / CEO partial path 收正到 formal runtime live path；后续 `P0-COR-002/003` 又把 capability-approved backlog follow-up 的 direct CEO create-ticket 补进当前主线）`
 
 - `P2-RLS-001` 已完成（2026-04-08）：`backend / database / platform / architect / cto` 五类模板现在已进入 Board/workforce staffing 主链；Board 可发起 hire / replace 审批，审批通过后这些角色会真实进入 workforce lane，并带上 `source_template_id / source_fragment_refs` 与一致的 `FREEZE / RESTORE / REPLACE` 动作；这轮同时把 board/workforce staffing 与 CEO limited hire 拆开，确保新增角色仍不会提前进入 CEO preset
 - `P2-RLS-002` 已完成（2026-04-08）：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口，并通过最小 `execution_contract + legacy role_profile:*` 兼容路径执行；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`
-- `P2-RLS-003` 已完成（2026-04-08）：`backend / database / platform` 现在已进入正式代码交付 runtime live 路径，并新增 `backend_build / database_build / platform_build` 三类 execution target；`architect_primary / cto_primary` 现在也已进入正式治理文档 runtime 支持矩阵与 provider target label。`role_templates_catalog` 五类新增模板现已标成 `LIVE_ON_MAINLINE`，`runtime-provider.future_binding_slots` 当前为空，Provider 设置抽屉改为直接编辑这五类角色的当前绑定；同时保留既有边界：`backend / database / platform` 仍不进入 direct CEO create-ticket，`architect / cto` 仍不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
+- `P2-RLS-003` 已完成（2026-04-08）：`backend / database / platform` 现在已进入正式代码交付 runtime live 路径，并新增 `backend_build / database_build / platform_build` 三类 execution target；`architect_primary / cto_primary` 现在也已进入正式治理文档 runtime 支持矩阵与 provider target label。`role_templates_catalog` 五类新增模板现已标成 `LIVE_ON_MAINLINE`，`runtime-provider.future_binding_slots` 当前为空，Provider 设置抽屉改为直接编辑这五类角色的当前绑定；当前边界已更新为：`backend / database / platform` 可进入 capability-approved backlog follow-up 的 direct CEO create-ticket，但一般代码票仍不开放，`architect / cto` 仍不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
 
 ### `P2-PRV`：Provider 策略收口
 

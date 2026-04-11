@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from app.contracts.commands import IncidentFollowupAction, IncidentResolveCommand
 from app.config import get_settings
+from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
+from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.constants import (
     EVENT_TICKET_FAILED,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
@@ -12,6 +14,7 @@ from app.core.constants import (
 )
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.ticket_handlers import run_scheduler_tick
+from app.core.workflow_controller import workflow_controller_effect
 from app.core.workflow_autopilot import ensure_workflow_atomic_chain_report, workflow_uses_ceo_board_delegate
 from app.db.repository import ControlPlaneRepository
 
@@ -150,6 +153,17 @@ def auto_advance_workflow_to_next_stop(
     effective_max_dispatches = max_dispatches or settings.scheduler_max_dispatches
     for step_index in range(max_steps):
         _maybe_write_autopilot_chain_report(repository, workflow_id=workflow_id)
+        snapshot = build_ceo_shadow_snapshot(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+            trigger_ref=f"{idempotency_key_prefix}:{step_index}:controller-probe",
+        )
+        if (
+            workflow_controller_effect(snapshot) in {"ARCHITECT_REQUIRED", "MEETING_REQUIRED", "STAFFING_REQUIRED"}
+            and int((snapshot.get("ticket_summary") or {}).get("active_count") or 0) == 0
+        ):
+            return
         if workflow_has_open_incident(repository, workflow_id):
             if _maybe_auto_resolve_open_incident(
                 repository,
