@@ -171,7 +171,7 @@ def _duplicate_ack(
     )
 
 
-def _validate_open_approval(
+def _validate_approval_version_guard(
     approval: dict[str, Any] | None,
     *,
     approval_id: str,
@@ -183,12 +183,32 @@ def _validate_open_approval(
         return "Approval target not found."
     if approval["approval_id"] != approval_id or approval["review_pack_id"] != review_pack_id:
         return "Approval target does not match review pack."
-    if approval["status"] != APPROVAL_STATUS_OPEN:
-        return f"Approval is already resolved with status {approval['status']}."
     if approval["review_pack_version"] != review_pack_version:
         return "Review pack outdated. Reload review-room projection."
     if approval["command_target_version"] != command_target_version:
         return "Projection target outdated. Reload review-room projection."
+    return None
+
+
+def _validate_open_approval(
+    approval: dict[str, Any] | None,
+    *,
+    approval_id: str,
+    review_pack_id: str,
+    review_pack_version: int,
+    command_target_version: int,
+) -> str | None:
+    version_guard_reason = _validate_approval_version_guard(
+        approval,
+        approval_id=approval_id,
+        review_pack_id=review_pack_id,
+        review_pack_version=review_pack_version,
+        command_target_version=command_target_version,
+    )
+    if version_guard_reason is not None:
+        return version_guard_reason
+    if approval is not None and approval["status"] != APPROVAL_STATUS_OPEN:
+        return f"Approval is already resolved with status {approval['status']}."
     return None
 
 

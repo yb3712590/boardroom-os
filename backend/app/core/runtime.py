@@ -2287,6 +2287,16 @@ def _build_runtime_result_submit_command(
         ticket_id=ticket["ticket_id"],
         node_id=ticket["node_id"],
         submitted_by=submitted_by,
+        compile_request_id=(
+            execution_package.meta.compile_request_id
+            if execution_package is not None
+            else None
+        ),
+        compiled_execution_package_version_ref=(
+            execution_package.meta.version_ref
+            if execution_package is not None
+            else None
+        ),
         result_status=(
             TicketResultStatus.COMPLETED
             if execution_result.result_status == "completed"
@@ -2327,6 +2337,10 @@ def run_leased_ticket_runtime(
     for ticket in _list_runtime_startable_leased_tickets(repository):
         lease_owner = str(ticket["lease_owner"])
         developer_inspector_refs = _build_runtime_developer_inspector_refs(str(ticket["ticket_id"]))
+        current_node = repository.get_current_node_projection(
+            str(ticket["workflow_id"]),
+            str(ticket["node_id"]),
+        )
         start_ack = handle_ticket_start(
             repository,
             TicketStartCommand(
@@ -2334,6 +2348,12 @@ def run_leased_ticket_runtime(
                 ticket_id=ticket["ticket_id"],
                 node_id=ticket["node_id"],
                 started_by=lease_owner,
+                expected_ticket_version=int(ticket["version"]),
+                expected_node_version=(
+                    int(current_node["version"])
+                    if current_node is not None
+                    else None
+                ),
                 idempotency_key=_build_start_idempotency_key(ticket),
             ),
         )

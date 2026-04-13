@@ -5,6 +5,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from app.contracts.commands import DeveloperInspectorRefs
+from app.db.repository import ControlPlaneRepository
 
 
 def _display_text(value: Any) -> str:
@@ -50,6 +51,23 @@ def _resolve_terminal_state(
         return dict(terminal_state)
     embedded = compiled_execution_package.get("terminal_state")
     return dict(embedded or {}) if isinstance(embedded, Mapping) else {}
+
+
+def is_ticket_context_stale(
+    repository: ControlPlaneRepository,
+    *,
+    ticket_id: str,
+    compile_request_id: str | None,
+    compiled_execution_package_version_ref: str | None,
+) -> bool:
+    with repository.connection() as connection:
+        guard_reason = repository.validate_compiled_execution_package_guard(
+            connection,
+            ticket_id=ticket_id,
+            compile_request_id=compile_request_id,
+            compiled_execution_package_version_ref=compiled_execution_package_version_ref,
+        )
+    return guard_reason is not None
 
 
 def _build_context_rows(
@@ -178,9 +196,13 @@ def build_ticket_context_markdown(
         f"- Workflow: `{meta.get('workflow_id') or 'unknown'}`",
         f"- Ticket: `{meta.get('ticket_id') or 'unknown'}`",
         f"- Node: `{meta.get('node_id') or 'unknown'}`",
+        f"- Compile Request: `{meta.get('compile_request_id') or 'unknown'}`",
+        f"- Execution Package Version: `{meta.get('version_ref') or 'N/A'}`",
+        f"- Source Projection Version: `{meta.get('source_projection_version') or 'N/A'}`",
         f"- Role: `{compiled_role.get('role_profile_ref') or execution.get('role_profile_ref') or 'unknown'}`",
         f"- Output Schema: `{execution.get('output_schema_ref') or responsibility_boundary.get('output_schema_ref') or 'unknown'}`",
         f"- 当前状态: `{resolved_terminal_state.get('status') or resolved_terminal_state.get('result_status') or 'EXECUTING'}`",
+        f"- Stale Against Latest Package: `{_display_bool(resolved_terminal_state.get('stale_against_latest'))}`",
         "",
         "## 输入上下文",
         f"- 来源数: `{len(context_rows)}`",

@@ -1605,7 +1605,10 @@ def _refresh_ticket_context_archive(repository: ControlPlaneRepository, ticket_i
         latest_execution_package.get("payload") or {},
         developer_inspector_refs=_developer_inspector_refs_for_ticket(ticket_id),
         compile_manifest=(latest_compile_manifest or {}).get("payload") or {},
-        terminal_state=_ticket_context_terminal_state(repository, ticket_id),
+        terminal_state={
+            **_ticket_context_terminal_state(repository, ticket_id),
+            "stale_against_latest": False,
+        },
     )
 
 
@@ -4433,6 +4436,20 @@ def handle_ticket_start(
                 ticket_id=payload.ticket_id,
                 reason="Node projection no longer points at this ticket.",
             )
+        version_guard_reason = repository.validate_projection_version_guard(
+            current_ticket=current_ticket,
+            current_node=current_node,
+            expected_ticket_version=payload.expected_ticket_version,
+            expected_node_version=payload.expected_node_version,
+        )
+        if version_guard_reason is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=version_guard_reason,
+            )
         if current_node["status"] != NODE_STATUS_PENDING:
             return _rejected_ack(
                 command_id=command_id,
@@ -4956,6 +4973,12 @@ def handle_ticket_result_submit(
 
     with repository.connection() as connection:
         created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
+        compiled_execution_package_guard_reason = repository.validate_compiled_execution_package_guard(
+            connection,
+            ticket_id=payload.ticket_id,
+            compile_request_id=payload.compile_request_id,
+            compiled_execution_package_version_ref=payload.compiled_execution_package_version_ref,
+        )
 
     if created_spec is None:
         return handle_ticket_fail(
@@ -4970,6 +4993,14 @@ def handle_ticket_result_submit(
                 failure_detail={},
                 idempotency_key=payload.idempotency_key,
             ),
+        )
+    if compiled_execution_package_guard_reason is not None:
+        return _rejected_ack(
+            command_id=new_prefixed_id("cmd"),
+            idempotency_key=payload.idempotency_key,
+            received_at=now_local(),
+            ticket_id=payload.ticket_id,
+            reason=compiled_execution_package_guard_reason,
         )
 
     try:

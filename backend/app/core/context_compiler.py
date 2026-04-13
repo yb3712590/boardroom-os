@@ -591,6 +591,9 @@ def _build_execution_package_meta(compile_request: CompileRequest) -> CompiledEx
         tenant_id=compile_request.meta.tenant_id,
         workspace_id=compile_request.meta.workspace_id,
         compiler_version=MINIMAL_CONTEXT_COMPILER_VERSION,
+        ticket_projection_version=compile_request.meta.ticket_projection_version,
+        node_projection_version=compile_request.meta.node_projection_version,
+        source_projection_version=compile_request.meta.source_projection_version,
     )
 
 
@@ -1620,6 +1623,16 @@ def build_compile_request(
     attempt_no = int(created_spec.get("attempt_no") or 0)
     if attempt_no <= 0:
         raise ValueError("Ticket attempt_no is missing for runtime compilation.")
+    node_projection = repository.get_current_node_projection(
+        str(ticket["workflow_id"]),
+        str(ticket["node_id"]),
+        connection=connection,
+    )
+    if node_projection is None:
+        raise ValueError("Node projection is missing for runtime compilation.")
+    _, source_projection_version = repository.get_cursor_and_version(connection=connection)
+    if source_projection_version <= 0:
+        raise ValueError("Source projection version is missing for runtime compilation.")
     tenant_id = str(ticket.get("tenant_id") or created_spec.get("tenant_id") or DEFAULT_TENANT_ID)
     workspace_id = str(
         ticket.get("workspace_id") or created_spec.get("workspace_id") or DEFAULT_WORKSPACE_ID
@@ -1717,6 +1730,9 @@ def build_compile_request(
             attempt_no=attempt_no,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
+            ticket_projection_version=int(ticket["version"]),
+            node_projection_version=int(node_projection["version"]),
+            source_projection_version=source_projection_version,
         ),
         control_refs=CompileRequestControlRefs(
             role_profile_ref=str(created_spec.get("role_profile_ref") or ""),

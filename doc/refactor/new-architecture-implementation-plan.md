@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P0`
-> 当前切片：`P0-S3`
-> 最后更新：`2026-04-14 04:20`
+> 当前切片：`P0-S4`
+> 最后更新：`2026-04-14 04:45`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -194,29 +194,29 @@
 
 **实施边界：**
 - 做什么：
-  - [ ] 给关键写路径补版本检查
-  - [ ] 建最小冲突失败保护
-  - [ ] 接必要租约或独占写规则
+  - [x] 给关键写路径补版本检查
+  - [x] 建最小冲突失败保护
+  - [x] 接必要租约或独占写规则
 - 不做什么：
-  - [ ] 不一次做完整分布式并发层
-  - [ ] 不顺手重构无关 repository
+  - [x] 不一次做完整分布式并发层
+  - [x] 不顺手重构无关 repository
 
 **代码任务：**
-- [ ] 任务 1
-- [ ] 任务 2
-- [ ] 任务 3
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
 
 **验证：**
-- [ ] 关键写路径有版本检查
-- [ ] 冲突时 fail-closed
-- [ ] 有最小并发测试或模拟验证
+- [x] 关键写路径有版本检查
+- [x] 冲突时 fail-closed
+- [x] 有最小并发测试或模拟验证
 
 **文档更新：**
-- [ ] 更新本计划文档
-- [ ] 更新 `doc/TODO.md`
-- [ ] 更新 `doc/history/memory-log.md`
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
 
-**状态：** `todo`
+**状态：** `done`
 
 ### 切片 `P0-S4`
 **名称：**  
@@ -231,29 +231,29 @@
 
 **实施边界：**
 - 做什么：
-  - [ ] 让至少一类视图文档自动物化
-  - [ ] 记录文档来源版本
-  - [ ] 建最小一致性检查
+  - [x] 让至少一类视图文档自动物化
+  - [x] 记录文档来源版本
+  - [x] 建最小一致性检查
 - 不做什么：
-  - [ ] 不一次覆盖所有文档面
-  - [ ] 不改架构决策文档正文
+  - [x] 不一次覆盖所有文档面
+  - [x] 不改架构决策文档正文
 
 **代码任务：**
-- [ ] 任务 1
-- [ ] 任务 2
+- [x] 任务 1
+- [x] 任务 2
 - [ ] 任务 3
 
 **验证：**
-- [ ] 至少一类视图文档能自动物化
-- [ ] 文档落后时可被检测
-- [ ] 不允许人工正文反推真相
+- [x] 至少一类视图文档能自动物化
+- [x] 文档落后时可被检测
+- [x] 不允许人工正文反推真相
 
 **文档更新：**
-- [ ] 更新本计划文档
-- [ ] 更新 `doc/TODO.md`
-- [ ] 更新 `doc/history/memory-log.md`
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
 
-**状态：** `todo`
+**状态：** `in_progress`
 
 ---
 
@@ -264,10 +264,10 @@
 ### 已完成
 - [x] `P0-S1` 已完成：系统冷启动现在会在 `repository.initialize()` 幂等写入单条 `SYSTEM_INITIALIZED`，`project-init` 不再兼任系统初始化入口
 - [x] `P0-S2` 已完成：最小版本协议骨架现已落地；process asset canonical ref 改成 versioned ref，compiled bundle / manifest / execution package 会追加版本与 supersede 链，`GovernanceProfile` 与 workflow graph version 也已有只读查询入口
+- [x] `P0-S3` 已完成：主线写路径现在已有显式 optimistic guard；`ticket-start` 可拒绝 stale ticket/node projection version，`ticket-result-submit` 可拒绝 stale `compiled_execution_package` ref，compile meta 也会写入 `ticket_projection_version / node_projection_version / source_projection_version`
 
 ### 未完成
-- [ ] `P0-S3` 尚未开始
-- [ ] `P0-S4` 尚未开始
+- [ ] `P0-S4` 已落最小闭环，但当前只覆盖 `ticket_context_archives`；是否扩到更多物化面，留到下一轮决定
 
 ### 明确放弃
 - [ ] 暂无
@@ -275,6 +275,7 @@
 ### 新发现但不在本轮做
 - [ ] `backend/tests/test_api.py -k "system_initialized or startup or project_init"` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会落 `PROVIDER_REQUIRED_UNAVAILABLE`，不阻断 `P0-S1` 收口
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
+- [ ] 宽口径 `board_approve` 回归桶当前仍会被一组旧的 governance/provider auto-advance 用例打断：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION` incident；这组不是本轮 stale-guard 主链回归，但下一轮要和 runtime/provider 历史测试一起收口
 
 ---
 
@@ -299,6 +300,21 @@
 `no`
 
 **状态：** `closed`
+
+### D-002
+**现象：**  
+`当前 external command 调用仍允许省略 expected version / compiled execution package ref；本轮只把这组字段强接进主线 runtime 自发命令和显式新测试入口。`
+
+**影响：**  
+`主线已经开始沿统一协议收口，但对外命令面暂时还保留兼容入口；后续如果要把 stale guard 升成全量硬约束，还要单独清一轮旧调用方。`
+
+**当前处理：**  
+`repository / handler / runtime 主链已经统一到 optimistic guard；兼容入口暂时保留，避免这一轮把历史测试和冻结兼容面一起炸开。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
 
 ---
 
@@ -392,6 +408,39 @@
 **下一轮起手动作：**
 `进入 P0-S3，先给关键写路径补显式版本检查，再把冲突失败保护接进 repository / compiler / ticket handler。`
 
+### Session `2026-04-14 / 04`
+**开始前判断：**
+- 当前阶段：`P0`
+- 当前切片：`P0-S3`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 `CompileRequestMeta / CompiledExecutionPackageMeta` 补上 `ticket_projection_version / node_projection_version / source_projection_version`
+- [x] 给 `TicketStartCommand / TicketResultSubmitCommand` 补上最小 optimistic guard 字段，并把 runtime 主线的 `ticket-start / ticket-result-submit` 一起接上新字段
+- [x] 在 repository / ticket handler 里新增主线 stale guard：`ticket-start` 会拒绝 stale projection version，`ticket-result-submit` 会拒绝 stale `compiled_execution_package` ref
+- [x] 把审批版本检查抽成共享 helper，并给 `ticket_context_archives` 补上 `compile_request_id / version_ref / source_projection_version / stale_against_latest`
+- [x] 同步本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k "version or stale or compile" -q` 通过（`33 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "stale_board_command or board_command_is_rejected_when_projection_is_not_currently_blocked or stale_projection_version_guard or stale_compiled_execution_package_version_ref" -q` 通过（`4 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_context_archive.py -q` 通过（`3 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_scheduler_runner.py -k "runtime_uses_openai_compat_provider_when_configured" -q` 通过（`1 passed`）
+- [x] `python -m py_compile backend/app/contracts/runtime.py backend/app/contracts/commands.py backend/app/db/repository.py backend/app/core/context_compiler.py backend/app/core/ticket_handlers.py backend/app/core/approval_handlers.py backend/app/core/ticket_context_archive.py backend/app/core/runtime.py` 通过
+- [ ] 宽口径 `./backend/.venv/bin/pytest backend/tests/test_api.py -k "board_approve or stale_board_command or projection_guard or stale_projection_version_guard or stale_compiled_execution_package_version_ref" -q` 当前未全绿；命中一组旧的 governance/provider auto-advance 用例，会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION`
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P0-S4` 当前只完成 `ticket_context_archives` 这一类视图文档的版本标记和 stale 检查；是否把一致性检查扩到更多物化面，下一轮再锁
+- [ ] external command 调用仍允许省略 expected version / execution package ref；如果下一轮要把它升成全量硬约束，需要先清旧调用方
+
+**下一轮起手动作：**
+`继续 P0-S4 或直接转 P1；先决定 ticket graph / controller 的首个正式切片，再把版本护栏扩到下一类物化视图。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -428,8 +477,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P0`
-- 当前切片：`P0-S3`
-- 当前状态：`P0-S2 已完成，等待进入 P0-S3`
-- 最近完成：`最小版本协议骨架已收口到 process asset / compiled artifact / governance profile / graph version helper`
-- 当前阻塞：`宽口径 project-init 自动推进老测试仍依赖 live provider 配置`
-- 下一步：`继续 P0-S3，给关键写路径补版本检查和冲突 fail-closed`
+- 当前切片：`P0-S4`
+- 当前状态：`P0-S3 已完成，P0-S4 已落最小 ticket context materializer 预接线`
+- 最近完成：`主线 optimistic guard 已接到 ticket-start / ticket-result-submit / compile meta，ticket_context_archives 也已带版本元信息和 stale 标记`
+- 当前阻塞：`宽口径 governance/provider 历史回归仍会在 auto-advance 上命中 PROVIDER_REQUIRED_UNAVAILABLE`
+- 下一步：`决定 P0-S4 是否继续扩到更多视图文档，或者正式切到 P1 图协议收口`

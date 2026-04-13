@@ -1055,6 +1055,8 @@ def _ticket_result_submit_payload(
     written_artifacts: list[dict] | None = None,
     idempotency_key: str | None = None,
     review_request: dict | None = None,
+    compile_request_id: str | None = None,
+    compiled_execution_package_version_ref: str | None = None,
 ) -> dict:
     resolved_artifact_refs = artifact_refs or [
         "art://homepage/option-a.png",
@@ -1115,6 +1117,10 @@ def _ticket_result_submit_payload(
         "idempotency_key": idempotency_key
         or f"ticket-result-submit:{workflow_id}:{ticket_id}:{result_status}",
     }
+    if compile_request_id is not None:
+        result_payload["compile_request_id"] = compile_request_id
+    if compiled_execution_package_version_ref is not None:
+        result_payload["compiled_execution_package_version_ref"] = compiled_execution_package_version_ref
     if result_status == "failed":
         result_payload["failure_kind"] = "RUNTIME_ERROR"
         result_payload["failure_message"] = "Structured runtime result reported failure."
@@ -1908,14 +1914,21 @@ def _ticket_start_payload(
     ticket_id: str = "tkt_visual_001",
     node_id: str = "node_homepage_visual",
     started_by: str = "emp_frontend_2",
+    expected_ticket_version: int | None = None,
+    expected_node_version: int | None = None,
 ) -> dict:
-    return {
+    payload = {
         "workflow_id": workflow_id,
         "ticket_id": ticket_id,
         "node_id": node_id,
         "started_by": started_by,
         "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
     }
+    if expected_ticket_version is not None:
+        payload["expected_ticket_version"] = expected_ticket_version
+    if expected_node_version is not None:
+        payload["expected_node_version"] = expected_node_version
+    return payload
 
 
 def _ticket_lease_payload(
@@ -7285,6 +7298,29 @@ def test_ticket_start_is_rejected_when_lease_has_expired(client, set_ticket_time
     assert "expired" in response.json()["reason"].lower()
 
 
+def test_ticket_start_rejects_stale_projection_version_guard(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_and_lease_ticket(client)
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection("tkt_visual_001")
+    node_projection = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    assert ticket_projection is not None
+    assert node_projection is not None
+
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            expected_ticket_version=int(ticket_projection["version"]) - 1,
+            expected_node_version=int(node_projection["version"]),
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "outdated" in response.json()["reason"].lower()
+
+
 def test_ticket_heartbeat_refreshes_executing_ticket(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client)
@@ -7452,6 +7488,45 @@ def test_ticket_result_submit_completes_ticket_with_validated_structured_payload
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert ticket_projection["status"] == TICKET_STATUS_COMPLETED
+
+
+def test_ticket_result_submit_rejects_stale_compiled_execution_package_version_ref(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(client)
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_visual_001")
+    assert ticket is not None
+
+    first = compile_and_persist_execution_artifacts(repository, ticket)
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    second = compile_and_persist_execution_artifacts(repository, ticket)
+
+    stale_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            compile_request_id=first.compiled_execution_package.meta.compile_request_id,
+            compiled_execution_package_version_ref=first.compiled_execution_package.meta.version_ref,
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:stale-execution-package",
+        ),
+    )
+
+    assert stale_response.status_code == 200
+    assert stale_response.json()["status"] == "REJECTED"
+    assert "compiled execution package" in stale_response.json()["reason"].lower()
+
+    fresh_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            compile_request_id=second.compiled_execution_package.meta.compile_request_id,
+            compiled_execution_package_version_ref=second.compiled_execution_package.meta.version_ref,
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:fresh-execution-package",
+        ),
+    )
+
+    assert fresh_response.status_code == 200
+    assert fresh_response.json()["status"] == "ACCEPTED"
+    node_projection = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
+    assert node_projection is not None
     assert node_projection["status"] == NODE_STATUS_COMPLETED
 
 

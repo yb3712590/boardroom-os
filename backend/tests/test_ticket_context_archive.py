@@ -6,6 +6,7 @@ from app.contracts.commands import DeveloperInspectorRefs
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.ticket_context_archive import (
     build_ticket_context_markdown,
+    is_ticket_context_stale,
     write_ticket_context_markdown,
 )
 from tests.test_context_compiler import _ticket_create_payload, _ticket_lease_payload
@@ -140,3 +141,41 @@ def test_write_ticket_context_markdown_persists_one_file_per_ticket(tmp_path: Pa
     assert "D:/tmp/wf_live_demo/checkout/tkt_live_demo" in body
     assert "reports/architecture/tkt_live_demo/architecture-brief.audit.md" in body
     assert "Token 预算" in body
+
+
+def test_ticket_context_markdown_includes_version_metadata_and_stale_status(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    assert ticket is not None
+
+    first = compile_and_persist_execution_artifacts(repository, ticket)
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    compile_and_persist_execution_artifacts(repository, ticket)
+
+    assert is_ticket_context_stale(
+        repository,
+        ticket_id="tkt_compile_001",
+        compile_request_id=first.compiled_execution_package.meta.compile_request_id,
+        compiled_execution_package_version_ref=first.compiled_execution_package.meta.version_ref,
+    )
+
+    markdown = build_ticket_context_markdown(
+        first.compiled_execution_package.model_dump(mode="json"),
+        compile_manifest=first.compile_manifest.model_dump(mode="json"),
+        terminal_state={
+            "status": "COMPLETED",
+            "result_status": "completed",
+            "artifact_paths": [],
+            "stale_against_latest": True,
+        },
+    )
+
+    assert "Compile Request" in markdown
+    assert str(first.compiled_execution_package.meta.version_ref) in markdown
+    assert "Source Projection Version" in markdown
+    assert "Stale Against Latest Package" in markdown
+    assert "`是`" in markdown

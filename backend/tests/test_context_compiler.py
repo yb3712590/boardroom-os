@@ -1860,6 +1860,32 @@ def test_compile_and_persist_execution_artifacts_versions_compiled_execution_pac
     assert first_version["payload"]["meta"]["version_ref"] == (
         first.compiled_execution_package.meta.version_ref
     )
+    assert first.compiled_execution_package.meta.ticket_projection_version == ticket["version"]
+    assert second.compiled_execution_package.meta.ticket_projection_version == ticket["version"]
+    assert latest_execution_package["payload"]["meta"]["compile_request_id"] == (
+        second.compiled_execution_package.meta.compile_request_id
+    )
+    assert latest_execution_package["payload"]["meta"]["version_ref"] == (
+        second.compiled_execution_package.meta.version_ref
+    )
+
+
+def test_build_compile_request_captures_projection_versions(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    node = repository.get_current_node_projection("wf_compile", "node_compile_001")
+    assert ticket is not None
+    assert node is not None
+
+    compile_request = build_compile_request(repository, ticket)
+
+    assert compile_request.meta.ticket_projection_version == int(ticket["version"])
+    assert compile_request.meta.node_projection_version == int(node["version"])
+    assert compile_request.meta.source_projection_version >= 1
 
 
 def test_export_latest_compile_artifacts_to_developer_inspector_writes_real_persisted_payloads(

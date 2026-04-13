@@ -2903,20 +2903,87 @@ class ControlPlaneRepository:
             rows = owned_connection.execute(query, (workflow_id,)).fetchall()
             return [self._convert_governance_profile_row(row) for row in rows]
 
-    def get_cursor_and_version(self) -> tuple[str | None, int]:
-        self.initialize()
-        with self.connection() as connection:
-            row = connection.execute(
-                """
-                SELECT event_id, sequence_no
-                FROM events
-                ORDER BY sequence_no DESC
-                LIMIT 1
-                """
-            ).fetchone()
+    def get_cursor_and_version(
+        self,
+        connection: sqlite3.Connection | None = None,
+    ) -> tuple[str | None, int]:
+        query = """
+            SELECT event_id, sequence_no
+            FROM events
+            ORDER BY sequence_no DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query).fetchone()
             if row is None:
                 return None, 0
             return row["event_id"], int(row["sequence_no"])
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query).fetchone()
+            if row is None:
+                return None, 0
+            return row["event_id"], int(row["sequence_no"])
+
+    def validate_projection_version_guard(
+        self,
+        *,
+        current_ticket: dict[str, Any],
+        current_node: dict[str, Any],
+        expected_ticket_version: int | None,
+        expected_node_version: int | None,
+    ) -> str | None:
+        if (
+            expected_ticket_version is None
+            and expected_node_version is None
+        ):
+            return None
+        if expected_ticket_version is not None and int(current_ticket["version"]) != int(expected_ticket_version):
+            return (
+                "Projection target outdated. Reload ticket state before retrying "
+                f"(ticket version {current_ticket['version']} != expected {expected_ticket_version})."
+            )
+        if expected_node_version is not None and int(current_node["version"]) != int(expected_node_version):
+            return (
+                "Projection target outdated. Reload ticket state before retrying "
+                f"(node version {current_node['version']} != expected {expected_node_version})."
+            )
+        return None
+
+    def validate_compiled_execution_package_guard(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        ticket_id: str,
+        compile_request_id: str | None,
+        compiled_execution_package_version_ref: str | None,
+    ) -> str | None:
+        if not compile_request_id and not compiled_execution_package_version_ref:
+            return None
+        latest_package = self.get_latest_compiled_execution_package_by_ticket(
+            ticket_id,
+            connection=connection,
+        )
+        if latest_package is None:
+            return "Compiled execution package is missing for this ticket."
+        if (
+            compile_request_id is not None
+            and str(latest_package["compile_request_id"]) != str(compile_request_id)
+        ):
+            return (
+                "Compiled execution package is outdated. Reload runtime state before retrying "
+                f"(compile request {latest_package['compile_request_id']} != expected {compile_request_id})."
+            )
+        if (
+            compiled_execution_package_version_ref is not None
+            and str(latest_package["version_ref"]) != str(compiled_execution_package_version_ref)
+        ):
+            return (
+                "Compiled execution package is outdated. Reload runtime state before retrying "
+                f"(package version {latest_package['version_ref']} != expected {compiled_execution_package_version_ref})."
+            )
+        return None
 
     def _next_version_int(
         self,

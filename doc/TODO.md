@@ -31,6 +31,9 @@
 - 2026-04-13 本轮已继续落第二批执行切片：live harness 现在会自动生成正式版 `audit-summary.md` 和去重后的 `integration-monitor-report.md`，治理文档会旁挂同名 `.audit.md`，`ticket_context_archives/*.md` 也已重写成执行卡片；对应专项记录见 `doc/tests/audit-readability-remediation-20260413.md`
 - 2026-04-14 本轮已落 `P0-S1` 最小启动协议：`repository.initialize()` 现在会幂等写入单条 `SYSTEM_INITIALIZED`，系统冷启动和 `project-init` 已拆开；空态 dashboard / 事件流现在也能直接看到初始化真相
 - 2026-04-14 本轮已落 `P0-S2` 最小版本协议骨架：`process asset` canonical ref 现已改成显式 versioned ref，旧短 ref 只在 resolver 入口兼容；`compiled_context_bundle / compile_manifest / compiled_execution_package` 也已接上版本与 supersede 链，最小 `GovernanceProfile` 与 workflow graph version helper 已落仓库级查询
+- 2026-04-14 本轮已落 `P0-S3` 主线写保护：`CompileRequestMeta / CompiledExecutionPackageMeta` 现在会带 `ticket_projection_version / node_projection_version / source_projection_version`；`ticket-start` 可拒绝 stale projection version，`ticket-result-submit` 可拒绝 stale `compiled_execution_package` ref；runtime 主线自发的 `ticket-start / ticket-result-submit` 也已开始携带这组新 guard 字段
+- 2026-04-14 本轮已给 `P0-S4` 先落最小预接线：`ticket_context_archives` 现在会展示 `compile_request_id / compiled execution package version / source projection version / stale_against_latest`，最小 stale 检查 helper 也已落地
+- 2026-04-14 本轮宽口径 `board_approve` 回归桶仍会命中一组旧的 governance/provider auto-advance 用例：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION`；本轮 stale-guard 主链子集已通过，这组继续留给 runtime/provider 历史测试收口
 
 ## 当前批次
 

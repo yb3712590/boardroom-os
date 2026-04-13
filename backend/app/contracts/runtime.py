@@ -17,6 +17,9 @@ class CompileRequestMeta(TenantWorkspaceScope):
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
+    ticket_projection_version: int | None = Field(default=None, ge=1)
+    node_projection_version: int | None = Field(default=None, ge=1)
+    source_projection_version: int | None = Field(default=None, ge=1)
 
 
 class CompileRequestControlRefs(StrictModel):
@@ -386,6 +389,9 @@ class CompiledExecutionPackageMeta(TenantWorkspaceScope):
     supersedes_ref: str | None = None
     lease_owner: str = Field(min_length=1)
     compiler_version: str = Field(min_length=1)
+    ticket_projection_version: int | None = Field(default=None, ge=1)
+    node_projection_version: int | None = Field(default=None, ge=1)
+    source_projection_version: int | None = Field(default=None, ge=1)
 
 
 class CompiledRole(StrictModel):

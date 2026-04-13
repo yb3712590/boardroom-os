@@ -23,6 +23,12 @@
 
 ### 2026-04-14
 
+- `P0-S3` 已落主线 optimistic guard：`CompileRequestMeta / CompiledExecutionPackageMeta` 现在会带 `ticket_projection_version / node_projection_version / source_projection_version`
+- `ticket-start` 现在可显式拒绝 stale ticket/node projection version；`ticket-result-submit` 现在可显式拒绝 stale `compiled_execution_package` ref，主线继续保持 fail-closed，不做静默 fallback
+- runtime 主线这轮也已开始自发携带新 guard：`run_leased_ticket_runtime` 发出的 `ticket-start / ticket-result-submit` 会带 expected projection version 与 `compile_request_id / compiled_execution_package_version_ref`
+- `ticket_context_archives` 这轮已补最小 `P0-S4` 预接线：执行卡片头部现在会展示 `compile_request_id / package version / source projection version`，并支持最小 `stale_against_latest` 检查
+- 本轮新增并实跑通过的回归包括：`./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k "version or stale or compile" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "stale_board_command or board_command_is_rejected_when_projection_is_not_currently_blocked or stale_projection_version_guard or stale_compiled_execution_package_version_ref" -q`、`./backend/.venv/bin/pytest backend/tests/test_ticket_context_archive.py -q`、`./backend/.venv/bin/pytest backend/tests/test_scheduler_runner.py -k "runtime_uses_openai_compat_provider_when_configured" -q`
+- 宽口径 `./backend/.venv/bin/pytest backend/tests/test_api.py -k "board_approve or stale_board_command or projection_guard or stale_projection_version_guard or stale_compiled_execution_package_version_ref" -q` 当前仍会命中一组旧的 governance/provider auto-advance 用例；scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION`，这块后续要和 runtime/provider 历史测试一起收口
 - `P0-S2` 已落最小版本协议骨架：新增 `backend/app/core/versioning.py` 统一 process asset canonical ref、compiled artifact version ref、`GovernanceProfile` id 和 workflow graph version helper
 - `ProcessAssetReference / ResolvedProcessAsset` 现在会带 `canonical_ref / version_int / supersedes_ref`；新写入结果统一落 versioned ref，旧短 ref 只保留 resolver 入口兼容
 - `compiled_context_bundle / compile_manifest / compiled_execution_package` 这轮已改成 append-only 版本化持久化；repository 现在可按 `ticket_id + version_int` 查询，并在 persisted payload 里写入版本与 supersede 关系

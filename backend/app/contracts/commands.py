@@ -397,6 +397,8 @@ class TicketStartCommand(StrictModel):
     ticket_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     started_by: str = Field(min_length=1)
+    expected_ticket_version: int | None = Field(default=None, ge=1)
+    expected_node_version: int | None = Field(default=None, ge=1)
     idempotency_key: str = Field(min_length=1)
 
 
@@ -466,6 +468,8 @@ class TicketResultSubmitCommand(StrictModel):
     ticket_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     submitted_by: str = Field(min_length=1)
+    compile_request_id: str | None = None
+    compiled_execution_package_version_ref: str | None = None
     result_status: TicketResultStatus
     schema_version: str = Field(min_length=1)
     payload: dict
