@@ -27,8 +27,11 @@
 - `source_code_delivery@1` 现在必须带 `source_files[] / verification_runs[]`；旧的“只交 `source_file_refs[]` + 占位源码 + 一句 `pytest -q passed`”已经被 schema 和 workspace hook 一起拦掉
 - workspace-managed 代码票的测试证据和 git 证据现在会按 `20-evidence/tests/<ticket>/attempt-1/`、`20-evidence/git/<ticket>/attempt-1/` 分路径，不再继续写固定 `test-report.json / git-commit.json`
 - live harness full success 现在也会把 `source_code_delivery` payload 质量和 `artifact_index` 证据路径撞车一起纳入断言
+- 第二批执行切片也已落：shared harness 现在会自动生成正式版 `audit-summary.md` 和去重后的 `integration-monitor-report.md`，场景根目录不再依赖人工手记才看得懂
+- governance JSON 现在会自动旁挂同名 `.audit.md`；`ticket_context_archives/*.md` 也已经从 preview dump 改成执行卡片，直接展示上下文来源、token 预算、降级告警、checkout / branch 和实际 artifact 路径
 - 本轮已实跑通过的回归集中在 `test_output_schemas.py`、`test_project_workspace_hooks.py`、`test_runtime_fallback_payload.py`、`test_live_library_management_runner.py`、`test_workflow_autopilot.py`
-- `test_api.py` 和 `test_scheduler_runner.py` 里那批依赖旧 deterministic 主线的历史测试，当前仍会被 provider fail-closed 链路打断；这批不是本轮第一批新引入，但后续继续推进前要单独收口
+- 本轮新增实跑通过的回归还包括：`test_ticket_context_archive.py`
+- `test_api.py` 和 `test_scheduler_runner.py` 里那批依赖旧 deterministic 主线的历史测试，当前仍会被 provider fail-closed 链路打断；这批不是本轮第一批或第二批新引入，但后续继续推进前要单独收口
 
 ### 2026-04-11
 

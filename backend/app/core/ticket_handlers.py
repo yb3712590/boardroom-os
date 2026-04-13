@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.contracts.commands import (
     CommandAckEnvelope,
     CommandAckStatus,
+    DeveloperInspectorRefs,
     IncidentFollowupAction,
     IncidentResolveCommand,
     SchedulerWorkerCandidate,
@@ -160,6 +161,7 @@ from app.core.ticket_artifacts import (
     prepare_written_artifacts,
     save_prepared_artifact_record,
 )
+from app.core.ticket_context_archive import write_ticket_context_markdown
 from app.core.time import now_local
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.core.workflow_scope import resolve_workflow_scope
@@ -1422,6 +1424,189 @@ def _validate_governance_document_hooks(
         )
 
     return None
+
+
+def _render_governance_audit_markdown(
+    *,
+    ticket_id: str,
+    output_schema_ref: str,
+    result_payload: dict[str, Any],
+) -> str:
+    title = (
+        str(result_payload.get("title") or "").strip()
+        or f"{output_schema_ref} - {ticket_id}"
+    )
+    summary = str(result_payload.get("summary") or "").strip() or "未提供摘要。"
+    decisions = [
+        str(item).strip()
+        for item in list(result_payload.get("decisions") or [])
+        if str(item).strip()
+    ]
+    constraints = [
+        str(item).strip()
+        for item in list(result_payload.get("constraints") or [])
+        if str(item).strip()
+    ]
+    sections = [
+        dict(item)
+        for item in list(result_payload.get("sections") or [])
+        if isinstance(item, dict)
+    ]
+
+    lines = [
+        f"# {title}",
+        "",
+        "## 摘要",
+        summary,
+        "",
+        "## 关键决策",
+    ]
+    if decisions:
+        lines.extend(f"{index}. {item}" for index, item in enumerate(decisions, start=1))
+    else:
+        lines.append("1. 无")
+    lines.extend(["", "## 关键约束"])
+    if constraints:
+        lines.extend(f"{index}. {item}" for index, item in enumerate(constraints, start=1))
+    else:
+        lines.append("1. 无")
+    lines.extend(["", "## 各节要点"])
+    if not sections:
+        lines.append("暂无分节内容。")
+    for index, section in enumerate(sections, start=1):
+        label = str(section.get("label") or f"Section {index}").strip()
+        section_summary = str(section.get("summary") or "").strip()
+        content_markdown = str(section.get("content_markdown") or "").strip()
+        lines.extend(
+            [
+                "",
+                f"### {index}. {label}",
+            ]
+        )
+        if section_summary:
+            lines.extend(
+                [
+                    "",
+                    section_summary,
+                ]
+            )
+        if content_markdown:
+            lines.extend(
+                [
+                    "",
+                    content_markdown,
+                ]
+            )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _build_governance_audit_written_artifact(
+    *,
+    created_spec: dict[str, Any],
+    payload: TicketResultSubmitCommand,
+    written_artifacts: list[TicketWrittenArtifact],
+) -> TicketWrittenArtifact | None:
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+    if output_schema_ref not in GOVERNANCE_DOCUMENT_SCHEMA_REFS or not isinstance(result_payload, dict):
+        return None
+
+    written_artifacts_by_ref = {
+        str(item.artifact_ref): item
+        for item in written_artifacts
+        if str(item.artifact_ref or "").strip()
+    }
+    primary_artifact: TicketWrittenArtifact | None = None
+    for artifact_ref in list(payload.artifact_refs):
+        candidate = written_artifacts_by_ref.get(str(artifact_ref))
+        if candidate is None:
+            continue
+        if str(candidate.kind or "").upper() != "JSON":
+            continue
+        primary_artifact = candidate
+        break
+    if primary_artifact is None:
+        return None
+
+    primary_path = str(primary_artifact.path or "").strip()
+    if not primary_path:
+        return None
+    audit_path = (
+        f"{primary_path[:-5]}.audit.md"
+        if primary_path.endswith(".json")
+        else f"{primary_path}.audit.md"
+    )
+    if any(str(item.path or "").strip() == audit_path for item in written_artifacts):
+        return None
+
+    primary_artifact_ref = str(primary_artifact.artifact_ref or "").strip()
+    audit_artifact_ref = (
+        f"{primary_artifact_ref[:-5]}.audit.md"
+        if primary_artifact_ref.endswith(".json")
+        else f"{primary_artifact_ref}.audit.md"
+    )
+    return TicketWrittenArtifact.model_validate(
+        {
+            "path": audit_path,
+            "artifact_ref": audit_artifact_ref,
+            "kind": "MARKDOWN",
+            "content_text": _render_governance_audit_markdown(
+                ticket_id=payload.ticket_id,
+                output_schema_ref=output_schema_ref,
+                result_payload=result_payload,
+            ),
+        }
+    )
+
+
+def _developer_inspector_refs_for_ticket(ticket_id: str) -> DeveloperInspectorRefs:
+    return DeveloperInspectorRefs(
+        compiled_context_bundle_ref=f"ctx://compile/{ticket_id}",
+        compile_manifest_ref=f"manifest://compile/{ticket_id}",
+        rendered_execution_payload_ref=f"render://compile/{ticket_id}",
+    )
+
+
+def _ticket_context_terminal_state(repository: ControlPlaneRepository, ticket_id: str) -> dict[str, Any]:
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    artifact_paths = [
+        str(item.get("logical_path") or "").strip()
+        for item in repository.list_ticket_artifacts(ticket_id)
+        if str(item.get("logical_path") or "").strip()
+    ]
+    result_status = "executing"
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+    if terminal_event is not None:
+        event_type = str(terminal_event.get("event_type") or "").strip()
+        if event_type == EVENT_TICKET_COMPLETED:
+            result_status = "completed"
+        elif event_type == EVENT_TICKET_TIMED_OUT:
+            result_status = "timed_out"
+        elif event_type == EVENT_TICKET_FAILED:
+            result_status = "failed"
+    return {
+        "status": str((ticket or {}).get("status") or "UNKNOWN"),
+        "result_status": result_status,
+        "artifact_paths": artifact_paths,
+    }
+
+
+def _refresh_ticket_context_archive(repository: ControlPlaneRepository, ticket_id: str) -> None:
+    settings = get_settings()
+    if settings.ticket_context_archive_root is None:
+        return
+    latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket(ticket_id)
+    if latest_execution_package is None:
+        return
+    latest_compile_manifest = repository.get_latest_compile_manifest_by_ticket(ticket_id)
+    write_ticket_context_markdown(
+        settings.ticket_context_archive_root,
+        latest_execution_package.get("payload") or {},
+        developer_inspector_refs=_developer_inspector_refs_for_ticket(ticket_id),
+        compile_manifest=(latest_compile_manifest or {}).get("payload") or {},
+        terminal_state=_ticket_context_terminal_state(repository, ticket_id),
+    )
 
 
 def _resolve_dispatch_intent(created_spec: dict[str, Any] | None) -> dict[str, Any]:
@@ -4662,6 +4847,7 @@ def handle_ticket_fail(
                 merge_status="NOT_REQUESTED",
             )
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
+    _refresh_ticket_context_archive(repository, payload.ticket_id)
 
     _trigger_ceo_shadow_safely(
         repository,
@@ -4866,9 +5052,18 @@ def handle_ticket_result_submit(
             ),
         )
 
+    effective_written_artifacts = list(payload.written_artifacts)
+    governance_audit_artifact = _build_governance_audit_written_artifact(
+        created_spec=created_spec,
+        payload=payload,
+        written_artifacts=effective_written_artifacts,
+    )
+    if governance_audit_artifact is not None:
+        effective_written_artifacts.append(governance_audit_artifact)
+
     allowed_write_set = list(created_spec.get("allowed_write_set") or [])
     violating_paths = [
-        item.path for item in payload.written_artifacts if not _match_allowed_write_set(item.path, allowed_write_set)
+        item.path for item in effective_written_artifacts if not _match_allowed_write_set(item.path, allowed_write_set)
     ]
     if violating_paths:
         return handle_ticket_fail(
@@ -4891,7 +5086,6 @@ def handle_ticket_result_submit(
     command_id = new_prefixed_id("cmd")
     received_at = now_local()
     resolved_artifact_store = artifact_store or repository.artifact_store
-    effective_written_artifacts = list(payload.written_artifacts)
     effective_git_commit_record = payload.git_commit_record
 
     if is_workspace_managed_source_code_ticket(created_spec):
@@ -5131,6 +5325,7 @@ def handle_ticket_result_submit(
         )
     if project_workspace_manifest_exists(payload.workflow_id):
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
+    _refresh_ticket_context_archive(repository, payload.ticket_id)
 
     _trigger_ceo_shadow_safely(
         repository,

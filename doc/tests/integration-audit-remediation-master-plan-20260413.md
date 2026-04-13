@@ -45,10 +45,16 @@
   - workspace-managed 代码票会直接拦占位源码和极简测试自报结果
   - `20-evidence/tests|git` 已按 `ticket_id/attempt-1` 分路径
   - live harness full success 已补源码证据质量和证据路径撞车断言
+- 第二批执行切片也已落：
+  - live harness 现在会自动生成正式版 `audit-summary.md`
+  - `integration-monitor-report.md` 已收成“只记变化点 + 静默恢复摘要”
+  - governance JSON 会自动旁挂同名 `.audit.md`
+  - `ticket_context_archives/*.md` 已改成执行卡片，并会在 terminal 后刷新真实产物路径
 
 对应专项记录在：
 
 - `doc/tests/source-delivery-evidence-remediation-20260413.md`
+- `doc/tests/audit-readability-remediation-20260413.md`
 
 ### 还没落地
 
@@ -58,8 +64,7 @@
 - schema 合规替代真实业务交付
 - 测试证据质量太低
 - 产物可覆盖，导致不可追溯
-- 巡检报告太吵
-- governance / inspector / context archive 对人不友好
+- developer_inspector 仍是三份 JSON，人工检索成本还高
 - project workspace 路径和目录组织负担太重
 
 ---
@@ -152,23 +157,16 @@
 
 ### P1-1 场景级审计摘要正式化
 
+当前状态：`第二批已落`
+
 目标：
 
 - 场景根目录一眼看懂
 
 当前已做：
 
-- `audit-summary.md` 基础版已落
-
-还要补：
-
-- workflow 阶段流转
-- ticket 完成 / 失败 / pending 数
-- 当前活跃 ticket
-- provider 选择链
-- 最长静默区间
-- incident / approval 汇总
-- 代码 / 测试 / evidence 产出概览
+- `audit-summary.md` 已从基础版收正成正式版
+- 已固定输出 workflow 阶段流转、ticket 汇总、当前活跃 ticket、provider 摘要、最长静默区间、incident / approval 汇总，以及代码 / 测试 / evidence 概览
 
 实施点：
 
@@ -176,15 +174,17 @@
 
 ### P1-2 巡检报告去重
 
+当前状态：`第二批已落`
+
 目标：
 
 - `integration-monitor-report.md` 只看变化点
 
-实施点：
+已落地：
 
-- 真实 live runner 的 monitor 写入逻辑
+- `integration-monitor-report.md` 现在由 shared harness 自动生成
 - 只在状态跳变时追加
-- 连续静默压成一条摘要
+- 连续静默会压成一条恢复摘要
 
 验收口径：
 
@@ -240,14 +240,18 @@
 
 ### P2-1 governance 文档旁挂 `.audit.md`
 
+当前状态：`第二批已落`
+
 目标：
 
 - JSON 继续给机器用
 - 人看同名 `.audit.md`
 
-实施点：
+已落地：
 
-- governance 文档落盘后 post-processor
+- governance 文档落盘后会自动生成同目录同 basename 的 `.audit.md`
+- `.audit.md` 已跟随原 ticket 一起进入 artifact index
+- governance process asset 继续指向原始 JSON，不改机器消费真相
 
 摘要字段：
 
@@ -266,13 +270,16 @@
 
 ### P2-2 ticket_context_archives 重写
 
+当前状态：`第二批已落`
+
 目标：
 
 - 从“截断 JSON preview”改成“执行卡片”
 
-实施点：
+已落地：
 
-- `backend/app/core/ticket_context_archive.py`
+- `backend/app/core/ticket_context_archive.py` 已重写成“ticket 执行卡片”
+- compile 阶段先写一版，ticket terminal 后会用同名文件刷新最终状态和实际 artifact 路径
 
 最少包含：
 

@@ -21,7 +21,7 @@
 
 | 区域 | 任务范围 | 当前状态 | 默认看哪里 |
 |------|----------|----------|------------|
-| 当前主线 | `P0-COR-001` 到 `P0-COR-006` | 进行中：本轮已按审计总计划落第一批，先把真实源码正文、原始测试输出和版本化证据路径收进主线 | [task-backlog/active.md](task-backlog/active.md) |
+| 当前主线 | `P0-COR-001` 到 `P0-COR-006` | 进行中：本轮已按审计总计划连续落两批，先把真实交付门禁收紧，再把场景摘要、巡检报告、治理 `.audit.md` 和 ticket 执行卡片收成固定审计入口 | [task-backlog/active.md](task-backlog/active.md) |
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | [task-backlog/active.md](task-backlog/active.md) |
 | 条件批次 | `C1` | 当前无新增开启项；只在触发条件成立时回到主线 | [TODO.md](TODO.md) |
 | 已完成历史 | `P2-*`、旧 `M7` 相关批次 | 已收口 | [task-backlog/done.md](task-backlog/done.md) |

@@ -19,7 +19,14 @@
 - `P0-2` 已落本轮最小闭环：`source_code_delivery@1` 现在必须带 `source_files[] / verification_runs[]`，不能再只靠 `source_file_refs[]` 过 schema。
 - `P0-3` 已落路径隔离：workspace-managed 测试证据统一写到 `20-evidence/tests/<ticket_id>/attempt-1/`，git 证据统一写到 `20-evidence/git/<ticket_id>/attempt-1/`。
 - `P1-3` 已落证据质量门禁：空 stdout/stderr、`pytest -q passed`、固定 `source.ts/source.tsx` 占位名和 `runtimeSourceDelivery = true` 现在都会被拦成失败。
-- 当前 blocker 仍在 `P0-COR-006`：真实 provider 长测还没重跑，`project-init / scheduler_runner / test_api` 那批受 provider fail-closed 影响的历史测试也还没一并收口。
+
+### 2026-04-13 审计第二批执行切片
+
+- `P1-1` 已落正式摘要：`audit-summary.md` 现在会固定输出场景时间范围、provider 摘要、workflow 阶段流转、ticket 汇总、governance 产出链、代码/证据概览和最长静默区间。
+- `P1-2` 已落巡检去重：live harness 现在会自动生成 `integration-monitor-report.md`，只在状态变化和静默恢复时写记录，不再刷满“无变化”心跳。
+- `P2-1` 已落治理文档人工可读层：五类 governance JSON 现在会自动旁挂同名 `.audit.md`，并一起进入 artifact index，但 process asset 仍继续指向原始 JSON。
+- `P2-2` 已落 ticket 执行卡片：`ticket_context_archives/*.md` 现在会按 compile / terminal 两阶段刷新，直接展示上下文来源表、token 预算、降级告警、checkout / branch 和实际 artifact 路径。
+- 当前 blocker 仍在 `P0-COR-006`：真实 provider 长测还没重跑，`test_api.py / test_scheduler_runner.py` 那批受 provider fail-closed 影响的历史测试也还没一并收口。
 
 ## 冻结后置
 

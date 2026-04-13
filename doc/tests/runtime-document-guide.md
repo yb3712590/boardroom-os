@@ -39,6 +39,7 @@
 
 - `artifacts/`
 - `artifact_uploads/`
+- `audit-summary.md`
 - `developer_inspector/`
 - `failure_snapshots/`
 - `ticket_context_archives/`
@@ -103,24 +104,23 @@
 
 用途：
 
-- 这是人工排障时持续追加的巡检报告。
-- 不是系统主线必备文件。
-- 是我们为了盯长测、记卡点、记修复动作单独写的。
+- 这是 shared harness 自动生成的巡检报告。
+- 它现在只保留状态变化点和静默恢复摘要。
+- 不是“每 tick 都刷一行”的流水账了。
 
 里面通常会记录：
 
-- 某个时间点的 workflow 状态
-- 当前 ticket 数
+- 某个时间点的 workflow 状态和阶段
+- 当前 ticket / event 数
+- 当前活跃 ticket
 - 当前 incident / approval 数量
-- 卡点判断
-- 排查证据
-- 修复动作
-- 重启原因
+- 进入新阶段的时间点
+- “静默 X 分钟后恢复”这种摘要
 
 它的价值很直接：
 
-- 让你不用反复翻聊天记录
-- 一眼看到“这轮到底发生过什么”
+- 一眼看到“这轮什么时候真的发生了变化”
+- 不用再在几百行无变化心跳里手工找跳变点
 
 ---
 
@@ -187,11 +187,13 @@
 - `reports/governance/<ticket-id>/milestone_plan.json`
 - `reports/governance/<ticket-id>/detailed_design.json`
 - `reports/governance/<ticket-id>/backlog_recommendation.json`
+- `reports/governance/<ticket-id>/*.audit.md`
 
 这些文件的意义是：
 
 - 它们是 ticket 实际提交出来的结构化产物
 - 也是 maker-checker 和 controller 后续消费的输入
+- 其中 `.audit.md` 是给人直接看的摘要层；机器继续读原始 JSON
 
 ---
 
@@ -420,7 +422,7 @@
 
 用途：
 
-- 每张已编译 ticket 都会导出一份 markdown 版上下文档案。
+- 每张已编译 ticket 都会导出一份 markdown 版执行卡片。
 - 文件名一般就是 `<ticket-id>.md`。
 
 它和 `developer_inspector/` 的关系是：
@@ -430,8 +432,9 @@
 
 适合干什么：
 
-- 快速看某张 ticket 当时到底带了什么上下文
-- 不想直接啃大 JSON 时，用它先做人工检查
+- 快速看某张 ticket 当时到底吃了什么上下文
+- 直接看 token 预算、truncated / degradation、cache hit
+- 直接看 checkout / branch 和 terminal 后的实际 artifact 路径
 
 ---
 
@@ -460,19 +463,22 @@
 1. `boardroom_os.db`
    - 查真实 workflow / ticket / event 状态
 
-2. `integration-monitor-report.md`
-   - 看人工排障过程和结论
+2. `audit-summary.md`
+   - 先看这轮有没有卡住、卡在哪个阶段、当前活跃 ticket 是谁
 
-3. `developer_inspector/rendered_execution_payload/compile/<ticket-id>.json`
+3. `integration-monitor-report.md`
+   - 看阶段跳变时间轴和静默恢复点
+
+4. `developer_inspector/rendered_execution_payload/compile/<ticket-id>.json`
    - 看 provider 实际吃到的 payload
 
-4. `artifacts/reports/governance/<ticket-id>/*.json`
-   - 看治理票到底产出了什么
+5. `artifacts/reports/governance/<ticket-id>/*.audit.md`
+   - 先看治理票的人类摘要；需要机器字段时再回 JSON
 
-5. `project-workspaces/<workflow-id>/10-project/docs/tracking/*.md`
+6. `project-workspaces/<workflow-id>/10-project/docs/tracking/*.md`
    - 看项目跟踪文件有没有开始真实更新
 
-6. `project-workspaces/<workflow-id>/10-project/src/`
+7. `project-workspaces/<workflow-id>/10-project/src/`
    - 看代码有没有真正落盘
 
 ---
@@ -501,9 +507,10 @@
 - `artifacts/` 放结果
 - `project-workspaces/` 放项目本体
 - `developer_inspector/` 放编译与 provider 调试材料
-- `ticket_context_archives/` 放人工可读上下文快照
+- `ticket_context_archives/` 放人工可读执行卡片
 - `failure_snapshots/` 放失败现场
-- `integration-monitor-report.md` 放人工排障记录
+- `audit-summary.md` 放场景级一页摘要
+- `integration-monitor-report.md` 放变化点巡检记录
 
 如果你只想查“为什么长测没往前走”，先看数据库和 `developer_inspector`。  
 如果你只想查“有没有真的写代码”，先看 `10-project/src/` 和 `20-evidence/`。

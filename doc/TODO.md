@@ -28,6 +28,7 @@
 - 2026-04-12 本轮还补了一条 `P0-COR-006` 最小 live 验证口径：shared harness 新增 `architecture_governance_autopilot_smoke` checkpoint smoke，`run_report.json` 会写 `completion_mode=checkpoint_smoke`；当前只验“招聘架构师 + 技术决策会议 + 架构治理文档批准”，不把它冒充成 full closeout 长测
 - 2026-04-12 同机实跑 smoke 时，provider 仍反复报 `UPSTREAM_UNAVAILABLE / timed out`；当前 smoke 入口已就位，但还没在这台机器上拿到成功的 checkpoint `run_report.json`
 - 2026-04-13 本轮已按 `doc/tests/integration-audit-remediation-master-plan-20260413.md` 落第一批执行切片：`source_code_delivery@1` 现在必须带 `source_files[] / verification_runs[]`，workspace-managed 代码票会拦截占位源码和极简测试自报结果，`20-evidence/tests|git` 也已改成按 `ticket_id/attempt-1` 分路径；对应专项记录见 `doc/tests/source-delivery-evidence-remediation-20260413.md`
+- 2026-04-13 本轮已继续落第二批执行切片：live harness 现在会自动生成正式版 `audit-summary.md` 和去重后的 `integration-monitor-report.md`，治理文档会旁挂同名 `.audit.md`，`ticket_context_archives/*.md` 也已重写成执行卡片；对应专项记录见 `doc/tests/audit-readability-remediation-20260413.md`
 
 ## 当前批次
 
@@ -61,7 +62,9 @@
 - `P0-COR-005` 进行中：把 checker / closeout 改成按 `deliverable_kind` 生效的硬门禁。当前第七段已把 closeout 提交口径收正到“final_artifact_refs 必须对齐已知 delivery evidence”，并统一 board-approved closeout、autopilot closeout 与 dashboard completion 的真相链；`FOLLOW_UP_REQUIRED` 继续只作为 checker 可见风险，不自动升成 schema 级硬失败；本机 `project_workspace_hooks` 相关 closeout 回归现在已能重跑
 - `P0-COR-006` 进行中：当前已把 live runner 抽成共享 harness，并补齐 3 条 full live 入口：`backend/tests/live/requirement_elicitation_autopilot_live.py`、`backend/tests/live/architecture_governance_autopilot_live.py`、`backend/tests/live/library_management_autopilot_live.py`。这轮新增了 `backend/tests/live/architecture_governance_autopilot_smoke.py` checkpoint smoke，用真实 provider 验“招聘架构师 + 技术决策会议 + 架构治理文档批准”；但这台机器上实跑仍被 provider timeout 卡住，`requirement_elicitation` 和 `library_management` 的 full real-provider 长测也仍待重跑
 - `2026-04-13 审计第一批执行切片` 已完成：只覆盖 `P0-2 / P0-3 / P1-3`。这轮把 `source_code_delivery` 提交口径从“只交 ref”收紧成“必须同时交源码正文、原始测试运行详情和版本化证据路径”；workspace-managed 代码票不再接受 `source.ts/source.tsx`、`runtimeSourceDelivery = true`、`generated for <ticket>`、空 stdout/stderr、`pytest -q passed` 这类占位内容过关；live harness full closeout 现在也会把源码证据质量和 `artifact_index` 路径撞车一并纳入成功断言
+- `2026-04-13 审计第二批执行切片` 已完成：覆盖 `P1-1 / P1-2 / P2-1 / P2-2`。这轮把场景根目录的审计入口收正成 `audit-summary.md + integration-monitor-report.md + governance *.audit.md + ticket_context_archives/*.md` 这组人工可读层；live harness 现在只记录状态变化点和静默恢复摘要，治理 JSON 会自动旁挂 `.audit.md`，ticket 上下文档案也会在 compile / terminal 两个阶段刷新成执行卡片
 - 本轮额外补了一条测试运行真相：当仓库位于 Git linked worktree 下时，`backend/tests/conftest.py` 现在会自动把 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 改到系统临时目录，避免测试里再创建项目 worktree 时撞上 Git 的 `$GIT_DIR too big`；Windows 下 `pytest` 仍建议继续显式带 repo 内 `--basetemp`
+- 当前 blocker 仍集中在两块：真实 provider 长测还没在这台机器上重跑通过，`test_api.py / test_scheduler_runner.py` 里那批被 fail-closed 打断的历史测试也还没整体收口
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

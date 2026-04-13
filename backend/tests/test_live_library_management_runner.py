@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+import tests.live._autopilot_live_harness as live_harness
 
 from tests.live.architecture_governance_autopilot_live import SCENARIO as ARCHITECTURE_SCENARIO
 from tests.live.architecture_governance_autopilot_smoke import (
@@ -142,6 +143,179 @@ def test_write_audit_summary_renders_provider_attempts_and_terminal_failure(tmp_
     assert "FIRST_TOKEN_TIMEOUT" in body
     assert "PROVIDER_REQUIRED_UNAVAILABLE" in body
     assert "fallback blocked" in body.lower()
+
+
+def test_build_scenario_paths_exposes_integration_monitor_report_path(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+
+    assert getattr(paths, "integration_monitor_report_path", None) == (
+        paths.root / "integration-monitor-report.md"
+    )
+
+
+def test_write_audit_summary_renders_formal_sections(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    target_path = write_audit_summary(
+        paths,
+        report={
+            "success": False,
+            "scenario_slug": "library_management_autopilot_live",
+            "workflow_id": "wf_library_live",
+            "completion_mode": "timeout",
+            "elapsed_sec": 4260.0,
+            "started_at": "2026-04-13T01:37:37+08:00",
+            "finished_at": "2026-04-13T02:48:37+08:00",
+        },
+        snapshot={
+            "workflow": {
+                "workflow_id": "wf_library_live",
+                "status": "EXECUTING",
+                "current_stage": "build",
+            },
+            "tickets": [
+                {
+                    "ticket_id": "tkt_build_001",
+                    "status": "IN_PROGRESS",
+                    "node_id": "node_build_001",
+                }
+            ],
+            "provider_candidate_chain": ["prov_primary", "prov_backup"],
+            "provider_attempt_log": [
+                {
+                    "provider_id": "prov_primary",
+                    "attempt_no": 1,
+                    "failure_kind": "FIRST_TOKEN_TIMEOUT",
+                    "status": "FAILED",
+                }
+            ],
+            "fallback_blocked": True,
+            "final_failure_kind": "PROVIDER_REQUIRED_UNAVAILABLE",
+            "provider_summary": {
+                "actual_provider_id": "prov_primary",
+                "actual_model": "gpt-5.4",
+                "provider_base_url": "https://api.example.test/v1",
+            },
+            "timeline": [
+                {
+                    "entered_at": "2026-04-13T01:37:37+08:00",
+                    "stage": "project_init",
+                    "workflow_status": "EXECUTING",
+                },
+                {
+                    "entered_at": "2026-04-13T01:41:37+08:00",
+                    "stage": "plan",
+                    "workflow_status": "EXECUTING",
+                },
+                {
+                    "entered_at": "2026-04-13T02:00:37+08:00",
+                    "stage": "build",
+                    "workflow_status": "EXECUTING",
+                },
+            ],
+            "ticket_summary": {
+                "total": 7,
+                "completed": 4,
+                "failed": 1,
+                "pending": 2,
+                "active_ticket_ids": ["tkt_build_001"],
+            },
+            "governance_documents": [
+                {
+                    "ticket_id": "tkt_gov_001",
+                    "document_kind_ref": "architecture_brief",
+                    "status": "COMPLETED",
+                    "summary": "MVP scope is locked to library management.",
+                }
+            ],
+            "artifact_summary": {
+                "has_project_code": True,
+                "has_test_evidence": True,
+                "has_git_evidence": True,
+            },
+            "approval_summary": {
+                "open_count": 1,
+                "resolved_count": 2,
+            },
+            "incident_summary": {
+                "open_count": 0,
+                "resolved_count": 1,
+            },
+            "longest_silence": {
+                "start_at": "2026-04-13T02:10:00+08:00",
+                "end_at": "2026-04-13T02:23:00+08:00",
+                "duration_sec": 780,
+            },
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "library_management_autopilot_live" in body
+    assert "## Workflow Progress" in body
+    assert "## Governance Output Chain" in body
+    assert "## Code And Evidence" in body
+    assert "## Incidents And Approvals" in body
+    assert "## Longest Silence" in body
+    assert "https://api.example.test/v1" in body
+    assert "MVP scope is locked to library management." in body
+
+
+def test_write_integration_monitor_report_only_keeps_changes(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    writer = getattr(live_harness, "write_integration_monitor_report", None)
+    assert callable(writer)
+
+    target_path = writer(
+        paths,
+        entries=[
+            {
+                "recorded_at": "2026-04-13T01:38:41+08:00",
+                "workflow_status": "EXECUTING",
+                "stage": "project_init",
+                "ticket_count": 0,
+                "event_count": 5,
+                "active_ticket_ids": [],
+                "approval_count": 0,
+                "incident_count": 0,
+                "change_type": "state_change",
+                "summary": "workflow 启动",
+            },
+            {
+                "recorded_at": "2026-04-13T01:39:41+08:00",
+                "workflow_status": "EXECUTING",
+                "stage": "plan",
+                "ticket_count": 1,
+                "event_count": 8,
+                "active_ticket_ids": ["tkt_plan_001"],
+                "approval_count": 0,
+                "incident_count": 0,
+                "change_type": "state_change",
+                "summary": "进入 plan 阶段",
+            },
+            {
+                "recorded_at": "2026-04-13T01:54:41+08:00",
+                "workflow_status": "EXECUTING",
+                "stage": "plan",
+                "ticket_count": 1,
+                "event_count": 8,
+                "active_ticket_ids": ["tkt_plan_001"],
+                "approval_count": 0,
+                "incident_count": 0,
+                "change_type": "silence_recovered",
+                "summary": "静默 14 分钟后恢复",
+                "silent_for_sec": 840,
+            },
+        ],
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert target_path.name == "integration-monitor-report.md"
+    assert body.count("### ") == 3
+    assert "静默 14 分钟后恢复" in body
+    assert "tkt_plan_001" in body
 
 
 def test_assert_source_delivery_payload_quality_requires_raw_verification_output() -> None:

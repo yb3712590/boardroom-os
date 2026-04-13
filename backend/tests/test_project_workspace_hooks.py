@@ -1020,3 +1020,57 @@ def test_governance_document_requires_written_artifact_for_declared_ref(client) 
     assert ticket is not None
     assert ticket["status"] == "FAILED"
     assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+
+
+def test_governance_document_writes_human_readable_audit_markdown(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Governance audit markdown demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_governance_audit_markdown_001"
+    node_id = "node_governance_audit_markdown_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "architecture_brief",
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:governance-audit-md",
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_governance_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    audit_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "10-project"
+        / "docs"
+        / f"{ticket_id}-architecture-brief.audit.md"
+    )
+    assert audit_path.is_file()
+    body = audit_path.read_text(encoding="utf-8")
+    assert "## 摘要" in body
+    assert "## 关键决策" in body
+    assert "## 关键约束" in body
+    assert "## 各节要点" in body
+    assert "linked_artifact_refs" not in body
+    assert "content_json" not in body
+
+    repository = client.app.state.repository
+    artifacts = repository.list_ticket_artifacts(ticket_id)
+    logical_paths = {str(item.get("logical_path") or "") for item in artifacts}
+    assert f"10-project/docs/{ticket_id}-architecture-brief.audit.md" in logical_paths

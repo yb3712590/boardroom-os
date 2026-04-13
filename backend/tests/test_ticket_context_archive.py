@@ -29,11 +29,13 @@ def test_build_ticket_context_markdown_includes_review_sections(client, set_tick
         ),
     )
 
-    assert "# Ticket Context Archive: tkt_compile_001" in markdown
-    assert "## Execution Contract" in markdown
-    assert "## Org Context" in markdown
-    assert "## Context Blocks" in markdown
-    assert "## Rendered Messages" in markdown
+    assert "# Ticket 执行卡片: tkt_compile_001" in markdown
+    assert "## 基本信息" in markdown
+    assert "## 输入上下文" in markdown
+    assert "## 编译健康度" in markdown
+    assert "## 输出信息" in markdown
+    assert "source_ref" in markdown
+    assert "tokens_before" in markdown
     assert "ctx://compile/tkt_compile_001" in markdown
     assert "render://compile/tkt_compile_001" in markdown
 
@@ -53,6 +55,8 @@ def test_write_ticket_context_markdown_persists_one_file_per_ticket(tmp_path: Pa
                 "role_profile_ref": "architect_primary",
                 "output_schema_ref": "architecture_brief",
                 "allowed_write_set": ["reports/architecture/*"],
+                "project_checkout_path": "D:/tmp/wf_live_demo/checkout/tkt_live_demo",
+                "git_branch_ref": "codex/tkt_live_demo",
             },
             "org_context": {
                 "responsibility_boundary": {
@@ -62,15 +66,54 @@ def test_write_ticket_context_markdown_persists_one_file_per_ticket(tmp_path: Pa
                 }
             },
             "atomic_context_bundle": {
+                "token_budget": 3000,
                 "context_blocks": [
                     {
+                        "source_kind": "PROCESS_ASSET",
+                        "content_mode": "INLINE_FULL",
+                        "degradation_reason_code": None,
                         "source_ref": "art://project-init/wf_live_demo/board-brief.md",
                         "content_type": "TEXT",
+                        "selector": {"selector_type": "SOURCE_REF", "selector_value": "art://project-init/wf_live_demo/board-brief.md"},
                         "content_payload": {
                             "text": "# Brief\n\nBuild an atomic architecture plan."
-                        },
+                        }
                     }
                 ]
+            },
+            "governance": {
+                "retry_budget": 1,
+                "timeout_sla_sec": 1800,
+                "escalation_policy": {
+                    "on_timeout": "retry",
+                    "on_schema_error": "retry",
+                    "on_repeat_failure": "escalate_ceo",
+                },
+            },
+            "terminal_state": {
+                "status": "COMPLETED",
+                "result_status": "completed",
+                "artifact_paths": [
+                    "reports/architecture/tkt_live_demo/architecture-brief.json",
+                    "reports/architecture/tkt_live_demo/architecture-brief.audit.md",
+                ],
+            },
+            "compile_manifest": {
+                "budget_plan": {"total_budget_tokens": 3000},
+                "budget_actual": {"final_bundle_tokens": 420, "truncated_tokens": 0},
+                "degradation": {"warnings": [], "is_degraded": False},
+                "cache_report": {"cache_hit": False},
+                "source_log": [
+                    {
+                        "source_ref": "art://project-init/wf_live_demo/board-brief.md",
+                        "source_kind": "PROCESS_ASSET",
+                        "content_mode": "INLINE_FULL",
+                        "tokens_before": 120,
+                        "tokens_after": 120,
+                        "reason_code": None,
+                        "status": "USED",
+                    }
+                ],
             },
             "rendered_execution_payload": {
                 "messages": [
@@ -92,4 +135,8 @@ def test_write_ticket_context_markdown_persists_one_file_per_ticket(tmp_path: Pa
 
     assert output_path == archive_root / "tkt_live_demo.md"
     assert output_path.exists()
-    assert "architect_primary" in output_path.read_text(encoding="utf-8")
+    body = output_path.read_text(encoding="utf-8")
+    assert "architect_primary" in body
+    assert "D:/tmp/wf_live_demo/checkout/tkt_live_demo" in body
+    assert "reports/architecture/tkt_live_demo/architecture-brief.audit.md" in body
+    assert "Token 预算" in body

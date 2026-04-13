@@ -2363,6 +2363,7 @@ def run_leased_ticket_runtime(
                     settings.ticket_context_archive_root,
                     execution_package.model_dump(mode="json"),
                     developer_inspector_refs=developer_inspector_refs,
+                    compile_manifest=compiled_artifacts.compile_manifest.model_dump(mode="json"),
                 )
             with repository.connection() as connection:
                 created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
