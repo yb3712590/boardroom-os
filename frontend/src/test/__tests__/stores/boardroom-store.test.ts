@@ -45,7 +45,7 @@ describe('boardroom-store', () => {
         })
       }
 
-      return new Response(JSON.stringify(envelope({ effective_mode: 'LOCAL_DETERMINISTIC' })), {
+      return new Response(JSON.stringify(envelope({ effective_mode: 'PROVIDER_REQUIRED_UNAVAILABLE' })), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
@@ -57,7 +57,7 @@ describe('boardroom-store', () => {
       workspace: { workspace_id: 'ws', workspace_name: 'Default' },
     })
     expect(useBoardroomStore.getState().runtimeProvider).toMatchObject({
-      effective_mode: 'LOCAL_DETERMINISTIC',
+      effective_mode: 'PROVIDER_REQUIRED_UNAVAILABLE',
     })
     expect(useBoardroomStore.getState().snapshotError).toBeNull()
   })

@@ -7,6 +7,7 @@ from app.core.runtime_provider_config import (
     RuntimeProviderConfigStore,
     RuntimeProviderStoredConfig,
     build_provider_model_entry_ref,
+    resolve_provider_failover_selections,
     resolve_provider_selection,
     save_runtime_provider_command,
 )
@@ -191,6 +192,100 @@ def test_resolve_provider_selection_prefers_role_binding_and_window_override(tmp
     assert selection.actual_model == "gpt-4.1"
     assert selection.effective_max_context_window == 180000
     assert selection.effective_reasoning_effort == "xhigh"
+
+
+def test_resolve_provider_failover_selections_uses_remaining_binding_entries_before_provider_fallbacks(
+    tmp_path: Path,
+) -> None:
+    class _HealthyRepository:
+        @staticmethod
+        def has_open_circuit_breaker_for_provider(_provider_id: str) -> bool:
+            return False
+
+    store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
+    payload = {
+        "providers": [
+            {
+                "provider_id": "prov_primary",
+                "type": "openai_responses_stream",
+                "base_url": "https://api.primary.test/v1",
+                "api_key": "sk-primary-secret",
+                "alias": "primary",
+                "preferred_model": "gpt-5.3-codex",
+                "max_context_window": None,
+                "enabled": True,
+                "fallback_provider_ids": ["prov_tail_backup"],
+            },
+            {
+                "provider_id": "prov_binding_backup",
+                "type": "openai_responses_non_stream",
+                "base_url": "https://api.binding-backup.test/v1",
+                "api_key": "sk-binding-backup",
+                "alias": "binding-backup",
+                "preferred_model": "gpt-4.1",
+                "max_context_window": None,
+                "enabled": True,
+            },
+            {
+                "provider_id": "prov_tail_backup",
+                "type": "openai_responses_non_stream",
+                "base_url": "https://api.tail-backup.test/v1",
+                "api_key": "sk-tail-backup",
+                "alias": "tail-backup",
+                "preferred_model": "gpt-4.1-mini",
+                "max_context_window": None,
+                "enabled": True,
+            },
+        ],
+        "provider_model_entries": [
+            {
+                "provider_id": "prov_primary",
+                "model_name": "gpt-5.3-codex",
+            },
+            {
+                "provider_id": "prov_binding_backup",
+                "model_name": "gpt-4.1",
+            },
+            {
+                "provider_id": "prov_tail_backup",
+                "model_name": "gpt-4.1-mini",
+            },
+        ],
+        "role_bindings": [
+            {
+                "target_ref": "role_profile:frontend_engineer_primary",
+                "provider_model_entry_refs": [
+                    build_provider_model_entry_ref("prov_primary", "gpt-5.3-codex"),
+                    build_provider_model_entry_ref("prov_binding_backup", "gpt-4.1"),
+                ],
+                "max_context_window_override": None,
+                "reasoning_effort_override": "high",
+            }
+        ],
+        "idempotency_key": "runtime-provider-upsert:binding-chain-failover",
+    }
+    command = RuntimeProviderUpsertCommand.model_validate(payload)
+    save_runtime_provider_command(store, command)
+    loaded = store.load_saved_config()
+
+    primary_selection = resolve_provider_selection(
+        loaded,
+        target_ref="role_profile:frontend_engineer_primary",
+        employee_provider_id=None,
+    )
+    assert primary_selection is not None
+
+    failover_selections = resolve_provider_failover_selections(
+        loaded,
+        _HealthyRepository(),
+        target_ref="role_profile:frontend_engineer_primary",
+        primary_selection=primary_selection,
+    )
+
+    assert [item.provider.provider_id for item in failover_selections] == [
+        "prov_binding_backup",
+        "prov_tail_backup",
+    ]
 
 
 def test_runtime_provider_store_normalizes_legacy_null_reasoning_to_high(tmp_path: Path) -> None:

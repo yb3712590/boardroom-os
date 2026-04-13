@@ -126,6 +126,11 @@ def runtime_provider_upsert(
 
 def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict) -> OpenAICompatProviderConfig:
     provider_type = payload.type if isinstance(payload, RuntimeProviderConfigInput) else payload["type"]
+    timeout_sec = (
+        payload.request_total_timeout_sec
+        if isinstance(payload, RuntimeProviderConfigInput)
+        else payload.get("request_total_timeout_sec")
+    ) or (payload.timeout_sec if isinstance(payload, RuntimeProviderConfigInput) else payload.get("timeout_sec")) or 120.0
     return OpenAICompatProviderConfig(
         base_url=payload.base_url if isinstance(payload, RuntimeProviderConfigInput) else payload["base_url"],
         api_key=payload.api_key if isinstance(payload, RuntimeProviderConfigInput) else payload["api_key"],
@@ -133,7 +138,40 @@ def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict
             payload.preferred_model if isinstance(payload, RuntimeProviderConfigInput) else payload["preferred_model"]
         )
         or "gpt-5.3-codex",
-        timeout_sec=30.0,
+        timeout_sec=float(timeout_sec),
+        connect_timeout_sec=float(
+            (
+                payload.connect_timeout_sec
+                if isinstance(payload, RuntimeProviderConfigInput)
+                else payload.get("connect_timeout_sec")
+            )
+            or 10.0
+        ),
+        write_timeout_sec=float(
+            (
+                payload.write_timeout_sec
+                if isinstance(payload, RuntimeProviderConfigInput)
+                else payload.get("write_timeout_sec")
+            )
+            or 20.0
+        ),
+        first_token_timeout_sec=float(
+            (
+                payload.first_token_timeout_sec
+                if isinstance(payload, RuntimeProviderConfigInput)
+                else payload.get("first_token_timeout_sec")
+            )
+            or 45.0
+        ),
+        stream_idle_timeout_sec=float(
+            (
+                payload.stream_idle_timeout_sec
+                if isinstance(payload, RuntimeProviderConfigInput)
+                else payload.get("stream_idle_timeout_sec")
+            )
+            or 20.0
+        ),
+        request_total_timeout_sec=float(timeout_sec),
         reasoning_effort=(
             payload.reasoning_effort
             if isinstance(payload, RuntimeProviderConfigInput)
@@ -181,6 +219,11 @@ def runtime_provider_models_refresh(
             api_key=str(provider.api_key or ""),
             model=str(provider.preferred_model or provider.model or "gpt-5.3-codex"),
             timeout_sec=float(provider.timeout_sec),
+            connect_timeout_sec=float(provider.connect_timeout_sec or provider.timeout_sec or 0),
+            write_timeout_sec=float(provider.write_timeout_sec or provider.timeout_sec or 0),
+            first_token_timeout_sec=float(provider.first_token_timeout_sec or provider.timeout_sec or 0),
+            stream_idle_timeout_sec=float(provider.stream_idle_timeout_sec or provider.timeout_sec or 0),
+            request_total_timeout_sec=float(provider.request_total_timeout_sec or provider.timeout_sec or 0),
             provider_type=OpenAICompatProviderType(provider.type.value),
         )
     )

@@ -2986,11 +2986,72 @@ def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeyp
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_retry"]
     assert ticket_projection["status"] == "COMPLETED"
     assert attempt_count["value"] == 3
-    assert sleep_calls == [1.0, 2.0]
+    assert sleep_calls == [2.0, 8.0]
     assert repository.list_open_incidents() == []
 
 
-def test_runtime_provider_auth_failure_does_not_attempt_provider_failover(
+def test_runtime_without_configured_provider_fails_closed_instead_of_using_deterministic_path(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_missing_provider", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_runner_provider_required",
+            ticket_id="tkt_runner_provider_required",
+            node_id="node_runner_provider_required",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": "wf_runner_provider_required",
+            "ticket_id": "tkt_runner_provider_required",
+            "node_id": "node_runner_provider_required",
+            "leased_by": "emp_frontend_missing_provider",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_required:tkt_runner_provider_required",
+        },
+    )
+
+    recorded_submit: dict[str, object] = {}
+    original_submit = runtime_module.handle_ticket_result_submit
+
+    def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
+        recorded_submit["failure_detail"] = dict(payload.failure_detail or {})
+        return original_submit(
+            repository_arg,
+            payload,
+            developer_inspector_store=developer_inspector_store,
+            artifact_store=artifact_store,
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(runtime_module, "handle_ticket_result_submit", _record_submit)
+    try:
+        outcomes = run_leased_ticket_runtime(repository)
+    finally:
+        monkeypatch.undo()
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_required")
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_required")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_required"]
+    assert ticket_projection["status"] == "FAILED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_REQUIRED_UNAVAILABLE"
+    assert recorded_submit["failure_detail"]["fallback_blocked"] is True
+    assert recorded_submit["failure_detail"]["provider_candidate_chain"] == []
+    assert recorded_submit["failure_detail"]["provider_attempt_log"] == []
+
+
+def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(
     client,
     set_ticket_time,
     monkeypatch,
@@ -3075,6 +3136,7 @@ def test_runtime_provider_auth_failure_does_not_attempt_provider_failover(
 
     def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
         recorded_submit["assumptions"] = list(payload.assumptions)
+        recorded_submit["failure_detail"] = dict(payload.failure_detail or {})
         return original_submit(
             repository_arg,
             payload,
@@ -3086,16 +3148,29 @@ def test_runtime_provider_auth_failure_does_not_attempt_provider_failover(
 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_auth_no_failover")
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_auth_no_failover")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_auth_no_failover"]
-    assert ticket_projection["status"] == "COMPLETED"
+    assert ticket_projection["status"] == "FAILED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_AUTH_FAILED"
     assert repository.list_open_incidents() == []
-    assert "provider_id=prov_openai_compat" in recorded_submit["assumptions"]
-    assert "provider_failure_kind=PROVIDER_AUTH_FAILED" in recorded_submit["assumptions"]
+    assert recorded_submit["failure_detail"]["fallback_blocked"] is True
+    assert recorded_submit["failure_detail"]["provider_candidate_chain"] == [
+        OPENAI_COMPAT_PROVIDER_ID,
+        CLAUDE_CODE_PROVIDER_ID,
+    ]
+    assert [item["provider_id"] for item in recorded_submit["failure_detail"]["provider_attempt_log"]] == [
+        OPENAI_COMPAT_PROVIDER_ID
+    ]
+    assert [item["failure_kind"] for item in recorded_submit["failure_detail"]["provider_attempt_log"]] == [
+        "PROVIDER_AUTH_FAILED"
+    ]
     assert not any("prov_claude_code" in assumption for assumption in recorded_submit["assumptions"])
 
 
-def test_runtime_provider_paused_ticket_falls_back_to_deterministic_completion(
+def test_runtime_provider_paused_ticket_fails_closed_without_deterministic_completion(
     client,
     set_ticket_time,
     monkeypatch,
@@ -3181,16 +3256,36 @@ def test_runtime_provider_paused_ticket_falls_back_to_deterministic_completion(
         "invoke_openai_compat_response",
         lambda config, rendered_payload: called_live_path.__setitem__("value", called_live_path["value"] + 1),
     )
+    recorded_submit: dict[str, object] = {}
+    original_submit = runtime_module.handle_ticket_result_submit
+
+    def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
+        recorded_submit["failure_detail"] = dict(payload.failure_detail or {})
+        return original_submit(
+            repository_arg,
+            payload,
+            developer_inspector_store=developer_inspector_store,
+            artifact_store=artifact_store,
+        )
+
+    monkeypatch.setattr(runtime_module, "handle_ticket_result_submit", _record_submit)
 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_paused_fallback")
     open_incidents = repository.list_open_incidents()
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_paused_fallback")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_paused_fallback"]
-    assert ticket_projection["status"] == "COMPLETED"
+    assert ticket_projection["status"] == "FAILED"
     assert called_live_path["value"] == 0
+    assert terminal_event is not None
+    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_REQUIRED_UNAVAILABLE"
     assert len(open_incidents) == 1
     assert open_incidents[0]["provider_id"] == "prov_openai_compat"
+    assert recorded_submit["failure_detail"]["fallback_blocked"] is True
+    assert recorded_submit["failure_detail"]["provider_candidate_chain"] == [OPENAI_COMPAT_PROVIDER_ID]
+    assert recorded_submit["failure_detail"]["provider_attempt_log"] == []
 
 
 def test_scheduler_runner_auto_closes_recovering_incident_after_followup_success(client, set_ticket_time):

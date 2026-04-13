@@ -222,6 +222,21 @@ def test_invoke_openai_compat_response_uses_streaming_responses_by_default() -> 
         request_urls.append(str(request.url))
         assert request.url.path.endswith("/responses")
         assert request.headers["Accept"] == "text/event-stream"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["instructions"].startswith("[SYSTEM_CONTROLS/JSON]\n")
+        assert '"rules"' in payload["instructions"]
+        assert '"content_type"' not in payload["instructions"]
+        assert payload["input"] == [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": '[TASK_DEFINITION/JSON]\n{\n  "task": "Return JSON only."\n}',
+                    }
+                ],
+            }
+        ]
         body = (
             'event: response.output_text.delta\n'
             'data: {"type":"response.output_text.delta","delta":"{\\"ok\\""}\n\n'
@@ -275,6 +290,54 @@ def test_invoke_openai_compat_response_returns_after_response_completed_without_
 
     assert result.response_id == "resp_stream_completed_only"
     assert result.output_text == '{"ok":true}'
+
+
+def test_invoke_openai_compat_response_raises_first_token_timeout_before_any_stream_output() -> None:
+    class _SilentStream(httpx.SyncByteStream):
+        def __iter__(self):
+            raise httpx.ReadTimeout("stream never produced a first token")
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_SilentStream(),
+        )
+
+    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
+        invoke_openai_compat_response(
+            _config(),
+            _rendered_payload(),
+            transport=httpx.MockTransport(_handler),
+        )
+
+    assert exc_info.value.failure_kind == "FIRST_TOKEN_TIMEOUT"
+
+
+def test_invoke_openai_compat_response_raises_stream_idle_timeout_after_first_token() -> None:
+    class _IdleAfterFirstTokenStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield (
+                b'event: response.output_text.delta\n'
+                b'data: {"type":"response.output_text.delta","delta":"{\\"ok\\":true"}\n\n'
+            )
+            raise httpx.ReadTimeout("stream stalled after the first token")
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_IdleAfterFirstTokenStream(),
+        )
+
+    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
+        invoke_openai_compat_response(
+            _config(),
+            _rendered_payload(),
+            transport=httpx.MockTransport(_handler),
+        )
+
+    assert exc_info.value.failure_kind == "STREAM_IDLE_TIMEOUT"
 
 
 def test_connectivity_test_falls_back_to_non_streaming_responses_when_streaming_is_not_supported() -> None:

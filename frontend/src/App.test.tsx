@@ -1190,15 +1190,15 @@ function dashboardData(overrides: Partial<JsonRecord> = {}) {
       blocked_nodes: 1,
       open_incidents: 0,
       open_circuit_breakers: 0,
-      provider_health_summary: 'LOCAL_ONLY',
+      provider_health_summary: 'UNAVAILABLE',
     },
     runtime_status: {
-      effective_mode: 'LOCAL_DETERMINISTIC',
-      provider_label: 'Local Deterministic',
+      effective_mode: 'PROVIDER_REQUIRED_UNAVAILABLE',
+      provider_label: 'Provider required',
       model: null,
       configured_worker_count: 1,
-      provider_health_summary: 'LOCAL_ONLY',
-      reason: 'Runtime is using the local deterministic path.',
+      provider_health_summary: 'UNAVAILABLE',
+      reason: 'No live provider is configured for runtime execution.',
     },
     pipeline_summary: {
       phases: [
@@ -1662,16 +1662,16 @@ function installBoardroomMock(options?: {
           ? 'OPENAI_COMPAT_LIVE'
           : defaultProviderId === 'prov_claude_code'
             ? 'CLAUDE_CODE_CLI_LIVE'
-            : 'LOCAL_DETERMINISTIC'
+            : 'PROVIDER_REQUIRED_UNAVAILABLE'
       state.runtimeProvider = runtimeProviderData({
         mode:
           defaultProviderId === 'prov_openai_compat'
             ? 'OPENAI_COMPAT'
             : defaultProviderId === 'prov_claude_code'
               ? 'CLAUDE_CODE_CLI'
-              : 'DETERMINISTIC',
+              : 'PROVIDER_REQUIRED',
         effective_mode: effectiveMode,
-        provider_health_summary: defaultProviderId ? 'HEALTHY' : 'LOCAL_ONLY',
+        provider_health_summary: defaultProviderId ? 'HEALTHY' : 'UNAVAILABLE',
         provider_id: defaultProviderId,
         default_provider_id: defaultProviderId,
         base_url: typeof activeProvider?.base_url === 'string' ? activeProvider.base_url : null,
@@ -1717,7 +1717,7 @@ function installBoardroomMock(options?: {
             ? 'Runtime is using the saved OpenAI-compatible provider config.'
             : defaultProviderId === 'prov_claude_code'
               ? 'Runtime is using the saved Claude Code CLI provider config.'
-            : 'Runtime is using the local deterministic path.',
+              : 'No live provider is configured for runtime execution.',
       })
       state.dashboard = {
         ...state.dashboard,
@@ -1728,12 +1728,12 @@ function installBoardroomMock(options?: {
               ? 'OpenAI Compat'
               : state.runtimeProvider.effective_mode === 'CLAUDE_CODE_CLI_LIVE'
                 ? 'Claude Code CLI'
-              : 'Local Deterministic',
+                : 'Provider required',
           model: state.runtimeProvider.model,
           configured_worker_count: Number(state.runtimeProvider.configured_worker_count),
           provider_health_summary: String(
             (state.dashboard as { ops_strip?: { provider_health_summary?: string } }).ops_strip
-              ?.provider_health_summary ?? 'LOCAL_ONLY',
+              ?.provider_health_summary ?? 'UNAVAILABLE',
           ),
           reason: String(state.runtimeProvider.effective_reason),
         },

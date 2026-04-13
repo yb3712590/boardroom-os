@@ -66,7 +66,12 @@ RUNTIME_TARGET_LABELS = {
 
 FUTURE_ROLE_BINDING_SLOTS: tuple[dict[str, object], ...] = ()
 DEFAULT_MAX_CONTEXT_WINDOW = 1_000_000
-DEFAULT_TIMEOUT_SEC = 30.0
+DEFAULT_TIMEOUT_SEC = 120.0
+DEFAULT_CONNECT_TIMEOUT_SEC = 10.0
+DEFAULT_WRITE_TIMEOUT_SEC = 20.0
+DEFAULT_FIRST_TOKEN_TIMEOUT_SEC = 45.0
+DEFAULT_STREAM_IDLE_TIMEOUT_SEC = 20.0
+DEFAULT_RETRY_BACKOFF_SCHEDULE_SEC: tuple[float, ...] = (2.0, 8.0, 20.0)
 DEFAULT_REASONING_EFFORT: RuntimeProviderReasoningEffort = "high"
 DEFAULT_PROVIDER_CAPABILITY_TAGS = (
     RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
@@ -93,7 +98,13 @@ class RuntimeProviderConfigEntry(StrictModel):
     preferred_model: str | None = None
     model: str | None = None
     max_context_window: int = Field(default=DEFAULT_MAX_CONTEXT_WINDOW, ge=1)
-    timeout_sec: float = Field(default=DEFAULT_TIMEOUT_SEC, gt=0)
+    timeout_sec: float | None = Field(default=None, gt=0)
+    connect_timeout_sec: float | None = Field(default=None, gt=0)
+    write_timeout_sec: float | None = Field(default=None, gt=0)
+    first_token_timeout_sec: float | None = Field(default=None, gt=0)
+    stream_idle_timeout_sec: float | None = Field(default=None, gt=0)
+    request_total_timeout_sec: float | None = Field(default=None, gt=0)
+    retry_backoff_schedule_sec: list[float] = Field(default_factory=list)
     reasoning_effort: RuntimeProviderReasoningEffort = DEFAULT_REASONING_EFFORT
     command_path: str | None = None
     capability_tags: list[RuntimeProviderCapabilityTag] = Field(default_factory=list)
@@ -107,6 +118,34 @@ class RuntimeProviderConfigEntry(StrictModel):
         if self.adapter_kind == RuntimeProviderAdapterKind.CLAUDE_CODE_CLI:
             provider_type = RuntimeProviderType.CLAUDE_STREAM
         alias = _derive_alias(str(self.base_url or ""), self.alias or self.label)
+        legacy_timeout_sec = float(self.timeout_sec or DEFAULT_TIMEOUT_SEC)
+        timeout_was_explicit = self.timeout_sec is not None
+        request_total_timeout_sec = float(self.request_total_timeout_sec or legacy_timeout_sec)
+        connect_timeout_sec = float(
+            self.connect_timeout_sec or min(request_total_timeout_sec, DEFAULT_CONNECT_TIMEOUT_SEC)
+        )
+        write_timeout_sec = float(
+            self.write_timeout_sec or min(request_total_timeout_sec, DEFAULT_WRITE_TIMEOUT_SEC)
+        )
+        first_token_timeout_sec = float(
+            self.first_token_timeout_sec
+            or (
+                min(legacy_timeout_sec, DEFAULT_FIRST_TOKEN_TIMEOUT_SEC)
+                if timeout_was_explicit and self.request_total_timeout_sec is None
+                else DEFAULT_FIRST_TOKEN_TIMEOUT_SEC
+            )
+        )
+        stream_idle_timeout_sec = float(
+            self.stream_idle_timeout_sec
+            or (
+                min(legacy_timeout_sec, DEFAULT_STREAM_IDLE_TIMEOUT_SEC)
+                if timeout_was_explicit and self.request_total_timeout_sec is None
+                else DEFAULT_STREAM_IDLE_TIMEOUT_SEC
+            )
+        )
+        retry_backoff_schedule_sec = [
+            float(item) for item in (self.retry_backoff_schedule_sec or DEFAULT_RETRY_BACKOFF_SCHEDULE_SEC)
+        ]
         object.__setattr__(self, "type", provider_type)
         object.__setattr__(self, "adapter_kind", _normalize_provider_type(provider_type))
         object.__setattr__(self, "alias", alias)
@@ -114,6 +153,13 @@ class RuntimeProviderConfigEntry(StrictModel):
         object.__setattr__(self, "model", self.preferred_model or self.model)
         object.__setattr__(self, "preferred_model", self.preferred_model or self.model)
         object.__setattr__(self, "max_context_window", self.max_context_window or DEFAULT_MAX_CONTEXT_WINDOW)
+        object.__setattr__(self, "timeout_sec", request_total_timeout_sec)
+        object.__setattr__(self, "connect_timeout_sec", connect_timeout_sec)
+        object.__setattr__(self, "write_timeout_sec", write_timeout_sec)
+        object.__setattr__(self, "first_token_timeout_sec", first_token_timeout_sec)
+        object.__setattr__(self, "stream_idle_timeout_sec", stream_idle_timeout_sec)
+        object.__setattr__(self, "request_total_timeout_sec", request_total_timeout_sec)
+        object.__setattr__(self, "retry_backoff_schedule_sec", retry_backoff_schedule_sec)
         object.__setattr__(self, "reasoning_effort", _normalize_reasoning_effort(self.reasoning_effort))
         return self
 
@@ -256,6 +302,7 @@ def _build_env_backed_provider_config() -> RuntimeProviderStoredConfig:
             "max_context_window": DEFAULT_MAX_CONTEXT_WINDOW,
             "enabled": True,
             "timeout_sec": settings.provider_openai_compat_timeout_sec,
+            "request_total_timeout_sec": settings.provider_openai_compat_timeout_sec,
             "reasoning_effort": settings.provider_openai_compat_reasoning_effort,
         }
     )
@@ -334,6 +381,12 @@ def _normalize_provider_entry(provider: RuntimeProviderConfigEntry | dict[str, A
             model=preferred_model,
             max_context_window=int(payload.get("max_context_window") or DEFAULT_MAX_CONTEXT_WINDOW),
             timeout_sec=float(payload.get("timeout_sec") or DEFAULT_TIMEOUT_SEC),
+            connect_timeout_sec=payload.get("connect_timeout_sec"),
+            write_timeout_sec=payload.get("write_timeout_sec"),
+            first_token_timeout_sec=payload.get("first_token_timeout_sec"),
+            stream_idle_timeout_sec=payload.get("stream_idle_timeout_sec"),
+            request_total_timeout_sec=payload.get("request_total_timeout_sec"),
+            retry_backoff_schedule_sec=[float(item) for item in list(payload.get("retry_backoff_schedule_sec") or [])],
             reasoning_effort=_normalize_reasoning_effort(payload.get("reasoning_effort")),
             command_path=(str(payload.get("command_path") or "").strip() or None),
             capability_tags=list(payload.get("capability_tags") or DEFAULT_PROVIDER_CAPABILITY_TAGS),
@@ -351,6 +404,14 @@ def _normalize_provider_entry(provider: RuntimeProviderConfigEntry | dict[str, A
             "model": provider.preferred_model,
             "max_context_window": provider.max_context_window or DEFAULT_MAX_CONTEXT_WINDOW,
             "timeout_sec": provider.timeout_sec or DEFAULT_TIMEOUT_SEC,
+            "connect_timeout_sec": provider.connect_timeout_sec,
+            "write_timeout_sec": provider.write_timeout_sec,
+            "first_token_timeout_sec": provider.first_token_timeout_sec,
+            "stream_idle_timeout_sec": provider.stream_idle_timeout_sec,
+            "request_total_timeout_sec": provider.request_total_timeout_sec,
+            "retry_backoff_schedule_sec": list(
+                provider.retry_backoff_schedule_sec or DEFAULT_RETRY_BACKOFF_SCHEDULE_SEC
+            ),
             "reasoning_effort": _normalize_reasoning_effort(provider.reasoning_effort),
             "capability_tags": list(provider.capability_tags or DEFAULT_PROVIDER_CAPABILITY_TAGS),
             "cost_tier": provider.cost_tier or RuntimeProviderCostTier.STANDARD,
@@ -508,11 +569,11 @@ def provider_effective_mode(
             else "OPENAI_RESPONSES_NON_STREAM"
         )
     if health_status == "DISABLED":
-        return ("LOCAL_DETERMINISTIC", f"{health_reason} Runtime falls back to the local deterministic path.")
+        return ("PROVIDER_REQUIRED_UNAVAILABLE", health_reason)
     if health_status == "INCOMPLETE":
-        return (f"{mode_prefix}_INCOMPLETE", f"{health_reason} Runtime falls back to the local deterministic path.")
+        return (f"{mode_prefix}_INCOMPLETE", health_reason)
     if health_status == "PAUSED":
-        return (f"{mode_prefix}_PAUSED", f"{health_reason} Runtime falls back to the local deterministic path.")
+        return (f"{mode_prefix}_PAUSED", health_reason)
     return (f"{mode_prefix}_LIVE", health_reason)
 
 
@@ -526,7 +587,7 @@ def runtime_provider_effective_mode(
         employee_provider_id=None,
     )
     if selection is None:
-        return ("LOCAL_DETERMINISTIC", "Runtime is using the local deterministic path.")
+        return ("PROVIDER_REQUIRED_UNAVAILABLE", "No live provider is configured for runtime execution.")
     return provider_effective_mode(selection.provider, repository)
 
 
@@ -535,8 +596,8 @@ def runtime_provider_health_summary(
     repository: ControlPlaneRepository,
 ) -> str:
     effective_mode, _ = runtime_provider_effective_mode(config, repository)
-    if effective_mode == "LOCAL_DETERMINISTIC":
-        return "LOCAL_ONLY"
+    if effective_mode == "PROVIDER_REQUIRED_UNAVAILABLE":
+        return "UNAVAILABLE"
     if effective_mode.endswith("_INCOMPLETE"):
         return "INCOMPLETE"
     if effective_mode.endswith("_PAUSED"):
@@ -623,16 +684,37 @@ def _selection_from_binding(
     binding_target_ref: str,
     selection_reason: str,
 ) -> RuntimeProviderSelection | None:
-    if not binding.provider_model_entry_refs:
-        return None
-    return _selection_from_entry(
+    selections = _selections_from_binding(
         config,
-        entry_ref=binding.provider_model_entry_refs[0],
+        binding=binding,
         binding_target_ref=binding_target_ref,
         selection_reason=selection_reason,
-        max_context_window_override=binding.max_context_window_override,
-        reasoning_effort_override=binding.reasoning_effort_override,
     )
+    return selections[0] if selections else None
+
+
+def _selections_from_binding(
+    config: RuntimeProviderStoredConfig,
+    *,
+    binding: RuntimeProviderRoleBinding,
+    binding_target_ref: str,
+    selection_reason: str,
+) -> list[RuntimeProviderSelection]:
+    if not binding.provider_model_entry_refs:
+        return []
+    selections: list[RuntimeProviderSelection] = []
+    for entry_ref in binding.provider_model_entry_refs:
+        selection = _selection_from_entry(
+            config,
+            entry_ref=entry_ref,
+            binding_target_ref=binding_target_ref,
+            selection_reason=selection_reason,
+            max_context_window_override=binding.max_context_window_override,
+            reasoning_effort_override=binding.reasoning_effort_override,
+        )
+        if selection is not None:
+            selections.append(selection)
+    return selections
 
 
 def _normalize_runtime_preference(
@@ -664,24 +746,26 @@ def resolve_provider_selection(
     normalized_preference = _normalize_runtime_preference(runtime_preference)
     if normalized_preference is not None:
         preferred_provider = find_provider_entry(config, normalized_preference.preferred_provider_id)
-        if preferred_provider is not None and preferred_provider.enabled:
-            preferred_model = normalized_preference.preferred_model or preferred_provider.preferred_model
-            if preferred_model:
-                return RuntimeProviderSelection(
-                    provider=preferred_provider,
-                    provider_model_entry_ref=build_provider_model_entry_ref(
-                        preferred_provider.provider_id,
-                        preferred_model,
-                    ),
-                    preferred_provider_id=preferred_provider.provider_id,
-                    preferred_model=preferred_model,
-                    actual_model=preferred_model,
-                    binding_target_ref=target_ref,
-                    selection_reason="ticket_runtime_preference",
-                    policy_reason=None,
-                    effective_max_context_window=preferred_provider.max_context_window,
-                    effective_reasoning_effort=preferred_provider.reasoning_effort,
-                )
+        if preferred_provider is None or not preferred_provider.enabled:
+            return None
+        preferred_model = normalized_preference.preferred_model or preferred_provider.preferred_model
+        if not preferred_model:
+            return None
+        return RuntimeProviderSelection(
+            provider=preferred_provider,
+            provider_model_entry_ref=build_provider_model_entry_ref(
+                preferred_provider.provider_id,
+                preferred_model,
+            ),
+            preferred_provider_id=preferred_provider.provider_id,
+            preferred_model=preferred_model,
+            actual_model=preferred_model,
+            binding_target_ref=target_ref,
+            selection_reason="ticket_runtime_preference",
+            policy_reason=None,
+            effective_max_context_window=preferred_provider.max_context_window,
+            effective_reasoning_effort=preferred_provider.reasoning_effort,
+        )
 
     for candidate_ref in _binding_target_ref_candidates(target_ref):
         binding = _get_binding(config, candidate_ref)
@@ -752,6 +836,34 @@ def resolve_provider_failover_selections(
 ) -> list[RuntimeProviderSelection]:
     selections: list[RuntimeProviderSelection] = []
     attempted_provider_ids = {primary_selection.provider.provider_id}
+    if (
+        primary_selection.binding_target_ref is not None
+        and primary_selection.selection_reason != "ticket_runtime_preference"
+    ):
+        binding = _get_binding(config, primary_selection.binding_target_ref)
+        if binding is not None:
+            binding_selections = _selections_from_binding(
+                config,
+                binding=binding,
+                binding_target_ref=primary_selection.binding_target_ref,
+                selection_reason="provider_failover",
+            )
+            binding_refs = [item.provider_model_entry_ref for item in binding_selections]
+            try:
+                start_index = binding_refs.index(primary_selection.provider_model_entry_ref) + 1
+            except ValueError:
+                start_index = 0
+            for failover_selection in binding_selections[start_index:]:
+                provider_id = failover_selection.provider.provider_id
+                if provider_id in attempted_provider_ids:
+                    continue
+                if not provider_meets_target_capability_floor(failover_selection.provider, target_ref):
+                    continue
+                health_status, _ = runtime_provider_health_details(failover_selection.provider, repository)
+                if health_status != "HEALTHY":
+                    continue
+                selections.append(failover_selection)
+                attempted_provider_ids.add(provider_id)
     for fallback_provider_id in primary_selection.provider.fallback_provider_ids:
         fallback_provider = find_provider_entry(config, fallback_provider_id)
         if fallback_provider is None or fallback_provider.provider_id in attempted_provider_ids:
@@ -796,8 +908,16 @@ def save_runtime_provider_command(
                 "alias": item.alias,
                 "preferred_model": item.preferred_model,
                 "max_context_window": item.max_context_window or DEFAULT_MAX_CONTEXT_WINDOW,
+                "timeout_sec": item.timeout_sec,
+                "connect_timeout_sec": item.connect_timeout_sec,
+                "write_timeout_sec": item.write_timeout_sec,
+                "first_token_timeout_sec": item.first_token_timeout_sec,
+                "stream_idle_timeout_sec": item.stream_idle_timeout_sec,
+                "request_total_timeout_sec": item.request_total_timeout_sec,
+                "retry_backoff_schedule_sec": list(item.retry_backoff_schedule_sec),
                 "reasoning_effort": item.reasoning_effort,
                 "enabled": item.enabled,
+                "fallback_provider_ids": list(item.fallback_provider_ids),
             }
         )
         for item in payload.providers

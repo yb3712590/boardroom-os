@@ -42,6 +42,7 @@ class ScenarioPaths:
     developer_inspector_root: Path
     ticket_context_archive_root: Path
     run_report_path: Path
+    audit_summary_path: Path
     failure_snapshot_root: Path
 
 
@@ -70,6 +71,7 @@ def build_scenario_paths(slug: str, scenario_root: Path | None = None) -> Scenar
         developer_inspector_root=root / "developer_inspector",
         ticket_context_archive_root=root / "ticket_context_archives",
         run_report_path=root / "run_report.json",
+        audit_summary_path=root / "audit-summary.md",
         failure_snapshot_root=root / "failure_snapshots",
     )
 
@@ -422,7 +424,96 @@ def _build_success_report(
     return report
 
 
+def _latest_provider_runtime_snapshot(repository, workflow_id: str) -> dict[str, Any]:
+    terminals = workflow_terminal_events(repository, workflow_id)
+    for ticket in reversed(workflow_ticket_rows(repository, workflow_id)):
+        terminal_event = terminals.get(str(ticket["ticket_id"]))
+        if not terminal_event:
+            continue
+        payload = terminal_event.get("payload") or {}
+        failure_detail = payload.get("failure_detail") or {}
+        assumptions = _parse_assumptions(payload.get("assumptions") or [])
+        provider_candidate_chain = list(failure_detail.get("provider_candidate_chain") or [])
+        provider_attempt_log = list(failure_detail.get("provider_attempt_log") or [])
+        provider_signals_present = bool(
+            provider_candidate_chain
+            or provider_attempt_log
+            or assumptions.get("actual_provider_id")
+            or assumptions.get("provider_failover_to")
+        )
+        if not provider_signals_present:
+            continue
+        return {
+            "provider_candidate_chain": provider_candidate_chain,
+            "provider_attempt_log": provider_attempt_log,
+            "fallback_blocked": bool(failure_detail.get("fallback_blocked")),
+            "final_failure_kind": payload.get("failure_kind"),
+            "preferred_provider_id": assumptions.get("preferred_provider_id"),
+            "actual_provider_id": assumptions.get("actual_provider_id"),
+            "actual_model": assumptions.get("actual_model"),
+            "provider_failover_to": assumptions.get("provider_failover_to"),
+        }
+    return {
+        "provider_candidate_chain": [],
+        "provider_attempt_log": [],
+        "fallback_blocked": False,
+        "final_failure_kind": None,
+        "preferred_provider_id": None,
+        "actual_provider_id": None,
+        "actual_model": None,
+        "provider_failover_to": None,
+    }
+
+
+def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapshot: dict[str, Any]) -> Path:
+    workflow = snapshot.get("workflow") or {}
+    tickets = list(snapshot.get("tickets") or [])
+    provider_candidate_chain = list(snapshot.get("provider_candidate_chain") or [])
+    provider_attempt_log = list(snapshot.get("provider_attempt_log") or [])
+    fallback_blocked = bool(snapshot.get("fallback_blocked"))
+    final_failure_kind = snapshot.get("final_failure_kind")
+    lines = [
+        "# Audit Summary",
+        f"- Workflow: `{workflow.get('workflow_id') or report.get('workflow_id') or 'unknown'}`",
+        f"- Status: `{workflow.get('status') or ('COMPLETED' if report.get('success') else 'FAILED')}`",
+        f"- Stage: `{workflow.get('current_stage') or 'unknown'}`",
+        f"- Completion mode: `{report.get('completion_mode') or 'unknown'}`",
+        f"- Candidate chain: `{(' -> '.join(provider_candidate_chain) if provider_candidate_chain else 'none')}`",
+        f"- Fallback blocked: `{str(fallback_blocked).lower()}`",
+        f"- Final failure kind: `{final_failure_kind or 'none'}`",
+        "",
+        "## Provider Attempts",
+    ]
+    if provider_attempt_log:
+        for item in provider_attempt_log:
+            lines.append(
+                "- "
+                f"`{item.get('provider_id')}` "
+                f"attempt `{item.get('attempt_no') or item.get('attempt_count') or 0}` "
+                f"status `{item.get('status') or 'UNKNOWN'}` "
+                f"failure `{item.get('failure_kind') or 'none'}`"
+            )
+    else:
+        lines.append("- `none`")
+    lines.extend(
+        [
+            "",
+            "## Recent Tickets",
+        ]
+    )
+    for ticket in tickets[:5]:
+        lines.append(
+            "- "
+            f"`{ticket.get('ticket_id')}` "
+            f"`{ticket.get('status') or 'UNKNOWN'}` "
+            f"`{ticket.get('node_id') or 'unknown-node'}`"
+        )
+    paths.audit_summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return paths.audit_summary_path
+
+
 def write_failure_snapshot(paths: ScenarioPaths, repository, workflow_id: str, *, label: str) -> Path:
+    provider_snapshot = _latest_provider_runtime_snapshot(repository, workflow_id)
     snapshot = {
         "workflow": repository.get_workflow_projection(workflow_id),
         "open_approvals": [item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id],
@@ -430,9 +521,19 @@ def write_failure_snapshot(paths: ScenarioPaths, repository, workflow_id: str, *
         "tickets": workflow_ticket_rows(repository, workflow_id)[-20:],
         "ceo_shadow_runs": repository.list_ceo_shadow_runs(workflow_id, limit=10),
         "orchestration_trace": recent_orchestration_trace(repository),
+        **provider_snapshot,
     }
     target_path = paths.failure_snapshot_root / f"{label}.json"
     _write_json(target_path, snapshot)
+    write_audit_summary(
+        paths,
+        report={
+            "success": False,
+            "workflow_id": workflow_id,
+            "completion_mode": label,
+        },
+        snapshot=snapshot,
+    )
     return target_path
 
 
@@ -614,6 +715,15 @@ def run_live_scenario(
                         completion_mode="full",
                     )
                     _write_json(paths.run_report_path, report)
+                    write_audit_summary(
+                        paths,
+                        report=report,
+                        snapshot={
+                            "workflow": common["workflow"],
+                            "tickets": common["tickets"][-20:],
+                            **_latest_provider_runtime_snapshot(repository, workflow_id),
+                        },
+                    )
                     return report
 
                 if scenario.checkpoint_assertion is not None:
@@ -632,6 +742,15 @@ def run_live_scenario(
                             checkpoint_label=scenario.checkpoint_label,
                         )
                         _write_json(paths.run_report_path, report)
+                        write_audit_summary(
+                            paths,
+                            report=report,
+                            snapshot={
+                                "workflow": snapshot["workflow"],
+                                "tickets": snapshot["tickets"][-20:],
+                                **_latest_provider_runtime_snapshot(repository, workflow_id),
+                            },
+                        )
                         return report
 
                 if time.monotonic() - started_at > timeout_sec:

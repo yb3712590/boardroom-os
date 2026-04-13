@@ -198,8 +198,16 @@ class RuntimeProviderConfigInput(StrictModel):
     alias: str | None = None
     preferred_model: str | None = None
     max_context_window: int | None = Field(default=None, ge=1)
+    timeout_sec: float | None = Field(default=None, gt=0)
+    connect_timeout_sec: float | None = Field(default=None, gt=0)
+    write_timeout_sec: float | None = Field(default=None, gt=0)
+    first_token_timeout_sec: float | None = Field(default=None, gt=0)
+    stream_idle_timeout_sec: float | None = Field(default=None, gt=0)
+    request_total_timeout_sec: float | None = Field(default=None, gt=0)
+    retry_backoff_schedule_sec: list[float] = Field(default_factory=list)
     reasoning_effort: RuntimeProviderReasoningEffort | None = "high"
     enabled: bool = False
+    fallback_provider_ids: list[str] = Field(default_factory=list)
 
 
 class RuntimeProviderModelEntryInput(StrictModel):
@@ -241,6 +249,22 @@ class RuntimeProviderUpsertCommand(StrictModel):
                 raise ValueError("provider_model_entries must not contain duplicate provider_id + model_name pairs.")
             seen_provider_model_pairs.add(pair)
             provider_model_entry_refs.add(f"{entry.provider_id}::{entry.model_name}")
+
+        for provider in self.providers:
+            if provider.retry_backoff_schedule_sec and any(delay <= 0 for delay in provider.retry_backoff_schedule_sec):
+                raise ValueError(
+                    f"{provider.provider_id} retry_backoff_schedule_sec must contain only positive values."
+                )
+            fallback_ids = list(provider.fallback_provider_ids)
+            if len(fallback_ids) != len(set(fallback_ids)):
+                raise ValueError(f"{provider.provider_id} fallback_provider_ids must not contain duplicates.")
+            if provider.provider_id in fallback_ids:
+                raise ValueError(f"{provider.provider_id} must not include itself in fallback_provider_ids.")
+            unknown_fallback_ids = [provider_id for provider_id in fallback_ids if provider_id not in valid_provider_ids]
+            if unknown_fallback_ids:
+                raise ValueError(
+                    f"{provider.provider_id} references unknown fallback providers: {', '.join(unknown_fallback_ids)}."
+                )
 
         seen_target_refs: set[str] = set()
         for binding in self.role_bindings:

@@ -108,32 +108,32 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
     RuntimeSupportRow(
         role_profile_ref="backend_engineer_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="新增 backend 实施角色现在已进入正式 BUILD runtime 路径。",
     ),
     RuntimeSupportRow(
         role_profile_ref="database_engineer_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="新增 database 实施角色现在已进入正式 BUILD runtime 路径。",
     ),
     RuntimeSupportRow(
         role_profile_ref="platform_sre_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="新增 platform 实施角色现在已进入正式 BUILD runtime 路径。",
     ),
     RuntimeSupportRow(
         role_profile_ref="ui_designer_primary",
         output_schema_ref=CONSENSUS_DOCUMENT_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="当前共识文档仍由主线 maker 角色产出。",
     ),
     *(
         RuntimeSupportRow(
             role_profile_ref="ui_designer_primary",
             output_schema_ref=output_schema_ref,
-            supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+            supported_modes=("OPENAI_COMPAT_LIVE",),
             notes="当前治理文档可由现有 live planning 角色产出，不额外启用治理新角色。",
         )
         for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
@@ -142,7 +142,7 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
         RuntimeSupportRow(
             role_profile_ref="architect_primary",
             output_schema_ref=output_schema_ref,
-            supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+            supported_modes=("OPENAI_COMPAT_LIVE",),
             notes="架构治理角色现在已进入正式治理文档 runtime 路径。",
         )
         for output_schema_ref in (
@@ -155,7 +155,7 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
         RuntimeSupportRow(
             role_profile_ref="cto_primary",
             output_schema_ref=output_schema_ref,
-            supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+            supported_modes=("OPENAI_COMPAT_LIVE",),
             notes="CTO 治理角色现在已进入正式治理文档 runtime 路径。",
         )
         for output_schema_ref in (
@@ -169,7 +169,7 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
         RuntimeSupportRow(
             role_profile_ref="frontend_engineer_primary",
             output_schema_ref=output_schema_ref,
-            supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+            supported_modes=("OPENAI_COMPAT_LIVE",),
             notes="当前治理文档也可由现有 frontend live 角色产出，保持文档家族与角色目录解耦。",
         )
         for output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS
@@ -177,31 +177,31 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
     RuntimeSupportRow(
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="BUILD 阶段的源码交付当前由 frontend_engineer_primary 产出。",
     ),
     RuntimeSupportRow(
         role_profile_ref="checker_primary",
         output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="CHECK 阶段的交付检查报告当前由 checker_primary 产出。",
     ),
     RuntimeSupportRow(
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref=UI_MILESTONE_REVIEW_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="最终 REVIEW 包当前由 frontend_engineer_primary 产出。",
     ),
     RuntimeSupportRow(
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="最终 closeout package 当前由 frontend_engineer_primary 产出。",
     ),
     RuntimeSupportRow(
         role_profile_ref="checker_primary",
         output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
-        supported_modes=("LOCAL_DETERMINISTIC", "OPENAI_COMPAT_LIVE"),
+        supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="所有主线 maker-checker verdict 当前都由 checker_primary 产出。",
     ),
 )

@@ -117,9 +117,12 @@ SUPPORTED_RUNTIME_ROLE_PROFILES = {
 }
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
 PROVIDER_MAX_ATTEMPTS = 3
-PROVIDER_RETRY_BACKOFF_BASE_SEC = 1.0
-PROVIDER_RETRY_BACKOFF_MAX_SEC = 8.0
-PROVIDER_FAILOVER_FAILURE_KINDS = {"PROVIDER_RATE_LIMITED", "UPSTREAM_UNAVAILABLE"}
+PROVIDER_FAILOVER_FAILURE_KINDS = {
+    "PROVIDER_RATE_LIMITED",
+    "UPSTREAM_UNAVAILABLE",
+    "FIRST_TOKEN_TIMEOUT",
+    "STREAM_IDLE_TIMEOUT",
+}
 _sleep = time.sleep
 
 
@@ -1367,6 +1370,11 @@ def _build_openai_compat_provider_config(selection: RuntimeProviderSelection) ->
         api_key=str(provider.api_key or ""),
         model=str(selection.actual_model or provider.model or ""),
         timeout_sec=float(provider.timeout_sec),
+        connect_timeout_sec=float(provider.connect_timeout_sec or provider.timeout_sec or 0),
+        write_timeout_sec=float(provider.write_timeout_sec or provider.timeout_sec or 0),
+        first_token_timeout_sec=float(provider.first_token_timeout_sec or provider.timeout_sec or 0),
+        stream_idle_timeout_sec=float(provider.stream_idle_timeout_sec or provider.timeout_sec or 0),
+        request_total_timeout_sec=float(provider.request_total_timeout_sec or provider.timeout_sec or 0),
         reasoning_effort=selection.effective_reasoning_effort,
     )
 
@@ -1384,12 +1392,21 @@ def _provider_failure_is_retryable(failure_kind: str) -> bool:
     return failure_kind in PROVIDER_PAUSE_FAILURE_KINDS
 
 
-def _provider_retry_delay_sec(failure_kind: str, failure_detail: dict[str, Any], attempt_no: int) -> float:
+def _provider_retry_delay_sec(
+    selection: RuntimeProviderSelection,
+    failure_kind: str,
+    failure_detail: dict[str, Any],
+    attempt_no: int,
+) -> float:
     if failure_kind == "PROVIDER_RATE_LIMITED":
         retry_after_sec = failure_detail.get("retry_after_sec")
         if isinstance(retry_after_sec, (int, float)) and retry_after_sec >= 0:
             return float(retry_after_sec)
-    return min(PROVIDER_RETRY_BACKOFF_BASE_SEC * (2 ** max(attempt_no - 1, 0)), PROVIDER_RETRY_BACKOFF_MAX_SEC)
+    retry_schedule = list(selection.provider.retry_backoff_schedule_sec or [2.0, 8.0, 20.0])
+    if not retry_schedule:
+        retry_schedule = [2.0, 8.0, 20.0]
+    schedule_index = min(max(attempt_no - 1, 0), len(retry_schedule) - 1)
+    return float(retry_schedule[schedule_index])
 
 
 def _normalize_provider_failure_detail(
@@ -1425,22 +1442,88 @@ def _normalize_provider_failure_detail(
     return normalized
 
 
-def _build_provider_fallback_evidence(execution_result: RuntimeExecutionResult) -> TicketReviewEvidence | None:
-    failure_detail = execution_result.failure_detail or {}
-    if failure_detail.get("fallback_mode") != "LOCAL_DETERMINISTIC":
-        return None
-    provider_id = str(failure_detail.get("provider_id") or OPENAI_COMPAT_PROVIDER_ID)
-    failure_kind = str(failure_detail.get("provider_failure_kind") or "PROVIDER_FAILURE")
-    incident_id = failure_detail.get("incident_id")
-    adapter_kind = str(failure_detail.get("adapter_kind") or "openai_compat")
-    provider_label = "Claude Code CLI" if adapter_kind == "claude_code_cli" else "OpenAI Compat"
-    return TicketReviewEvidence(
-        evidence_id="provider_fallback",
-        source_type="RUNTIME_FALLBACK",
-        headline=f"Provider fallback on {provider_id}",
-        summary=f"{provider_label} hit {failure_kind} and this result fell back to the local deterministic path.",
-        source_ref=(f"incident:{incident_id}" if incident_id is not None else provider_id),
+def _extract_provider_attempt_count(result: RuntimeExecutionResult) -> int:
+    failure_detail = result.failure_detail or {}
+    raw_attempt_count = failure_detail.get("attempt_count")
+    if isinstance(raw_attempt_count, int) and raw_attempt_count >= 0:
+        return raw_attempt_count
+    if isinstance(raw_attempt_count, float) and raw_attempt_count >= 0:
+        return int(raw_attempt_count)
+    for item in result.assumptions:
+        if str(item).startswith("provider_attempt_count="):
+            _, value = str(item).split("=", 1)
+            if value.isdigit():
+                return int(value)
+    return 0
+
+
+def _build_provider_attempt_log_entry(
+    *,
+    selection: RuntimeProviderSelection,
+    result: RuntimeExecutionResult,
+) -> dict[str, Any]:
+    return {
+        "provider_id": selection.provider.provider_id,
+        "provider_model_entry_ref": selection.provider_model_entry_ref,
+        "actual_model": selection.actual_model or selection.provider.model,
+        "selection_reason": selection.selection_reason,
+        "status": result.result_status.upper(),
+        "failure_kind": result.failure_kind,
+        "failure_message": result.failure_message,
+        "attempt_count": _extract_provider_attempt_count(result),
+    }
+
+
+def _build_provider_candidate_chain(
+    primary_selection: RuntimeProviderSelection | None,
+    failover_selections: list[RuntimeProviderSelection] | None = None,
+) -> list[str]:
+    chain: list[str] = []
+    for selection in [primary_selection, *(failover_selections or [])]:
+        if selection is None:
+            continue
+        provider_id = selection.provider.provider_id
+        if provider_id not in chain:
+            chain.append(provider_id)
+    return chain
+
+
+def _build_provider_required_unavailable_result(
+    *,
+    selection: RuntimeProviderSelection | None,
+    candidate_chain: list[str],
+    provider_attempt_log: list[dict[str, Any]],
+    failure_message: str,
+    failure_kind: str = "PROVIDER_REQUIRED_UNAVAILABLE",
+) -> RuntimeExecutionResult:
+    failure_detail = _normalize_provider_failure_detail(
+        {},
+        selection=selection,
+        attempt_count=(provider_attempt_log[-1]["attempt_count"] if provider_attempt_log else 0),
+        fallback_applied=False,
     )
+    if selection is None:
+        failure_detail.pop("provider_id", None)
+        failure_detail.pop("preferred_provider_id", None)
+        failure_detail.pop("preferred_model", None)
+        failure_detail.pop("actual_provider_id", None)
+        failure_detail.pop("actual_model", None)
+        failure_detail.pop("adapter_kind", None)
+        failure_detail.pop("selection_reason", None)
+        failure_detail.pop("policy_reason", None)
+    failure_detail["fallback_blocked"] = True
+    failure_detail["provider_candidate_chain"] = list(candidate_chain)
+    failure_detail["provider_attempt_log"] = list(provider_attempt_log)
+    return RuntimeExecutionResult(
+        result_status="failed",
+        failure_kind=failure_kind,
+        failure_message=failure_message,
+        failure_detail=failure_detail,
+    )
+
+
+def _build_provider_fallback_evidence(execution_result: RuntimeExecutionResult) -> TicketReviewEvidence | None:
+    return None
 
 
 def _execute_openai_compat_provider(
@@ -1555,7 +1638,7 @@ def _execute_openai_compat_provider(
                 fallback_applied=False,
             )
             if _provider_failure_is_retryable(failure_kind) and attempt_no < PROVIDER_MAX_ATTEMPTS:
-                sleep_fn(_provider_retry_delay_sec(failure_kind, last_failure_detail, attempt_no))
+                sleep_fn(_provider_retry_delay_sec(selection, failure_kind, last_failure_detail, attempt_no))
                 continue
             return RuntimeExecutionResult(
                 result_status="failed",
@@ -1652,59 +1735,20 @@ def _build_provider_fallback_execution_result(
     fallback_reason: str,
     incident_id: str | None = None,
 ) -> RuntimeExecutionResult:
-    deterministic_result = _execute_compiled_execution_package(execution_package)
-    if deterministic_result.result_status != "completed":
-        return deterministic_result
-
-    failure_detail = _normalize_provider_failure_detail(
-        provider_failure.failure_detail,
+    provider_attempt_log = []
+    if selection is not None:
+        provider_attempt_log.append(
+            _build_provider_attempt_log_entry(
+                selection=selection,
+                result=provider_failure,
+            )
+        )
+    return _build_provider_required_unavailable_result(
         selection=selection,
-        attempt_count=int((provider_failure.failure_detail or {}).get("attempt_count") or 0),
-        fallback_applied=True,
-        fallback_mode="LOCAL_DETERMINISTIC",
-        fallback_reason=fallback_reason,
-        incident_id=incident_id,
-    )
-    failure_detail["provider_failure_kind"] = provider_failure.failure_kind or "PROVIDER_FAILURE"
-    failure_detail["provider_failure_message"] = provider_failure.failure_message or fallback_reason
-
-    provider_id = str(failure_detail.get("provider_id") or OPENAI_COMPAT_PROVIDER_ID)
-    failure_kind = str(failure_detail["provider_failure_kind"])
-    provider_label = "Claude Code CLI" if str(failure_detail.get("adapter_kind") or "") == "claude_code_cli" else "OpenAI Compat"
-    fallback_issue = (
-        f"{provider_label} provider {provider_id} hit {failure_kind}; runtime fell back to the local "
-        "deterministic path for this result."
-    )
-    return RuntimeExecutionResult(
-        result_status="completed",
-        completion_summary=(
-            f"{deterministic_result.completion_summary} OpenAI Compat fallback was applied because {fallback_reason}."
-        ),
-        artifact_refs=list(deterministic_result.artifact_refs),
-        result_payload=dict(deterministic_result.result_payload),
-        written_artifacts=list(deterministic_result.written_artifacts),
-        verification_evidence_refs=list(deterministic_result.verification_evidence_refs),
-        git_commit_record=(
-            dict(deterministic_result.git_commit_record)
-            if isinstance(deterministic_result.git_commit_record, dict)
-            else None
-        ),
-        assumptions=[
-            *deterministic_result.assumptions,
-            "runtime_fallback=LOCAL_DETERMINISTIC",
-            f"runtime_fallback_reason={fallback_reason}",
-            f"provider_id={provider_id}",
-            f"preferred_provider_id={failure_detail.get('preferred_provider_id') or provider_id}",
-            f"preferred_model={failure_detail.get('preferred_model') or 'unknown'}",
-            f"actual_provider_id={failure_detail.get('actual_provider_id') or provider_id}",
-            f"actual_model={failure_detail.get('actual_model') or 'unknown'}",
-            f"selection_reason={failure_detail.get('selection_reason') or 'provider_selection'}",
-            f"policy_reason={failure_detail.get('policy_reason') or 'none'}",
-            f"provider_failure_kind={failure_kind}",
-        ],
-        issues=[fallback_issue, *deterministic_result.issues],
-        confidence=deterministic_result.confidence,
-        failure_detail=failure_detail,
+        candidate_chain=_build_provider_candidate_chain(selection),
+        provider_attempt_log=provider_attempt_log,
+        failure_message=provider_failure.failure_message or fallback_reason,
+        failure_kind=provider_failure.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
     )
 
 
@@ -1830,19 +1874,12 @@ def _build_preemptive_provider_fallback_result(
     failure_message: str,
     fallback_reason: str,
 ) -> RuntimeExecutionResult:
-    return _build_provider_fallback_execution_result(
-        execution_package,
-        RuntimeExecutionResult(
-            result_status="failed",
-            failure_kind=failure_kind,
-            failure_message=failure_message,
-            failure_detail={
-                "provider_id": selection.provider.provider_id if selection is not None else OPENAI_COMPAT_PROVIDER_ID,
-                "attempt_count": 0,
-            },
-        ),
+    return _build_provider_required_unavailable_result(
         selection=selection,
-        fallback_reason=fallback_reason,
+        candidate_chain=_build_provider_candidate_chain(selection),
+        provider_attempt_log=[],
+        failure_message=failure_message or fallback_reason,
+        failure_kind=failure_kind,
     )
 
 
@@ -1880,68 +1917,106 @@ def _execute_runtime_with_provider_if_configured(
     ):
         return _execute_meeting_runtime(repository, ticket, execution_package, created_spec)
 
+    target_ref = _resolve_ticket_target_ref(created_spec)
     selection = _resolve_provider_selection_for_ticket(repository, ticket, created_spec)
-    if selection is not None:
-        if repository.has_open_circuit_breaker_for_provider(selection.provider.provider_id):
-            return _build_preemptive_provider_fallback_result(
-                execution_package,
-                selection=selection,
-                failure_kind="UPSTREAM_UNAVAILABLE",
-                failure_message="Provider execution is currently paused by an open incident.",
-                fallback_reason="provider execution is paused",
-            )
-        if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT and not all(
-            (selection.provider.base_url, selection.provider.api_key, selection.actual_model or selection.provider.model)
-        ):
-            return _build_preemptive_provider_fallback_result(
-                execution_package,
-                selection=selection,
-                failure_kind="PROVIDER_CONFIG_INCOMPLETE",
-                failure_message="Provider config is incomplete for OpenAI Compat execution.",
-                fallback_reason="provider configuration is incomplete",
-            )
-        if selection.provider.adapter_kind == RuntimeProviderAdapterKind.CLAUDE_CODE_CLI and not all(
-            (selection.provider.command_path, selection.actual_model or selection.provider.model)
-        ):
-            return _build_preemptive_provider_fallback_result(
-                execution_package,
-                selection=selection,
-                failure_kind="PROVIDER_CONFIG_INCOMPLETE",
-                failure_message="Provider config is incomplete for Claude Code execution.",
-                fallback_reason="provider configuration is incomplete",
-            )
-        provider_result = _execute_provider_selection(execution_package, selection)
-        if provider_result.result_status == "completed":
-            return provider_result
-        if provider_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
-            incident_id = _open_runtime_provider_incident(repository, ticket, provider_result)
-            if provider_result.failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
-                failover_result = _attempt_provider_failover(
-                    repository,
-                    ticket,
-                    execution_package,
-                    created_spec,
-                    primary_selection=selection,
-                    primary_failure=provider_result,
-                )
-                if failover_result is not None:
-                    return failover_result
-            return _build_provider_fallback_execution_result(
-                execution_package,
-                provider_result,
-                selection=selection,
-                fallback_reason="provider execution is paused after retry exhaustion",
-                incident_id=incident_id,
-            )
-        if provider_result.failure_kind in {"PROVIDER_AUTH_FAILED", "PROVIDER_BAD_RESPONSE", "UPSTREAM_UNAVAILABLE"}:
-            return _build_provider_fallback_execution_result(
-                execution_package,
-                provider_result,
-                selection=selection,
-                fallback_reason="provider returned a non-retryable error",
-            )
+    if selection is None:
+        return _build_provider_required_unavailable_result(
+            selection=None,
+            candidate_chain=[],
+            provider_attempt_log=[],
+            failure_message="No live provider was available for runtime execution.",
+        )
+
+    config = resolve_runtime_provider_config()
+    failover_selections = (
+        resolve_provider_failover_selections(
+            config,
+            repository,
+            target_ref=target_ref,
+            primary_selection=selection,
+        )
+        if target_ref is not None
+        else []
+    )
+    candidate_chain = _build_provider_candidate_chain(selection, failover_selections)
+    provider_attempt_log: list[dict[str, Any]] = []
+
+    if repository.has_open_circuit_breaker_for_provider(selection.provider.provider_id):
+        return _build_provider_required_unavailable_result(
+            selection=selection,
+            candidate_chain=candidate_chain,
+            provider_attempt_log=provider_attempt_log,
+            failure_message="Provider execution is currently paused by an open incident.",
+        )
+    if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT and not all(
+        (selection.provider.base_url, selection.provider.api_key, selection.actual_model or selection.provider.model)
+    ):
+        return _build_provider_required_unavailable_result(
+            selection=selection,
+            candidate_chain=candidate_chain,
+            provider_attempt_log=provider_attempt_log,
+            failure_message="Provider config is incomplete for OpenAI Compat execution.",
+        )
+    if selection.provider.adapter_kind == RuntimeProviderAdapterKind.CLAUDE_CODE_CLI and not all(
+        (selection.provider.command_path, selection.actual_model or selection.provider.model)
+    ):
+        return _build_provider_required_unavailable_result(
+            selection=selection,
+            candidate_chain=candidate_chain,
+            provider_attempt_log=provider_attempt_log,
+            failure_message="Provider config is incomplete for Claude Code execution.",
+        )
+
+    provider_result = _execute_provider_selection(execution_package, selection)
+    provider_attempt_log.append(
+        _build_provider_attempt_log_entry(
+            selection=selection,
+            result=provider_result,
+        )
+    )
+    if provider_result.result_status == "completed":
         return provider_result
-    return _execute_compiled_execution_package(execution_package)
+    if provider_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
+        _open_runtime_provider_incident(repository, ticket, provider_result)
+        if provider_result.failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
+            for failover_selection in failover_selections:
+                failover_result = _execute_provider_selection(execution_package, failover_selection)
+                provider_attempt_log.append(
+                    _build_provider_attempt_log_entry(
+                        selection=failover_selection,
+                        result=failover_result,
+                    )
+                )
+                if failover_result.result_status == "completed":
+                    return _annotate_provider_failover_success(
+                        failover_result,
+                        failed_selection=selection,
+                        failover_selection=failover_selection,
+                        failure_kind=provider_result.failure_kind or "PROVIDER_FAILURE",
+                    )
+                if failover_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
+                    _open_runtime_provider_incident(repository, ticket, failover_result)
+                    continue
+                return _build_provider_required_unavailable_result(
+                    selection=failover_selection,
+                    candidate_chain=candidate_chain,
+                    provider_attempt_log=provider_attempt_log,
+                    failure_message=failover_result.failure_message or "Configured provider candidates failed.",
+                    failure_kind=failover_result.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+                )
+        return _build_provider_required_unavailable_result(
+            selection=selection,
+            candidate_chain=candidate_chain,
+            provider_attempt_log=provider_attempt_log,
+            failure_message=provider_result.failure_message or "Configured provider candidates were unavailable.",
+        )
+    return _build_provider_required_unavailable_result(
+        selection=selection,
+        candidate_chain=candidate_chain,
+        provider_attempt_log=provider_attempt_log,
+        failure_message=provider_result.failure_message or "Provider execution failed.",
+        failure_kind=provider_result.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+    )
 
 
 def _execute_compiled_execution_package(

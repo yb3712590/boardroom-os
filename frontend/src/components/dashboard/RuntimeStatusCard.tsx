@@ -16,17 +16,15 @@ function runtimeModeTone(value: string | null | undefined) {
       return 'live'
     case 'OPENAI_COMPAT_INCOMPLETE':
     case 'OPENAI_COMPAT_PAUSED':
+    case 'PROVIDER_REQUIRED_UNAVAILABLE':
       return 'warning'
-    case 'LOCAL_DETERMINISTIC':
     default:
-      return 'local'
+      return 'warning'
   }
 }
 
 function runtimeHealthLabel(value: string) {
   switch (value) {
-    case 'LOCAL_ONLY':
-      return 'LOCAL_ONLY'
     case 'HEALTHY':
       return 'Healthy'
     default:
@@ -58,7 +56,7 @@ export function RuntimeStatusCard({
       <dl className="runtime-status-grid">
         <div>
           <dt>Model</dt>
-          <dd>{model ?? 'Deterministic local runtime'}</dd>
+          <dd>{model ?? 'No live provider configured'}</dd>
         </div>
         <div>
           <dt>Workers</dt>

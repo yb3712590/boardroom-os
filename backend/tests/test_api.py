@@ -4554,12 +4554,14 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert projection_data["mode"] == "OPENAI_RESPONSES_STREAM"
         assert projection_data["effective_mode"] == "OPENAI_RESPONSES_STREAM_LIVE"
         assert projection_data["provider_health_summary"] == "HEALTHY"
+        assert projection_data["fallback_blocked"] is True
+        assert projection_data["provider_candidate_chain"] == ["prov_openai_compat"]
         assert projection_data["provider_id"] == "prov_openai_compat"
         assert projection_data["base_url"] == "https://api.example.test/v1"
         assert projection_data["alias"] == "example"
         assert projection_data["model"] == "gpt-5.3-codex"
         assert projection_data["max_context_window"] == 1000000
-        assert projection_data["timeout_sec"] == 30.0
+        assert projection_data["timeout_sec"] == 120.0
         assert projection_data["reasoning_effort"] == "high"
         assert projection_data["default_provider_id"] == "prov_openai_compat"
         assert projection_data["api_key_configured"] is True
@@ -4609,14 +4611,16 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
 
         assert switch_response.status_code == 200
         assert switch_response.json()["status"] == "ACCEPTED"
-        assert switched_projection.json()["data"]["mode"] == "DETERMINISTIC"
-        assert switched_projection.json()["data"]["effective_mode"] == "LOCAL_DETERMINISTIC"
-        assert switched_projection.json()["data"]["provider_health_summary"] == "LOCAL_ONLY"
+        assert switched_projection.json()["data"]["mode"] == "PROVIDER_REQUIRED"
+        assert switched_projection.json()["data"]["effective_mode"] == "PROVIDER_REQUIRED_UNAVAILABLE"
+        assert switched_projection.json()["data"]["provider_health_summary"] == "UNAVAILABLE"
+        assert switched_projection.json()["data"]["fallback_blocked"] is True
+        assert switched_projection.json()["data"]["provider_candidate_chain"] == []
         assert switched_projection.json()["data"]["default_provider_id"] is None
         assert switched_dashboard.json()["data"]["runtime_status"]["effective_mode"] == (
-            "LOCAL_DETERMINISTIC"
+            "PROVIDER_REQUIRED_UNAVAILABLE"
         )
-        assert switched_dashboard.json()["data"]["runtime_status"]["provider_health_summary"] == "LOCAL_ONLY"
+        assert switched_dashboard.json()["data"]["runtime_status"]["provider_health_summary"] == "UNAVAILABLE"
 
 
 def test_runtime_provider_upsert_preserves_existing_openai_api_key_when_update_omits_key(

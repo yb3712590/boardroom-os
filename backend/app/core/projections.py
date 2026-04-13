@@ -137,6 +137,7 @@ from app.core.runtime_provider_config import (
     find_provider_entry,
     find_provider_model_entry,
     mask_api_key,
+    resolve_provider_failover_selections,
     resolve_provider_selection,
     resolve_runtime_provider_config,
     runtime_target_label,
@@ -243,9 +244,30 @@ def _build_runtime_provider_projection_data(
         employee_provider_id=None,
     )
     default_provider = default_selection.provider if default_selection is not None else None
+    provider_candidate_chain = (
+        [
+            item.provider.provider_id
+            for item in [
+                default_selection,
+                *(
+                    resolve_provider_failover_selections(
+                        config,
+                        repository,
+                        target_ref="ceo_shadow",
+                        primary_selection=default_selection,
+                    )
+                    if default_selection is not None
+                    else []
+                ),
+            ]
+            if item is not None
+        ]
+        if default_selection is not None
+        else []
+    )
     return RuntimeProviderProjectionData(
         mode=(
-            "DETERMINISTIC"
+            "PROVIDER_REQUIRED"
             if default_provider is None
             else (
                 "OPENAI_RESPONSES_STREAM"
@@ -255,12 +277,18 @@ def _build_runtime_provider_projection_data(
         ),
         effective_mode=effective_mode,
         provider_health_summary=health_summary,
+        fallback_blocked=True,
+        provider_candidate_chain=provider_candidate_chain,
         provider_id=default_provider.provider_id if default_provider is not None else None,
         base_url=default_provider.base_url if default_provider is not None else None,
         alias=default_provider.alias if default_provider is not None else None,
         model=default_provider.preferred_model if default_provider is not None else None,
         max_context_window=default_provider.max_context_window if default_provider is not None else 0,
-        timeout_sec=default_provider.timeout_sec if default_provider is not None else 30.0,
+        timeout_sec=(
+            default_provider.request_total_timeout_sec
+            if default_provider is not None
+            else 120.0
+        ),
         reasoning_effort=default_provider.reasoning_effort if default_provider is not None else None,
         api_key_configured=bool(default_provider.api_key) if default_provider is not None else False,
         api_key_masked=mask_api_key(default_provider.api_key) if default_provider is not None else None,
@@ -286,6 +314,12 @@ def _build_runtime_provider_projection_data(
                 "preferred_model": provider.preferred_model,
                 "max_context_window": provider.max_context_window,
                 "timeout_sec": provider.timeout_sec,
+                "connect_timeout_sec": provider.connect_timeout_sec,
+                "write_timeout_sec": provider.write_timeout_sec,
+                "first_token_timeout_sec": provider.first_token_timeout_sec,
+                "stream_idle_timeout_sec": provider.stream_idle_timeout_sec,
+                "request_total_timeout_sec": provider.request_total_timeout_sec,
+                "retry_backoff_schedule_sec": list(provider.retry_backoff_schedule_sec),
                 "reasoning_effort": provider.reasoning_effort,
                 "command_path": provider.command_path,
                 "capability_tags": [tag.value for tag in provider.capability_tags],
@@ -1406,7 +1440,7 @@ def build_dashboard_projection(
                 provider_label=(
                     runtime_provider.alias
                     or runtime_provider.provider_id
-                    or "Local Deterministic"
+                    or "Provider required"
                 ),
                 model=runtime_provider.model,
                 configured_worker_count=runtime_provider.configured_worker_count,

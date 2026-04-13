@@ -176,7 +176,8 @@ export function DashboardPage() {
   const activeWorkflow = dashboard?.active_workflow
   const runtimeStatus = dashboard?.runtime_status
   const completionSummary = dashboard?.completion_summary
-  const effectiveRuntimeMode = runtimeStatus?.effective_mode ?? runtimeProvider?.effective_mode ?? 'LOCAL_DETERMINISTIC'
+  const effectiveRuntimeMode =
+    runtimeStatus?.effective_mode ?? runtimeProvider?.effective_mode ?? 'PROVIDER_REQUIRED_UNAVAILABLE'
   const runtimeProviderLabel = runtimeModeLabel(runtimeStatus?.effective_mode ?? runtimeProvider?.effective_mode ?? effectiveRuntimeMode)
   const runtimeModel = runtimeStatus?.model ?? runtimeProvider?.model
   const runtimeWorkerCount = runtimeStatus?.configured_worker_count ?? runtimeProvider?.configured_worker_count ?? 0
@@ -185,7 +186,7 @@ export function DashboardPage() {
     runtimeStatus?.provider_health_summary ??
     runtimeProvider?.provider_health_summary ??
     dashboard?.ops_strip.provider_health_summary ??
-    'LOCAL_ONLY'
+    'UNAVAILABLE'
 
   return (
     <ErrorBoundary>

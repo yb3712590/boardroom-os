@@ -12,6 +12,7 @@ from tests.live._autopilot_live_harness import (
     _build_success_report,
     integration_test_provider_template_path,
     load_integration_test_provider_payload,
+    write_audit_summary,
 )
 from tests.live.library_management_autopilot_live import (
     SCENARIO as LIBRARY_SCENARIO,
@@ -84,6 +85,59 @@ def test_build_success_report_marks_checkpoint_mode() -> None:
     assert report["checkpoint_label"] == "architecture_governance_gate"
     assert report["assertions"]["workflow_status"] == "EXECUTING"
     assert report["assertions"]["approved_architect_governance_ticket_ids"] == ["tkt_architect_001"]
+
+
+def test_write_audit_summary_renders_provider_attempts_and_terminal_failure(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    target_path = write_audit_summary(
+        paths,
+        report={
+            "success": False,
+            "workflow_id": "wf_library_live",
+            "completion_mode": "full",
+        },
+        snapshot={
+            "workflow": {
+                "workflow_id": "wf_library_live",
+                "status": "EXECUTING",
+                "current_stage": "build",
+            },
+            "tickets": [
+                {
+                    "ticket_id": "tkt_build_001",
+                    "status": "FAILED",
+                    "node_id": "node_build_001",
+                }
+            ],
+            "provider_candidate_chain": ["prov_primary", "prov_backup"],
+            "provider_attempt_log": [
+                {
+                    "provider_id": "prov_primary",
+                    "attempt_no": 1,
+                    "failure_kind": "FIRST_TOKEN_TIMEOUT",
+                    "status": "FAILED",
+                },
+                {
+                    "provider_id": "prov_backup",
+                    "attempt_no": 1,
+                    "failure_kind": "PROVIDER_AUTH_FAILED",
+                    "status": "FAILED",
+                },
+            ],
+            "fallback_blocked": True,
+            "final_failure_kind": "PROVIDER_REQUIRED_UNAVAILABLE",
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert target_path.name == "audit-summary.md"
+    assert "wf_library_live" in body
+    assert "prov_primary -> prov_backup" in body
+    assert "FIRST_TOKEN_TIMEOUT" in body
+    assert "PROVIDER_REQUIRED_UNAVAILABLE" in body
+    assert "fallback blocked" in body.lower()
 
 
 def test_architecture_smoke_scenario_stops_before_source_code_fanout() -> None:

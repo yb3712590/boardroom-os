@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import queue
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -31,6 +34,11 @@ class OpenAICompatProviderConfig:
     api_key: str
     model: str
     timeout_sec: float
+    connect_timeout_sec: float | None = None
+    write_timeout_sec: float | None = None
+    first_token_timeout_sec: float | None = None
+    stream_idle_timeout_sec: float | None = None
+    request_total_timeout_sec: float | None = None
     reasoning_effort: ReasoningEffort | None = None
     provider_type: OpenAICompatProviderType = OpenAICompatProviderType.RESPONSES_STREAM
 
@@ -92,14 +100,29 @@ def _parse_retry_after_sec(header_value: str | None) -> float | None:
 
 
 def _message_payload_to_text(content_type: str, content_payload: dict[str, object]) -> str:
-    return json.dumps(
-        {
-            "content_type": content_type,
-            "content_payload": content_payload,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    normalized_content_type = str(content_type or "TEXT").upper()
+    if normalized_content_type == "TEXT":
+        text_value = content_payload.get("text")
+        if isinstance(text_value, str) and text_value.strip():
+            return text_value
+    return json.dumps(content_payload, ensure_ascii=False, sort_keys=True, indent=2)
+
+
+def _render_message_text(message: RenderedExecutionMessage) -> str:
+    header = f"[{message.channel}/{message.content_type}]"
+    body = _message_payload_to_text(message.content_type, dict(message.content_payload))
+    return f"{header}\n{body}"
+
+
+def _build_responses_instructions(rendered_payload: RenderedExecutionPayload) -> str | None:
+    instruction_parts = [
+        _render_message_text(message)
+        for message in rendered_payload.messages
+        if str(message.role or "").lower() == "system"
+    ]
+    if not instruction_parts:
+        return None
+    return "\n\n".join(instruction_parts)
 
 
 def _build_responses_input(rendered_payload: RenderedExecutionPayload) -> list[dict[str, object]]:
@@ -109,21 +132,12 @@ def _build_responses_input(rendered_payload: RenderedExecutionPayload) -> list[d
             "content": [
                 {
                     "type": "input_text",
-                    "text": _message_payload_to_text(message.content_type, dict(message.content_payload)),
+                    "text": _render_message_text(message),
                 }
             ],
         }
         for message in rendered_payload.messages
-    ]
-
-
-def _build_chat_completions_messages(rendered_payload: RenderedExecutionPayload) -> list[dict[str, object]]:
-    return [
-        {
-            "role": message.role,
-            "content": _message_payload_to_text(message.content_type, dict(message.content_payload)),
-        }
-        for message in rendered_payload.messages
+        if str(message.role or "").lower() != "system"
     ]
 
 
@@ -173,10 +187,15 @@ def _extract_output_text(response_payload: dict[str, object]) -> str:
 
 def _extract_streaming_responses_output(
     response: httpx.Response,
+    *,
+    config: OpenAICompatProviderConfig,
 ) -> tuple[str, str | None]:
     response_id: str | None = None
     output_parts: list[str] = []
     buffer = ""
+    stream_queue: queue.Queue[tuple[str, object]] = queue.Queue()
+    first_output_at: float | None = None
+    started_at = time.monotonic()
 
     def _finalize_output(response_payload: dict[str, object] | None = None) -> tuple[str, str | None]:
         combined = "".join(output_parts).strip()
@@ -192,7 +211,79 @@ def _extract_streaming_responses_output(
             },
         )
 
-    for chunk in response.iter_text():
+    def _stream_reader() -> None:
+        try:
+            for chunk in response.iter_text():
+                stream_queue.put(("chunk", chunk))
+        except BaseException as exc:  # pragma: no cover - exercised through queue handoff
+            stream_queue.put(("error", exc))
+        finally:
+            stream_queue.put(("done", None))
+
+    reader = threading.Thread(target=_stream_reader, daemon=True)
+    reader.start()
+
+    while True:
+        elapsed_sec = time.monotonic() - started_at
+        remaining_total_sec = float(config.request_total_timeout_sec or config.timeout_sec) - elapsed_sec
+        if remaining_total_sec <= 0:
+            response.close()
+            raise OpenAICompatProviderUnavailableError(
+                failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                message="Provider stream exceeded the total request timeout.",
+                failure_detail={
+                    "provider_response_id": response_id,
+                    "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
+                },
+            )
+        current_phase_timeout_sec = float(
+            (
+                config.stream_idle_timeout_sec
+                if first_output_at is not None
+                else config.first_token_timeout_sec
+            )
+            or config.timeout_sec
+        )
+        wait_timeout_sec = min(current_phase_timeout_sec, remaining_total_sec)
+        try:
+            event_type, payload = stream_queue.get(timeout=wait_timeout_sec)
+        except queue.Empty as exc:
+            response.close()
+            raise OpenAICompatProviderUnavailableError(
+                failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                message="Provider stream timed out while waiting for the next output chunk.",
+                failure_detail={
+                    "provider_response_id": response_id,
+                    "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
+                },
+            ) from exc
+
+        if event_type == "done":
+            return _finalize_output()
+        if event_type == "error":
+            error = payload
+            if isinstance(error, httpx.TimeoutException):
+                raise OpenAICompatProviderUnavailableError(
+                    failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                    message=f"Provider stream timed out: {error}",
+                    failure_detail={
+                        "provider_response_id": response_id,
+                        "provider_transport_error": type(error).__name__,
+                        "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
+                    },
+                ) from error
+            if isinstance(error, httpx.TransportError):
+                raise OpenAICompatProviderUnavailableError(
+                    failure_kind="UPSTREAM_UNAVAILABLE",
+                    message=f"Provider transport failed: {error}",
+                    failure_detail={
+                        "provider_response_id": response_id,
+                        "provider_transport_error": type(error).__name__,
+                    },
+                ) from error
+            raise error  # pragma: no cover - unexpected queue payload
+
+        chunk = str(payload or "")
         if not chunk:
             continue
         buffer += chunk
@@ -227,14 +318,14 @@ def _extract_streaming_responses_output(
                 delta = event_payload.get("delta")
                 if isinstance(delta, str) and delta:
                     output_parts.append(delta)
+                    if first_output_at is None:
+                        first_output_at = time.monotonic()
                 continue
             response_payload = event_payload.get("response")
             if isinstance(response_payload, dict) and response_id is None and response_payload.get("id") is not None:
                 response_id = str(response_payload.get("id"))
             if event_type == "response.completed":
                 return _finalize_output(response_payload if isinstance(response_payload, dict) else None)
-
-    return _finalize_output()
 
 
 def _responses_request_payload(
@@ -247,6 +338,9 @@ def _responses_request_payload(
         "model": config.model,
         "input": _build_responses_input(rendered_payload),
     }
+    instructions = _build_responses_instructions(rendered_payload)
+    if instructions is not None:
+        payload["instructions"] = instructions
     if stream:
         payload["stream"] = True
     if config.reasoning_effort is not None:
@@ -312,6 +406,18 @@ def _parse_non_streaming_response(response: httpx.Response) -> OpenAICompatProvi
     )
 
 
+def _httpx_timeout(config: OpenAICompatProviderConfig, *, streaming: bool) -> httpx.Timeout:
+    read_timeout_sec = float(config.request_total_timeout_sec or config.timeout_sec)
+    if streaming:
+        read_timeout_sec = None
+    return httpx.Timeout(
+        connect=float(config.connect_timeout_sec or config.timeout_sec),
+        write=float(config.write_timeout_sec or config.timeout_sec),
+        read=read_timeout_sec,
+        pool=float(config.connect_timeout_sec or config.timeout_sec),
+    )
+
+
 def _invoke_streaming_responses(
     config: OpenAICompatProviderConfig,
     rendered_payload: RenderedExecutionPayload,
@@ -320,7 +426,7 @@ def _invoke_streaming_responses(
 ) -> OpenAICompatProviderResult:
     try:
         with httpx.Client(
-            timeout=config.timeout_sec,
+            timeout=_httpx_timeout(config, streaming=True),
             transport=transport,
         ) as client:
             with client.stream(
@@ -338,7 +444,10 @@ def _invoke_streaming_responses(
                 if "text/event-stream" not in content_type:
                     return _parse_non_streaming_response(response)
 
-                output_text, response_id = _extract_streaming_responses_output(response)
+                output_text, response_id = _extract_streaming_responses_output(
+                    response,
+                    config=config,
+                )
                 return OpenAICompatProviderResult(
                     output_text=output_text,
                     response_id=response_id,
@@ -369,7 +478,7 @@ def _invoke_non_streaming_responses(
 ) -> OpenAICompatProviderResult:
     try:
         with httpx.Client(
-            timeout=config.timeout_sec,
+            timeout=_httpx_timeout(config, streaming=False),
             transport=transport,
         ) as client:
             response = client.post(
@@ -479,6 +588,11 @@ def probe_openai_compat_connectivity(
                 api_key=config.api_key,
                 model=config.model,
                 timeout_sec=config.timeout_sec,
+                connect_timeout_sec=config.connect_timeout_sec,
+                write_timeout_sec=config.write_timeout_sec,
+                first_token_timeout_sec=config.first_token_timeout_sec,
+                stream_idle_timeout_sec=config.stream_idle_timeout_sec,
+                request_total_timeout_sec=config.request_total_timeout_sec,
                 reasoning_effort=config.reasoning_effort,
                 provider_type=OpenAICompatProviderType.RESPONSES_NON_STREAM,
             ),
@@ -498,7 +612,7 @@ def list_openai_compat_models(
     transport: httpx.BaseTransport | None = None,
 ) -> list[str]:
     try:
-        with httpx.Client(timeout=config.timeout_sec, transport=transport) as client:
+        with httpx.Client(timeout=_httpx_timeout(config, streaming=False), transport=transport) as client:
             response = client.get(
                 f"{config.base_url}/models",
                 headers={

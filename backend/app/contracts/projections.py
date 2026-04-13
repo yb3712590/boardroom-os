@@ -459,6 +459,8 @@ class RuntimeProviderProjectionData(StrictModel):
     mode: str
     effective_mode: str
     provider_health_summary: str
+    fallback_blocked: bool = True
+    provider_candidate_chain: list[str] = Field(default_factory=list)
     provider_id: str | None = None
     base_url: str | None = None
     alias: str | None = None
