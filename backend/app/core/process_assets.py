@@ -19,6 +19,7 @@ from app.core.output_schemas import (
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
 from app.core.project_workspaces import load_git_closeout_receipt
+from app.core.versioning import build_process_asset_canonical_ref, split_versioned_ref
 from app.db.repository import ControlPlaneRepository
 
 _PROCESS_ASSET_PREFIX = "pa://"
@@ -44,36 +45,51 @@ def dedupe_process_asset_refs(values: Iterable[str]) -> list[str]:
     return deduped
 
 
-def build_artifact_process_asset_ref(artifact_ref: str) -> str:
-    return f"{_PROCESS_ASSET_PREFIX}artifact/{quote(str(artifact_ref), safe='')}"
+def _process_asset_ref(kind: str, target: str, *, version_int: int | None = None) -> str:
+    base_ref = f"{_PROCESS_ASSET_PREFIX}{kind}/{quote(str(target), safe='')}"
+    if version_int is None:
+        return base_ref
+    return build_process_asset_canonical_ref(base_ref, version_int)
 
 
-def build_compiled_context_bundle_process_asset_ref(ticket_id: str) -> str:
-    return f"{_PROCESS_ASSET_PREFIX}compiled-context-bundle/{quote(str(ticket_id), safe='')}"
+def build_artifact_process_asset_ref(artifact_ref: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("artifact", artifact_ref, version_int=version_int)
 
 
-def build_compile_manifest_process_asset_ref(ticket_id: str) -> str:
-    return f"{_PROCESS_ASSET_PREFIX}compile-manifest/{quote(str(ticket_id), safe='')}"
+def build_compiled_context_bundle_process_asset_ref(
+    ticket_id: str,
+    *,
+    version_int: int | None = None,
+) -> str:
+    return _process_asset_ref("compiled-context-bundle", ticket_id, version_int=version_int)
 
 
-def build_compiled_execution_package_process_asset_ref(ticket_id: str) -> str:
-    return f"{_PROCESS_ASSET_PREFIX}compiled-execution-package/{quote(str(ticket_id), safe='')}"
+def build_compile_manifest_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("compile-manifest", ticket_id, version_int=version_int)
 
 
-def build_meeting_decision_process_asset_ref(ticket_id: str) -> str:
-    return f"{_PROCESS_ASSET_PREFIX}meeting-decision-record/{quote(str(ticket_id), safe='')}"
+def build_compiled_execution_package_process_asset_ref(
+    ticket_id: str,
+    *,
+    version_int: int | None = None,
+) -> str:
+    return _process_asset_ref("compiled-execution-package", ticket_id, version_int=version_int)
 
 
-def build_source_code_delivery_process_asset_ref(ticket_id: str) -> str:
-    return f"{_PROCESS_ASSET_PREFIX}source-code-delivery/{quote(str(ticket_id), safe='')}"
+def build_meeting_decision_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("meeting-decision-record", ticket_id, version_int=version_int)
 
 
-def build_closeout_summary_process_asset_ref(ticket_id: str) -> str:
-    return f"{_PROCESS_ASSET_PREFIX}closeout-summary/{quote(str(ticket_id), safe='')}"
+def build_source_code_delivery_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("source-code-delivery", ticket_id, version_int=version_int)
 
 
-def build_governance_document_process_asset_ref(ticket_id: str) -> str:
-    return f"{_PROCESS_ASSET_PREFIX}governance-document/{quote(str(ticket_id), safe='')}"
+def build_closeout_summary_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("closeout-summary", ticket_id, version_int=version_int)
+
+
+def build_governance_document_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("governance-document", ticket_id, version_int=version_int)
 
 
 def artifact_refs_to_process_asset_refs(artifact_refs: Iterable[str]) -> list[str]:
@@ -96,7 +112,7 @@ def merge_input_process_asset_refs(
 
 
 def parse_process_asset_ref(process_asset_ref: str) -> tuple[str, str]:
-    normalized = str(process_asset_ref).strip()
+    normalized, _ = split_versioned_ref(str(process_asset_ref).strip())
     if not normalized.startswith(_PROCESS_ASSET_PREFIX):
         raise ValueError(f"Unsupported process asset ref: {process_asset_ref}")
     path = normalized.removeprefix(_PROCESS_ASSET_PREFIX)
@@ -104,6 +120,22 @@ def parse_process_asset_ref(process_asset_ref: str) -> tuple[str, str]:
     if not kind or not raw_target:
         raise ValueError(f"Unsupported process asset ref: {process_asset_ref}")
     return kind, unquote(raw_target)
+
+
+def parse_process_asset_version(process_asset_ref: str) -> tuple[str, str, int | None]:
+    normalized = str(process_asset_ref).strip()
+    base_ref, version_int = split_versioned_ref(normalized)
+    kind, target = parse_process_asset_ref(base_ref)
+    return kind, target, version_int
+
+
+def _matches_process_asset_ref(asset_entry: dict[str, Any], requested_ref: str) -> bool:
+    entry_ref = str(asset_entry.get("canonical_ref") or asset_entry.get("process_asset_ref") or "").strip()
+    requested_base_ref, requested_version_int = split_versioned_ref(requested_ref)
+    entry_base_ref, entry_version_int = split_versioned_ref(entry_ref)
+    if requested_version_int is None:
+        return requested_base_ref == entry_base_ref
+    return requested_base_ref == entry_base_ref and requested_version_int == entry_version_int
 
 
 def get_ticket_output_process_asset_refs(
@@ -153,7 +185,9 @@ def build_result_process_assets(
     for artifact_ref in dedupe_process_asset_refs(artifact_refs):
         produced_assets.append(
             ProcessAssetReference(
-                process_asset_ref=build_artifact_process_asset_ref(artifact_ref),
+                process_asset_ref=build_artifact_process_asset_ref(artifact_ref, version_int=1),
+                canonical_ref=build_artifact_process_asset_ref(artifact_ref, version_int=1),
+                version_int=1,
                 process_asset_kind="ARTIFACT",
                 producer_ticket_id=ticket_id,
                 summary=summary or artifact_ref,
@@ -165,7 +199,9 @@ def build_result_process_assets(
     if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF and isinstance(result_payload, dict):
         produced_assets.append(
             ProcessAssetReference(
-                process_asset_ref=build_source_code_delivery_process_asset_ref(ticket_id),
+                process_asset_ref=build_source_code_delivery_process_asset_ref(ticket_id, version_int=1),
+                canonical_ref=build_source_code_delivery_process_asset_ref(ticket_id, version_int=1),
+                version_int=1,
                 process_asset_kind="SOURCE_CODE_DELIVERY",
                 producer_ticket_id=ticket_id,
                 summary=summary or "Source code delivery",
@@ -188,7 +224,9 @@ def build_result_process_assets(
         if isinstance(decision_record, dict):
             produced_assets.append(
                 ProcessAssetReference(
-                    process_asset_ref=build_meeting_decision_process_asset_ref(ticket_id),
+                    process_asset_ref=build_meeting_decision_process_asset_ref(ticket_id, version_int=1),
+                    canonical_ref=build_meeting_decision_process_asset_ref(ticket_id, version_int=1),
+                    version_int=1,
                     process_asset_kind="MEETING_DECISION_RECORD",
                     producer_ticket_id=ticket_id,
                     summary=(
@@ -205,7 +243,9 @@ def build_result_process_assets(
     if output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF and isinstance(result_payload, dict):
         produced_assets.append(
             ProcessAssetReference(
-                process_asset_ref=build_closeout_summary_process_asset_ref(ticket_id),
+                process_asset_ref=build_closeout_summary_process_asset_ref(ticket_id, version_int=1),
+                canonical_ref=build_closeout_summary_process_asset_ref(ticket_id, version_int=1),
+                version_int=1,
                 process_asset_kind="CLOSEOUT_SUMMARY",
                 producer_ticket_id=ticket_id,
                 summary=summary or "Delivery closeout summary",
@@ -229,7 +269,9 @@ def build_result_process_assets(
         )
         produced_assets.append(
             ProcessAssetReference(
-                process_asset_ref=build_governance_document_process_asset_ref(ticket_id),
+                process_asset_ref=build_governance_document_process_asset_ref(ticket_id, version_int=1),
+                canonical_ref=build_governance_document_process_asset_ref(ticket_id, version_int=1),
+                version_int=1,
                 process_asset_kind="GOVERNANCE_DOCUMENT",
                 producer_ticket_id=ticket_id,
                 summary=summary,
@@ -241,7 +283,7 @@ def build_result_process_assets(
             )
         )
 
-    return [asset.model_dump(mode="json") for asset in produced_assets]
+    return [asset.model_dump(mode="json", exclude_none=True) for asset in produced_assets]
 
 
 def resolve_process_asset(
@@ -250,7 +292,7 @@ def resolve_process_asset(
     *,
     connection: sqlite3.Connection | None = None,
 ) -> ResolvedProcessAsset:
-    kind, target = parse_process_asset_ref(process_asset_ref)
+    kind, target, version_int = parse_process_asset_version(process_asset_ref)
     if kind == "artifact":
         return _resolve_artifact_process_asset(
             repository,
@@ -263,9 +305,12 @@ def resolve_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             ticket_id=target,
+            version_int=version_int,
             payload_kind="COMPILED_CONTEXT_BUNDLE",
             schema_ref="compiled_context_bundle@1",
             loader=repository.get_latest_compiled_context_bundle_by_ticket,
+            version_loader=repository.get_compiled_context_bundle_version,
+            builder=build_compiled_context_bundle_process_asset_ref,
             connection=connection,
         )
     if kind == "compile-manifest":
@@ -273,9 +318,12 @@ def resolve_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             ticket_id=target,
+            version_int=version_int,
             payload_kind="COMPILE_MANIFEST",
             schema_ref="compile_manifest@1",
             loader=repository.get_latest_compile_manifest_by_ticket,
+            version_loader=repository.get_compile_manifest_version,
+            builder=build_compile_manifest_process_asset_ref,
             connection=connection,
         )
     if kind == "compiled-execution-package":
@@ -283,9 +331,12 @@ def resolve_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             ticket_id=target,
+            version_int=version_int,
             payload_kind="COMPILED_EXECUTION_PACKAGE",
             schema_ref="compiled_execution_package@1",
             loader=repository.get_latest_compiled_execution_package_by_ticket,
+            version_loader=repository.get_compiled_execution_package_version,
+            builder=build_compiled_execution_package_process_asset_ref,
             connection=connection,
         )
     if kind == "meeting-decision-record":
@@ -324,19 +375,36 @@ def _resolve_compiled_payload_asset(
     *,
     process_asset_ref: str,
     ticket_id: str,
+    version_int: int | None,
     payload_kind: str,
     schema_ref: str,
     loader,
+    version_loader,
+    builder,
     connection: sqlite3.Connection | None,
 ) -> ResolvedProcessAsset:
-    row = loader(ticket_id, connection=connection)
+    row = (
+        loader(ticket_id, connection=connection)
+        if version_int is None
+        else version_loader(ticket_id, version_int, connection=connection)
+    )
     if row is None:
         raise ValueError(f"Process asset {process_asset_ref} is missing.")
     payload = row.get("payload")
     if not isinstance(payload, dict):
         raise ValueError(f"Process asset {process_asset_ref} has no structured payload.")
+    resolved_version_int = int(row.get("version_int") or 0)
+    canonical_ref = builder(ticket_id, version_int=resolved_version_int)
+    supersedes_ref = (
+        builder(ticket_id, version_int=resolved_version_int - 1)
+        if resolved_version_int > 1
+        else None
+    )
     return ResolvedProcessAsset(
-        process_asset_ref=process_asset_ref,
+        process_asset_ref=canonical_ref,
+        canonical_ref=canonical_ref,
+        version_int=resolved_version_int,
+        supersedes_ref=supersedes_ref,
         process_asset_kind=payload_kind,
         producer_ticket_id=ticket_id,
         summary=f"{payload_kind.lower()} for {ticket_id}",
@@ -548,7 +616,7 @@ def _resolve_source_code_delivery_process_asset(
                 item
                 for item in produced_assets
                 if isinstance(item, dict)
-                and str(item.get("process_asset_ref") or "") == process_asset_ref
+                and _matches_process_asset_ref(item, process_asset_ref)
                 and str(item.get("process_asset_kind") or "") == "SOURCE_CODE_DELIVERY"
             ),
             None,
@@ -581,8 +649,12 @@ def _resolve_source_code_delivery_process_asset(
             latest_git_closeout = load_git_closeout_receipt(str(terminal_event["workflow_id"]), ticket_id)
             if latest_git_closeout:
                 git_commit_record = latest_git_closeout
+        canonical_ref = str(asset_entry.get("canonical_ref") or asset_entry.get("process_asset_ref") or "").strip()
         return ResolvedProcessAsset(
-            process_asset_ref=process_asset_ref,
+            process_asset_ref=canonical_ref or process_asset_ref,
+            canonical_ref=canonical_ref or process_asset_ref,
+            version_int=asset_entry.get("version_int"),
+            supersedes_ref=asset_entry.get("supersedes_ref"),
             process_asset_kind="SOURCE_CODE_DELIVERY",
             producer_ticket_id=ticket_id,
             summary=(
@@ -662,7 +734,7 @@ def _resolve_governance_document_process_asset(
                 item
                 for item in produced_assets
                 if isinstance(item, dict)
-                and str(item.get("process_asset_ref") or "") == process_asset_ref
+                and _matches_process_asset_ref(item, process_asset_ref)
                 and str(item.get("process_asset_kind") or "") == "GOVERNANCE_DOCUMENT"
             ),
             None,
@@ -701,6 +773,11 @@ def _resolve_governance_document_process_asset(
             transform_payload=_transform,
             connection=resolved_connection,
         )
+        canonical_ref = str(asset_entry.get("canonical_ref") or asset_entry.get("process_asset_ref") or "").strip()
+        base.process_asset_ref = canonical_ref or process_asset_ref
+        base.canonical_ref = canonical_ref or process_asset_ref
+        base.version_int = asset_entry.get("version_int")
+        base.supersedes_ref = asset_entry.get("supersedes_ref")
         base.consumable_by = ["context_compiler", "followup_ticket", "review"]
         if isinstance(base.source_metadata, dict):
             base.source_metadata["document_kind_ref"] = source_metadata.get("document_kind_ref")

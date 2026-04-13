@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P0`
-> 当前切片：`P0-S2`
-> 最后更新：`2026-04-14 03:29`
+> 当前切片：`P0-S3`
+> 最后更新：`2026-04-14 04:20`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -156,29 +156,29 @@
 
 **实施边界：**
 - 做什么：
-  - [ ] 建版本标识和 supersede 链
-  - [ ] 让关键对象带显式版本
-  - [ ] 接最小版本校验
+  - [x] 建版本标识和 supersede 链
+  - [x] 让关键对象带显式版本
+  - [x] 接最小版本校验
 - 不做什么：
-  - [ ] 不补完整历史 diff UI
-  - [ ] 不扩远期版本管理平台层
+  - [x] 不补完整历史 diff UI
+  - [x] 不扩远期版本管理平台层
 
 **代码任务：**
-- [ ] 任务 1
-- [ ] 任务 2
-- [ ] 任务 3
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
 
 **验证：**
-- [ ] 新版本创建可追踪
-- [ ] supersede 链可查询
-- [ ] 冲突场景有失败保护
+- [x] 新版本创建可追踪
+- [x] supersede 链可查询
+- [x] 冲突场景有失败保护
 
 **文档更新：**
-- [ ] 更新本计划文档
-- [ ] 更新 `doc/TODO.md`
-- [ ] 更新 `doc/history/memory-log.md`
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
 
-**状态：** `todo`
+**状态：** `done`
 
 ### 切片 `P0-S3`
 **名称：**  
@@ -263,9 +263,9 @@
 
 ### 已完成
 - [x] `P0-S1` 已完成：系统冷启动现在会在 `repository.initialize()` 幂等写入单条 `SYSTEM_INITIALIZED`，`project-init` 不再兼任系统初始化入口
+- [x] `P0-S2` 已完成：最小版本协议骨架现已落地；process asset canonical ref 改成 versioned ref，compiled bundle / manifest / execution package 会追加版本与 supersede 链，`GovernanceProfile` 与 workflow graph version 也已有只读查询入口
 
 ### 未完成
-- [ ] `P0-S2` 尚未开始
 - [ ] `P0-S3` 尚未开始
 - [ ] `P0-S4` 尚未开始
 
@@ -274,6 +274,7 @@
 
 ### 新发现但不在本轮做
 - [ ] `backend/tests/test_api.py -k "system_initialized or startup or project_init"` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会落 `PROVIDER_REQUIRED_UNAVAILABLE`，不阻断 `P0-S1` 收口
+- [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
 
 ---
 
@@ -361,6 +362,36 @@
 **下一轮起手动作：**
 `继续 P0-S2，先锁 graph / asset / governance profile / execution package 这几类对象的最小版本标识入口。`
 
+### Session `2026-04-14 / 03`
+**开始前判断：**
+- 当前阶段：`P0`
+- 当前切片：`P0-S2`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `backend/app/core/versioning.py`，统一 process asset canonical ref、compiled artifact version ref、`GovernanceProfile` id 和 workflow graph version helper
+- [x] 给 process asset、compiled context bundle / manifest / execution package 接上显式版本字段和 supersede 链，旧短 ref 只保留 resolver 入口兼容
+- [x] 新增最小 `GovernanceProfile` contract + repository append-only 存储与只读查询
+- [x] 补齐 process asset / context compiler / repository / API 相关回归，并同步本计划、`doc/TODO.md`、`doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_process_assets.py backend/tests/test_versioning.py backend/tests/test_context_compiler.py -k "version or governance_profile or graph_version or process_asset" -q` 通过（`11 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_process_assets.py backend/tests/test_context_compiler.py backend/tests/test_repository.py backend/tests/test_project_workspace_hooks.py -k "version or governance or compile or process_asset" -q` 通过（`40 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "governance_document or compile or process_asset" -q` 通过（`5 passed`）
+- [x] `python -m py_compile backend/app/contracts/governance.py backend/app/core/versioning.py backend/app/core/process_assets.py backend/app/core/context_compiler.py backend/app/db/repository.py backend/tests/test_process_assets.py backend/tests/test_versioning.py backend/tests/test_context_compiler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P0-S3` 还没开始
+- [ ] graph version 当前还是 repository helper 推导值，后续 `P1` 需要决定是否升级成正式图真相字段
+
+**下一轮起手动作：**
+`进入 P0-S3，先给关键写路径补显式版本检查，再把冲突失败保护接进 repository / compiler / ticket handler。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -397,8 +428,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P0`
-- 当前切片：`P0-S2`
-- 当前状态：`P0-S1 已完成，等待进入 P0-S2`
-- 最近完成：`系统冷启动 bootstrap 已收口到 repository 级幂等入口`
+- 当前切片：`P0-S3`
+- 当前状态：`P0-S2 已完成，等待进入 P0-S3`
+- 最近完成：`最小版本协议骨架已收口到 process asset / compiled artifact / governance profile / graph version helper`
 - 当前阻塞：`宽口径 project-init 自动推进老测试仍依赖 live provider 配置`
-- 下一步：`继续 P0-S2，给 graph / asset / governance profile / execution package 补最小版本协议入口`
+- 下一步：`继续 P0-S3，给关键写路径补版本检查和冲突 fail-closed`

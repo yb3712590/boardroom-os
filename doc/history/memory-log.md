@@ -23,6 +23,12 @@
 
 ### 2026-04-14
 
+- `P0-S2` 已落最小版本协议骨架：新增 `backend/app/core/versioning.py` 统一 process asset canonical ref、compiled artifact version ref、`GovernanceProfile` id 和 workflow graph version helper
+- `ProcessAssetReference / ResolvedProcessAsset` 现在会带 `canonical_ref / version_int / supersedes_ref`；新写入结果统一落 versioned ref，旧短 ref 只保留 resolver 入口兼容
+- `compiled_context_bundle / compile_manifest / compiled_execution_package` 这轮已改成 append-only 版本化持久化；repository 现在可按 `ticket_id + version_int` 查询，并在 persisted payload 里写入版本与 supersede 关系
+- 最小 `GovernanceProfile` 现在已具备 append-only 存储、latest 查询和 supersede 链追溯；本轮只补骨架和只读入口，还没把 `approval_mode / audit_mode` 全面接进 runtime
+- workflow graph version 当前已按最保守口径落成 repository helper：基于 graph mutation event 的最新 `sequence_no` 推导 `gv_<int>`，缺失时 fail-closed；后续 `P1` 再决定是否升级成正式图真相字段
+- 本轮新增并实跑通过的回归包括：`./backend/.venv/bin/pytest backend/tests/test_process_assets.py backend/tests/test_versioning.py backend/tests/test_context_compiler.py -k "version or governance_profile or graph_version or process_asset" -q`、`./backend/.venv/bin/pytest backend/tests/test_process_assets.py backend/tests/test_context_compiler.py backend/tests/test_repository.py backend/tests/test_project_workspace_hooks.py -k "version or governance or compile or process_asset" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "governance_document or compile or process_asset" -q`
 - `P0-S1` 已落最小启动协议：`repository.initialize()` 现在会幂等写入单条 `SYSTEM_INITIALIZED`，系统冷启动和 `project-init` 不再绑在一起
 - `project-init` 这轮已删掉系统初始化写入，职责收回到纯 workflow 启动；空态 dashboard 和事件流现在就算没有 workflow，也能直接看到初始化真相
 - 本轮新增并实跑通过的回归包括：`./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or invalid_project_init" -q`、`./backend/.venv/bin/pytest backend/tests/test_repository.py -k "initialize" -q`

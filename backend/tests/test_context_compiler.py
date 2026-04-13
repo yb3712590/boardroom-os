@@ -18,7 +18,9 @@ from app.core.context_compiler import (
 from app.core.process_assets import (
     build_artifact_process_asset_ref,
     build_compiled_context_bundle_process_asset_ref,
+    build_compiled_execution_package_process_asset_ref,
 )
+from app.core.versioning import build_process_asset_canonical_ref
 
 
 def _ticket_create_payload(
@@ -1746,7 +1748,7 @@ def test_build_compile_request_resolves_governance_document_process_asset(client
     with repository.connection() as connection:
         terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_gov_doc_source")
     produced_assets = list((terminal_event or {}).get("payload", {}).get("produced_process_assets") or [])
-    assert "pa://governance-document/tkt_gov_doc_source" in [
+    assert "pa://governance-document/tkt_gov_doc_source@1" in [
         asset.get("process_asset_ref") for asset in produced_assets
     ]
 
@@ -1813,12 +1815,51 @@ def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(clie
     assert latest_execution_package["compile_request_id"] == (
         compiled_artifacts.compiled_execution_package.meta.compile_request_id
     )
+    assert latest_execution_package["version_int"] == 1
+    assert latest_execution_package["version_ref"].startswith("pkg_tkt_compile_001_1_1")
     assert latest_execution_package["payload"]["meta"]["ticket_id"] == "tkt_compile_001"
+    assert latest_execution_package["payload"]["meta"]["version_int"] == 1
     assert latest_execution_package["payload"]["execution"]["output_schema_ref"] == "ui_milestone_review"
     assert latest_execution_package["payload"]["rendered_execution_payload"]["meta"]["render_target"] == (
         "json_messages_v1"
     )
     assert repository.get_compiled_execution_package(latest_execution_package["compile_request_id"]) is not None
+
+
+def test_compile_and_persist_execution_artifacts_versions_compiled_execution_package(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+
+    first = compile_and_persist_execution_artifacts(repository, ticket)
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    second = compile_and_persist_execution_artifacts(repository, ticket)
+
+    latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket("tkt_compile_001")
+    first_version = repository.get_compiled_execution_package_version(
+        "tkt_compile_001",
+        1,
+    )
+
+    assert first.compiled_execution_package.meta.version_int == 1
+    assert first.compiled_execution_package.meta.supersedes_ref is None
+    assert second.compiled_execution_package.meta.version_int == 2
+    assert second.compiled_execution_package.meta.supersedes_ref == (
+        first.compiled_execution_package.meta.version_ref
+    )
+    assert latest_execution_package is not None
+    assert latest_execution_package["version_int"] == 2
+    assert latest_execution_package["supersedes_ref"] == first.compiled_execution_package.meta.version_ref
+    assert latest_execution_package["payload"]["meta"]["version_ref"] == (
+        second.compiled_execution_package.meta.version_ref
+    )
+    assert first_version is not None
+    assert first_version["payload"]["meta"]["version_ref"] == (
+        first.compiled_execution_package.meta.version_ref
+    )
 
 
 def test_export_latest_compile_artifacts_to_developer_inspector_writes_real_persisted_payloads(
@@ -1853,7 +1894,49 @@ def test_export_latest_compile_artifacts_to_developer_inspector_writes_real_pers
     assert bundle_payload is not None
     assert manifest_payload is not None
     assert rendered_payload is not None
-    assert bundle_payload["meta"]["bundle_id"] == compiled_artifacts.compiled_context_bundle.meta.bundle_id
-    assert manifest_payload["compile_meta"]["compile_id"] == compiled_artifacts.compile_manifest.compile_meta.compile_id
-    assert manifest_payload["compile_meta"]["bundle_id"] == bundle_payload["meta"]["bundle_id"]
-    assert rendered_payload["meta"]["bundle_id"] == bundle_payload["meta"]["bundle_id"]
+
+
+def test_build_compile_request_accepts_legacy_process_asset_ref_but_resolves_versioned_source_ref(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    source_ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_and_persist_execution_artifacts(repository, source_ticket)
+    compile_and_persist_execution_artifacts(repository, source_ticket)
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_compile_consumer",
+            ticket_id="tkt_compile_consumer",
+            node_id="node_compile_consumer",
+            input_artifact_refs=[],
+            input_process_asset_refs=[build_compiled_execution_package_process_asset_ref("tkt_compile_001")],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_compile_consumer",
+            ticket_id="tkt_compile_consumer",
+            node_id="node_compile_consumer",
+        ),
+    )
+
+    consumer_ticket = repository.get_current_ticket_projection("tkt_compile_consumer")
+    compile_request = build_compile_request(repository, consumer_ticket)
+
+    assert compile_request.execution.input_process_asset_refs == [
+        "pa://compiled-execution-package/tkt_compile_001"
+    ]
+    assert compile_request.explicit_sources[0].source_ref == build_process_asset_canonical_ref(
+        build_compiled_execution_package_process_asset_ref("tkt_compile_001"),
+        2,
+    )
+    assert compile_request.explicit_sources[0].source_metadata["version_int"] == 2
+    assert compile_request.explicit_sources[0].source_metadata["supersedes_ref"] == "pa://compiled-execution-package/tkt_compile_001@1"

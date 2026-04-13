@@ -22,6 +22,9 @@ ProcessAssetContentType = Literal["TEXT", "JSON"]
 
 class ProcessAssetReference(StrictModel):
     process_asset_ref: str = Field(min_length=1)
+    canonical_ref: str | None = None
+    version_int: int | None = Field(default=None, ge=1)
+    supersedes_ref: str | None = None
     process_asset_kind: ProcessAssetKind
     producer_ticket_id: str | None = None
     summary: str | None = None

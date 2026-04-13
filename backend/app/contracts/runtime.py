@@ -184,6 +184,9 @@ class CompiledContextBundleMeta(StrictModel):
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
+    version_ref: str | None = None
+    version_int: int | None = Field(default=None, ge=1)
+    supersedes_ref: str | None = None
     compiler_version: str = Field(min_length=1)
     compiled_at: datetime
     model_profile: str = Field(min_length=1)
@@ -259,6 +262,10 @@ class CompileManifestMeta(StrictModel):
     ticket_id: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
+    attempt_no: int = Field(ge=1)
+    version_ref: str | None = None
+    version_int: int | None = Field(default=None, ge=1)
+    supersedes_ref: str | None = None
     compiler_version: str = Field(min_length=1)
     compiled_at: datetime
     duration_ms: int = Field(ge=0)
@@ -374,6 +381,9 @@ class CompiledExecutionPackageMeta(TenantWorkspaceScope):
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
+    version_ref: str | None = None
+    version_int: int | None = Field(default=None, ge=1)
+    supersedes_ref: str | None = None
     lease_owner: str = Field(min_length=1)
     compiler_version: str = Field(min_length=1)
 

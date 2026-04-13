@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.contracts.governance import GovernanceProfile
 from app.contracts.runtime import CompileManifest, CompiledContextBundle, CompiledExecutionPackage
 from app.core.artifact_store import ArtifactStore
 from app.core.artifacts import (
@@ -73,6 +74,12 @@ from app.core.persona_profiles import (
     build_default_employee_roster,
     normalize_employee_projection_profiles,
 )
+from app.core.versioning import (
+    build_compiled_context_bundle_version_ref,
+    build_compiled_execution_package_version_ref,
+    build_compile_manifest_version_ref,
+    validate_supersedes_ref,
+)
 from app.core.reducer import (
     rebuild_employee_projections,
     rebuild_incident_projections,
@@ -127,6 +134,7 @@ class ControlPlaneRepository:
             self._ensure_compiled_context_bundle_shape(connection)
             self._ensure_compile_manifest_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
+            self._ensure_governance_profile_shape(connection)
             self._ensure_ceo_shadow_run_shape(connection)
             self._ensure_artifact_index_shape(connection)
             self._ensure_artifact_upload_session_shape(connection)
@@ -2420,6 +2428,29 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         bundle: CompiledContextBundle,
     ) -> None:
+        version_int = self._next_version_int(
+            connection,
+            table_name="compiled_context_bundle",
+            ticket_id=bundle.meta.ticket_id,
+        )
+        version_ref = build_compiled_context_bundle_version_ref(
+            bundle.meta.ticket_id,
+            bundle.meta.attempt_no,
+            version_int,
+        )
+        supersedes_ref = self._previous_version_ref(
+            connection,
+            table_name="compiled_context_bundle",
+            ticket_id=bundle.meta.ticket_id,
+        )
+        validate_supersedes_ref(
+            canonical_ref=version_ref,
+            version_int=version_int,
+            supersedes_ref=supersedes_ref,
+        )
+        bundle.meta.version_ref = version_ref
+        bundle.meta.version_int = version_int
+        bundle.meta.supersedes_ref = supersedes_ref
         payload = bundle.model_dump(mode="json")
         connection.execute(
             """
@@ -2432,8 +2463,11 @@ class ControlPlaneRepository:
                 compiler_version,
                 compiled_at,
                 bundle_version,
+                version_ref,
+                version_int,
+                supersedes_ref,
                 payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 bundle.meta.bundle_id,
@@ -2443,7 +2477,10 @@ class ControlPlaneRepository:
                 bundle.meta.node_id,
                 bundle.meta.compiler_version,
                 bundle.meta.compiled_at.isoformat(),
-                "CompiledContextBundle_v1",
+                version_ref,
+                version_ref,
+                version_int,
+                supersedes_ref,
                 json.dumps(payload, sort_keys=True),
             ),
         )
@@ -2453,6 +2490,29 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         manifest: CompileManifest,
     ) -> None:
+        version_int = self._next_version_int(
+            connection,
+            table_name="compile_manifest",
+            ticket_id=manifest.compile_meta.ticket_id,
+        )
+        version_ref = build_compile_manifest_version_ref(
+            manifest.compile_meta.ticket_id,
+            manifest.compile_meta.attempt_no,
+            version_int,
+        )
+        supersedes_ref = self._previous_version_ref(
+            connection,
+            table_name="compile_manifest",
+            ticket_id=manifest.compile_meta.ticket_id,
+        )
+        validate_supersedes_ref(
+            canonical_ref=version_ref,
+            version_int=version_int,
+            supersedes_ref=supersedes_ref,
+        )
+        manifest.compile_meta.version_ref = version_ref
+        manifest.compile_meta.version_int = version_int
+        manifest.compile_meta.supersedes_ref = supersedes_ref
         payload = manifest.model_dump(mode="json")
         connection.execute(
             """
@@ -2466,8 +2526,11 @@ class ControlPlaneRepository:
                 compiler_version,
                 compiled_at,
                 manifest_version,
+                version_ref,
+                version_int,
+                supersedes_ref,
                 payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 manifest.compile_meta.compile_id,
@@ -2478,7 +2541,10 @@ class ControlPlaneRepository:
                 manifest.compile_meta.node_id,
                 manifest.compile_meta.compiler_version,
                 manifest.compile_meta.compiled_at.isoformat(),
-                "CompileManifest_v1",
+                version_ref,
+                version_ref,
+                version_int,
+                supersedes_ref,
                 json.dumps(payload, sort_keys=True),
             ),
         )
@@ -2490,6 +2556,29 @@ class ControlPlaneRepository:
         *,
         compiled_at: datetime,
     ) -> None:
+        version_int = self._next_version_int(
+            connection,
+            table_name="compiled_execution_package",
+            ticket_id=execution_package.meta.ticket_id,
+        )
+        version_ref = build_compiled_execution_package_version_ref(
+            execution_package.meta.ticket_id,
+            execution_package.meta.attempt_no,
+            version_int,
+        )
+        supersedes_ref = self._previous_version_ref(
+            connection,
+            table_name="compiled_execution_package",
+            ticket_id=execution_package.meta.ticket_id,
+        )
+        validate_supersedes_ref(
+            canonical_ref=version_ref,
+            version_int=version_int,
+            supersedes_ref=supersedes_ref,
+        )
+        execution_package.meta.version_ref = version_ref
+        execution_package.meta.version_int = version_int
+        execution_package.meta.supersedes_ref = supersedes_ref
         payload = execution_package.model_dump(mode="json")
         connection.execute(
             """
@@ -2501,8 +2590,11 @@ class ControlPlaneRepository:
                 compiler_version,
                 compiled_at,
                 package_version,
+                version_ref,
+                version_int,
+                supersedes_ref,
                 payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 execution_package.meta.compile_request_id,
@@ -2511,7 +2603,10 @@ class ControlPlaneRepository:
                 execution_package.meta.node_id,
                 execution_package.meta.compiler_version,
                 compiled_at.isoformat(),
-                "CompiledExecutionPackage_v1",
+                version_ref,
+                version_ref,
+                version_int,
+                supersedes_ref,
                 json.dumps(payload, sort_keys=True),
             ),
         )
@@ -2548,7 +2643,7 @@ class ControlPlaneRepository:
         query = """
             SELECT * FROM compiled_context_bundle
             WHERE ticket_id = ?
-            ORDER BY compiled_at DESC, bundle_id DESC
+            ORDER BY version_int DESC, compiled_at DESC, bundle_id DESC
             LIMIT 1
         """
         if connection is not None:
@@ -2620,7 +2715,7 @@ class ControlPlaneRepository:
         query = """
             SELECT * FROM compile_manifest
             WHERE ticket_id = ?
-            ORDER BY compiled_at DESC, compile_id DESC
+            ORDER BY version_int DESC, compiled_at DESC, compile_id DESC
             LIMIT 1
         """
         if connection is not None:
@@ -2644,7 +2739,7 @@ class ControlPlaneRepository:
         query = """
             SELECT * FROM compiled_execution_package
             WHERE ticket_id = ?
-            ORDER BY compiled_at DESC, compile_request_id DESC
+            ORDER BY version_int DESC, compiled_at DESC, compile_request_id DESC
             LIMIT 1
         """
         if connection is not None:
@@ -2660,6 +2755,154 @@ class ControlPlaneRepository:
                 return None
             return self._convert_compiled_execution_package_row(row)
 
+    def get_compiled_execution_package_version(
+        self,
+        ticket_id: str,
+        version_int: int,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM compiled_execution_package
+            WHERE ticket_id = ? AND version_int = ?
+            LIMIT 1
+        """
+        params = (ticket_id, int(version_int))
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_compiled_execution_package_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_compiled_execution_package_row(row)
+
+    def get_compiled_context_bundle_version(
+        self,
+        ticket_id: str,
+        version_int: int,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM compiled_context_bundle
+            WHERE ticket_id = ? AND version_int = ?
+            LIMIT 1
+        """
+        params = (ticket_id, int(version_int))
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_compiled_context_bundle_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_compiled_context_bundle_row(row)
+
+    def get_compile_manifest_version(
+        self,
+        ticket_id: str,
+        version_int: int,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM compile_manifest
+            WHERE ticket_id = ? AND version_int = ?
+            LIMIT 1
+        """
+        params = (ticket_id, int(version_int))
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_compile_manifest_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_compile_manifest_row(row)
+
+    def save_governance_profile(
+        self,
+        connection: sqlite3.Connection,
+        profile: GovernanceProfile,
+    ) -> GovernanceProfile:
+        if profile.supersedes_ref is not None:
+            previous = connection.execute(
+                """
+                SELECT profile_id
+                FROM governance_profile
+                WHERE workflow_id = ? AND profile_id = ?
+                LIMIT 1
+                """,
+                (profile.workflow_id, profile.supersedes_ref),
+            ).fetchone()
+            if previous is None:
+                raise ValueError("governance profile supersedes_ref must reference an existing row.")
+        elif int(profile.version_int) != 1:
+            raise ValueError("governance profile supersedes_ref is required when version_int > 1.")
+
+        connection.execute(
+            """
+            INSERT INTO governance_profile (
+                profile_id,
+                workflow_id,
+                approval_mode,
+                audit_mode,
+                source_ref,
+                supersedes_ref,
+                effective_from_event,
+                version_int
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                profile.profile_id,
+                profile.workflow_id,
+                profile.approval_mode,
+                profile.audit_mode,
+                profile.source_ref,
+                profile.supersedes_ref,
+                profile.effective_from_event,
+                int(profile.version_int),
+            ),
+        )
+        return profile
+
+    def get_latest_governance_profile(
+        self,
+        workflow_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM governance_profile
+            WHERE workflow_id = ?
+            ORDER BY version_int DESC, profile_id DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (workflow_id,)).fetchone()
+            return None if row is None else self._convert_governance_profile_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (workflow_id,)).fetchone()
+            return None if row is None else self._convert_governance_profile_row(row)
+
+    def list_governance_profiles(
+        self,
+        workflow_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM governance_profile
+            WHERE workflow_id = ?
+            ORDER BY version_int DESC, profile_id DESC
+        """
+        if connection is not None:
+            rows = connection.execute(query, (workflow_id,)).fetchall()
+            return [self._convert_governance_profile_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, (workflow_id,)).fetchall()
+            return [self._convert_governance_profile_row(row) for row in rows]
+
     def get_cursor_and_version(self) -> tuple[str | None, int]:
         self.initialize()
         with self.connection() as connection:
@@ -2674,6 +2917,41 @@ class ControlPlaneRepository:
             if row is None:
                 return None, 0
             return row["event_id"], int(row["sequence_no"])
+
+    def _next_version_int(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        table_name: str,
+        ticket_id: str,
+    ) -> int:
+        row = connection.execute(
+            f"SELECT MAX(version_int) AS max_version FROM {table_name} WHERE ticket_id = ?",
+            (ticket_id,),
+        ).fetchone()
+        return int(row["max_version"] or 0) + 1
+
+    def _previous_version_ref(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        table_name: str,
+        ticket_id: str,
+    ) -> str | None:
+        row = connection.execute(
+            f"""
+            SELECT version_ref
+            FROM {table_name}
+            WHERE ticket_id = ?
+            ORDER BY version_int DESC
+            LIMIT 1
+            """,
+            (ticket_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        version_ref = str(row["version_ref"] or "").strip()
+        return version_ref or None
 
     def save_artifact_record(
         self,
@@ -4241,18 +4519,26 @@ class ControlPlaneRepository:
         converted = dict(row)
         converted["compiled_at"] = datetime.fromisoformat(converted["compiled_at"])
         converted["payload"] = json.loads(converted["payload_json"])
+        converted["version_int"] = int(converted.get("version_int") or 0)
         return converted
 
     def _convert_compile_manifest_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["compiled_at"] = datetime.fromisoformat(converted["compiled_at"])
         converted["payload"] = json.loads(converted["payload_json"])
+        converted["version_int"] = int(converted.get("version_int") or 0)
         return converted
 
     def _convert_compiled_execution_package_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["compiled_at"] = datetime.fromisoformat(converted["compiled_at"])
         converted["payload"] = json.loads(converted["payload_json"])
+        converted["version_int"] = int(converted.get("version_int") or 0)
+        return converted
+
+    def _convert_governance_profile_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["version_int"] = int(converted.get("version_int") or 0)
         return converted
 
     def _convert_ceo_shadow_run_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -5854,6 +6140,9 @@ class ControlPlaneRepository:
                 compiler_version TEXT NOT NULL,
                 compiled_at TEXT NOT NULL,
                 bundle_version TEXT NOT NULL,
+                version_ref TEXT,
+                version_int INTEGER,
+                supersedes_ref TEXT,
                 payload_json TEXT NOT NULL
             )
             """
@@ -5871,6 +6160,9 @@ class ControlPlaneRepository:
             "compiler_version": "TEXT",
             "compiled_at": "TEXT",
             "bundle_version": "TEXT",
+            "version_ref": "TEXT",
+            "version_int": "INTEGER",
+            "supersedes_ref": "TEXT",
             "payload_json": "TEXT",
         }
         for column_name, column_type in required_columns.items():
@@ -5883,6 +6175,9 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_compiled_context_bundle_compile_request_id ON compiled_context_bundle(compile_request_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compiled_context_bundle_ticket_version ON compiled_context_bundle(ticket_id, version_int)"
         )
 
     def _ensure_compile_manifest_shape(self, connection: sqlite3.Connection) -> None:
@@ -5898,6 +6193,9 @@ class ControlPlaneRepository:
                 compiler_version TEXT NOT NULL,
                 compiled_at TEXT NOT NULL,
                 manifest_version TEXT NOT NULL,
+                version_ref TEXT,
+                version_int INTEGER,
+                supersedes_ref TEXT,
                 payload_json TEXT NOT NULL
             )
             """
@@ -5916,6 +6214,9 @@ class ControlPlaneRepository:
             "compiler_version": "TEXT",
             "compiled_at": "TEXT",
             "manifest_version": "TEXT",
+            "version_ref": "TEXT",
+            "version_int": "INTEGER",
+            "supersedes_ref": "TEXT",
             "payload_json": "TEXT",
         }
         for column_name, column_type in required_columns.items():
@@ -5929,6 +6230,9 @@ class ControlPlaneRepository:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_compile_manifest_compile_request_id ON compile_manifest(compile_request_id)"
         )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compile_manifest_ticket_version ON compile_manifest(ticket_id, version_int)"
+        )
 
     def _ensure_compiled_execution_package_shape(self, connection: sqlite3.Connection) -> None:
         connection.execute(
@@ -5941,6 +6245,9 @@ class ControlPlaneRepository:
                 compiler_version TEXT NOT NULL,
                 compiled_at TEXT NOT NULL,
                 package_version TEXT NOT NULL,
+                version_ref TEXT,
+                version_int INTEGER,
+                supersedes_ref TEXT,
                 payload_json TEXT NOT NULL
             )
             """
@@ -5957,6 +6264,9 @@ class ControlPlaneRepository:
             "compiler_version": "TEXT",
             "compiled_at": "TEXT",
             "package_version": "TEXT",
+            "version_ref": "TEXT",
+            "version_int": "INTEGER",
+            "supersedes_ref": "TEXT",
             "payload_json": "TEXT",
         }
         for column_name, column_type in required_columns.items():
@@ -5969,6 +6279,47 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_compiled_execution_package_compile_request_id ON compiled_execution_package(compile_request_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compiled_execution_package_ticket_version ON compiled_execution_package(ticket_id, version_int)"
+        )
+
+    def _ensure_governance_profile_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS governance_profile (
+                profile_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                approval_mode TEXT NOT NULL,
+                audit_mode TEXT NOT NULL,
+                source_ref TEXT NOT NULL,
+                supersedes_ref TEXT,
+                effective_from_event TEXT NOT NULL,
+                version_int INTEGER NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(governance_profile)").fetchall()
+        }
+        required_columns = {
+            "profile_id": "TEXT",
+            "workflow_id": "TEXT",
+            "approval_mode": "TEXT",
+            "audit_mode": "TEXT",
+            "source_ref": "TEXT",
+            "supersedes_ref": "TEXT",
+            "effective_from_event": "TEXT",
+            "version_int": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE governance_profile ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_governance_profile_workflow_version ON governance_profile(workflow_id, version_int)"
         )
 
     def _ensure_ceo_shadow_run_shape(self, connection: sqlite3.Connection) -> None:

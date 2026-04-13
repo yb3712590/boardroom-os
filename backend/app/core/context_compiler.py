@@ -1654,13 +1654,20 @@ def build_compile_request(
     for source_ref in input_process_asset_refs:
         resolved_asset = resolve_process_asset(repository, str(source_ref), connection=connection)
         explicit_source = CompileRequestExplicitSource(
-                source_ref=str(source_ref),
+                source_ref=str(resolved_asset.process_asset_ref),
                 source_kind="PROCESS_ASSET",
                 process_asset_kind=resolved_asset.process_asset_kind,
                 producer_ticket_id=resolved_asset.producer_ticket_id,
                 source_summary=resolved_asset.summary,
                 consumable_by=list(resolved_asset.consumable_by),
-                source_metadata=dict(resolved_asset.source_metadata),
+                source_metadata=(
+                    dict(resolved_asset.source_metadata)
+                    | {
+                        "canonical_ref": resolved_asset.canonical_ref,
+                        "version_int": resolved_asset.version_int,
+                        "supersedes_ref": resolved_asset.supersedes_ref,
+                    }
+                ),
                 is_mandatory=True,
                 artifact_access=(
                     CompiledArtifactAccessDescriptor.model_validate(resolved_asset.artifact_access)
@@ -1951,6 +1958,7 @@ def compile_audit_artifacts(
             ticket_id=compile_request.meta.ticket_id,
             workflow_id=compile_request.meta.workflow_id,
             node_id=compile_request.meta.node_id,
+            attempt_no=compile_request.meta.attempt_no,
             compiler_version=MINIMAL_CONTEXT_COMPILER_VERSION,
             compiled_at=compiled_at,
             duration_ms=0,
