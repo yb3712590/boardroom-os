@@ -10,6 +10,7 @@
 
 文档、Dashboard、Review Room 都只是这三样东西的物化视图。  
 CEO 不持有长对话记忆。Worker 不继承隐式上下文。错误不靠 fallback 掩盖，而是显式变成 `IncidentRecord`，再通过 `RecoveryAction` 幂等恢复。
+workflow 级 `GovernanceProfile` 决定审批强度和审计强度，但它只调控运行时和物化面，不改写真相底座。
 
 ## 设计目标
 
@@ -47,7 +48,19 @@ CEO 不持有长对话记忆。Worker 不继承隐式上下文。错误不靠 fa
 | `Worker / Checker` | 执行包 | 结构化结果、资产引用、审查裁决 |
 | `Hook Runner` | 事件、角色、交付类型 | 文档同步、证据留档、closeout |
 
-### 3. 全局不变量
+### 3. `GovernanceProfile`
+
+| 字段 | 负责什么 | 不负责什么 |
+|---|---|---|
+| `approval_mode` | 决定 CEO 哪些审批口能自动关闭 | 绕过图里的显式 gate |
+| `audit_mode` | 决定系统额外物化多少 trace / archive | 关闭事件、图和最低交付证据 |
+| `auto_approval_scope` | 约束自动审批的节点范围 | 替代 `Board` 和 `Checker` 的正式裁决 |
+| `audit_materialization_policy` | 约束 trace / timeline 的落盘面 | 改写历史真相 |
+
+`GovernanceProfile` 由 `Constitution / Charter / DecisionAsset` 派生。  
+它不是第四类真相，而是对运行时读面、审批边界、审计物化面的统一控制协议。
+
+### 4. 全局不变量
 
 1. 所有正式协作都必须落成事件、图边、资产引用或审批记录。
 2. 没有 `idempotency_key` 的动作不能执行。
@@ -55,6 +68,8 @@ CEO 不持有长对话记忆。Worker 不继承隐式上下文。错误不靠 fa
 4. 节点完成不等于下游可见。必须等必要 hook 和必要证据都落地。
 5. 文档不直接驱动调度。调度只看投影、图和资产索引。
 6. 任意恢复动作都必须可重放，且重放后不会额外制造副作用。
+7. `audit_mode` 可以降低扩展审计材料的物化级别，但不能关闭 `EventRecord`、图状态变化和最低交付证据。
+8. `approval_mode` 可以改变谁来关审批口，但不能跳过显式 `REVIEWS` / `ESCALATES_TO` 边和 required hooks。
 
 ## 状态机 / 流程
 

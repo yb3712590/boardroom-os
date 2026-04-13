@@ -8,7 +8,7 @@ from app.contracts.commands import (
     CommandAckStatus,
     ProjectInitCommand,
 )
-from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_SYSTEM_INITIALIZED, EVENT_WORKFLOW_CREATED, SYSTEM_INITIALIZED_KEY
+from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_WORKFLOW_CREATED
 from app.core.ceo_execution_presets import (
     build_project_init_scope_ticket_id,
 )
@@ -138,19 +138,6 @@ def handle_project_init(
 
     with repository.transaction() as connection:
         tenant_id, workspace_id = default_workflow_scope()
-        repository.insert_event(
-            connection,
-            event_type=EVENT_SYSTEM_INITIALIZED,
-            actor_type="system",
-            actor_id="system",
-            workflow_id=None,
-            idempotency_key=SYSTEM_INITIALIZED_KEY,
-            causation_id=None,
-            correlation_id=None,
-            payload={"status": "initialized"},
-            occurred_at=received_at,
-        )
-
         existing_workflow_event = repository.get_event_by_idempotency_key(
             connection,
             workflow_event_key,

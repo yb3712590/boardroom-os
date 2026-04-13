@@ -34,6 +34,7 @@
 | `required_write_set[]` | hook 自己的写集 |
 | `idempotency_key_template` | 幂等键模板 |
 | `failure_policy` | 失败时怎么处理 |
+| `activation_policy` | 在不同 `approval_mode / audit_mode` 下是 required、optional 还是 skipped |
 | `visibility` | 是否进入 Board / CEO 读面 |
 
 ### 2. 生命周期事件
@@ -54,6 +55,8 @@
 | `documentation_sync` | Worker / Hook Runner | 校验并写文档同步信息 |
 | `evidence_capture` | Worker / Checker | 固化测试、截图、日志、review 证据 |
 | `git_closeout` | Worker | 固化 branch、commit、merge 证据 |
+| `ticket_trace_capture` | Hook Runner | 固化逐票上下文摘要、实施记录和交付索引 |
+| `timeline_archive` | Hook Runner | 把自治机沟通时间线写进 `90-archive/transcripts` |
 | `review_request` | Maker | 自动创建 Checker 路径 |
 | `board_pack_generation` | Review 角色 | 生成 Board 可裁决包 |
 | `project_map_refresh` | Hook Runner | 刷新模块边界、责任和热区 |
@@ -63,7 +66,7 @@
 Hook 链固定规则：
 
 1. 事件发生。
-2. Registry 根据 `role + lifecycle_event + deliverable_kind` 找 hook。
+2. Registry 根据 `role + lifecycle_event + deliverable_kind + governance modes` 找 hook。
 3. Hook Runner 校验输入和写集。
 4. Hook 执行。
 5. 写 `EventRecord` 和 `ProcessAsset`。
@@ -74,6 +77,17 @@ Hook 链固定规则：
 `TICKET_COMPLETED` 只表示执行成功。  
 节点真正转成 `COMPLETED`，必须等 required hooks 全部成功。
 
+required hooks 由 `audit_mode` 决定，但最低地板要按交付类型看。
+
+对 `source_code_delivery`，固定地板如下：
+
+- `documentation_sync`
+- 最低 `evidence_capture`
+- `git_closeout`
+
+对其他交付类型，也必须保留各自的最低收口证据。  
+也就是说，`MINIMAL` 可以跳过逐票 trace 和全量时间线，不可以跳过最低交付收口。
+
 ## 失败与恢复
 
 | 失败 | 说明 | 恢复 |
@@ -82,6 +96,7 @@ Hook 链固定规则：
 | `HOOK_WRITE_DENIED` | hook 试图越权写文件 | 失败并开 incident |
 | `HOOK_PARTIAL_SUCCESS` | 一部分资产落了，一部分没落 | 按幂等键补跑未完成部分 |
 | `HOOK_CHAIN_TIMEOUT` | hook 长时间未收口 | 冻结下游并升级 |
+| `AUDIT_POLICY_MISMATCH` | 当前档位要求的审计材料没被物化 | 拒绝 closeout 并补跑 hook |
 
 恢复原则：
 

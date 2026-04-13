@@ -1,0 +1,404 @@
+# 新架构重构实施计划
+
+> 状态：`active`
+> 当前阶段：`P0`
+> 当前切片：`P0-S2`
+> 最后更新：`2026-04-14 03:29`
+> 负责人：`Codex / 人工协作`
+> 计划性质：`可续跑主计划`
+> 架构文档状态：`只读，不修改`
+
+---
+
+## 1. 这份计划是干什么的
+
+这份文档只负责一件事：  
+把 `doc/new-architecture/` 定下来的目标架构，拆成可以连续推进、可中断恢复、可逐阶段验收的重构计划。
+
+这份计划允许更新。  
+`doc/new-architecture/` 下的架构决策文档默认只读，不在实施阶段顺手改写。  
+如果发现架构和代码现实冲突，只能记录到“偏差与待决策”区，不能直接改架构文档。
+
+---
+
+## 2. 固定输入文档
+
+每次新会话开始，先按这个顺序读，不跳步：
+
+1. `README.md`
+2. `doc/README.md`
+3. `doc/mainline-truth.md`
+4. `doc/roadmap-reset.md`
+5. `doc/TODO.md`
+6. `doc/new-architecture/README.md`
+7. 本计划文档
+8. 本计划里“当前阶段”对应的相关架构文档
+9. 只有在需要历史原因时，再读 `doc/history/context-baseline.md` 和 `doc/history/memory-log.md`
+
+---
+
+## 3. 实施铁律
+
+- `doc/new-architecture/**` 默认只读。
+- 实施必须以当前代码现实为基础，做增量重构，不重建骨架。
+- 每轮只选一个主方向，连续完成 `2` 到 `4` 个强相关切片。
+- 每个切片都必须有：目标、边界、代码改动、验证方式、文档同步动作。
+- 每阶段结束后，必须核对任务清单并更新本计划。
+- 只能把“已实现、已验证、已同步文档”的内容勾成完成。
+- 发现偏差、阻塞、设计疑点，先记到文档，不要临场扩范围。
+- 如果某项需要改架构决策，先停在“待决策”，由单独决策流程处理。
+- 不允许为了省事重写本计划结构。只更新状态、勾选框、时间戳、会话记录和必要说明。
+
+---
+
+## 4. 总目标
+
+把当前主线从“多口径协议 + 文档提醒式收口”收正成“事件、图、执行包、hook 驱动的单一自治状态机主链”。
+
+---
+
+## 5. 阶段总览
+
+| 阶段 | 名称 | 目标 | 状态 | 完成标准 |
+|---|---|---|---|---|
+| `P0` | 前置协议收口 | 先补初始化、并发、版本、物化这些地基 | `in_progress` | 关键前置协议有代码入口和最小验证 |
+| `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `todo` | 图成为正式真相面 |
+| `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `todo` | 失败显式化、后置动作制度化 |
+| `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `todo` | CEO / Worker 不再靠长提示词兜底 |
+| `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `todo` | 可重规划、可诊断、可复盘 |
+
+状态只允许用：
+
+- `todo`
+- `in_progress`
+- `blocked`
+- `done`
+
+---
+
+## 6. 当前阶段
+
+### 当前阶段编号
+`P0`
+
+### 当前阶段目标
+先补冷启动、版本、一致性和文档物化协议，不然后面的图、Hook 和 CEO 运行时都只能停在设计层。
+
+### 当前阶段入口条件
+- [x] 当前代码现实已核对
+- [x] 本阶段相关架构文档已重读
+- [x] 上一阶段的未完成项已转移
+- [x] 本阶段切片范围已锁定
+- [x] 验证方式已明确
+
+### 当前阶段出口条件
+- [ ] 本阶段所有必做切片完成
+- [ ] 每个切片都有最小验证证据
+- [ ] 涉及的运行文档已同步
+- [ ] 未完成项已明确转移到下阶段或阻塞区
+- [x] `doc/history/memory-log.md` 已补记
+
+---
+
+## 7. 当前阶段切片清单
+
+### 切片 `P0-S1`
+**名称：**  
+`Bootstrap / 初始化序列落地`
+
+**现实问题：**  
+`Projection、Graph、Snapshot 冷启动时不能互相卡死。`
+
+**对应架构文档：**
+- `doc/new-architecture/00-autonomous-machine-overview.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/12-architecture-audit-report.md`
+- `doc/new-architecture/13-cross-cutting-concerns.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 定义初始化阶段状态
+  - [x] 建最小 bootstrap 入口
+  - [x] 让初始 Projection / Graph 可生成
+- 不做什么：
+  - [x] 不顺手重写调度器
+  - [x] 不顺手补 UI
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] 冷启动命令可跑通
+- [x] 最小测试通过
+- [x] 能生成初始状态快照
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
+### 切片 `P0-S2`
+**名称：**  
+`统一版本协议接线`
+
+**现实问题：**  
+`graph_version、asset version、profile version 现在不是一套规则，后面恢复和回放会乱。`
+
+**对应架构文档：**
+- `doc/new-architecture/05-incident-idempotency-and-recovery.md`
+- `doc/new-architecture/11-governance-profile-and-audit-modes.md`
+- `doc/new-architecture/13-cross-cutting-concerns.md`
+
+**实施边界：**
+- 做什么：
+  - [ ] 建版本标识和 supersede 链
+  - [ ] 让关键对象带显式版本
+  - [ ] 接最小版本校验
+- 不做什么：
+  - [ ] 不补完整历史 diff UI
+  - [ ] 不扩远期版本管理平台层
+
+**代码任务：**
+- [ ] 任务 1
+- [ ] 任务 2
+- [ ] 任务 3
+
+**验证：**
+- [ ] 新版本创建可追踪
+- [ ] supersede 链可查询
+- [ ] 冲突场景有失败保护
+
+**文档更新：**
+- [ ] 更新本计划文档
+- [ ] 更新 `doc/TODO.md`
+- [ ] 更新 `doc/history/memory-log.md`
+
+**状态：** `todo`
+
+### 切片 `P0-S3`
+**名称：**  
+`并发控制与写保护`
+
+**现实问题：**  
+`CEO、Hook、Materializer 可能抢写同一资源。`
+
+**对应架构文档：**
+- `doc/new-architecture/01-document-constitution.md`
+- `doc/new-architecture/05-incident-idempotency-and-recovery.md`
+- `doc/new-architecture/13-cross-cutting-concerns.md`
+
+**实施边界：**
+- 做什么：
+  - [ ] 给关键写路径补版本检查
+  - [ ] 建最小冲突失败保护
+  - [ ] 接必要租约或独占写规则
+- 不做什么：
+  - [ ] 不一次做完整分布式并发层
+  - [ ] 不顺手重构无关 repository
+
+**代码任务：**
+- [ ] 任务 1
+- [ ] 任务 2
+- [ ] 任务 3
+
+**验证：**
+- [ ] 关键写路径有版本检查
+- [ ] 冲突时 fail-closed
+- [ ] 有最小并发测试或模拟验证
+
+**文档更新：**
+- [ ] 更新本计划文档
+- [ ] 更新 `doc/TODO.md`
+- [ ] 更新 `doc/history/memory-log.md`
+
+**状态：** `todo`
+
+### 切片 `P0-S4`
+**名称：**  
+`Document Materializer 最小闭环`
+
+**现实问题：**  
+`文档现在还主要靠提示词提醒，不是事件和投影的物化视图。`
+
+**对应架构文档：**
+- `doc/new-architecture/01-document-constitution.md`
+- `doc/new-architecture/12-architecture-audit-report.md`
+
+**实施边界：**
+- 做什么：
+  - [ ] 让至少一类视图文档自动物化
+  - [ ] 记录文档来源版本
+  - [ ] 建最小一致性检查
+- 不做什么：
+  - [ ] 不一次覆盖所有文档面
+  - [ ] 不改架构决策文档正文
+
+**代码任务：**
+- [ ] 任务 1
+- [ ] 任务 2
+- [ ] 任务 3
+
+**验证：**
+- [ ] 至少一类视图文档能自动物化
+- [ ] 文档落后时可被检测
+- [ ] 不允许人工正文反推真相
+
+**文档更新：**
+- [ ] 更新本计划文档
+- [ ] 更新 `doc/TODO.md`
+- [ ] 更新 `doc/history/memory-log.md`
+
+**状态：** `todo`
+
+---
+
+## 8. 任务清单核对区
+
+每次阶段结束后，必须逐项核对，不允许跳过。
+
+### 已完成
+- [x] `P0-S1` 已完成：系统冷启动现在会在 `repository.initialize()` 幂等写入单条 `SYSTEM_INITIALIZED`，`project-init` 不再兼任系统初始化入口
+
+### 未完成
+- [ ] `P0-S2` 尚未开始
+- [ ] `P0-S3` 尚未开始
+- [ ] `P0-S4` 尚未开始
+
+### 明确放弃
+- [ ] 暂无
+
+### 新发现但不在本轮做
+- [ ] `backend/tests/test_api.py -k "system_initialized or startup or project_init"` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会落 `PROVIDER_REQUIRED_UNAVAILABLE`，不阻断 `P0-S1` 收口
+
+---
+
+## 9. 偏差与待决策
+
+这里只记录两类东西：
+
+1. 架构文档和代码现实不一致
+2. 实施中发现必须补一个新决策，否则不能继续
+
+### D-001
+**现象：**  
+`SYSTEM_INITIALIZED` 原先只在 `project-init` 命令里写入；应用冷启动只建表和回填，不写独立的系统初始化真相。`
+
+**影响：**  
+`系统启动和首个 workflow 创建被绑死；空态 dashboard / 事件流无法表达“系统已完成 bootstrap”，legacy 初始化顺序也会和 workflow 事件混在一起。`
+
+**当前处理：**  
+`已保守收口到 repository 级幂等 bootstrap：repository.initialize() 统一写单条 SYSTEM_INITIALIZED，project-init 回到纯 workflow 启动。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `closed`
+
+---
+
+## 10. 本轮会话记录
+
+每次新会话追加一段，不覆盖历史。
+
+### Session `2026-04-14 / 01`
+**开始前判断：**
+- 当前阶段：`P0`
+- 当前切片：`P0-S1`
+- 是否继续上轮：`no`
+
+**本轮做了什么：**
+- [x] 创建重构计划模板
+- [x] 创建主计划文档
+- [x] 创建新会话提示词文档
+- [x] 更新文档索引入口
+
+**验证结果：**
+- [ ] 尚未进行代码重构验证
+- [x] 计划资产文件已落盘
+
+**文档更新：**
+- [x] 本计划已更新
+- [ ] `doc/TODO.md` 未更新
+- [ ] `doc/history/memory-log.md` 未更新
+
+**留下的未完成项：**
+- [ ] 进入首次代码实施前，先核对当前代码现实和 `P0-S1` 验证方式
+
+**下一轮起手动作：**
+`读取固定输入文档，然后从 P0-S1 开始锁定 bootstrap 相关代码入口和最小验证命令。`
+
+### Session `2026-04-14 / 02`
+**开始前判断：**
+- 当前阶段：`P0`
+- 当前切片：`P0-S1`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `SYSTEM_INITIALIZED` 收到 `repository.initialize()` 的仓库级幂等入口
+- [x] 删掉 `project-init` 里的系统初始化写入，保留纯 workflow 启动职责
+- [x] 补了冷启动空态 dashboard、初始化幂等和 legacy 初始化顺序回归
+- [x] 同步本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or invalid_project_init" -q` 通过
+- [x] `./backend/.venv/bin/pytest backend/tests/test_repository.py -k "initialize" -q` 通过
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or project_init" -q` 当前未全绿；命中一组依赖 live provider 的旧 `project-init` 自动推进用例，当前环境未配 provider 时会报 `PROVIDER_REQUIRED_UNAVAILABLE`
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P0-S2` 还没开始
+- [ ] `project-init` 自动推进那批 provider 依赖老测试，后续要单独和 runtime/provider 收口一起处理
+
+**下一轮起手动作：**
+`继续 P0-S2，先锁 graph / asset / governance profile / execution package 这几类对象的最小版本标识入口。`
+
+---
+
+## 11. 新会话续跑指令
+
+每次新会话先做这 6 步：
+
+1. 读“固定输入文档”
+2. 读本计划的“当前阶段”“任务清单核对区”“最近一条会话记录”
+3. 确认当前切片状态
+4. 先处理 `blocked` 和“未完成”
+5. 再继续当前切片，不要重开新方向
+6. 收尾前必须更新本计划和相关运行文档
+
+---
+
+## 12. 收尾检查
+
+每次本轮实施结束前，必须手动核对：
+
+- [x] 代码已落地
+- [x] 有最小验证证据
+- [x] 本计划状态已更新
+- [x] 已完成项已勾选
+- [x] 未完成项已保留
+- [x] 新问题已记录到“偏差与待决策”
+- [x] `doc/TODO.md` 已同步或明确说明为何没改
+- [x] `doc/history/memory-log.md` 已补记
+- [x] 没有修改 `doc/new-architecture/**`
+
+---
+
+## 13. 当前快照
+
+这一段保持短，方便下次打开 10 秒内看懂。
+
+- 当前阶段：`P0`
+- 当前切片：`P0-S2`
+- 当前状态：`P0-S1 已完成，等待进入 P0-S2`
+- 最近完成：`系统冷启动 bootstrap 已收口到 repository 级幂等入口`
+- 当前阻塞：`宽口径 project-init 自动推进老测试仍依赖 live provider 配置`
+- 下一步：`继续 P0-S2，给 graph / asset / governance profile / execution package 补最小版本协议入口`

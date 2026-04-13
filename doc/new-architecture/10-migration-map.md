@@ -39,6 +39,7 @@
 | 技能运行时 | 会话层技能、人工约定 | 没有 runtime 绑定协议 | 把技能写进执行包 |
 | 顾问环 | Board review、modify constraints、meeting ADR | 没有 `BoardAdvisorySession` | 连接顾问包和图补丁 |
 | 过程资产 / 项目地图 | `input_process_asset_refs[]`、资产写回 | 没有一等 `ProjectMap` | 增地图和血缘刷新 |
+| 治理档位 | Board 约束、review 开关、审计材料 | 没有统一 `GovernanceProfile` | 先立 `approval_mode / audit_mode` 协议 |
 
 ### 3. 冻结区
 
@@ -61,6 +62,12 @@
 | `P3` | 执行包和 CEO 记忆收口 | `ProjectionSnapshot`、`SkillBinding`、执行包扩容 |
 | `P4` | 顾问环和项目地图接入 | `BoardAdvisorySession`、`ProjectMap` 上线 |
 
+治理档位要这样并入：
+
+- `P0` 先立 `GovernanceProfile` 和 2 个 mode 的枚举、底线、不变量
+- `P3` 再把 mode 真正注入 `ProjectionSnapshot` 和 `CompiledExecutionPackage`
+- `P4` 最后补 `FULL_TIMELINE` 的完整时间线归档和专家模式的高阶裁决链
+
 ### 当前优先级
 
 按 [../roadmap-reset.md](../roadmap-reset.md) 的边界，这几个顺序不能乱：
@@ -81,6 +88,7 @@
 | 只补文档，不补状态机 | 又回到文档地狱 | 先落 contract，再补读面 |
 | 先补项目地图，不补恢复协议 | 地图有了，但系统还是乱恢复 | 先补 incident / hook |
 | 用 fallback 兼容一切 | 真问题继续被遮住 | fail-closed + 显式 incident |
+| 先做模式 UI，不立 `GovernanceProfile` | 后面接运行时要返工多层协议 | 先把 mode 收成 charter / package / hook 可消费的合同 |
 
 ## 统一示例
 

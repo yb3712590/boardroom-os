@@ -21,6 +21,13 @@
 
 ## Recent Memory
 
+### 2026-04-14
+
+- `P0-S1` 已落最小启动协议：`repository.initialize()` 现在会幂等写入单条 `SYSTEM_INITIALIZED`，系统冷启动和 `project-init` 不再绑在一起
+- `project-init` 这轮已删掉系统初始化写入，职责收回到纯 workflow 启动；空态 dashboard 和事件流现在就算没有 workflow，也能直接看到初始化真相
+- 本轮新增并实跑通过的回归包括：`./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or invalid_project_init" -q`、`./backend/.venv/bin/pytest backend/tests/test_repository.py -k "initialize" -q`
+- `./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or project_init" -q` 当前仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会报 `PROVIDER_REQUIRED_UNAVAILABLE`，这块后续要和 runtime/provider 测试收口一起处理
+
 ### 2026-04-13
 
 - 已按 `doc/tests/integration-audit-remediation-master-plan-20260413.md` 落第一批执行切片，只收 `P0-2 / P0-3 / P1-3`

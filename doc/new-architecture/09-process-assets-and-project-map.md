@@ -33,9 +33,11 @@
 | `ADR` | 架构和策略决策 |
 | `SOURCE_CODE_DELIVERY` | 源码交付结果 |
 | `EVIDENCE_PACK` | 测试、截图、git、review 证据 |
+| `TICKET_TRACE_PACK` | 单 ticket 的上下文摘要、实施记录、交付索引 |
 | `FAILURE_FINGERPRINT` | 故障指纹和复盘结论 |
 | `CLOSEOUT_SUMMARY` | 收口摘要 |
 | `DECISION_SUMMARY` | 会议或顾问会话摘要 |
+| `TIMELINE_INDEX` | 指向全量时间线归档的重放索引 |
 | `PROJECT_MAP_SLICE` | 地图切片 |
 
 每条 `ProcessAsset` 至少要有：
@@ -66,6 +68,14 @@
 - 地图是“这个项目现在长什么样、哪里危险、谁负责什么”。
 - 地图由资产、事件和代码结构共同派生。
 
+### 4. 审计档位的物化规则
+
+| `audit_mode` | 默认物化面 |
+|---|---|
+| `MINIMAL` | 最低 `EVIDENCE_PACK` + 必要交付资产 |
+| `TICKET_TRACE` | `MINIMAL` + `TICKET_TRACE_PACK` |
+| `FULL_TIMELINE` | `TICKET_TRACE` + `TIMELINE_INDEX` + transcript archive 引用 |
+
 ## 状态机 / 流程
 
 ### 项目地图 / 资产图
@@ -94,9 +104,10 @@ flowchart TB
 ### 资产写回规则
 
 1. 票完成后先写最小资产。
-2. hook 再补证据、文档和地图相关资产。
+2. hook 再按 `audit_mode` 补证据、trace、时间线索引和地图相关资产。
 3. 资产入索引后，地图刷新。
-4. 后续票只消费资产引用和地图切片，不回看整段历史。
+4. `FULL_TIMELINE` 时，索引资产还要指向 `90-archive/transcripts/` 的不可变归档。
+5. 后续票只消费资产引用和地图切片，不回看整段历史。
 
 ## 失败与恢复
 

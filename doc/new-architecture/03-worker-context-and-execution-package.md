@@ -37,6 +37,7 @@ Worker 的“无状态”不等于“空着脑袋开干”。
 | `task_frame` | 当前目标、完成定义、失败定义 |
 | `compiled_role` | 当前票需要的角色约束 |
 | `compiled_constraints` | 安全、品牌、技术、合规约束 |
+| `governance_mode_slice` | 当前 workflow 的 `approval_mode / audit_mode` 和适用边界 |
 | `atomic_context_bundle` | 当前票的最小证据集 |
 | `required_doc_surfaces` | 必须同步的文档面 |
 | `allowed_tools` | 允许工具集合 |
@@ -50,7 +51,7 @@ Worker 的“无状态”不等于“空着脑袋开干”。
 
 | 层 | 内容 | 默认预算 |
 |---|---|---|
-| `W0 Constitution Slice` | 必要规则、schema、写权、hook 说明 | 小 |
+| `W0 Constitution Slice` | 必要规则、schema、写权、hook 说明、治理档位切片 | 小 |
 | `W1 Task Frame` | 当前票目标、验收标准、失败边界 | 中 |
 | `W2 Evidence Slice` | 必要代码、文档、ADR、项目地图切片 | 中 |
 | `W3 Runtime Guard` | 工具、写集、超时、重试预算 | 小 |
@@ -83,7 +84,7 @@ Worker 默认只看 `W0 + W1 + W2 + W3`。
 执行包生命周期固定如下：
 
 1. `Scheduler` 选中 ready 节点。
-2. `Context Compiler` 根据 `TicketNode + ProcessAsset + ProjectMap` 组包。
+2. `Context Compiler` 根据 `TicketNode + ProcessAsset + ProjectMap + GovernanceProfile` 组包。
 3. `Skill Resolver` 绑定当前票所需技能。
 4. Worker 执行。
 5. 结果进入 `schema / write-set / evidence` 校验。
@@ -91,6 +92,10 @@ Worker 默认只看 `W0 + W1 + W2 + W3`。
 
 这条链里，Worker 只负责第 4 步。  
 组包、验收、后置动作都不靠 Worker 自觉。
+
+这里有一条补充规则：
+
+- `audit_mode = MINIMAL` 不等于“没有审计要求”，只表示执行包里不会强制带上逐票 trace 和全量时间线档位。
 
 ## 失败与恢复
 

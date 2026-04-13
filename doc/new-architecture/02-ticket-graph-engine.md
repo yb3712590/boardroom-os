@@ -123,6 +123,7 @@ flowchart LR
 - 替换旧节点时必须写 `REPLACES` 边，旧节点转成 `SUPERSEDED`。
 - 冻结某节点时，沿 `DEPENDS_ON` 传播到必要下游，不沿 `PARENT_OF` 全图乱冻。
 - `graph_version` 一旦提交，不允许原地改边，只允许补丁生成新版本。
+- 如果 `approval_mode` 要求专家把关，必须通过显式 `REVIEWS` / `ESCALATES_TO` 边表达，不能靠运行时暗规则临时拦截。
 
 ## 失败与恢复
 

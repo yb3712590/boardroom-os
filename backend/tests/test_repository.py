@@ -5,8 +5,29 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.core.artifact_store import ArtifactStore
-from app.core.constants import DEFAULT_TENANT_ID, DEFAULT_WORKSPACE_ID, EVENT_EMPLOYEE_HIRED
+from app.core.constants import (
+    DEFAULT_TENANT_ID,
+    DEFAULT_WORKSPACE_ID,
+    EVENT_EMPLOYEE_HIRED,
+    EVENT_SYSTEM_INITIALIZED,
+)
 from app.db.repository import ControlPlaneRepository
+
+
+def test_initialize_writes_single_system_initialized_event_before_employee_seed(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+
+    repository.initialize()
+    events = repository.list_events_for_testing()
+
+    assert repository.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 1
+    assert events[0]["event_type"] == EVENT_SYSTEM_INITIALIZED
+    assert events[1]["event_type"] == EVENT_EMPLOYEE_HIRED
+
+    reloaded = ControlPlaneRepository(db_path, 1000)
+    reloaded.initialize()
+
+    assert reloaded.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 1
 
 
 def test_initialize_backfills_default_scope_for_legacy_rows(db_path):
@@ -1939,8 +1960,8 @@ def test_initialize_backfills_legacy_employee_rows_into_employee_events(db_path)
                 "Skill frontend, delivery slice, balanced. "
                 "Personality assertive, constructive, fast, focused, direct. "
                 "Aesthetic functional, balanced, measured."
-            ),
-            "updated_at": datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
-            "version": 1,
-        }
-    ]
+                ),
+                "updated_at": datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
+                "version": 2,
+            }
+        ]

@@ -13,6 +13,8 @@
 - [milestone-timeline.md](milestone-timeline.md)：后续顺序、条件批次、远期储备，以及未来可支持的交付类型方向
 - [task-backlog.md](task-backlog.md)：任务库入口，只放统计、状态索引和阅读说明
 - [task-backlog/active.md](task-backlog/active.md)：当前未关闭任务
+- [refactor/new-architecture-implementation-plan.md](refactor/new-architecture-implementation-plan.md)：新架构重构主计划，后续会话默认从这里续跑
+- [refactor/new-architecture-refactor-session-prompt.md](refactor/new-architecture-refactor-session-prompt.md)：新开会话时可直接复制的重构提示词
 - [backend-runtime-guide.md](backend-runtime-guide.md)：当前后端运行、运维和排障指南
 - [api-reference.md](api-reference.md)：当前 HTTP 接口参考
 - [history/context-baseline.md](history/context-baseline.md)：稳定不常变的规则和架构基线，只在需要时打开

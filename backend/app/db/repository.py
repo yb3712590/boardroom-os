@@ -66,6 +66,7 @@ from app.core.constants import (
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
     TICKET_STATUS_PENDING,
+    SYSTEM_INITIALIZED_KEY,
 )
 from app.core.ids import new_prefixed_id
 from app.core.persona_profiles import (
@@ -136,6 +137,7 @@ class ControlPlaneRepository:
             self._backfill_scope_defaults(connection)
             self._backfill_artifact_storage_defaults(connection)
             self._backfill_artifact_retention_defaults(connection)
+            self._ensure_system_initialized_event(connection)
             self._bootstrap_employee_events(connection)
             employee_events = self.list_all_events(connection)
             self.replace_employee_projections(
@@ -146,6 +148,23 @@ class ControlPlaneRepository:
             self._rebuild_retrieval_incident_summary_fts(connection)
             self._rebuild_retrieval_artifact_summary_fts(connection)
         self._initialized = True
+
+    def _ensure_system_initialized_event(self, connection: sqlite3.Connection) -> None:
+        existing = self.get_event_by_idempotency_key(connection, SYSTEM_INITIALIZED_KEY)
+        if existing is not None:
+            return
+        self.insert_event(
+            connection,
+            event_type=EVENT_SYSTEM_INITIALIZED,
+            actor_type="system",
+            actor_id="system",
+            workflow_id=None,
+            idempotency_key=SYSTEM_INITIALIZED_KEY,
+            causation_id=None,
+            correlation_id=None,
+            payload={"status": "initialized"},
+            occurred_at=now_local(),
+        )
 
     @contextmanager
     def connection(self):

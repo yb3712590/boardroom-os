@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-13
+> 最后更新：2026-04-14
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
@@ -29,6 +29,7 @@
 - 2026-04-12 同机实跑 smoke 时，provider 仍反复报 `UPSTREAM_UNAVAILABLE / timed out`；当前 smoke 入口已就位，但还没在这台机器上拿到成功的 checkpoint `run_report.json`
 - 2026-04-13 本轮已按 `doc/tests/integration-audit-remediation-master-plan-20260413.md` 落第一批执行切片：`source_code_delivery@1` 现在必须带 `source_files[] / verification_runs[]`，workspace-managed 代码票会拦截占位源码和极简测试自报结果，`20-evidence/tests|git` 也已改成按 `ticket_id/attempt-1` 分路径；对应专项记录见 `doc/tests/source-delivery-evidence-remediation-20260413.md`
 - 2026-04-13 本轮已继续落第二批执行切片：live harness 现在会自动生成正式版 `audit-summary.md` 和去重后的 `integration-monitor-report.md`，治理文档会旁挂同名 `.audit.md`，`ticket_context_archives/*.md` 也已重写成执行卡片；对应专项记录见 `doc/tests/audit-readability-remediation-20260413.md`
+- 2026-04-14 本轮已落 `P0-S1` 最小启动协议：`repository.initialize()` 现在会幂等写入单条 `SYSTEM_INITIALIZED`，系统冷启动和 `project-init` 已拆开；空态 dashboard / 事件流现在也能直接看到初始化真相
 
 ## 当前批次
 
@@ -64,6 +65,7 @@
 - `2026-04-13 审计第一批执行切片` 已完成：只覆盖 `P0-2 / P0-3 / P1-3`。这轮把 `source_code_delivery` 提交口径从“只交 ref”收紧成“必须同时交源码正文、原始测试运行详情和版本化证据路径”；workspace-managed 代码票不再接受 `source.ts/source.tsx`、`runtimeSourceDelivery = true`、`generated for <ticket>`、空 stdout/stderr、`pytest -q passed` 这类占位内容过关；live harness full closeout 现在也会把源码证据质量和 `artifact_index` 路径撞车一并纳入成功断言
 - `2026-04-13 审计第二批执行切片` 已完成：覆盖 `P1-1 / P1-2 / P2-1 / P2-2`。这轮把场景根目录的审计入口收正成 `audit-summary.md + integration-monitor-report.md + governance *.audit.md + ticket_context_archives/*.md` 这组人工可读层；live harness 现在只记录状态变化点和静默恢复摘要，治理 JSON 会自动旁挂 `.audit.md`，ticket 上下文档案也会在 compile / terminal 两个阶段刷新成执行卡片
 - 本轮额外补了一条测试运行真相：当仓库位于 Git linked worktree 下时，`backend/tests/conftest.py` 现在会自动把 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 改到系统临时目录，避免测试里再创建项目 worktree 时撞上 Git 的 `$GIT_DIR too big`；Windows 下 `pytest` 仍建议继续显式带 repo 内 `--basetemp`
+- 本轮还补了一条 `P0-S1` 验证真相：`./backend/.venv/bin/pytest backend/tests/test_repository.py -k "initialize" -q` 当前已通过；`./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or project_init" -q` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例，当前环境未配 provider 时会报 `PROVIDER_REQUIRED_UNAVAILABLE`
 - 当前 blocker 仍集中在两块：真实 provider 长测还没在这台机器上重跑通过，`test_api.py / test_scheduler_runner.py` 里那批被 fail-closed 打断的历史测试也还没整体收口
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 

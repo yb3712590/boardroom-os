@@ -2689,6 +2689,26 @@ def test_startup_initializes_schema_and_wal_mode(client, db_path):
     assert repository.get_journal_mode() == "wal"
 
 
+def test_startup_writes_single_system_initialized_event(client):
+    repository = client.app.state.repository
+
+    assert repository.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 1
+
+
+def test_dashboard_empty_state_exposes_system_initialized_preview(client):
+    response = client.get("/api/v1/projections/dashboard")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["active_workflow"] is None
+    assert body["projection_version"] > 0
+    assert body["cursor"] is not None
+    assert any(
+        item["message"] == "SYSTEM_INITIALIZED by system"
+        for item in body["data"]["event_stream_preview"]
+    )
+
+
 def test_startup_seeds_minimal_employee_roster(client):
     employees = client.app.state.repository.list_employee_projections(
         states=["ACTIVE"],
@@ -2715,10 +2735,13 @@ def test_project_init_returns_real_command_ack(client):
 
 
 def test_system_initialized_is_written_only_once(client):
+    repository = client.app.state.repository
+
+    assert repository.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 1
+
     client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
     duplicate = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
 
-    repository = client.app.state.repository
     assert duplicate.status_code == 200
     assert duplicate.json()["status"] == "DUPLICATE"
     assert repository.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 1
@@ -13909,7 +13932,8 @@ def test_invalid_project_init_returns_422_without_writing_events(client):
 
     repository = client.app.state.repository
     assert response.status_code == 422
-    assert repository.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 0
+    assert repository.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 1
+    assert repository.count_events_by_type(EVENT_WORKFLOW_CREATED) == 0
 
 
 def test_ticket_complete_review_request_emits_required_event(client):

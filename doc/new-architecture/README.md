@@ -14,17 +14,22 @@
 
 1. [00-autonomous-machine-overview.md](00-autonomous-machine-overview.md)
 2. [01-document-constitution.md](01-document-constitution.md)
-3. [02-ticket-graph-engine.md](02-ticket-graph-engine.md)
-4. [03-worker-context-and-execution-package.md](03-worker-context-and-execution-package.md)
-5. [04-ceo-memory-model.md](04-ceo-memory-model.md)
-6. [05-incident-idempotency-and-recovery.md](05-incident-idempotency-and-recovery.md)
-7. [06-role-hook-system.md](06-role-hook-system.md)
-8. [07-skill-runtime.md](07-skill-runtime.md)
-9. [08-board-advisor-and-replanning.md](08-board-advisor-and-replanning.md)
-10. [09-process-assets-and-project-map.md](09-process-assets-and-project-map.md)
-11. [10-migration-map.md](10-migration-map.md)
+3. [11-governance-profile-and-audit-modes.md](11-governance-profile-and-audit-modes.md)
+4. [02-ticket-graph-engine.md](02-ticket-graph-engine.md)
+5. [03-worker-context-and-execution-package.md](03-worker-context-and-execution-package.md)
+6. [04-ceo-memory-model.md](04-ceo-memory-model.md)
+7. [05-incident-idempotency-and-recovery.md](05-incident-idempotency-and-recovery.md)
+8. [06-role-hook-system.md](06-role-hook-system.md)
+9. [07-skill-runtime.md](07-skill-runtime.md)
+10. [08-board-advisor-and-replanning.md](08-board-advisor-and-replanning.md)
+11. [09-process-assets-and-project-map.md](09-process-assets-and-project-map.md)
+12. [10-migration-map.md](10-migration-map.md)
+13. [12-architecture-audit-report.md](12-architecture-audit-report.md)
+14. [13-cross-cutting-concerns.md](13-cross-cutting-concerns.md)
+15. [14-graph-health-monitor.md](14-graph-health-monitor.md)
 
-如果你只想先抓主线，读 `00 -> 02 -> 03 -> 05 -> 10` 就够了。
+如果你只想先抓主线，读 `00 -> 01 -> 11 -> 02 -> 03 -> 05 -> 10` 就够了。
+如果你想看审计结论和重构建议，读 `12 -> 13 -> 14`。
 
 ## 这套文稿固定保留的判断
 
@@ -36,6 +41,8 @@
 - 错误必须升级成 `IncidentRecord`，恢复靠 `RecoveryAction` 和幂等重放。
 - Hook 跟 `role + lifecycle event + deliverable kind` 绑定，不跟 runtime 阶段绑定。
 - Board 不只是审批点，也是随时可唤醒的重规划顾问环。
+- `小白 / 专家` 和 `审计强度` 不是 UI 开关，是 workflow 级治理协议。
+- `audit_mode` 只能控制留痕物化强度，不能关闭系统真相底座。
 
 ## 统一术语总表
 
@@ -53,6 +60,8 @@
 | `RoleHook` | 和角色绑定的标准化后置动作。 | Hook Runner |
 | `SkillBinding` | 当前票解析出来的技能装配结果。 | Compiler、Worker |
 | `BoardAdvisorySession` | 董事会顾问会话。用于约束变更和图重排。 | CEO、Board |
+
+| `GraphHealthReport` | 图健康检查报告。瓶颈、深度、扇出、孤立、震荡的检测结果。 | CEO、Scheduler |
 
 ## 和现有文档栈的关系
 

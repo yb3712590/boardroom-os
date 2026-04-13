@@ -75,7 +75,14 @@ workflow-root/
 | `VERSION_SUPERSEDE` | charter、ADR、治理文档、产品说明 | 允许新版本替代默认视图，但旧版必须可追溯 |
 | `IMMUTABLE_ARCHIVE` | transcript、原始事件导出、旧投影快照 | 一旦归档不得编辑 |
 
-### 4. 文档最小读写权限
+### 4. `GovernanceProfile` 固定入口
+
+- `approval_mode` 和 `audit_mode` 必须以结构化字段存在于 `10-charter` 或受控 `30-decisions` 资产里。
+- 任何角色都不能从正文语气里“猜测当前是不是小白模式 / 专家模式”。
+- `audit_mode = MINIMAL` 只允许减少扩展审计材料，不允许关闭 `20-graph`、`20-evidence` 的最低交付证据和 `90-archive/events` 的基础归档。
+- `audit_mode = FULL_TIMELINE` 时，`90-archive/transcripts/` 和时间线索引必须成为正式物化面。
+
+### 5. 文档最小读写权限
 
 - Worker 默认只读 `00-constitution`、当前 `charter` 摘要、相关 `20-graph` 摘要、必要 `30-decisions` 和 `50-project-map` 切片。
 - Worker 默认只写 `10-project/*` 的允许写集，以及自己票对应的 `20-evidence/*`。
@@ -83,7 +90,7 @@ workflow-root/
 - Board 不直接改项目源码和运行回执。
 - 任何角色都不能直接编辑 `20-graph` 当前视图。它必须由图物化器重算。
 
-### 5. 文档可读性规则
+### 6. 文档可读性规则
 
 每类人类可读文档都必须固定这些段落：
 
@@ -121,6 +128,7 @@ workflow-root/
 | Worker 漏更文档 | hook 检到 `documentation_updates` 缺口 | 生成 `DOCUMENTATION_SYNC_REQUIRED` |
 | 证据没落盘就宣称完成 | `20-evidence` 缺资产 | 拒绝开放下游节点 |
 | charter 被正文改乱 | 正文无法映射成结构化约束 | 回退到上一版 `VERSION_SUPERSEDE` |
+| 治理档位正文漂移 | 正文和结构化 `GovernanceProfile` 不一致 | 以结构字段为准并出新版本 |
 
 ### 恢复原则
 
