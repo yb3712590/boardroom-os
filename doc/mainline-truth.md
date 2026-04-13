@@ -1,6 +1,6 @@
 # 主线真相表
 
-> 最后更新：2026-04-12
+> 最后更新：2026-04-13
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
@@ -60,8 +60,10 @@
 - 五类治理文档票现在也会走 maker-checker：checker 通过后不开 board review，但 CEO snapshot / reuse_candidates 只会把已经过 governance gate 的逻辑治理文档票暴露成可复用真相；maker 首次完成、或 checker `CHANGES_REQUIRED / ESCALATED` 的治理文档不会被提前当成“已完成”
 - `TICKET_CREATED` payload 对 workspace-managed `source_code_delivery` 票现在还会自动补 `project_checkout_ref=worktree://<workflow>/<ticket>` 和 `git_branch_ref=codex/<ticket>`；编译出来的 `CompileRequestExecution / CompiledExecution` 也会继续带 `project_checkout_ref / project_checkout_path / git_branch_ref`
 - 上述 workspace-managed 代码票在 `ticket-start` 时会创建真实 git worktree 到 `20-evidence/worktrees/<ticket_id>/`，并在 dossier 里写 `worktree-checkout` 回执
-- `source_code_delivery@1` 当前固定携带 `source_file_refs`，也可携带 `implementation_notes / documentation_updates`；对 `allowed_write_set` 明确落在 `10-project/* / 20-evidence/* / 00-boardroom/*` 的 workspace-managed 代码票，提交时会交叉校验 `source_file_refs` 是否真的命中本次源码写入，并把 `10-project/*` 真写进 checkout、把 `00-boardroom/* / 20-evidence/*` 写回 canonical workspace
-- 上述 workspace-managed 代码票在 `ticket-result-submit` 时，当前会硬校验 `documentation_updates / verification_evidence_refs / git_commit_record`，并改成服务端生成真实 `commit_sha / branch_ref / merge_status=PENDING_REVIEW_GATE`；dossier 会继续写 `worker-postrun / evidence-capture / git-closeout` 回执；旧 artifact-path 代码票继续兼容，不会误触这条新 gate
+- `source_code_delivery@1` 当前不再只认 `source_file_refs`：主线 payload 现在必须带 `source_files[] / verification_runs[]`，源码正文和测试运行详情都会先过 schema，再转成 `written_artifacts`
+- workspace-managed 代码票当前会直接拦这些占位模式：固定 `source.ts / source.tsx` 文件名、`runtimeSourceDelivery = true`、`generated for <ticket>`、空 stdout / stderr、只剩一句 `pytest -q passed`
+- workspace-managed 代码票的主线路径现在已按票隔离：测试证据写到 `20-evidence/tests/<ticket>/attempt-1/`，git 证据写到 `20-evidence/git/<ticket>/attempt-1/`
+- 上述 workspace-managed 代码票在 `ticket-result-submit` 时，当前会硬校验 `documentation_updates / verification_evidence_refs`，并要求它们与 `source_files[] / verification_runs[]` 和实际 `written_artifacts` 对齐；真实 `git_commit_record` 现在统一由服务端 commit 后回填，dossier 会继续写 `worker-postrun / evidence-capture / git-closeout` 回执；旧 artifact-path 代码票继续兼容，不会误触这条新 gate
 - `source_code_delivery` 的 deterministic / provider-backed runtime 当前都会直接落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产；dashboard completion / 完成卡现在也会从 closeout 输入链反查最后一条可解析的 `SOURCE_CODE_DELIVERY` 过程资产，并优先用最新 git receipt 覆盖原始 `git_commit_record`
 - `TICKET_COMPLETED` payload 现在也会带回 `verification_evidence_refs` 和 `git_commit_record`，给后续 review / closeout / projection 继续消费
 - 最终 `VISUAL_MILESTONE` 批准时，workspace-managed 代码链路现在会先把 review gate 分支真实 merge 回 `10-project/main`，merge 成功才写 `BOARD_REVIEW_APPROVED` 和 closeout follow-up；merge 冲突会 fail-closed，打开 `REVIEW_GATE_MERGE_FAILED` incident，review 继续保持 open

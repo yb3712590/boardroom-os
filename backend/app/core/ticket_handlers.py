@@ -1193,6 +1193,16 @@ def _validate_source_code_delivery_hooks(
         return None
 
     result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+    source_files = [
+        dict(item)
+        for item in list(result_payload.get("source_files") or [])
+        if isinstance(item, dict)
+    ]
+    verification_runs = [
+        dict(item)
+        for item in list(result_payload.get("verification_runs") or [])
+        if isinstance(item, dict)
+    ]
     written_artifacts_by_ref = {
         str(item.artifact_ref): item
         for item in payload.written_artifacts
@@ -1218,6 +1228,17 @@ def _validate_source_code_delivery_hooks(
                 "Code delivery tickets must keep payload.source_file_refs inside "
                 f"10-project/ source paths; got {path}."
             )
+    source_files_by_ref = {
+        str(item.get("artifact_ref") or "").strip(): item
+        for item in source_files
+        if str(item.get("artifact_ref") or "").strip()
+    }
+    for artifact_ref in source_file_refs:
+        source_file = source_files_by_ref.get(str(artifact_ref))
+        if source_file is None:
+            return f"payload.source_files is missing artifact_ref {artifact_ref}."
+        if str(source_file.get("path") or "").strip() != str(written_artifacts_by_ref[artifact_ref].path or "").strip():
+            return f"payload.source_files path must match written_artifacts for {artifact_ref}."
 
     documentation_updates = list(result_payload.get("documentation_updates") or [])
     updates_by_ref = {
@@ -1239,12 +1260,39 @@ def _validate_source_code_delivery_hooks(
     available_artifact_refs.update(str(item.artifact_ref) for item in payload.written_artifacts)
     if not payload.verification_evidence_refs:
         return "Code delivery tickets must include verification_evidence_refs."
+    expected_verification_refs = [
+        str(item.get("artifact_ref") or "").strip()
+        for item in verification_runs
+        if str(item.get("artifact_ref") or "").strip()
+    ]
+    if list(payload.verification_evidence_refs) != expected_verification_refs:
+        return "Code delivery tickets must keep verification_evidence_refs aligned with payload.verification_runs."
+    verification_paths: list[str] = []
     for artifact_ref in payload.verification_evidence_refs:
         if artifact_ref not in available_artifact_refs:
             return f"verification_evidence_refs includes unknown artifact_ref {artifact_ref}."
+        written_artifact = written_artifacts_by_ref.get(str(artifact_ref))
+        if written_artifact is None:
+            return f"verification_evidence_refs includes non-materialized artifact_ref {artifact_ref}."
+        verification_path = str(written_artifact.path or "")
+        verification_paths.append(verification_path)
+        if not verification_path.startswith("20-evidence/tests/"):
+            return (
+                "Code delivery tickets must keep verification evidence inside "
+                f"20-evidence/tests/; got {verification_path}."
+            )
+    if not all("/attempt-" in path for path in verification_paths):
+        return "Code delivery tickets must version verification evidence paths by attempt."
 
-    if payload.git_commit_record is None:
-        return "Code delivery tickets must include git_commit_record."
+    git_written_artifacts = [
+        item
+        for item in payload.written_artifacts
+        if str(item.path or "").startswith("20-evidence/git/")
+    ]
+    if not git_written_artifacts:
+        return "Code delivery tickets must persist git evidence under 20-evidence/git/."
+    if not all("/attempt-" in str(item.path or "") for item in git_written_artifacts):
+        return "Code delivery tickets must version git evidence paths by attempt."
     return None
 
 

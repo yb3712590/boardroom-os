@@ -96,6 +96,31 @@ def test_output_schema_registry_accepts_valid_source_code_delivery_with_document
         payload={
             "summary": "Prepared one source code delivery package.",
             "source_file_refs": ["art://workspace/tkt_impl_001/source.ts"],
+            "source_files": [
+                {
+                    "artifact_ref": "art://workspace/tkt_impl_001/source.ts",
+                    "path": "10-project/src/tkt_impl_001.ts",
+                    "content": "export const buildReady = true;\n",
+                }
+            ],
+            "verification_runs": [
+                {
+                    "artifact_ref": "art://workspace/tkt_impl_001/test-report.json",
+                    "path": "20-evidence/tests/tkt_impl_001/attempt-1/test-report.json",
+                    "runner": "pytest",
+                    "command": "pytest tests/test_project_workspace_hooks.py -q",
+                    "status": "passed",
+                    "exit_code": 0,
+                    "duration_sec": 1.2,
+                    "stdout": "collected 1 item\n\n1 passed in 0.12s\n",
+                    "stderr": "",
+                    "discovered_count": 1,
+                    "passed_count": 1,
+                    "failed_count": 0,
+                    "skipped_count": 0,
+                    "failures": [],
+                }
+            ],
             "implementation_notes": ["Kept the scope inside the approved MVP slice."],
             "documentation_updates": [
                 {
@@ -276,6 +301,36 @@ def test_output_schema_registry_accepts_valid_source_code_delivery_payload() -> 
                 "art://workspace/tkt_followup_scope_build/homepage.tsx",
                 "art://workspace/tkt_followup_scope_build/header.tsx",
             ],
+            "source_files": [
+                {
+                    "artifact_ref": "art://workspace/tkt_followup_scope_build/homepage.tsx",
+                    "path": "10-project/src/homepage.tsx",
+                    "content": "export function Homepage() {\n  return <main>Boardroom</main>;\n}\n",
+                },
+                {
+                    "artifact_ref": "art://workspace/tkt_followup_scope_build/header.tsx",
+                    "path": "10-project/src/header.tsx",
+                    "content": "export function Header() {\n  return <header>Boardroom</header>;\n}\n",
+                },
+            ],
+            "verification_runs": [
+                {
+                    "artifact_ref": "art://workspace/tkt_followup_scope_build/test-report.json",
+                    "path": "20-evidence/tests/tkt_followup_scope_build/attempt-1/test-report.json",
+                    "runner": "vitest",
+                    "command": "npm run test -- --runInBand",
+                    "status": "passed",
+                    "exit_code": 0,
+                    "duration_sec": 2.4,
+                    "stdout": " RUN  v1.0.0\n  ✓ homepage renders\n\n Test Files  1 passed\n",
+                    "stderr": "",
+                    "discovered_count": 1,
+                    "passed_count": 1,
+                    "failed_count": 0,
+                    "skipped_count": 0,
+                    "failures": [],
+                }
+            ],
             "implementation_notes": ["Hero layout and CTA hierarchy now follow the approved scope lock."],
         },
     )
@@ -292,6 +347,135 @@ def test_output_schema_registry_rejects_source_code_delivery_without_source_file
                 "source_file_refs": [],
             },
         )
+
+
+def test_output_schema_registry_rejects_source_code_delivery_without_source_file_bodies() -> None:
+    with pytest.raises(ValueError, match="source_files"):
+        validate_output_payload(
+            schema_ref="source_code_delivery",
+            schema_version=1,
+            submitted_schema_version="source_code_delivery_v1",
+            payload={
+                "summary": "Missing source file bodies should fail schema validation.",
+                "source_file_refs": ["art://workspace/tkt_impl_001/source.ts"],
+                "verification_runs": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_impl_001/test-report.json",
+                        "path": "20-evidence/tests/tkt_impl_001/attempt-1/test-report.json",
+                        "runner": "pytest",
+                        "command": "pytest tests/test_project_workspace_hooks.py -q",
+                        "status": "passed",
+                        "exit_code": 0,
+                        "duration_sec": 0.5,
+                        "stdout": "1 passed in 0.05s\n",
+                        "stderr": "",
+                        "discovered_count": 1,
+                        "passed_count": 1,
+                        "failed_count": 0,
+                        "skipped_count": 0,
+                        "failures": [],
+                    }
+                ],
+            },
+        )
+
+
+def test_output_schema_registry_rejects_source_code_delivery_without_verification_runs() -> None:
+    with pytest.raises(ValueError, match="verification_runs"):
+        validate_output_payload(
+            schema_ref="source_code_delivery",
+            schema_version=1,
+            submitted_schema_version="source_code_delivery_v1",
+            payload={
+                "summary": "Missing verification runs should fail schema validation.",
+                "source_file_refs": ["art://workspace/tkt_impl_001/source.ts"],
+                "source_files": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_impl_001/source.ts",
+                        "path": "10-project/src/tkt_impl_001.ts",
+                        "content": "export const buildReady = true;\n",
+                    }
+                ],
+            },
+        )
+
+
+def test_output_schema_registry_rejects_source_code_delivery_with_placeholder_source_content() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        validate_output_payload(
+            schema_ref="source_code_delivery",
+            schema_version=1,
+            submitted_schema_version="source_code_delivery_v1",
+            payload={
+                "summary": "Placeholder source content should fail schema validation.",
+                "source_file_refs": ["art://workspace/tkt_impl_001/source.ts"],
+                "source_files": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_impl_001/source.ts",
+                        "path": "10-project/src/source.ts",
+                        "content": "export const runtimeSourceDelivery = true;\n",
+                    }
+                ],
+                "verification_runs": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_impl_001/test-report.json",
+                        "path": "20-evidence/tests/tkt_impl_001/attempt-1/test-report.json",
+                        "runner": "pytest",
+                        "command": "pytest tests/test_project_workspace_hooks.py -q",
+                        "status": "passed",
+                        "exit_code": 0,
+                        "duration_sec": 0.5,
+                        "stdout": "1 passed in 0.05s\n",
+                        "stderr": "",
+                        "discovered_count": 1,
+                        "passed_count": 1,
+                        "failed_count": 0,
+                        "skipped_count": 0,
+                        "failures": [],
+                    }
+                ],
+            },
+        )
+    assert getattr(exc_info.value, "field_path", None) == "source_files[0].content"
+
+
+def test_output_schema_registry_rejects_source_code_delivery_with_minimal_verification_stub() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        validate_output_payload(
+            schema_ref="source_code_delivery",
+            schema_version=1,
+            submitted_schema_version="source_code_delivery_v1",
+            payload={
+                "summary": "Minimal self-reported verification should fail schema validation.",
+                "source_file_refs": ["art://workspace/tkt_impl_001/source.ts"],
+                "source_files": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_impl_001/source.ts",
+                        "path": "10-project/src/tkt_impl_001.ts",
+                        "content": "export const buildReady = true;\n",
+                    }
+                ],
+                "verification_runs": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_impl_001/test-report.json",
+                        "path": "20-evidence/tests/tkt_impl_001/attempt-1/test-report.json",
+                        "runner": "pytest",
+                        "command": "pytest -q",
+                        "status": "passed",
+                        "exit_code": 0,
+                        "duration_sec": 0.1,
+                        "stdout": "",
+                        "stderr": "",
+                        "discovered_count": 0,
+                        "passed_count": 0,
+                        "failed_count": 0,
+                        "skipped_count": 0,
+                        "failures": [],
+                    }
+                ],
+            },
+        )
+    assert getattr(exc_info.value, "field_path", None) == "verification_runs[0].stdout"
 
 
 def test_output_schema_registry_exposes_delivery_check_report_schema() -> None:

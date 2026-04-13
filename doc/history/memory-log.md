@@ -21,6 +21,15 @@
 
 ## Recent Memory
 
+### 2026-04-13
+
+- 已按 `doc/tests/integration-audit-remediation-master-plan-20260413.md` 落第一批执行切片，只收 `P0-2 / P0-3 / P1-3`
+- `source_code_delivery@1` 现在必须带 `source_files[] / verification_runs[]`；旧的“只交 `source_file_refs[]` + 占位源码 + 一句 `pytest -q passed`”已经被 schema 和 workspace hook 一起拦掉
+- workspace-managed 代码票的测试证据和 git 证据现在会按 `20-evidence/tests/<ticket>/attempt-1/`、`20-evidence/git/<ticket>/attempt-1/` 分路径，不再继续写固定 `test-report.json / git-commit.json`
+- live harness full success 现在也会把 `source_code_delivery` payload 质量和 `artifact_index` 证据路径撞车一起纳入断言
+- 本轮已实跑通过的回归集中在 `test_output_schemas.py`、`test_project_workspace_hooks.py`、`test_runtime_fallback_payload.py`、`test_live_library_management_runner.py`、`test_workflow_autopilot.py`
+- `test_api.py` 和 `test_scheduler_runner.py` 里那批依赖旧 deterministic 主线的历史测试，当前仍会被 provider fail-closed 链路打断；这批不是本轮第一批新引入，但后续继续推进前要单独收口
+
 ### 2026-04-11
 
 - 当前已新增 `workflow_progression` shared abstraction：`AUTOPILOT_GOVERNANCE_CHAIN / STANDARD_LEGACY_SCOPE_CHAIN` 两个 adapter 现在开始承接 kickoff、requirement elicitation 后续 kickoff、controller 下一步判断，以及 standard scope follow-up 选路

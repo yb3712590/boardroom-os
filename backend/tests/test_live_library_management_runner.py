@@ -3,12 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from tests.live.architecture_governance_autopilot_live import SCENARIO as ARCHITECTURE_SCENARIO
 from tests.live.architecture_governance_autopilot_smoke import (
     SCENARIO as ARCHITECTURE_SMOKE_SCENARIO,
     _assert_architecture_governance_smoke_checkpoint,
 )
 from tests.live._autopilot_live_harness import (
+    _assert_source_delivery_payload_quality,
+    _assert_unique_source_delivery_evidence_paths,
     _build_success_report,
     integration_test_provider_template_path,
     load_integration_test_provider_payload,
@@ -138,6 +142,67 @@ def test_write_audit_summary_renders_provider_attempts_and_terminal_failure(tmp_
     assert "FIRST_TOKEN_TIMEOUT" in body
     assert "PROVIDER_REQUIRED_UNAVAILABLE" in body
     assert "fallback blocked" in body.lower()
+
+
+def test_assert_source_delivery_payload_quality_requires_raw_verification_output() -> None:
+    created_specs = {
+        "tkt_build_001": {
+            "output_schema_ref": "source_code_delivery",
+        }
+    }
+    terminals = {
+        "tkt_build_001": {
+            "payload": {
+                "summary": "Source code delivery prepared for ticket tkt_build_001.",
+                "source_file_refs": ["art://workspace/tkt_build_001/source.ts"],
+                "source_files": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_build_001/source.ts",
+                        "path": "10-project/src/tkt_build_001.ts",
+                        "content": "export const buildReady = true;\n",
+                    }
+                ],
+                "verification_evidence_refs": ["art://workspace/tkt_build_001/test-report.json"],
+                "verification_runs": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_build_001/test-report.json",
+                        "path": "20-evidence/tests/tkt_build_001/attempt-1/test-report.json",
+                        "runner": "pytest",
+                        "command": "pytest -q",
+                        "status": "passed",
+                        "exit_code": 0,
+                        "duration_sec": 0.2,
+                        "stdout": "",
+                        "stderr": "",
+                        "discovered_count": 0,
+                        "passed_count": 0,
+                        "failed_count": 0,
+                        "skipped_count": 0,
+                        "failures": [],
+                    }
+                ],
+            }
+        }
+    }
+
+    with pytest.raises(AssertionError, match="raw verification stdout"):
+        _assert_source_delivery_payload_quality(created_specs, terminals)
+
+
+def test_assert_unique_source_delivery_evidence_paths_rejects_duplicate_paths() -> None:
+    with pytest.raises(AssertionError, match="duplicate source delivery evidence paths"):
+        _assert_unique_source_delivery_evidence_paths(
+            [
+                {
+                    "ticket_id": "tkt_build_001",
+                    "logical_path": "20-evidence/tests/tkt_build_001/attempt-1/test-report.json",
+                },
+                {
+                    "ticket_id": "tkt_build_002",
+                    "logical_path": "20-evidence/tests/tkt_build_001/attempt-1/test-report.json",
+                },
+            ]
+        )
 
 
 def test_architecture_smoke_scenario_stops_before_source_code_fanout() -> None:

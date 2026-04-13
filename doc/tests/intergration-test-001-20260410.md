@@ -1,5 +1,8 @@
 # 集成测试记录 001
 
+> 历史留档。
+> 如果本文件和 `doc/tests/integration-audit-remediation-master-plan-20260413.md`、`doc/tests/source-delivery-evidence-remediation-20260413.md` 冲突，以 2026-04-13 的总整改计划和专项记录为准。
+
 ## 目标
 
 盯住上个提交新增的 live 集成场景：

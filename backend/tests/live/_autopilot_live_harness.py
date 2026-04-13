@@ -308,6 +308,73 @@ def compiled_ticket_ids(repository, workflow_id: str) -> list[str]:
     return [str(row["ticket_id"]) for row in rows]
 
 
+def _source_delivery_ticket_ids(created_specs: dict[str, dict[str, Any]]) -> list[str]:
+    return [
+        ticket_id
+        for ticket_id, created_spec in created_specs.items()
+        if str(created_spec.get("output_schema_ref") or "") == "source_code_delivery"
+    ]
+
+
+def _assert_source_delivery_payload_quality(
+    created_specs: dict[str, dict[str, Any]],
+    terminals: dict[str, dict[str, Any] | None],
+) -> list[str]:
+    source_delivery_ticket_ids = _source_delivery_ticket_ids(created_specs)
+    for ticket_id in source_delivery_ticket_ids:
+        terminal_event = terminals.get(ticket_id) or {}
+        payload = terminal_event.get("payload") or {}
+        if not isinstance(payload, dict):
+            raise AssertionError(f"{ticket_id} is missing source delivery payload.")
+        source_files = list(payload.get("source_files") or [])
+        verification_runs = list(payload.get("verification_runs") or [])
+        if not source_files:
+            raise AssertionError(f"{ticket_id} is missing source_files in terminal payload.")
+        if not verification_runs:
+            raise AssertionError(f"{ticket_id} is missing verification_runs in terminal payload.")
+        for run in verification_runs:
+            if not isinstance(run, dict):
+                raise AssertionError(f"{ticket_id} contains invalid verification_runs payload.")
+            if not str(run.get("stdout") or "").strip():
+                raise AssertionError(f"{ticket_id} is missing raw verification stdout.")
+    return source_delivery_ticket_ids
+
+
+def _assert_unique_source_delivery_evidence_paths(artifact_rows: list[dict[str, Any]]) -> None:
+    seen_paths: dict[str, str] = {}
+    duplicates: list[tuple[str, str, str]] = []
+    for row in artifact_rows:
+        logical_path = str(row.get("logical_path") or "").strip()
+        ticket_id = str(row.get("ticket_id") or "").strip() or "unknown"
+        if not logical_path.startswith(("20-evidence/tests/", "20-evidence/git/")):
+            continue
+        previous_ticket_id = seen_paths.get(logical_path)
+        if previous_ticket_id is not None and previous_ticket_id != ticket_id:
+            duplicates.append((logical_path, previous_ticket_id, ticket_id))
+            continue
+        seen_paths[logical_path] = ticket_id
+    if duplicates:
+        duplicate_lines = ", ".join(
+            f"{logical_path} ({first_ticket_id}, {second_ticket_id})"
+            for logical_path, first_ticket_id, second_ticket_id in duplicates
+        )
+        raise AssertionError(f"Found duplicate source delivery evidence paths: {duplicate_lines}")
+
+
+def _workflow_artifact_rows(repository, workflow_id: str) -> list[dict[str, Any]]:
+    with repository.connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT ticket_id, logical_path
+            FROM artifact_index
+            WHERE workflow_id = ?
+            ORDER BY created_at ASC, artifact_ref ASC
+            """,
+            (workflow_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def recent_orchestration_trace(repository, *, limit: int = 5) -> list[dict[str, Any]]:
     with repository.connection() as connection:
         rows = connection.execute(
@@ -554,6 +621,7 @@ def collect_common_outcome(paths: ScenarioPaths, repository, workflow_id: str) -
     architect_ticket_ids = approved_architect_governance_ticket_ids(repository, workflow_id)
     compiled_ids = compiled_ticket_ids(repository, workflow_id)
     archived_ids = sorted(path.stem for path in paths.ticket_context_archive_root.glob("*.md"))
+    source_delivery_ticket_ids = _assert_source_delivery_payload_quality(created_specs, terminals)
 
     if not artifact_exists(repository, f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"):
         raise AssertionError("Workflow chain report artifact is missing.")
@@ -567,6 +635,13 @@ def collect_common_outcome(paths: ScenarioPaths, repository, workflow_id: str) -
         for ticket in tickets
     ):
         raise AssertionError("No delivery_closeout_package ticket was recorded.")
+    _assert_unique_source_delivery_evidence_paths(
+        [
+            artifact
+            for artifact in _workflow_artifact_rows(repository, workflow_id)
+            if str(artifact.get("ticket_id") or "").strip() in set(source_delivery_ticket_ids)
+        ]
+    )
 
     employees = [
         employee
@@ -583,6 +658,7 @@ def collect_common_outcome(paths: ScenarioPaths, repository, workflow_id: str) -
         "audits": audits,
         "architect_ticket_ids": architect_ticket_ids,
         "employees": employees,
+        "source_delivery_ticket_ids": source_delivery_ticket_ids,
         "compiled_ticket_ids": compiled_ids,
         "archived_ticket_ids": archived_ids,
         "base_report": {

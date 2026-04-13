@@ -1,6 +1,6 @@
 # Boardroom OS 任务库入口
 
-> 最后更新：2026-04-10
+> 最后更新：2026-04-13
 > 目的：保留 `doc/task-backlog.md` 这个高频入口，但把默认阅读层压缩到索引级别。
 
 ## 怎么读
@@ -21,7 +21,7 @@
 
 | 区域 | 任务范围 | 当前状态 | 默认看哪里 |
 |------|----------|----------|------------|
-| 当前主线 | `P0-COR-001` 到 `P0-COR-006` | 进行中：MVP 已完成，当前主线改为 runtime 主线纠偏和真实代码交付重构 | [task-backlog/active.md](task-backlog/active.md) |
+| 当前主线 | `P0-COR-001` 到 `P0-COR-006` | 进行中：本轮已按审计总计划落第一批，先把真实源码正文、原始测试输出和版本化证据路径收进主线 | [task-backlog/active.md](task-backlog/active.md) |
 | 冻结后置 | `P1-CLN-002` 到 `P1-CLN-003` | 冻结后置 | [task-backlog/active.md](task-backlog/active.md) |
 | 条件批次 | `C1` | 当前无新增开启项；只在触发条件成立时回到主线 | [TODO.md](TODO.md) |
 | 已完成历史 | `P2-*`、旧 `M7` 相关批次 | 已收口 | [task-backlog/done.md](task-backlog/done.md) |

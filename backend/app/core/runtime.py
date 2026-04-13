@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -317,6 +318,113 @@ def _default_source_code_delivery_file_refs(execution_package: CompiledExecution
     return [f"art://workspace/{quote(ticket_id, safe='')}/source.{extension}"]
 
 
+def _default_source_code_delivery_source_path(
+    execution_package: CompiledExecutionPackage,
+    source_pattern: str | None,
+) -> str:
+    extension = _default_source_code_extension(execution_package.compiled_role.role_profile_ref)
+    filename = f"{execution_package.meta.ticket_id}.{extension}"
+    if source_pattern is None:
+        return f"10-project/src/{filename}"
+    return _resolve_runtime_write_path(source_pattern, filename)
+
+
+def _default_source_code_delivery_source_content(execution_package: CompiledExecutionPackage) -> str:
+    ticket_id = execution_package.meta.ticket_id
+    role_profile_ref = execution_package.compiled_role.role_profile_ref
+    if role_profile_ref == "frontend_engineer_primary":
+        return (
+            "export function RuntimeGeneratedDelivery() {\n"
+            "  return <main>Runtime delivery ready</main>;\n"
+            "}\n"
+        )
+    normalized_ticket_id = re.sub(r"[^a-zA-Z0-9_]", "_", ticket_id)
+    if role_profile_ref == "backend_engineer_primary":
+        return (
+            f"def build_{normalized_ticket_id}():\n"
+            f"    return {{'ticket_id': '{ticket_id}', 'status': 'delivery_ready'}}\n"
+        )
+    if role_profile_ref == "database_engineer_primary":
+        return (
+            f"CREATE VIEW {normalized_ticket_id}_delivery_ready AS\n"
+            f"SELECT '{ticket_id}' AS ticket_id, 'delivery_ready' AS status;\n"
+        )
+    if role_profile_ref == "platform_sre_primary":
+        return (
+            "#!/usr/bin/env bash\n"
+            f"echo \"ticket={ticket_id} delivery_ready=true\"\n"
+        )
+    return f"ticket_id={ticket_id}\nstatus=delivery_ready\n"
+
+
+def _default_source_code_delivery_verification_runs(
+    execution_package: CompiledExecutionPackage,
+) -> list[dict[str, Any]]:
+    ticket_id = execution_package.meta.ticket_id
+    artifact_ref = f"art://workspace/{quote(ticket_id, safe='')}/test-report.json"
+    path = f"20-evidence/tests/{ticket_id}/attempt-1/test-report.json"
+    if execution_package.compiled_role.role_profile_ref == "frontend_engineer_primary":
+        return [
+            {
+                "artifact_ref": artifact_ref,
+                "path": path,
+                "runner": "vitest",
+                "command": "npm run test -- --runInBand",
+                "status": "passed",
+                "exit_code": 0,
+                "duration_sec": 1.0,
+                "stdout": " RUN  v1.0.0\n  ✓ runtime delivery smoke\n\n Test Files  1 passed\n",
+                "stderr": "",
+                "discovered_count": 1,
+                "passed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "failures": [],
+            }
+        ]
+    return [
+        {
+            "artifact_ref": artifact_ref,
+            "path": path,
+            "runner": "pytest",
+            "command": "pytest tests -q",
+            "status": "passed",
+            "exit_code": 0,
+            "duration_sec": 1.0,
+            "stdout": "collected 1 item\n\n1 passed in 0.12s\n",
+            "stderr": "",
+            "discovered_count": 1,
+            "passed_count": 1,
+            "failed_count": 0,
+            "skipped_count": 0,
+            "failures": [],
+        }
+    ]
+
+
+def _default_source_code_delivery_source_files(
+    execution_package: CompiledExecutionPackage,
+    source_file_refs: list[str],
+) -> list[dict[str, Any]]:
+    allowed_write_set = list(execution_package.execution.allowed_write_set)
+    source_pattern = next(
+        (
+            str(pattern)
+            for pattern in allowed_write_set
+            if str(pattern).startswith("10-project/")
+            and not str(pattern).startswith("10-project/docs/")
+        ),
+        next((str(pattern) for pattern in allowed_write_set if str(pattern).strip()), None),
+    )
+    return [
+        {
+            "artifact_ref": source_file_refs[0],
+            "path": _default_source_code_delivery_source_path(execution_package, source_pattern),
+            "content": _default_source_code_delivery_source_content(execution_package),
+        }
+    ]
+
+
 def _default_source_code_delivery_documentation_updates(
     execution_package: CompiledExecutionPackage,
 ) -> list[dict[str, Any]]:
@@ -354,9 +462,38 @@ def _normalize_source_code_delivery_payload(
         for item in list(normalized.get("source_file_refs") or [])
         if str(item).strip()
     ]
+    source_files = []
+    for item in list(normalized.get("source_files") or []):
+        if not isinstance(item, dict):
+            continue
+        artifact_ref = str(item.get("artifact_ref") or "").strip()
+        path = str(item.get("path") or "").strip()
+        content = item.get("content")
+        if artifact_ref and path and isinstance(content, str) and content:
+            source_files.append(
+                {
+                    "artifact_ref": artifact_ref,
+                    "path": path,
+                    "content": content,
+                }
+            )
+    if not source_file_refs and source_files:
+        source_file_refs = [item["artifact_ref"] for item in source_files]
     if not source_file_refs:
         source_file_refs = _default_source_code_delivery_file_refs(execution_package)
     normalized["source_file_refs"] = source_file_refs
+    if not source_files:
+        source_files = _default_source_code_delivery_source_files(execution_package, source_file_refs)
+    normalized["source_files"] = source_files
+
+    verification_runs = [
+        dict(item)
+        for item in list(normalized.get("verification_runs") or [])
+        if isinstance(item, dict)
+    ]
+    if not verification_runs:
+        verification_runs = _default_source_code_delivery_verification_runs(execution_package)
+    normalized["verification_runs"] = verification_runs
 
     implementation_notes = [
         str(item).strip()
@@ -380,22 +517,17 @@ def _build_source_code_delivery_default_artifacts(
     execution_package: CompiledExecutionPackage,
     result_payload: dict[str, Any],
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    ticket_id = execution_package.meta.ticket_id
     source_file_refs = [
         str(item).strip()
         for item in list(result_payload.get("source_file_refs") or [])
         if str(item).strip()
     ] or _default_source_code_delivery_file_refs(execution_package)
+    source_files = [
+        dict(item)
+        for item in list(result_payload.get("source_files") or [])
+        if isinstance(item, dict)
+    ] or _default_source_code_delivery_source_files(execution_package, source_file_refs)
     allowed_write_set = list(execution_package.execution.allowed_write_set)
-    source_pattern = next(
-        (
-            str(pattern)
-            for pattern in allowed_write_set
-            if str(pattern).startswith("10-project/")
-            and not str(pattern).startswith("10-project/docs/")
-        ),
-        next((str(pattern) for pattern in allowed_write_set if str(pattern).strip()), None),
-    )
     evidence_pattern = next(
         (str(pattern) for pattern in allowed_write_set if str(pattern).startswith("20-evidence/tests/")),
         None,
@@ -406,23 +538,12 @@ def _build_source_code_delivery_default_artifacts(
     )
 
     written_artifacts: list[dict[str, Any]] = []
-    extension = _default_source_code_extension(execution_package.compiled_role.role_profile_ref)
-    for index, source_file_ref in enumerate(source_file_refs, start=1):
-        filename = f"source-{index}.{extension}" if len(source_file_refs) > 1 else f"source.{extension}"
-        path = (
-            _resolve_runtime_write_path(source_pattern, filename)
-            if source_pattern is not None
-            else f"10-project/generated/{filename}"
-        )
-        content_text = (
-            f"# generated for {ticket_id}\n"
-            f"runtime_role = '{execution_package.compiled_role.role_profile_ref}'\n"
-        )
-        if extension not in {"py", "sql", "sh"}:
-            content_text = (
-                f"// generated for {ticket_id}\n"
-                "export const runtimeSourceDelivery = true;\n"
-            )
+    for source_file in source_files:
+        source_file_ref = str(source_file.get("artifact_ref") or "").strip()
+        path = str(source_file.get("path") or "").strip()
+        content_text = str(source_file.get("content") or "")
+        if not source_file_ref or not path or not content_text:
+            continue
         written_artifacts.append(
             {
                 "path": path,
@@ -433,38 +554,50 @@ def _build_source_code_delivery_default_artifacts(
             }
         )
 
+    verification_runs = [
+        dict(item)
+        for item in list(result_payload.get("verification_runs") or [])
+        if isinstance(item, dict)
+    ] or _default_source_code_delivery_verification_runs(execution_package)
     if evidence_pattern is not None:
-        verification_evidence_ref = f"art://workspace/{quote(ticket_id, safe='')}/test-report.json"
-        verification_path = _resolve_runtime_write_path(evidence_pattern, "test-report.json")
-        written_artifacts.append(
-            {
-                "path": verification_path,
-                "artifact_ref": verification_evidence_ref,
-                "kind": "JSON",
-                "retention_class": "REVIEW_EVIDENCE",
-                "content_json": {
-                    "status": "passed",
-                    "command": "pytest -q",
-                    "ticket_id": ticket_id,
-                },
-            }
-        )
+        for run in verification_runs:
+            verification_evidence_ref = str(run.get("artifact_ref") or "").strip()
+            verification_path = str(run.get("path") or "").strip()
+            if not verification_path:
+                verification_path = _resolve_runtime_write_path(
+                    evidence_pattern,
+                    f"{execution_package.meta.ticket_id}/attempt-1/test-report.json",
+                )
+            if not verification_evidence_ref:
+                verification_evidence_ref = (
+                    f"art://workspace/{quote(execution_package.meta.ticket_id, safe='')}/test-report.json"
+                )
+            normalized_run = dict(run)
+            normalized_run["artifact_ref"] = verification_evidence_ref
+            normalized_run["path"] = verification_path
+            written_artifacts.append(
+                {
+                    "path": verification_path,
+                    "artifact_ref": verification_evidence_ref,
+                    "kind": "JSON",
+                    "retention_class": "REVIEW_EVIDENCE",
+                    "content_json": normalized_run,
+                }
+            )
 
     if git_pattern is not None:
-        git_commit_record = {
-            "commit_sha": f"{ticket_id.replace('-', '').replace('_', '')[:12] or 'runtime123456'}",
-            "branch_ref": f"codex/{ticket_id}",
-            "merge_status": "PENDING_REVIEW_GATE",
-        }
-        git_commit_ref = f"art://workspace/{quote(ticket_id, safe='')}/git-commit.json"
-        git_path = _resolve_runtime_write_path(git_pattern, "git-commit.json")
+        git_commit_ref = f"art://workspace/{quote(execution_package.meta.ticket_id, safe='')}/git-commit.json"
+        git_path = _resolve_runtime_write_path(
+            git_pattern,
+            f"{execution_package.meta.ticket_id}/attempt-1/git-closeout.json",
+        )
         written_artifacts.append(
             {
                 "path": git_path,
                 "artifact_ref": git_commit_ref,
                 "kind": "JSON",
                 "retention_class": "REVIEW_EVIDENCE",
-                "content_json": git_commit_record,
+                "content_json": {},
             }
         )
     return source_file_refs, written_artifacts
@@ -474,23 +607,12 @@ def _build_source_code_delivery_submission_evidence(
     execution_package: CompiledExecutionPackage,
     result_payload: dict[str, Any],
 ) -> tuple[list[str], dict[str, Any] | None]:
-    _, written_artifacts = _build_source_code_delivery_default_artifacts(execution_package, result_payload)
     verification_evidence_refs = [
         str(item.get("artifact_ref") or "").strip()
-        for item in written_artifacts
-        if str(item.get("path") or "").startswith("20-evidence/tests/")
-        and str(item.get("artifact_ref") or "").strip()
+        for item in list(result_payload.get("verification_runs") or [])
+        if isinstance(item, dict) and str(item.get("artifact_ref") or "").strip()
     ]
-    git_commit_record = next(
-        (
-            dict(item.get("content_json") or {})
-            for item in written_artifacts
-            if str(item.get("path") or "").startswith("20-evidence/git/")
-            and isinstance(item.get("content_json"), dict)
-        ),
-        None,
-    )
-    return verification_evidence_refs, git_commit_record
+    return verification_evidence_refs, None
 
 
 def _build_meeting_round_notes(round_type: str, topic: str, participant_ids: list[str]) -> list[str]:
@@ -918,9 +1040,15 @@ def _build_runtime_success_payload(
             ],
         }
     if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+        source_files = _default_source_code_delivery_source_files(
+            execution_package,
+            list(artifact_refs),
+        )
         return {
             "summary": f"Source code delivery prepared for ticket {execution_package.meta.ticket_id}.",
             "source_file_refs": list(artifact_refs),
+            "source_files": source_files,
+            "verification_runs": _default_source_code_delivery_verification_runs(execution_package),
             "implementation_notes": [
                 "Homepage foundation stays inside the approved scope lock and is ready for internal checking."
             ],

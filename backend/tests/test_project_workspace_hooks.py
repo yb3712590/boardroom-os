@@ -244,11 +244,41 @@ def _source_code_delivery_result_submit_payload(
     node_id: str,
     include_documentation_updates: bool,
     include_git_evidence: bool,
+    source_file_content: str = "export const workspaceBuild = true;\n",
+    verification_stdout: str = "collected 1 item\n\n1 passed in 0.12s\n",
+    verification_stderr: str = "",
 ) -> dict[str, object]:
     source_file_ref = f"art://workspace/{ticket_id}/source.ts"
+    verification_ref = f"art://workspace/{ticket_id}/test-report.json"
+    verification_path = f"20-evidence/tests/{ticket_id}/attempt-1/test-report.json"
     payload: dict[str, object] = {
         "summary": f"Source code delivery prepared for {ticket_id}.",
         "source_file_refs": [source_file_ref],
+        "source_files": [
+            {
+                "artifact_ref": source_file_ref,
+                "path": f"10-project/src/{ticket_id}.ts",
+                "content": source_file_content,
+            }
+        ],
+        "verification_runs": [
+            {
+                "artifact_ref": verification_ref,
+                "path": verification_path,
+                "runner": "pytest",
+                "command": "pytest tests/test_project_workspace_hooks.py -q",
+                "status": "passed",
+                "exit_code": 0,
+                "duration_sec": 1.2,
+                "stdout": verification_stdout,
+                "stderr": verification_stderr,
+                "discovered_count": 1,
+                "passed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "failures": [],
+            }
+        ],
         "implementation_notes": ["Implementation stayed inside the approved scope lock."],
     }
     written_artifacts: list[dict[str, object]] = [
@@ -256,7 +286,7 @@ def _source_code_delivery_result_submit_payload(
             "path": f"10-project/src/{ticket_id}.ts",
             "artifact_ref": source_file_ref,
             "kind": "TEXT",
-            "content_text": "export const workspaceBuild = true;\n",
+            "content_text": source_file_content,
         },
         {
             "path": f"10-project/docs/tracking/{ticket_id}-active.md",
@@ -271,13 +301,13 @@ def _source_code_delivery_result_submit_payload(
             "content_text": "Updated recent memory.\n",
         },
         {
-            "path": f"20-evidence/tests/{ticket_id}-report.json",
-            "artifact_ref": f"art://workspace/{ticket_id}/test-report.json",
+            "path": verification_path,
+            "artifact_ref": verification_ref,
             "kind": "JSON",
-            "content_json": {"status": "passed", "command": "pytest tests/test_project_workspace_hooks.py -q"},
+            "content_json": payload["verification_runs"][0],
         },
         {
-            "path": f"20-evidence/git/{ticket_id}-commit.json",
+            "path": f"20-evidence/git/{ticket_id}/attempt-1/git-closeout.json",
             "artifact_ref": f"art://workspace/{ticket_id}/git-commit.json",
             "kind": "JSON",
             "content_json": {"commit_sha": "abc1234", "branch_ref": f"codex/{ticket_id}"},
@@ -306,7 +336,7 @@ def _source_code_delivery_result_submit_payload(
         "payload": payload,
         "artifact_refs": [],
         "written_artifacts": written_artifacts,
-        "verification_evidence_refs": [f"art://workspace/{ticket_id}/test-report.json"],
+        "verification_evidence_refs": [verification_ref],
         "assumptions": ["Project workspace receipts are enabled."],
         "issues": [],
         "confidence": 0.91,
@@ -526,8 +556,22 @@ def test_source_code_delivery_writes_postrun_and_git_receipts(client) -> None:
     assert (checkout_path / "docs" / "tracking" / f"{ticket_id}-active.md").is_file()
     assert (checkout_path / "docs" / "history" / f"{ticket_id}-memory.md").is_file()
     assert not (canonical_workspace_root / "10-project" / "src" / f"{ticket_id}.ts").exists()
-    assert (canonical_workspace_root / "20-evidence" / "tests" / f"{ticket_id}-report.json").is_file()
-    assert (canonical_workspace_root / "20-evidence" / "git" / f"{ticket_id}-commit.json").is_file()
+    assert (
+        canonical_workspace_root
+        / "20-evidence"
+        / "tests"
+        / ticket_id
+        / "attempt-1"
+        / "test-report.json"
+    ).is_file()
+    assert (
+        canonical_workspace_root
+        / "20-evidence"
+        / "git"
+        / ticket_id
+        / "attempt-1"
+        / "git-closeout.json"
+    ).is_file()
     receipt = json.loads((dossier_root / "git-closeout.json").read_text(encoding="utf-8"))
     git_commit_record = receipt["git_commit_record"]
     assert git_commit_record["branch_ref"] == f"codex/{ticket_id}"
@@ -663,7 +707,80 @@ def test_source_code_delivery_requires_project_source_file_refs(client) -> None:
     ticket = repository.get_current_ticket_projection(ticket_id)
     assert ticket is not None
     assert ticket["status"] == "FAILED"
-    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert ticket["last_failure_kind"] == "SCHEMA_ERROR"
+
+
+def test_source_code_delivery_rejects_placeholder_source_content(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code placeholder gate demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_placeholder_001"
+    node_id = "node_code_placeholder_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_documentation_updates=True,
+            include_git_evidence=True,
+            source_file_content="export const runtimeSourceDelivery = true;\n",
+        ),
+    )
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "SCHEMA_ERROR"
+
+
+def test_source_code_delivery_rejects_minimal_verification_stub(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code verification gate demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_verification_stub_001"
+    node_id = "node_code_verification_stub_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_documentation_updates=True,
+            include_git_evidence=True,
+            verification_stdout="",
+            verification_stderr="",
+        ),
+    )
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "SCHEMA_ERROR"
 
 
 def test_structured_document_delivery_does_not_require_git_commit(client) -> None:

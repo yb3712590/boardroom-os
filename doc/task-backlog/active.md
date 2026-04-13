@@ -1,6 +1,6 @@
 # Active Task Backlog
 
-> 最后更新：2026-04-12
+> 最后更新：2026-04-13
 > 说明：这里只保留当前仍未关闭、仍会影响当前主线实现的任务。已完成的详细任务卡片和完成补记统一看 `done.md`。
 
 ## 当前主线：`P0-COR`
@@ -13,6 +13,13 @@
 | `P0-COR-004` | 源码交付 contract 与 write set 重构 | 进行中 | 已落第七段：`delivery_closeout_package` 也已并回 `structured_document_delivery` 主线，closeout 票默认写到 `20-evidence/closeout/<ticket>/`，并继续复用 declared artifact / written artifact 对齐 contract；这轮又补了 Windows Git 子进程兼容，本机 workspace-managed 回归已恢复；但更广义的非代码 deliverable kind 还没正式进入主线 |
 | `P0-COR-005` | checker / closeout 硬门禁 | 进行中 | 已落第七段：closeout 票现在会继承 canonical docs、doc update 要求和上游 delivery evidence，`payload.final_artifact_refs` 也已进入硬校验；`FOLLOW_UP_REQUIRED` 继续只作为 checker 可见风险；本机 closeout/workspace hook 回归已恢复，但 full live 退出标准还没重跑确认 |
 | `P0-COR-006` | live 场景回归与退出标准重建 | 进行中 | 已把 live runner 抽成共享 harness，并补出 `requirement_elicitation / architecture_governance / library_management` 三条 full 入口；这轮新增 `architecture_governance_autopilot_smoke` checkpoint smoke，但当前机器实跑仍被 provider timeout 卡住，其他 full 长测也尚未重跑 |
+
+### 2026-04-13 审计第一批执行切片
+
+- `P0-2` 已落本轮最小闭环：`source_code_delivery@1` 现在必须带 `source_files[] / verification_runs[]`，不能再只靠 `source_file_refs[]` 过 schema。
+- `P0-3` 已落路径隔离：workspace-managed 测试证据统一写到 `20-evidence/tests/<ticket_id>/attempt-1/`，git 证据统一写到 `20-evidence/git/<ticket_id>/attempt-1/`。
+- `P1-3` 已落证据质量门禁：空 stdout/stderr、`pytest -q passed`、固定 `source.ts/source.tsx` 占位名和 `runtimeSourceDelivery = true` 现在都会被拦成失败。
+- 当前 blocker 仍在 `P0-COR-006`：真实 provider 长测还没重跑，`project-init / scheduler_runner / test_api` 那批受 provider fail-closed 影响的历史测试也还没一并收口。
 
 ## 冻结后置
 

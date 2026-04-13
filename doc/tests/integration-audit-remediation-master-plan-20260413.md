@@ -38,6 +38,18 @@
 
 - `doc/tests/provider-runtime-strict-remediation-plan-20260413.md`
 
+### 本轮新增已落地
+
+- 第一批执行切片已落：
+  - `source_code_delivery@1` 现在必须带 `source_files[] / verification_runs[]`
+  - workspace-managed 代码票会直接拦占位源码和极简测试自报结果
+  - `20-evidence/tests|git` 已按 `ticket_id/attempt-1` 分路径
+  - live harness full success 已补源码证据质量和证据路径撞车断言
+
+对应专项记录在：
+
+- `doc/tests/source-delivery-evidence-remediation-20260413.md`
+
 ### 还没落地
 
 下面这些问题仍然没收：
@@ -78,6 +90,8 @@
 
 ### P0-2 交付成功条件改真
 
+当前状态：`第一批已落`
+
 目标：
 
 - ticket 完成条件从“schema 对了”改成“产物真能交付”
@@ -108,6 +122,8 @@
 - 不能再出现 70 字节左右的占位源码通过主线
 
 ### P0-3 证据不可覆盖
+
+当前状态：`第一批已落最小闭环`
 
 目标：
 
@@ -176,6 +192,8 @@
 - 文件头部能直接看到阶段跳变时间轴
 
 ### P1-3 原始测试证据保留
+
+当前状态：`第一批已落最小闭环`
 
 目标：
 

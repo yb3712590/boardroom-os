@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import re
 from typing import Any
 
 from app.contracts.commands import DeliveryStage
@@ -45,6 +46,11 @@ GOVERNANCE_DOCUMENT_SCHEMA_REFS = (
 
 OutputSchemaValidator = Callable[[dict[str, Any]], None]
 _MISSING = object()
+_SOURCE_CODE_PLACEHOLDER_NAME_RE = re.compile(r"^source(?:-\d+)?\.(?:ts|tsx|js|jsx|py|sql|sh|txt)$", re.IGNORECASE)
+_SOURCE_CODE_PLACEHOLDER_CONTENT_PATTERNS = (
+    "runtimeSourceDelivery = true",
+    "generated for ",
+)
 
 
 class OutputSchemaValidationError(ValueError):
@@ -218,6 +224,265 @@ def _validate_documentation_updates(
                 actual_value=summary,
                 message="Each documentation update requires a non-empty summary.",
             )
+
+
+def _require_non_negative_int(value: Any, *, field_path: str, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        _raise_schema_validation_error(
+            field_path=field_path,
+            expected="non-negative integer",
+            actual_value=value,
+            message=f"{label} must be a non-negative integer.",
+        )
+    return value
+
+
+def _require_positive_number(value: Any, *, field_path: str, label: str) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        _raise_schema_validation_error(
+            field_path=field_path,
+            expected="positive number",
+            actual_value=value,
+            message=f"{label} must be a positive number.",
+        )
+    return float(value)
+
+
+def _looks_like_placeholder_source_file(*, path: str, content: str) -> bool:
+    normalized_path = path.replace("\\", "/").strip()
+    filename = normalized_path.rsplit("/", 1)[-1]
+    if _SOURCE_CODE_PLACEHOLDER_NAME_RE.match(filename):
+        return True
+    return any(marker in content for marker in _SOURCE_CODE_PLACEHOLDER_CONTENT_PATTERNS)
+
+
+def _validate_source_code_delivery_source_files(
+    payload: dict[str, Any],
+    *,
+    source_file_refs: list[str],
+) -> list[dict[str, Any]]:
+    source_files = _require_array(
+        payload,
+        "source_files",
+        label="Source code delivery payload.source_files",
+        non_empty=True,
+    )
+    normalized_source_files: list[dict[str, Any]] = []
+    seen_artifact_refs: set[str] = set()
+    for index, item in enumerate(source_files):
+        field_prefix = f"source_files[{index}]"
+        if not isinstance(item, dict):
+            _raise_schema_validation_error(
+                field_path=field_prefix,
+                expected="object",
+                actual_value=item,
+                message="Each source_files item must be an object.",
+            )
+        artifact_ref = item.get("artifact_ref", _MISSING)
+        if not isinstance(artifact_ref, str) or not artifact_ref.strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.artifact_ref",
+                expected="non-empty string",
+                actual_value=artifact_ref,
+                message="Each source_files item requires artifact_ref.",
+            )
+        normalized_artifact_ref = artifact_ref.strip()
+        if normalized_artifact_ref in seen_artifact_refs:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.artifact_ref",
+                expected="unique artifact_ref",
+                actual_value=artifact_ref,
+                message="source_files artifact_ref values must be unique.",
+            )
+        seen_artifact_refs.add(normalized_artifact_ref)
+
+        path = item.get("path", _MISSING)
+        if not isinstance(path, str) or not path.strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.path",
+                expected="non-empty string",
+                actual_value=path,
+                message="Each source_files item requires path.",
+            )
+        content = item.get("content", _MISSING)
+        if not isinstance(content, str) or not content.strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.content",
+                expected="non-empty string",
+                actual_value=content,
+                message="Each source_files item requires content.",
+            )
+        normalized_content = content.strip()
+        if len(normalized_content) < 24 or _looks_like_placeholder_source_file(path=path, content=content):
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.content",
+                expected="non-placeholder source content",
+                actual_value=content,
+                message="source_files content must be non-placeholder source code.",
+            )
+        normalized_source_files.append(
+            {
+                "artifact_ref": normalized_artifact_ref,
+                "path": path.strip(),
+                "content": content,
+            }
+        )
+
+    normalized_source_file_refs = [item.strip() for item in source_file_refs]
+    if normalized_source_file_refs != [item["artifact_ref"] for item in normalized_source_files]:
+        _raise_schema_validation_error(
+            field_path="source_file_refs",
+            expected="same artifact_ref order as source_files",
+            actual_value=source_file_refs,
+            message="source_file_refs must match source_files artifact_ref values in order.",
+        )
+    return normalized_source_files
+
+
+def _validate_source_code_delivery_verification_runs(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    verification_runs = _require_array(
+        payload,
+        "verification_runs",
+        label="Source code delivery payload.verification_runs",
+        non_empty=True,
+    )
+    normalized_runs: list[dict[str, Any]] = []
+    seen_artifact_refs: set[str] = set()
+    for index, item in enumerate(verification_runs):
+        field_prefix = f"verification_runs[{index}]"
+        if not isinstance(item, dict):
+            _raise_schema_validation_error(
+                field_path=field_prefix,
+                expected="object",
+                actual_value=item,
+                message="Each verification_runs item must be an object.",
+            )
+        artifact_ref = item.get("artifact_ref", _MISSING)
+        if not isinstance(artifact_ref, str) or not artifact_ref.strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.artifact_ref",
+                expected="non-empty string",
+                actual_value=artifact_ref,
+                message="Each verification_runs item requires artifact_ref.",
+            )
+        normalized_artifact_ref = artifact_ref.strip()
+        if normalized_artifact_ref in seen_artifact_refs:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.artifact_ref",
+                expected="unique artifact_ref",
+                actual_value=artifact_ref,
+                message="verification_runs artifact_ref values must be unique.",
+            )
+        seen_artifact_refs.add(normalized_artifact_ref)
+        for key in ("path", "runner", "command", "status", "stdout", "stderr"):
+            value = item.get(key, _MISSING)
+            if not isinstance(value, str):
+                _raise_schema_validation_error(
+                    field_path=f"{field_prefix}.{key}",
+                    expected="string",
+                    actual_value=value,
+                    message=f"Each verification_runs item requires string {key}.",
+                )
+        if not str(item.get("path") or "").strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.path",
+                expected="non-empty string",
+                actual_value=item.get("path", _MISSING),
+                message="Each verification_runs item requires path.",
+            )
+        if not str(item.get("runner") or "").strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.runner",
+                expected="non-empty string",
+                actual_value=item.get("runner", _MISSING),
+                message="Each verification_runs item requires runner.",
+            )
+        if not str(item.get("command") or "").strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.command",
+                expected="non-empty string",
+                actual_value=item.get("command", _MISSING),
+                message="Each verification_runs item requires command.",
+            )
+        if str(item.get("status") or "").strip() not in {"passed", "failed"}:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.status",
+                expected="passed or failed",
+                actual_value=item.get("status", _MISSING),
+                message="Each verification_runs item status must be passed or failed.",
+            )
+        _require_non_negative_int(
+            item.get("exit_code", _MISSING),
+            field_path=f"{field_prefix}.exit_code",
+            label="Each verification_runs item exit_code",
+        )
+        _require_positive_number(
+            item.get("duration_sec", _MISSING),
+            field_path=f"{field_prefix}.duration_sec",
+            label="Each verification_runs item duration_sec",
+        )
+        discovered_count = _require_non_negative_int(
+            item.get("discovered_count", _MISSING),
+            field_path=f"{field_prefix}.discovered_count",
+            label="Each verification_runs item discovered_count",
+        )
+        passed_count = _require_non_negative_int(
+            item.get("passed_count", _MISSING),
+            field_path=f"{field_prefix}.passed_count",
+            label="Each verification_runs item passed_count",
+        )
+        failed_count = _require_non_negative_int(
+            item.get("failed_count", _MISSING),
+            field_path=f"{field_prefix}.failed_count",
+            label="Each verification_runs item failed_count",
+        )
+        _require_non_negative_int(
+            item.get("skipped_count", _MISSING),
+            field_path=f"{field_prefix}.skipped_count",
+            label="Each verification_runs item skipped_count",
+        )
+        failures = item.get("failures", _MISSING)
+        if not isinstance(failures, list):
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.failures",
+                expected="array",
+                actual_value=failures,
+                message="Each verification_runs item requires failures array.",
+            )
+        stdout = str(item.get("stdout") or "")
+        if not stdout.strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.stdout",
+                expected="non-empty string",
+                actual_value=item.get("stdout", _MISSING),
+                message="Each verification_runs item requires raw stdout output.",
+            )
+        if discovered_count <= 0 or passed_count + failed_count > discovered_count:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.discovered_count",
+                expected="count compatible with pass/fail totals",
+                actual_value=item.get("discovered_count", _MISSING),
+                message="verification_runs counts must describe at least one discovered test.",
+            )
+        normalized_runs.append(
+            {
+                "artifact_ref": normalized_artifact_ref,
+                "path": str(item["path"]).strip(),
+                "runner": str(item["runner"]).strip(),
+                "command": str(item["command"]).strip(),
+                "status": str(item["status"]).strip(),
+                "exit_code": int(item["exit_code"]),
+                "duration_sec": float(item["duration_sec"]),
+                "stdout": stdout,
+                "stderr": str(item["stderr"]),
+                "discovered_count": discovered_count,
+                "passed_count": passed_count,
+                "failed_count": failed_count,
+                "skipped_count": int(item["skipped_count"]),
+                "failures": list(failures),
+            }
+        )
+    return normalized_runs
 
 
 def schema_id(schema_ref: str, schema_version: int) -> str:
@@ -542,13 +807,65 @@ def _validate_governance_document_payload(
 def _source_code_delivery_schema_body() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["summary", "source_file_refs"],
+        "required": ["summary", "source_file_refs", "source_files", "verification_runs"],
         "properties": {
             "summary": {"type": "string"},
             "source_file_refs": {
                 "type": "array",
                 "minItems": 1,
                 "items": {"type": "string"},
+            },
+            "source_files": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": ["artifact_ref", "path", "content"],
+                    "properties": {
+                        "artifact_ref": {"type": "string"},
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                },
+            },
+            "verification_runs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "artifact_ref",
+                        "path",
+                        "runner",
+                        "command",
+                        "status",
+                        "exit_code",
+                        "duration_sec",
+                        "stdout",
+                        "stderr",
+                        "discovered_count",
+                        "passed_count",
+                        "failed_count",
+                        "skipped_count",
+                        "failures",
+                    ],
+                    "properties": {
+                        "artifact_ref": {"type": "string"},
+                        "path": {"type": "string"},
+                        "runner": {"type": "string"},
+                        "command": {"type": "string"},
+                        "status": {"type": "string", "enum": ["passed", "failed"]},
+                        "exit_code": {"type": "integer"},
+                        "duration_sec": {"type": "number"},
+                        "stdout": {"type": "string"},
+                        "stderr": {"type": "string"},
+                        "discovered_count": {"type": "integer"},
+                        "passed_count": {"type": "integer"},
+                        "failed_count": {"type": "integer"},
+                        "skipped_count": {"type": "integer"},
+                        "failures": {"type": "array"},
+                    },
+                },
             },
             "implementation_notes": {
                 "type": "array",
@@ -838,12 +1155,14 @@ def _validate_consensus_document_payload(payload: dict[str, Any]) -> None:
 def _validate_source_code_delivery_payload(payload: dict[str, Any]) -> None:
     payload = _require_object(payload)
     _require_non_empty_string(payload, "summary", label="Source code delivery payload.summary")
-    _require_string_array(
+    source_file_refs = _require_string_array(
         payload,
         "source_file_refs",
         label="Source code delivery payload.source_file_refs",
         non_empty=True,
     )
+    _validate_source_code_delivery_source_files(payload, source_file_refs=source_file_refs)
+    _validate_source_code_delivery_verification_runs(payload)
 
     implementation_notes = payload.get("implementation_notes")
     if implementation_notes is not None and (

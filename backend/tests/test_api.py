@@ -1561,9 +1561,35 @@ def _source_code_delivery_result_submit_payload(
     idempotency_key: str | None = None,
 ) -> dict:
     source_file_ref = (artifact_refs or [f"art://runtime/{ticket_id}/source-code.tsx"])[0]
+    source_path = written_artifact_path or f"artifacts/ui/scope-followups/{ticket_id}/source-code.tsx"
     payload = {
         "summary": f"Source code delivery prepared for {ticket_id}.",
         "source_file_refs": [source_file_ref],
+        "source_files": [
+            {
+                "artifact_ref": source_file_ref,
+                "path": source_path,
+                "content": "export const sourceCodeDelivery = true;\n",
+            }
+        ],
+        "verification_runs": [
+            {
+                "artifact_ref": f"art://runtime/{ticket_id}/test-report.json",
+                "path": f"artifacts/ui/scope-followups/{ticket_id}/verification/test-report.json",
+                "runner": "vitest",
+                "command": "npm run test -- --runInBand",
+                "status": "passed",
+                "exit_code": 0,
+                "duration_sec": 1.4,
+                "stdout": " RUN  v1.0.0\n  ✓ source delivery smoke\n\n Test Files  1 passed\n",
+                "stderr": "",
+                "discovered_count": 1,
+                "passed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "failures": [],
+            }
+        ],
         "implementation_notes": [
             "Homepage foundation stays inside the approved scope lock and is ready for internal checking."
         ],
@@ -1579,8 +1605,7 @@ def _source_code_delivery_result_submit_payload(
         "artifact_refs": [source_file_ref],
         "written_artifacts": [
             {
-                "path": written_artifact_path
-                or f"artifacts/ui/scope-followups/{ticket_id}/source-code.tsx",
+                "path": source_path,
                 "artifact_ref": source_file_ref,
                 "kind": "TEXT",
                 "content_text": "export const sourceCodeDelivery = true;\n",
