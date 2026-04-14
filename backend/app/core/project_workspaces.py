@@ -295,6 +295,28 @@ def load_worker_postrun_receipt(workflow_id: str, ticket_id: str) -> dict[str, A
     return dict(payload) if isinstance(payload, dict) else {}
 
 
+def load_artifact_capture_receipt(workflow_id: str, ticket_id: str) -> dict[str, Any]:
+    receipt_path = _ticket_receipt_root(workflow_id, ticket_id) / "artifact-capture.json"
+    if not receipt_path.exists():
+        return {}
+    try:
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def load_documentation_sync_receipt(workflow_id: str, ticket_id: str) -> dict[str, Any]:
+    receipt_path = _ticket_receipt_root(workflow_id, ticket_id) / "documentation-sync.json"
+    if not receipt_path.exists():
+        return {}
+    try:
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
 def _ticket_git_closeout_view_state_path(workflow_id: str, ticket_id: str) -> Path:
     return _ticket_receipt_root(workflow_id, ticket_id) / "git-closeout-view-state.json"
 
@@ -1206,6 +1228,32 @@ def write_worker_postrun_receipt(
     return str(receipt_path)
 
 
+def write_artifact_capture_receipt(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    artifact_refs: list[str],
+    written_artifact_paths: list[str],
+) -> str:
+    receipt_path = (
+        resolve_project_workspace_root(workflow_id)
+        / "00-boardroom"
+        / "tickets"
+        / ticket_id
+        / "hook-receipts"
+        / "artifact-capture.json"
+    )
+    _write_json(
+        receipt_path,
+        {
+            "ticket_id": ticket_id,
+            "artifact_refs": list(artifact_refs),
+            "written_artifact_paths": list(written_artifact_paths),
+        },
+    )
+    return str(receipt_path)
+
+
 def write_evidence_capture_receipt(
     *,
     workflow_id: str,
@@ -1225,6 +1273,30 @@ def write_evidence_capture_receipt(
         {
             "ticket_id": ticket_id,
             "verification_evidence_refs": list(verification_evidence_refs),
+        },
+    )
+    return str(receipt_path)
+
+
+def write_documentation_sync_receipt(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    documentation_updates: list[dict[str, Any]],
+) -> str:
+    receipt_path = (
+        resolve_project_workspace_root(workflow_id)
+        / "00-boardroom"
+        / "tickets"
+        / ticket_id
+        / "hook-receipts"
+        / "documentation-sync.json"
+    )
+    _write_json(
+        receipt_path,
+        {
+            "ticket_id": ticket_id,
+            "documentation_updates": list(documentation_updates),
         },
     )
     return str(receipt_path)

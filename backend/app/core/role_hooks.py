@@ -15,15 +15,20 @@ from app.core.constants import (
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     TICKET_STATUS_COMPLETED,
 )
+from app.core.output_schemas import DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.core.project_workspaces import (
+    load_artifact_capture_receipt,
+    load_documentation_sync_receipt,
     load_git_closeout_receipt,
     load_worker_postrun_receipt,
     project_workspace_manifest_exists,
     resolve_project_workspace_root,
     sync_active_worktree_index,
     sync_ticket_boardroom_views,
+    write_artifact_capture_receipt,
+    write_documentation_sync_receipt,
     write_evidence_capture_receipt,
     write_git_closeout_receipt,
     write_worker_postrun_receipt,
@@ -39,6 +44,7 @@ HOOK_GATE_MODE_NOT_APPLICABLE = "not_applicable"
 HOOK_GATE_MODE_REQUIRED = "required"
 HOOK_GATE_APPLICABILITY_OUT_OF_SCOPE = "out_of_scope_deliverable"
 HOOK_GATE_APPLICABILITY_WORKSPACE_SOURCE = "workspace_managed_source_code_delivery"
+HOOK_GATE_APPLICABILITY_WORKSPACE_STRUCTURED_DOCUMENT = "workspace_managed_structured_document_delivery"
 
 
 class HookGateStatus(StrEnum):
@@ -53,6 +59,7 @@ class RoleHookSpec:
     deliverable_kind: str
     required_for_gate: bool
     receipt_filename: str
+    output_schema_refs: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,21 @@ def default_role_hook_registry() -> list[RoleHookSpec]:
             required_for_gate=True,
             receipt_filename="git-closeout.json",
         ),
+        RoleHookSpec(
+            hook_id="artifact_capture",
+            lifecycle_event="RESULT_ACCEPTED",
+            deliverable_kind="structured_document_delivery",
+            required_for_gate=True,
+            receipt_filename="artifact-capture.json",
+        ),
+        RoleHookSpec(
+            hook_id="documentation_sync",
+            lifecycle_event="RESULT_ACCEPTED",
+            deliverable_kind="structured_document_delivery",
+            required_for_gate=True,
+            receipt_filename="documentation-sync.json",
+            output_schema_refs=(DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,),
+        ),
     ]
 
 
@@ -144,6 +166,17 @@ def _is_workspace_managed_source_code_delivery(created_spec: dict[str, Any]) -> 
     )
 
 
+def _is_workspace_managed_structured_document_delivery(created_spec: dict[str, Any]) -> bool:
+    if str(created_spec.get("deliverable_kind") or "").strip() != "structured_document_delivery":
+        return False
+    if not project_workspace_manifest_exists(str(created_spec.get("workflow_id") or "")):
+        return False
+    return any(
+        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
+        for pattern in list(created_spec.get("allowed_write_set") or [])
+    )
+
+
 def _resolve_registry(registry: Iterable[RoleHookSpec] | None) -> list[RoleHookSpec]:
     return list(registry) if registry is not None else default_role_hook_registry()
 
@@ -156,9 +189,43 @@ def _resolve_required_hook_receipt(
 ) -> dict[str, Any]:
     if hook_id == "worker_postrun":
         return load_worker_postrun_receipt(workflow_id, ticket_id)
+    if hook_id == "artifact_capture":
+        return load_artifact_capture_receipt(workflow_id, ticket_id)
+    if hook_id == "documentation_sync":
+        return load_documentation_sync_receipt(workflow_id, ticket_id)
     if hook_id == "git_closeout":
         return load_git_closeout_receipt(workflow_id, ticket_id)
     return _load_json_receipt(workflow_id, ticket_id, receipt_filename)
+
+
+def _resolve_applicable_hook_specs(
+    created_spec: dict[str, Any],
+    *,
+    registry: Iterable[RoleHookSpec] | None = None,
+) -> tuple[str, str, list[RoleHookSpec]]:
+    resolved_registry = _resolve_registry(registry)
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    if _is_workspace_managed_source_code_delivery(created_spec):
+        return (
+            HOOK_GATE_MODE_REQUIRED,
+            HOOK_GATE_APPLICABILITY_WORKSPACE_SOURCE,
+            [spec for spec in resolved_registry if spec.deliverable_kind == "source_code_delivery"],
+        )
+    if _is_workspace_managed_structured_document_delivery(created_spec):
+        return (
+            HOOK_GATE_MODE_REQUIRED,
+            HOOK_GATE_APPLICABILITY_WORKSPACE_STRUCTURED_DOCUMENT,
+            [
+                spec
+                for spec in resolved_registry
+                if spec.deliverable_kind == "structured_document_delivery"
+                and (
+                    spec.output_schema_refs is None
+                    or output_schema_ref in spec.output_schema_refs
+                )
+            ],
+        )
+    return (HOOK_GATE_MODE_NOT_APPLICABLE, HOOK_GATE_APPLICABILITY_OUT_OF_SCOPE, [])
 
 
 def _build_required_hook_incident_fingerprint(
@@ -207,7 +274,11 @@ def evaluate_ticket_required_hook_gate(
                 registry=registry,
             )
 
-    if not _is_workspace_managed_source_code_delivery(created_spec):
+    gate_mode, applicability, applicable_specs = _resolve_applicable_hook_specs(
+        created_spec,
+        registry=registry,
+    )
+    if gate_mode == HOOK_GATE_MODE_NOT_APPLICABLE:
         return HookGateResult(
             gate_mode=HOOK_GATE_MODE_NOT_APPLICABLE,
             applicability=HOOK_GATE_APPLICABILITY_OUT_OF_SCOPE,
@@ -223,16 +294,13 @@ def evaluate_ticket_required_hook_gate(
     workflow_id = str(ticket.get("workflow_id") or created_spec.get("workflow_id") or "").strip()
     ticket_id = str(ticket.get("ticket_id") or created_spec.get("ticket_id") or "").strip()
     node_id = str(ticket.get("node_id") or created_spec.get("node_id") or "").strip()
-    resolved_registry = [
-        spec for spec in _resolve_registry(registry) if spec.deliverable_kind == "source_code_delivery"
-    ]
-    checked_hook_ids = [spec.hook_id for spec in resolved_registry]
-    required_hook_ids = [spec.hook_id for spec in resolved_registry if spec.required_for_gate]
+    checked_hook_ids = [spec.hook_id for spec in applicable_specs]
+    required_hook_ids = [spec.hook_id for spec in applicable_specs if spec.required_for_gate]
 
     if str(ticket.get("status") or "").strip() != TICKET_STATUS_COMPLETED:
         return HookGateResult(
-            gate_mode=HOOK_GATE_MODE_REQUIRED,
-            applicability=HOOK_GATE_APPLICABILITY_WORKSPACE_SOURCE,
+            gate_mode=gate_mode,
+            applicability=applicability,
             required_hook_ids=required_hook_ids,
             checked_hook_ids=checked_hook_ids,
             missing_hook_ids=[],
@@ -243,7 +311,7 @@ def evaluate_ticket_required_hook_gate(
         )
 
     missing_hook_ids: list[str] = []
-    for spec in resolved_registry:
+    for spec in applicable_specs:
         if not spec.required_for_gate:
             continue
         receipt_payload = _resolve_required_hook_receipt(
@@ -257,8 +325,8 @@ def evaluate_ticket_required_hook_gate(
 
     if not missing_hook_ids:
         return HookGateResult(
-            gate_mode=HOOK_GATE_MODE_REQUIRED,
-            applicability=HOOK_GATE_APPLICABILITY_WORKSPACE_SOURCE,
+            gate_mode=gate_mode,
+            applicability=applicability,
             required_hook_ids=required_hook_ids,
             checked_hook_ids=checked_hook_ids,
             missing_hook_ids=[],
@@ -278,8 +346,8 @@ def evaluate_ticket_required_hook_gate(
     )
     reason_code = f"REQUIRED_HOOK_PENDING:{missing_hook_ids[0]}"
     return HookGateResult(
-        gate_mode=HOOK_GATE_MODE_REQUIRED,
-        applicability=HOOK_GATE_APPLICABILITY_WORKSPACE_SOURCE,
+        gate_mode=gate_mode,
+        applicability=applicability,
         required_hook_ids=required_hook_ids,
         checked_hook_ids=checked_hook_ids,
         missing_hook_ids=missing_hook_ids,
@@ -353,6 +421,35 @@ def replay_required_hook_receipts(
                 workflow_id=workflow_id,
                 ticket_id=ticket_id,
                 verification_evidence_refs=list(verification_evidence_refs),
+            )
+        elif hook_id == "artifact_capture":
+            artifact_refs = terminal_payload.get("artifact_refs")
+            if not isinstance(artifact_refs, list) or not artifact_refs:
+                raise ValueError("Cannot replay artifact_capture without artifact_refs.")
+            written_artifacts = terminal_payload.get("written_artifacts")
+            if not isinstance(written_artifacts, list) or not written_artifacts:
+                raise ValueError("Cannot replay artifact_capture without written_artifacts.")
+            written_artifact_paths = [
+                str(item.get("path") or "").strip()
+                for item in written_artifacts
+                if isinstance(item, dict) and str(item.get("path") or "").strip()
+            ]
+            if not written_artifact_paths:
+                raise ValueError("Cannot replay artifact_capture without written_artifact paths.")
+            write_artifact_capture_receipt(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                artifact_refs=[str(item).strip() for item in artifact_refs if str(item).strip()],
+                written_artifact_paths=written_artifact_paths,
+            )
+        elif hook_id == "documentation_sync":
+            documentation_updates = terminal_payload.get("documentation_updates")
+            if not isinstance(documentation_updates, list):
+                raise ValueError("Cannot replay documentation_sync without documentation_updates.")
+            write_documentation_sync_receipt(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                documentation_updates=list(documentation_updates),
             )
         elif hook_id == "git_closeout":
             git_commit_record = terminal_payload.get("git_commit_record")

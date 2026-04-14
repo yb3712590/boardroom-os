@@ -145,7 +145,9 @@ describe('IncidentDrawer', () => {
       />,
     )
 
-    expect(screen.getByText(/required result_accepted hook receipts are missing/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/required hook receipts are missing, so the node stays fail-closed until recovery replays the missing hooks from persisted terminal truth/i),
+    ).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toHaveValue('REPLAY_REQUIRED_HOOKS')
   })
 })

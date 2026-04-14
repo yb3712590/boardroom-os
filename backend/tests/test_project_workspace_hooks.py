@@ -105,6 +105,17 @@ def _checkout_path(workflow_id: str, ticket_id: str) -> Path:
     )
 
 
+def _receipt_root(client, workflow_id: str, ticket_id: str):
+    return (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "00-boardroom"
+        / "tickets"
+        / ticket_id
+        / "hook-receipts"
+    )
+
+
 def _git_output(cwd: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", *args],
@@ -897,6 +908,8 @@ def test_structured_document_delivery_does_not_require_git_commit(client) -> Non
     ticket = repository.get_current_ticket_projection(ticket_id)
     assert ticket is not None
     assert ticket["status"] == "COMPLETED"
+    receipt_root = _receipt_root(client, workflow_id, ticket_id)
+    assert (receipt_root / "artifact-capture.json").is_file()
 
 
 def test_closeout_ticket_create_uses_structured_document_workspace_bootstrap(client) -> None:
@@ -1014,6 +1027,9 @@ def test_closeout_ticket_result_submit_materializes_workspace_evidence_files(cli
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
+    receipt_root = _receipt_root(client, workflow_id, ticket_id)
+    assert (receipt_root / "artifact-capture.json").is_file()
+    assert (receipt_root / "documentation-sync.json").is_file()
     closeout_path = (
         get_settings().project_workspace_root
         / workflow_id

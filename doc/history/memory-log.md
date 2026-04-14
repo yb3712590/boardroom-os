@@ -23,6 +23,11 @@
 
 ### 2026-04-15
 
+- `P2-S3` 这轮已完成：`structured_document_delivery` 现在也进入正式 `RoleHook` gate；治理文档和 closeout 会写 `artifact-capture.json`，closeout 还会额外写 `documentation-sync.json`
+- `REPLAY_REQUIRED_HOOKS` 这轮已从“只补源码票 receipt”扩到“也能补文档票 receipt”：replay 现在只读 `TICKET_COMPLETED.payload.artifact_refs / written_artifacts / documentation_updates`，缺字段会显式 `REJECTED`，incident 保持 `OPEN`
+- `TICKET_COMPLETED` payload 这轮新增 `written_artifacts`，这是文档票幂等 replay 的唯一新增真相源；当前实现不会从 Markdown 正文或磁盘目录反推业务状态
+- 前端 `IncidentDrawer` 这轮已把 required hook 说明收正成票型无关文案；本轮新增并实跑通过 `./backend/.venv/bin/pytest backend/tests/test_role_hooks.py -q`、`./backend/.venv/bin/pytest backend/tests/test_project_workspace_hooks.py -q`、`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "incident or hook or graph" -q`、`./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -q`、`cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx`
+- 下一轮从 `P2-S4` 起手：先把 `ui_milestone_review / delivery_check_report / maker_checker_verdict` 这些 `review_evidence` 票型按独立 hook 语义接进 gate / replay，再决定旧的 project-init governance/provider incident 噪音是否单列恢复切片
 - `P2-S2` 这轮已完成：新增 `backend/app/core/role_hooks.py`，把最小 `RoleHook` registry、结构化 gate result、缺 hook 稳定指纹、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery 收成单点协议；当前先只覆盖 `workspace-managed source_code_delivery`
 - `TicketGraph` 这轮已开始显式消费 hook gate：源码票缺 `worker_postrun / evidence_capture / git_closeout` 任一 required hook 时，会落 `REQUIRED_HOOK_PENDING:*`，不再把“票已提交”误当成“节点已对下游开放”
 - `workflow_auto_advance` 这轮也已接上这条新主链：缺 hook 的源码票会被正式开成 `REQUIRED_HOOK_GATE_BLOCKED`，并按 `workflow_id + ticket_id + node_id + terminal_event_ref + sorted(missing_hook_ids)` 去重；恢复时 `incident-resolve` 会基于持久化 terminal truth 幂等补写缺失 receipt，不能补就 reject 并保持 incident OPEN

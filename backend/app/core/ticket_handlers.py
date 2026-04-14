@@ -152,6 +152,8 @@ from app.core.project_workspaces import (
     sync_active_worktree_index,
     sync_ticket_boardroom_views,
     update_ticket_git_closeout_notes,
+    write_artifact_capture_receipt,
+    write_documentation_sync_receipt,
     write_worktree_checkout_receipt,
     write_evidence_capture_receipt,
     write_git_closeout_receipt,
@@ -5459,6 +5461,10 @@ def handle_ticket_result_submit(
                     completed_by=payload.submitted_by,
                     completion_summary=payload.summary,
                     artifact_refs=completed_artifact_refs,
+                    written_artifacts=[
+                        TicketWrittenArtifact.model_validate(item.model_dump(mode="json"))
+                        for item in effective_written_artifacts
+                    ],
                     produced_process_assets=produced_process_assets,
                     verification_evidence_refs=list(payload.verification_evidence_refs),
                     git_commit_record=effective_git_commit_record,
@@ -5543,6 +5549,24 @@ def handle_ticket_result_submit(
                 item.model_dump(mode="json") for item in effective_written_artifacts
             ],
         )
+        if str(created_spec.get("deliverable_kind") or "") == "structured_document_delivery":
+            write_artifact_capture_receipt(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                artifact_refs=[str(item).strip() for item in payload.artifact_refs if str(item).strip()],
+                written_artifact_paths=[
+                    str(item.path or "").strip()
+                    for item in effective_written_artifacts
+                    if str(item.path or "").strip()
+                ],
+            )
+            if str(created_spec.get("output_schema_ref") or "").strip() == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+                result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+                write_documentation_sync_receipt(
+                    workflow_id=payload.workflow_id,
+                    ticket_id=payload.ticket_id,
+                    documentation_updates=list(result_payload.get("documentation_updates") or []),
+                )
     if project_workspace_manifest_exists(payload.workflow_id):
         sync_ticket_boardroom_views(
             repository,
@@ -5675,7 +5699,10 @@ def _complete_ticket_locked(
             "ticket_id": payload.ticket_id,
             "node_id": payload.node_id,
             "completion_summary": payload.completion_summary,
-            "artifact_refs": payload.artifact_refs,
+                "artifact_refs": payload.artifact_refs,
+                "written_artifacts": [
+                    item.model_dump(mode="json") for item in payload.written_artifacts
+                ],
             "verification_evidence_refs": list(payload.verification_evidence_refs),
             "git_commit_record": (
                 payload.git_commit_record.model_dump(mode="json")

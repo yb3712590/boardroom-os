@@ -685,6 +685,7 @@ class TicketCompletedCommand(StrictModel):
     completed_by: str = Field(min_length=1)
     completion_summary: str = Field(min_length=1)
     artifact_refs: list[str] = Field(default_factory=list)
+    written_artifacts: list[TicketWrittenArtifact] = Field(default_factory=list)
     produced_process_assets: list[ProcessAssetReference] = Field(default_factory=list)
     verification_evidence_refs: list[str] = Field(default_factory=list)
     git_commit_record: TicketGitCommitRecord | None = None

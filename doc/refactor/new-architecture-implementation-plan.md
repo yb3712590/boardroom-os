@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P2`
-> 当前切片：`P2-S3`
-> 最后更新：`2026-04-15 07:20`
+> 当前切片：`P2-S4`
+> 最后更新：`2026-04-15 07:51`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -477,9 +477,10 @@
 - [x] `P1-S3` 已完成：`Dependency Inspector` 现已改成直接消费 `TicketGraph` 边和索引，`dependency_ticket_ids[] / graph_summary` 已成为正式只读合同；dashboard 的 `blocked_node_ids` legacy fallback 已移除，图不可用时改成显式 `blocked_node_source=graph_unavailable`
 - [x] `P2-S1` 已完成：`workflow_auto_advance` 命中 `build_ceo_shadow_snapshot()` 的图不可用异常时，现已打开正式 `TICKET_GRAPH_UNAVAILABLE` incident；incident detail / resolve 与 `IncidentDrawer` 已补 `REBUILD_TICKET_GRAPH`
 - [x] `P2-S2` 已完成：`backend/app/core/role_hooks.py` 已把最小 hook registry、结构化 gate result、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery 收进单点协议；`TicketGraph / workflow_auto_advance / incident detail / resolve / IncidentDrawer` 已开始消费这条新主链
+- [x] `P2-S3` 已完成：`structured_document_delivery` 现已接入正式 `RoleHook` gate；治理文档与 closeout 会写 `artifact-capture.json`，closeout 还会额外写 `documentation-sync.json`，`REPLAY_REQUIRED_HOOKS` 也已能按持久化 terminal truth 幂等重放这两类 receipt
 
 ### 未完成
-- [ ] `P2-S3` 还没开始；`REPLAY_REQUIRED_HOOKS` 当前只覆盖 `workspace-managed source_code_delivery` 的 `worker_postrun / evidence_capture / git_closeout`，治理文档、review 包和 closeout 票还没接进同一套 hook gate / replay 框架
+- [ ] `P2-S4` 还没开始；`review_evidence` 票型仍未进入同一套 hook gate / replay，`run_ceo_shadow_for_trigger` 的其他直调路径和旧的 project-init governance/provider incident 噪音也还没统一收口
 
 ### 明确放弃
 - [ ] 暂无
@@ -492,6 +493,7 @@
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 本轮额外复验时仍会在 `project-init` workflow 上多带一条旧的 provider / auto-advance incident；当前没证据表明是 `P1-S2` 新回归，先继续留给 runtime/provider 历史测试收口
 - [ ] `P2-S1` 这轮只把 `TicketGraph` 真不可用接到了 `workflow_auto_advance` 的正式 incident 主链；其他直接调用 `run_ceo_shadow_for_trigger` 的路径暂时仍沿现状显式失败，留给后续恢复切片统一收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "hook or blocked_reason or incident" -q` 本轮验证时仍有 3 条旧的 `project-init` governance/provider incident 历史用例失败：`test_check_internal_checker_escalated_opens_incident_and_marks_dependency_stop`、`test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_breaker`、`test_employee_freeze_containment_opens_staffing_incident_for_executing_ticket`；当前看到的额外 incident 仍来自旧 `node_ceo_architecture_brief` provider / auto-advance 噪音，不是 `P2-S2` 新 gate 自己开的源码票 incident
+- [ ] `P2-S3` 这轮按最小边界只收了 `structured_document_delivery`；`ui_milestone_review / delivery_check_report / maker_checker_verdict` 这些 `review_evidence` 票型仍故意留在 gate 外，下一轮再按独立票型收口，避免把文档票和审批证据票混成同一个 hook 语义
 
 ---
 
@@ -586,6 +588,21 @@
 
 **当前处理：**  
 `先把它记成历史问题，继续按当前计划留给 runtime/provider 历史测试收口；本轮不顺手改 project-init governance/provider 老链，避免跨出 Hook 主方向。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
+
+### D-007
+**现象：**  
+`P2-S3` 已把治理文档和 closeout 接进正式 hook gate，但当前计划正文还没有单列 `P2-S4`；如果下一轮直接继续扩 review evidence 或 runtime/provider 恢复路径，续跑入口会只剩“当前快照”里的短说明。`
+
+**影响：**  
+`P2` 阶段还没结束，但主计划正文里当前只展开到 `P2-S3`；下一轮如果不先锁定 `P2-S4` 的边界，容易把 review evidence 收口和旧 runtime/provider 噪音清理混成同一轮。`
+
+**当前处理：**  
+`本轮先把顶部当前切片切到 \`P2-S4\`，并在“未完成”“当前快照”里明确下一轮先收 \`review_evidence\` gate，继续把 runtime/provider 老 incident 噪音留在独立未完成项。`
 
 **是否需要改架构文档：**  
 `no`
@@ -904,6 +921,39 @@
 **下一轮起手动作：**
 `从 P2-S3 继续，把 required hook gate 从 workspace-managed 源码票扩到下一类真实主线票型，并决定 runtime/provider 老 incident 噪音和 hook replay 的边界谁先收。`
 
+### Session `2026-04-15 / 11`
+**开始前判断：**
+- 当前阶段：`P2`
+- 当前切片：`P2-S3`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `structured_document_delivery` 接进正式 `RoleHook` gate：治理文档和 closeout 现在会写 `artifact-capture.json`
+- [x] 给 closeout 额外补 `documentation-sync.json`，并把 `REPLAY_REQUIRED_HOOKS` 扩到 `artifact_capture / documentation_sync`
+- [x] 给 `TICKET_COMPLETED` payload 补 `written_artifacts`，让文档票 replay 只读持久化 terminal truth，不从正文反推
+- [x] 把前端 `IncidentDrawer` 文案收正成票型无关口径，并同步后端 / 前端回归
+- [x] 更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_role_hooks.py -q` 通过（`10 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_project_workspace_hooks.py -q` 通过（`29 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "incident or hook or graph" -q` 通过（`3 passed, 8 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -q` 通过（`6 passed`）
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx` 通过（`3 passed`）
+- [x] `python3 -m py_compile backend/app/core/project_workspaces.py backend/app/core/role_hooks.py backend/app/core/ticket_handlers.py backend/tests/test_role_hooks.py backend/tests/test_project_workspace_hooks.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P2-S4` 还没开始；`review_evidence` 票型仍未接进正式 hook gate / replay
+- [ ] project-init governance/provider 老 incident 噪音仍未收口
+
+**下一轮起手动作：**
+`从 P2-S4 起手，先把 review evidence 票型按独立语义接进 hook gate / replay，再决定 runtime/provider 老 incident 噪音是否单列一个恢复切片。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -940,8 +990,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P2`
-- 当前切片：`P2-S3`
-- 当前状态：`P2-S2` 已完成；workspace-managed `source_code_delivery` 现在已经有正式 `RoleHook` registry、结构化 required hook gate、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` 幂等恢复，不再靠散点 receipt / validation 兜底
-- 最近完成：`TicketGraph` 会显式落 `REQUIRED_HOOK_PENDING:*`；`workflow_auto_advance` 会给缺 hook 的源码票正式开 incident 并去重；incident detail / resolve 和前端 `IncidentDrawer` 已补 replay 恢复动作
-- 当前阻塞：`P2-S3` 还没开始；当前 hook gate 只覆盖 workspace-managed 源码票；`run_ceo_shadow_for_trigger` 的其他直调路径和旧的 project-init governance/provider incident 噪音仍未统一收口`
-- 下一步：`继续 P2-S3，把同一套 hook gate / replay 协议扩到下一类真实主线票型，并决定 runtime/provider 老 incident 噪音的收口顺序`
+- 当前切片：`P2-S4`
+- 当前状态：`P2-S3` 已完成；`structured_document_delivery` 现在已经有正式 `artifact_capture / documentation_sync` hook receipt、结构化 required hook gate、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` 幂等恢复，不再只靠 schema / 写盘校验放行
+- 最近完成：`TICKET_COMPLETED` payload 现在会带 `written_artifacts`，治理文档和 closeout replay 只读持久化 terminal truth；前端 `IncidentDrawer` 已改成票型无关的 required hook 文案
+- 当前阻塞：`review_evidence` 票型仍未进入同一套 hook gate / replay；旧的 project-init governance/provider incident 噪音也还在宽口径回归桶里`
+- 下一步：`继续 P2-S4，把 review evidence 票型按独立 hook 语义接进正式 gate / replay，并继续把 runtime/provider 老 incident 噪音隔离到单独恢复切片`
