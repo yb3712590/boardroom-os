@@ -10524,6 +10524,238 @@ def test_dashboard_projection_exposes_graph_unavailable_without_legacy_blocked_f
     assert dashboard_data["ops_strip"]["blocked_nodes"] == 0
 
 
+def test_incident_detail_exposes_rebuild_ticket_graph_recovery_for_graph_unavailable_incident(client):
+    workflow_id = "wf_incident_graph_unavailable_detail"
+    incident_id = "inc_graph_unavailable_detail"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Incident detail should expose graph rebuild recovery.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": None,
+                "ticket_id": None,
+                "incident_type": "TICKET_GRAPH_UNAVAILABLE",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:TICKET_GRAPH_UNAVAILABLE:ceo_shadow_snapshot",
+                "source_component": "ceo_shadow_snapshot",
+                "source_stage": "ticket_graph_snapshot",
+                "error_class": "RuntimeError",
+                "error_message": "ticket graph unavailable from ceo snapshot",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:TICKET_GRAPH_UNAVAILABLE:ceo_shadow_snapshot",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["incident"]["incident_type"] == "TICKET_GRAPH_UNAVAILABLE"
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "REBUILD_TICKET_GRAPH",
+        "RESTORE_ONLY",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == "REBUILD_TICKET_GRAPH"
+
+
+def test_incident_resolve_can_rebuild_ticket_graph_when_graph_unavailable_incident_is_open(client, monkeypatch):
+    workflow_id = "wf_incident_graph_rebuild"
+    incident_id = "inc_graph_rebuild"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Incident resolve should support graph rebuild.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": None,
+                "ticket_id": None,
+                "incident_type": "TICKET_GRAPH_UNAVAILABLE",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:TICKET_GRAPH_UNAVAILABLE:ceo_shadow_snapshot",
+                "source_component": "ceo_shadow_snapshot",
+                "source_stage": "ticket_graph_snapshot",
+                "error_class": "RuntimeError",
+                "error_message": "ticket graph unavailable from ceo snapshot",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:TICKET_GRAPH_UNAVAILABLE:ceo_shadow_snapshot",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    import app.core.ticket_handlers as ticket_handlers_module
+
+    rebuild_calls: list[str] = []
+
+    def _rebuild_ticket_graph(*args, **kwargs):
+        rebuild_calls.append("called")
+        return {"graph_snapshot": "ok"}
+
+    monkeypatch.setattr(ticket_handlers_module, "build_ticket_graph_snapshot", _rebuild_ticket_graph)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="REBUILD_TICKET_GRAPH",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert rebuild_calls == ["called"]
+    assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
+    assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "REBUILD_TICKET_GRAPH"
+
+
+def test_incident_resolve_rejects_rebuild_ticket_graph_when_snapshot_still_unavailable(client, monkeypatch):
+    workflow_id = "wf_incident_graph_rebuild_reject"
+    incident_id = "inc_graph_rebuild_reject"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Incident resolve should fail closed when graph rebuild still fails.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": None,
+                "ticket_id": None,
+                "incident_type": "TICKET_GRAPH_UNAVAILABLE",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:TICKET_GRAPH_UNAVAILABLE:ceo_shadow_snapshot",
+                "source_component": "ceo_shadow_snapshot",
+                "source_stage": "ticket_graph_snapshot",
+                "error_class": "RuntimeError",
+                "error_message": "ticket graph unavailable from ceo snapshot",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:TICKET_GRAPH_UNAVAILABLE:ceo_shadow_snapshot",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    import app.core.ticket_handlers as ticket_handlers_module
+
+    def _raise_graph_unavailable(*args, **kwargs):
+        raise RuntimeError("ticket graph unavailable during rebuild")
+
+    monkeypatch.setattr(ticket_handlers_module, "build_ticket_graph_snapshot", _raise_graph_unavailable)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="REBUILD_TICKET_GRAPH",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "REJECTED"
+    assert "ticket graph unavailable during rebuild" in resolve_response.json()["reason"]
+    assert incident_response.json()["data"]["incident"]["status"] == "OPEN"
+    assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "OPEN"
+
+
 def test_visual_milestone_result_submit_routes_to_checker_ticket_before_board_review(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client)

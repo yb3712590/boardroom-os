@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P2`
-> 当前切片：`P2-S1`
-> 最后更新：`2026-04-14 19:42`
+> 当前切片：`P2-S2`
+> 最后更新：`2026-04-14 21:52`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -79,10 +79,10 @@
 ## 6. 当前阶段
 
 ### 当前阶段编号
-`P1`
+`P2`
 
 ### 当前阶段目标
-先把 TicketGraph、legacy adapter 和 ready/blocked 读面收成正式协议，让 controller / snapshot 不再继续直拼旧 ticket/node 语义。
+先把 Incident、Recovery 和 Hook 门禁入口收成正式协议，让图故障和后置动作不再只停在读面提示或散点回执。
 
 ### 当前阶段入口条件
 - [x] 当前代码现实已核对
@@ -92,8 +92,10 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [x] 本阶段所有必做切片完成
-- [x] 每个切片都有最小验证证据
+- [ ] 本阶段所有必做切片完成
+- [ ] 图故障、runtime/provider 故障和 Hook 门禁都已进入正式 incident / recovery 主链
+- [ ] required hook gate 已成为节点对下游开放的正式条件
+- [x] 每个已完成切片都有最小验证证据
 - [x] 涉及的运行文档已同步
 - [x] 未完成项已明确转移到下阶段或阻塞区
 - [x] `doc/history/memory-log.md` 已补记
@@ -378,6 +380,47 @@
 
 **状态：** `done`
 
+### 切片 `P2-S1`
+**名称：**  
+`TicketGraph 故障显式化与恢复入口`
+
+**现实问题：**  
+`graph_unavailable` 之前只停在 dashboard 的只读状态；`workflow_auto_advance` 命中 `build_ceo_shadow_snapshot()` 异常时会直接中断，不会留下正式 incident、恢复动作和门禁轨迹。`
+
+**对应架构文档：**
+- `doc/new-architecture/05-incident-idempotency-and-recovery.md`
+- `doc/new-architecture/06-role-hook-system.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/14-graph-health-monitor.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 给 `TicketGraph` 真不可用补正式 `TICKET_GRAPH_UNAVAILABLE` incident 和去重指纹
+  - [x] 把 `workflow_auto_advance` 接到这条 incident 主链，禁止继续静默推进
+  - [x] 给 incident detail / resolve / Incident Drawer 补最小恢复动作 `REBUILD_TICKET_GRAPH`
+- 不做什么：
+  - [x] 不做正式 `RoleHook` registry
+  - [x] 不做 `GraphHealthMonitor` 全量落地
+  - [x] 不改 dashboard GET 为写路径，也不在读接口里开 incident
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] `workflow_auto_advance` 命中图快照异常时会打开正式 incident，并且同指纹不重复开单
+- [x] incident detail / resolve 已补 `REBUILD_TICKET_GRAPH`，重建失败会 reject，不会静默关 breaker
+- [x] 前端 `IncidentDrawer` 已补图故障说明和默认恢复动作
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
 ---
 
 ## 8. 任务清单核对区
@@ -392,9 +435,10 @@
 - [x] `P1-S1` 已完成：`TicketGraph` 最小合同和 legacy adapter 已落地；`ceo_snapshot / workflow_controller` 现在会读正式图摘要，invalid legacy dependency 会显式 blocked，graph version 也已把 `WORKFLOW_CREATED` 算进正式事件序列
 - [x] `P1-S2` 已完成：`TicketGraphIndexSummary` 现已补齐 `in_flight / critical_path / blocked_reasons`；`workflow_controller` 和 dashboard 主读面已开始复用同一套图索引
 - [x] `P1-S3` 已完成：`Dependency Inspector` 现已改成直接消费 `TicketGraph` 边和索引，`dependency_ticket_ids[] / graph_summary` 已成为正式只读合同；dashboard 的 `blocked_node_ids` legacy fallback 已移除，图不可用时改成显式 `blocked_node_source=graph_unavailable`
+- [x] `P2-S1` 已完成：`workflow_auto_advance` 命中 `build_ceo_shadow_snapshot()` 的图不可用异常时，现已打开正式 `TICKET_GRAPH_UNAVAILABLE` incident；incident detail / resolve 与 `IncidentDrawer` 已补 `REBUILD_TICKET_GRAPH`
 
 ### 未完成
-- [ ] `P2-S1` 还没展开正文；下一轮从恢复与 Hook 收口的首个正式切片起手，并把 `P2` 切片内容补进主计划
+- [ ] `P2-S2` 还没开始；现有 `worker-preflight / worker-postrun / evidence-capture / git-closeout` 仍是散点 receipt / validation，还没收成正式 `RoleHook` registry 和 required hook gate
 
 ### 明确放弃
 - [ ] 暂无
@@ -405,7 +449,7 @@
 - [ ] 宽口径 `board_approve` 回归桶当前仍会被一组旧的 governance/provider auto-advance 用例打断：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION` incident；这组不是本轮 stale-guard 主链回归，但下一轮要和 runtime/provider 历史测试一起收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 本轮额外复验时仍会在 `project-init` workflow 上多带一条旧的 provider / auto-advance incident；当前没证据表明是 `P1-S2` 新回归，先继续留给 runtime/provider 历史测试收口
-- [ ] `Dependency Inspector / dashboard` 这轮已去掉 silent legacy fallback；后续如果 `TicketGraph` 真不可用，必须走显式 incident / recovery，不允许再补第二套 projection 兜底
+- [ ] `P2-S1` 这轮只把 `TicketGraph` 真不可用接到了 `workflow_auto_advance` 的正式 incident 主链；其他直接调用 `run_ceo_shadow_for_trigger` 的路径暂时仍沿现状显式失败，留给后续恢复切片统一收口
 
 ---
 
@@ -469,7 +513,7 @@
 `P1-S2` 已经把 controller 和 dashboard 主读面拉到正式图索引上，但 dashboard 还没完全达到“只认图真相”的纯口径；后续 `P1-S3` 需要先决定 active workflow / blocked scope 的正式边界，再移除这层兼容逻辑。`
 
 **当前处理：**  
-`已在 P1-S3 收口：dashboard 不再回退 legacy blocked-node 读面；active workflow 的图不可用时，当前只显式返回 \`blocked_node_source=graph_unavailable\` 和空 blocked 列表，等 P2 再把它升级成 incident / recovery 主链。`
+`已在 P2-S1 收口：dashboard 继续保持只读显式状态 \`blocked_node_source=graph_unavailable\`；真正的 incident / recovery 主链改由 \`workflow_auto_advance -> TICKET_GRAPH_UNAVAILABLE -> REBUILD_TICKET_GRAPH\` 接管，不再补第二套 projection fallback。`
 
 **是否需要改架构文档：**  
 `no`
@@ -484,12 +528,12 @@
 `本轮可以把顶部当前阶段切到 \`P2\`，但下一轮正式进入恢复与 Hook 收口前，还要先把 P2 首个切片正文补进主计划，否则续跑入口不完整。`
 
 **当前处理：**  
-`本轮先把顶部元信息、阶段状态、任务核对区和当前快照切到 \`P2 / P2-S1\`，不扩主计划结构；下一轮起手先补 P2 首个切片正文，再继续实现。`
+`P2-S1 正文、本轮验证和运行文档同步已补齐；后续继续从 \`P2-S2\` 起手。`
 
 **是否需要改架构文档：**  
 `no`
 
-**状态：** `open`
+**状态：** `closed`
 
 ---
 
@@ -740,6 +784,37 @@
 **下一轮起手动作：**
 `切到 P2-S1，先把恢复与 Hook 收口的首个切片正文补进主计划，再继续实现 fail-visible 到 incident / recovery 的正式接线。`
 
+### Session `2026-04-14 / 09`
+**开始前判断：**
+- 当前阶段：`P2`
+- 当前切片：`P2-S1`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把主计划的 `## 6` 和 `P2-S1` 正文补齐到真实 `P2 / P2-S1` 续跑状态
+- [x] 新增 `TICKET_GRAPH_UNAVAILABLE` incident 与 `REBUILD_TICKET_GRAPH` 恢复动作，`workflow_auto_advance` 命中图不可用时会正式开单并停止静默推进
+- [x] 给 incident detail / resolve 和前端 `IncidentDrawer` 补齐图故障说明、恢复动作和 fail-closed 恢复校验
+- [x] 同步本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_unavailable or rebuild_ticket_graph" -q` 通过（`4 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_workflow_autopilot.py -k "graph_unavailable" -q` 通过（`1 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q` 通过（`6 passed`）
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx` 通过（`2 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m py_compile backend/app/contracts/commands.py backend/app/core/constants.py backend/app/core/ticket_handlers.py backend/app/core/workflow_auto_advance.py backend/app/core/projections.py backend/tests/test_api.py backend/tests/test_workflow_autopilot.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P2-S2` 还没开始；Hook 仍是散点 receipt / validation，尚未收成正式 `RoleHook` registry 和 required hook gate
+- [ ] `TICKET_GRAPH_UNAVAILABLE` 这轮只接到 `workflow_auto_advance`；其他直接调用 `run_ceo_shadow_for_trigger` 的路径还没统一 incident 化
+
+**下一轮起手动作：**
+`继续 P2-S2，先把现有 worker receipts 和 validation 收成最小 RoleHook registry，再把 required hook gate 接进节点放行条件。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -776,8 +851,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P2`
-- 当前切片：`P2-S1`
-- 当前状态：`P1-S3 已完成；Dependency Inspector 和 dashboard blocked 读面都已切到正式 TicketGraph，只保留显式 graph-unavailable 状态，不再 silent fallback`
-- 最近完成：`Dependency Inspector` 已补 `dependency_ticket_ids[] / graph_summary`，dashboard 已补 `blocked_node_source`；后端 API 回归、`test_ticket_graph.py`、前端 `App.test.tsx` 和 build 都已通过`
-- 当前阻塞：`P2-S1` 正文还没写进主计划；`TicketGraph` 真不可用时还只是显式状态，尚未升级成 incident / recovery 主链；宽口径 governance/provider 与 closeout/approval 历史回归仍是旧失败`
-- 下一步：`先补 P2-S1 主计划正文，再把 graph-unavailable 这类 fail-visible 状态接进正式恢复与 Hook 收口主线`
+- 当前切片：`P2-S2`
+- 当前状态：P2-S1 已完成；`graph_unavailable` 不再只停在 dashboard 读面，`workflow_auto_advance` 命中图快照异常时会打开正式 `TICKET_GRAPH_UNAVAILABLE` incident，并暴露 `REBUILD_TICKET_GRAPH` 恢复动作
+- 最近完成：`incident detail / resolve` 已补图故障恢复入口；前端 `IncidentDrawer` 已补图故障说明；后端 API / autopilot / ticket graph 回归和前端组件测试都已通过
+- 当前阻塞：`P2-S2` 还没开始；现有 Hook 仍是散点 receipt / validation，没有正式 `RoleHook` registry；`run_ceo_shadow_for_trigger` 的其他直调路径还没统一 graph incident 化；宽口径 governance/provider 与 closeout/approval 历史回归仍是旧失败`
+- 下一步：`继续 P2-S2，把 worker receipts 和 validation 收成最小 RoleHook registry，并把 required hook gate 接进节点放行条件`

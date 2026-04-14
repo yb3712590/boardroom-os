@@ -85,4 +85,36 @@ describe('IncidentDrawer', () => {
       screen.getByText(/This is not a provider outage. The required input art:\/\/runtime\/tkt_closeout\/delivery-closeout-package\.json/i),
     ).toBeInTheDocument()
   })
+
+  it('describes ticket graph unavailable incidents and defaults to rebuild recovery', () => {
+    render(
+      <IncidentDrawer
+        isOpen={true}
+        loading={false}
+        error={null}
+        submitting={false}
+        onClose={vi.fn()}
+        onResolve={vi.fn().mockResolvedValue(undefined)}
+        incidentData={{
+          incident: {
+            ...buildIncidentData().incident,
+            incident_id: 'inc_graph_001',
+            incident_type: 'TICKET_GRAPH_UNAVAILABLE',
+            provider_id: null,
+            payload: {
+              source_component: 'ceo_shadow_snapshot',
+              source_stage: 'ticket_graph_snapshot',
+              error_class: 'RuntimeError',
+              error_message: 'ticket graph unavailable from ceo snapshot',
+            },
+          },
+          available_followup_actions: ['REBUILD_TICKET_GRAPH', 'RESTORE_ONLY'],
+          recommended_followup_action: 'REBUILD_TICKET_GRAPH',
+        }}
+      />,
+    )
+
+    expect(screen.getByText(/ticket graph snapshot could not be rebuilt/i)).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toHaveValue('REBUILD_TICKET_GRAPH')
+  })
 })

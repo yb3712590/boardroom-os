@@ -23,6 +23,10 @@
 
 ### 2026-04-14
 
+- `P2-S1` 这轮已完成：`graph_unavailable` 不再只停在 dashboard 读面；`workflow_auto_advance` 命中 `build_ceo_shadow_snapshot()` 的图快照异常时，会打开正式 `TICKET_GRAPH_UNAVAILABLE` incident，并按 `workflow_id + incident_type + source_component` 去重
+- incident 恢复入口这轮已补 `REBUILD_TICKET_GRAPH`：incident detail 会优先推荐该动作，`incident-resolve` 会先同步重建 `TicketGraph`，成功后才关 breaker，失败时 reject 并保持 incident OPEN
+- 前端 `IncidentDrawer` 这轮已补图故障说明和默认恢复动作；本轮新增并实跑通过的回归包括：`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_unavailable or rebuild_ticket_graph" -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_workflow_autopilot.py -k "graph_unavailable" -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q`、`cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx`
+- 下一轮从 `P2-S2` 起手：先把 `worker-preflight / worker-postrun / evidence-capture / git-closeout` 这些散点 receipt / validation 收成最小 `RoleHook` registry 和 required hook gate
 - `P1-S3` 这轮已完成：`Dependency Inspector` 现在直接消费 `TicketGraph` 边和索引，正式读面新增 `dependency_ticket_ids[] / graph_summary`，不再用 legacy `parent_ticket_id` 自己拼依赖解释
 - dashboard 的 blocked 读面这轮已去掉 silent legacy fallback：active workflow 正常时只认 `TicketGraph.index_summary.blocked_node_ids`；图不可用时显式返回 `blocked_node_source=graph_unavailable` 和空 blocked 列表，后续 P2 再接 incident / recovery
 - 本轮新增并实跑通过的回归包括：`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "dependency_inspector or dashboard_projection_reuses_ticket_graph_indexes_for_blocked_and_critical_path" -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q`、`cd frontend && npm run test:run -- src/App.test.tsx`、`cd frontend && npm run build`

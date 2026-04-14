@@ -64,6 +64,7 @@ from app.core.constants import (
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
+    INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
     INCIDENT_STATUS_CLOSED,
     INCIDENT_STATUS_OPEN,
     INCIDENT_STATUS_RECOVERING,
@@ -155,6 +156,7 @@ from app.core.project_workspaces import (
     write_git_closeout_receipt,
     write_worker_postrun_receipt,
 )
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.ticket_artifacts import (
     PreparedTicketArtifact,
     cleanup_materialized_artifacts,
@@ -1784,6 +1786,13 @@ def _resolve_repeated_failure_incident_fingerprint(
     return f"{workflow_id}:{node_id}:repeat-failure:{failure_fingerprint}"
 
 
+def _resolve_ticket_graph_unavailable_incident_fingerprint(
+    workflow_id: str,
+    source_component: str,
+) -> str:
+    return f"{workflow_id}:{INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE}:{source_component}"
+
+
 def _resolve_provider_id_for_ticket(
     repository: ControlPlaneRepository,
     connection,
@@ -2887,6 +2896,87 @@ def _open_provider_incident(
     return incident_id
 
 
+def open_ticket_graph_unavailable_incident(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    source_component: str,
+    error: Exception,
+    idempotency_key_base: str,
+    actor_id: str = "autopilot-controller",
+) -> str:
+    command_id = new_prefixed_id("cmd")
+    occurred_at = now_local()
+    fingerprint = _resolve_ticket_graph_unavailable_incident_fingerprint(workflow_id, source_component)
+
+    with repository.transaction() as connection:
+        existing_row = connection.execute(
+            """
+            SELECT incident_id
+            FROM incident_projection
+            WHERE workflow_id = ? AND fingerprint = ? AND status = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            LIMIT 1
+            """,
+            (workflow_id, fingerprint, INCIDENT_STATUS_OPEN),
+        ).fetchone()
+        if existing_row is not None:
+            return str(existing_row["incident_id"])
+
+        incident_id = new_prefixed_id("inc")
+        incident_payload = {
+            "incident_id": incident_id,
+            "ticket_id": None,
+            "node_id": None,
+            "incident_type": INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
+            "status": INCIDENT_STATUS_OPEN,
+            "severity": "high",
+            "fingerprint": fingerprint,
+            "source_component": source_component,
+            "source_stage": "ticket_graph_snapshot",
+            "error_class": error.__class__.__name__,
+            "error_message": str(error),
+        }
+        incident_event = repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:incident-opened:{source_component}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload=incident_payload,
+            occurred_at=occurred_at,
+        )
+        if incident_event is None:
+            raise RuntimeError("Ticket graph unavailable incident opening idempotency conflict.")
+
+        breaker_event = repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:{source_component}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+                "fingerprint": fingerprint,
+            },
+            occurred_at=occurred_at,
+        )
+        if breaker_event is None:
+            raise RuntimeError("Ticket graph unavailable circuit breaker opening idempotency conflict.")
+
+        repository.refresh_projections(connection)
+        return incident_id
+
+
 def _dispatch_sort_key(ticket: dict[str, Any]) -> tuple[int, datetime, str]:
     priority_rank = {
         "critical": 0,
@@ -3785,6 +3875,31 @@ def handle_incident_resolve(
                     received_at=received_at,
                     incident_id=payload.incident_id,
                     reason=str(exc),
+                )
+        elif payload.followup_action == IncidentFollowupAction.REBUILD_TICKET_GRAPH:
+            if incident["incident_type"] != INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=(
+                        f"Incident {payload.incident_id} does not support ticket graph rebuild recovery."
+                    ),
+                )
+            try:
+                build_ticket_graph_snapshot(
+                    repository,
+                    workflow_id,
+                    connection=connection,
+                )
+            except Exception as exc:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=f"Ticket graph rebuild failed: {exc}",
                 )
 
         resolution_payload = {

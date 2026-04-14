@@ -40,6 +40,9 @@
 - 2026-04-14 `graph_version` 这轮也已继续往正式图真相靠：`WORKFLOW_CREATED` 现已纳入 graph mutation event 序列，空图 workflow 也能拿到稳定 `gv_<int>` 版本
 - 2026-04-14 本轮已完成 `P1-S2`：`TicketGraphIndexSummary` 现已补齐 `in_flight_ticket_ids / in_flight_node_ids / critical_path_node_ids / blocked_reasons`，controller 的 runtime gate 与 `ceo_snapshot.ticket_summary.ready_count` 继续共用同一套图索引
 - 2026-04-14 本轮已完成 `P1-S3`：`Dependency Inspector` 现已正式消费 `TicketGraph` 边和索引，依赖读面补上 `dependency_ticket_ids[] / graph_summary`；dashboard 的 `pipeline_summary.blocked_node_ids` 不再回退 legacy blocked-node，图不可用时会显式返回 `blocked_node_source=graph_unavailable`
+- 2026-04-14 本轮已完成 `P2-S1`：`graph_unavailable` 不再只停在 dashboard 的只读状态；`workflow_auto_advance` 命中 `build_ceo_shadow_snapshot()` 的图快照异常时，现在会打开正式 `TICKET_GRAPH_UNAVAILABLE` incident，并按 `workflow_id + incident_type + source_component` 去重
+- 2026-04-14 本轮还把图故障恢复入口接到现有 incident 主链：incident detail 现已暴露 `REBUILD_TICKET_GRAPH / RESTORE_ONLY`，`incident-resolve` 会先同步重建 `TicketGraph`，成功后才关 breaker 并进入 `RECOVERING`，失败时直接 reject，不做静默恢复
+- 2026-04-14 前端 `IncidentDrawer` 这轮也已补图故障说明和默认恢复动作；本轮实跑通过 `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_unavailable or rebuild_ticket_graph" -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_workflow_autopilot.py -k "graph_unavailable" -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q`、`cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx`
 - 2026-04-14 本轮宽口径 `board_approve` 回归桶仍会命中一组旧的 governance/provider auto-advance 用例：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION`；本轮 stale-guard 主链子集已通过，这组继续留给 runtime/provider 历史测试收口
 - 2026-04-14 额外复验了一条更宽的 closeout API 老用例：`./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 在本 worktree 和原工作区同提交都会因为拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归
 - 2026-04-14 额外复验 `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 时，`project-init` workflow 仍会多带一条旧的 provider / auto-advance incident；当前先继续留给 runtime/provider 历史测试收口
@@ -80,7 +83,7 @@
 - 本轮额外补了一条测试运行真相：当仓库位于 Git linked worktree 下时，`backend/tests/conftest.py` 现在会自动把 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 改到系统临时目录，避免测试里再创建项目 worktree 时撞上 Git 的 `$GIT_DIR too big`；Windows 下 `pytest` 仍建议继续显式带 repo 内 `--basetemp`
 - 本轮还补了一条 `P0-S1` 验证真相：`./backend/.venv/bin/pytest backend/tests/test_repository.py -k "initialize" -q` 当前已通过；`./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or project_init" -q` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例，当前环境未配 provider 时会报 `PROVIDER_REQUIRED_UNAVAILABLE`
 - 当前 blocker 仍集中在两块：真实 provider 长测还没在这台机器上重跑通过，`test_api.py / test_scheduler_runner.py` 里那批被 fail-closed 打断的历史测试也还没整体收口
-- 当前 `P1` 三个正式切片都已完成：`P1-S1` 落 TicketGraph 最小合同，`P1-S2` 把 controller / dashboard 主读面接到正式图索引，`P1-S3` 把 `Dependency Inspector` 和 dashboard blocked 兼容层一起收口到图真相；下一轮转 `P2-S1`
+- 当前 `P2-S1` 已完成：图不可用现在会正式开 `TICKET_GRAPH_UNAVAILABLE` incident，并暴露 `REBUILD_TICKET_GRAPH` 恢复动作；下一轮转 `P2-S2`，把现有 worker receipts / validation 收成最小 `RoleHook` registry 和 required hook gate
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

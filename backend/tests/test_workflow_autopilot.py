@@ -460,6 +460,71 @@ def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_al
     assert "source_code_delivery" in observed_schema_refs
 
 
+def test_autopilot_auto_advance_opens_ticket_graph_unavailable_incident_and_stops(
+    client,
+    monkeypatch,
+):
+    workflow_id = "wf_autopilot_graph_unavailable"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot graph incident should be explicit.",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+
+    import app.core.workflow_auto_advance as workflow_auto_advance_module
+
+    def _raise_graph_unavailable(*args, **kwargs):
+        raise RuntimeError("ticket graph unavailable from ceo snapshot")
+
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "build_ceo_shadow_snapshot",
+        _raise_graph_unavailable,
+    )
+
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="test-autopilot:graph-unavailable",
+        max_steps=2,
+        max_dispatches=10,
+    )
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="test-autopilot:graph-unavailable-repeat",
+        max_steps=2,
+        max_dispatches=10,
+    )
+
+    open_incidents = [item for item in repository.list_open_incidents() if item["workflow_id"] == workflow_id]
+    incident_opened_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["workflow_id"] == workflow_id and event["event_type"] == EVENT_INCIDENT_OPENED
+    ]
+    breaker_opened_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["workflow_id"] == workflow_id and event["event_type"] == EVENT_CIRCUIT_BREAKER_OPENED
+    ]
+
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["incident_type"] == "TICKET_GRAPH_UNAVAILABLE"
+    assert open_incidents[0]["payload"]["source_component"] == "ceo_shadow_snapshot"
+    assert open_incidents[0]["payload"]["source_stage"] == "ticket_graph_snapshot"
+    assert open_incidents[0]["payload"]["error_class"] == "RuntimeError"
+    assert "ticket graph unavailable" in open_incidents[0]["payload"]["error_message"]
+    assert len(incident_opened_events) == 1
+    assert len(breaker_opened_events) == 1
+    assert open_incidents[0]["status"] == "OPEN"
+    assert open_incidents[0]["circuit_breaker_state"] == "OPEN"
+
+
 def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id = "wf_autopilot_build_rework_cap"

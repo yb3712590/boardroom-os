@@ -99,6 +99,7 @@ from app.core.constants import (
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
+    INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_CANCEL_REQUESTED,
     NODE_STATUS_COMPLETED,
@@ -2215,7 +2216,13 @@ def build_incident_detail_projection(
     incident_type = str(incident["incident_type"])
     available_followup_actions = [IncidentFollowupAction.RESTORE_ONLY.value]
     recommended_followup_action: str | None = IncidentFollowupAction.RESTORE_ONLY.value
-    if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
+    if incident_type == INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
+        available_followup_actions = [
+            IncidentFollowupAction.REBUILD_TICKET_GRAPH.value,
+            IncidentFollowupAction.RESTORE_ONLY.value,
+        ]
+        recommended_followup_action = IncidentFollowupAction.REBUILD_TICKET_GRAPH.value
+    elif incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value
         )

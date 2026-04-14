@@ -19,6 +19,8 @@ function formatIncidentLabel(value: string) {
 
 function describeIncident(incidentType: string) {
   switch (incidentType) {
+    case 'TICKET_GRAPH_UNAVAILABLE':
+      return 'The ticket graph snapshot could not be rebuilt, so controller recovery is blocked until the graph compiles again.'
     case 'RUNTIME_TIMEOUT_ESCALATION':
       return 'Execution timed out repeatedly and the circuit breaker is now open.'
     case 'REPEATED_FAILURE_ESCALATION':

@@ -10,10 +10,11 @@ from app.core.constants import (
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
+    INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
     PROVIDER_PAUSE_FAILURE_KINDS,
 )
 from app.core.runtime import run_leased_ticket_runtime
-from app.core.ticket_handlers import run_scheduler_tick
+from app.core.ticket_handlers import open_ticket_graph_unavailable_incident, run_scheduler_tick
 from app.core.workflow_controller import workflow_controller_effect
 from app.core.workflow_autopilot import ensure_workflow_atomic_chain_report, workflow_uses_ceo_board_delegate
 from app.db.repository import ControlPlaneRepository
@@ -84,6 +85,8 @@ def _recommended_incident_followup_action(
     incident: dict[str, object],
 ) -> IncidentFollowupAction:
     incident_type = str(incident.get("incident_type") or "")
+    if incident_type == INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
+        return IncidentFollowupAction.REBUILD_TICKET_GRAPH
     if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
         return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
     if incident_type == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
@@ -114,6 +117,8 @@ def _maybe_auto_resolve_open_incident(
     )
     if incident is None:
         return False
+    if str(incident.get("incident_type") or "") == INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
+        return False
 
     from app.core.ticket_handlers import handle_incident_resolve
 
@@ -141,6 +146,11 @@ def _maybe_write_autopilot_chain_report(
     ensure_workflow_atomic_chain_report(repository, workflow_id=workflow_id)
 
 
+def _is_ticket_graph_unavailable_error(error: Exception) -> bool:
+    message = str(error).strip().lower()
+    return "graph" in message and "unavailable" in message
+
+
 def auto_advance_workflow_to_next_stop(
     repository: ControlPlaneRepository,
     *,
@@ -153,12 +163,24 @@ def auto_advance_workflow_to_next_stop(
     effective_max_dispatches = max_dispatches or settings.scheduler_max_dispatches
     for step_index in range(max_steps):
         _maybe_write_autopilot_chain_report(repository, workflow_id=workflow_id)
-        snapshot = build_ceo_shadow_snapshot(
-            repository,
-            workflow_id=workflow_id,
-            trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
-            trigger_ref=f"{idempotency_key_prefix}:{step_index}:controller-probe",
-        )
+        try:
+            snapshot = build_ceo_shadow_snapshot(
+                repository,
+                workflow_id=workflow_id,
+                trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+                trigger_ref=f"{idempotency_key_prefix}:{step_index}:controller-probe",
+            )
+        except Exception as exc:
+            if not _is_ticket_graph_unavailable_error(exc):
+                raise
+            open_ticket_graph_unavailable_incident(
+                repository,
+                workflow_id=workflow_id,
+                source_component="ceo_shadow_snapshot",
+                error=exc,
+                idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:graph-unavailable",
+            )
+            return
         if (
             workflow_controller_effect(snapshot)
             in {"GOVERNANCE_REQUIRED", "ARCHITECT_REQUIRED", "MEETING_REQUIRED", "STAFFING_REQUIRED"}
