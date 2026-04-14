@@ -95,6 +95,7 @@ from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_OPEN,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
+    INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
@@ -994,13 +995,15 @@ def build_dependency_inspector_projection(
     def _reason_priority(reason_code: str) -> tuple[int, str]:
         if reason_code == "GRAPH_REDUCTION_ISSUE":
             return (0, reason_code)
-        if reason_code == "INCIDENT_OPEN":
+        if reason_code.startswith("REQUIRED_HOOK_PENDING:"):
             return (1, reason_code)
-        if reason_code == "BOARD_REVIEW_OPEN":
+        if reason_code == "INCIDENT_OPEN":
             return (2, reason_code)
-        if reason_code.startswith("EXPLICIT_BLOCKING_REASON:"):
+        if reason_code == "BOARD_REVIEW_OPEN":
             return (3, reason_code)
-        return (4, reason_code)
+        if reason_code.startswith("EXPLICIT_BLOCKING_REASON:"):
+            return (4, reason_code)
+        return (5, reason_code)
 
     def _resolve_block_reason(ticket_id: str, node_id: str) -> str:
         graph_node = graph_node_by_ticket_id.get(ticket_id)
@@ -2222,6 +2225,12 @@ def build_incident_detail_projection(
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
         recommended_followup_action = IncidentFollowupAction.REBUILD_TICKET_GRAPH.value
+    elif incident_type == INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
+        available_followup_actions = [
+            IncidentFollowupAction.REPLAY_REQUIRED_HOOKS.value,
+            IncidentFollowupAction.RESTORE_ONLY.value,
+        ]
+        recommended_followup_action = IncidentFollowupAction.REPLAY_REQUIRED_HOOKS.value
     elif incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value

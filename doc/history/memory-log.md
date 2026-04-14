@@ -21,6 +21,15 @@
 
 ## Recent Memory
 
+### 2026-04-15
+
+- `P2-S2` 这轮已完成：新增 `backend/app/core/role_hooks.py`，把最小 `RoleHook` registry、结构化 gate result、缺 hook 稳定指纹、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery 收成单点协议；当前先只覆盖 `workspace-managed source_code_delivery`
+- `TicketGraph` 这轮已开始显式消费 hook gate：源码票缺 `worker_postrun / evidence_capture / git_closeout` 任一 required hook 时，会落 `REQUIRED_HOOK_PENDING:*`，不再把“票已提交”误当成“节点已对下游开放”
+- `workflow_auto_advance` 这轮也已接上这条新主链：缺 hook 的源码票会被正式开成 `REQUIRED_HOOK_GATE_BLOCKED`，并按 `workflow_id + ticket_id + node_id + terminal_event_ref + sorted(missing_hook_ids)` 去重；恢复时 `incident-resolve` 会基于持久化 terminal truth 幂等补写缺失 receipt，不能补就 reject 并保持 incident OPEN
+- 前端 `IncidentDrawer` 这轮已补 required hook gate 说明和默认 `REPLAY_REQUIRED_HOOKS` 动作；本轮实跑通过 `./backend/.venv/bin/pytest backend/tests/test_role_hooks.py -q`、`./backend/.venv/bin/pytest backend/tests/test_project_workspace_hooks.py -q`、`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "incident or hook or graph" -q`、`./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -q`、`cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx`
+- `./backend/.venv/bin/pytest backend/tests/test_api.py -k "hook or blocked_reason or incident" -q` 这轮仍有 3 条旧的 `project-init` governance/provider incident 历史用例失败；当前额外 incident 仍来自旧 `node_ceo_architecture_brief` provider / auto-advance 噪音，先继续留给 runtime/provider 历史测试收口，不算 `P2-S2` 新 gate 自己的回归
+- 下一轮从 `P2-S3` 起手：优先把同一套 hook gate / replay 协议扩到下一类真实主线票型，再决定旧的 project-init governance/provider incident 噪音与其他直调 `run_ceo_shadow_for_trigger` 路径谁先收
+
 ### 2026-04-14
 
 - `P2-S1` 这轮已完成：`graph_unavailable` 不再只停在 dashboard 读面；`workflow_auto_advance` 命中 `build_ceo_shadow_snapshot()` 的图快照异常时，会打开正式 `TICKET_GRAPH_UNAVAILABLE` incident，并按 `workflow_id + incident_type + source_component` 去重

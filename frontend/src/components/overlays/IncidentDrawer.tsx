@@ -21,6 +21,8 @@ function describeIncident(incidentType: string) {
   switch (incidentType) {
     case 'TICKET_GRAPH_UNAVAILABLE':
       return 'The ticket graph snapshot could not be rebuilt, so controller recovery is blocked until the graph compiles again.'
+    case 'REQUIRED_HOOK_GATE_BLOCKED':
+      return 'Required RESULT_ACCEPTED hook receipts are missing, so the source-delivery node stays fail-closed until the missing hooks are replayed from persisted runtime truth.'
     case 'RUNTIME_TIMEOUT_ESCALATION':
       return 'Execution timed out repeatedly and the circuit breaker is now open.'
     case 'REPEATED_FAILURE_ESCALATION':

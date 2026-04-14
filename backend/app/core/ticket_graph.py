@@ -15,6 +15,7 @@ from app.core.output_schemas import (
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
 )
+from app.core.role_hooks import HookGateStatus, evaluate_ticket_required_hook_gate
 from app.core.versioning import resolve_workflow_graph_version
 
 if TYPE_CHECKING:
@@ -336,11 +337,19 @@ def build_ticket_graph_snapshot(
             continue
         ticket_status = str(ticket_projection.get("status") or "").strip()
         node_status = str((node_projection_by_node_id.get(node_id) or {}).get("status") or "").strip()
+        created_spec = created_specs_by_ticket_id.get(latest_ticket_id) or {}
         blocking_reason_code = str(
             ticket_projection.get("blocking_reason_code")
             or (node_projection_by_node_id.get(node_id) or {}).get("blocking_reason_code")
             or ""
         ).strip()
+        hook_gate_result = evaluate_ticket_required_hook_gate(
+            repository,
+            ticket=ticket_projection,
+            created_spec=created_spec,
+            connection=connection,
+        )
+        hook_gate_blocked = hook_gate_result.status == HookGateStatus.BLOCKED
         blocked_by_graph = latest_ticket_id in blocked_ticket_ids_from_issues or node_id in blocked_node_ids_from_issues
         is_board_review_open = (
             ticket_status == "BLOCKED_FOR_BOARD_REVIEW" or node_status == "BLOCKED_FOR_BOARD_REVIEW"
@@ -354,6 +363,7 @@ def build_ticket_graph_snapshot(
         if (
             ticket_status == "PENDING"
             and not blocked_by_graph
+            and not hook_gate_blocked
             and not blocking_reason_code
             and not is_board_review_open
             and not has_open_incident
@@ -361,9 +371,16 @@ def build_ticket_graph_snapshot(
             ready_ticket_ids.append(latest_ticket_id)
             ready_node_ids.append(node_id)
             continue
-        if blocked_by_graph or blocking_reason_code or is_board_review_open or has_open_incident:
+        if blocked_by_graph or hook_gate_blocked or blocking_reason_code or is_board_review_open or has_open_incident:
             blocked_ticket_ids.append(latest_ticket_id)
             blocked_node_ids.append(node_id)
+        if hook_gate_blocked:
+            _append_blocked_reason(
+                blocked_reason_map,
+                reason_code=hook_gate_result.reason_code,
+                ticket_id=latest_ticket_id,
+                node_id=node_id,
+            )
         if has_open_incident:
             _append_blocked_reason(
                 blocked_reason_map,

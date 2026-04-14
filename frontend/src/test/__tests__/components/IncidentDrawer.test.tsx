@@ -117,4 +117,35 @@ describe('IncidentDrawer', () => {
     expect(screen.getByText(/ticket graph snapshot could not be rebuilt/i)).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toHaveValue('REBUILD_TICKET_GRAPH')
   })
+
+  it('describes required hook gate incidents and defaults to replay recovery', () => {
+    render(
+      <IncidentDrawer
+        isOpen={true}
+        loading={false}
+        error={null}
+        submitting={false}
+        onClose={vi.fn()}
+        onResolve={vi.fn().mockResolvedValue(undefined)}
+        incidentData={{
+          incident: {
+            ...buildIncidentData().incident,
+            incident_id: 'inc_hook_gate_001',
+            incident_type: 'REQUIRED_HOOK_GATE_BLOCKED',
+            provider_id: null,
+            payload: {
+              missing_hook_ids: ['git_closeout'],
+              reason_code: 'REQUIRED_HOOK_PENDING:git_closeout',
+              reason_detail: 'Required hook receipts are missing for git_closeout.',
+            },
+          },
+          available_followup_actions: ['REPLAY_REQUIRED_HOOKS', 'RESTORE_ONLY'],
+          recommended_followup_action: 'REPLAY_REQUIRED_HOOKS',
+        }}
+      />,
+    )
+
+    expect(screen.getByText(/required result_accepted hook receipts are missing/i)).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toHaveValue('REPLAY_REQUIRED_HOOKS')
+  })
 })

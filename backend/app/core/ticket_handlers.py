@@ -63,6 +63,7 @@ from app.core.constants import (
     FAILURE_KIND_UPSTREAM_UNAVAILABLE,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
+    INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
     INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
     INCIDENT_STATUS_CLOSED,
@@ -156,6 +157,7 @@ from app.core.project_workspaces import (
     write_git_closeout_receipt,
     write_worker_postrun_receipt,
 )
+from app.core.role_hooks import HookGateStatus, evaluate_ticket_required_hook_gate, replay_required_hook_receipts
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.ticket_artifacts import (
     PreparedTicketArtifact,
@@ -2038,6 +2040,15 @@ def _evaluate_delivery_stage_parent_dependency(
         )
     if parent_ticket["status"] != TICKET_STATUS_COMPLETED:
         return False, None
+    parent_created_spec = repository.get_latest_ticket_created_payload(connection, parent_ticket_id) or {}
+    parent_gate_result = evaluate_ticket_required_hook_gate(
+        repository,
+        ticket=parent_ticket,
+        created_spec=parent_created_spec,
+        connection=connection,
+    )
+    if parent_gate_result.status == HookGateStatus.BLOCKED:
+        return False, None
     if not parent_node_id or not parent_workflow_id:
         return True, None
     if parent_node is None:
@@ -2081,6 +2092,15 @@ def _evaluate_dispatch_dependency_gates(
                 },
             )
         if dependency_status != TICKET_STATUS_COMPLETED:
+            return False, None
+        dependency_created_spec = repository.get_latest_ticket_created_payload(connection, dependency_ticket_id) or {}
+        dependency_gate_result = evaluate_ticket_required_hook_gate(
+            repository,
+            ticket=dependency_ticket,
+            created_spec=dependency_created_spec,
+            connection=connection,
+        )
+        if dependency_gate_result.status == HookGateStatus.BLOCKED:
             return False, None
     return True, None
 
@@ -3773,6 +3793,7 @@ def handle_incident_resolve(
         followup_action = payload.followup_action.value
         retry_ticket: dict[str, Any] | None = None
         retry_created_spec: dict[str, Any] | None = None
+        replay_result = None
         if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
             if incident["incident_type"] != INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
                 return _incident_rejected_ack(
@@ -3876,6 +3897,41 @@ def handle_incident_resolve(
                     incident_id=payload.incident_id,
                     reason=str(exc),
                 )
+        elif payload.followup_action == IncidentFollowupAction.REPLAY_REQUIRED_HOOKS:
+            if incident["incident_type"] != INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=(
+                        f"Incident {payload.incident_id} does not support required hook replay recovery."
+                    ),
+                )
+            incident_ticket_id = str(incident.get("ticket_id") or "").strip()
+            if not incident_ticket_id:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason="Required hook gate incident is missing its source ticket.",
+                )
+            try:
+                replay_result = replay_required_hook_receipts(
+                    repository,
+                    workflow_id=workflow_id,
+                    ticket_id=incident_ticket_id,
+                    connection=connection,
+                )
+            except ValueError as exc:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=str(exc),
+                )
         elif payload.followup_action == IncidentFollowupAction.REBUILD_TICKET_GRAPH:
             if incident["incident_type"] != INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
                 return _incident_rejected_ack(
@@ -3913,6 +3969,8 @@ def handle_incident_resolve(
             "followup_ticket_id": None,
             "incident_type": incident["incident_type"],
         }
+        if payload.followup_action == IncidentFollowupAction.REPLAY_REQUIRED_HOOKS:
+            resolution_payload["replayed_hook_ids"] = list(replay_result.replayed_hook_ids)
 
         breaker_closed_event = repository.insert_event(
             connection,

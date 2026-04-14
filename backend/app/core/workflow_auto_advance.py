@@ -7,6 +7,7 @@ from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.constants import (
     EVENT_TICKET_FAILED,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
+    INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
@@ -14,6 +15,7 @@ from app.core.constants import (
     PROVIDER_PAUSE_FAILURE_KINDS,
 )
 from app.core.runtime import run_leased_ticket_runtime
+from app.core.role_hooks import scan_and_open_required_hook_gate_incidents
 from app.core.ticket_handlers import open_ticket_graph_unavailable_incident, run_scheduler_tick
 from app.core.workflow_controller import workflow_controller_effect
 from app.core.workflow_autopilot import ensure_workflow_atomic_chain_report, workflow_uses_ceo_board_delegate
@@ -87,6 +89,8 @@ def _recommended_incident_followup_action(
     incident_type = str(incident.get("incident_type") or "")
     if incident_type == INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
         return IncidentFollowupAction.REBUILD_TICKET_GRAPH
+    if incident_type == INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
+        return IncidentFollowupAction.REPLAY_REQUIRED_HOOKS
     if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
         return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
     if incident_type == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
@@ -180,6 +184,13 @@ def auto_advance_workflow_to_next_stop(
                 error=exc,
                 idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:graph-unavailable",
             )
+            return
+        hook_incident_scan = scan_and_open_required_hook_gate_incidents(
+            repository,
+            workflow_id=workflow_id,
+            idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:required-hook-gate",
+        )
+        if hook_incident_scan.opened_incident_ids:
             return
         if (
             workflow_controller_effect(snapshot)

@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P2`
-> 当前切片：`P2-S2`
-> 最后更新：`2026-04-14 21:52`
+> 当前切片：`P2-S3`
+> 最后更新：`2026-04-15 07:20`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -94,7 +94,7 @@
 ### 当前阶段出口条件
 - [ ] 本阶段所有必做切片完成
 - [ ] 图故障、runtime/provider 故障和 Hook 门禁都已进入正式 incident / recovery 主链
-- [ ] required hook gate 已成为节点对下游开放的正式条件
+- [x] required hook gate 已成为节点对下游开放的正式条件
 - [x] 每个已完成切片都有最小验证证据
 - [x] 涉及的运行文档已同步
 - [x] 未完成项已明确转移到下阶段或阻塞区
@@ -421,6 +421,46 @@
 
 **状态：** `done`
 
+### 切片 `P2-S2`
+**名称：**  
+`最小 RoleHook registry 与 required hook gate`
+
+**现实问题：**  
+`worker-preflight / worker-postrun / evidence-capture / git-closeout` 之前只是散点 receipt 和散点校验；源码票即使缺 hook 也没有统一 gate、正式 incident 和幂等 replay。`
+
+**对应架构文档：**
+- `doc/new-architecture/05-incident-idempotency-and-recovery.md`
+- `doc/new-architecture/06-role-hook-system.md`
+- `doc/new-architecture/10-migration-map.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 新增最小 `RoleHook` protocol module，并让 gate evaluator 直接消费 registry
+  - [x] 只把 `workspace-managed source_code_delivery` 接进 required hook gate，缺 hook 时显式打开 `REQUIRED_HOOK_GATE_BLOCKED`
+  - [x] 新增 `REPLAY_REQUIRED_HOOKS` 幂等恢复动作，并让 `TicketGraph / workflow_auto_advance / IncidentDrawer` 读到统一 stop reason
+- 不做什么：
+  - [x] 不扩 governance / review / closeout 全票型
+  - [x] 不新增完整 Hook Runner
+  - [x] 不改 Worker prompt、结果 payload 或 `doc/new-architecture/**`
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] `source_code_delivery` 缺 required hook receipt 时，gate 会给出结构化 `BLOCKED` 结果，`TicketGraph` 会显式落 `REQUIRED_HOOK_PENDING:*`
+- [x] `workflow_auto_advance` 会给缺 hook 的源码票正式打开 `REQUIRED_HOOK_GATE_BLOCKED`，并按稳定指纹去重
+- [x] `incident-resolve` 已支持 `REPLAY_REQUIRED_HOOKS`；缺失 receipt 可按持久化 terminal truth 幂等补写，前端 `IncidentDrawer` 已补说明和默认恢复动作
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
 ---
 
 ## 8. 任务清单核对区
@@ -436,9 +476,10 @@
 - [x] `P1-S2` 已完成：`TicketGraphIndexSummary` 现已补齐 `in_flight / critical_path / blocked_reasons`；`workflow_controller` 和 dashboard 主读面已开始复用同一套图索引
 - [x] `P1-S3` 已完成：`Dependency Inspector` 现已改成直接消费 `TicketGraph` 边和索引，`dependency_ticket_ids[] / graph_summary` 已成为正式只读合同；dashboard 的 `blocked_node_ids` legacy fallback 已移除，图不可用时改成显式 `blocked_node_source=graph_unavailable`
 - [x] `P2-S1` 已完成：`workflow_auto_advance` 命中 `build_ceo_shadow_snapshot()` 的图不可用异常时，现已打开正式 `TICKET_GRAPH_UNAVAILABLE` incident；incident detail / resolve 与 `IncidentDrawer` 已补 `REBUILD_TICKET_GRAPH`
+- [x] `P2-S2` 已完成：`backend/app/core/role_hooks.py` 已把最小 hook registry、结构化 gate result、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery 收进单点协议；`TicketGraph / workflow_auto_advance / incident detail / resolve / IncidentDrawer` 已开始消费这条新主链
 
 ### 未完成
-- [ ] `P2-S2` 还没开始；现有 `worker-preflight / worker-postrun / evidence-capture / git-closeout` 仍是散点 receipt / validation，还没收成正式 `RoleHook` registry 和 required hook gate
+- [ ] `P2-S3` 还没开始；`REPLAY_REQUIRED_HOOKS` 当前只覆盖 `workspace-managed source_code_delivery` 的 `worker_postrun / evidence_capture / git_closeout`，治理文档、review 包和 closeout 票还没接进同一套 hook gate / replay 框架
 
 ### 明确放弃
 - [ ] 暂无
@@ -450,6 +491,7 @@
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 本轮额外复验时仍会在 `project-init` workflow 上多带一条旧的 provider / auto-advance incident；当前没证据表明是 `P1-S2` 新回归，先继续留给 runtime/provider 历史测试收口
 - [ ] `P2-S1` 这轮只把 `TicketGraph` 真不可用接到了 `workflow_auto_advance` 的正式 incident 主链；其他直接调用 `run_ceo_shadow_for_trigger` 的路径暂时仍沿现状显式失败，留给后续恢复切片统一收口
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "hook or blocked_reason or incident" -q` 本轮验证时仍有 3 条旧的 `project-init` governance/provider incident 历史用例失败：`test_check_internal_checker_escalated_opens_incident_and_marks_dependency_stop`、`test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_breaker`、`test_employee_freeze_containment_opens_staffing_incident_for_executing_ticket`；当前看到的额外 incident 仍来自旧 `node_ceo_architecture_brief` provider / auto-advance 噪音，不是 `P2-S2` 新 gate 自己开的源码票 incident
 
 ---
 
@@ -534,6 +576,21 @@
 `no`
 
 **状态：** `closed`
+
+### D-006
+**现象：**  
+`project-init` workflow 仍会在部分历史 API 回归里额外带出旧的 governance/provider auto-advance incident，导致 incident / blocked_reason 宽口径测试桶会多出一条和当前源码票无关的 `node_ceo_architecture_brief` 噪音。`
+
+**影响：**  
+`P2-S2` 的 required hook gate 主链本身已可验证，但当回归桶直接按“当前 workflow 的 open incident 数量 / fused 节点数”做强断言时，会被这条旧噪音打断。`
+
+**当前处理：**  
+`先把它记成历史问题，继续按当前计划留给 runtime/provider 历史测试收口；本轮不顺手改 project-init governance/provider 老链，避免跨出 Hook 主方向。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
 
 ---
 
@@ -815,6 +872,38 @@
 **下一轮起手动作：**
 `继续 P2-S2，先把现有 worker receipts 和 validation 收成最小 RoleHook registry，再把 required hook gate 接进节点放行条件。`
 
+### Session `2026-04-15 / 10`
+**开始前判断：**
+- 当前阶段：`P2`
+- 当前切片：`P2-S2`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `backend/app/core/role_hooks.py`，把最小 hook registry、结构化 gate result、required hook replay 和缺 hook incident 扫描收成单点协议
+- [x] 给 `TicketGraph / workflow_auto_advance / ticket_handlers` 接上 `REQUIRED_HOOK_GATE_BLOCKED`、`REPLAY_REQUIRED_HOOKS` 和 `REQUIRED_HOOK_PENDING:*`
+- [x] 给 incident detail / 前端 `IncidentDrawer` 补 required hook gate 说明和默认恢复动作
+- [x] 更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_role_hooks.py -q` 通过（`7 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_project_workspace_hooks.py -q` 通过（`19 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "incident or hook or graph" -q` 通过（`3 passed, 8 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -q` 通过（`6 passed`）
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx` 通过（`3 passed`）
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "hook or blocked_reason or incident" -q` 当前未全绿；仍有 3 条旧的 `project-init` governance/provider incident 历史用例失败，已记到“新发现但不在本轮做”和 `D-006`
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P2-S3` 还没开始；当前 `REPLAY_REQUIRED_HOOKS` 只覆盖 workspace-managed 源码票
+- [ ] `run_ceo_shadow_for_trigger` 的其他直调路径和 project-init governance/provider 老 incident 噪音还没统一收口
+
+**下一轮起手动作：**
+`从 P2-S3 继续，把 required hook gate 从 workspace-managed 源码票扩到下一类真实主线票型，并决定 runtime/provider 老 incident 噪音和 hook replay 的边界谁先收。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -851,8 +940,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P2`
-- 当前切片：`P2-S2`
-- 当前状态：P2-S1 已完成；`graph_unavailable` 不再只停在 dashboard 读面，`workflow_auto_advance` 命中图快照异常时会打开正式 `TICKET_GRAPH_UNAVAILABLE` incident，并暴露 `REBUILD_TICKET_GRAPH` 恢复动作
-- 最近完成：`incident detail / resolve` 已补图故障恢复入口；前端 `IncidentDrawer` 已补图故障说明；后端 API / autopilot / ticket graph 回归和前端组件测试都已通过
-- 当前阻塞：`P2-S2` 还没开始；现有 Hook 仍是散点 receipt / validation，没有正式 `RoleHook` registry；`run_ceo_shadow_for_trigger` 的其他直调路径还没统一 graph incident 化；宽口径 governance/provider 与 closeout/approval 历史回归仍是旧失败`
-- 下一步：`继续 P2-S2，把 worker receipts 和 validation 收成最小 RoleHook registry，并把 required hook gate 接进节点放行条件`
+- 当前切片：`P2-S3`
+- 当前状态：`P2-S2` 已完成；workspace-managed `source_code_delivery` 现在已经有正式 `RoleHook` registry、结构化 required hook gate、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` 幂等恢复，不再靠散点 receipt / validation 兜底
+- 最近完成：`TicketGraph` 会显式落 `REQUIRED_HOOK_PENDING:*`；`workflow_auto_advance` 会给缺 hook 的源码票正式开 incident 并去重；incident detail / resolve 和前端 `IncidentDrawer` 已补 replay 恢复动作
+- 当前阻塞：`P2-S3` 还没开始；当前 hook gate 只覆盖 workspace-managed 源码票；`run_ceo_shadow_for_trigger` 的其他直调路径和旧的 project-init governance/provider incident 噪音仍未统一收口`
+- 下一步：`继续 P2-S3，把同一套 hook gate / replay 协议扩到下一类真实主线票型，并决定 runtime/provider 老 incident 噪音的收口顺序`
