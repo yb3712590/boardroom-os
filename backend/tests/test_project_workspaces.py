@@ -233,3 +233,17 @@ def test_ticket_create_bootstraps_dossier_and_workspace_truth(client) -> None:
     assert (dossier_root / "doc-impact.md").is_file()
     assert (dossier_root / "git-closeout.md").is_file()
     assert (dossier_root / "hook-receipts").is_dir()
+
+    brief_body = (dossier_root / "brief.md").read_text(encoding="utf-8")
+    required_reads_body = (dossier_root / "required-reads.md").read_text(encoding="utf-8")
+    doc_impact_body = (dossier_root / "doc-impact.md").read_text(encoding="utf-8")
+    git_closeout_body = (dossier_root / "git-closeout.md").read_text(encoding="utf-8")
+
+    assert "- View Kind: `ticket_brief`" in brief_body
+    assert "- Source Projection Version: `" in brief_body
+    assert "- View Kind: `ticket_required_reads`" in required_reads_body
+    assert "- Source Projection Version: `" in required_reads_body
+    assert "- View Kind: `ticket_doc_impact`" in doc_impact_body
+    assert "`not_reported`" in doc_impact_body
+    assert "- View Kind: `ticket_git_closeout`" in git_closeout_body
+    assert "- Source Projection Version: `" in git_closeout_body

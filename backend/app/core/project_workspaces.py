@@ -5,13 +5,23 @@ import json
 import sqlite3
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
 from app.contracts.commands import DeliverableKind, GitPolicy, ProjectMethodologyProfile
 from app.core.artifact_store import ArtifactStore
+from app.core.boardroom_document_materializer import (
+    BoardroomViewDocument,
+    BoardroomViewMeta,
+    render_active_worktree_index_markdown,
+    render_ticket_brief_markdown,
+    render_ticket_doc_impact_markdown,
+    render_ticket_git_closeout_markdown,
+    render_ticket_required_reads_markdown,
+    write_boardroom_view_markdown,
+)
 from app.core.output_schemas import (
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -264,6 +274,42 @@ def load_worktree_checkout_receipt(workflow_id: str, ticket_id: str) -> dict[str
     return dict(payload) if isinstance(payload, dict) else {}
 
 
+def _ticket_receipt_root(workflow_id: str, ticket_id: str) -> Path:
+    return (
+        resolve_project_workspace_root(workflow_id)
+        / "00-boardroom"
+        / "tickets"
+        / ticket_id
+        / "hook-receipts"
+    )
+
+
+def load_worker_postrun_receipt(workflow_id: str, ticket_id: str) -> dict[str, Any]:
+    receipt_path = _ticket_receipt_root(workflow_id, ticket_id) / "worker-postrun.json"
+    if not receipt_path.exists():
+        return {}
+    try:
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _ticket_git_closeout_view_state_path(workflow_id: str, ticket_id: str) -> Path:
+    return _ticket_receipt_root(workflow_id, ticket_id) / "git-closeout-view-state.json"
+
+
+def load_ticket_git_closeout_view_state(workflow_id: str, ticket_id: str) -> dict[str, Any]:
+    state_path = _ticket_git_closeout_view_state_path(workflow_id, ticket_id)
+    if not state_path.exists():
+        return {}
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
 def update_ticket_git_closeout_notes(
     *,
     workflow_id: str,
@@ -274,22 +320,19 @@ def update_ticket_git_closeout_notes(
     project_checkout_path: str | None,
     merge_status: str | None,
 ) -> str:
-    relative_path = f"00-boardroom/tickets/{ticket_id}/git-closeout.md"
-    lines = [
-        "# Git Closeout",
-        "",
-        f"- Git policy: `{git_policy}`",
-        "- Merge boundary: `review_gate`",
-        f"- Branch ref: `{git_branch_ref}`",
-    ]
-    if project_checkout_ref:
-        lines.append(f"- Checkout ref: `{project_checkout_ref}`")
-    if project_checkout_path:
-        lines.append(f"- Checkout path: `{project_checkout_path}`")
-    if merge_status:
-        lines.append(f"- Merge status: `{merge_status}`")
-    _write_text(resolve_project_workspace_root(workflow_id) / relative_path, "\n".join(lines) + "\n")
-    return relative_path
+    state_path = _ticket_git_closeout_view_state_path(workflow_id, ticket_id)
+    _write_json(
+        state_path,
+        {
+            "ticket_id": ticket_id,
+            "git_policy": git_policy,
+            "git_branch_ref": git_branch_ref,
+            "project_checkout_ref": project_checkout_ref,
+            "project_checkout_path": project_checkout_path,
+            "merge_status": merge_status,
+        },
+    )
+    return str(state_path)
 
 
 def build_effective_workspace_written_artifacts(
@@ -1017,33 +1060,13 @@ def bootstrap_ticket_dossier(
     )
     dossier_root = resolve_project_workspace_root(workflow_id) / "00-boardroom" / "tickets" / ticket_id
     (dossier_root / "hook-receipts").mkdir(parents=True, exist_ok=True)
-    required_reads_lines = "\n".join(f"- `{ref}`" for ref in required_read_refs) or "- None"
-    doc_update_lines = "\n".join(f"- `{ref}`" for ref in doc_update_requirements) or "- None"
     write_set_lines = "\n".join(f"- `{item}`" for item in allowed_write_set) or "- None"
     files = {
-        "00-boardroom/tickets/{ticket_id}/brief.md": (
-            "# Ticket Brief\n\n"
-            f"- Ticket ID: `{ticket_id}`\n"
-            f"- Summary: {summary}\n"
-            f"- Deliverable Kind: `{resolved_deliverable_kind.value}`\n"
-        ),
-        "00-boardroom/tickets/{ticket_id}/required-reads.md": (
-            "# Required Reads\n\n"
-            f"{required_reads_lines}\n"
-        ),
+        "00-boardroom/tickets/{ticket_id}/brief.md": "",
+        "00-boardroom/tickets/{ticket_id}/required-reads.md": "",
         "00-boardroom/tickets/{ticket_id}/execution-log.md": "# Execution Log\n\n- Ticket execution has not started yet.\n",
-        "00-boardroom/tickets/{ticket_id}/doc-impact.md": (
-            "# Doc Impact\n\n"
-            "## Required Updates\n"
-            f"{doc_update_lines}\n"
-        ),
-        "00-boardroom/tickets/{ticket_id}/git-closeout.md": (
-            "# Git Closeout\n\n"
-            f"- Git policy: `{resolved_git_policy.value}`\n"
-            "- Merge boundary: `review_gate`\n"
-            f"- Branch ref: `{git_branch_ref or default_ticket_branch_ref(ticket_id)}`\n"
-            f"- Checkout ref: `{project_checkout_ref or build_project_checkout_ref(workflow_id, ticket_id)}`\n"
-        ),
+        "00-boardroom/tickets/{ticket_id}/doc-impact.md": "",
+        "00-boardroom/tickets/{ticket_id}/git-closeout.md": "",
         "00-boardroom/tickets/{ticket_id}/allowed-write-set.md": (
             "# Allowed Write Set\n\n"
             f"{write_set_lines}\n"
@@ -1052,6 +1075,16 @@ def bootstrap_ticket_dossier(
     for relative_path_template, content in files.items():
         target_path = resolve_project_workspace_root(workflow_id) / relative_path_template.format(ticket_id=ticket_id)
         _write_text(target_path, content)
+    update_ticket_git_closeout_notes(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        git_policy=resolved_git_policy.value,
+        git_branch_ref=git_branch_ref or default_ticket_branch_ref(ticket_id),
+        project_checkout_ref=project_checkout_ref or build_project_checkout_ref(workflow_id, ticket_id),
+        project_checkout_path=None,
+        merge_status=None,
+    )
+    sync_ticket_boardroom_views(repository, workflow_id=workflow_id, ticket_id=ticket_id)
 
 
 def infer_ticket_workspace_bootstrap(ticket_payload: dict[str, Any]) -> TicketWorkspaceBootstrap:
@@ -1221,6 +1254,194 @@ def write_git_closeout_receipt(
     return str(receipt_path)
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _ticket_boardroom_view_meta(
+    *,
+    view_kind: str,
+    source_projection_version: int,
+    source_refs: list[str],
+    stale_check_key: str,
+) -> BoardroomViewMeta:
+    return BoardroomViewMeta(
+        view_kind=view_kind,
+        generated_at=_utc_now_iso(),
+        source_projection_version=source_projection_version,
+        source_refs=source_refs,
+        stale_check_key=stale_check_key,
+    )
+
+
+def _ticket_boardroom_doc_paths(workflow_id: str, ticket_id: str) -> dict[str, Path]:
+    ticket_root = resolve_project_workspace_root(workflow_id) / "00-boardroom" / "tickets" / ticket_id
+    return {
+        "brief": ticket_root / "brief.md",
+        "required_reads": ticket_root / "required-reads.md",
+        "doc_impact": ticket_root / "doc-impact.md",
+        "git_closeout": ticket_root / "git-closeout.md",
+    }
+
+
+def sync_ticket_boardroom_views(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    connection: sqlite3.Connection | None = None,
+) -> dict[str, str]:
+    if not project_workspace_manifest_exists(workflow_id):
+        return {}
+
+    owns_connection = connection is None
+    context = repository.connection() if owns_connection else None
+    resolved_connection = context.__enter__() if context is not None else connection
+    try:
+        assert resolved_connection is not None
+        ticket = repository.get_current_ticket_projection(ticket_id, connection=resolved_connection)
+        if ticket is None:
+            return {}
+        created_spec = repository.get_latest_ticket_created_payload(resolved_connection, ticket_id) or {}
+        _, source_projection_version = repository.get_cursor_and_version(connection=resolved_connection)
+        source_refs = [f"ticket_projection:{ticket_id}", f"ticket_created:{ticket_id}"]
+        paths = _ticket_boardroom_doc_paths(workflow_id, ticket_id)
+
+        summary = str((created_spec.get("acceptance_criteria") or [""])[0] or "").strip() or ticket_id
+        brief_document = BoardroomViewDocument(
+            meta=_ticket_boardroom_view_meta(
+                view_kind="ticket_brief",
+                source_projection_version=source_projection_version,
+                source_refs=source_refs,
+                stale_check_key=f"ticket:{ticket_id}:ticket_brief:v{source_projection_version}",
+            ),
+            title="Ticket Brief",
+            sections={
+                "ticket_id": ticket_id,
+                "node_id": str(ticket.get("node_id") or "").strip(),
+                "ticket_status": str(ticket.get("status") or "").strip(),
+                "deliverable_kind": str(created_spec.get("deliverable_kind") or "").strip() or "N/A",
+                "summary": summary,
+            },
+        )
+        write_boardroom_view_markdown(paths["brief"], brief_document, renderer=render_ticket_brief_markdown)
+
+        required_reads_document = BoardroomViewDocument(
+            meta=_ticket_boardroom_view_meta(
+                view_kind="ticket_required_reads",
+                source_projection_version=source_projection_version,
+                source_refs=source_refs,
+                stale_check_key=f"ticket:{ticket_id}:ticket_required_reads:v{source_projection_version}",
+            ),
+            title="Required Reads",
+            sections={
+                "required_read_refs": [
+                    str(item).strip()
+                    for item in list(created_spec.get("required_read_refs") or [])
+                    if str(item).strip()
+                ]
+            },
+        )
+        write_boardroom_view_markdown(
+            paths["required_reads"],
+            required_reads_document,
+            renderer=render_ticket_required_reads_markdown,
+        )
+
+        worker_postrun_receipt = load_worker_postrun_receipt(workflow_id, ticket_id)
+        reported_updates = [
+            dict(item)
+            for item in list(worker_postrun_receipt.get("documentation_updates") or [])
+            if isinstance(item, dict)
+        ]
+        doc_impact_source_refs = list(source_refs)
+        if worker_postrun_receipt:
+            doc_impact_source_refs.append(f"receipt:worker-postrun:{ticket_id}")
+        doc_impact_document = BoardroomViewDocument(
+            meta=_ticket_boardroom_view_meta(
+                view_kind="ticket_doc_impact",
+                source_projection_version=source_projection_version,
+                source_refs=doc_impact_source_refs,
+                stale_check_key=f"ticket:{ticket_id}:ticket_doc_impact:v{source_projection_version}",
+            ),
+            title="Doc Impact",
+            sections={
+                "required_updates": [
+                    str(item).strip()
+                    for item in list(created_spec.get("doc_update_requirements") or [])
+                    if str(item).strip()
+                ],
+                "reported_updates": reported_updates,
+                "report_status": "reported" if reported_updates else "not_reported",
+            },
+        )
+        write_boardroom_view_markdown(
+            paths["doc_impact"],
+            doc_impact_document,
+            renderer=render_ticket_doc_impact_markdown,
+        )
+
+        git_closeout_state = load_ticket_git_closeout_view_state(workflow_id, ticket_id)
+        worktree_checkout_receipt = load_worktree_checkout_receipt(workflow_id, ticket_id)
+        git_closeout_receipt = load_git_closeout_receipt(workflow_id, ticket_id)
+        git_source_refs = list(source_refs)
+        if git_closeout_state:
+            git_source_refs.append(f"state:git-closeout:{ticket_id}")
+        if worktree_checkout_receipt:
+            git_source_refs.append(f"receipt:worktree-checkout:{ticket_id}")
+        if git_closeout_receipt:
+            git_source_refs.append(f"receipt:git-closeout:{ticket_id}")
+        checkout_truth = resolve_ticket_checkout_truth(workflow_id, ticket_id, created_spec)
+        git_document = BoardroomViewDocument(
+            meta=_ticket_boardroom_view_meta(
+                view_kind="ticket_git_closeout",
+                source_projection_version=source_projection_version,
+                source_refs=git_source_refs,
+                stale_check_key=f"ticket:{ticket_id}:ticket_git_closeout:v{source_projection_version}",
+            ),
+            title="Git Closeout",
+            sections={
+                "git_policy": str(
+                    git_closeout_state.get("git_policy")
+                    or created_spec.get("git_policy")
+                    or GitPolicy.PER_TICKET_COMMIT_REQUIRED.value
+                ),
+                "merge_boundary": "review_gate",
+                "branch_ref": str(
+                    git_closeout_receipt.get("branch_ref")
+                    or worktree_checkout_receipt.get("git_branch_ref")
+                    or git_closeout_state.get("git_branch_ref")
+                    or checkout_truth["git_branch_ref"]
+                ),
+                "checkout_ref": str(
+                    worktree_checkout_receipt.get("project_checkout_ref")
+                    or git_closeout_state.get("project_checkout_ref")
+                    or checkout_truth["project_checkout_ref"]
+                ),
+                "checkout_path": str(
+                    worktree_checkout_receipt.get("project_checkout_path")
+                    or git_closeout_state.get("project_checkout_path")
+                    or checkout_truth["project_checkout_path"]
+                ),
+                "commit_sha": str(git_closeout_receipt.get("commit_sha") or "N/A"),
+                "merge_status": str(
+                    git_closeout_receipt.get("merge_status")
+                    or git_closeout_state.get("merge_status")
+                    or ("EXECUTING" if str(ticket.get("status") or "").strip() == "EXECUTING" else "N/A")
+                ),
+            },
+        )
+        write_boardroom_view_markdown(
+            paths["git_closeout"],
+            git_document,
+            renderer=render_ticket_git_closeout_markdown,
+        )
+        return {key: str(value) for key, value in paths.items()}
+    finally:
+        if context is not None:
+            context.__exit__(None, None, None)
+
+
 def _active_worktree_index_path(workflow_id: str) -> Path:
     return resolve_project_workspace_root(workflow_id) / "00-boardroom" / "workflow" / "active-worktree-index.md"
 
@@ -1358,23 +1579,25 @@ def sync_active_worktree_index(
                 }
             )
 
-        if not entries:
-            content = "# Active Worktrees\n\n- No active worktree recorded yet.\n"
-        else:
-            lines = [
-                "# Active Worktrees",
-                "",
-                "| ticket_id | node_id | worker | status | branch_ref | commit_sha | merge_status | updated_at |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- |",
-            ]
-            for entry in entries:
-                lines.append(
-                    "| {ticket_id} | {node_id} | {worker} | {status} | {branch_ref} | {commit_sha} | {merge_status} | {updated_at} |".format(
-                        **entry
-                    )
-                )
-            content = "\n".join(lines) + "\n"
-        _write_text(index_path, content)
+        _, source_projection_version = repository.get_cursor_and_version(connection=resolved_connection)
+        source_refs = [f"ticket_projection:{workflow_id}"]
+        if entries:
+            source_refs.extend(f"receipt:worktree-checkout:{entry['ticket_id']}" for entry in entries)
+        document = BoardroomViewDocument(
+            meta=_ticket_boardroom_view_meta(
+                view_kind="active_worktree_index",
+                source_projection_version=source_projection_version,
+                source_refs=source_refs,
+                stale_check_key=f"workflow:{workflow_id}:active_worktree_index:v{source_projection_version}",
+            ),
+            title="Active Worktrees",
+            sections={"entries": entries},
+        )
+        write_boardroom_view_markdown(
+            index_path,
+            document,
+            renderer=render_active_worktree_index_markdown,
+        )
         return str(index_path)
     finally:
         if context is not None:

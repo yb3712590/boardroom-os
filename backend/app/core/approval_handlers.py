@@ -63,6 +63,8 @@ from app.core.project_workspaces import (
     merge_ticket_branch_into_main,
     resolve_source_code_ticket_from_chain,
     resolve_ticket_checkout_truth,
+    sync_active_worktree_index,
+    sync_ticket_boardroom_views,
 )
 from app.core.process_assets import (
     build_source_code_delivery_process_asset_ref,
@@ -1491,6 +1493,17 @@ def _handle_board_approve(
                         created_spec=review_gate_source_created_spec,
                         merge_status="MERGED",
                     )
+                    sync_ticket_boardroom_views(
+                        repository,
+                        workflow_id=approval["workflow_id"],
+                        ticket_id=review_gate_source_ticket_id,
+                        connection=connection,
+                    )
+                    sync_active_worktree_index(
+                        repository,
+                        workflow_id=approval["workflow_id"],
+                        connection=connection,
+                    )
 
         event_row = repository.insert_event(
             connection,
@@ -1781,6 +1794,12 @@ def handle_board_reject(
                 created_spec=source_created_spec,
                 merge_status="NOT_REQUESTED",
             )
+            sync_ticket_boardroom_views(
+                repository,
+                workflow_id=approval["workflow_id"],
+                ticket_id=source_code_ticket_id,
+            )
+            sync_active_worktree_index(repository, workflow_id=approval["workflow_id"])
 
     _trigger_ceo_shadow_safely(
         repository,
@@ -1955,6 +1974,12 @@ def handle_modify_constraints(
                 created_spec=source_created_spec,
                 merge_status="NOT_REQUESTED",
             )
+            sync_ticket_boardroom_views(
+                repository,
+                workflow_id=approval["workflow_id"],
+                ticket_id=source_code_ticket_id,
+            )
+            sync_active_worktree_index(repository, workflow_id=approval["workflow_id"])
 
     if approval["approval_type"] != "REQUIREMENT_ELICITATION":
         _trigger_ceo_shadow_safely(

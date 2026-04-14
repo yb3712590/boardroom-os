@@ -148,6 +148,7 @@ from app.core.project_workspaces import (
     resolve_ticket_checkout_truth,
     resolve_source_code_ticket_from_chain,
     sync_active_worktree_index,
+    sync_ticket_boardroom_views,
     update_ticket_git_closeout_notes,
     write_worktree_checkout_receipt,
     write_evidence_capture_receipt,
@@ -4048,6 +4049,11 @@ def handle_ticket_cancel(
                 created_spec=created_spec,
                 merge_status="NOT_REQUESTED",
             )
+        sync_ticket_boardroom_views(
+            repository,
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+        )
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 
     return CommandAckEnvelope(
@@ -4198,6 +4204,11 @@ def handle_ticket_create(
             allowed_write_set=list(event_payload.get("allowed_write_set") or []),
             project_checkout_ref=event_payload.get("project_checkout_ref"),
             git_branch_ref=event_payload.get("git_branch_ref"),
+        )
+        sync_ticket_boardroom_views(
+            repository,
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
         )
 
     return CommandAckEnvelope(
@@ -4376,6 +4387,11 @@ def handle_ticket_lease(
                 project_checkout_path=str(checkout_path),
                 merge_status="EXECUTING",
             )
+        sync_ticket_boardroom_views(
+            repository,
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+        )
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
 
     return CommandAckEnvelope(
@@ -5355,6 +5371,11 @@ def handle_ticket_result_submit(
             ],
         )
     if project_workspace_manifest_exists(payload.workflow_id):
+        sync_ticket_boardroom_views(
+            repository,
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+        )
         sync_active_worktree_index(repository, workflow_id=payload.workflow_id)
     _refresh_ticket_context_archive(repository, payload.ticket_id)
 
