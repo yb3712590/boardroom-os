@@ -23,6 +23,7 @@ from app.contracts.projections import (
     CEOShadowRunProjection,
     CEOShadowValidatedActionProjection,
     DependencyInspectorCurrentStopProjection,
+    DependencyInspectorGraphSummaryProjection,
     DependencyInspectorNodeProjection,
     DependencyInspectorProjectionData,
     DependencyInspectorProjectionEnvelope,
@@ -918,16 +919,9 @@ def build_dependency_inspector_projection(
     generated_at = now_local()
     cursor, projection_version = repository.get_cursor_and_version()
     approvals = [item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id]
+    graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id)
 
     with repository.connection() as connection:
-        node_rows = connection.execute(
-            """
-            SELECT * FROM node_projection
-            WHERE workflow_id = ?
-            ORDER BY updated_at ASC, node_id ASC
-            """,
-            (workflow_id,),
-        ).fetchall()
         incident_rows = connection.execute(
             """
             SELECT * FROM incident_projection
@@ -936,171 +930,225 @@ def build_dependency_inspector_projection(
             """,
             (workflow_id, "OPEN"),
         ).fetchall()
+        ticket_snapshots = list_workflow_ticket_snapshots(repository, workflow_id, connection=connection)
 
-        approval_by_node_id: dict[str, dict[str, Any]] = {}
-        for approval in approvals:
-            subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
-            source_node_id = str(subject.get("source_node_id") or "").strip()
-            if source_node_id and source_node_id not in approval_by_node_id:
-                approval_by_node_id[source_node_id] = approval
+    approval_by_node_id: dict[str, dict[str, Any]] = {}
+    for approval in approvals:
+        subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
+        source_node_id = str(subject.get("source_node_id") or "").strip()
+        if source_node_id and source_node_id not in approval_by_node_id:
+            approval_by_node_id[source_node_id] = approval
 
-        incident_by_node_id: dict[str, dict[str, Any]] = {}
-        for row in incident_rows:
-            incident = repository._convert_incident_projection_row(row)
-            node_id = str(incident.get("node_id") or "").strip()
-            if node_id and node_id not in incident_by_node_id:
-                incident_by_node_id[node_id] = incident
+    incident_by_node_id: dict[str, dict[str, Any]] = {}
+    for row in incident_rows:
+        incident = repository._convert_incident_projection_row(row)
+        node_id = str(incident.get("node_id") or "").strip()
+        if node_id and node_id not in incident_by_node_id:
+            incident_by_node_id[node_id] = incident
 
-        raw_nodes: list[dict[str, Any]] = []
-        current_ticket_status_by_logical_id: dict[str, str] = {}
-        for snapshot in list_workflow_ticket_snapshots(repository, workflow_id, connection=connection):
-            approval = approval_by_node_id.get(snapshot.node_id)
-            incident = incident_by_node_id.get(snapshot.node_id)
-            raw_nodes.append(
-                {
-                    "node_id": snapshot.node_id,
-                    "ticket_id": snapshot.ticket_id,
-                    "parent_ticket_id": snapshot.parent_ticket_id,
-                    "phase": snapshot.phase,
-                    "delivery_stage": snapshot.delivery_stage,
-                    "node_status": snapshot.node_status,
-                    "ticket_status": snapshot.ticket_status,
-                    "role_profile_ref": snapshot.role_profile_ref,
-                    "output_schema_ref": snapshot.output_schema_ref,
-                    "lease_owner": snapshot.lease_owner,
-                    "expected_artifact_scope": list(snapshot.expected_artifact_scope),
-                    "open_review_pack_id": approval.get("review_pack_id") if approval is not None else None,
-                    "open_incident_id": incident.get("incident_id") if incident is not None else None,
-                    "sort_key": (
-                        snapshot.sort_updated_at,
-                        snapshot.ticket_id or snapshot.node_id,
-                    ),
-                }
-            )
-            if snapshot.ticket_id and snapshot.ticket_status:
-                current_ticket_status_by_logical_id[snapshot.ticket_id] = snapshot.ticket_status
-
-    for item in raw_nodes:
-        parent_ticket_id = item["parent_ticket_id"]
-        if item["open_incident_id"] is not None:
-            block_reason = "INCIDENT_OPEN"
-        elif item["open_review_pack_id"] is not None or (
-            item["node_status"] == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW
-            or item["ticket_status"] == TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW
-        ):
-            block_reason = "BOARD_REVIEW_OPEN"
-        elif parent_ticket_id and current_ticket_status_by_logical_id.get(parent_ticket_id) != TICKET_STATUS_COMPLETED:
-            block_reason = "WAITING_PARENT"
-        elif item["node_status"] == NODE_STATUS_COMPLETED or item["ticket_status"] == TICKET_STATUS_COMPLETED:
-            block_reason = "COMPLETED"
-        else:
-            block_reason = "READY"
-        item["block_reason"] = block_reason
-
-    children_by_parent: dict[str, list[dict[str, Any]]] = {}
-    item_by_ticket_id = {
-        str(item["ticket_id"]): item
-        for item in raw_nodes
-        if item.get("ticket_id") is not None
+    snapshot_by_ticket_id = {
+        str(snapshot.ticket_id): snapshot
+        for snapshot in ticket_snapshots
+        if snapshot.ticket_id is not None
     }
-    for item in raw_nodes:
-        parent_ticket_id = item["parent_ticket_id"]
-        if parent_ticket_id:
-            children_by_parent.setdefault(parent_ticket_id, []).append(item)
+    sort_key_by_ticket_id = {
+        str(snapshot.ticket_id): (
+            snapshot.sort_updated_at or generated_at,
+            str(snapshot.ticket_id or snapshot.node_id),
+        )
+        for snapshot in ticket_snapshots
+        if snapshot.ticket_id is not None
+    }
+    graph_node_by_ticket_id = {
+        str(node.ticket_id): node
+        for node in graph_snapshot.nodes
+    }
+    incoming_dependency_ticket_ids: dict[str, set[str]] = {}
+    outgoing_dependency_ticket_ids: dict[str, set[str]] = {}
+    parent_ticket_id_by_ticket_id: dict[str, str | None] = {}
 
-    def _node_sort_key(item: dict[str, Any]) -> tuple[object, str]:
-        return (item["sort_key"][0] or generated_at, str(item.get("ticket_id") or item["node_id"]))
+    for node in graph_snapshot.nodes:
+        parent_ticket_id_by_ticket_id[str(node.ticket_id)] = (
+            str(node.parent_ticket_id).strip() if node.parent_ticket_id else None
+        )
 
-    ordered_nodes: list[dict[str, Any]] = []
-    visited_node_ids: set[str] = set()
+    for edge in graph_snapshot.edges:
+        if edge.edge_type not in {"PARENT_OF", "DEPENDS_ON"}:
+            continue
+        incoming_dependency_ticket_ids.setdefault(edge.target_ticket_id, set()).add(edge.source_ticket_id)
+        outgoing_dependency_ticket_ids.setdefault(edge.source_ticket_id, set()).add(edge.target_ticket_id)
+        if edge.edge_type == "PARENT_OF" and edge.target_ticket_id not in parent_ticket_id_by_ticket_id:
+            parent_ticket_id_by_ticket_id[edge.target_ticket_id] = edge.source_ticket_id
 
-    def _append_branch(item: dict[str, Any]) -> None:
-        node_id = str(item["node_id"])
-        if node_id in visited_node_ids:
-            return
-        visited_node_ids.add(node_id)
-        ordered_nodes.append(item)
-        child_items = sorted(children_by_parent.get(str(item.get("ticket_id") or ""), []), key=_node_sort_key)
-        for child in child_items:
-            _append_branch(child)
+    blocked_reason_codes_by_node_id: dict[str, list[str]] = {}
+    for entry in graph_snapshot.index_summary.blocked_reasons:
+        for node_id in entry.node_ids:
+            blocked_reason_codes_by_node_id.setdefault(str(node_id), []).append(entry.reason_code)
 
-    root_nodes = sorted(
-        [
-            item
-            for item in raw_nodes
-            if item["parent_ticket_id"] is None or item["parent_ticket_id"] not in item_by_ticket_id
-        ],
-        key=_node_sort_key,
-    )
-    for item in root_nodes:
-        _append_branch(item)
-    for item in sorted(raw_nodes, key=_node_sort_key):
-        _append_branch(item)
+    blocked_node_ids = set(graph_snapshot.index_summary.blocked_node_ids)
+    critical_path_node_ids = set(graph_snapshot.index_summary.critical_path_node_ids)
+    in_flight_node_ids = set(graph_snapshot.index_summary.in_flight_node_ids)
+    ready_node_ids = set(graph_snapshot.index_summary.ready_node_ids)
 
-    current_stop_node: dict[str, Any] | None = None
-    for reason in ("INCIDENT_OPEN", "BOARD_REVIEW_OPEN", "WAITING_PARENT"):
-        current_stop_node = next((item for item in ordered_nodes if item["block_reason"] == reason), None)
-        if current_stop_node is not None:
+    def _reason_priority(reason_code: str) -> tuple[int, str]:
+        if reason_code == "GRAPH_REDUCTION_ISSUE":
+            return (0, reason_code)
+        if reason_code == "INCIDENT_OPEN":
+            return (1, reason_code)
+        if reason_code == "BOARD_REVIEW_OPEN":
+            return (2, reason_code)
+        if reason_code.startswith("EXPLICIT_BLOCKING_REASON:"):
+            return (3, reason_code)
+        return (4, reason_code)
+
+    def _resolve_block_reason(ticket_id: str, node_id: str) -> str:
+        graph_node = graph_node_by_ticket_id.get(ticket_id)
+        reason_codes = sorted(blocked_reason_codes_by_node_id.get(node_id, []), key=_reason_priority)
+        if reason_codes:
+            return reason_codes[0]
+        snapshot = snapshot_by_ticket_id.get(ticket_id)
+        if node_id in blocked_node_ids:
+            if graph_node is not None and graph_node.blocking_reason_code:
+                return f"EXPLICIT_BLOCKING_REASON:{graph_node.blocking_reason_code}"
+            return "BLOCKED"
+        if snapshot is not None and (
+            snapshot.node_status == NODE_STATUS_COMPLETED or snapshot.ticket_status == TICKET_STATUS_COMPLETED
+        ):
+            return "COMPLETED"
+        if node_id in in_flight_node_ids:
+            return "IN_FLIGHT"
+        if node_id in ready_node_ids:
+            return "READY"
+        if graph_node is not None and graph_node.blocking_reason_code:
+            return f"EXPLICIT_BLOCKING_REASON:{graph_node.blocking_reason_code}"
+        return "PENDING"
+
+    current_stop_ticket_id: str | None = None
+    current_stop_reason: str | None = None
+    for blocked_reason in sorted(graph_snapshot.index_summary.blocked_reasons, key=lambda item: _reason_priority(item.reason_code)):
+        candidate_ticket_ids = sorted(
+            set(blocked_reason.ticket_ids),
+            key=lambda ticket_id: sort_key_by_ticket_id.get(ticket_id, (generated_at, ticket_id)),
+        )
+        if candidate_ticket_ids:
+            current_stop_ticket_id = candidate_ticket_ids[0]
+            current_stop_reason = blocked_reason.reason_code
             break
 
-    critical_path_ticket_ids: set[str] = set()
-    critical_path_node_ids: set[str] = set()
-    if current_stop_node is not None:
-        critical_path_node_ids.add(str(current_stop_node["node_id"]))
-        parent_ticket_id = str(current_stop_node.get("ticket_id") or "").strip()
-        while parent_ticket_id:
-            critical_path_ticket_ids.add(parent_ticket_id)
-            parent_item = item_by_ticket_id.get(parent_ticket_id) or {}
-            if parent_item:
-                critical_path_node_ids.add(str(parent_item["node_id"]))
-            parent_ticket_id = str(parent_item.get("parent_ticket_id") or "").strip()
+    display_ticket_ids: set[str]
+    if current_stop_ticket_id is not None:
+        display_ticket_ids = set()
+        reverse_stack = [current_stop_ticket_id]
+        while reverse_stack:
+            ticket_id = reverse_stack.pop()
+            if ticket_id in display_ticket_ids:
+                continue
+            display_ticket_ids.add(ticket_id)
+            for upstream_ticket_id in sorted(incoming_dependency_ticket_ids.get(ticket_id, set())):
+                if upstream_ticket_id not in display_ticket_ids:
+                    reverse_stack.append(upstream_ticket_id)
+        forward_stack = [current_stop_ticket_id]
+        while forward_stack:
+            ticket_id = forward_stack.pop()
+            for downstream_ticket_id in sorted(outgoing_dependency_ticket_ids.get(ticket_id, set())):
+                if downstream_ticket_id in display_ticket_ids:
+                    continue
+                display_ticket_ids.add(downstream_ticket_id)
+                forward_stack.append(downstream_ticket_id)
+    else:
+        display_ticket_ids = {str(node.ticket_id) for node in graph_snapshot.nodes}
 
-    order_index = {
-        str(item.get("ticket_id") or item["node_id"]): index
-        for index, item in enumerate(ordered_nodes)
-    }
-    dependent_ticket_ids_by_ticket_id = {
-        ticket_id: sorted(
-            [str(child.get("ticket_id")) for child in children if child.get("ticket_id")],
-            key=lambda child_ticket_id: order_index.get(child_ticket_id, 0),
-        )
-        for ticket_id, children in children_by_parent.items()
-    }
+    def _ticket_sort_key(ticket_id: str) -> tuple[object, str]:
+        return sort_key_by_ticket_id.get(ticket_id, (generated_at, ticket_id))
 
-    nodes = [
-        DependencyInspectorNodeProjection(
-            node_id=str(item["node_id"]),
-            ticket_id=item["ticket_id"],
-            parent_ticket_id=item["parent_ticket_id"],
-            phase=str(item["phase"]),
-            delivery_stage=item["delivery_stage"],
-            node_status=str(item["node_status"]),
-            ticket_status=item["ticket_status"],
-            role_profile_ref=item["role_profile_ref"],
-            output_schema_ref=item["output_schema_ref"],
-            lease_owner=item["lease_owner"],
-            depends_on_ticket_id=item["parent_ticket_id"],
-            dependent_ticket_ids=dependent_ticket_ids_by_ticket_id.get(str(item.get("ticket_id") or ""), []),
-            block_reason=str(item["block_reason"]),
-            is_critical_path=(
-                bool(item.get("ticket_id") and str(item["ticket_id"]) in critical_path_ticket_ids)
-                or str(item["node_id"]) in critical_path_node_ids
-            ),
-            is_blocked=str(item["block_reason"]) in {"INCIDENT_OPEN", "BOARD_REVIEW_OPEN", "WAITING_PARENT"},
-            expected_artifact_scope=list(item["expected_artifact_scope"]),
-            open_review_pack_id=item["open_review_pack_id"],
-            open_incident_id=item["open_incident_id"],
+    incoming_within_display_count = {
+        ticket_id: len(
+            {
+                upstream_ticket_id
+                for upstream_ticket_id in incoming_dependency_ticket_ids.get(ticket_id, set())
+                if upstream_ticket_id in display_ticket_ids
+            }
         )
-        for item in ordered_nodes
-    ]
+        for ticket_id in display_ticket_ids
+    }
+    ordered_ticket_ids: list[str] = []
+    visited_ticket_ids: set[str] = set()
+
+    def _append_ticket_branch(ticket_id: str) -> None:
+        if ticket_id in visited_ticket_ids:
+            return
+        visited_ticket_ids.add(ticket_id)
+        ordered_ticket_ids.append(ticket_id)
+        for child_ticket_id in sorted(outgoing_dependency_ticket_ids.get(ticket_id, set()), key=_ticket_sort_key):
+            if child_ticket_id in display_ticket_ids:
+                _append_ticket_branch(child_ticket_id)
+
+    root_ticket_ids = sorted(
+        [ticket_id for ticket_id, incoming_count in incoming_within_display_count.items() if incoming_count == 0],
+        key=_ticket_sort_key,
+    )
+    for ticket_id in root_ticket_ids:
+        _append_ticket_branch(ticket_id)
+    for ticket_id in sorted(display_ticket_ids, key=_ticket_sort_key):
+        _append_ticket_branch(ticket_id)
+
+    node_projections = []
+    for ticket_id in ordered_ticket_ids:
+        graph_node = graph_node_by_ticket_id.get(ticket_id)
+        if graph_node is None:
+            continue
+        snapshot = snapshot_by_ticket_id.get(ticket_id)
+        dependency_ticket_ids = sorted(incoming_dependency_ticket_ids.get(ticket_id, set()), key=_ticket_sort_key)
+        dependent_ticket_ids = sorted(outgoing_dependency_ticket_ids.get(ticket_id, set()), key=_ticket_sort_key)
+        approval = approval_by_node_id.get(graph_node.node_id)
+        incident = incident_by_node_id.get(graph_node.node_id)
+        node_projections.append(
+            DependencyInspectorNodeProjection(
+                node_id=graph_node.node_id,
+                ticket_id=ticket_id,
+                parent_ticket_id=parent_ticket_id_by_ticket_id.get(ticket_id),
+                phase=str(
+                    snapshot.phase
+                    if snapshot is not None
+                    else _shared_resolve_phase_label(
+                        {
+                            "delivery_stage": graph_node.delivery_stage,
+                            "output_schema_ref": graph_node.output_schema_ref,
+                        }
+                    )
+                ),
+                delivery_stage=graph_node.delivery_stage,
+                node_status=str(snapshot.node_status if snapshot is not None else graph_node.node_status or NODE_STATUS_PENDING),
+                ticket_status=(str(snapshot.ticket_status) if snapshot is not None and snapshot.ticket_status is not None else graph_node.ticket_status),
+                role_profile_ref=graph_node.role_profile_ref,
+                output_schema_ref=graph_node.output_schema_ref,
+                lease_owner=snapshot.lease_owner if snapshot is not None else None,
+                depends_on_ticket_id=dependency_ticket_ids[0] if dependency_ticket_ids else None,
+                dependency_ticket_ids=dependency_ticket_ids,
+                dependent_ticket_ids=dependent_ticket_ids,
+                block_reason=_resolve_block_reason(ticket_id, graph_node.node_id),
+                is_critical_path=graph_node.node_id in critical_path_node_ids,
+                is_blocked=graph_node.node_id in blocked_node_ids,
+                expected_artifact_scope=list(snapshot.expected_artifact_scope) if snapshot is not None else [],
+                open_review_pack_id=approval.get("review_pack_id") if approval is not None else None,
+                open_incident_id=incident.get("incident_id") if incident is not None else None,
+            )
+        )
+
+    current_stop_node = None
+    if current_stop_ticket_id is not None:
+        current_stop_node = next(
+            (item for item in node_projections if item.ticket_id == current_stop_ticket_id),
+            None,
+        )
 
     current_stop = (
         DependencyInspectorCurrentStopProjection(
-            reason=str(current_stop_node["block_reason"]),
-            node_id=str(current_stop_node["node_id"]),
-            ticket_id=current_stop_node["ticket_id"],
-            review_pack_id=current_stop_node["open_review_pack_id"],
-            incident_id=current_stop_node["open_incident_id"],
+            reason=current_stop_reason or current_stop_node.block_reason,
+            node_id=current_stop_node.node_id,
+            ticket_id=current_stop_node.ticket_id,
+            review_pack_id=current_stop_node.open_review_pack_id,
+            incident_id=current_stop_node.open_incident_id,
         )
         if current_stop_node is not None
         else None
@@ -1119,14 +1167,20 @@ def build_dependency_inspector_projection(
                 status=str(workflow["status"]),
             ),
             summary=DependencyInspectorSummaryProjection(
-                total_nodes=len(nodes),
-                critical_path_nodes=sum(1 for item in nodes if item.is_critical_path),
-                blocked_nodes=sum(1 for item in nodes if item.is_blocked),
-                open_approvals=len(approvals),
-                open_incidents=len(incident_rows),
+                total_nodes=len(node_projections),
+                critical_path_nodes=sum(1 for item in node_projections if item.is_critical_path),
+                blocked_nodes=sum(1 for item in node_projections if item.is_blocked),
+                open_approvals=sum(1 for item in node_projections if item.open_review_pack_id is not None),
+                open_incidents=sum(1 for item in node_projections if item.open_incident_id is not None),
                 current_stop=current_stop,
             ),
-            nodes=nodes,
+            graph_summary=DependencyInspectorGraphSummaryProjection(
+                graph_version=graph_snapshot.graph_version,
+                source_adapter=graph_snapshot.source_adapter,
+                reduction_issue_count=graph_snapshot.index_summary.reduction_issue_count,
+                blocked_reasons=list(graph_snapshot.index_summary.blocked_reasons),
+            ),
+            nodes=node_projections,
         ),
     )
 
@@ -1352,26 +1406,21 @@ def build_dashboard_projection(
     open_provider_incidents = repository.count_open_provider_incidents()
     active_tickets = repository.count_active_tickets()
     active_ticket_graph_index = None
+    blocked_node_source = "no_active_workflow"
     if active_workflow is not None:
-        active_ticket_graph_index = build_ticket_graph_snapshot(
-            repository,
-            str(active_workflow["workflow_id"]),
-        ).index_summary
-    legacy_blocked_node_ids = sorted(
-        {
-            *repository.list_blocked_node_ids(),
-            *[
-                str(incident["node_id"])
-                for incident in open_incident_rows
-                if incident.get("node_id") is not None
-                and incident.get("circuit_breaker_state") == CIRCUIT_BREAKER_STATE_OPEN
-            ],
-        }
-    )
+        try:
+            active_ticket_graph_index = build_ticket_graph_snapshot(
+                repository,
+                str(active_workflow["workflow_id"]),
+            ).index_summary
+            blocked_node_source = "ticket_graph"
+        except Exception:
+            active_ticket_graph_index = None
+            blocked_node_source = "graph_unavailable"
     blocked_node_ids = (
         sorted(set(active_ticket_graph_index.blocked_node_ids))
-        if active_ticket_graph_index is not None and list(active_ticket_graph_index.blocked_node_ids)
-        else legacy_blocked_node_ids
+        if active_ticket_graph_index is not None
+        else []
     )
     critical_path_node_ids = (
         sorted(set(active_ticket_graph_index.critical_path_node_ids))
@@ -1472,6 +1521,7 @@ def build_dashboard_projection(
                 phases=pipeline_summary.phases,
                 critical_path_node_ids=pipeline_summary.critical_path_node_ids,
                 blocked_node_ids=blocked_node_ids,
+                blocked_node_source=blocked_node_source,
             ),
             inbox_counts=InboxCountsProjection(
                 approvals_pending=pending_approvals,

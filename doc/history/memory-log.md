@@ -23,6 +23,10 @@
 
 ### 2026-04-14
 
+- `P1-S3` 这轮已完成：`Dependency Inspector` 现在直接消费 `TicketGraph` 边和索引，正式读面新增 `dependency_ticket_ids[] / graph_summary`，不再用 legacy `parent_ticket_id` 自己拼依赖解释
+- dashboard 的 blocked 读面这轮已去掉 silent legacy fallback：active workflow 正常时只认 `TicketGraph.index_summary.blocked_node_ids`；图不可用时显式返回 `blocked_node_source=graph_unavailable` 和空 blocked 列表，后续 P2 再接 incident / recovery
+- 本轮新增并实跑通过的回归包括：`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "dependency_inspector or dashboard_projection_reuses_ticket_graph_indexes_for_blocked_and_critical_path" -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q`、`cd frontend && npm run test:run -- src/App.test.tsx`、`cd frontend && npm run build`
+- 进入下一轮时，主计划顶部已切到 `P2 / P2-S1`，但 P2 切片正文还没展开；下一轮先补 P2-S1 正文，再继续实现恢复与 Hook 收口
 - `P1-S2` 这轮已完成：`TicketGraphIndexSummary` 现已补齐 `in_flight_ticket_ids / in_flight_node_ids / critical_path_node_ids / blocked_reasons`，controller 和 dashboard 主读面开始共用这层正式图索引
 - `workflow_controller` 的 `WAIT_FOR_RUNTIME` gate 现在已从“直扫 ticket status”改成读 `TicketGraph` 的 `in_flight_*` 索引；`ceo_snapshot.ticket_summary.ready_count` 继续沿同一套图索引，不再另算一遍 ready
 - dashboard 的 `pipeline_summary.blocked_node_ids / critical_path_node_ids` 与 `ops_strip.blocked_nodes` 这轮已优先读取 active workflow 的 `TicketGraph` 索引；但当 active graph 没给出 blocked node 时，dashboard 仍会临时回退 legacy blocked-node 读面，这个兼容层会直接影响下一轮 `P1-S3`

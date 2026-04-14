@@ -8,6 +8,7 @@ from app.contracts.common import ProjectionEnvelopeBase, StrictModel
 from app.contracts.commands import ElicitationAnswer
 from app.contracts.runtime import RenderedExecutionPayloadSummary
 from app.contracts.events import EventSeverity
+from app.contracts.ticket_graph import TicketGraphBlockedReasonSummary
 
 
 class WorkspaceSummary(StrictModel):
@@ -98,6 +99,7 @@ class PipelineSummaryProjection(StrictModel):
     phases: list[PhaseSummaryProjection]
     critical_path_node_ids: list[str]
     blocked_node_ids: list[str]
+    blocked_node_source: str = "no_active_workflow"
 
 
 class InboxCountsProjection(StrictModel):
@@ -436,6 +438,7 @@ class DependencyInspectorNodeProjection(StrictModel):
     output_schema_ref: str | None = None
     lease_owner: str | None = None
     depends_on_ticket_id: str | None = None
+    dependency_ticket_ids: list[str] = Field(default_factory=list)
     dependent_ticket_ids: list[str]
     block_reason: str
     is_critical_path: bool
@@ -445,9 +448,17 @@ class DependencyInspectorNodeProjection(StrictModel):
     open_incident_id: str | None = None
 
 
+class DependencyInspectorGraphSummaryProjection(StrictModel):
+    graph_version: str
+    source_adapter: str
+    reduction_issue_count: int = 0
+    blocked_reasons: list[TicketGraphBlockedReasonSummary] = Field(default_factory=list)
+
+
 class DependencyInspectorProjectionData(StrictModel):
     workflow: DependencyInspectorWorkflowProjection
     summary: DependencyInspectorSummaryProjection
+    graph_summary: DependencyInspectorGraphSummaryProjection
     nodes: list[DependencyInspectorNodeProjection]
 
 

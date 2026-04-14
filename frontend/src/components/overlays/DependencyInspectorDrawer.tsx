@@ -67,6 +67,11 @@ export function DependencyInspectorDrawer({
               </p>
             </div>
             <div className="review-room-action-panel">
+              <span className="eyebrow">Graph</span>
+              <p>{inspectorData.graph_summary.graph_version}</p>
+              <p className="muted-copy">{formatLabel(inspectorData.graph_summary.source_adapter)}</p>
+            </div>
+            <div className="review-room-action-panel">
               <span className="eyebrow">Approvals</span>
               <p>{inspectorData.summary.open_approvals}</p>
               <p className="muted-copy">Open board approvals still on this path.</p>
@@ -100,7 +105,11 @@ export function DependencyInspectorDrawer({
                 <dl className="dependency-node-grid">
                   <div>
                     <dt>Depends on</dt>
-                    <dd>{node.depends_on_ticket_id ?? 'Root node'}</dd>
+                    <dd>
+                      {node.dependency_ticket_ids.length > 0
+                        ? node.dependency_ticket_ids.join(', ')
+                        : node.depends_on_ticket_id ?? 'Root node'}
+                    </dd>
                   </div>
                   <div>
                     <dt>Downstream impact</dt>

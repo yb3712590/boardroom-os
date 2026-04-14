@@ -1,9 +1,9 @@
 # 新架构重构实施计划
 
 > 状态：`active`
-> 当前阶段：`P1`
-> 当前切片：`P1-S3`
-> 最后更新：`2026-04-14 16:07`
+> 当前阶段：`P2`
+> 当前切片：`P2-S1`
+> 最后更新：`2026-04-14 19:42`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -62,8 +62,8 @@
 | 阶段 | 名称 | 目标 | 状态 | 完成标准 |
 |---|---|---|---|---|
 | `P0` | 前置协议收口 | 先补初始化、并发、版本、物化这些地基 | `done` | 关键前置协议有代码入口和最小验证 |
-| `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `in_progress` | 图成为正式真相面 |
-| `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `todo` | 失败显式化、后置动作制度化 |
+| `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `done` | 图成为正式真相面 |
+| `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `in_progress` | 失败显式化、后置动作制度化 |
 | `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `todo` | CEO / Worker 不再靠长提示词兜底 |
 | `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `todo` | 可重规划、可诊断、可复盘 |
 
@@ -92,11 +92,11 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [ ] 本阶段所有必做切片完成
-- [ ] 每个切片都有最小验证证据
-- [ ] 涉及的运行文档已同步
-- [ ] 未完成项已明确转移到下阶段或阻塞区
-- [ ] `doc/history/memory-log.md` 已补记
+- [x] 本阶段所有必做切片完成
+- [x] 每个切片都有最小验证证据
+- [x] 涉及的运行文档已同步
+- [x] 未完成项已明确转移到下阶段或阻塞区
+- [x] `doc/history/memory-log.md` 已补记
 
 ---
 
@@ -352,31 +352,31 @@
 
 **实施边界：**
 - 做什么：
-  - [ ] 让 `Dependency Inspector` 正式消费 `TicketGraph` 边和索引
-  - [ ] 明确 dashboard blocked 兼容层的退出条件
-  - [ ] 给后续图健康读面预留最小只读接线点
+  - [x] 让 `Dependency Inspector` 正式消费 `TicketGraph` 边和索引
+  - [x] 明确 dashboard blocked 兼容层的退出条件
+  - [x] 给后续图健康读面预留最小只读接线点
 - 不做什么：
-  - [ ] 不引入 graph patch 写路径
-  - [ ] 不提前做 `GraphHealthMonitor` incident 自动化
-  - [ ] 不顺手改 hook / recovery / ProjectMap
+  - [x] 不引入 graph patch 写路径
+  - [x] 不提前做 `GraphHealthMonitor` incident 自动化
+  - [x] 不顺手改 hook / recovery / ProjectMap
 
 **代码任务：**
-- [ ] 任务 1
-- [ ] 任务 2
-- [ ] 任务 3
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
 
 **验证：**
-- [ ] `Dependency Inspector` 的节点顺序、阻断原因和关键路径改成按图真相输出
-- [ ] dashboard 不再新增第二套 blocked 解释逻辑
-- [ ] 相关 API / UI 最小回归通过
+- [x] `Dependency Inspector` 的节点顺序、阻断原因和关键路径改成按图真相输出
+- [x] dashboard 不再新增第二套 blocked 解释逻辑
+- [x] 相关 API / UI 最小回归通过
 
 **文档更新：**
-- [ ] 更新本计划文档
-- [ ] 视影响更新 `doc/TODO.md`
-- [ ] 视影响更新 `doc/history/memory-log.md`
-- [ ] 如果没改 `README.md`，在收尾说明原因
+- [x] 更新本计划文档
+- [x] 视影响更新 `doc/TODO.md`
+- [x] 视影响更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
 
-**状态：** `todo`
+**状态：** `done`
 
 ---
 
@@ -391,9 +391,10 @@
 - [x] `P0-S4` 已完成：`active-worktree-index.md` 与 ticket dossier 核心视图现在会走共享 `Boardroom` materializer；文档头固定带 `view_kind / generated_at / source_projection_version / source_refs / stale_check_key`，`doc-impact.md` 只读 `worker-postrun` receipt，`git-closeout.md` 只读 checkout/git closeout 事实输入
 - [x] `P1-S1` 已完成：`TicketGraph` 最小合同和 legacy adapter 已落地；`ceo_snapshot / workflow_controller` 现在会读正式图摘要，invalid legacy dependency 会显式 blocked，graph version 也已把 `WORKFLOW_CREATED` 算进正式事件序列
 - [x] `P1-S2` 已完成：`TicketGraphIndexSummary` 现已补齐 `in_flight / critical_path / blocked_reasons`；`workflow_controller` 和 dashboard 主读面已开始复用同一套图索引
+- [x] `P1-S3` 已完成：`Dependency Inspector` 现已改成直接消费 `TicketGraph` 边和索引，`dependency_ticket_ids[] / graph_summary` 已成为正式只读合同；dashboard 的 `blocked_node_ids` legacy fallback 已移除，图不可用时改成显式 `blocked_node_source=graph_unavailable`
 
 ### 未完成
-- [ ] `P1-S3` 还没开始；下一轮继续把 `Dependency Inspector` 切到 `TicketGraph`，并决定 dashboard blocked 兼容层何时退出
+- [ ] `P2-S1` 还没展开正文；下一轮从恢复与 Hook 收口的首个正式切片起手，并把 `P2` 切片内容补进主计划
 
 ### 明确放弃
 - [ ] 暂无
@@ -404,7 +405,7 @@
 - [ ] 宽口径 `board_approve` 回归桶当前仍会被一组旧的 governance/provider auto-advance 用例打断：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION` incident；这组不是本轮 stale-guard 主链回归，但下一轮要和 runtime/provider 历史测试一起收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 本轮额外复验时仍会在 `project-init` workflow 上多带一条旧的 provider / auto-advance incident；当前没证据表明是 `P1-S2` 新回归，先继续留给 runtime/provider 历史测试收口
-- [ ] `Dependency Inspector` 还没切到 `TicketGraph`；后续只能沿现有图合同扩，不再回去加新的 legacy parent-only 解释逻辑
+- [ ] `Dependency Inspector / dashboard` 这轮已去掉 silent legacy fallback；后续如果 `TicketGraph` 真不可用，必须走显式 incident / recovery，不允许再补第二套 projection 兜底
 
 ---
 
@@ -468,7 +469,22 @@
 `P1-S2` 已经把 controller 和 dashboard 主读面拉到正式图索引上，但 dashboard 还没完全达到“只认图真相”的纯口径；后续 `P1-S3` 需要先决定 active workflow / blocked scope 的正式边界，再移除这层兼容逻辑。`
 
 **当前处理：**  
-`controller / ceo_snapshot` 继续保持 fail-closed，只读图索引；dashboard 现阶段只在 active graph blocked 为空时回退 legacy blocked-node 读面，用来维持当前工作区 dashboard 的兼容口径。`
+`已在 P1-S3 收口：dashboard 不再回退 legacy blocked-node 读面；active workflow 的图不可用时，当前只显式返回 \`blocked_node_source=graph_unavailable\` 和空 blocked 列表，等 P2 再把它升级成 incident / recovery 主链。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `closed`
+
+### D-005
+**现象：**  
+`P1 已完成，但主计划正文里还没有展开 \`P2-S1\` 及后续切片；按本轮文档限制，不能顺手重排结构或新开大段正文。`
+
+**影响：**  
+`本轮可以把顶部当前阶段切到 \`P2\`，但下一轮正式进入恢复与 Hook 收口前，还要先把 P2 首个切片正文补进主计划，否则续跑入口不完整。`
+
+**当前处理：**  
+`本轮先把顶部元信息、阶段状态、任务核对区和当前快照切到 \`P2 / P2-S1\`，不扩主计划结构；下一轮起手先补 P2 首个切片正文，再继续实现。`
 
 **是否需要改架构文档：**  
 `no`
@@ -694,6 +710,36 @@
 **下一轮起手动作：**
 `继续 P1-S3，先把 Dependency Inspector 切到 TicketGraph，再决定 dashboard blocked 兼容层的退出条件。`
 
+### Session `2026-04-14 / 08`
+**开始前判断：**
+- 当前阶段：`P1`
+- 当前切片：`P1-S3`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 重写 `Dependency Inspector` 投影，让它正式消费 `TicketGraph` 边和索引，不再按 legacy parent-only 语义解释依赖
+- [x] 给依赖读面补上 `dependency_ticket_ids[] / graph_summary`，并把 dashboard 的 `blocked_node_ids` silent legacy fallback 改成显式 `blocked_node_source`
+- [x] 同步后端 API 回归、前端类型和 `DependencyInspectorDrawer` 最小展示
+- [x] 更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "dependency_inspector or dashboard_projection_reuses_ticket_graph_indexes_for_blocked_and_critical_path" -q` 通过（`6 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q` 通过（`6 passed`）
+- [x] `cd frontend && npm run test:run -- src/App.test.tsx` 通过（`29 passed`）
+- [x] `cd frontend && npm run build` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P2-S1` 正文还没写进主计划
+- [ ] `TicketGraph` 不可用时的显式状态当前还没升级成正式 incident / recovery 主链
+
+**下一轮起手动作：**
+`切到 P2-S1，先把恢复与 Hook 收口的首个切片正文补进主计划，再继续实现 fail-visible 到 incident / recovery 的正式接线。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -729,9 +775,9 @@
 
 这一段保持短，方便下次打开 10 秒内看懂。
 
-- 当前阶段：`P1`
-- 当前切片：`P1-S3`
-- 当前状态：`P1-S2 已完成，controller 和 dashboard 主读面已开始复用正式 TicketGraph 索引`
-- 最近完成：`TicketGraph` 现已补齐 `in_flight / critical_path / blocked_reasons`；`workflow_controller` 与 dashboard 的 blocked / critical-path 主读面已开始吃同一套图索引`
-- 当前阻塞：`Dependency Inspector` 仍是 legacy 依赖解释；dashboard blocked 读面还保留兼容回退；宽口径 governance/provider 与 closeout/approval 历史回归仍是旧失败`
-- 下一步：`继续 P1-S3，把 Dependency Inspector 切到 TicketGraph，并决定 dashboard blocked 兼容层何时退出`
+- 当前阶段：`P2`
+- 当前切片：`P2-S1`
+- 当前状态：`P1-S3 已完成；Dependency Inspector 和 dashboard blocked 读面都已切到正式 TicketGraph，只保留显式 graph-unavailable 状态，不再 silent fallback`
+- 最近完成：`Dependency Inspector` 已补 `dependency_ticket_ids[] / graph_summary`，dashboard 已补 `blocked_node_source`；后端 API 回归、`test_ticket_graph.py`、前端 `App.test.tsx` 和 build 都已通过`
+- 当前阻塞：`P2-S1` 正文还没写进主计划；`TicketGraph` 真不可用时还只是显式状态，尚未升级成 incident / recovery 主链；宽口径 governance/provider 与 closeout/approval 历史回归仍是旧失败`
+- 下一步：`先补 P2-S1 主计划正文，再把 graph-unavailable 这类 fail-visible 状态接进正式恢复与 Hook 收口主线`

@@ -46,6 +46,7 @@ export type DashboardData = {
     phases: PhaseSummary[]
     critical_path_node_ids: string[]
     blocked_node_ids: string[]
+    blocked_node_source: 'ticket_graph' | 'graph_unavailable' | 'no_active_workflow'
   }
   inbox_counts: {
     approvals_pending: number
@@ -176,6 +177,17 @@ export type DependencyInspectorData = {
       review_pack_id: string | null
       incident_id: string | null
     } | null
+  }
+  graph_summary: {
+    graph_version: string
+    source_adapter: string
+    reduction_issue_count: number
+    blocked_reasons: Array<{
+      reason_code: string
+      ticket_ids: string[]
+      node_ids: string[]
+      count: number
+    }>
   }
   nodes: DependencyInspectorNode[]
 }

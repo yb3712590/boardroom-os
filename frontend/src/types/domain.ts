@@ -259,6 +259,7 @@ export type DependencyInspectorNode = {
   output_schema_ref: string | null
   lease_owner: string | null
   depends_on_ticket_id: string | null
+  dependency_ticket_ids: string[]
   dependent_ticket_ids: string[]
   block_reason: string
   is_critical_path: boolean

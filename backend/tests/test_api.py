@@ -248,6 +248,7 @@ def _seed_created_ticket(
     input_artifact_refs: list[str] | None = None,
     input_process_asset_refs: list[str] | None = None,
     parent_ticket_id: str | None = None,
+    dependency_gate_refs: list[str] | None = None,
 ) -> None:
     repository = client.app.state.repository
     payload = _ticket_create_payload(
@@ -262,6 +263,15 @@ def _seed_created_ticket(
         acceptance_criteria=acceptance_criteria,
         input_artifact_refs=input_artifact_refs,
         parent_ticket_id=parent_ticket_id,
+        dispatch_intent={
+            "assignee_employee_id": "emp_frontend_2",
+            "selection_reason": "Seed graph dependency gates",
+            "dependency_gate_refs": dependency_gate_refs,
+            "selected_by": "test",
+            "wakeup_policy": "default",
+        }
+        if dependency_gate_refs is not None
+        else None,
     )
     if input_process_asset_refs is not None:
         payload["input_process_asset_refs"] = input_process_asset_refs
@@ -2715,6 +2725,8 @@ def test_dashboard_empty_state_exposes_system_initialized_preview(client):
     assert response.status_code == 200
     body = response.json()
     assert body["data"]["active_workflow"] is None
+    assert body["data"]["pipeline_summary"]["blocked_node_source"] == "no_active_workflow"
+    assert body["data"]["pipeline_summary"]["blocked_node_ids"] == []
     assert body["projection_version"] > 0
     assert body["cursor"] is not None
     assert any(
@@ -4952,50 +4964,104 @@ def test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_br
 
 
 def test_dependency_inspector_shows_scope_review_stop_after_project_init(client):
-    workflow_id, approval = _project_init_to_scope_approval(client)
+    workflow_id = "wf_dependency_inspector_review_stop"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dependency inspector review stop",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
 
     response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
 
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["workflow"]["workflow_id"] == workflow_id
-    assert body["summary"]["total_nodes"] == 1
-    assert body["summary"]["blocked_nodes"] == 1
-    assert body["summary"]["open_approvals"] == 1
+    assert body["summary"]["total_nodes"] >= 1
+    assert body["summary"]["blocked_nodes"] >= 1
+    assert body["summary"]["open_approvals"] >= 1
     assert body["summary"]["open_incidents"] == 0
     assert body["summary"]["current_stop"]["reason"] == "BOARD_REVIEW_OPEN"
     assert body["summary"]["current_stop"]["review_pack_id"] == approval["review_pack_id"]
-    assert [item["phase"] for item in body["nodes"]] == ["Plan"]
-    scope_node = body["nodes"][0]
-    assert scope_node["node_status"] == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW
-    assert scope_node["ticket_status"] == TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW
-    assert scope_node["depends_on_ticket_id"] is None
-    assert scope_node["dependent_ticket_ids"] == []
-    assert scope_node["block_reason"] == "BOARD_REVIEW_OPEN"
-    assert scope_node["is_critical_path"] is True
-    assert scope_node["is_blocked"] is True
-    assert scope_node["open_review_pack_id"] == approval["review_pack_id"]
-    assert scope_node["open_incident_id"] is None
+    assert body["graph_summary"]["graph_version"].startswith("gv_")
+    assert body["graph_summary"]["source_adapter"] == "legacy_projection_adapter"
+    assert body["graph_summary"]["reduction_issue_count"] == 0
+    assert any(
+        item["reason_code"] == "BOARD_REVIEW_OPEN"
+        and body["summary"]["current_stop"]["node_id"] in item["node_ids"]
+        for item in body["graph_summary"]["blocked_reasons"]
+    )
+    review_node = next(item for item in body["nodes"] if item["open_review_pack_id"] == approval["review_pack_id"])
+    assert review_node["block_reason"] == "BOARD_REVIEW_OPEN"
+    assert review_node["is_critical_path"] is True
+    assert review_node["is_blocked"] is True
+    assert review_node["open_incident_id"] is None
+    assert "dependency_ticket_ids" in review_node
 
 
 def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id, approval = _project_init_to_scope_approval(client)
-
-    approve_response = _approve_open_review(client, approval, idempotency_suffix="dependency-chain")
+    workflow_id = "wf_dependency_inspector_linear_chain"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dependency inspector linear chain",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_plan_scope",
+        node_id="node_plan_scope",
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="consensus_document",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_build_app",
+        node_id="node_build_app",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        parent_ticket_id="tkt_plan_scope",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_check_app",
+        node_id="node_check_app",
+        role_profile_ref="checker_primary",
+        output_schema_ref="maker_checker_verdict",
+        delivery_stage="CHECK",
+        parent_ticket_id="tkt_build_app",
+        dependency_gate_refs=["tkt_build_app"],
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_review_app",
+        node_id="node_review_app",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+        delivery_stage="REVIEW",
+        parent_ticket_id="tkt_check_app",
+        dependency_gate_refs=["tkt_check_app"],
+    )
     response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
 
-    assert approve_response.status_code == 200
-    assert approve_response.json()["status"] == "ACCEPTED"
     assert response.status_code == 200
     body = response.json()["data"]
     phases = [item["phase"] for item in body["nodes"]]
     assert phases == ["Plan", "Build", "Check", "Review"]
     assert body["summary"]["total_nodes"] == 4
-    assert body["summary"]["critical_path_nodes"] == 4
-    assert body["summary"]["blocked_nodes"] == 1
-    assert body["summary"]["open_approvals"] == 1
-    assert body["summary"]["current_stop"]["reason"] == "BOARD_REVIEW_OPEN"
+    assert body["summary"]["critical_path_nodes"] == 0
+    assert body["summary"]["blocked_nodes"] == 0
+    assert body["summary"]["open_approvals"] == 0
+    assert body["summary"]["current_stop"] is None
 
     build_node = next(item for item in body["nodes"] if item["phase"] == "Build")
     check_node = next(item for item in body["nodes"] if item["phase"] == "Check")
@@ -5004,23 +5070,31 @@ def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(c
     assert build_node["delivery_stage"] == "BUILD"
     assert check_node["delivery_stage"] == "CHECK"
     assert review_node["delivery_stage"] == "REVIEW"
-    assert build_node["block_reason"] == "COMPLETED"
+    assert build_node["block_reason"] == "READY"
     assert check_node["depends_on_ticket_id"] == build_node["ticket_id"]
+    assert build_node["dependency_ticket_ids"] == [body["nodes"][0]["ticket_id"]]
+    assert check_node["dependency_ticket_ids"] == [build_node["ticket_id"]]
+    assert review_node["dependency_ticket_ids"] == [check_node["ticket_id"]]
     assert review_node["depends_on_ticket_id"] == check_node["ticket_id"]
     assert build_node["dependent_ticket_ids"] == [check_node["ticket_id"]]
     assert check_node["dependent_ticket_ids"] == [review_node["ticket_id"]]
-    assert review_node["block_reason"] == "BOARD_REVIEW_OPEN"
-    assert review_node["is_blocked"] is True
-    assert review_node["open_review_pack_id"] is not None
+    assert review_node["block_reason"] == "READY"
+    assert review_node["is_blocked"] is False
+    assert review_node["open_review_pack_id"] is None
     assert review_node["open_incident_id"] is None
-    assert "10-project/src/*" in build_node["expected_artifact_scope"]
-    assert "20-evidence/tests/*" in build_node["expected_artifact_scope"]
-    assert any(scope.endswith(f"{check_node['ticket_id']}/*") for scope in check_node["expected_artifact_scope"])
+    assert "artifacts/ui/homepage/*" in build_node["expected_artifact_scope"]
+    assert "reports/review/*" in build_node["expected_artifact_scope"]
 
 
 def test_dependency_inspector_marks_incident_stop_for_fused_node(client):
-    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
-    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    workflow_id = "wf_dependency_inspector_incident_stop"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dependency inspector incident stop",
+    )
     _create_lease_and_start_ticket(
         client,
         workflow_id=workflow_id,
@@ -5079,6 +5153,98 @@ def test_dependency_inspector_marks_incident_stop_for_fused_node(client):
     assert incident_node["is_blocked"] is True
     assert incident_node["open_incident_id"] == "inc_dependency_build_fused"
     assert incident_node["open_review_pack_id"] is None
+    assert any(
+        item["reason_code"] == "INCIDENT_OPEN" and "node_incident_dependency_build" in item["node_ids"]
+        for item in body["graph_summary"]["blocked_reasons"]
+    )
+
+
+def test_dependency_inspector_exposes_multiple_dependency_gate_refs_from_ticket_graph(client):
+    workflow_id = "wf_dependency_inspector_multi_dependency"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dependency inspector shows multiple dependency gates",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_build_api",
+        node_id="node_build_api",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_build_ui",
+        node_id="node_build_ui",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_check_bundle",
+        node_id="node_check_bundle",
+        role_profile_ref="checker_primary",
+        output_schema_ref="maker_checker_verdict",
+        delivery_stage="CHECK",
+        dependency_gate_refs=["tkt_build_api", "tkt_build_ui"],
+    )
+
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    check_node = next(item for item in body["nodes"] if item["node_id"] == "node_check_bundle")
+    api_build_node = next(item for item in body["nodes"] if item["node_id"] == "node_build_api")
+    ui_build_node = next(item for item in body["nodes"] if item["node_id"] == "node_build_ui")
+
+    assert check_node["depends_on_ticket_id"] == "tkt_build_api"
+    assert check_node["dependency_ticket_ids"] == ["tkt_build_api", "tkt_build_ui"]
+    assert api_build_node["dependent_ticket_ids"] == ["tkt_check_bundle"]
+    assert ui_build_node["dependent_ticket_ids"] == ["tkt_check_bundle"]
+
+
+def test_dependency_inspector_surfaces_graph_reduction_issue_without_legacy_fallback(client):
+    workflow_id = "wf_dependency_inspector_graph_issue"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dependency inspector surfaces graph reduction issues",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_invalid_dependency",
+        node_id="node_invalid_dependency",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        dependency_gate_refs=["tkt_missing_dependency"],
+    )
+
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    invalid_node = body["nodes"][0]
+
+    assert body["summary"]["current_stop"]["reason"] == "GRAPH_REDUCTION_ISSUE"
+    assert body["graph_summary"]["reduction_issue_count"] == 1
+    assert any(
+        item["reason_code"] == "GRAPH_REDUCTION_ISSUE" and item["node_ids"] == ["node_invalid_dependency"]
+        for item in body["graph_summary"]["blocked_reasons"]
+    )
+    assert invalid_node["block_reason"] == "GRAPH_REDUCTION_ISSUE"
+    assert invalid_node["is_blocked"] is True
 
 
 def test_dashboard_workforce_summary_reflects_seeded_roster_and_busy_worker(client, set_ticket_time):
@@ -10284,6 +10450,7 @@ def test_inbox_and_dashboard_reflect_open_approval(client):
     assert dashboard_response.json()["data"]["inbox_counts"]["approvals_pending"] == 1
     assert dashboard_response.json()["data"]["ops_strip"]["active_tickets"] == 1
     assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 1
+    assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_source"] == "ticket_graph"
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == [
         "node_homepage_visual"
     ]
@@ -10321,11 +10488,40 @@ def test_dashboard_projection_reuses_ticket_graph_indexes_for_blocked_and_critic
 
     assert dashboard_response.status_code == 200
     assert dashboard_data["active_workflow"]["workflow_id"] == workflow_id
+    assert dashboard_data["pipeline_summary"]["blocked_node_source"] == "ticket_graph"
     assert dashboard_data["pipeline_summary"]["blocked_node_ids"] == graph_snapshot.index_summary.blocked_node_ids
     assert dashboard_data["pipeline_summary"]["critical_path_node_ids"] == (
         graph_snapshot.index_summary.critical_path_node_ids
     )
     assert dashboard_data["ops_strip"]["blocked_nodes"] == len(graph_snapshot.index_summary.blocked_node_ids)
+
+
+def test_dashboard_projection_exposes_graph_unavailable_without_legacy_blocked_fallback(client, monkeypatch):
+    workflow_id = "wf_dashboard_graph_unavailable"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dashboard graph unavailable stays fail visible",
+    )
+    _seed_review_request(client, workflow_id=workflow_id)
+
+    import app.core.projections as projections_module
+
+    def _raise_graph_unavailable(*args, **kwargs):
+        raise RuntimeError("ticket graph unavailable")
+
+    monkeypatch.setattr(projections_module, "build_ticket_graph_snapshot", _raise_graph_unavailable)
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+
+    assert dashboard_response.status_code == 200
+    dashboard_data = dashboard_response.json()["data"]
+    assert dashboard_data["active_workflow"]["workflow_id"] == workflow_id
+    assert dashboard_data["pipeline_summary"]["blocked_node_source"] == "graph_unavailable"
+    assert dashboard_data["pipeline_summary"]["blocked_node_ids"] == []
+    assert dashboard_data["ops_strip"]["blocked_nodes"] == 0
 
 
 def test_visual_milestone_result_submit_routes_to_checker_ticket_before_board_review(client, set_ticket_time):

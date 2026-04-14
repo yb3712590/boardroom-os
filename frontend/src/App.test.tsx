@@ -975,6 +975,19 @@ function dependencyInspectorData(overrides: Partial<JsonRecord> = {}) {
         incident_id: null,
       },
     },
+    graph_summary: {
+      graph_version: 'gv_42',
+      source_adapter: 'legacy_projection_adapter',
+      reduction_issue_count: 0,
+      blocked_reasons: [
+        {
+          reason_code: 'BOARD_REVIEW_OPEN',
+          ticket_ids: ['tkt_homepage_review'],
+          node_ids: ['node_homepage_review'],
+          count: 1,
+        },
+      ],
+    },
     nodes: [
       {
         node_id: 'node_scope_decision',
@@ -988,6 +1001,7 @@ function dependencyInspectorData(overrides: Partial<JsonRecord> = {}) {
         output_schema_ref: 'consensus_document',
         lease_owner: null,
         depends_on_ticket_id: null,
+        dependency_ticket_ids: [],
         dependent_ticket_ids: ['tkt_homepage_build'],
         block_reason: 'COMPLETED',
         is_critical_path: true,
@@ -1008,6 +1022,7 @@ function dependencyInspectorData(overrides: Partial<JsonRecord> = {}) {
         output_schema_ref: 'implementation_bundle',
         lease_owner: null,
         depends_on_ticket_id: 'tkt_scope_decision',
+        dependency_ticket_ids: ['tkt_scope_decision'],
         dependent_ticket_ids: ['tkt_homepage_check'],
         block_reason: 'COMPLETED',
         is_critical_path: true,
@@ -1028,6 +1043,7 @@ function dependencyInspectorData(overrides: Partial<JsonRecord> = {}) {
         output_schema_ref: 'delivery_check_report',
         lease_owner: null,
         depends_on_ticket_id: 'tkt_homepage_build',
+        dependency_ticket_ids: ['tkt_homepage_build'],
         dependent_ticket_ids: ['tkt_homepage_review'],
         block_reason: 'COMPLETED',
         is_critical_path: true,
@@ -1048,6 +1064,7 @@ function dependencyInspectorData(overrides: Partial<JsonRecord> = {}) {
         output_schema_ref: 'ui_milestone_review',
         lease_owner: null,
         depends_on_ticket_id: 'tkt_homepage_check',
+        dependency_ticket_ids: ['tkt_homepage_check'],
         dependent_ticket_ids: [],
         block_reason: 'BOARD_REVIEW_OPEN',
         is_critical_path: true,
@@ -1210,6 +1227,7 @@ function dashboardData(overrides: Partial<JsonRecord> = {}) {
       ],
       critical_path_node_ids: ['node_homepage_visual'],
       blocked_node_ids: [],
+      blocked_node_source: 'ticket_graph',
     },
     inbox_counts: {
       approvals_pending: 0,
@@ -2201,6 +2219,7 @@ describe('Boardroom UI', () => {
     await user.click(await screen.findByRole('button', { name: /open dependency path/i }))
 
     expect(await screen.findByRole('heading', { name: /dependency path/i })).toBeInTheDocument()
+    expect(screen.getByText('gv_42')).toBeInTheDocument()
     expect(screen.getAllByText(/board review open/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText('tkt_homepage_review').length).toBeGreaterThan(0)
 
