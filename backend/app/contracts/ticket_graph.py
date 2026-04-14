@@ -42,11 +42,22 @@ class TicketGraphEdge(StrictModel):
     target_node_id: str
 
 
+class TicketGraphBlockedReasonSummary(StrictModel):
+    reason_code: str
+    ticket_ids: list[str] = Field(default_factory=list)
+    node_ids: list[str] = Field(default_factory=list)
+    count: int = 0
+
+
 class TicketGraphIndexSummary(StrictModel):
     ready_ticket_ids: list[str] = Field(default_factory=list)
     ready_node_ids: list[str] = Field(default_factory=list)
     blocked_ticket_ids: list[str] = Field(default_factory=list)
     blocked_node_ids: list[str] = Field(default_factory=list)
+    in_flight_ticket_ids: list[str] = Field(default_factory=list)
+    in_flight_node_ids: list[str] = Field(default_factory=list)
+    critical_path_node_ids: list[str] = Field(default_factory=list)
+    blocked_reasons: list[TicketGraphBlockedReasonSummary] = Field(default_factory=list)
     reduction_issue_count: int = 0
 
 

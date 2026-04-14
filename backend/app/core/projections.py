@@ -146,6 +146,7 @@ from app.core.runtime_provider_config import (
     runtime_provider_health_summary,
 )
 from app.core.time import now_local
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.worker_scope_ops import (
     list_auth_rejections,
     list_binding_admin_views,
@@ -779,6 +780,8 @@ def _build_pipeline_summary(
     *,
     workflow_id: str | None,
     pending_approvals: int,
+    blocked_node_ids_override: list[str] | None = None,
+    critical_path_node_ids_override: list[str] | None = None,
 ) -> PipelineSummaryProjection:
     phase_specs = [
         ("phase_intake", "Intake"),
@@ -898,8 +901,8 @@ def _build_pipeline_summary(
     ]
     return PipelineSummaryProjection(
         phases=phases,
-        critical_path_node_ids=sorted(set(critical_path_node_ids)),
-        blocked_node_ids=sorted(set(blocked_node_ids)),
+        critical_path_node_ids=sorted(set(critical_path_node_ids_override or critical_path_node_ids)),
+        blocked_node_ids=sorted(set(blocked_node_ids_override or blocked_node_ids)),
     )
 
 
@@ -1348,7 +1351,13 @@ def build_dashboard_projection(
     open_circuit_breakers = repository.count_open_circuit_breakers()
     open_provider_incidents = repository.count_open_provider_incidents()
     active_tickets = repository.count_active_tickets()
-    blocked_node_ids = sorted(
+    active_ticket_graph_index = None
+    if active_workflow is not None:
+        active_ticket_graph_index = build_ticket_graph_snapshot(
+            repository,
+            str(active_workflow["workflow_id"]),
+        ).index_summary
+    legacy_blocked_node_ids = sorted(
         {
             *repository.list_blocked_node_ids(),
             *[
@@ -1358,6 +1367,16 @@ def build_dashboard_projection(
                 and incident.get("circuit_breaker_state") == CIRCUIT_BREAKER_STATE_OPEN
             ],
         }
+    )
+    blocked_node_ids = (
+        sorted(set(active_ticket_graph_index.blocked_node_ids))
+        if active_ticket_graph_index is not None and list(active_ticket_graph_index.blocked_node_ids)
+        else legacy_blocked_node_ids
+    )
+    critical_path_node_ids = (
+        sorted(set(active_ticket_graph_index.critical_path_node_ids))
+        if active_ticket_graph_index is not None
+        else []
     )
     blocked_nodes = len(blocked_node_ids)
     artifact_cleanup_summary = repository.get_artifact_cleanup_summary(at=generated_at)
@@ -1390,6 +1409,8 @@ def build_dashboard_projection(
             repository,
             workflow_id=active_workflow["workflow_id"],
             pending_approvals=pending_approvals,
+            blocked_node_ids_override=blocked_node_ids,
+            critical_path_node_ids_override=critical_path_node_ids,
         )
 
     preview_events = [

@@ -724,12 +724,25 @@ def build_workflow_controller_view(
             ],
             "blocked_ticket_ids": [],
             "blocked_node_ids": [],
+            "in_flight_ticket_ids": [
+                str(ticket.get("ticket_id") or "").strip()
+                for ticket in tickets
+                if str(ticket.get("status") or "").strip() in {"LEASED", "EXECUTING"}
+            ],
+            "in_flight_node_ids": [
+                str(ticket.get("node_id") or "").strip()
+                for ticket in tickets
+                if str(ticket.get("status") or "").strip() in {"LEASED", "EXECUTING"}
+            ],
+            "critical_path_node_ids": [],
+            "blocked_reasons": [],
             "reduction_issue_count": 0,
         }
     )
     graph_ready_ticket_ids = list(graph_index_summary.get("ready_ticket_ids") or [])
     graph_ready_node_ids = list(graph_index_summary.get("ready_node_ids") or [])
     graph_blocked_node_ids = list(graph_index_summary.get("blocked_node_ids") or [])
+    graph_in_flight_ticket_ids = list(graph_index_summary.get("in_flight_ticket_ids") or [])
     graph_has_reduction_issues = int(graph_index_summary.get("reduction_issue_count") or 0) > 0
     hard_constraints = _load_workflow_hard_constraints(connection, workflow_id)
     created_specs_by_ticket = {
@@ -816,7 +829,7 @@ def build_workflow_controller_view(
             "recommended_action": "NO_ACTION",
             "blocking_reason": "Workflow has an open incident.",
         }
-    elif any(ticket["status"] in {"LEASED", "EXECUTING"} for ticket in tickets):
+    elif graph_in_flight_ticket_ids:
         controller_state = {
             "state": "WAIT_FOR_RUNTIME",
             "recommended_action": "NO_ACTION",

@@ -11,7 +11,14 @@ from app.core.output_schemas import (
     TECHNOLOGY_DECISION_SCHEMA_REF,
 )
 from app.core.ticket_graph import build_ticket_graph_snapshot
-from tests.test_api import _ensure_scoped_workflow, _seed_created_ticket, _ticket_create_payload
+from tests.test_api import (
+    _create_lease_and_start_ticket,
+    _employee_freeze_payload,
+    _ensure_scoped_workflow,
+    _seed_created_ticket,
+    _seed_review_request,
+    _ticket_create_payload,
+)
 
 
 def _seed_ticket_created_event(
@@ -222,3 +229,115 @@ def test_ceo_shadow_snapshot_exposes_ticket_graph_summary_without_changing_contr
     assert snapshot["controller_state"]["state"] == "READY_TICKET"
     assert snapshot["ticket_graph"]["index_summary"]["ready_node_ids"] == ["node_ready_build"]
     assert snapshot["ticket_graph"]["index_summary"]["blocked_node_ids"] == []
+
+
+def test_ticket_graph_snapshot_indexes_in_flight_and_critical_path(client):
+    workflow_id = "wf_ticket_graph_in_flight"
+    ticket_id = "tkt_in_flight_build"
+    node_id = "node_in_flight_build"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket graph in-flight index",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+
+    assert snapshot.index_summary.in_flight_ticket_ids == [ticket_id]
+    assert snapshot.index_summary.in_flight_node_ids == [node_id]
+    assert snapshot.index_summary.critical_path_node_ids == [node_id]
+
+
+def test_ticket_graph_snapshot_summarizes_board_review_and_incident_blockers(client):
+    board_workflow_id = "wf_ticket_graph_board_block"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=board_workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket graph board blocker",
+    )
+    _seed_review_request(client, workflow_id=board_workflow_id)
+
+    board_snapshot = build_ticket_graph_snapshot(client.app.state.repository, board_workflow_id)
+
+    assert board_snapshot.index_summary.blocked_node_ids == ["node_homepage_visual"]
+    assert any(
+        item.reason_code == "BOARD_REVIEW_OPEN" and item.node_ids == ["node_homepage_visual"]
+        for item in board_snapshot.index_summary.blocked_reasons
+    )
+
+    incident_workflow_id = "wf_ticket_graph_incident_block"
+    incident_ticket_id = "tkt_incident_build"
+    incident_node_id = "node_incident_build"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=incident_workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket graph incident blocker",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=incident_workflow_id,
+        ticket_id=incident_ticket_id,
+        node_id=incident_node_id,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(incident_workflow_id, employee_id="emp_frontend_2"),
+    )
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+
+    incident_snapshot = build_ticket_graph_snapshot(client.app.state.repository, incident_workflow_id)
+
+    assert incident_node_id in incident_snapshot.index_summary.blocked_node_ids
+    assert any(
+        item.reason_code == "INCIDENT_OPEN" and incident_node_id in item.node_ids
+        for item in incident_snapshot.index_summary.blocked_reasons
+    )
+
+
+def test_ceo_shadow_snapshot_uses_ticket_graph_in_flight_index_for_ready_count_and_runtime_gate(client):
+    workflow_id = "wf_ticket_graph_snapshot_in_flight"
+    ticket_id = "tkt_snapshot_in_flight"
+    node_id = "node_snapshot_in_flight"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket graph snapshot in flight",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="SCHEDULER_IDLE_MAINTENANCE",
+        trigger_ref="test-ticket-graph-in-flight",
+    )
+
+    assert snapshot["controller_state"]["state"] == "WAIT_FOR_RUNTIME"
+    assert snapshot["ticket_summary"]["ready_count"] == 0
+    assert snapshot["ticket_graph"]["index_summary"]["in_flight_ticket_ids"] == [ticket_id]

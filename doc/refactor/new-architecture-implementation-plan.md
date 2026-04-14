@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P1`
-> 当前切片：`P1-S1`
-> 最后更新：`2026-04-14 13:30`
+> 当前切片：`P1-S3`
+> 最后更新：`2026-04-14 16:07`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -296,6 +296,88 @@
 
 **状态：** `done`
 
+### 切片 `P1-S2`
+**名称：**  
+`TicketGraph 正式索引与 controller / dashboard 对齐`
+
+**现实问题：**  
+`workflow_controller` 对 ready/blocked/runtime 仍混用 ticket status 和图摘要，dashboard 的 blocked / critical-path 也还在各拼各的，图索引还没真正变成共享协议面。`
+
+**对应架构文档：**
+- `doc/new-architecture/02-ticket-graph-engine.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/12-architecture-audit-report.md`
+- `doc/new-architecture/13-cross-cutting-concerns.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 扩 `TicketGraphIndexSummary`，补齐 `in_flight_* / critical_path_node_ids / blocked_reasons`
+  - [x] 让 `workflow_controller` 的 ready / blocked / in-flight gate 正式消费图索引
+  - [x] 让 dashboard 的 `blocked_node_ids / critical_path_node_ids / ops_strip.blocked_nodes` 优先复用同一套图索引
+- 不做什么：
+  - [x] 不引入 graph patch 写路径
+  - [x] 不提前改 `Dependency Inspector`
+  - [x] 不重写 dashboard 的 phase 分桶逻辑
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] `TicketGraph` 已能归约 `in_flight / critical_path / blocked_reasons`
+- [x] `workflow_controller / ceo_snapshot` 已继续沿同一套图索引判断 runtime gate 和 ready count
+- [x] dashboard blocked / critical-path 相关 API 回归通过
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
+### 切片 `P1-S3`
+**名称：**  
+`Dependency Inspector 与图读面清尾`
+
+**现实问题：**  
+`Dependency Inspector` 还在按 legacy ticket snapshot 和 parent-only 路径解释依赖；dashboard blocked 读面虽然已优先吃图索引，但兼容层还没退出。`
+
+**对应架构文档：**
+- `doc/new-architecture/02-ticket-graph-engine.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/12-architecture-audit-report.md`
+- `doc/new-architecture/14-graph-health-monitor.md`
+
+**实施边界：**
+- 做什么：
+  - [ ] 让 `Dependency Inspector` 正式消费 `TicketGraph` 边和索引
+  - [ ] 明确 dashboard blocked 兼容层的退出条件
+  - [ ] 给后续图健康读面预留最小只读接线点
+- 不做什么：
+  - [ ] 不引入 graph patch 写路径
+  - [ ] 不提前做 `GraphHealthMonitor` incident 自动化
+  - [ ] 不顺手改 hook / recovery / ProjectMap
+
+**代码任务：**
+- [ ] 任务 1
+- [ ] 任务 2
+- [ ] 任务 3
+
+**验证：**
+- [ ] `Dependency Inspector` 的节点顺序、阻断原因和关键路径改成按图真相输出
+- [ ] dashboard 不再新增第二套 blocked 解释逻辑
+- [ ] 相关 API / UI 最小回归通过
+
+**文档更新：**
+- [ ] 更新本计划文档
+- [ ] 视影响更新 `doc/TODO.md`
+- [ ] 视影响更新 `doc/history/memory-log.md`
+- [ ] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `todo`
+
 ---
 
 ## 8. 任务清单核对区
@@ -308,9 +390,10 @@
 - [x] `P0-S3` 已完成：主线写路径现在已有显式 optimistic guard；`ticket-start` 可拒绝 stale ticket/node projection version，`ticket-result-submit` 可拒绝 stale `compiled_execution_package` ref，compile meta 也会写入 `ticket_projection_version / node_projection_version / source_projection_version`
 - [x] `P0-S4` 已完成：`active-worktree-index.md` 与 ticket dossier 核心视图现在会走共享 `Boardroom` materializer；文档头固定带 `view_kind / generated_at / source_projection_version / source_refs / stale_check_key`，`doc-impact.md` 只读 `worker-postrun` receipt，`git-closeout.md` 只读 checkout/git closeout 事实输入
 - [x] `P1-S1` 已完成：`TicketGraph` 最小合同和 legacy adapter 已落地；`ceo_snapshot / workflow_controller` 现在会读正式图摘要，invalid legacy dependency 会显式 blocked，graph version 也已把 `WORKFLOW_CREATED` 算进正式事件序列
+- [x] `P1-S2` 已完成：`TicketGraphIndexSummary` 现已补齐 `in_flight / critical_path / blocked_reasons`；`workflow_controller` 和 dashboard 主读面已开始复用同一套图索引
 
 ### 未完成
-- [ ] `P1-S2` 还没开始；下一轮继续把 controller ready-node / blocked 判定收成正式消费 `TicketGraph` 索引
+- [ ] `P1-S3` 还没开始；下一轮继续把 `Dependency Inspector` 切到 `TicketGraph`，并决定 dashboard blocked 兼容层何时退出
 
 ### 明确放弃
 - [ ] 暂无
@@ -320,7 +403,8 @@
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
 - [ ] 宽口径 `board_approve` 回归桶当前仍会被一组旧的 governance/provider auto-advance 用例打断：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION` incident；这组不是本轮 stale-guard 主链回归，但下一轮要和 runtime/provider 历史测试一起收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
-- [ ] `TicketGraph` 这轮还是投影化图：dashboard、dependency inspector 和 graph patch 写路径都还没切过来；后续只能在现有图合同上扩，不能再回去直接加旧 projection 直读逻辑
+- [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 本轮额外复验时仍会在 `project-init` workflow 上多带一条旧的 provider / auto-advance incident；当前没证据表明是 `P1-S2` 新回归，先继续留给 runtime/provider 历史测试收口
+- [ ] `Dependency Inspector` 还没切到 `TicketGraph`；后续只能沿现有图合同扩，不再回去加新的 legacy parent-only 解释逻辑
 
 ---
 
@@ -370,6 +454,21 @@
 
 **当前处理：**  
 `本轮先锁 ticket 级 graph_node_id + 原 node_id 双字段合同；上层只允许读 TicketGraph 协议，不允许继续直拼 legacy node/ticket 语义。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
+
+### D-004
+**现象：**  
+`dashboard` 的 `blocked_node_ids / blocked_nodes` 这轮已经优先读取 active workflow 的 `TicketGraph` 索引；但为了不把现有 workspace 级 blocked 读面直接打断，当 active graph 没给出 blocked node 时，dashboard 仍保留了一层 legacy blocked-node 兼容回退。`
+
+**影响：**  
+`P1-S2` 已经把 controller 和 dashboard 主读面拉到正式图索引上，但 dashboard 还没完全达到“只认图真相”的纯口径；后续 `P1-S3` 需要先决定 active workflow / blocked scope 的正式边界，再移除这层兼容逻辑。`
+
+**当前处理：**  
+`controller / ceo_snapshot` 继续保持 fail-closed，只读图索引；dashboard 现阶段只在 active graph blocked 为空时回退 legacy blocked-node 读面，用来维持当前工作区 dashboard 的兼容口径。`
 
 **是否需要改架构文档：**  
 `no`
@@ -564,6 +663,37 @@
 **下一轮起手动作：**
 `继续 P1-S2，把 controller 的 ready-node / blocked 判定改成正式消费 TicketGraph 索引，并决定 dependency inspector / dashboard 哪个先接图摘要。`
 
+### Session `2026-04-14 / 07`
+**开始前判断：**
+- 当前阶段：`P1`
+- 当前切片：`P1-S2`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 扩 `backend/app/contracts/ticket_graph.py` 和 `backend/app/core/ticket_graph.py`，给正式图索引补上 `in_flight_* / critical_path_node_ids / blocked_reasons`
+- [x] 把 `workflow_controller` 的 runtime gate 改成正式读 `TicketGraph` 索引，`ceo_snapshot.ticket_summary.ready_count` 继续和图索引共口径
+- [x] 把 dashboard 的 `blocked_node_ids / critical_path_node_ids / ops_strip.blocked_nodes` 接到同一套图索引，并保留最小兼容回退
+- [x] 同步本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q` 通过（`6 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py backend/tests/test_ceo_scheduler.py -k "in_flight or blocker or summary_without_changing_controller_state or snapshot_exposes_capability_plan_for_backlog_followups or snapshot_requires_next_governance_document_before_backlog_fanout or snapshot_builds_full_dependency_chain_for_next_governance_document or snapshot_treats_any_approved_architect_governance_document_as_gate_satisfied" -q` 通过（`11 passed, 62 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "inbox_and_dashboard_reflect_open_approval or dashboard_projection_reuses_ticket_graph_indexes_for_blocked_and_critical_path or board_approve_command_resolves_open_approval or board_reject_command_resolves_open_approval" -q` 通过（`4 passed, 275 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m py_compile backend/app/contracts/ticket_graph.py backend/app/core/ticket_graph.py backend/app/core/workflow_controller.py backend/app/core/projections.py backend/tests/test_ticket_graph.py backend/tests/test_api.py` 通过
+- [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 额外复验时仍会命中一条旧的 provider / auto-advance incident；当前先记为历史问题，不算本轮回归
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P1-S3` 还没开始；`Dependency Inspector` 仍未正式消费 `TicketGraph`
+- [ ] dashboard blocked 读面的兼容回退还没退出
+
+**下一轮起手动作：**
+`继续 P1-S3，先把 Dependency Inspector 切到 TicketGraph，再决定 dashboard blocked 兼容层的退出条件。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -600,8 +730,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P1`
-- 当前切片：`P1-S1`
-- 当前状态：`P1-S1 已完成，TicketGraph 最小合同和图摘要读面已落地`
-- 最近完成：`legacy ticket/node/projection 现在可归约成正式 TicketGraph；ceo_snapshot / workflow_controller 已开始读 ready/blocked 图摘要`
-- 当前阻塞：`dashboard / dependency inspector 还没切到 TicketGraph，宽口径 governance/provider 与 closeout/approval 历史回归仍是旧失败`
-- 下一步：`继续 P1-S2，把 controller ready-node / blocked 判定正式切到 TicketGraph 索引`
+- 当前切片：`P1-S3`
+- 当前状态：`P1-S2 已完成，controller 和 dashboard 主读面已开始复用正式 TicketGraph 索引`
+- 最近完成：`TicketGraph` 现已补齐 `in_flight / critical_path / blocked_reasons`；`workflow_controller` 与 dashboard 的 blocked / critical-path 主读面已开始吃同一套图索引`
+- 当前阻塞：`Dependency Inspector` 仍是 legacy 依赖解释；dashboard blocked 读面还保留兼容回退；宽口径 governance/provider 与 closeout/approval 历史回归仍是旧失败`
+- 下一步：`继续 P1-S3，把 Dependency Inspector 切到 TicketGraph，并决定 dashboard blocked 兼容层何时退出`

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.context_compiler import compile_and_persist_execution_artifacts
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.process_assets import (
     build_closeout_summary_process_asset_ref,
@@ -10286,6 +10287,45 @@ def test_inbox_and_dashboard_reflect_open_approval(client):
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == [
         "node_homepage_visual"
     ]
+
+
+def test_dashboard_projection_reuses_ticket_graph_indexes_for_blocked_and_critical_path(client):
+    workflow_id = "wf_dashboard_ticket_graph_indexes"
+    ticket_id = "tkt_dashboard_graph_runtime"
+    node_id = "node_dashboard_graph_runtime"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dashboard uses ticket graph indexes",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    freeze_response = client.post(
+        "/api/v1/commands/employee-freeze",
+        json=_employee_freeze_payload(workflow_id, employee_id="emp_frontend_2"),
+    )
+    assert freeze_response.status_code == 200
+    assert freeze_response.json()["status"] == "ACCEPTED"
+
+    graph_snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    dashboard_data = dashboard_response.json()["data"]
+
+    assert dashboard_response.status_code == 200
+    assert dashboard_data["active_workflow"]["workflow_id"] == workflow_id
+    assert dashboard_data["pipeline_summary"]["blocked_node_ids"] == graph_snapshot.index_summary.blocked_node_ids
+    assert dashboard_data["pipeline_summary"]["critical_path_node_ids"] == (
+        graph_snapshot.index_summary.critical_path_node_ids
+    )
+    assert dashboard_data["ops_strip"]["blocked_nodes"] == len(graph_snapshot.index_summary.blocked_node_ids)
 
 
 def test_visual_milestone_result_submit_routes_to_checker_ticket_before_board_review(client, set_ticket_time):
