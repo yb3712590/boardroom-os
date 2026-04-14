@@ -1,9 +1,9 @@
 # 新架构重构实施计划
 
 > 状态：`active`
-> 当前阶段：`P0`
-> 当前切片：`P0-S4`
-> 最后更新：`2026-04-14 05:21`
+> 当前阶段：`P1`
+> 当前切片：`P1-S1`
+> 最后更新：`2026-04-14 13:30`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -62,7 +62,7 @@
 | 阶段 | 名称 | 目标 | 状态 | 完成标准 |
 |---|---|---|---|---|
 | `P0` | 前置协议收口 | 先补初始化、并发、版本、物化这些地基 | `done` | 关键前置协议有代码入口和最小验证 |
-| `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `todo` | 图成为正式真相面 |
+| `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `in_progress` | 图成为正式真相面 |
 | `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `todo` | 失败显式化、后置动作制度化 |
 | `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `todo` | CEO / Worker 不再靠长提示词兜底 |
 | `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `todo` | 可重规划、可诊断、可复盘 |
@@ -79,10 +79,10 @@
 ## 6. 当前阶段
 
 ### 当前阶段编号
-`P0`
+`P1`
 
 ### 当前阶段目标
-先补冷启动、版本、一致性和文档物化协议，不然后面的图、Hook 和 CEO 运行时都只能停在设计层。
+先把 TicketGraph、legacy adapter 和 ready/blocked 读面收成正式协议，让 controller / snapshot 不再继续直拼旧 ticket/node 语义。
 
 ### 当前阶段入口条件
 - [x] 当前代码现实已核对
@@ -92,11 +92,11 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [x] 本阶段所有必做切片完成
-- [x] 每个切片都有最小验证证据
-- [x] 涉及的运行文档已同步
-- [x] 未完成项已明确转移到下阶段或阻塞区
-- [x] `doc/history/memory-log.md` 已补记
+- [ ] 本阶段所有必做切片完成
+- [ ] 每个切片都有最小验证证据
+- [ ] 涉及的运行文档已同步
+- [ ] 未完成项已明确转移到下阶段或阻塞区
+- [ ] `doc/history/memory-log.md` 已补记
 
 ---
 
@@ -255,6 +255,47 @@
 
 **状态：** `done`
 
+### 切片 `P1-S1`
+**名称：**  
+`TicketGraph 基础合同与最小读索引`
+
+**现实问题：**  
+`workflow_controller / ceo_snapshot 还在直接拼 ticket_projection、node_projection、parent_ticket_id 和 dependency_gate_refs，图协议还不是真正的一等真相。`
+
+**对应架构文档：**
+- `doc/new-architecture/02-ticket-graph-engine.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/12-architecture-audit-report.md`
+- `doc/new-architecture/13-cross-cutting-concerns.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 新增正式 `TicketGraphSnapshot / TicketGraphNode / TicketGraphEdge / TicketGraphIndexSummary`
+  - [x] 用 legacy ticket/node/projection 归约最小 `PARENT_OF / DEPENDS_ON / REVIEWS` 边
+  - [x] 让 `ceo_snapshot / workflow_controller` 开始读图摘要
+- 不做什么：
+  - [x] 不引入 graph patch 写路径
+  - [x] 不重写 controller 决策内核
+  - [x] 不顺手扩到 hook / recovery / ProjectMap
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] governance / backlog / maker-checker 主线都能归约出稳定边
+- [x] invalid legacy dependency 会显式 blocked，不做静默 fallback
+- [x] `ceo_snapshot / scheduler_runner` 相关回归通过
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
 ---
 
 ## 8. 任务清单核对区
@@ -266,9 +307,10 @@
 - [x] `P0-S2` 已完成：最小版本协议骨架现已落地；process asset canonical ref 改成 versioned ref，compiled bundle / manifest / execution package 会追加版本与 supersede 链，`GovernanceProfile` 与 workflow graph version 也已有只读查询入口
 - [x] `P0-S3` 已完成：主线写路径现在已有显式 optimistic guard；`ticket-start` 可拒绝 stale ticket/node projection version，`ticket-result-submit` 可拒绝 stale `compiled_execution_package` ref，compile meta 也会写入 `ticket_projection_version / node_projection_version / source_projection_version`
 - [x] `P0-S4` 已完成：`active-worktree-index.md` 与 ticket dossier 核心视图现在会走共享 `Boardroom` materializer；文档头固定带 `view_kind / generated_at / source_projection_version / source_refs / stale_check_key`，`doc-impact.md` 只读 `worker-postrun` receipt，`git-closeout.md` 只读 checkout/git closeout 事实输入
+- [x] `P1-S1` 已完成：`TicketGraph` 最小合同和 legacy adapter 已落地；`ceo_snapshot / workflow_controller` 现在会读正式图摘要，invalid legacy dependency 会显式 blocked，graph version 也已把 `WORKFLOW_CREATED` 算进正式事件序列
 
 ### 未完成
-- [ ] 下一轮需要为 `P1` 建首个正式切片；本轮不改主计划结构，不在这里提前补写 `P1-S1` 章节
+- [ ] `P1-S2` 还没开始；下一轮继续把 controller ready-node / blocked 判定收成正式消费 `TicketGraph` 索引
 
 ### 明确放弃
 - [ ] 暂无
@@ -278,6 +320,7 @@
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
 - [ ] 宽口径 `board_approve` 回归桶当前仍会被一组旧的 governance/provider auto-advance 用例打断：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION` incident；这组不是本轮 stale-guard 主链回归，但下一轮要和 runtime/provider 历史测试一起收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
+- [ ] `TicketGraph` 这轮还是投影化图：dashboard、dependency inspector 和 graph patch 写路径都还没切过来；后续只能在现有图合同上扩，不能再回去直接加旧 projection 直读逻辑
 
 ---
 
@@ -312,6 +355,21 @@
 
 **当前处理：**  
 `repository / handler / runtime 主链已经统一到 optimistic guard；兼容入口暂时保留，避免这一轮把历史测试和冻结兼容面一起炸开。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
+
+### D-003
+**现象：**  
+`当前 legacy maker-checker 流里，maker 和 checker 仍可能共用同一个 node_id；为了先把 REVIEWS 边正规化，这轮 TicketGraph 先用 ticket 级 graph_node_id 承载边，再把原 node_id 作为显式字段保留。`
+
+**影响：**  
+`P1-S1 已经能稳定归约 REVIEWS，但 P1-S2 往后如果要把 controller / dashboard 全面改成消费图索引，还要继续决定“逻辑 node”和“ticket graph node”各自的长期边界。`
+
+**当前处理：**  
+`本轮先锁 ticket 级 graph_node_id + 原 node_id 双字段合同；上层只允许读 TicketGraph 协议，不允许继续直拼 legacy node/ticket 语义。`
 
 **是否需要改架构文档：**  
 `no`
@@ -475,6 +533,37 @@
 **下一轮起手动作：**
 `从 P1-S1 开始，先把 ticket graph / edge / ready-node 选路收成正式协议，再决定哪些 Boardroom 视图继续复用这轮 materializer。`
 
+### Session `2026-04-14 / 06`
+**开始前判断：**
+- 当前阶段：`P1`
+- 当前切片：`P1-S1`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `backend/app/contracts/ticket_graph.py` 和 `backend/app/core/ticket_graph.py`，把 legacy ticket/node/projection 归约成正式 `TicketGraph`
+- [x] 给最小图合同接上 `PARENT_OF / DEPENDS_ON / REVIEWS` 三类边，并把缺失 legacy dependency 显式收成 `reduction_issues + blocked_node_ids`
+- [x] 把 `ceo_snapshot / workflow_controller` 接到图摘要，ready/blocked 读口开始优先走 `TicketGraph`
+- [x] 同步本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q` 通过（`3 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py backend/tests/test_versioning.py -q` 通过（`7 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "snapshot_exposes_capability_plan_for_backlog_followups or snapshot_requires_next_governance_document_before_backlog_fanout or snapshot_builds_full_dependency_chain_for_next_governance_document or snapshot_treats_any_approved_architect_governance_document_as_gate_satisfied" -q` 通过（`7 passed, 60 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "test_scheduler_runner_idle_ceo_maintenance_hires_architect_for_controller_gate or test_scheduler_runner_idle_ceo_maintenance_creates_architect_governance_ticket_for_controller_gate or test_scheduler_runner_idle_ceo_maintenance_creates_next_governance_document_ticket" -q` 通过（`3 passed, 48 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m py_compile backend/app/contracts/ticket_graph.py backend/app/core/ticket_graph.py backend/app/core/versioning.py backend/app/core/workflow_controller.py backend/app/core/ceo_snapshot.py backend/tests/test_ticket_graph.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P1-S2` 还没开始；controller 的 ready-node / blocked 判定目前只是开始读图摘要，还没全面切到图索引
+- [ ] dashboard / dependency inspector 还没消费 `TicketGraph`
+
+**下一轮起手动作：**
+`继续 P1-S2，把 controller 的 ready-node / blocked 判定改成正式消费 TicketGraph 索引，并决定 dependency inspector / dashboard 哪个先接图摘要。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -510,9 +599,9 @@
 
 这一段保持短，方便下次打开 10 秒内看懂。
 
-- 当前阶段：`P0`
-- 当前切片：`P0-S4`
-- 当前状态：`P0-S4 已完成，P0 全阶段前置协议已收口`
-- 最近完成：`Boardroom runtime view materializer 已接管 active-worktree-index 和 ticket dossier 核心视图，文档头现在固定带来源版本与 stale check key`
-- 当前阻塞：`宽口径 governance/provider 与 closeout/approval 历史回归仍有旧失败，不属于本轮新增`
-- 下一步：`从 P1-S1 开始收 ticket graph / edge / ready-node 正式协议`
+- 当前阶段：`P1`
+- 当前切片：`P1-S1`
+- 当前状态：`P1-S1 已完成，TicketGraph 最小合同和图摘要读面已落地`
+- 最近完成：`legacy ticket/node/projection 现在可归约成正式 TicketGraph；ceo_snapshot / workflow_controller 已开始读 ready/blocked 图摘要`
+- 当前阻塞：`dashboard / dependency inspector 还没切到 TicketGraph，宽口径 governance/provider 与 closeout/approval 历史回归仍是旧失败`
+- 下一步：`继续 P1-S2，把 controller ready-node / blocked 判定正式切到 TicketGraph 索引`

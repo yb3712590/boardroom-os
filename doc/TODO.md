@@ -35,6 +35,9 @@
 - 2026-04-14 本轮已给 `P0-S4` 先落最小预接线：`ticket_context_archives` 现在会展示 `compile_request_id / compiled execution package version / source projection version / stale_against_latest`，最小 stale 检查 helper 也已落地
 - 2026-04-14 本轮已完成 `P0-S4` 第一批正式物化面：新增共享 `Boardroom` runtime view materializer，`active-worktree-index.md` 与 ticket dossier 的 `brief.md / required-reads.md / doc-impact.md / git-closeout.md` 现在都会从 projection + receipt 重算，文档头固定带 `view_kind / generated_at / source_projection_version / source_refs / stale_check_key`
 - 2026-04-14 本轮还把 `doc-impact.md` 收正到只读 `worker-postrun` receipt：未上报时明确展示 `not_reported`，已上报时展示真实 `documentation_updates`；手工改坏正文后，再次 sync 会整份覆盖，不会从文档正文反推真相
+- 2026-04-14 本轮已落 `P1-S1` 第一段：新增正式 `TicketGraphSnapshot / TicketGraphNode / TicketGraphEdge / TicketGraphIndexSummary`，legacy ticket/node/projection 现在可归约出 `PARENT_OF / DEPENDS_ON / REVIEWS` 三类最小图边
+- 2026-04-14 本轮已把 `ceo_snapshot / workflow_controller` 接到图摘要：ready/blocked 读口开始优先走 `TicketGraph`，invalid legacy dependency 会显式收成 `reduction_issues + blocked_node_ids`，不再静默当成 ready
+- 2026-04-14 `graph_version` 这轮也已继续往正式图真相靠：`WORKFLOW_CREATED` 现已纳入 graph mutation event 序列，空图 workflow 也能拿到稳定 `gv_<int>` 版本
 - 2026-04-14 本轮宽口径 `board_approve` 回归桶仍会命中一组旧的 governance/provider auto-advance 用例：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION`；本轮 stale-guard 主链子集已通过，这组继续留给 runtime/provider 历史测试收口
 - 2026-04-14 额外复验了一条更宽的 closeout API 老用例：`./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 在本 worktree 和原工作区同提交都会因为拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归
 
@@ -74,7 +77,7 @@
 - 本轮额外补了一条测试运行真相：当仓库位于 Git linked worktree 下时，`backend/tests/conftest.py` 现在会自动把 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 改到系统临时目录，避免测试里再创建项目 worktree 时撞上 Git 的 `$GIT_DIR too big`；Windows 下 `pytest` 仍建议继续显式带 repo 内 `--basetemp`
 - 本轮还补了一条 `P0-S1` 验证真相：`./backend/.venv/bin/pytest backend/tests/test_repository.py -k "initialize" -q` 当前已通过；`./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or project_init" -q` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例，当前环境未配 provider 时会报 `PROVIDER_REQUIRED_UNAVAILABLE`
 - 当前 blocker 仍集中在两块：真实 provider 长测还没在这台机器上重跑通过，`test_api.py / test_scheduler_runner.py` 里那批被 fail-closed 打断的历史测试也还没整体收口
-- 当前 `P0` 已完成，下一轮默认转 `P1`：先把 ticket graph / edge / ready-node 选路收成正式协议，再决定哪些 Boardroom 视图继续复用这轮 materializer
+- 当前 `P1` 已进入首个正式切片：`P1-S1` 已把 TicketGraph 最小合同和图摘要读面落下；下一轮继续 `P1-S2`，把 controller ready-node / blocked 判定正式切到图索引，再决定 dashboard / dependency inspector 谁先接图摘要
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

@@ -11,6 +11,7 @@ from app.core.output_schemas import (
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_controller import build_workflow_controller_view
 from app.db.repository import ControlPlaneRepository
 
@@ -46,13 +47,20 @@ def _enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
 
 
-def _build_idle_maintenance_signals(tickets: list[dict[str, Any]]) -> list[str]:
+def _build_idle_maintenance_signals(
+    tickets: list[dict[str, Any]],
+    *,
+    ready_ticket_ids: list[str] | None = None,
+    reduction_issue_count: int = 0,
+) -> list[str]:
     signals: list[str] = []
     if not tickets or all(ticket["status"] in _TERMINAL_TICKET_STATUSES for ticket in tickets):
         signals.append("NO_TICKET_STARTED")
 
-    if any(ticket["status"] == "PENDING" for ticket in tickets):
+    if list(ready_ticket_ids or []):
         signals.append("READY_TICKET")
+    if int(reduction_issue_count) > 0:
+        signals.append("INVALID_DEPENDENCY_OR_DISPATCH")
 
     latest_ticket_id_by_node: dict[str, str] = {}
     latest_ticket_sort_key_by_node: dict[str, tuple[float, str]] = {}
@@ -284,6 +292,11 @@ def build_ceo_shadow_snapshot(
         ).fetchall()
         tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
         nodes = [repository._convert_node_projection_row(row) for row in node_rows]
+        ticket_graph_snapshot = build_ticket_graph_snapshot(
+            repository,
+            workflow_id,
+            connection=connection,
+        )
         reuse_candidates = {
             "recent_completed_tickets": _build_recent_completed_ticket_reuse_candidates(
                 repository,
@@ -314,9 +327,15 @@ def build_ceo_shadow_snapshot(
                 approvals=open_approvals,
                 incidents=open_incidents,
             ),
+            ticket_graph_snapshot=ticket_graph_snapshot,
             connection=connection,
         )
-    ready_tickets = [ticket for ticket in tickets if ticket["status"] == "PENDING"]
+    ready_ticket_id_set = set(ticket_graph_snapshot.index_summary.ready_ticket_ids)
+    ready_tickets = [
+        ticket
+        for ticket in tickets
+        if str(ticket.get("ticket_id") or "") in ready_ticket_id_set
+    ]
 
     return {
         "trigger": {
@@ -393,7 +412,11 @@ def build_ceo_shadow_snapshot(
             for incident in open_incidents
         ],
         "idle_maintenance": {
-            "signal_types": _build_idle_maintenance_signals(tickets),
+            "signal_types": _build_idle_maintenance_signals(
+                tickets,
+                ready_ticket_ids=list(ticket_graph_snapshot.index_summary.ready_ticket_ids),
+                reduction_issue_count=ticket_graph_snapshot.index_summary.reduction_issue_count,
+            ),
             "latest_state_change_at": _latest_snapshot_timestamp(
                 tickets,
                 nodes,
@@ -438,4 +461,5 @@ def build_ceo_shadow_snapshot(
         "task_sensemaking": controller_view["task_sensemaking"],
         "capability_plan": controller_view["capability_plan"],
         "controller_state": controller_view["controller_state"],
+        "ticket_graph": ticket_graph_snapshot.model_dump(mode="json"),
     }

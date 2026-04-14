@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.contracts.ticket_graph import TicketGraphSnapshot
 from app.core.ceo_execution_presets import PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_WORKFLOW_CREATED
 from app.core.execution_targets import infer_execution_contract_payload, employee_supports_execution_contract
@@ -702,10 +703,34 @@ def build_workflow_controller_view(
     employees: list[dict[str, Any]],
     trigger_ref: str | None,
     meeting_candidates: list[dict[str, Any]],
+    ticket_graph_snapshot: TicketGraphSnapshot | None = None,
     connection,
 ) -> dict[str, Any]:
     workflow_id = str(workflow.get("workflow_id") or "").strip()
     progression_adapter_id = resolve_workflow_progression_adapter(workflow)
+    graph_index_summary = (
+        ticket_graph_snapshot.index_summary.model_dump(mode="json")
+        if ticket_graph_snapshot is not None
+        else {
+            "ready_ticket_ids": [
+                str(ticket.get("ticket_id") or "").strip()
+                for ticket in tickets
+                if str(ticket.get("status") or "").strip() == "PENDING"
+            ],
+            "ready_node_ids": [
+                str(ticket.get("node_id") or "").strip()
+                for ticket in tickets
+                if str(ticket.get("status") or "").strip() == "PENDING"
+            ],
+            "blocked_ticket_ids": [],
+            "blocked_node_ids": [],
+            "reduction_issue_count": 0,
+        }
+    )
+    graph_ready_ticket_ids = list(graph_index_summary.get("ready_ticket_ids") or [])
+    graph_ready_node_ids = list(graph_index_summary.get("ready_node_ids") or [])
+    graph_blocked_node_ids = list(graph_index_summary.get("blocked_node_ids") or [])
+    graph_has_reduction_issues = int(graph_index_summary.get("reduction_issue_count") or 0) > 0
     hard_constraints = _load_workflow_hard_constraints(connection, workflow_id)
     created_specs_by_ticket = {
         str(ticket["ticket_id"]): repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
@@ -797,11 +822,20 @@ def build_workflow_controller_view(
             "recommended_action": "NO_ACTION",
             "blocking_reason": "A leased ticket is still executing.",
         }
-    elif any(ticket["status"] == "PENDING" for ticket in tickets):
+    elif graph_has_reduction_issues and graph_blocked_node_ids and not graph_ready_node_ids:
+        controller_state = {
+            "state": "NO_IMMEDIATE_FOLLOWUP",
+            "recommended_action": "NO_ACTION",
+            "blocking_reason": (
+                "Ticket graph reports blocked pending nodes and no ready node. "
+                "Resolve the legacy graph issue before dispatching more work."
+            ),
+        }
+    elif graph_ready_ticket_ids:
         controller_state = {
             "state": "READY_TICKET",
             "recommended_action": "NO_ACTION",
-            "blocking_reason": "Pending tickets already exist on the current mainline.",
+            "blocking_reason": "Ready tickets already exist on the current mainline.",
         }
     elif required_governance_ticket_plan is not None:
         controller_state = {
@@ -945,5 +979,6 @@ def build_workflow_controller_view(
         "capability_plan": capability_plan,
         "controller_state": controller_state,
         "meeting_candidates": combined_meeting_candidates,
+        "ticket_graph_summary": graph_index_summary,
     }
 

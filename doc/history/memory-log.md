@@ -23,6 +23,13 @@
 
 ### 2026-04-14
 
+- `P1-S1` 已落第一段正式 TicketGraph 合同：新增 `backend/app/contracts/ticket_graph.py` 和 `backend/app/core/ticket_graph.py`，当前会把 legacy `ticket_projection / node_projection / ticket create spec` 归约成 `TicketGraphSnapshot / TicketGraphNode / TicketGraphEdge / TicketGraphIndexSummary`
+- 当前最小图边只覆盖 `PARENT_OF / DEPENDS_ON / REVIEWS`；`REPLACES / FREEZES / ESCALATES_TO` 还没进正式图合同，后续只能在这层接口上扩，不能再回去加新的旧 projection 直读逻辑
+- `ceo_snapshot / workflow_controller` 这轮已开始读 `TicketGraph` 摘要：ready ticket 判定优先走 `index_summary.ready_ticket_ids`，invalid legacy dependency 会显式落 `reduction_issues + blocked_node_ids`，controller 在“有 blocked、没 ready”时会 fail-closed 停住
+- `graph_version` 这轮已把 `WORKFLOW_CREATED` 算进 graph mutation event 序列；现在就算 workflow 还没创建 ticket，也能拿到稳定 graph version
+- 当前 TicketGraph 为了兼容 legacy maker-checker，同一逻辑 node 下会先用 ticket 级 `graph_node_id` 承载 REVIEWS 边，同时保留原 `node_id` 字段；这会直接影响后续 `P1-S2 / P1-S3` 的图粒度收口
+- 本轮新增并实跑通过的回归包括：`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py backend/tests/test_versioning.py -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "snapshot_exposes_capability_plan_for_backlog_followups or snapshot_requires_next_governance_document_before_backlog_fanout or snapshot_builds_full_dependency_chain_for_next_governance_document or snapshot_treats_any_approved_architect_governance_document_as_gate_satisfied" -q`、`./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "test_scheduler_runner_idle_ceo_maintenance_hires_architect_for_controller_gate or test_scheduler_runner_idle_ceo_maintenance_creates_architect_governance_ticket_for_controller_gate or test_scheduler_runner_idle_ceo_maintenance_creates_next_governance_document_ticket" -q`
+- `./backend/.venv/Scripts/python.exe -m py_compile backend/app/contracts/ticket_graph.py backend/app/core/ticket_graph.py backend/app/core/versioning.py backend/app/core/workflow_controller.py backend/app/core/ceo_snapshot.py backend/tests/test_ticket_graph.py` 本轮已通过
 - `P0-S3` 已落主线 optimistic guard：`CompileRequestMeta / CompiledExecutionPackageMeta` 现在会带 `ticket_projection_version / node_projection_version / source_projection_version`
 - `ticket-start` 现在可显式拒绝 stale ticket/node projection version；`ticket-result-submit` 现在可显式拒绝 stale `compiled_execution_package` ref，主线继续保持 fail-closed，不做静默 fallback
 - runtime 主线这轮也已开始自发携带新 guard：`run_leased_ticket_runtime` 发出的 `ticket-start / ticket-result-submit` 会带 expected projection version 与 `compile_request_id / compiled_execution_package_version_ref`
