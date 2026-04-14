@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from app.config import get_settings
+from app.core import project_workspaces
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.process_assets import (
     build_artifact_process_asset_ref,
@@ -639,6 +640,84 @@ def test_source_code_delivery_submit_updates_active_worktree_index_with_git_stat
     assert ticket_id in index_body
     assert _git_output(_checkout_path(workflow_id, ticket_id), "rev-parse", "HEAD") in index_body
     assert "PENDING_REVIEW_GATE" in index_body
+
+
+def test_source_code_delivery_submit_refreshes_doc_impact_view_from_receipts(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code doc impact materializer demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_doc_impact_001"
+    node_id = "node_code_doc_impact_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_documentation_updates=True,
+            include_git_evidence=True,
+        ),
+    )
+
+    doc_impact_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "00-boardroom"
+        / "tickets"
+        / ticket_id
+        / "doc-impact.md"
+    )
+    body = doc_impact_path.read_text(encoding="utf-8")
+    assert "- View Kind: `ticket_doc_impact`" in body
+    assert "10-project/docs/tracking/active-tasks.md" in body
+    assert "UPDATED" in body
+    assert "NO_CHANGE_REQUIRED" in body
+
+
+def test_sync_ticket_boardroom_views_overwrites_manual_doc_edits(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Ticket doc overwrite demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_doc_overwrite_001"
+    node_id = "node_doc_overwrite_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+
+    doc_impact_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "00-boardroom"
+        / "tickets"
+        / ticket_id
+        / "doc-impact.md"
+    )
+    doc_impact_path.write_text("# Broken\n\nmanual drift\n", encoding="utf-8")
+
+    repository = client.app.state.repository
+    project_workspaces.sync_ticket_boardroom_views(
+        repository,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+    )
+
+    refreshed = doc_impact_path.read_text(encoding="utf-8")
+    assert "# Broken" not in refreshed
+    assert "- View Kind: `ticket_doc_impact`" in refreshed
+    assert "`not_reported`" in refreshed
 
 
 def test_governance_ticket_does_not_enter_active_worktree_index(client) -> None:

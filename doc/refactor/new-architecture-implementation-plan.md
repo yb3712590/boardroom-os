@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P0`
 > 当前切片：`P0-S4`
-> 最后更新：`2026-04-14 04:45`
+> 最后更新：`2026-04-14 05:21`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -61,7 +61,7 @@
 
 | 阶段 | 名称 | 目标 | 状态 | 完成标准 |
 |---|---|---|---|---|
-| `P0` | 前置协议收口 | 先补初始化、并发、版本、物化这些地基 | `in_progress` | 关键前置协议有代码入口和最小验证 |
+| `P0` | 前置协议收口 | 先补初始化、并发、版本、物化这些地基 | `done` | 关键前置协议有代码入口和最小验证 |
 | `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `todo` | 图成为正式真相面 |
 | `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `todo` | 失败显式化、后置动作制度化 |
 | `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `todo` | CEO / Worker 不再靠长提示词兜底 |
@@ -92,10 +92,10 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [ ] 本阶段所有必做切片完成
-- [ ] 每个切片都有最小验证证据
-- [ ] 涉及的运行文档已同步
-- [ ] 未完成项已明确转移到下阶段或阻塞区
+- [x] 本阶段所有必做切片完成
+- [x] 每个切片都有最小验证证据
+- [x] 涉及的运行文档已同步
+- [x] 未完成项已明确转移到下阶段或阻塞区
 - [x] `doc/history/memory-log.md` 已补记
 
 ---
@@ -241,7 +241,7 @@
 **代码任务：**
 - [x] 任务 1
 - [x] 任务 2
-- [ ] 任务 3
+- [x] 任务 3
 
 **验证：**
 - [x] 至少一类视图文档能自动物化
@@ -253,7 +253,7 @@
 - [x] 更新 `doc/TODO.md`
 - [x] 更新 `doc/history/memory-log.md`
 
-**状态：** `in_progress`
+**状态：** `done`
 
 ---
 
@@ -265,9 +265,10 @@
 - [x] `P0-S1` 已完成：系统冷启动现在会在 `repository.initialize()` 幂等写入单条 `SYSTEM_INITIALIZED`，`project-init` 不再兼任系统初始化入口
 - [x] `P0-S2` 已完成：最小版本协议骨架现已落地；process asset canonical ref 改成 versioned ref，compiled bundle / manifest / execution package 会追加版本与 supersede 链，`GovernanceProfile` 与 workflow graph version 也已有只读查询入口
 - [x] `P0-S3` 已完成：主线写路径现在已有显式 optimistic guard；`ticket-start` 可拒绝 stale ticket/node projection version，`ticket-result-submit` 可拒绝 stale `compiled_execution_package` ref，compile meta 也会写入 `ticket_projection_version / node_projection_version / source_projection_version`
+- [x] `P0-S4` 已完成：`active-worktree-index.md` 与 ticket dossier 核心视图现在会走共享 `Boardroom` materializer；文档头固定带 `view_kind / generated_at / source_projection_version / source_refs / stale_check_key`，`doc-impact.md` 只读 `worker-postrun` receipt，`git-closeout.md` 只读 checkout/git closeout 事实输入
 
 ### 未完成
-- [ ] `P0-S4` 已落最小闭环，但当前只覆盖 `ticket_context_archives`；是否扩到更多物化面，留到下一轮决定
+- [ ] 下一轮需要为 `P1` 建首个正式切片；本轮不改主计划结构，不在这里提前补写 `P1-S1` 章节
 
 ### 明确放弃
 - [ ] 暂无
@@ -276,6 +277,7 @@
 - [ ] `backend/tests/test_api.py -k "system_initialized or startup or project_init"` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会落 `PROVIDER_REQUIRED_UNAVAILABLE`，不阻断 `P0-S1` 收口
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
 - [ ] 宽口径 `board_approve` 回归桶当前仍会被一组旧的 governance/provider auto-advance 用例打断：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION` incident；这组不是本轮 stale-guard 主链回归，但下一轮要和 runtime/provider 历史测试一起收口
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
 
 ---
 
@@ -441,6 +443,38 @@
 **下一轮起手动作：**
 `继续 P0-S4 或直接转 P1；先决定 ticket graph / controller 的首个正式切片，再把版本护栏扩到下一类物化视图。`
 
+### Session `2026-04-14 / 05`
+**开始前判断：**
+- 当前阶段：`P0`
+- 当前切片：`P0-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `backend/app/core/boardroom_document_materializer.py`，给 `Boardroom` 运行时视图补上共享 contract、纯 renderer 和原子 writer
+- [x] 把 `active-worktree-index.md`、`brief.md`、`required-reads.md`、`doc-impact.md`、`git-closeout.md` 改成从 projection + receipt 重算，不再靠 bootstrap 模板或点状手写正文
+- [x] 给 `ticket-create / ticket-start / ticket-result-submit` 以及 review/closeout 的 git 状态变更补视图刷新触点
+- [x] 补齐 `backend/tests/test_boardroom_document_materializer.py`，并扩 `test_project_workspaces.py / test_project_workspace_hooks.py`
+- [x] 同步本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_boardroom_document_materializer.py -q` 通过（`2 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_project_workspaces.py backend/tests/test_project_workspace_hooks.py -k "boardroom or dossier or worktree or doc_impact or git_closeout" -q` 通过（`6 passed, 19 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_context_archive.py -q` 通过（`3 passed`）
+- [x] `python3 -m py_compile backend/app/core/boardroom_document_materializer.py backend/app/core/project_workspaces.py backend/app/core/ticket_handlers.py backend/app/core/approval_handlers.py backend/tests/test_boardroom_document_materializer.py backend/tests/test_project_workspaces.py backend/tests/test_project_workspace_hooks.py` 通过
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 未通过；已在原工作区同提交复验，同样失败，确认为历史旧问题，不是本轮回归
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P1` 的首个 ticket graph / controller 正式切片还没建立
+- [ ] 更广的 closeout / approval 历史测试还没和新物化面一起重收
+
+**下一轮起手动作：**
+`从 P1-S1 开始，先把 ticket graph / edge / ready-node 选路收成正式协议，再决定哪些 Boardroom 视图继续复用这轮 materializer。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -478,7 +512,7 @@
 
 - 当前阶段：`P0`
 - 当前切片：`P0-S4`
-- 当前状态：`P0-S3 已完成，P0-S4 已落最小 ticket context materializer 预接线`
-- 最近完成：`主线 optimistic guard 已接到 ticket-start / ticket-result-submit / compile meta，ticket_context_archives 也已带版本元信息和 stale 标记`
-- 当前阻塞：`宽口径 governance/provider 历史回归仍会在 auto-advance 上命中 PROVIDER_REQUIRED_UNAVAILABLE`
-- 下一步：`决定 P0-S4 是否继续扩到更多视图文档，或者正式切到 P1 图协议收口`
+- 当前状态：`P0-S4 已完成，P0 全阶段前置协议已收口`
+- 最近完成：`Boardroom runtime view materializer 已接管 active-worktree-index 和 ticket dossier 核心视图，文档头现在固定带来源版本与 stale check key`
+- 当前阻塞：`宽口径 governance/provider 与 closeout/approval 历史回归仍有旧失败，不属于本轮新增`
+- 下一步：`从 P1-S1 开始收 ticket graph / edge / ready-node 正式协议`
