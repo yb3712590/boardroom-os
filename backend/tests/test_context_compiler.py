@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 import pytest
+import tests.test_api as api_test_helpers
 
 from app.contracts.commands import DeveloperInspectorRefs
 from app.contracts.governance import GovernanceProfile
@@ -1900,6 +1901,176 @@ def test_build_compile_request_resolves_governance_document_process_asset(client
     assert compile_request.explicit_sources[0].inline_content_json["linked_document_refs"] == [
         "doc://governance/technology-decision/current"
     ]
+
+
+def test_build_compile_request_auto_injects_project_map_and_failure_fingerprint_assets(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-04-15T20:30:00+08:00")
+    workflow_id = "wf_compile_project_map_auto"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Compile request should auto-inject project map and failure fingerprints.",
+    )
+
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_arch_project_map_auto",
+        node_id="node_arch_project_map_auto",
+        output_schema_ref="architecture_brief",
+        allowed_write_set=["artifacts/governance/*"],
+        input_artifact_refs=[],
+    )
+    governance_payload = _governance_document_payload("architecture_brief")
+    governance_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": "tkt_arch_project_map_auto",
+            "node_id": "node_arch_project_map_auto",
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": "architecture_brief_v1",
+            "payload": governance_payload,
+            "artifact_refs": ["art://runtime/tkt_arch_project_map_auto/architecture-brief.json"],
+            "written_artifacts": [
+                {
+                    "path": "artifacts/governance/architecture-brief.json",
+                    "artifact_ref": "art://runtime/tkt_arch_project_map_auto/architecture-brief.json",
+                    "kind": "JSON",
+                    "content_json": governance_payload,
+                }
+            ],
+            "assumptions": [],
+            "issues": [],
+            "confidence": 0.84,
+            "needs_escalation": False,
+            "summary": "Governance document recorded for compile request coverage.",
+            "failure_kind": None,
+            "failure_message": None,
+            "failure_detail": None,
+            "idempotency_key": (
+                f"ticket-result-submit:{workflow_id}:tkt_arch_project_map_auto:architecture"
+            ),
+        },
+    )
+    assert governance_response.status_code == 200
+    assert governance_response.json()["status"] == "ACCEPTED"
+
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_build_project_map_auto",
+        node_id="node_build_project_map_auto",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=["src/ui/*"],
+        input_artifact_refs=[],
+    )
+    source_submit_payload = api_test_helpers._source_code_delivery_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id="tkt_build_project_map_auto",
+        node_id="node_build_project_map_auto",
+        artifact_refs=["art://runtime/tkt_build_project_map_auto/source-code.ts"],
+        written_artifact_path="src/ui/homepage.ts",
+        idempotency_key=f"ticket-result-submit:{workflow_id}:tkt_build_project_map_auto:source",
+    )
+    source_submit_payload["payload"]["source_files"][0]["path"] = "src/ui/homepage.ts"
+    source_submit_payload["payload"]["source_files"][0]["content"] = (
+        "export function renderHomepageCard() {\n"
+        "  return 'project-map-auto'\n"
+        "}\n"
+    )
+    source_submit_payload["written_artifacts"][0]["path"] = "src/ui/homepage.ts"
+    source_submit_payload["written_artifacts"][0]["content_text"] = (
+        "export function renderHomepageCard() {\n"
+        "  return 'project-map-auto'\n"
+        "}\n"
+    )
+    source_submit_payload["payload"]["documentation_updates"] = [
+        {
+            "doc_ref": "doc://todo/project-map-auto",
+            "status": "UPDATED",
+            "summary": "Synced project map compile coverage.",
+        }
+    ]
+    source_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=source_submit_payload,
+    )
+    assert source_response.status_code == 200
+    assert source_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="INCIDENT_OPENED",
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"incident-opened:{workflow_id}:project-map-auto",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_compile_project_map_auto",
+                "node_id": "node_build_project_map_auto",
+                "ticket_id": "tkt_build_project_map_auto",
+                "incident_type": "REPEATED_FAILURE_ESCALATION",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": (
+                    f"{workflow_id}:node_build_project_map_auto:"
+                    "repeat-failure:compile-project-map-auto"
+                ),
+                "latest_failure_fingerprint": "compile-project-map-auto",
+                "latest_failure_kind": "RUNTIME_TIMEOUT_ESCALATION",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-15T20:35:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_consume_project_map_auto",
+            node_id="node_consume_project_map_auto",
+            output_schema_ref="delivery_check_report",
+            input_artifact_refs=[],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_consume_project_map_auto",
+            node_id="node_consume_project_map_auto",
+        ),
+    )
+
+    consumer_ticket = repository.get_current_ticket_projection("tkt_consume_project_map_auto")
+    compile_request = build_compile_request(repository, consumer_ticket)
+
+    assert "pa://project-map-slice/wf_compile_project_map_auto" in (
+        compile_request.execution.input_process_asset_refs
+    )
+    assert "pa://failure-fingerprint/inc_compile_project_map_auto" in (
+        compile_request.execution.input_process_asset_refs
+    )
+    assert any(
+        source.process_asset_kind == "PROJECT_MAP_SLICE"
+        for source in compile_request.explicit_sources
+    )
+    assert any(
+        source.process_asset_kind == "FAILURE_FINGERPRINT"
+        for source in compile_request.explicit_sources
+    )
 
 
 def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(client, set_ticket_time):

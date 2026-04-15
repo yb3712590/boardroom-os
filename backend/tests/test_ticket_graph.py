@@ -258,6 +258,125 @@ def test_ticket_graph_snapshot_indexes_in_flight_and_critical_path(client):
     assert snapshot.index_summary.critical_path_node_ids == [node_id]
 
 
+def test_graph_health_report_detects_fanout_too_wide(client):
+    workflow_id = "wf_graph_health_fanout"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose wide fanout.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_graph_health",
+        node_id="node_backlog_graph_health",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    for index in range(11):
+        _seed_ticket_created_event(
+            client,
+            workflow_id=workflow_id,
+            idempotency_key=(
+                f"test-seed-ticket-created:{workflow_id}:tkt_graph_health_child_{index}"
+            ),
+            ticket_payload={
+                **_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=f"tkt_graph_health_child_{index}",
+                    node_id=f"node_graph_health_child_{index}",
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    delivery_stage="BUILD",
+                    parent_ticket_id="tkt_backlog_graph_health",
+                ),
+            },
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-fanout",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding_types = [item["finding_type"] for item in report["findings"]]
+
+    assert "FANOUT_TOO_WIDE" in finding_types
+    assert report["overall_health"] in {"WARNING", "CRITICAL"}
+
+
+def test_graph_health_report_detects_persistent_failure_zone(client):
+    workflow_id = "wf_graph_health_failure_zone"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose persistent failure zones.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_failure",
+        node_id="node_graph_health_failure",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        for index in range(3):
+            incident_id = f"inc_graph_health_failure_{index}"
+            occurred_at = datetime.fromisoformat(f"2026-04-15T20:4{index}:00+08:00")
+            repository.insert_event(
+                connection,
+                event_type="INCIDENT_OPENED",
+                actor_type="system",
+                actor_id="test-seed",
+                workflow_id=workflow_id,
+                idempotency_key=f"incident-opened:{workflow_id}:{incident_id}",
+                causation_id=None,
+                correlation_id=workflow_id,
+                payload={
+                    "incident_id": incident_id,
+                    "node_id": "node_graph_health_failure",
+                    "ticket_id": "tkt_graph_health_failure",
+                    "incident_type": "REPEATED_FAILURE_ESCALATION",
+                    "status": "OPEN",
+                    "severity": "high",
+                    "fingerprint": (
+                        f"{workflow_id}:node_graph_health_failure:"
+                        f"repeat-failure:graph-health-{index}"
+                    ),
+                    "latest_failure_fingerprint": f"graph-health-{index}",
+                },
+                occurred_at=occurred_at,
+            )
+        repository.refresh_projections(connection)
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-failure-zone",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "PERSISTENT_FAILURE_ZONE"
+    )
+
+    assert report["overall_health"] == "CRITICAL"
+    assert finding["affected_nodes"] == ["node_graph_health_failure"]
+    assert finding["metric_value"] == 3
+
+
 def test_ticket_graph_snapshot_summarizes_board_review_and_incident_blockers(client):
     board_workflow_id = "wf_ticket_graph_board_block"
     _ensure_scoped_workflow(

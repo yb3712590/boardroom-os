@@ -1326,8 +1326,15 @@ def test_ceo_shadow_snapshot_exposes_projection_snapshot_and_replan_focus(client
         "open_incidents",
         "open_board_items",
         "board_advisory_sessions",
+        "project_map_slices",
+        "failure_fingerprints",
+        "graph_health_report",
         "recent_asset_digests",
     ]
+    assert projection_snapshot["project_map_slices"][0]["workflow_id"] == workflow_id
+    assert projection_snapshot["graph_health_report"]["workflow_id"] == workflow_id
+    assert projection_snapshot["graph_health_report"]["overall_health"] == "HEALTHY"
+    assert replan_focus["failure_fingerprints"] == []
     assert replan_focus["task_sensemaking"] == snapshot["task_sensemaking"]
     assert replan_focus["capability_plan"] == snapshot["capability_plan"]
     assert replan_focus["controller_state"] == snapshot["controller_state"]
@@ -4328,6 +4335,23 @@ def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client):
     assert "latest_advisory_decision" in prompt
     assert "board_advisory_sessions" in prompt
     assert "Treat this advisory decision as the new execution baseline." in prompt
+
+
+def test_ceo_shadow_prompt_mentions_project_map_and_graph_health(client):
+    workflow_id = "wf_ceo_graph_health_prompt"
+    _seed_workflow(client, workflow_id, "CEO project map prompt")
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:project-map-and-graph-health",
+    )
+    prompt = build_ceo_shadow_system_prompt(snapshot)
+
+    assert "project_map_slices" in prompt
+    assert "failure_fingerprints" in prompt
+    assert "graph_health_report" in prompt
 
 
 def test_incident_resolve_triggers_ceo_shadow_audit(client):

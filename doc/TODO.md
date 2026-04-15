@@ -107,8 +107,10 @@
 - 2026-04-15 本轮已完成 `P4-S1`：新增正式 `BoardAdvisorySession` 合同、schema 和 repository helper；`requires_constraint_patch_on_modify=true` 的 review pack 现在会自动绑定单条 advisory session，Review Room 也会暴露 `advisory_context`
 - 2026-04-15 本轮已完成 `P4-S2`：`MODIFY_CONSTRAINTS` 现在会显式写 advisory decision truth、`DECISION_SUMMARY` 过程资产和可选 `GovernanceProfile` supersede；非法 `governance_patch` 会 fail-closed reject，不再静默忽略
 - 2026-04-15 本轮已完成 `P4-S3`：`build_ceo_shadow_snapshot()` 已补 `board_advisory_sessions / latest_advisory_decision`，`ceo_prompts` 会显式提示先读顾问决策；现有 `ReviewRoomDrawer` 也已补最小 governance patch 控件，不新开页面
+- 2026-04-15 本轮已完成 `P4-S4` 第一批：`FAILURE_FINGERPRINT / PROJECT_MAP_SLICE` 已进入正式 `ProcessAsset` 合同和 resolver；`Context Compiler` 会对源码票、`delivery_check_report` 和治理文档自动注入 workflow 地图切片与最近失败指纹，`build_ceo_shadow_snapshot()` 也已补 `project_map_slices / failure_fingerprints / graph_health_report`
+- 2026-04-15 本轮还把 `GraphHealthReport` 首版接进 incident 主链：当前只覆盖 `FANOUT_TOO_WIDE / CRITICAL_PATH_TOO_DEEP / PERSISTENT_FAILURE_ZONE` 三条规则；`workflow_auto_advance` 命中 `CRITICAL` 时会显式打开 `GRAPH_HEALTH_CRITICAL`，Incident Drawer 和 incident detail 继续复用 `RERUN_CEO_SHADOW`
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮主方向继续留在 `P4`：先从 `P4-S4` 补 `ProjectMap / FailureFingerprint / GraphHealthReport` 的最小合同，再决定 graph patch engine 和图健康 incident 谁先落；这轮仍不碰 `doc/new-architecture/**`
+- 下一轮如果继续推进新架构重构，优先从 `approved_patch_ref -> graph patch engine` 的独立切片起手，再决定是否扩第二批 `GraphHealthReport` 规则和更细的 `ProjectMap` 切片；仍不碰 `doc/new-architecture/**`
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

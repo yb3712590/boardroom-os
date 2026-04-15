@@ -66,6 +66,7 @@ from app.core.constants import (
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+    INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
     INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
@@ -97,6 +98,7 @@ from app.core.constants import (
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.ceo_scheduler import (
     CeoShadowPipelineError,
+    SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
     is_ticket_graph_unavailable_error,
     run_ceo_shadow_for_trigger,
     trigger_ceo_shadow_with_recovery,
@@ -1835,6 +1837,16 @@ def _resolve_ceo_shadow_pipeline_failure_fingerprint(
     return f"{workflow_id}:{trigger_type}:{trigger_ref or 'none'}:{source_stage}:{error_class}"
 
 
+def _resolve_graph_health_critical_incident_fingerprint(
+    workflow_id: str,
+    graph_version: str,
+    finding_type: str,
+    affected_nodes: list[str],
+) -> str:
+    normalized_nodes = ",".join(sorted(str(node_id).strip() for node_id in affected_nodes if str(node_id).strip()))
+    return f"{workflow_id}:{graph_version}:{finding_type}:{normalized_nodes or 'workflow'}"
+
+
 def _resolve_provider_id_for_ticket(
     repository: ControlPlaneRepository,
     connection,
@@ -3285,6 +3297,128 @@ def open_ticket_graph_unavailable_incident(
         return incident_id
 
 
+def open_graph_health_critical_incident(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    report: dict[str, Any],
+    idempotency_key_base: str,
+    actor_id: str = "autopilot-controller",
+) -> str | None:
+    if str(report.get("overall_health") or "") != "CRITICAL":
+        return None
+    findings = [
+        item
+        for item in list(report.get("findings") or [])
+        if str(item.get("severity") or "").upper() == "CRITICAL"
+    ]
+    if not findings:
+        return None
+    primary_finding = dict(findings[0])
+    graph_version = str(report.get("graph_version") or "").strip()
+    if not graph_version:
+        raise ValueError("Graph health report is missing graph_version.")
+    finding_type = str(primary_finding.get("finding_type") or "").strip()
+    if not finding_type:
+        raise ValueError("Graph health report is missing finding_type.")
+    affected_nodes = [
+        str(node_id).strip()
+        for node_id in list(primary_finding.get("affected_nodes") or [])
+        if str(node_id).strip()
+    ]
+    fingerprint = _resolve_graph_health_critical_incident_fingerprint(
+        workflow_id,
+        graph_version,
+        finding_type,
+        affected_nodes,
+    )
+    command_id = new_prefixed_id("cmd")
+    occurred_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_row = connection.execute(
+            """
+            SELECT incident_id
+            FROM incident_projection
+            WHERE workflow_id = ? AND fingerprint = ? AND status = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            LIMIT 1
+            """,
+            (workflow_id, fingerprint, INCIDENT_STATUS_OPEN),
+        ).fetchone()
+        if existing_row is not None:
+            return str(existing_row["incident_id"])
+
+        incident_id = new_prefixed_id("inc")
+        linked_node_id = affected_nodes[0] if len(affected_nodes) == 1 else None
+        linked_ticket_id = None
+        if linked_node_id:
+            node_projection = repository.get_current_node_projection(
+                workflow_id,
+                linked_node_id,
+                connection=connection,
+            )
+            if node_projection is not None:
+                linked_ticket_id = str(node_projection.get("latest_ticket_id") or "").strip() or None
+        incident_payload = {
+            "incident_id": incident_id,
+            "ticket_id": linked_ticket_id,
+            "node_id": linked_node_id,
+            "incident_type": INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+            "status": INCIDENT_STATUS_OPEN,
+            "severity": "high",
+            "fingerprint": fingerprint,
+            "report_id": report.get("report_id"),
+            "graph_version": graph_version,
+            "finding_type": finding_type,
+            "affected_nodes": affected_nodes,
+            "metric_value": primary_finding.get("metric_value"),
+            "threshold": primary_finding.get("threshold"),
+            "description": primary_finding.get("description"),
+            "recommended_actions": list(report.get("recommended_actions") or []),
+            "trigger_type": SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+            "trigger_ref": graph_version,
+        }
+        incident_event = repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:incident-opened:{finding_type}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload=incident_payload,
+            occurred_at=occurred_at,
+        )
+        if incident_event is None:
+            raise RuntimeError("Graph health critical incident opening idempotency conflict.")
+
+        breaker_event = repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:{finding_type}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": linked_ticket_id,
+                "node_id": linked_node_id,
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+                "fingerprint": fingerprint,
+            },
+            occurred_at=occurred_at,
+        )
+        if breaker_event is None:
+            raise RuntimeError("Graph health critical circuit breaker opening idempotency conflict.")
+
+        repository.refresh_projections(connection)
+        return incident_id
+
+
 def open_ceo_shadow_pipeline_failed_incident(
     repository: ControlPlaneRepository,
     *,
@@ -4382,7 +4516,10 @@ def handle_incident_resolve(
                     reason=f"Ticket graph rebuild failed: {exc}",
                 )
         elif payload.followup_action == IncidentFollowupAction.RERUN_CEO_SHADOW:
-            if incident["incident_type"] != INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
+            if incident["incident_type"] not in {
+                INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+            }:
                 return _incident_rejected_ack(
                     command_id=command_id,
                     idempotency_key=payload.idempotency_key,
@@ -4392,7 +4529,14 @@ def handle_incident_resolve(
                 )
             rerun_context = {
                 "workflow_id": workflow_id,
-                "trigger_type": str((incident.get("payload") or {}).get("trigger_type") or "").strip(),
+                "trigger_type": str(
+                    (incident.get("payload") or {}).get("trigger_type")
+                    or (
+                        SCHEDULER_IDLE_MAINTENANCE_TRIGGER
+                        if incident["incident_type"] == INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL
+                        else ""
+                    )
+                ).strip(),
                 "trigger_ref": (
                     str((incident.get("payload") or {}).get("trigger_ref"))
                     if (incident.get("payload") or {}).get("trigger_ref") is not None

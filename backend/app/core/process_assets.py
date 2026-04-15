@@ -19,6 +19,7 @@ from app.core.output_schemas import (
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
 from app.core.project_workspaces import load_git_closeout_receipt
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.versioning import build_process_asset_canonical_ref, split_versioned_ref
 from app.db.repository import ControlPlaneRepository
 
@@ -78,6 +79,22 @@ def build_compiled_execution_package_process_asset_ref(
 
 def build_decision_summary_process_asset_ref(session_id: str, *, version_int: int | None = None) -> str:
     return _process_asset_ref("decision-summary", session_id, version_int=version_int)
+
+
+def build_failure_fingerprint_process_asset_ref(
+    incident_id: str,
+    *,
+    version_int: int | None = None,
+) -> str:
+    return _process_asset_ref("failure-fingerprint", incident_id, version_int=version_int)
+
+
+def build_project_map_slice_process_asset_ref(
+    workflow_id: str,
+    *,
+    version_int: int | None = None,
+) -> str:
+    return _process_asset_ref("project-map-slice", workflow_id, version_int=version_int)
 
 
 def build_meeting_decision_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
@@ -218,6 +235,7 @@ def build_result_process_assets(
                         if isinstance(item, dict) and str(item.get("artifact_ref") or "").strip()
                     ],
                     "verification_evidence_refs": list(verification_evidence_refs or []),
+                    "documentation_updates": list(result_payload.get("documentation_updates") or []),
                     "git_commit_record": dict(git_commit_record or {}),
                 },
             )
@@ -348,6 +366,20 @@ def resolve_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             session_id=target,
+            connection=connection,
+        )
+    if kind == "failure-fingerprint":
+        return _resolve_failure_fingerprint_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            incident_id=target,
+            connection=connection,
+        )
+    if kind == "project-map-slice":
+        return _resolve_project_map_slice_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            workflow_id=target,
             connection=connection,
         )
     if kind == "meeting-decision-record":
@@ -616,6 +648,283 @@ def _resolve_decision_summary_process_asset(
         return base
 
 
+def _related_process_asset_refs_for_incident(
+    repository: ControlPlaneRepository,
+    *,
+    incident: dict[str, Any],
+    connection: sqlite3.Connection | None,
+) -> list[str]:
+    ticket_id = str(incident.get("ticket_id") or "").strip()
+    if not ticket_id:
+        return []
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(resolved_connection, ticket_id)
+    if terminal_event is None:
+        return []
+    payload = terminal_event.get("payload") or {}
+    produced_assets = list(payload.get("produced_process_assets") or [])
+    allowed_kinds = {
+        "SOURCE_CODE_DELIVERY",
+        "GOVERNANCE_DOCUMENT",
+        "DECISION_SUMMARY",
+        "CLOSEOUT_SUMMARY",
+    }
+    refs = [
+        str(item.get("process_asset_ref") or "").strip()
+        for item in produced_assets
+        if isinstance(item, dict)
+        and str(item.get("process_asset_kind") or "").strip() in allowed_kinds
+        and str(item.get("process_asset_ref") or "").strip()
+    ]
+    if refs:
+        return dedupe_process_asset_refs(refs)
+
+    created_spec = repository.get_latest_ticket_created_payload(resolved_connection, ticket_id) or {}
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+        refs.append(build_source_code_delivery_process_asset_ref(ticket_id, version_int=1))
+    elif output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        refs.append(build_closeout_summary_process_asset_ref(ticket_id, version_int=1))
+    elif output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
+        refs.append(build_governance_document_process_asset_ref(ticket_id, version_int=1))
+    return dedupe_process_asset_refs(refs)
+
+
+def _resolve_failure_fingerprint_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    incident_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        incident = repository.get_incident_projection(incident_id, connection=resolved_connection)
+        if incident is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        canonical_ref = build_failure_fingerprint_process_asset_ref(incident_id, version_int=1)
+        related_process_asset_refs = _related_process_asset_refs_for_incident(
+            repository,
+            incident=incident,
+            connection=resolved_connection,
+        )
+        return ResolvedProcessAsset(
+            process_asset_ref=canonical_ref,
+            canonical_ref=canonical_ref,
+            version_int=1,
+            supersedes_ref=None,
+            process_asset_kind="FAILURE_FINGERPRINT",
+            producer_ticket_id=str(incident.get("ticket_id") or "").strip() or None,
+            summary=(
+                f"{str(incident.get('incident_type') or 'INCIDENT').strip()} "
+                f"fingerprint for {incident_id}"
+            ),
+            consumable_by=["context_compiler", "ceo", "review"],
+            source_metadata={
+                "incident_id": incident_id,
+                "workflow_id": incident.get("workflow_id"),
+                "node_id": incident.get("node_id"),
+                "ticket_id": incident.get("ticket_id"),
+            },
+            content_type="JSON",
+            json_content={
+                "incident_id": incident_id,
+                "workflow_id": str(incident.get("workflow_id") or ""),
+                "node_id": incident.get("node_id"),
+                "ticket_id": incident.get("ticket_id"),
+                "incident_type": str(incident.get("incident_type") or ""),
+                "severity": incident.get("severity"),
+                "fingerprint": str(incident.get("fingerprint") or ""),
+                "payload": dict(incident.get("payload") or {}),
+                "related_process_asset_refs": related_process_asset_refs,
+            },
+            schema_ref="failure_fingerprint@1",
+        )
+
+
+def _workflow_incidents(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection: sqlite3.Connection,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM incident_projection
+        WHERE workflow_id = ?
+        ORDER BY opened_at DESC, incident_id DESC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    return [repository._convert_incident_projection_row(row) for row in rows]
+
+
+def _workflow_ticket_ids(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection: sqlite3.Connection,
+) -> list[str]:
+    rows = connection.execute(
+        """
+        SELECT ticket_id
+        FROM ticket_projection
+        WHERE workflow_id = ?
+        ORDER BY updated_at DESC, ticket_id DESC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    return [
+        str(row["ticket_id"]).strip()
+        for row in rows
+        if str(row["ticket_id"]).strip()
+    ]
+
+
+def _top_level_module_path(path: str) -> str | None:
+    normalized = str(path).strip().strip("/")
+    if not normalized:
+        return None
+    return normalized.split("/", 1)[0] or None
+
+
+def _resolve_project_map_slice_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    workflow_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        workflow = repository.get_workflow_projection(workflow_id, connection=resolved_connection)
+        if workflow is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+
+        graph_snapshot = build_ticket_graph_snapshot(
+            repository,
+            workflow_id,
+            connection=resolved_connection,
+        )
+        ticket_ids = _workflow_ticket_ids(
+            repository,
+            workflow_id=workflow_id,
+            connection=resolved_connection,
+        )
+
+        module_paths: list[str] = []
+        document_surfaces: list[str] = []
+        decision_asset_refs: list[str] = []
+        source_process_asset_refs: list[str] = []
+
+        for ticket_id in ticket_ids:
+            created_spec = repository.get_latest_ticket_created_payload(resolved_connection, ticket_id) or {}
+            output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+            terminal_event = repository.get_latest_ticket_terminal_event(resolved_connection, ticket_id)
+            if terminal_event is None:
+                continue
+            payload = terminal_event.get("payload") or {}
+            result_payload = payload.get("payload") or {}
+            if not isinstance(result_payload, dict):
+                result_payload = {}
+            produced_assets = list(payload.get("produced_process_assets") or [])
+            if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+                for source_file in list(result_payload.get("source_files") or []):
+                    if not isinstance(source_file, dict):
+                        continue
+                    module_path = _top_level_module_path(str(source_file.get("path") or ""))
+                    if module_path:
+                        module_paths.append(module_path)
+                for written_artifact in list(payload.get("written_artifacts") or []):
+                    if not isinstance(written_artifact, dict):
+                        continue
+                    module_path = _top_level_module_path(str(written_artifact.get("path") or ""))
+                    if module_path:
+                        module_paths.append(module_path)
+                for artifact in repository.list_ticket_artifacts(ticket_id, connection=resolved_connection):
+                    module_path = _top_level_module_path(str(artifact.get("logical_path") or ""))
+                    if module_path:
+                        module_paths.append(module_path)
+                if not module_paths:
+                    for allowed_pattern in list(created_spec.get("allowed_write_set") or []):
+                        module_path = _top_level_module_path(str(allowed_pattern).replace("*", ""))
+                        if module_path:
+                            module_paths.append(module_path)
+            documentation_updates = list(result_payload.get("documentation_updates") or [])
+            if not documentation_updates:
+                documentation_updates = list(payload.get("documentation_updates") or [])
+            for documentation_update in documentation_updates:
+                if not isinstance(documentation_update, dict):
+                    continue
+                doc_ref = str(documentation_update.get("doc_ref") or "").strip()
+                if doc_ref:
+                    document_surfaces.append(doc_ref)
+            for asset in produced_assets:
+                if not isinstance(asset, dict):
+                    continue
+                asset_ref = str(asset.get("process_asset_ref") or "").strip()
+                asset_kind = str(asset.get("process_asset_kind") or "").strip()
+                if not asset_ref:
+                    continue
+                if asset_kind in {"GOVERNANCE_DOCUMENT", "MEETING_DECISION_RECORD"}:
+                    decision_asset_refs.append(asset_ref)
+                if asset_kind in {"GOVERNANCE_DOCUMENT", "SOURCE_CODE_DELIVERY"}:
+                    source_process_asset_refs.append(asset_ref)
+                if asset_kind == "SOURCE_CODE_DELIVERY":
+                    resolved_delivery_asset = resolve_process_asset(
+                        repository,
+                        asset_ref,
+                        connection=resolved_connection,
+                    )
+                    delivery_payload = dict(resolved_delivery_asset.json_content or {})
+                    for documentation_update in list(delivery_payload.get("documentation_updates") or []):
+                        if not isinstance(documentation_update, dict):
+                            continue
+                        doc_ref = str(documentation_update.get("doc_ref") or "").strip()
+                        if doc_ref:
+                            document_surfaces.append(doc_ref)
+
+        for session in repository.list_board_advisory_sessions(workflow_id, connection=resolved_connection):
+            approved_patch_ref = str(session.get("approved_patch_ref") or "").strip()
+            if approved_patch_ref:
+                decision_asset_refs.append(approved_patch_ref)
+
+        failure_fingerprint_refs = [
+            build_failure_fingerprint_process_asset_ref(str(incident["incident_id"]), version_int=1)
+            for incident in _workflow_incidents(
+                repository,
+                workflow_id=workflow_id,
+                connection=resolved_connection,
+            )
+        ]
+
+        canonical_ref = build_project_map_slice_process_asset_ref(workflow_id, version_int=1)
+        return ResolvedProcessAsset(
+            process_asset_ref=canonical_ref,
+            canonical_ref=canonical_ref,
+            version_int=1,
+            supersedes_ref=None,
+            process_asset_kind="PROJECT_MAP_SLICE",
+            producer_ticket_id=None,
+            summary=f"Workflow project map slice for {workflow_id}",
+            consumable_by=["context_compiler", "ceo", "review"],
+            source_metadata={
+                "workflow_id": workflow_id,
+                "graph_version": graph_snapshot.graph_version,
+            },
+            content_type="JSON",
+            json_content={
+                "workflow_id": workflow_id,
+                "graph_version": graph_snapshot.graph_version,
+                "module_paths": sorted(dedupe_process_asset_refs(module_paths)),
+                "document_surfaces": sorted(dedupe_process_asset_refs(document_surfaces)),
+                "decision_asset_refs": sorted(dedupe_process_asset_refs(decision_asset_refs)),
+                "failure_fingerprint_refs": sorted(dedupe_process_asset_refs(failure_fingerprint_refs)),
+                "source_process_asset_refs": sorted(dedupe_process_asset_refs(source_process_asset_refs)),
+            },
+            schema_ref="project_map_slice@1",
+        )
+
+
 def _resolve_meeting_decision_process_asset(
     repository: ControlPlaneRepository,
     *,
@@ -701,6 +1010,13 @@ def _resolve_source_code_delivery_process_asset(
         git_commit_record = payload.get("git_commit_record")
         if not isinstance(git_commit_record, dict):
             git_commit_record = dict(source_metadata.get("git_commit_record") or {})
+        documentation_updates = list(result_payload.get("documentation_updates") or [])
+        if not documentation_updates:
+            documentation_updates = [
+                item
+                for item in list(source_metadata.get("documentation_updates") or [])
+                if isinstance(item, dict)
+            ]
         if terminal_event.get("workflow_id"):
             latest_git_closeout = load_git_closeout_receipt(str(terminal_event["workflow_id"]), ticket_id)
             if latest_git_closeout:
@@ -729,7 +1045,7 @@ def _resolve_source_code_delivery_process_asset(
                 ),
                 "source_file_refs": source_file_refs,
                 "implementation_notes": list(result_payload.get("implementation_notes") or []),
-                "documentation_updates": list(result_payload.get("documentation_updates") or []),
+                "documentation_updates": documentation_updates,
                 "verification_evidence_refs": verification_evidence_refs,
                 "git_commit_record": git_commit_record,
             },

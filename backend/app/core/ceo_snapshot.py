@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from app.contracts.ceo import ProjectionSnapshot, RecentAssetDigest, ReplanFocus
+from app.contracts.ceo import (
+    FailureFingerprintDigest,
+    GraphHealthReportDigest,
+    ProjectionSnapshot,
+    ProjectMapSliceDigest,
+    RecentAssetDigest,
+    ReplanFocus,
+)
 from app.core.board_advisory import (
     BOARD_ADVISORY_STATUS_DECIDED,
     BOARD_ADVISORY_STATUS_OPEN,
@@ -12,6 +19,7 @@ from app.core.board_advisory import (
 )
 from app.core.constants import NODE_STATUS_COMPLETED
 from app.core.ceo_meeting_policy import build_ceo_meeting_candidates
+from app.core.graph_health import build_graph_health_report
 from app.core.governance_profiles import require_governance_profile
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -19,6 +27,11 @@ from app.core.output_schemas import (
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.process_assets import (
+    build_failure_fingerprint_process_asset_ref,
+    build_project_map_slice_process_asset_ref,
+    resolve_process_asset,
+)
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_controller import build_workflow_controller_view
 from app.db.repository import ControlPlaneRepository
@@ -56,6 +69,9 @@ _DEFAULT_READ_ORDER = [
     "open_incidents",
     "open_board_items",
     "board_advisory_sessions",
+    "project_map_slices",
+    "failure_fingerprints",
+    "graph_health_report",
     "recent_asset_digests",
 ]
 
@@ -303,6 +319,75 @@ def _build_recent_asset_digests(reuse_candidates: dict[str, Any]) -> list[dict[s
     return [item.model_dump(mode="json") for item in digests[:5]]
 
 
+def _build_project_map_slices(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> list[dict[str, Any]]:
+    resolved_asset = resolve_process_asset(
+        repository,
+        build_project_map_slice_process_asset_ref(workflow_id),
+        connection=connection,
+    )
+    payload = dict(resolved_asset.json_content or {})
+    return [
+        ProjectMapSliceDigest(
+            process_asset_ref=str(resolved_asset.process_asset_ref),
+            workflow_id=str(payload.get("workflow_id") or workflow_id),
+            graph_version=str(payload.get("graph_version") or ""),
+            module_paths=list(payload.get("module_paths") or []),
+            document_surfaces=list(payload.get("document_surfaces") or []),
+            decision_asset_refs=list(payload.get("decision_asset_refs") or []),
+            failure_fingerprint_refs=list(payload.get("failure_fingerprint_refs") or []),
+            source_process_asset_refs=list(payload.get("source_process_asset_refs") or []),
+        ).model_dump(mode="json")
+    ]
+
+
+def _build_failure_fingerprints(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT incident_id
+        FROM incident_projection
+        WHERE workflow_id = ?
+        ORDER BY opened_at DESC, incident_id DESC
+        LIMIT 3
+        """,
+        (workflow_id,),
+    ).fetchall()
+    digests: list[dict[str, Any]] = []
+    for row in rows:
+        incident_id = str(row["incident_id"]).strip()
+        if not incident_id:
+            continue
+        resolved_asset = resolve_process_asset(
+            repository,
+            build_failure_fingerprint_process_asset_ref(incident_id),
+            connection=connection,
+        )
+        payload = dict(resolved_asset.json_content or {})
+        digests.append(
+            FailureFingerprintDigest(
+                process_asset_ref=str(resolved_asset.process_asset_ref),
+                incident_id=str(payload.get("incident_id") or incident_id),
+                workflow_id=str(payload.get("workflow_id") or workflow_id),
+                incident_type=str(payload.get("incident_type") or ""),
+                severity=payload.get("severity"),
+                fingerprint=str(payload.get("fingerprint") or ""),
+                node_id=payload.get("node_id"),
+                ticket_id=payload.get("ticket_id"),
+                related_process_asset_refs=list(payload.get("related_process_asset_refs") or []),
+            ).model_dump(mode="json")
+        )
+    return digests
+
+
 def build_ceo_shadow_snapshot(
     repository: ControlPlaneRepository,
     *,
@@ -374,6 +459,23 @@ def build_ceo_shadow_snapshot(
             statuses=[BOARD_ADVISORY_STATUS_OPEN, BOARD_ADVISORY_STATUS_DECIDED],
             connection=connection,
         )
+        project_map_slices = _build_project_map_slices(
+            repository,
+            workflow_id=workflow_id,
+            connection=connection,
+        )
+        failure_fingerprints = _build_failure_fingerprints(
+            repository,
+            workflow_id=workflow_id,
+            connection=connection,
+        )
+        graph_health_report = GraphHealthReportDigest.model_validate(
+            build_graph_health_report(
+                repository,
+                workflow_id,
+                connection=connection,
+            )
+        ).model_dump(mode="json")
         controller_view = build_workflow_controller_view(
             repository,
             workflow=workflow,
@@ -421,6 +523,8 @@ def build_ceo_shadow_snapshot(
             build_board_advisory_snapshot_entry(item)
             for item in advisory_sessions
         ],
+        project_map_slices=project_map_slices,
+        graph_health_report=graph_health_report,
         memory_budget_ratios=dict(_MEMORY_BUDGET_RATIOS),
         default_read_order=list(_DEFAULT_READ_ORDER),
     )
@@ -433,6 +537,7 @@ def build_ceo_shadow_snapshot(
             advisory_sessions[0] if advisory_sessions else None,
             current_profile=governance_profile,
         ),
+        failure_fingerprints=failure_fingerprints,
     )
 
     return {

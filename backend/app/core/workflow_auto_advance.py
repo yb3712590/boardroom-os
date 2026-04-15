@@ -7,6 +7,7 @@ from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.constants import (
     EVENT_TICKET_FAILED,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+    INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
@@ -18,6 +19,7 @@ from app.core.constants import (
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.role_hooks import scan_and_open_required_hook_gate_incidents
 from app.core.ticket_handlers import open_ticket_graph_unavailable_incident, run_scheduler_tick
+from app.core.ticket_handlers import open_graph_health_critical_incident
 from app.core.workflow_controller import workflow_controller_effect
 from app.core.workflow_autopilot import ensure_workflow_atomic_chain_report, workflow_uses_ceo_board_delegate
 from app.db.repository import ControlPlaneRepository
@@ -92,6 +94,8 @@ def _recommended_incident_followup_action(
         return IncidentFollowupAction.REBUILD_TICKET_GRAPH
     if incident_type == INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
         return IncidentFollowupAction.REPLAY_REQUIRED_HOOKS
+    if incident_type == INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL:
+        return IncidentFollowupAction.RERUN_CEO_SHADOW
     if incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
         return IncidentFollowupAction.RERUN_CEO_SHADOW
     if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
@@ -181,6 +185,15 @@ def auto_advance_workflow_to_next_stop(
                 source_component="ceo_shadow_snapshot",
                 error=exc,
                 idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:graph-unavailable",
+            )
+            return
+        graph_health_report = (snapshot.get("projection_snapshot") or {}).get("graph_health_report") or {}
+        if str(graph_health_report.get("overall_health") or "") == "CRITICAL":
+            open_graph_health_critical_incident(
+                repository,
+                workflow_id=workflow_id,
+                report=graph_health_report,
+                idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:graph-health-critical",
             )
             return
         hook_incident_scan = scan_and_open_required_hook_gate_incidents(

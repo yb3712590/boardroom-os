@@ -21,6 +21,8 @@ function describeIncident(incidentType: string) {
   switch (incidentType) {
     case 'TICKET_GRAPH_UNAVAILABLE':
       return 'The ticket graph snapshot could not be rebuilt, so controller recovery is blocked until the graph compiles again.'
+    case 'GRAPH_HEALTH_CRITICAL':
+      return 'Graph health reached a critical state, so execution stays fail-closed until the CEO reruns against the latest graph health snapshot.'
     case 'REQUIRED_HOOK_GATE_BLOCKED':
       return 'Required hook receipts are missing, so the node stays fail-closed until recovery replays the missing hooks from persisted terminal truth.'
     case 'RUNTIME_TIMEOUT_ESCALATION':

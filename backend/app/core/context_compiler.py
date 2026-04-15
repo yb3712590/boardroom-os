@@ -74,14 +74,26 @@ from app.core.constants import (
 )
 from app.core.governance_profiles import require_governance_profile, governance_profile_to_mode_slice
 from app.core.ids import new_prefixed_id
-from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, get_output_schema_body
+from app.core.output_schemas import (
+    CONSENSUS_DOCUMENT_SCHEMA_REF,
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    GOVERNANCE_DOCUMENT_SCHEMA_REFS,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    get_output_schema_body,
+)
 from app.core.persona_profiles import normalize_persona_profiles
 from app.core.project_workspaces import (
     project_workspace_manifest_exists,
     resolve_ticket_checkout_truth,
     write_worker_preflight_receipt,
 )
-from app.core.process_assets import merge_input_process_asset_refs, resolve_process_asset
+from app.core.process_assets import (
+    build_failure_fingerprint_process_asset_ref,
+    build_project_map_slice_process_asset_ref,
+    dedupe_process_asset_refs,
+    merge_input_process_asset_refs,
+    resolve_process_asset,
+)
 from app.core.skill_runtime import resolve_skill_binding
 from app.core.time import now_local
 from app.core.workflow_relationships import WorkflowTicketSnapshot, list_workflow_ticket_snapshots
@@ -137,6 +149,12 @@ _RETRIEVAL_REASON_BY_CHANNEL = {
     "artifact_summaries": RETRIEVAL_MATCH_REASON_ARTIFACT,
 }
 
+_AUTO_INJECTED_PROCESS_ASSET_OUTPUT_SCHEMAS = {
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    *GOVERNANCE_DOCUMENT_SCHEMA_REFS,
+}
+
 
 @dataclass(frozen=True)
 class _PreparedInlineSource:
@@ -182,6 +200,79 @@ def _normalize_retrieval_terms(*values: str) -> list[str]:
             if len(term) >= 3:
                 terms.add(term)
     return sorted(terms)
+
+
+def _auto_injected_failure_fingerprint_refs(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    connection: sqlite3.Connection | None,
+) -> list[str]:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        rows = resolved_connection.execute(
+            """
+            SELECT *
+            FROM incident_projection
+            WHERE workflow_id = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            LIMIT 10
+            """,
+            (workflow_id,),
+        ).fetchall()
+        incidents = [
+            repository._convert_incident_projection_row(row)
+            for row in rows
+        ]
+        ranked_incidents = sorted(
+            incidents,
+            key=lambda incident: (
+                0
+                if str(incident.get("ticket_id") or "").strip() == ticket_id
+                or str(incident.get("node_id") or "").strip() == node_id
+                else 1
+                if str(incident.get("ticket_id") or "").strip()
+                or str(incident.get("node_id") or "").strip()
+                else 2,
+                -(
+                    incident["opened_at"].timestamp()
+                    if incident.get("opened_at") is not None
+                    else 0.0
+                ),
+                str(incident.get("incident_id") or ""),
+            ),
+        )
+        incident_refs = [
+            build_failure_fingerprint_process_asset_ref(str(incident.get("incident_id") or "").strip())
+            for incident in ranked_incidents
+            if str(incident.get("incident_id") or "").strip()
+        ]
+    return dedupe_process_asset_refs(incident_refs)[:3]
+
+
+def _auto_injected_process_asset_refs(
+    repository: ControlPlaneRepository,
+    *,
+    ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+    connection: sqlite3.Connection | None,
+) -> list[str]:
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    if output_schema_ref not in _AUTO_INJECTED_PROCESS_ASSET_OUTPUT_SCHEMAS:
+        return []
+    workflow_id = str(ticket["workflow_id"])
+    injected_refs = [
+        build_project_map_slice_process_asset_ref(workflow_id),
+        *_auto_injected_failure_fingerprint_refs(
+            repository,
+            workflow_id=workflow_id,
+            ticket_id=str(ticket["ticket_id"]),
+            node_id=str(ticket["node_id"]),
+            connection=connection,
+        ),
+    ]
+    return dedupe_process_asset_refs(injected_refs)
 
 
 def _build_descriptor_payload(source: CompileRequestExplicitSource) -> dict[str, Any]:
@@ -1739,7 +1830,15 @@ def build_compile_request(
     )
 
     input_process_asset_refs = merge_input_process_asset_refs(
-        existing_process_asset_refs=list(created_spec.get("input_process_asset_refs") or []),
+        existing_process_asset_refs=[
+            *list(created_spec.get("input_process_asset_refs") or []),
+            *_auto_injected_process_asset_refs(
+                repository,
+                ticket=ticket,
+                created_spec=created_spec,
+                connection=connection,
+            ),
+        ],
         artifact_refs=list(created_spec.get("input_artifact_refs") or [])
         + list(created_spec.get("required_read_refs") or []),
     )

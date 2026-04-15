@@ -11420,6 +11420,77 @@ def test_p2_ceo_shadow_incident_detail_exposes_rerun_action(client):
     assert incident_response.json()["data"]["recommended_followup_action"] == "RERUN_CEO_SHADOW"
 
 
+def test_graph_health_critical_incident_detail_exposes_rerun_action(client):
+    workflow_id = "wf_graph_health_critical_detail"
+    incident_id = "inc_graph_health_critical_detail"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health critical detail should expose rerun recovery.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": "node_graph_health_hotspot",
+                "ticket_id": None,
+                "incident_type": "GRAPH_HEALTH_CRITICAL",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": (
+                    f"{workflow_id}:gv_7:PERSISTENT_FAILURE_ZONE:node_graph_health_hotspot"
+                ),
+                "graph_version": "gv_7",
+                "finding_type": "PERSISTENT_FAILURE_ZONE",
+                "affected_nodes": ["node_graph_health_hotspot"],
+            },
+            occurred_at=datetime.fromisoformat("2026-04-15T20:42:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": "node_graph_health_hotspot",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": (
+                    f"{workflow_id}:gv_7:PERSISTENT_FAILURE_ZONE:node_graph_health_hotspot"
+                ),
+            },
+            occurred_at=datetime.fromisoformat("2026-04-15T20:42:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["incident"]["incident_type"] == "GRAPH_HEALTH_CRITICAL"
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RERUN_CEO_SHADOW",
+        "RESTORE_ONLY",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == "RERUN_CEO_SHADOW"
+
+
 def test_incident_resolve_can_rebuild_ticket_graph_when_graph_unavailable_incident_is_open(client, monkeypatch):
     workflow_id = "wf_incident_graph_rebuild"
     incident_id = "inc_graph_rebuild"

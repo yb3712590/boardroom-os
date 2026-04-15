@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P4`
-> 当前切片：`P4-S3`
-> 最后更新：`2026-04-15 19:50`
+> 当前切片：`P4-S4`
+> 最后更新：`2026-04-15 22:06`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -65,7 +65,7 @@
 | `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `done` | 图成为正式真相面 |
 | `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `done` | 失败显式化、后置动作制度化 |
 | `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `done` | CEO / Worker 不再靠长提示词兜底 |
-| `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `in_progress` | 可重规划、可诊断、可复盘 |
+| `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `done` | 可重规划、可诊断、可复盘 |
 
 状态只允许用：
 
@@ -92,13 +92,13 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [ ] 本阶段所有必做切片完成
+- [x] 本阶段所有必做切片完成
 - [x] `BoardAdvisorySession` 已进入正式合同、持久化和只读投影
 - [x] `MODIFY_CONSTRAINTS` 已收成显式顾问决策、`DECISION_SUMMARY` 过程资产和可选治理档位 supersede
 - [x] `build_ceo_shadow_snapshot()` 已输出 `board_advisory_sessions / latest_advisory_decision`，CEO prompt 已切到新读面
 - [x] `Review Room` 已暴露 `advisory_context`，现有抽屉已能显示最小 advisory 摘要和治理档位 patch 控件
-- [ ] `ProjectMap` 已进入正式合同和可消费读面
-- [ ] `GraphHealthMonitor` 已进入正式合同和 incident / snapshot 主链
+- [x] `ProjectMap` 已进入正式合同和可消费读面
+- [x] `GraphHealthMonitor` 已进入正式合同和 incident / snapshot 主链
 - [x] 每个已完成切片都有最小验证证据
 - [x] 涉及的运行文档已同步
 - [x] `doc/history/memory-log.md` 已补记
@@ -692,9 +692,10 @@
 - [x] `P4-S1` 已完成：新增正式 `BoardAdvisorySession` 合同、schema 和 repository helper；凡是 `requires_constraint_patch_on_modify=true` 的 review pack，当前都会自动绑定单条 advisory session，并在 review-room 读面暴露 `advisory_context`
 - [x] `P4-S2` 已完成：`MODIFY_CONSTRAINTS` 现在会显式写 advisory decision truth、`DECISION_SUMMARY` 过程资产和可选 `GovernanceProfile` supersede；非法 `governance_patch` 不再隐式忽略，而是直接 reject
 - [x] `P4-S3` 已完成：`build_ceo_shadow_snapshot()` 现在会输出 `projection_snapshot.board_advisory_sessions[] / replan_focus.latest_advisory_decision`；`ceo_prompts` 已显式提示先读顾问决策，现有 `ReviewRoomDrawer` 也已补最小 governance patch 控件
+- [x] `P4-S4` 已完成：`FAILURE_FINGERPRINT / PROJECT_MAP_SLICE` 已进入正式 `ProcessAsset` 合同和 resolver；`Context Compiler / CEO Snapshot / CEO prompt` 都已接入 workflow 地图切片和最近失败指纹
+- [x] `P4-S4` 已完成：新增最小 `GraphHealthReport` 首版，只覆盖 `FANOUT_TOO_WIDE / CRITICAL_PATH_TOO_DEEP / PERSISTENT_FAILURE_ZONE` 三类规则；`workflow_auto_advance` 命中 `CRITICAL` 时会显式打开 `GRAPH_HEALTH_CRITICAL`
 
 ### 未完成
-- [ ] `P4-S4` 还没开始；`ProjectMap / FailureFingerprint / GraphHealthReport` 仍未进入正式合同和 CEO 可消费读面
 - [ ] `BoardAdvisorySession.approved_patch_ref` 当前先指向 `DECISION_SUMMARY` 过程资产，不是独立 graph patch engine
 
 ### 明确放弃
@@ -706,7 +707,8 @@
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
-- [ ] `ProjectMap / GraphHealthMonitor` 这轮仍未开工；当前 advisory 主链已经能审计和 rerun，但还没有把地图切片、失败热区和图健康检查并入 CEO 快照
+- [ ] `ProjectMap / GraphHealthMonitor` 第一批虽然已进正式合同、快照和 incident 主链，但 `approved_patch_ref -> graph patch engine` 仍未落；后续如果继续扩 P4，应该把顾问决策和 graph patch 的正式连接单列成后续切片
+- [ ] `legacy / 非 workspace-managed source_code_delivery` 的 `ProjectMapSlice` 当前对 `module_paths / document_surfaces` 先走结构化保守回退：优先读源码票显式 payload 和 source delivery asset，缺失时再退到 `allowed_write_set`，不会读 Markdown 正文或目录扫描反推真相
 
 ---
 
@@ -893,6 +895,21 @@
 `本轮先保守收口到 \`DECISION_SUMMARY\` 过程资产 + advisory session + CEO rerun；\`ProjectMap / graph patch engine / GraphHealthMonitor\` 继续留到后续 P4 切片，不在这一轮顺手扩。`
 
 **是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
+
+### D-013
+**现象：**
+`legacy / 非 workspace-managed source_code_delivery` 的 terminal truth 对 `module_paths / documentation_updates` 还没有 workspace-managed 路径那样稳定；同一份结构化信息当前会分散在 ticket payload、source delivery asset 和 allowed write set。`
+
+**影响：**
+`P4-S4` 第一批虽然已经把 `ProjectMapSlice` 收成正式资产，但 legacy 代码票的地图切片精度仍弱于 workspace-managed 主链；如果后续直接把这层写成“所有代码票都已有同精度地图”，会误导实现判断。`
+
+**当前处理：**
+`本轮保持 fail-closed，不新增隐式 fallback：`ProjectMapSlice` 只消费结构化 source delivery truth，缺失时最多退到 `allowed_write_set` 的顶层目录，不会从 Markdown 正文、日志文本或目录扫描反推地图。`
+
+**是否需要改架构文档：**
 `no`
 
 **状态：** `open`
@@ -1465,6 +1482,41 @@
 **下一轮起手动作：**
 `从 P4-S4 继续，先补 ProjectMap 最小合同和 process asset / advisory 的血缘接线，再决定 graph patch engine 和 GraphHealthMonitor 谁先落。`
 
+### Session `2026-04-15 / 19`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `FAILURE_FINGERPRINT / PROJECT_MAP_SLICE` 正式 `ProcessAsset` 合同、ref builder 和 resolver，不新增独立存储，也不从文档正文反推真相
+- [x] 把 workflow 级 `ProjectMapSlice`、最近失败指纹和 `GraphHealthReport` 接进 `Context Compiler / CEO Snapshot / CEO prompt`
+- [x] 新增最小 `graph_health.py`，只做 `FANOUT_TOO_WIDE / CRITICAL_PATH_TOO_DEEP / PERSISTENT_FAILURE_ZONE` 三条规则
+- [x] 把 `GRAPH_HEALTH_CRITICAL` 接进 `workflow_auto_advance / incident detail / IncidentDrawer`，恢复动作继续复用 `RERUN_CEO_SHADOW`
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_process_assets.py -q` 通过（`3 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k "project_map or failure_fingerprint" -q` 通过（`1 passed, 34 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "project_map or failure_fingerprint or graph_health" -q` 通过（`1 passed, 73 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "graph_health" -q` 通过（`2 passed, 6 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "graph_health_critical or incident_detail" -q` 通过（`3 passed, 295 deselected`）
+- [x] `python3 -m py_compile backend/app/contracts/ceo.py backend/app/contracts/process_assets.py backend/app/core/process_assets.py backend/app/core/context_compiler.py backend/app/core/ceo_snapshot.py backend/app/core/ceo_prompts.py backend/app/core/graph_health.py backend/app/core/constants.py backend/app/core/projections.py backend/app/core/ticket_handlers.py backend/app/core/workflow_auto_advance.py backend/tests/test_process_assets.py backend/tests/test_context_compiler.py backend/tests/test_ceo_scheduler.py backend/tests/test_ticket_graph.py backend/tests/test_api.py` 通过
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx` 通过（`4 passed`）
+- [x] `cd frontend && npm run build` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `BoardAdvisorySession.approved_patch_ref -> graph patch engine` 仍未落地
+- [ ] `ProjectMapSlice` 对 legacy 非 workspace-managed 代码票仍是保守精度，不等于 workspace-managed 主链的正式地图精度
+
+**下一轮起手动作：**
+`如果继续推进新架构重构，优先从 advisory graph patch engine 的独立切片起手，再决定是否扩第二批 GraphHealth 规则和更细的 ProjectMap 切片。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1501,8 +1553,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P4`
-- 当前切片：`P4-S3`
-- 当前状态：`P4` 第一批顾问环切片已落地；`BoardAdvisorySession`、`DECISION_SUMMARY`、可选治理档位 supersede、`board_advisory_sessions / latest_advisory_decision` 和 `review_pack.advisory_context` 都已进入正式主链
-- 最近完成：`modify-constraints` 现在会显式写 advisory decision truth 和最小 governance patch；现有 `ReviewRoomDrawer` 也已能显示 advisory 摘要并提交最小 governance patch
-- 当前阻塞：`P4-S4` 还没开始；`approved_patch_ref` 当前先指向 `DECISION_SUMMARY` 过程资产，不是独立 graph patch engine；`scheduler_runner -k "ceo_shadow"` 仍没有稳定、非空跑的聚合桶
-- 下一步：`从 P4-S4 起手，优先补 ProjectMap 最小合同和 advisory / process asset 血缘接线，再继续图健康与重规划主链`
+- 当前切片：`P4-S4`
+- 当前状态：`P4` 第一批地图与健康监视切片已落地；`FAILURE_FINGERPRINT / PROJECT_MAP_SLICE / graph_health_report / GRAPH_HEALTH_CRITICAL` 都已进入正式主链
+- 最近完成：`Context Compiler` 现在会自动注入 workflow 地图切片和最近失败指纹；`CEO Snapshot / prompt` 也已显式读 `project_map_slices / failure_fingerprints / graph_health_report`
+- 当前阻塞：`approved_patch_ref` 仍先指向 `DECISION_SUMMARY` 过程资产，不是独立 graph patch engine；legacy 非 workspace-managed 代码票的地图切片仍是保守精度
+- 下一步：`如果继续推进新架构重构，优先从 advisory graph patch engine 的独立切片起手，再决定是否扩第二批 GraphHealth 规则和更细的 ProjectMap 切片`

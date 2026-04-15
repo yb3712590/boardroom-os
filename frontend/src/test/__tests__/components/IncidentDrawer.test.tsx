@@ -150,4 +150,37 @@ describe('IncidentDrawer', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toHaveValue('REPLAY_REQUIRED_HOOKS')
   })
+
+  it('describes graph health critical incidents and defaults to rerun recovery', () => {
+    render(
+      <IncidentDrawer
+        isOpen={true}
+        loading={false}
+        error={null}
+        submitting={false}
+        onClose={vi.fn()}
+        onResolve={vi.fn().mockResolvedValue(undefined)}
+        incidentData={{
+          incident: {
+            ...buildIncidentData().incident,
+            incident_id: 'inc_graph_health_001',
+            incident_type: 'GRAPH_HEALTH_CRITICAL',
+            provider_id: null,
+            payload: {
+              graph_version: 'gv_7',
+              finding_type: 'PERSISTENT_FAILURE_ZONE',
+              affected_nodes: ['node_graph_health_hotspot'],
+            },
+          },
+          available_followup_actions: ['RERUN_CEO_SHADOW', 'RESTORE_ONLY'],
+          recommended_followup_action: 'RERUN_CEO_SHADOW',
+        }}
+      />,
+    )
+
+    expect(
+      screen.getByText(/graph health reached a critical state, so execution stays fail-closed until the ceo reruns against the latest graph health snapshot/i),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toHaveValue('RERUN_CEO_SHADOW')
+  })
 })
