@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.execution_targets import infer_execution_contract_payload
+from app.core.governance_profiles import build_default_governance_profile
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.provider_openai_compat import OpenAICompatProviderResult
@@ -215,6 +216,30 @@ def _ensure_scoped_workflow(
                 "workspace_id": workspace_id,
             },
             occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.save_governance_profile(
+            connection,
+            build_default_governance_profile(
+                workflow_id=workflow_id,
+                source_ref=f"test://workflow/{workflow_id}/charter",
+                effective_from_event=f"test-workflow-created:{workflow_id}",
+            ),
+        )
+        repository.refresh_projections(connection)
+
+
+def _ensure_default_governance_profile(client, *, workflow_id: str) -> None:
+    repository = client.app.state.repository
+    if repository.get_latest_governance_profile(workflow_id) is not None:
+        return
+    with repository.transaction() as connection:
+        repository.save_governance_profile(
+            connection,
+            build_default_governance_profile(
+                workflow_id=workflow_id,
+                source_ref=f"test://workflow/{workflow_id}/charter",
+                effective_from_event=f"test-governance:{workflow_id}",
+            ),
         )
         repository.refresh_projections(connection)
 
@@ -759,6 +784,22 @@ def _worker_assignments_data(
     issued_at: str = "2026-03-28T10:00:00+08:00",
     ttl_sec: int = 3600,
 ) -> dict:
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        workflow_ids = {
+            str(row["workflow_id"])
+            for row in connection.execute(
+                """
+                SELECT DISTINCT workflow_id
+                FROM ticket_projection
+                WHERE lease_owner = ?
+                """,
+                (worker_id,),
+            ).fetchall()
+            if str(row["workflow_id"] or "").strip()
+        }
+    for workflow_id in workflow_ids:
+        _ensure_default_governance_profile(client, workflow_id=workflow_id)
     response = _worker_assignments_response(
         client,
         worker_id=worker_id,
@@ -2156,6 +2197,7 @@ def _create_and_lease_ticket(
     )
     assert create_response.status_code == 200
     assert create_response.json()["status"] == "ACCEPTED"
+    _ensure_default_governance_profile(client, workflow_id=workflow_id)
 
     lease_response = client.post(
         "/api/v1/commands/ticket-lease",
@@ -5089,6 +5131,24 @@ def test_project_init_exposes_board_directive_ceo_shadow_run(client):
     assert any(run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED for run in runs)
 
 
+def test_project_init_persists_default_governance_profile(client):
+    response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship governed MVP"))
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+
+    profile = client.app.state.repository.get_latest_governance_profile(workflow_id)
+
+    assert profile is not None
+    assert profile["approval_mode"] == "AUTO_CEO"
+    assert profile["audit_mode"] == "MINIMAL"
+    assert profile["auto_approval_scope"] == ["scope:mainline_internal"]
+    assert profile["expert_review_targets"] == ["checker", "board"]
+    assert profile["audit_materialization_policy"] == {
+        "ticket_context_archive": False,
+        "full_timeline": False,
+        "closeout_evidence": True,
+    }
+
+
 def test_project_init_ignores_legacy_scope_fields_and_uses_default_scope(client):
     response = client.post(
         "/api/v1/commands/project-init",
@@ -7097,6 +7157,15 @@ def test_worker_runtime_execution_package_signed_url_allows_token_only_access_an
         first_body["compiled_execution_package"]["execution"]["output_schema_ref"]
         == "ui_milestone_review"
     )
+    assert first_body["compiled_execution_package"]["meta"]["governance_profile_ref"].startswith("gp_")
+    assert first_body["compiled_execution_package"]["governance_mode_slice"]["approval_mode"] == "AUTO_CEO"
+    assert first_body["compiled_execution_package"]["governance_mode_slice"]["audit_mode"] == "MINIMAL"
+    assert first_body["compiled_execution_package"]["task_frame"]["task_category"] == "review"
+    assert first_body["compiled_execution_package"]["required_doc_surfaces"] == []
+    assert (
+        first_body["compiled_execution_package"]["context_layer_summary"]["w0_constitution"]["governance_profile_ref"]
+        == first_body["compiled_execution_package"]["meta"]["governance_profile_ref"]
+    )
     assert content_payload["content_url"].startswith(
         "https://workers.boardroom.test/api/v1/worker-runtime/artifacts/content"
     )
@@ -7142,6 +7211,11 @@ def test_worker_runtime_execution_package_inlines_materialized_text_input_and_ke
     monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
     _seed_input_artifact(content="# Brief\n\nInline package body.\n", client=client)
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -7156,6 +7230,7 @@ def test_worker_runtime_execution_package_inlines_materialized_text_input_and_ke
         },
     )
     assert create_response.status_code == 200
+    _ensure_default_governance_profile(client, workflow_id="wf_worker_runtime_inline")
     lease_response = client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(
@@ -7192,6 +7267,11 @@ def test_worker_runtime_execution_package_keeps_binary_artifact_kind_and_preview
     monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
     _seed_input_artifact(
         client=client,
         artifact_ref="art://inputs/mock.png",
@@ -7213,6 +7293,7 @@ def test_worker_runtime_execution_package_keeps_binary_artifact_kind_and_preview
         },
     )
     assert create_response.status_code == 200
+    _ensure_default_governance_profile(client, workflow_id="wf_worker_runtime_binary")
     lease_response = client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(
@@ -7254,6 +7335,11 @@ def test_worker_runtime_execution_package_exposes_fragment_selector_and_metadata
     monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     monkeypatch.setenv("BOARDROOM_OS_PUBLIC_BASE_URL", "https://workers.boardroom.test")
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
     _seed_input_artifact(
         client=client,
         artifact_ref="art://inputs/brief.md",
@@ -7284,6 +7370,7 @@ def test_worker_runtime_execution_package_exposes_fragment_selector_and_metadata
         },
     )
     assert create_response.status_code == 200
+    _ensure_default_governance_profile(client, workflow_id="wf_worker_runtime_fragment")
     lease_response = client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(
@@ -7422,6 +7509,11 @@ def test_worker_runtime_artifact_routes_preserve_registered_only_and_deleted_beh
     monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
     client.post(
         "/api/v1/commands/ticket-create",
         json={
@@ -7433,6 +7525,7 @@ def test_worker_runtime_artifact_routes_preserve_registered_only_and_deleted_beh
             "input_artifact_refs": ["art://inputs/registered.md", "art://inputs/deleted.md"],
         },
     )
+    _ensure_default_governance_profile(client, workflow_id="wf_worker_runtime")
     client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(
@@ -7757,6 +7850,11 @@ def test_worker_runtime_signed_artifact_url_rejects_artifact_scope_mismatch(
     monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
     monkeypatch.setenv("BOARDROOM_OS_WORKER_DELIVERY_SIGNING_SECRET", "delivery-secret")
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
     _seed_input_artifact(client, artifact_ref="art://inputs/brief.md", logical_path="artifacts/inputs/brief.md")
     _seed_input_artifact(
         client,
@@ -7775,6 +7873,7 @@ def test_worker_runtime_signed_artifact_url_rejects_artifact_scope_mismatch(
             "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
         },
     )
+    _ensure_default_governance_profile(client, workflow_id="wf_worker_runtime")
     client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(
@@ -13627,6 +13726,11 @@ def test_employee_restore_reenables_manual_lease_and_worker_runtime_bootstrap(
     restore_response = client.post(
         "/api/v1/commands/employee-restore",
         json=_employee_restore_payload(workflow_id),
+    )
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
     )
     create_response = client.post(
         "/api/v1/commands/ticket-create",

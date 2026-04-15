@@ -23,6 +23,12 @@
 
 ### 2026-04-15
 
+- `P3-S1` 这轮已完成：`GovernanceProfile` 现已补齐 `auto_approval_scope / expert_review_targets / audit_materialization_policy`，`project-init` 会稳定写默认治理档位；`CompileRequest / CompiledExecutionPackage` 也已显式带 `governance_profile_ref / governance_mode_slice / task_frame / required_doc_surfaces / context_layer_summary`
+- `P3-S2` 这轮已完成：`build_ceo_shadow_snapshot()` 现在会稳定产出 `projection_snapshot / replan_focus`；`ceo_prompts / proposer / validator / scheduler / workflow_controller` 已切到新快照合同，缺结构时直接显式失败，不再从旧顶层隐式补读
+- `P3-S3` 这轮已完成：新增最小 `skill_runtime`，当前已稳定解析 `implementation / review / debugging / planning_governance` 四类技能；未知 `forced_skill_ids` 或冲突组合会直接拒绝组包，执行包和执行卡片都会带 `skill_binding`
+- 当前 `worker_runtime` 和 `context_compiler` 测试夹具也已补齐主线前置：正常执行测试会先显式补 provider binding 和 governance profile，不再靠“未配置 provider / 未写治理档位也能 lease 或 compile”这种旧假设混过
+- 本轮 fresh 验证已通过：`backend/tests/test_ceo_scheduler.py -k "snapshot or governance or prompt" -q`、`backend/tests/test_ticket_graph.py -k "ceo_shadow_snapshot" -q`、`backend/tests/test_scheduler_runner.py -k "idle_ceo_maintenance_creates_architect or idle_ceo_maintenance_creates_next_governance_document_ticket" -q`、`backend/tests/test_skill_runtime.py -q`、`backend/tests/test_context_compiler.py -q`、`backend/tests/test_api.py -k "worker_runtime" -q`、`backend/tests/test_ticket_context_archive.py -q`、`backend/tests/test_versioning.py -q`
+- `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前仍会返回 `51 deselected`；这条不是失败，但也不是有效验证，本轮已改用精确的 `idle_ceo_maintenance_*` 桶替代
 - `P2-S5` 这轮已完成：provider unavailable 现在会先写 `TICKET_EXECUTION_PRECONDITION_BLOCKED`，把 ticket/node 固定阻断到 `BLOCKING_REASON_PROVIDER_REQUIRED`；`project-init -> node_ceo_architecture_brief` 不再误走 `TICKET_FAILED -> TICKET_RETRY_SCHEDULED -> REPEATED_FAILURE_ESCALATION`
 - `P2-S7` 这轮已完成：`run_ceo_shadow_for_trigger` 现在已经收成严格路径；显式 deterministic mode 继续保留，但 live provider 坏响应、非法 action batch 和执行失败不再隐式 fallback，而是抛 `CeoShadowPipelineError` 并打开 `CEO_SHADOW_PIPELINE_FAILED`
 - `P2-S8` 这轮已完成：`command / approval / ticket / idle maintenance` 四类直调入口现在统一走 `trigger_ceo_shadow_with_recovery()`；`incident-resolve` 也新增了 `RERUN_CEO_SHADOW`，恢复时会按 incident 固化的原始 trigger 幂等重跑 shadow

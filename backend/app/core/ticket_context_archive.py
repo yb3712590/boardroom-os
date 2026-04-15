@@ -153,6 +153,15 @@ def build_ticket_context_markdown(
     meta = dict(compiled_execution_package.get("meta") or {})
     execution = dict(compiled_execution_package.get("execution") or {})
     compiled_role = dict(compiled_execution_package.get("compiled_role") or {})
+    governance_mode_slice = dict(compiled_execution_package.get("governance_mode_slice") or {})
+    task_frame = dict(compiled_execution_package.get("task_frame") or {})
+    required_doc_surfaces = [
+        str(item).strip()
+        for item in list(compiled_execution_package.get("required_doc_surfaces") or [])
+        if str(item).strip()
+    ]
+    context_layer_summary = dict(compiled_execution_package.get("context_layer_summary") or {})
+    skill_binding = dict(compiled_execution_package.get("skill_binding") or {})
     org_context = dict(compiled_execution_package.get("org_context") or {})
     responsibility_boundary = dict(org_context.get("responsibility_boundary") or {})
     atomic_context_bundle = dict(compiled_execution_package.get("atomic_context_bundle") or {})
@@ -238,6 +247,26 @@ def build_ticket_context_markdown(
 
     lines.extend(
         [
+            "",
+            "## 治理切片",
+            f"- Governance Profile: `{governance_mode_slice.get('governance_profile_ref') or meta.get('governance_profile_ref') or 'N/A'}`",
+            f"- Approval Mode: `{governance_mode_slice.get('approval_mode') or 'N/A'}`",
+            f"- Audit Mode: `{governance_mode_slice.get('audit_mode') or 'N/A'}`",
+            f"- Auto Approval Scope: `{_display_list(governance_mode_slice.get('auto_approval_scope'))}`",
+            f"- Expert Review Targets: `{_display_list(governance_mode_slice.get('expert_review_targets'))}`",
+            f"- Required Doc Surfaces: `{_display_list(required_doc_surfaces)}`",
+            "",
+            "## 技能绑定",
+            f"- Binding Id: `{skill_binding.get('binding_id') or 'N/A'}`",
+            f"- Task Category: `{skill_binding.get('task_category') or task_frame.get('task_category') or 'N/A'}`",
+            f"- Resolved Skills: `{_display_list(skill_binding.get('resolved_skill_ids'))}`",
+            f"- Binding Reason: `{skill_binding.get('binding_reason') or 'N/A'}`",
+            "",
+            "## 上下文分层",
+            f"- W0: `{_display_text((context_layer_summary.get('w0_constitution') or {}).get('label'))}` / items={_display_tokens((context_layer_summary.get('w0_constitution') or {}).get('item_count'))}",
+            f"- W1: `{_display_text((context_layer_summary.get('w1_task_frame') or {}).get('label'))}` / items={_display_tokens((context_layer_summary.get('w1_task_frame') or {}).get('item_count'))}",
+            f"- W2: `{_display_text((context_layer_summary.get('w2_evidence') or {}).get('label'))}` / items={_display_tokens((context_layer_summary.get('w2_evidence') or {}).get('item_count'))}",
+            f"- W3: `{_display_text((context_layer_summary.get('w3_runtime_guard') or {}).get('label'))}` / items={_display_tokens((context_layer_summary.get('w3_runtime_guard') or {}).get('item_count'))}",
             "",
             "## 输出信息",
             f"- Allowed Write Set: `{_display_list(execution.get('allowed_write_set'))}`",

@@ -1,9 +1,9 @@
 # 新架构重构实施计划
 
 > 状态：`active`
-> 当前阶段：`P2`
-> 当前切片：`P2-S8`
-> 最后更新：`2026-04-15 15:42`
+> 当前阶段：`P3`
+> 当前切片：`P3-S3`
+> 最后更新：`2026-04-15 18:33`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -64,7 +64,7 @@
 | `P0` | 前置协议收口 | 先补初始化、并发、版本、物化这些地基 | `done` | 关键前置协议有代码入口和最小验证 |
 | `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `done` | 图成为正式真相面 |
 | `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `done` | 失败显式化、后置动作制度化 |
-| `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `todo` | CEO / Worker 不再靠长提示词兜底 |
+| `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `done` | CEO / Worker 不再靠长提示词兜底 |
 | `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `todo` | 可重规划、可诊断、可复盘 |
 
 状态只允许用：
@@ -79,10 +79,10 @@
 ## 6. 当前阶段
 
 ### 当前阶段编号
-`P2`
+`P3`
 
 ### 当前阶段目标
-先把 Incident、Recovery 和 Hook 门禁入口收成正式协议，让图故障和后置动作不再只停在读面提示或散点回执。
+先把执行包、CEO 快照和技能绑定收成正式 runtime 合同，让 Worker / CEO 都先读结构化包和结构化快照，再决定执行与恢复。
 
 ### 当前阶段入口条件
 - [x] 当前代码现实已核对
@@ -93,8 +93,10 @@
 
 ### 当前阶段出口条件
 - [x] 本阶段所有必做切片完成
-- [x] 图故障、runtime/provider 故障和 Hook 门禁都已进入正式 incident / recovery 主链
-- [x] required hook gate 已成为节点对下游开放的正式条件
+- [x] `GovernanceProfile` 已进入 workflow / compile / worker-runtime 主链
+- [x] `CompiledExecutionPackage` 已带 `governance_mode_slice / task_frame / required_doc_surfaces / context_layer_summary / skill_binding`
+- [x] `build_ceo_shadow_snapshot()` 已输出 `projection_snapshot / replan_focus`，CEO 消费面已切到新形状
+- [x] `SkillBinding` 已按任务类别显式解析，并对未知或冲突绑定 fail-closed
 - [x] 每个已完成切片都有最小验证证据
 - [x] 涉及的运行文档已同步
 - [x] 未完成项已明确转移到下阶段或阻塞区
@@ -564,9 +566,12 @@
 - [x] `P2-S6` 已完成：`scheduler_runner` 的 provider incident / recovery 历史测试现在已切到 provider center + explicit target binding 真相；auth / bad response / rate limit 断言不再把失败包装成 `COMPLETED`，mainline recovery 也不再假设 `project-init` 直接打开旧 scope approval
 - [x] `P2-S7` 已完成：`run_ceo_shadow_for_trigger` 现在已经改成严格路径；显式 deterministic mode 继续保留，但 live provider 坏响应、非法 action batch 和执行失败不再隐式 fallback，而是落 `CEO_SHADOW_PIPELINE_FAILED` incident
 - [x] `P2-S8` 已完成：`command / approval / ticket / idle maintenance` 直调入口现在统一走 `trigger_ceo_shadow_with_recovery()`；`incident-resolve` 新增 `RERUN_CEO_SHADOW`，API 稳定验证桶也已改成 `test_p2_ceo_shadow_incident_*`
+- [x] `P3-S1` 已完成：`GovernanceProfile` 现在已补 `auto_approval_scope / expert_review_targets / audit_materialization_policy`，`project-init` 会稳定落默认治理档位；`CompileRequest / CompiledExecutionPackage` 已带 `governance_profile_ref`、`governance_mode_slice`、`task_frame`、`required_doc_surfaces` 与 `context_layer_summary`
+- [x] `P3-S2` 已完成：`build_ceo_shadow_snapshot()` 现在会稳定产出 `projection_snapshot / replan_focus`；`ceo_prompts / proposer / validator / scheduler / workflow_controller` 已切到新读面，缺少新结构时直接显式失败，不再从旧顶层隐式兜底
+- [x] `P3-S3` 已完成：新增最小 `skill_runtime`，当前已稳定解析 `implementation / review / debugging / planning_governance` 四类技能；未知 `forced_skill_ids` 或冲突组合会直接拒绝组包，执行包与执行卡片都会带 `skill_binding`
 
 ### 未完成
-- [ ] 暂无；`P2` 阶段这轮已按当前计划收口，下一轮转 `P3`
+- [ ] 暂无；`P3` 阶段这轮已按当前计划收口，下一轮转 `P4`
 
 ### 明确放弃
 - [ ] 暂无
@@ -575,6 +580,7 @@
 - [ ] `backend/tests/test_api.py -k "system_initialized or startup or project_init"` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会落 `PROVIDER_REQUIRED_UNAVAILABLE`，不阻断 `P0-S1` 收口
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
+- [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
 
 ---
@@ -1254,6 +1260,40 @@
 **下一轮起手动作：**
 `从 P3 起手，先补执行包 / CEO 收口的首个切片正文，再决定执行包合同、快照分层和技能绑定谁先落。`
 
+### Session `2026-04-15 / 17`
+**开始前判断：**
+- 当前阶段：`P3`
+- 当前切片：`P3-S1`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 `GovernanceProfile` 补齐运行时合同字段，`project-init` 现在会稳定写默认治理档位；`CompileRequest / CompiledExecutionPackage` 已显式带 `governance_profile_ref / governance_mode_slice / task_frame / required_doc_surfaces / context_layer_summary`
+- [x] 把 `build_ceo_shadow_snapshot()` 收成 `projection_snapshot / replan_focus` 两层，`ceo_prompts / proposer / validator / scheduler / workflow_controller` 已切到新快照协议；缺结构时走显式失败，不再隐式读旧顶层
+- [x] 新增最小 `skill_runtime`，把 `SkillBinding` 接进执行包和执行卡片；当前已覆盖 `implementation / review / debugging / planning_governance` 四类技能，并对未知 `forced_skill_ids` fail-closed
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "snapshot or governance or prompt" -q` 通过（`35 passed, 36 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "ceo_shadow_snapshot" -q` 通过（`2 passed, 4 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "idle_ceo_maintenance_creates_architect or idle_ceo_maintenance_creates_next_governance_document_ticket" -q` 通过（`2 passed, 49 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_skill_runtime.py -q` 通过（`3 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_context_compiler.py -q` 通过（`34 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "worker_runtime" -q` 通过（`34 passed, 259 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_context_archive.py -q` 通过（`3 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_versioning.py -q` 通过（`5 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m py_compile backend/app/contracts/commands.py backend/app/contracts/governance.py backend/app/contracts/runtime.py backend/app/contracts/ceo.py backend/app/core/governance_profiles.py backend/app/core/context_compiler.py backend/app/core/skill_runtime.py backend/app/core/ceo_snapshot_contracts.py backend/app/core/ceo_snapshot.py backend/app/core/ceo_prompts.py backend/app/core/ceo_proposer.py backend/app/core/ceo_validator.py backend/app/core/ceo_scheduler.py backend/app/core/workflow_controller.py backend/app/core/ticket_context_archive.py backend/app/core/command_handlers.py backend/app/db/repository.py backend/app/core/versioning.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py backend/tests/test_context_compiler.py backend/tests/test_ticket_context_archive.py backend/tests/test_versioning.py backend/tests/test_skill_runtime.py backend/tests/test_scheduler_runner.py backend/tests/test_ticket_graph.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P4` 正文切片还没展开；下一轮先补顾问环 / ProjectMap 接入的首个切片入口
+
+**下一轮起手动作：**
+`从 P4 起手，先补顾问环 / ProjectMap 接入的首个切片正文，再决定 BoardAdvisorySession 和 ProjectMap 谁先落。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1289,9 +1329,9 @@
 
 这一段保持短，方便下次打开 10 秒内看懂。
 
-- 当前阶段：`P2`
-- 当前切片：`P2-S8`
-- 当前状态：`P2` 已按当前计划收口；`ceo_scheduler` 旧 helper 和 `closeout / approval` 历史测试桶都已切到显式失败、显式前置和幂等恢复口径
-- 最近完成：`backend/tests/test_ceo_scheduler.py` 已全绿；`closeout / approval` 目标桶与相邻 merge-conflict/docs/source-delivery 桶也已改成显式 manual chain 并通过
-- 当前阻塞：`P3` 还没补首个切片正文；synthetic manual chain 仍不会自动产出 dashboard `completion_summary`，这块继续交给 autopilot / closeout 专项测试覆盖
-- 下一步：`从 P3 起手，先补执行包 / CEO 收口的首个切片正文，再继续实现`
+- 当前阶段：`P3`
+- 当前切片：`P3-S3`
+- 当前状态：`P3` 已按当前计划收口；默认 `GovernanceProfile`、执行包治理切片、`projection_snapshot / replan_focus` 和 `skill_binding` 都已进入正式运行时合同
+- 最近完成：`worker_runtime` 执行包、`ticket_context_archive`、`ceo_shadow` 读面和 `skill_runtime` 已全部对齐新协议；相关后端专项回归均已实跑通过
+- 当前阻塞：`P4` 还没补首个切片正文；`scheduler_runner -k "ceo_shadow"` 仍没有稳定、非空跑的聚合桶；synthetic manual closeout 链仍不会自动产出 dashboard `completion_summary`
+- 下一步：`从 P4 起手，先补顾问环 / ProjectMap 接入的首个切片正文，再继续实现`

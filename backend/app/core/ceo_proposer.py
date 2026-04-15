@@ -19,6 +19,12 @@ from app.core.ceo_execution_presets import (
     supports_ceo_create_ticket_preset,
 )
 from app.core.ceo_prompts import build_ceo_shadow_rendered_payload
+from app.core.ceo_snapshot_contracts import (
+    capability_plan_view,
+    controller_state_view,
+    projection_snapshot_view,
+    replan_focus_view,
+)
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED
 from app.core.execution_targets import (
     employee_supports_execution_contract,
@@ -169,9 +175,10 @@ def _build_project_init_kickoff_batch(snapshot: dict, reason: str) -> CEOActionB
 
 
 def _eligible_meeting_candidates(snapshot: dict) -> list[dict]:
+    replan_focus = replan_focus_view(snapshot)
     return [
         item
-        for item in snapshot.get("meeting_candidates") or []
+        for item in replan_focus.get("meeting_candidates") or []
         if bool(item.get("eligible"))
     ]
 
@@ -265,7 +272,9 @@ def _normalized_runtime_preference(raw_payload: dict[str, Any]) -> dict[str, Any
 
 def _recent_completed_governance_ticket_ids_by_schema(snapshot: dict) -> dict[str, str]:
     mapping: dict[str, str] = {}
-    for item in list((snapshot.get("reuse_candidates") or {}).get("recent_completed_tickets") or []):
+    projection_snapshot = projection_snapshot_view(snapshot)
+    reuse_candidates = projection_snapshot.get("reuse_candidates") or {}
+    for item in list((reuse_candidates or {}).get("recent_completed_tickets") or []):
         output_schema_ref = str(item.get("output_schema_ref") or "").strip()
         ticket_id = str(item.get("ticket_id") or "").strip()
         if not output_schema_ref or not ticket_id or output_schema_ref in mapping:
@@ -495,7 +504,9 @@ def _backlog_recommendation_ticket_id(snapshot: dict, repository: ControlPlaneRe
         if str(trigger_created_spec.get("output_schema_ref") or "").strip() == BACKLOG_RECOMMENDATION_SCHEMA_REF:
             return trigger_ref
 
-    for item in list((snapshot.get("reuse_candidates") or {}).get("recent_completed_tickets") or []):
+    projection_snapshot = projection_snapshot_view(snapshot)
+    reuse_candidates = projection_snapshot.get("reuse_candidates") or {}
+    for item in list((reuse_candidates or {}).get("recent_completed_tickets") or []):
         if str(item.get("output_schema_ref") or "").strip() == BACKLOG_RECOMMENDATION_SCHEMA_REF:
             ticket_id = str(item.get("ticket_id") or "").strip()
             if ticket_id:
@@ -512,7 +523,7 @@ def _build_backlog_followup_batch(
     workflow_id = str(workflow.get("workflow_id") or "").strip()
     if not workflow_id:
         return None
-    capability_plan = snapshot.get("capability_plan") or {}
+    capability_plan = capability_plan_view(snapshot)
     followup_ticket_plans = list(capability_plan.get("followup_ticket_plans") or [])
     if not followup_ticket_plans:
         return None
@@ -619,7 +630,7 @@ def _build_required_governance_ticket_batch(
     reason: str,
 ) -> CEOActionBatch | None:
     workflow_id = str((snapshot.get("workflow") or {}).get("workflow_id") or "").strip()
-    capability_plan = snapshot.get("capability_plan") or {}
+    capability_plan = capability_plan_view(snapshot)
     required_governance_ticket_plan = capability_plan.get("required_governance_ticket_plan")
     if not workflow_id or not isinstance(required_governance_ticket_plan, dict):
         return None
@@ -672,7 +683,7 @@ def _build_required_governance_ticket_batch(
 
 def _build_capability_hire_batch(snapshot: dict, reason: str) -> CEOActionBatch | None:
     workflow_id = str((snapshot.get("workflow") or {}).get("workflow_id") or "").strip()
-    capability_plan = snapshot.get("capability_plan") or {}
+    capability_plan = capability_plan_view(snapshot)
     recommended_hire = capability_plan.get("recommended_hire")
     if not workflow_id or not isinstance(recommended_hire, dict):
         return None
@@ -843,7 +854,7 @@ def build_deterministic_fallback_batch(
     snapshot: dict,
     reason: str,
 ) -> CEOActionBatch:
-    controller_state = snapshot.get("controller_state") or {}
+    controller_state = controller_state_view(snapshot)
     recommended_action = str(controller_state.get("recommended_action") or "").strip()
     closeout_batch = _build_autopilot_closeout_batch(repository, snapshot, reason)
     if closeout_batch is not None:

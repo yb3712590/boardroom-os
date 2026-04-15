@@ -9,15 +9,22 @@ from app.core.ticket_context_archive import (
     is_ticket_context_stale,
     write_ticket_context_markdown,
 )
-from tests.test_context_compiler import _ticket_create_payload, _ticket_lease_payload
+from tests.test_context_compiler import (
+    _configure_runtime_provider,
+    _seed_governance_profile,
+    _ticket_create_payload,
+    _ticket_lease_payload,
+)
 
 
 def test_build_ticket_context_markdown_includes_review_sections(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _configure_runtime_provider(client)
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
+    _seed_governance_profile(repository, workflow_id="wf_compile")
     ticket = repository.get_current_ticket_projection("tkt_compile_001")
     compiled_artifacts = compile_and_persist_execution_artifacts(repository, ticket)
 
@@ -34,6 +41,8 @@ def test_build_ticket_context_markdown_includes_review_sections(client, set_tick
     assert "## 基本信息" in markdown
     assert "## 输入上下文" in markdown
     assert "## 编译健康度" in markdown
+    assert "## 治理切片" in markdown
+    assert "## 技能绑定" in markdown
     assert "## 输出信息" in markdown
     assert "source_ref" in markdown
     assert "tokens_before" in markdown
@@ -51,6 +60,72 @@ def test_write_ticket_context_markdown_persists_one_file_per_ticket(tmp_path: Pa
                 "workflow_id": "wf_live_demo",
                 "ticket_id": "tkt_live_demo",
                 "node_id": "node_live_demo",
+                "governance_profile_ref": "gp_live_demo",
+            },
+            "governance_mode_slice": {
+                "governance_profile_ref": "gp_live_demo",
+                "approval_mode": "AUTO_CEO",
+                "audit_mode": "MINIMAL",
+                "auto_approval_scope": ["scope:mainline_internal"],
+                "expert_review_targets": ["checker", "board"],
+                "audit_materialization_policy": {
+                    "ticket_context_archive": False,
+                    "full_timeline": False,
+                    "closeout_evidence": True,
+                },
+            },
+            "task_frame": {
+                "task_category": "planning",
+                "goal": "Produce a governed architecture brief.",
+                "completion_definition": ["Return a structured architecture brief."],
+                "failure_definition": ["Reject schema-invalid output."],
+                "deliverable_kind": "structured_document_delivery",
+            },
+            "required_doc_surfaces": ["10-project/docs/tracking/active-tasks.md"],
+            "context_layer_summary": {
+                "w0_constitution": {
+                    "label": "W0 Constitution",
+                    "item_count": 1,
+                    "notes": ["approval_mode=AUTO_CEO", "audit_mode=MINIMAL"],
+                    "governance_profile_ref": "gp_live_demo",
+                    "allowed_tool_count": None,
+                    "allowed_write_set_count": None,
+                },
+                "w1_task_frame": {
+                    "label": "W1 Task Frame",
+                    "item_count": 1,
+                    "notes": ["output_schema=architecture_brief"],
+                    "governance_profile_ref": None,
+                    "allowed_tool_count": None,
+                    "allowed_write_set_count": None,
+                },
+                "w2_evidence": {
+                    "label": "W2 Evidence Slice",
+                    "item_count": 1,
+                    "notes": ["required_read_refs=0"],
+                    "governance_profile_ref": None,
+                    "allowed_tool_count": None,
+                    "allowed_write_set_count": None,
+                },
+                "w3_runtime_guard": {
+                    "label": "W3 Runtime Guard",
+                    "item_count": 1,
+                    "notes": ["forced_skill_ids=0"],
+                    "governance_profile_ref": None,
+                    "allowed_tool_count": 0,
+                    "allowed_write_set_count": 1,
+                },
+            },
+            "skill_binding": {
+                "binding_id": "sb_tkt_live_demo_1",
+                "binding_version": 1,
+                "task_category": "planning",
+                "audit_mode": "MINIMAL",
+                "forced_skill_ids": [],
+                "resolved_skill_ids": ["planning_governance"],
+                "binding_reason": "Structured governance delivery uses planning skills.",
+                "binding_scope": "execution_package",
+                "conflict_resolution": "no_conflict",
             },
             "execution": {
                 "role_profile_ref": "architect_primary",
@@ -139,16 +214,20 @@ def test_write_ticket_context_markdown_persists_one_file_per_ticket(tmp_path: Pa
     body = output_path.read_text(encoding="utf-8")
     assert "architect_primary" in body
     assert "D:/tmp/wf_live_demo/checkout/tkt_live_demo" in body
+    assert "gp_live_demo" in body
+    assert "planning_governance" in body
     assert "reports/architecture/tkt_live_demo/architecture-brief.audit.md" in body
     assert "Token 预算" in body
 
 
 def test_ticket_context_markdown_includes_version_metadata_and_stale_status(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _configure_runtime_provider(client)
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
+    _seed_governance_profile(repository, workflow_id="wf_compile")
     ticket = repository.get_current_ticket_projection("tkt_compile_001")
     assert ticket is not None
 

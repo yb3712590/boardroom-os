@@ -101,7 +101,11 @@
 - 本轮 `review_evidence` replay 已收正成 fail-closed：只要 `TICKET_COMPLETED` 里缺 `artifact_refs` 或 `written_artifacts` 字段就直接 `REJECTED`，incident 保持 `OPEN`；如果字段存在但为空数组，则允许幂等补回最小 `artifact-capture.json`，不从正文或磁盘目录反推
 - 本轮新增并实跑通过 `./backend/.venv/bin/pytest backend/tests/test_role_hooks.py -q`、`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "hook or incident or graph" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "review_evidence_missing_required_hook_keeps_dependency_gate_blocked" -q`、`python3 -m py_compile backend/app/core/role_hooks.py backend/app/core/ticket_handlers.py backend/tests/test_role_hooks.py backend/tests/test_api.py`
 - `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮原样补跑只返回 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 聚合桶，这条不能再当有效验证口径，后续要单独整理
-- 下一轮主方向切到 `P3`：优先补执行包 / CEO 收口的首个切片正文，再决定执行包合同、快照分层和技能绑定的实现顺序；这轮不顺手扩新 hook runner，也不重写现有 closeout / approval 目录设计
+- 2026-04-15 本轮已完成 `P3-S1`：`GovernanceProfile` 现已补齐 `auto_approval_scope / expert_review_targets / audit_materialization_policy`，`project-init` 会稳定写默认治理档位；`CompileRequest / CompiledExecutionPackage` 也已显式带 `governance_profile_ref / governance_mode_slice / task_frame / required_doc_surfaces / context_layer_summary`
+- 2026-04-15 本轮已完成 `P3-S2`：`build_ceo_shadow_snapshot()` 现在会稳定产出 `projection_snapshot / replan_focus`；`ceo_prompts / proposer / validator / scheduler / workflow_controller` 已切到新快照合同，缺结构时显式失败，不再从旧顶层隐式补读
+- 2026-04-15 本轮已完成 `P3-S3`：新增最小 `skill_runtime`，当前已稳定解析 `implementation / review / debugging / planning_governance` 四类技能；未知 `forced_skill_ids` 或冲突组合会直接拒绝组包，执行包和执行卡片都会带 `skill_binding`
+- `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
+- 下一轮主方向切到 `P4`：先补顾问环 / ProjectMap 接入的首个切片正文，再决定 `BoardAdvisorySession` 和 `ProjectMap` 谁先落；这轮不顺手扩前端壳，也不碰 `doc/new-architecture/**`
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

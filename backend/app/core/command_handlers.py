@@ -17,6 +17,7 @@ from app.core.requirement_elicitation import (
     should_require_requirement_elicitation,
 )
 from app.core.ceo_scheduler import trigger_ceo_shadow_with_recovery
+from app.core.governance_profiles import build_default_governance_profile
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.core.workflow_scope import default_workflow_scope
@@ -208,6 +209,16 @@ def handle_project_init(
         node_id=kickoff_node_id,
         payload=payload,
     )
+    with repository.transaction() as connection:
+        repository.save_governance_profile(
+            connection,
+            build_default_governance_profile(
+                workflow_id=workflow_id,
+                source_ref=board_brief_artifact_ref,
+                effective_from_event=workflow_event_key,
+            ),
+        )
+        repository.refresh_projections(connection)
     bootstrap_project_workspace(
         repository,
         workflow_id=workflow_id,

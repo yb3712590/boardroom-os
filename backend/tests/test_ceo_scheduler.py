@@ -12,6 +12,7 @@ from app.core.ceo_execution_presets import (
     PROJECT_INIT_SCOPE_NODE_ID,
     build_project_init_scope_ticket_id,
 )
+from app.core.governance_profiles import build_default_governance_profile
 from app.core.ceo_prompts import build_ceo_shadow_system_prompt
 from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.execution_targets import infer_execution_contract_payload
@@ -228,6 +229,14 @@ def _seed_workflow(client, workflow_id: str, goal: str = "Seeded CEO workflow") 
                 "workspace_id": "ws_default",
             },
             occurred_at=datetime.fromisoformat("2026-04-05T10:00:00+08:00"),
+        )
+        repository.save_governance_profile(
+            connection,
+            build_default_governance_profile(
+                workflow_id=workflow_id,
+                source_ref=f"test://workflow/{workflow_id}/charter",
+                effective_from_event=f"workflow-created:{workflow_id}",
+            ),
         )
         repository.refresh_projections(connection)
     return workflow_id
@@ -1285,6 +1294,79 @@ def test_ceo_shadow_snapshot_includes_normalized_profiles_and_summary(client):
     assert frontend_employee["profile_summary"].startswith("Skill frontend")
 
 
+def test_ceo_shadow_snapshot_exposes_projection_snapshot_and_replan_focus(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_projection_snapshot")
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:projection-snapshot",
+    )
+
+    projection_snapshot = snapshot["projection_snapshot"]
+    replan_focus = snapshot["replan_focus"]
+
+    assert projection_snapshot["workflow_status"] == "EXECUTING"
+    assert projection_snapshot["governance_profile_ref"].startswith("gp_")
+    assert projection_snapshot["approval_mode"] == "AUTO_CEO"
+    assert projection_snapshot["audit_mode"] == "MINIMAL"
+    assert projection_snapshot["reuse_candidates"] == snapshot["reuse_candidates"]
+    assert projection_snapshot["memory_budget_ratios"] == {
+        "m0_constitution": 10,
+        "m1_control_snapshot": 40,
+        "m2_replan_focus": 20,
+        "m3_process_assets": 20,
+        "reserve": 10,
+    }
+    assert projection_snapshot["default_read_order"] == [
+        "projection_snapshot",
+        "ticket_graph",
+        "open_incidents",
+        "open_board_items",
+        "recent_asset_digests",
+    ]
+    assert replan_focus["task_sensemaking"] == snapshot["task_sensemaking"]
+    assert replan_focus["capability_plan"] == snapshot["capability_plan"]
+    assert replan_focus["controller_state"] == snapshot["controller_state"]
+
+
+def test_ceo_shadow_snapshot_rejects_missing_governance_profile(client):
+    repository = client.app.state.repository
+    workflow_id = "wf_ceo_missing_governance"
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_WORKFLOW_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"workflow-created:{workflow_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "north_star_goal": "Missing governance snapshot",
+                "hard_constraints": ["Keep governance explicit."],
+                "budget_cap": 500000,
+                "deadline_at": None,
+                "title": "Missing governance snapshot",
+                "tenant_id": "tenant_default",
+                "workspace_id": "ws_default",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-05T10:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    with pytest.raises(ValueError, match="GovernanceProfile"):
+        build_ceo_shadow_snapshot(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:missing-governance",
+        )
+
+
 def test_ceo_shadow_snapshot_includes_failed_ticket_meeting_candidate(client):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_ceo_meeting_candidate")
@@ -1490,6 +1572,8 @@ def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(cl
     )
     system_prompt = build_ceo_shadow_system_prompt(snapshot)
     assert "reuse_candidates" in system_prompt
+    assert "snapshot.projection_snapshot" in system_prompt
+    assert "snapshot.replan_focus" in system_prompt
 
     run = run_ceo_shadow_for_trigger(
         client.app.state.repository,

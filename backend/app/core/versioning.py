@@ -116,6 +116,15 @@ def build_compiled_execution_package_version_ref(
     return f"pkg_{ticket_id}_{int(attempt_no)}_{int(version_int)}"
 
 
+def build_skill_binding_id(
+    ticket_id: str,
+    binding_seq: int,
+) -> str:
+    if int(binding_seq) < 1:
+        raise ValueError("skill binding version must be >= 1")
+    return f"sb_{ticket_id}_{int(binding_seq)}"
+
+
 def resolve_workflow_graph_version(
     repository: "ControlPlaneRepository",
     workflow_id: str,

@@ -8,6 +8,7 @@ from pydantic import Field
 from app.contracts.common import StrictModel
 from app.contracts.scope import TenantWorkspaceScope
 from app.contracts.commands import TicketEscalationPolicy
+from app.contracts.governance import GovernanceModeSlice
 from app.contracts.process_assets import ProcessAssetKind
 
 
@@ -17,6 +18,7 @@ class CompileRequestMeta(TenantWorkspaceScope):
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
+    governance_profile_ref: str = Field(min_length=1)
     ticket_projection_version: int | None = Field(default=None, ge=1)
     node_projection_version: int | None = Field(default=None, ge=1)
     source_projection_version: int | None = Field(default=None, ge=1)
@@ -149,6 +151,7 @@ class CompileRequestExecution(StrictModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
     allowed_write_set: list[str] = Field(default_factory=list)
+    forced_skill_ids: list[str] = Field(default_factory=list)
     input_artifact_refs: list[str] = Field(default_factory=list)
     input_process_asset_refs: list[str] = Field(default_factory=list)
     required_read_refs: list[str] = Field(default_factory=list)
@@ -172,6 +175,7 @@ class CompileRequest(StrictModel):
     control_refs: CompileRequestControlRefs
     worker_binding: CompileRequestWorkerBinding
     budget_policy: CompileRequestBudgetPolicy
+    governance_mode_slice: GovernanceModeSlice
     org_context: CompileRequestOrgContext
     retrieval_plan: CompileRequestRetrievalPlan
     explicit_sources: list[CompileRequestExplicitSource]
@@ -206,6 +210,9 @@ class CompiledOutputContract(StrictModel):
 class CompiledSystemControls(StrictModel):
     role_profile: dict[str, Any] = Field(default_factory=dict)
     organization_context: CompileRequestOrgContext
+    governance_mode_slice: GovernanceModeSlice | None = None
+    required_doc_surfaces: list[str] = Field(default_factory=list)
+    skill_binding: dict[str, Any] = Field(default_factory=dict)
     hard_rules: list[str] = Field(default_factory=list)
     board_constraints: list[str] = Field(default_factory=list)
     output_contract: CompiledOutputContract
@@ -384,6 +391,7 @@ class CompiledExecutionPackageMeta(TenantWorkspaceScope):
     workflow_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
+    governance_profile_ref: str = Field(min_length=1)
     version_ref: str | None = None
     version_int: int | None = Field(default=None, ge=1)
     supersedes_ref: str | None = None
@@ -473,6 +481,7 @@ class CompiledExecution(StrictModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
     allowed_write_set: list[str] = Field(default_factory=list)
+    forced_skill_ids: list[str] = Field(default_factory=list)
     input_artifact_refs: list[str] = Field(default_factory=list)
     input_process_asset_refs: list[str] = Field(default_factory=list)
     required_read_refs: list[str] = Field(default_factory=list)
@@ -493,15 +502,56 @@ class CompiledGovernance(StrictModel):
     escalation_policy: TicketEscalationPolicy
 
 
+class CompiledTaskFrame(StrictModel):
+    task_category: Literal["implementation", "review", "debugging", "planning"]
+    goal: str = Field(min_length=1)
+    completion_definition: list[str] = Field(default_factory=list)
+    failure_definition: list[str] = Field(default_factory=list)
+    deliverable_kind: str | None = None
+
+
+class ContextLayerSectionSummary(StrictModel):
+    label: str = Field(min_length=1)
+    item_count: int = Field(ge=0)
+    notes: list[str] = Field(default_factory=list)
+    governance_profile_ref: str | None = None
+    allowed_tool_count: int | None = Field(default=None, ge=0)
+    allowed_write_set_count: int | None = Field(default=None, ge=0)
+
+
+class CompiledContextLayerSummary(StrictModel):
+    w0_constitution: ContextLayerSectionSummary
+    w1_task_frame: ContextLayerSectionSummary
+    w2_evidence: ContextLayerSectionSummary
+    w3_runtime_guard: ContextLayerSectionSummary
+
+
+class SkillBinding(StrictModel):
+    binding_id: str = Field(min_length=1)
+    binding_version: int = Field(ge=1)
+    task_category: Literal["implementation", "review", "debugging", "planning"]
+    audit_mode: str = Field(min_length=1)
+    forced_skill_ids: list[str] = Field(default_factory=list)
+    resolved_skill_ids: list[str] = Field(default_factory=list)
+    binding_reason: str = Field(min_length=1)
+    binding_scope: str = Field(min_length=1)
+    conflict_resolution: str = Field(min_length=1)
+
+
 class CompiledExecutionPackage(StrictModel):
     meta: CompiledExecutionPackageMeta
     compiled_role: CompiledRole
     compiled_constraints: CompiledConstraints
+    governance_mode_slice: GovernanceModeSlice
+    task_frame: CompiledTaskFrame
+    required_doc_surfaces: list[str] = Field(default_factory=list)
+    context_layer_summary: CompiledContextLayerSummary
     org_context: CompileRequestOrgContext
     atomic_context_bundle: AtomicContextBundle
     rendered_execution_payload: RenderedExecutionPayload
     execution: CompiledExecution
     governance: CompiledGovernance
+    skill_binding: SkillBinding | None = None
 
 
 class CompiledAuditArtifacts(StrictModel):

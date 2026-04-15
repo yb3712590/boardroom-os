@@ -372,6 +372,7 @@ class TicketCreateCommand(StrictModel):
     output_schema_version: int = Field(ge=1)
     allowed_tools: list[str]
     allowed_write_set: list[str]
+    forced_skill_ids: list[str] = Field(default_factory=list)
     lease_timeout_sec: int = Field(default=DEFAULT_LEASE_TIMEOUT_SEC, ge=1)
     retry_budget: int = Field(ge=0)
     priority: str = Field(min_length=1)

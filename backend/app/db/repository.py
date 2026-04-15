@@ -2845,17 +2845,23 @@ class ControlPlaneRepository:
                 workflow_id,
                 approval_mode,
                 audit_mode,
+                auto_approval_scope_json,
+                expert_review_targets_json,
+                audit_materialization_policy_json,
                 source_ref,
                 supersedes_ref,
                 effective_from_event,
                 version_int
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile.profile_id,
                 profile.workflow_id,
                 profile.approval_mode,
                 profile.audit_mode,
+                json.dumps(profile.auto_approval_scope, sort_keys=True),
+                json.dumps(profile.expert_review_targets, sort_keys=True),
+                json.dumps(profile.audit_materialization_policy, sort_keys=True),
                 profile.source_ref,
                 profile.supersedes_ref,
                 profile.effective_from_event,
@@ -4606,6 +4612,14 @@ class ControlPlaneRepository:
     def _convert_governance_profile_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["version_int"] = int(converted.get("version_int") or 0)
+        converted["auto_approval_scope"] = json.loads(converted.get("auto_approval_scope_json") or "[]")
+        converted["expert_review_targets"] = json.loads(converted.get("expert_review_targets_json") or "[]")
+        converted["audit_materialization_policy"] = json.loads(
+            converted.get("audit_materialization_policy_json") or "{}"
+        )
+        converted.pop("auto_approval_scope_json", None)
+        converted.pop("expert_review_targets_json", None)
+        converted.pop("audit_materialization_policy_json", None)
         return converted
 
     def _convert_ceo_shadow_run_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -6359,6 +6373,9 @@ class ControlPlaneRepository:
                 workflow_id TEXT NOT NULL,
                 approval_mode TEXT NOT NULL,
                 audit_mode TEXT NOT NULL,
+                auto_approval_scope_json TEXT NOT NULL DEFAULT '[]',
+                expert_review_targets_json TEXT NOT NULL DEFAULT '[]',
+                audit_materialization_policy_json TEXT NOT NULL DEFAULT '{}',
                 source_ref TEXT NOT NULL,
                 supersedes_ref TEXT,
                 effective_from_event TEXT NOT NULL,
@@ -6375,6 +6392,9 @@ class ControlPlaneRepository:
             "workflow_id": "TEXT",
             "approval_mode": "TEXT",
             "audit_mode": "TEXT",
+            "auto_approval_scope_json": "TEXT NOT NULL DEFAULT '[]'",
+            "expert_review_targets_json": "TEXT NOT NULL DEFAULT '[]'",
+            "audit_materialization_policy_json": "TEXT NOT NULL DEFAULT '{}'",
             "source_ref": "TEXT",
             "supersedes_ref": "TEXT",
             "effective_from_event": "TEXT",

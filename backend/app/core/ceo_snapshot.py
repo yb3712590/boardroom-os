@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.contracts.ceo import ProjectionSnapshot, RecentAssetDigest, ReplanFocus
 from app.core.constants import NODE_STATUS_COMPLETED
 from app.core.ceo_meeting_policy import build_ceo_meeting_candidates
+from app.core.governance_profiles import require_governance_profile
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
@@ -35,6 +37,20 @@ _TERMINAL_TICKET_STATUSES = {
 _RECENT_COMPLETED_TICKET_LIMIT = 5
 _RECENT_CLOSED_MEETING_LIMIT = 3
 _APPROVED_INTERNAL_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
+_MEMORY_BUDGET_RATIOS = {
+    "m0_constitution": 10,
+    "m1_control_snapshot": 40,
+    "m2_replan_focus": 20,
+    "m3_process_assets": 20,
+    "reserve": 10,
+}
+_DEFAULT_READ_ORDER = [
+    "projection_snapshot",
+    "ticket_graph",
+    "open_incidents",
+    "open_board_items",
+    "recent_asset_digests",
+]
 
 
 def _serialize_timestamp(value: datetime | None) -> str | None:
@@ -249,6 +265,37 @@ def _build_recent_closed_meeting_reuse_candidates(
     return candidates
 
 
+def _build_recent_asset_digests(reuse_candidates: dict[str, Any]) -> list[dict[str, Any]]:
+    digests: list[RecentAssetDigest] = []
+    for item in list(reuse_candidates.get("recent_completed_tickets") or []):
+        source_ref = (
+            str(((item.get("artifact_refs") or [None])[0]) or "").strip()
+            or str(item.get("ticket_id") or "").strip()
+        )
+        summary = str(item.get("summary") or "").strip()
+        asset_kind = str(item.get("output_schema_ref") or "ticket").strip()
+        if source_ref and summary and asset_kind:
+            digests.append(
+                RecentAssetDigest(
+                    source_ref=source_ref,
+                    asset_kind=asset_kind,
+                    summary=summary,
+                )
+            )
+    for item in list(reuse_candidates.get("recent_closed_meetings") or []):
+        source_ref = str(item.get("meeting_id") or "").strip()
+        summary = str(item.get("consensus_summary") or "").strip()
+        if source_ref and summary:
+            digests.append(
+                RecentAssetDigest(
+                    source_ref=source_ref,
+                    asset_kind="meeting_decision_record",
+                    summary=summary,
+                )
+            )
+    return [item.model_dump(mode="json") for item in digests[:5]]
+
+
 def build_ceo_shadow_snapshot(
     repository: ControlPlaneRepository,
     *,
@@ -274,6 +321,11 @@ def build_ceo_shadow_snapshot(
 
     employees = repository.list_employee_projections()
     with repository.connection() as connection:
+        governance_profile = require_governance_profile(
+            repository,
+            workflow_id=workflow_id,
+            connection=connection,
+        )
         ticket_rows = connection.execute(
             """
             SELECT * FROM ticket_projection
@@ -336,6 +388,32 @@ def build_ceo_shadow_snapshot(
         for ticket in tickets
         if str(ticket.get("ticket_id") or "") in ready_ticket_id_set
     ]
+    projection_snapshot = ProjectionSnapshot(
+        workflow_status=str(workflow["status"]),
+        graph_version=ticket_graph_snapshot.graph_version,
+        governance_profile_ref=governance_profile.profile_id,
+        approval_mode=governance_profile.approval_mode,
+        audit_mode=governance_profile.audit_mode,
+        ready_nodes=list(ticket_graph_snapshot.index_summary.ready_node_ids),
+        blocked_nodes=list(ticket_graph_snapshot.index_summary.blocked_node_ids),
+        open_incidents=[str(item["incident_id"]) for item in open_incidents],
+        open_board_items=[str(item["approval_id"]) for item in open_approvals],
+        pending_expert_gates=(
+            [str(item["approval_id"]) for item in open_approvals]
+            if governance_profile.approval_mode == "EXPERT_GATED"
+            else []
+        ),
+        recent_asset_digests=_build_recent_asset_digests(reuse_candidates),
+        reuse_candidates=reuse_candidates,
+        memory_budget_ratios=dict(_MEMORY_BUDGET_RATIOS),
+        default_read_order=list(_DEFAULT_READ_ORDER),
+    )
+    replan_focus = ReplanFocus(
+        task_sensemaking=controller_view["task_sensemaking"],
+        capability_plan=controller_view["capability_plan"],
+        controller_state=controller_view["controller_state"],
+        meeting_candidates=controller_view["meeting_candidates"],
+    )
 
     return {
         "trigger": {
@@ -456,6 +534,8 @@ def build_ceo_shadow_snapshot(
             }
             for preview in repository.get_recent_event_previews()
         ],
+        "projection_snapshot": projection_snapshot.model_dump(mode="json"),
+        "replan_focus": replan_focus.model_dump(mode="json"),
         "reuse_candidates": reuse_candidates,
         "meeting_candidates": controller_view["meeting_candidates"],
         "task_sensemaking": controller_view["task_sensemaking"],

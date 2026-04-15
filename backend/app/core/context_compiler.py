@@ -34,11 +34,14 @@ from app.contracts.runtime import (
     CompiledExecutionPackage,
     CompiledExecutionPackageMeta,
     CompiledGovernance,
+    CompiledContextLayerSummary,
     CompiledOutputContract,
     CompiledRenderHints,
     CompiledRole,
     CompiledSystemControls,
     CompiledTaskDefinition,
+    CompiledTaskFrame,
+    ContextLayerSectionSummary,
     CompileRequest,
     CompileRequestBudgetPolicy,
     CompileRequestControlRefs,
@@ -69,6 +72,7 @@ from app.core.constants import (
     DEFAULT_WORKSPACE_ID,
     TICKET_STATUS_COMPLETED,
 )
+from app.core.governance_profiles import require_governance_profile, governance_profile_to_mode_slice
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, get_output_schema_body
 from app.core.persona_profiles import normalize_persona_profiles
@@ -78,6 +82,7 @@ from app.core.project_workspaces import (
     write_worker_preflight_receipt,
 )
 from app.core.process_assets import merge_input_process_asset_refs, resolve_process_asset
+from app.core.skill_runtime import resolve_skill_binding
 from app.core.time import now_local
 from app.core.workflow_relationships import WorkflowTicketSnapshot, list_workflow_ticket_snapshots
 from app.core.developer_inspector import (
@@ -587,6 +592,7 @@ def _build_execution_package_meta(compile_request: CompileRequest) -> CompiledEx
         workflow_id=compile_request.meta.workflow_id,
         node_id=compile_request.meta.node_id,
         attempt_no=compile_request.meta.attempt_no,
+        governance_profile_ref=compile_request.meta.governance_profile_ref,
         lease_owner=compile_request.worker_binding.lease_owner,
         tenant_id=compile_request.meta.tenant_id,
         workspace_id=compile_request.meta.workspace_id,
@@ -594,6 +600,84 @@ def _build_execution_package_meta(compile_request: CompileRequest) -> CompiledEx
         ticket_projection_version=compile_request.meta.ticket_projection_version,
         node_projection_version=compile_request.meta.node_projection_version,
         source_projection_version=compile_request.meta.source_projection_version,
+    )
+
+
+def _resolve_task_category(compile_request: CompileRequest) -> str:
+    if compile_request.meta.attempt_no > 1 or compile_request.org_context.escalation_path.open_incident_id is not None:
+        return "debugging"
+    output_schema_ref = str(compile_request.control_refs.output_schema_ref or "").strip()
+    deliverable_kind = str(compile_request.execution.deliverable_kind or "").strip()
+    if deliverable_kind == "structured_document_delivery":
+        return "planning"
+    if output_schema_ref in {"maker_checker_verdict", "delivery_check_report", "ui_milestone_review"}:
+        return "review"
+    return "implementation"
+
+
+def _build_task_frame(compile_request: CompileRequest) -> CompiledTaskFrame:
+    task_category = _resolve_task_category(compile_request)
+    completion_definition = list(compile_request.execution.acceptance_criteria)
+    if not completion_definition:
+        completion_definition = [
+            (
+                "Return output that matches "
+                f"{compile_request.control_refs.output_schema_ref}@{compile_request.control_refs.output_schema_version}."
+            )
+        ]
+    return CompiledTaskFrame(
+        task_category=task_category,
+        goal=(
+            "Produce output for ticket "
+            f"{compile_request.meta.ticket_id} that satisfies {compile_request.control_refs.output_schema_ref}."
+        ),
+        completion_definition=completion_definition,
+        failure_definition=[
+            "Reject schema-invalid output.",
+            "Reject write-set violations.",
+            "Reject missing required documentation surfaces or evidence.",
+        ],
+        deliverable_kind=compile_request.execution.deliverable_kind,
+    )
+
+
+def _build_context_layer_summary(
+    compile_request: CompileRequest,
+    *,
+    context_block_count: int,
+) -> CompiledContextLayerSummary:
+    governance_profile_ref = compile_request.governance_mode_slice.governance_profile_ref
+    return CompiledContextLayerSummary(
+        w0_constitution=ContextLayerSectionSummary(
+            label="W0 Constitution",
+            item_count=1,
+            notes=[
+                f"approval_mode={compile_request.governance_mode_slice.approval_mode}",
+                f"audit_mode={compile_request.governance_mode_slice.audit_mode}",
+            ],
+            governance_profile_ref=governance_profile_ref,
+        ),
+        w1_task_frame=ContextLayerSectionSummary(
+            label="W1 Task Frame",
+            item_count=max(len(compile_request.execution.acceptance_criteria), 1),
+            notes=[f"output_schema={compile_request.control_refs.output_schema_ref}"],
+        ),
+        w2_evidence=ContextLayerSectionSummary(
+            label="W2 Evidence Slice",
+            item_count=context_block_count,
+            notes=[f"required_read_refs={len(compile_request.execution.required_read_refs)}"],
+        ),
+        w3_runtime_guard=ContextLayerSectionSummary(
+            label="W3 Runtime Guard",
+            item_count=(
+                len(compile_request.execution.allowed_tools)
+                + len(compile_request.execution.allowed_write_set)
+                + len(compile_request.execution.doc_update_requirements)
+            ),
+            notes=[f"forced_skill_ids={len(compile_request.execution.forced_skill_ids)}"],
+            allowed_tool_count=len(compile_request.execution.allowed_tools),
+            allowed_write_set_count=len(compile_request.execution.allowed_write_set),
+        ),
     )
 
 
@@ -1609,6 +1693,12 @@ def build_compile_request(
     connection: sqlite3.Connection | None = None,
 ) -> CompileRequest:
     created_spec = _require_ticket_create_spec(repository, ticket["ticket_id"], connection=connection)
+    governance_profile = require_governance_profile(
+        repository,
+        workflow_id=str(ticket["workflow_id"]),
+        connection=connection,
+    )
+    governance_mode_slice = governance_profile_to_mode_slice(governance_profile)
     lease_owner, employee = _require_worker_binding(
         repository,
         ticket.get("lease_owner"),
@@ -1728,6 +1818,7 @@ def build_compile_request(
             workflow_id=ticket["workflow_id"],
             node_id=ticket["node_id"],
             attempt_no=attempt_no,
+            governance_profile_ref=governance_profile.profile_id,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             ticket_projection_version=int(ticket["version"]),
@@ -1754,6 +1845,7 @@ def build_compile_request(
             max_input_tokens=max_input_tokens,
             overflow_policy="FAIL_CLOSED",
         ),
+        governance_mode_slice=governance_mode_slice,
         org_context=org_context,
         retrieval_plan=retrieval_plan,
         explicit_sources=explicit_sources,
@@ -1766,6 +1858,7 @@ def build_compile_request(
             acceptance_criteria=list(created_spec.get("acceptance_criteria") or []),
             allowed_tools=list(created_spec.get("allowed_tools") or []),
             allowed_write_set=list(created_spec.get("allowed_write_set") or []),
+            forced_skill_ids=list(created_spec.get("forced_skill_ids") or []),
             input_artifact_refs=list(created_spec.get("input_artifact_refs") or []),
             input_process_asset_refs=input_process_asset_refs,
             required_read_refs=list(created_spec.get("required_read_refs") or []),
@@ -1902,6 +1995,16 @@ def compile_audit_artifacts(
         or dropped_retrieval_count > 0
         or dropped_explicit_source_count > 0
     )
+    task_frame = _build_task_frame(compile_request)
+    required_doc_surfaces = list(compile_request.execution.doc_update_requirements)
+    context_layer_summary = _build_context_layer_summary(
+        compile_request,
+        context_block_count=len(context_blocks),
+    )
+    skill_binding = resolve_skill_binding(
+        compile_request=compile_request,
+        task_frame=task_frame,
+    )
 
     compiled_context_bundle = CompiledContextBundle(
         meta=CompiledContextBundleMeta(
@@ -1920,6 +2023,9 @@ def compile_audit_artifacts(
         system_controls=CompiledSystemControls(
             role_profile=compiled_role.model_dump(mode="json"),
             organization_context=compile_request.org_context,
+            governance_mode_slice=compile_request.governance_mode_slice,
+            required_doc_surfaces=required_doc_surfaces,
+            skill_binding=skill_binding.model_dump(mode="json"),
             hard_rules=[],
             board_constraints=[],
             output_contract=CompiledOutputContract(
@@ -1933,13 +2039,9 @@ def compile_audit_artifacts(
             allowed_write_set=compile_request.execution.allowed_write_set,
         ),
         task_definition=CompiledTaskDefinition(
-            task_type="EXECUTION",
-            atomic_task=(
-                "Produce output that conforms to "
-                f"{compile_request.control_refs.output_schema_ref} for ticket "
-                f"{compile_request.meta.ticket_id}."
-            ),
-            acceptance_criteria=compile_request.execution.acceptance_criteria,
+            task_type=task_frame.task_category.upper(),
+            atomic_task=task_frame.goal,
+            acceptance_criteria=task_frame.completion_definition,
             risk_class="medium",
             budget_profile=compile_request.budget_policy.overflow_policy,
         ),
@@ -2056,6 +2158,10 @@ def compile_audit_artifacts(
         meta=_build_execution_package_meta(compile_request),
         compiled_role=compiled_role,
         compiled_constraints=compiled_constraints,
+        governance_mode_slice=compile_request.governance_mode_slice,
+        task_frame=task_frame,
+        required_doc_surfaces=required_doc_surfaces,
+        context_layer_summary=context_layer_summary,
         org_context=compile_request.org_context,
         atomic_context_bundle=_build_atomic_context_bundle(
             context_blocks,
@@ -2066,6 +2172,7 @@ def compile_audit_artifacts(
             acceptance_criteria=compile_request.execution.acceptance_criteria,
             allowed_tools=compile_request.execution.allowed_tools,
             allowed_write_set=compile_request.execution.allowed_write_set,
+            forced_skill_ids=compile_request.execution.forced_skill_ids,
             input_artifact_refs=compile_request.execution.input_artifact_refs,
             input_process_asset_refs=compile_request.execution.input_process_asset_refs,
             required_read_refs=compile_request.execution.required_read_refs,
@@ -2084,6 +2191,7 @@ def compile_audit_artifacts(
             timeout_sla_sec=compile_request.governance.timeout_sla_sec,
             escalation_policy=compile_request.governance.escalation_policy,
         ),
+        skill_binding=skill_binding,
     )
 
     return CompiledAuditArtifacts(

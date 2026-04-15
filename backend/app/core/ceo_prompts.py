@@ -6,6 +6,7 @@ from app.contracts.runtime import (
     RenderedExecutionPayloadMeta,
     RenderedExecutionPayloadSummary,
 )
+from app.core.ceo_snapshot_contracts import capability_plan_view, controller_state_view, task_sensemaking_view
 from app.core.ceo_execution_presets import (
     GOVERNANCE_DOCUMENT_CHAIN_ORDER,
 )
@@ -23,6 +24,9 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
     trigger_type = str((snapshot.get("trigger") or {}).get("trigger_type") or "")
     workflow = snapshot.get("workflow") or {}
     ticket_summary = snapshot.get("ticket_summary") or {}
+    controller_state = controller_state_view(snapshot)
+    capability_plan = capability_plan_view(snapshot)
+    task_sensemaking = task_sensemaking_view(snapshot)
     kickoff_instruction = ""
     if trigger_type == EVENT_BOARD_DIRECTIVE_RECEIVED and int(ticket_summary.get("total") or 0) == 0:
         kickoff_spec = build_project_init_kickoff_spec(workflow)
@@ -64,22 +68,26 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "If workflow.workflow_profile is CEO_AUTOPILOT_FINE_GRAINED, keep task breakdown fine-grained and prefer atomic tasks with explicit dependency refs over large bundled tickets.\n"
         "Governance document kinds are a shared document family, not a hard role whitelist.\n"
         "Governance documents may stay on current live planning roles, or use architect_primary / cto_primary when those roles already exist in the active board-approved roster.\n"
-        "Do not use backend_engineer_primary, database_engineer_primary, or platform_sre_primary for direct CEO CREATE_TICKET unless snapshot.capability_plan.followup_ticket_plans explicitly routes a backlog follow-up there.\n"
-        "Read snapshot.task_sensemaking, snapshot.capability_plan, and snapshot.controller_state before proposing anything.\n"
-        "When snapshot.controller_state.state is GOVERNANCE_REQUIRED, ARCHITECT_REQUIRED, MEETING_REQUIRED, or STAFFING_REQUIRED, satisfy that gate first instead of forcing implementation tickets through.\n"
-        "If snapshot.capability_plan.required_governance_ticket_plan exists, only CREATE_TICKET that exact governance ticket before implementation fanout resumes.\n"
-        "If snapshot.capability_plan.followup_ticket_plans exists, keep CREATE_TICKET proposals aligned with those planned node_id / role_profile_ref pairs.\n"
-        "Before proposing any action, inspect snapshot.reuse_candidates.\n"
+        "Do not use backend_engineer_primary, database_engineer_primary, or platform_sre_primary for direct CEO CREATE_TICKET unless snapshot.replan_focus.capability_plan.followup_ticket_plans explicitly routes a backlog follow-up there.\n"
+        "Read snapshot.projection_snapshot before anything else.\n"
+        "Then read snapshot.replan_focus.task_sensemaking, snapshot.replan_focus.capability_plan, and snapshot.replan_focus.controller_state before proposing actions.\n"
+        "When snapshot.replan_focus.controller_state.state is GOVERNANCE_REQUIRED, ARCHITECT_REQUIRED, MEETING_REQUIRED, or STAFFING_REQUIRED, satisfy that gate first instead of forcing implementation tickets through.\n"
+        "If snapshot.replan_focus.capability_plan.required_governance_ticket_plan exists, only CREATE_TICKET that exact governance ticket before implementation fanout resumes.\n"
+        "If snapshot.replan_focus.capability_plan.followup_ticket_plans exists, keep CREATE_TICKET proposals aligned with those planned node_id / role_profile_ref pairs.\n"
+        "Before proposing any action, inspect snapshot.projection_snapshot.reuse_candidates.\n"
         "If recent completed tickets or closed meetings already cover the current need, prefer NO_ACTION.\n"
         "If existing work only needs recovery or follow-through, prefer RETRY_TICKET or continued waiting over creating parallel tickets.\n"
         "Meeting requests are a bounded exception path, not the default collaboration mode.\n"
-        "You may only propose REQUEST_MEETING when snapshot.meeting_candidates contains an eligible candidate and snapshot.reuse_candidates does not already resolve the decision.\n"
-        "Do not invent participants, meeting types, or source refs outside snapshot.meeting_candidates.\n"
-        "Do not propose HIRE_EMPLOYEE just to collect extra opinions when snapshot.reuse_candidates already provides enough guidance.\n"
+        "You may only propose REQUEST_MEETING when snapshot.replan_focus.meeting_candidates contains an eligible candidate and snapshot.projection_snapshot.reuse_candidates does not already resolve the decision.\n"
+        "Do not invent participants, meeting types, or source refs outside snapshot.replan_focus.meeting_candidates.\n"
+        "Do not propose HIRE_EMPLOYEE just to collect extra opinions when snapshot.projection_snapshot.reuse_candidates already provides enough guidance.\n"
         "When proposing staffing changes, prefer complementary same-role profiles and avoid hires that duplicate "
         "the active board-approved team on risk posture, challenge style, rigor, and aesthetic preferences.\n"
         "If the workflow is blocked by board review or incident, usually return NO_ACTION.\n"
         f"{kickoff_instruction}"
+        f"Current task_sensemaking summary: {task_sensemaking}.\n"
+        f"Current controller_state summary: {controller_state}.\n"
+        f"Current capability_plan summary: {capability_plan}.\n"
         "Return strict JSON matching ceo_action_batch_v1 with a short summary and actions array.\n"
         "Supported actions: CREATE_TICKET, RETRY_TICKET, HIRE_EMPLOYEE, REQUEST_MEETING, ESCALATE_TO_BOARD, NO_ACTION."
     )

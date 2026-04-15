@@ -22,6 +22,9 @@ def test_governance_profile_append_only_and_supersede_chain(db_path) -> None:
                 workflow_id="wf_governance_profile",
                 approval_mode="AUTO_CEO",
                 audit_mode="MINIMAL",
+                auto_approval_scope=["scope:mainline_internal"],
+                expert_review_targets=["checker", "board"],
+                audit_materialization_policy={"ticket_context_archive": False, "full_timeline": False},
                 source_ref="doc://charter/v1",
                 supersedes_ref=None,
                 effective_from_event="evt_bootstrap",
@@ -35,6 +38,9 @@ def test_governance_profile_append_only_and_supersede_chain(db_path) -> None:
                 workflow_id="wf_governance_profile",
                 approval_mode="EXPERT_GATED",
                 audit_mode="TICKET_TRACE",
+                auto_approval_scope=["scope:board_review"],
+                expert_review_targets=["board"],
+                audit_materialization_policy={"ticket_context_archive": True, "full_timeline": False},
                 source_ref="doc://charter/v2",
                 supersedes_ref="gp_1",
                 effective_from_event="evt_constraints_update",
@@ -66,12 +72,53 @@ def test_governance_profile_rejects_missing_superseded_target(db_path) -> None:
                     workflow_id="wf_governance_profile",
                     approval_mode="AUTO_CEO",
                     audit_mode="MINIMAL",
+                    auto_approval_scope=["scope:mainline_internal"],
+                    expert_review_targets=["checker", "board"],
+                    audit_materialization_policy={"ticket_context_archive": False, "full_timeline": False},
                     source_ref="doc://charter/v2",
                     supersedes_ref="gp_1",
                     effective_from_event="evt_constraints_update",
                     version_int=2,
                 ),
             )
+
+
+def test_governance_profile_persists_runtime_contract_fields(db_path) -> None:
+    repository = ControlPlaneRepository(db_path, 1000)
+    repository.initialize()
+
+    with repository.transaction() as connection:
+        repository.save_governance_profile(
+            connection,
+            GovernanceProfile(
+                profile_id="gp_runtime_contract",
+                workflow_id="wf_governance_runtime",
+                approval_mode="AUTO_CEO",
+                audit_mode="MINIMAL",
+                auto_approval_scope=["scope:mainline_internal"],
+                expert_review_targets=["checker", "board"],
+                audit_materialization_policy={
+                    "ticket_context_archive": False,
+                    "full_timeline": False,
+                    "closeout_evidence": True,
+                },
+                source_ref="doc://charter/runtime-contract",
+                supersedes_ref=None,
+                effective_from_event="evt_runtime_contract",
+                version_int=1,
+            ),
+        )
+
+    latest = repository.get_latest_governance_profile("wf_governance_runtime")
+
+    assert latest is not None
+    assert latest["auto_approval_scope"] == ["scope:mainline_internal"]
+    assert latest["expert_review_targets"] == ["checker", "board"]
+    assert latest["audit_materialization_policy"] == {
+        "ticket_context_archive": False,
+        "full_timeline": False,
+        "closeout_evidence": True,
+    }
 
 
 def test_resolve_workflow_graph_version_uses_latest_graph_mutation_event(db_path) -> None:

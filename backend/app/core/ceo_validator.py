@@ -13,6 +13,7 @@ from app.core.ceo_execution_presets import (
     is_project_init_scope_preset,
     supports_ceo_create_ticket_preset,
 )
+from app.core.ceo_snapshot_contracts import capability_plan_view, controller_state_view, replan_focus_view
 from app.core.constants import EMPLOYEE_STATE_ACTIVE
 from app.core.execution_targets import (
     infer_execution_contract_payload,
@@ -145,7 +146,7 @@ def validate_ceo_action_batch(
             candidate = next(
                 (
                     item
-                    for item in snapshot.get("meeting_candidates") or []
+                    for item in replan_focus_view(snapshot).get("meeting_candidates") or []
                     if str(item.get("source_ticket_id") or "") == action.payload.source_ticket_id
                     and str(item.get("source_node_id") or "") == action.payload.source_node_id
                 ),
@@ -305,7 +306,7 @@ def validate_ceo_action_batch(
                 continue
             if snapshot is not None:
                 required_governance_ticket_plan = (
-                    (snapshot.get("capability_plan") or {}).get("required_governance_ticket_plan")
+                    capability_plan_view(snapshot).get("required_governance_ticket_plan")
                 )
                 if isinstance(required_governance_ticket_plan, dict):
                     matching_required_governance_plan = (
@@ -355,7 +356,7 @@ def validate_ceo_action_batch(
                     )
                     continue
             if snapshot is not None and action.payload.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
-                controller_state = snapshot.get("controller_state") or {}
+                controller_state = controller_state_view(snapshot)
                 controller_gate_state = str(controller_state.get("state") or "").strip()
                 if controller_gate_state in {"GOVERNANCE_REQUIRED", "ARCHITECT_REQUIRED", "MEETING_REQUIRED"}:
                     rejected_actions.append(
@@ -365,7 +366,7 @@ def validate_ceo_action_batch(
                         )
                     )
                     continue
-                planned_followups = list((snapshot.get("capability_plan") or {}).get("followup_ticket_plans") or [])
+                planned_followups = list(capability_plan_view(snapshot).get("followup_ticket_plans") or [])
                 if planned_followups:
                     matching_plan = next(
                         (

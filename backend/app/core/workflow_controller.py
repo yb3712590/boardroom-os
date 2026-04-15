@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.contracts.ticket_graph import TicketGraphSnapshot
+from app.core.ceo_snapshot_contracts import controller_state_view
 from app.core.ceo_execution_presets import PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_WORKFLOW_CREATED
 from app.core.execution_targets import infer_execution_contract_payload, employee_supports_execution_contract
@@ -95,7 +96,7 @@ def _architect_governance_gate_node_id(source_node_id: str | None, source_ticket
 
 
 def workflow_controller_effect(snapshot: dict[str, Any]) -> str:
-    state = str((snapshot.get("controller_state") or {}).get("state") or "").strip()
+    state = str((controller_state_view(snapshot) or {}).get("state") or "").strip()
     if state == "WAIT_FOR_BOARD":
         return "WAIT_FOR_BOARD"
     if state == "WAIT_FOR_INCIDENT":

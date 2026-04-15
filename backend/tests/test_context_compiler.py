@@ -6,6 +6,7 @@ from datetime import datetime
 import pytest
 
 from app.contracts.commands import DeveloperInspectorRefs
+from app.contracts.governance import GovernanceProfile
 
 from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
@@ -20,7 +21,85 @@ from app.core.process_assets import (
     build_compiled_context_bundle_process_asset_ref,
     build_compiled_execution_package_process_asset_ref,
 )
+from app.core.runtime_provider_config import (
+    OPENAI_COMPAT_PROVIDER_ID,
+    RuntimeProviderConfigEntry,
+    RuntimeProviderStoredConfig,
+)
 from app.core.versioning import build_process_asset_canonical_ref
+
+
+def _configure_runtime_provider(client) -> None:
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api-hk.codex-for.me/v1",
+                    api_key="test-key",
+                    model="gpt-5.4",
+                    timeout_sec=30.0,
+                    reasoning_effort="high",
+                    capability_tags=["structured_output", "planning", "implementation", "review"],
+                    fallback_provider_ids=[],
+                )
+            ],
+            role_bindings=[],
+        )
+    )
+
+
+@pytest.fixture(autouse=True)
+def _configure_runtime_provider_fixture(client):
+    _configure_runtime_provider(client)
+
+
+@pytest.fixture(autouse=True)
+def _seed_default_governance_profile_fixture(client, request):
+    if "missing_governance_profile" in request.node.name:
+        return
+    _seed_governance_profile(
+        client.app.state.repository,
+        workflow_id="wf_compile",
+        profile_id="gp_compile_runtime",
+    )
+
+
+def _seed_governance_profile(
+    repository,
+    *,
+    workflow_id: str,
+    profile_id: str | None = None,
+) -> None:
+    existing = repository.get_latest_governance_profile(workflow_id)
+    if existing is not None:
+        return
+    resolved_profile_id = profile_id or f"gp_{workflow_id}"
+    with repository.transaction() as connection:
+        repository.save_governance_profile(
+            connection,
+            GovernanceProfile(
+                profile_id=resolved_profile_id,
+                workflow_id=workflow_id,
+                approval_mode="AUTO_CEO",
+                audit_mode="MINIMAL",
+                auto_approval_scope=["scope:mainline_internal"],
+                expert_review_targets=["checker", "board"],
+                audit_materialization_policy={
+                    "ticket_context_archive": False,
+                    "full_timeline": False,
+                    "closeout_evidence": True,
+                },
+                source_ref=f"doc://charter/{workflow_id}",
+                supersedes_ref=None,
+                effective_from_event=f"evt_governance_{workflow_id}",
+                version_int=1,
+            ),
+        )
 
 
 def _ticket_create_payload(
@@ -384,6 +463,7 @@ def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
+    _seed_governance_profile(repository, workflow_id="wf_compile")
     ticket = repository.get_current_ticket_projection("tkt_compile_001")
 
     compile_request = build_compile_request(repository, ticket)
@@ -401,6 +481,7 @@ def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time
     assert compile_request.worker_binding.aesthetic_profile["surface_preference"] == "functional"
     assert compile_request.budget_policy.max_input_tokens == 3000
     assert compile_request.budget_policy.overflow_policy == "FAIL_CLOSED"
+    assert compile_request.meta.governance_profile_ref == "gp_compile_runtime"
     assert [source.source_ref for source in compile_request.explicit_sources] == [
         build_artifact_process_asset_ref("art://inputs/brief.md"),
         build_artifact_process_asset_ref("art://inputs/brand-guide.md"),
@@ -415,6 +496,7 @@ def test_build_compile_request_includes_cross_workflow_retrieval_plan(client, se
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
+    _seed_governance_profile(repository, workflow_id="wf_compile")
     ticket = repository.get_current_ticket_projection("tkt_compile_001")
 
     compile_request = build_compile_request(repository, ticket)
@@ -441,6 +523,7 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
+    _seed_governance_profile(repository, workflow_id="wf_compile")
     ticket = repository.get_current_ticket_projection("tkt_compile_001")
     compile_request = build_compile_request(repository, ticket)
 
@@ -451,11 +534,21 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
     assert compiled_package.meta.tenant_id == "tenant_default"
     assert compiled_package.meta.workspace_id == "ws_default"
     assert compiled_package.meta.compiler_version == MINIMAL_CONTEXT_COMPILER_VERSION
+    assert compiled_package.meta.governance_profile_ref == "gp_compile_runtime"
     assert compiled_package.compiled_role.role_profile_ref == "frontend_engineer_primary"
     assert compiled_package.compiled_role.employee_role_type == "frontend_engineer"
     assert compiled_package.compiled_role.persona_summary.startswith("Skill frontend")
     assert compiled_package.compiled_constraints.constraints_ref == "global_constraints_v3"
     assert compiled_package.compiled_constraints.global_rules == []
+    assert compiled_package.governance_mode_slice.governance_profile_ref == "gp_compile_runtime"
+    assert compiled_package.governance_mode_slice.approval_mode == "AUTO_CEO"
+    assert compiled_package.governance_mode_slice.audit_mode == "MINIMAL"
+    assert compiled_package.required_doc_surfaces == []
+    assert compiled_package.task_frame.task_category == "review"
+    assert compiled_package.context_layer_summary.w0_constitution.governance_profile_ref == "gp_compile_runtime"
+    assert compiled_package.context_layer_summary.w3_runtime_guard.allowed_tool_count == 2
+    assert compiled_package.skill_binding is not None
+    assert compiled_package.skill_binding.resolved_skill_ids == ["review"]
     assert compiled_package.org_context.upstream_provider is None
     assert compiled_package.org_context.downstream_reviewer is not None
     assert compiled_package.org_context.downstream_reviewer.ticket_id == "tkt_compile_001"
@@ -486,9 +579,31 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
         "Skill frontend"
     )
     assert (
+        compiled_package.rendered_execution_payload.messages[0].content_payload["governance_mode_slice"][
+            "governance_profile_ref"
+        ]
+        == "gp_compile_runtime"
+    )
+    assert (
+        compiled_package.rendered_execution_payload.messages[0].content_payload["skill_binding"]["resolved_skill_ids"]
+        == ["review"]
+    )
+    assert (
         compiled_package.rendered_execution_payload.messages[0].content_payload["organization_context"]
         == compiled_package.org_context.model_dump(mode="json")
     )
+
+
+def test_build_compile_request_rejects_missing_governance_profile(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+
+    with pytest.raises(ValueError, match="GovernanceProfile"):
+        build_compile_request(repository, ticket)
 
 
 def test_compile_execution_package_builds_dynamic_org_context_for_parent_child_and_siblings(
@@ -1660,6 +1775,7 @@ def test_build_compile_request_resolves_compiled_context_bundle_process_asset(cl
             ],
         ),
     )
+    _seed_governance_profile(repository, workflow_id="wf_compile_process_assets")
     client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(
@@ -1696,6 +1812,8 @@ def test_build_compile_request_resolves_governance_document_process_asset(client
             input_artifact_refs=[],
         ),
     )
+    repository = client.app.state.repository
+    _seed_governance_profile(repository, workflow_id="wf_governance_source")
     client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(
@@ -1743,8 +1861,6 @@ def test_build_compile_request_resolves_governance_document_process_asset(client
             "idempotency_key": "ticket-result-submit:wf_governance_source:tkt_gov_doc_source:architecture-brief",
         },
     )
-
-    repository = client.app.state.repository
     with repository.connection() as connection:
         terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_gov_doc_source")
     produced_assets = list((terminal_event or {}).get("payload", {}).get("produced_process_assets") or [])
@@ -1762,6 +1878,7 @@ def test_build_compile_request_resolves_governance_document_process_asset(client
             input_process_asset_refs=["pa://governance-document/tkt_gov_doc_source"],
         ),
     )
+    _seed_governance_profile(repository, workflow_id="wf_governance_consumer")
     client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(
@@ -1945,6 +2062,7 @@ def test_build_compile_request_accepts_legacy_process_asset_ref_but_resolves_ver
             input_process_asset_refs=[build_compiled_execution_package_process_asset_ref("tkt_compile_001")],
         ),
     )
+    _seed_governance_profile(repository, workflow_id="wf_compile_consumer")
     client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(

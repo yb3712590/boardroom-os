@@ -12,6 +12,7 @@ from app.core.ceo_proposer import (
 )
 from app.core.ceo_prompts import CEO_SHADOW_PROMPT_VERSION
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
+from app.core.ceo_snapshot_contracts import controller_state_view
 from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.runtime_provider_config import RuntimeProviderConfigStore
 from app.core.time import now_local
@@ -63,8 +64,12 @@ def _build_comparison(
     accepted_actions: list[dict[str, Any]],
     rejected_actions: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    deterministic_effect = _build_mainline_effect(snapshot)
-    expected_action = str((snapshot.get("controller_state") or {}).get("recommended_action") or "").strip()
+    try:
+        deterministic_effect = _build_mainline_effect(snapshot)
+        expected_action = str((controller_state_view(snapshot) or {}).get("recommended_action") or "").strip()
+    except ValueError:
+        deterministic_effect = "PIPELINE_FAILED_BEFORE_SNAPSHOT"
+        expected_action = ""
     accepted_action_types = [item["action_type"] for item in accepted_actions]
     mainline_waiting_states = {"WAIT_FOR_BOARD", "WAIT_FOR_INCIDENT", "WAIT_FOR_RUNTIME", "NO_IMMEDIATE_FOLLOWUP"}
     if deterministic_effect in mainline_waiting_states:
