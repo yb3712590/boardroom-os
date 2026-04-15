@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 import pytest
+import tests.test_api as api_test_helpers
 
 from app.contracts.ceo_actions import CEOActionBatch
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
@@ -48,6 +49,143 @@ from app.core.runtime_provider_config import (
     RuntimeProviderRoleBinding,
     RuntimeProviderStoredConfig,
 )
+
+
+def _assert_command_status(
+    response,
+    *,
+    expected_status: str = "ACCEPTED",
+    expected_reason_contains: str | None = None,
+) -> dict:
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == expected_status
+    if expected_reason_contains is not None:
+        assert expected_reason_contains in str(payload.get("reason") or "")
+    return payload
+
+
+class _temporary_live_provider:
+    def __init__(self, client):
+        self.client = client
+        self.store = client.app.state.runtime_provider_store
+        self.previous_config = None
+
+    def __enter__(self):
+        self.previous_config = self.store.load_saved_config()
+        _set_live_provider(self.client)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.previous_config is None:
+            _set_deterministic_mode(self.client)
+        else:
+            self.store.save_config(self.previous_config)
+        return False
+
+
+def _create_ticket_for_test(client, payload: dict) -> dict:
+    return _assert_command_status(client.post("/api/v1/commands/ticket-create", json=payload))
+
+
+def _lease_ticket_for_test(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    leased_by: str,
+    idempotency_key: str,
+    expected_status: str = "ACCEPTED",
+    expected_reason_contains: str | None = None,
+) -> dict:
+    return _assert_command_status(
+        client.post(
+            "/api/v1/commands/ticket-lease",
+            json={
+                "workflow_id": workflow_id,
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "leased_by": leased_by,
+                "lease_timeout_sec": 600,
+                "idempotency_key": idempotency_key,
+            },
+        ),
+        expected_status=expected_status,
+        expected_reason_contains=expected_reason_contains,
+    )
+
+
+def _start_ticket_for_test(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    started_by: str,
+    idempotency_key: str,
+    expected_status: str = "ACCEPTED",
+    expected_reason_contains: str | None = None,
+) -> dict:
+    return _assert_command_status(
+        client.post(
+            "/api/v1/commands/ticket-start",
+            json={
+                "workflow_id": workflow_id,
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "started_by": started_by,
+                "idempotency_key": idempotency_key,
+            },
+        ),
+        expected_status=expected_status,
+        expected_reason_contains=expected_reason_contains,
+    )
+
+
+def _submit_ticket_result_for_test(client, payload: dict) -> dict:
+    return _assert_command_status(client.post("/api/v1/commands/ticket-result-submit", json=payload))
+
+
+def _complete_checker_verdict_for_test(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    submitted_by: str = "emp_checker_1",
+    review_status: str = "APPROVED_WITH_NOTES",
+    findings: list[dict] | None = None,
+    idempotency_key: str,
+) -> None:
+    _lease_ticket_for_test(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        leased_by=submitted_by,
+        idempotency_key=f"ticket-lease:{workflow_id}:{ticket_id}:{submitted_by}",
+    )
+    _start_ticket_for_test(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        started_by=submitted_by,
+        idempotency_key=f"ticket-start:{workflow_id}:{ticket_id}:{submitted_by}",
+    )
+    _submit_ticket_result_for_test(
+        client,
+        api_test_helpers._maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            submitted_by=submitted_by,
+            review_status=review_status,
+            findings=findings,
+            idempotency_key=idempotency_key,
+        ),
+    )
 
 
 def _project_init(client, goal: str = "CEO shadow test") -> str:
@@ -269,9 +407,9 @@ def _create_and_fail_ticket(
     output_schema_ref: str = "ui_milestone_review",
     leased_by: str = "emp_frontend_2",
 ) -> None:
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
             workflow_id=workflow_id,
             ticket_id=ticket_id,
             node_id=node_id,
@@ -280,49 +418,39 @@ def _create_and_fail_ticket(
             output_schema_ref=output_schema_ref,
         ),
     )
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
 
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "leased_by": leased_by,
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}",
-        },
-    )
-    assert lease_response.status_code == 200
-
-    start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "started_by": leased_by,
-            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
-        },
-    )
-    assert start_response.status_code == 200
-
-    fail_response = client.post(
-        "/api/v1/commands/ticket-fail",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "failed_by": leased_by,
-            "failure_kind": failure_kind,
-            "failure_message": failure_message,
-            "failure_detail": failure_detail or {},
-            "idempotency_key": f"ticket-fail:{workflow_id}:{ticket_id}",
-        },
-    )
-    assert fail_response.status_code == 200
-    assert fail_response.json()["status"] == "ACCEPTED"
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            leased_by=leased_by,
+            idempotency_key=f"ticket-lease:{workflow_id}:{ticket_id}",
+        )
+        _start_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            started_by=leased_by,
+            idempotency_key=f"ticket-start:{workflow_id}:{ticket_id}",
+        )
+        _assert_command_status(
+            client.post(
+                "/api/v1/commands/ticket-fail",
+                json={
+                    "workflow_id": workflow_id,
+                    "ticket_id": ticket_id,
+                    "node_id": node_id,
+                    "failed_by": leased_by,
+                    "failure_kind": failure_kind,
+                    "failure_message": failure_message,
+                    "failure_detail": failure_detail or {},
+                    "idempotency_key": f"ticket-fail:{workflow_id}:{ticket_id}",
+                },
+            ),
+        )
 
 
 def _seed_board_approved_employee(
@@ -369,9 +497,9 @@ def _create_and_complete_ticket(
     node_id: str,
     summary: str = "Completed implementation slice ready for reuse.",
 ) -> None:
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json={
+    _create_ticket_for_test(
+        client,
+        {
             **_ticket_create_payload(
                 workflow_id=workflow_id,
                 ticket_id=ticket_id,
@@ -381,72 +509,34 @@ def _create_and_complete_ticket(
             "output_schema_ref": "source_code_delivery",
         },
     )
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
 
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:complete",
-        },
-    )
-    assert lease_response.status_code == 200
-
-    start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "started_by": "emp_frontend_2",
-            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:complete",
-        },
-    )
-    assert start_response.status_code == 200
-
-    artifact_ref = f"art://runtime/{ticket_id}/source-code.tsx"
-    submit_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "submitted_by": "emp_frontend_2",
-            "result_status": "completed",
-            "schema_version": "source_code_delivery_v1",
-            "payload": {
-                "summary": summary,
-                "source_file_refs": [artifact_ref],
-                "implementation_notes": ["Keep delivery inside the already approved scope."],
-            },
-            "artifact_refs": [artifact_ref],
-            "written_artifacts": [
-                {
-                    "path": "artifacts/ui/homepage/source-code.tsx",
-                    "artifact_ref": artifact_ref,
-                    "kind": "JSON",
-                    "content_json": {
-                        "summary": summary,
-                        "source_file_refs": [artifact_ref],
-                        "implementation_notes": ["Keep delivery inside the already approved scope."],
-                    },
-                }
-            ],
-            "assumptions": ["Completed bundle is still reusable for the current workflow."],
-            "issues": [],
-            "confidence": 0.87,
-            "needs_escalation": False,
-            "summary": summary,
-            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:complete",
-        },
-    )
-    assert submit_response.status_code == 200
-    assert submit_response.json()["status"] == "ACCEPTED"
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            leased_by="emp_frontend_2",
+            idempotency_key=f"ticket-lease:{workflow_id}:{ticket_id}:complete",
+        )
+        _start_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            started_by="emp_frontend_2",
+            idempotency_key=f"ticket-start:{workflow_id}:{ticket_id}:complete",
+        )
+        submit_payload = api_test_helpers._source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            written_artifact_path="artifacts/ui/homepage/source-code.tsx",
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{ticket_id}:complete",
+        )
+        submit_payload["payload"]["summary"] = summary
+        submit_payload["summary"] = summary
+        _submit_ticket_result_for_test(client, submit_payload)
 
 
 def _create_and_complete_governance_ticket(
@@ -461,9 +551,9 @@ def _create_and_complete_governance_ticket(
     role_profile_ref: str = "frontend_engineer_primary",
     leased_by: str = "emp_frontend_2",
 ) -> None:
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json={
+    _create_ticket_for_test(
+        client,
+        {
             **_ticket_create_payload(
                 workflow_id=workflow_id,
                 ticket_id=ticket_id,
@@ -475,89 +565,33 @@ def _create_and_complete_governance_ticket(
             "allowed_write_set": [f"reports/governance/{ticket_id}/*"],
         },
     )
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
 
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "leased_by": leased_by,
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:governance",
-        },
-    )
-    assert lease_response.status_code == 200
-
-    start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "started_by": leased_by,
-            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:governance",
-        },
-    )
-    assert start_response.status_code == 200
-
-    artifact_ref = f"art://runtime/{ticket_id}/{output_schema_ref}.json"
-    governance_payload = {
-        "document_kind_ref": output_schema_ref,
-        "title": f"{output_schema_ref} for {ticket_id}",
-        "summary": summary,
-        "linked_document_refs": ["doc://governance/upstream/current"],
-        "linked_artifact_refs": [artifact_ref],
-        "source_process_asset_refs": [],
-        "decisions": ["Keep the delivery sequence explicit and document-first."],
-        "constraints": ["Do not widen the current MVP boundary."],
-        "sections": [
-            {
-                "section_id": "section_overview",
-                "label": "Overview",
-                "summary": summary,
-                "content_markdown": "Document-first guidance for the next delivery slice.",
-            }
-        ],
-        "followup_recommendations": [
-            {
-                "recommendation_id": "rec_implementation_followup",
-                "summary": "Turn this document into the next implementation ticket.",
-                "target_role": "frontend_engineer",
-            }
-        ],
-    }
-    submit_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "submitted_by": leased_by,
-            "result_status": "completed",
-            "schema_version": f"{output_schema_ref}_v1",
-            "payload": governance_payload,
-            "artifact_refs": [artifact_ref],
-            "written_artifacts": [
-                {
-                    "path": f"reports/governance/{ticket_id}/{output_schema_ref}.json",
-                    "artifact_ref": artifact_ref,
-                    "kind": "JSON",
-                    "content_json": governance_payload,
-                }
-            ],
-            "assumptions": ["Governance document can be compiled into the next delivery ticket."],
-            "issues": [],
-            "confidence": 0.84,
-            "needs_escalation": False,
-            "summary": summary,
-            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:governance",
-        },
-    )
-    assert submit_response.status_code == 200
-    assert submit_response.json()["status"] == "ACCEPTED"
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            leased_by=leased_by,
+            idempotency_key=f"ticket-lease:{workflow_id}:{ticket_id}:governance",
+        )
+        _start_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            started_by=leased_by,
+            idempotency_key=f"ticket-start:{workflow_id}:{ticket_id}:governance",
+        )
+        submit_payload = api_test_helpers._governance_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            output_schema_ref=output_schema_ref,
+            summary=summary,
+        )
+        submit_payload["submitted_by"] = leased_by
+        _submit_ticket_result_for_test(client, submit_payload)
 
     if not approve_internal_gate:
         return
@@ -568,55 +602,14 @@ def _create_and_complete_governance_ticket(
         return
 
     checker_ticket_id = current_node["latest_ticket_id"]
-    lease_checker_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "leased_by": "emp_checker_1",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:governance-checker",
-        },
-    )
-    assert lease_checker_response.status_code == 200
-    start_checker_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "started_by": "emp_checker_1",
-            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:governance-checker",
-        },
-    )
-    assert start_checker_response.status_code == 200
-    approve_checker_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "submitted_by": "emp_checker_1",
-            "result_status": "completed",
-            "schema_version": "maker_checker_verdict_v1",
-            "payload": {
-                "summary": "Checker approved the governance document.",
-                "review_status": "APPROVED_WITH_NOTES",
-                "findings": [],
-            },
-            "artifact_refs": [],
-            "written_artifacts": [],
-            "assumptions": [],
-            "issues": [],
-            "confidence": 0.9,
-            "needs_escalation": False,
-            "summary": "Governance checker verdict submitted.",
-            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:governance-approved",
-        },
-    )
-    assert approve_checker_response.status_code == 200
-    assert approve_checker_response.json()["status"] == "ACCEPTED"
+    with _temporary_live_provider(client):
+        _complete_checker_verdict_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:governance-approved",
+        )
 
 
 def _create_and_board_approve_consensus_ticket(
@@ -627,9 +620,9 @@ def _create_and_board_approve_consensus_ticket(
     node_id: str,
     summary: str = "Board-approved consensus is ready for reuse.",
 ) -> None:
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json={
+    _create_ticket_for_test(
+        client,
+        {
             **_ticket_create_payload(
                 workflow_id=workflow_id,
                 ticket_id=ticket_id,
@@ -652,33 +645,6 @@ def _create_and_board_approve_consensus_ticket(
             },
         },
     )
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
-
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:consensus",
-        },
-    )
-    assert lease_response.status_code == 200
-
-    start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "started_by": "emp_frontend_2",
-            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:consensus",
-        },
-    )
-    assert start_response.status_code == 200
 
     artifact_ref = f"art://meeting/{ticket_id}/consensus-document.json"
     result_payload = {
@@ -736,91 +702,57 @@ def _create_and_board_approve_consensus_ticket(
         "inbox_summary": "A consensus document is ready for board review.",
         "badges": ["meeting", "board_gate", "scope"],
     }
-    submit_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "submitted_by": "emp_frontend_2",
-            "result_status": "completed",
-            "schema_version": "consensus_document_v1",
-            "payload": result_payload,
-            "artifact_refs": [artifact_ref],
-            "written_artifacts": [
-                {
-                    "path": f"reports/meeting/{ticket_id}/consensus-document.json",
-                    "artifact_ref": artifact_ref,
-                    "kind": "JSON",
-                    "content_json": result_payload,
-                }
-            ],
-            "assumptions": ["Consensus already reflects the final facilitator summary."],
-            "issues": [],
-            "confidence": 0.86,
-            "needs_escalation": False,
-            "summary": summary,
-            "review_request": review_request,
-            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:consensus",
-        },
-    )
-    assert submit_response.status_code == 200
-    assert submit_response.json()["status"] == "ACCEPTED"
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            leased_by="emp_frontend_2",
+            idempotency_key=f"ticket-lease:{workflow_id}:{ticket_id}:consensus",
+        )
+        _start_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            started_by="emp_frontend_2",
+            idempotency_key=f"ticket-start:{workflow_id}:{ticket_id}:consensus",
+        )
+        _submit_ticket_result_for_test(
+            client,
+            {
+                **api_test_helpers._consensus_document_result_submit_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=ticket_id,
+                    node_id=node_id,
+                    payload=result_payload,
+                    review_request=review_request,
+                    include_review_request=True,
+                    artifact_refs=[artifact_ref],
+                    idempotency_key=f"ticket-result-submit:{workflow_id}:{ticket_id}:consensus",
+                ),
+                "written_artifacts": [
+                    {
+                        "path": f"reports/meeting/{ticket_id}/consensus-document.json",
+                        "artifact_ref": artifact_ref,
+                        "kind": "JSON",
+                        "content_json": result_payload,
+                    }
+                ],
+            },
+        )
 
     repository = client.app.state.repository
     checker_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
-
-    checker_lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "leased_by": "emp_checker_1",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:checker",
-        },
-    )
-    assert checker_lease_response.status_code == 200
-
-    checker_start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "started_by": "emp_checker_1",
-            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:checker",
-        },
-    )
-    assert checker_start_response.status_code == 200
-
-    checker_submit_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "submitted_by": "emp_checker_1",
-            "result_status": "completed",
-            "schema_version": "maker_checker_verdict_v1",
-            "payload": {
-                "summary": "Checker approved the consensus output.",
-                "review_status": "APPROVED_WITH_NOTES",
-                "findings": [],
-            },
-            "artifact_refs": [],
-            "written_artifacts": [],
-            "assumptions": [],
-            "issues": [],
-            "confidence": 0.9,
-            "needs_escalation": False,
-            "summary": "Checker verdict submitted.",
-            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved",
-        },
-    )
-    assert checker_submit_response.status_code == 200
-    assert checker_submit_response.json()["status"] == "ACCEPTED"
+    with _temporary_live_provider(client):
+        _complete_checker_verdict_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved",
+        )
 
     approval = next(
         item
@@ -828,20 +760,20 @@ def _create_and_board_approve_consensus_ticket(
         if item["workflow_id"] == workflow_id and item["approval_type"] == "MEETING_ESCALATION"
     )
     option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
-    approve_response = client.post(
-        "/api/v1/commands/board-approve",
-        json={
-            "review_pack_id": approval["review_pack_id"],
-            "review_pack_version": approval["review_pack_version"],
-            "command_target_version": approval["command_target_version"],
-            "approval_id": approval["approval_id"],
-            "selected_option_id": option_id,
-            "board_comment": "Approve consensus and keep it reusable.",
-            "idempotency_key": f"board-approve:{approval['approval_id']}:consensus",
-        },
+    _assert_command_status(
+        client.post(
+            "/api/v1/commands/board-approve",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "selected_option_id": option_id,
+                "board_comment": "Approve consensus and keep it reusable.",
+                "idempotency_key": f"board-approve:{approval['approval_id']}:consensus",
+            },
+        ),
     )
-    assert approve_response.status_code == 200
-    assert approve_response.json()["status"] == "ACCEPTED"
 
 
 def _create_and_complete_backlog_recommendation_ticket(
@@ -855,9 +787,9 @@ def _create_and_complete_backlog_recommendation_ticket(
     dependency_graph: list[dict] | None = None,
     recommended_sequence: list[str] | None = None,
 ) -> None:
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json={
+    _create_ticket_for_test(
+        client,
+        {
             **_ticket_create_payload(
                 workflow_id=workflow_id,
                 ticket_id=ticket_id,
@@ -869,33 +801,6 @@ def _create_and_complete_backlog_recommendation_ticket(
             "allowed_write_set": [f"reports/governance/{ticket_id}/*"],
         },
     )
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
-
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:backlog",
-        },
-    )
-    assert lease_response.status_code == 200
-
-    start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "started_by": "emp_frontend_2",
-            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:backlog",
-        },
-    )
-    assert start_response.status_code == 200
 
     artifact_ref = f"art://runtime/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json"
     backlog_payload = {
@@ -978,35 +883,50 @@ def _create_and_complete_backlog_recommendation_ticket(
             }
         ],
     }
-    submit_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "submitted_by": "emp_frontend_2",
-            "result_status": "completed",
-            "schema_version": f"{BACKLOG_RECOMMENDATION_SCHEMA_REF}_v1",
-            "payload": backlog_payload,
-            "artifact_refs": [artifact_ref],
-            "written_artifacts": [
-                {
-                    "path": f"reports/governance/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json",
-                    "artifact_ref": artifact_ref,
-                    "kind": "JSON",
-                    "content_json": backlog_payload,
-                }
-            ],
-            "assumptions": ["backlog recommendation 可以直接转成实现工单。"],
-            "issues": [],
-            "confidence": 0.88,
-            "needs_escalation": False,
-            "summary": "backlog recommendation 已完成。",
-            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:backlog",
-        },
-    )
-    assert submit_response.status_code == 200
-    assert submit_response.json()["status"] == "ACCEPTED"
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            leased_by="emp_frontend_2",
+            idempotency_key=f"ticket-lease:{workflow_id}:{ticket_id}:backlog",
+        )
+        _start_ticket_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            started_by="emp_frontend_2",
+            idempotency_key=f"ticket-start:{workflow_id}:{ticket_id}:backlog",
+        )
+        _submit_ticket_result_for_test(
+            client,
+            {
+                "workflow_id": workflow_id,
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "submitted_by": "emp_frontend_2",
+                "result_status": "completed",
+                "schema_version": f"{BACKLOG_RECOMMENDATION_SCHEMA_REF}_v1",
+                "payload": backlog_payload,
+                "artifact_refs": [artifact_ref],
+                "written_artifacts": [
+                    {
+                        "path": f"reports/governance/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json",
+                        "artifact_ref": artifact_ref,
+                        "kind": "JSON",
+                        "content_json": backlog_payload,
+                    }
+                ],
+                "assumptions": ["backlog recommendation 可以直接转成实现工单。"],
+                "issues": [],
+                "confidence": 0.88,
+                "needs_escalation": False,
+                "summary": "backlog recommendation 已完成。",
+                "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:backlog",
+            },
+        )
 
     if not approve_internal_gate:
         return
@@ -1017,53 +937,14 @@ def _create_and_complete_backlog_recommendation_ticket(
         return
 
     checker_ticket_id = current_node["latest_ticket_id"]
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "leased_by": "emp_checker_1",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:backlog-checker",
-        },
-    )
-    client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "started_by": "emp_checker_1",
-            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:backlog-checker",
-        },
-    )
-    approve_checker_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": node_id,
-            "submitted_by": "emp_checker_1",
-            "result_status": "completed",
-            "schema_version": "maker_checker_verdict_v1",
-            "payload": {
-                "summary": "Checker approved the backlog recommendation.",
-                "review_status": "APPROVED_WITH_NOTES",
-                "findings": [],
-            },
-            "artifact_refs": [],
-            "written_artifacts": [],
-            "assumptions": [],
-            "issues": [],
-            "confidence": 0.9,
-            "needs_escalation": False,
-            "summary": "Backlog checker verdict submitted.",
-            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:backlog-approved",
-        },
-    )
-    assert approve_checker_response.status_code == 200
-    assert approve_checker_response.json()["status"] == "ACCEPTED"
+    with _temporary_live_provider(client):
+        _complete_checker_verdict_for_test(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:backlog-approved",
+        )
 
 
 def _create_and_complete_minimum_governance_chain(
@@ -2310,7 +2191,7 @@ def test_ceo_shadow_run_executes_governance_document_create_ticket_for_live_role
     assert created_spec["delivery_stage"] is None
 
 
-def test_ceo_shadow_run_falls_back_safely_for_invalid_create_ticket_preset(client, monkeypatch):
+def test_ceo_shadow_run_raises_for_invalid_create_ticket_preset(client, monkeypatch):
     workflow_id = _project_init(client, "CEO invalid create preset")
     _set_live_provider(client)
 
@@ -2350,18 +2231,20 @@ def test_ceo_shadow_run_falls_back_safely_for_invalid_create_ticket_preset(clien
 
     monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
 
-    run = run_ceo_shadow_for_trigger(
-        client.app.state.repository,
-        workflow_id=workflow_id,
-        trigger_type="MANUAL_TEST",
-        trigger_ref="manual:create-invalid",
-        runtime_provider_store=client.app.state.runtime_provider_store,
-    )
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            client.app.state.repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:create-invalid",
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
 
-    assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
-    assert run["executed_actions"][0]["action_type"] == "NO_ACTION"
-    assert run["deterministic_fallback_used"] is True
-    assert run["fallback_reason"] is not None
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["fallback_reason"] is not None
 
 
 def test_ceo_validator_accepts_governance_document_create_ticket_for_architect_role(client):
@@ -2866,13 +2749,13 @@ def test_ceo_shadow_run_idle_governance_followup_infers_dependency_chain_and_pro
         "tkt_parent_detailed_design",
     ]
     assert created_spec["parent_ticket_id"] == "tkt_parent_detailed_design"
-    assert "pa://governance-document/tkt_parent_architecture_doc" in created_spec["input_process_asset_refs"]
-    assert "pa://governance-document/tkt_parent_technology_decision" in created_spec["input_process_asset_refs"]
-    assert "pa://governance-document/tkt_parent_milestone_plan" in created_spec["input_process_asset_refs"]
-    assert "pa://governance-document/tkt_parent_detailed_design" in created_spec["input_process_asset_refs"]
+    assert "pa://governance-document/tkt_parent_architecture_doc@1" in created_spec["input_process_asset_refs"]
+    assert "pa://governance-document/tkt_parent_technology_decision@1" in created_spec["input_process_asset_refs"]
+    assert "pa://governance-document/tkt_parent_milestone_plan@1" in created_spec["input_process_asset_refs"]
+    assert "pa://governance-document/tkt_parent_detailed_design@1" in created_spec["input_process_asset_refs"]
 
 
-def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_leaves_fields_blank(
+def test_ceo_shadow_run_raises_when_live_provider_leaves_backlog_followup_fields_blank(
     client,
     monkeypatch,
 ):
@@ -2959,42 +2842,22 @@ def test_ceo_shadow_run_falls_back_to_backlog_followup_batch_when_live_provider_
     monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
 
     repository = client.app.state.repository
-    run = run_ceo_shadow_for_trigger(
-        repository,
-        workflow_id=workflow_id,
-        trigger_type="TICKET_COMPLETED",
-        trigger_ref="tkt_backlog_followup_parent",
-        runtime_provider_store=client.app.state.runtime_provider_store,
-    )
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="TICKET_COMPLETED",
+            trigger_ref="tkt_backlog_followup_parent",
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
 
-    assert run["deterministic_fallback_used"] is True
-    assert [item["action_type"] for item in run["executed_actions"]] == ["CREATE_TICKET", "CREATE_TICKET"]
+    runs = repository.list_ceo_shadow_runs(workflow_id)
 
-    created_ticket_ids = [item["payload"]["ticket_id"] for item in run["executed_actions"]]
-    with repository.connection() as connection:
-        created_specs = [
-            repository.get_latest_ticket_created_payload(connection, ticket_id)
-            for ticket_id in created_ticket_ids
-        ]
-
-    assert all(spec is not None for spec in created_specs)
-    assert {spec["output_schema_ref"] for spec in created_specs if spec is not None} == {"source_code_delivery"}
-    assert {spec["parent_ticket_id"] for spec in created_specs if spec is not None} == {
-        "tkt_backlog_followup_parent"
-    }
-    specs_by_node_id = {
-        spec["node_id"]: spec
-        for spec in created_specs
-        if spec is not None
-    }
-    assert set(specs_by_node_id) == {
-        "node_backlog_followup_br_be_01",
-        "node_backlog_followup_br_ops_01",
-    }
-    assert specs_by_node_id["node_backlog_followup_br_be_01"]["role_profile_ref"] == "backend_engineer_primary"
-    assert specs_by_node_id["node_backlog_followup_br_ops_01"]["role_profile_ref"] == "platform_sre_primary"
-    assert specs_by_node_id["node_backlog_followup_br_be_01"]["dispatch_intent"]["dependency_gate_refs"] == []
-    assert specs_by_node_id["node_backlog_followup_br_ops_01"]["dispatch_intent"]["dependency_gate_refs"] == []
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["fallback_reason"] is not None
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
 
 
 def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(client, monkeypatch):
@@ -3695,7 +3558,7 @@ def test_ceo_create_ticket_inherits_parent_governance_process_assets(client):
     created_ticket_id = execution_result["executed_actions"][0]["payload"]["ticket_id"]
     with repository.connection() as connection:
         created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
-    assert "pa://governance-document/tkt_parent_governance_doc" in created_spec["input_process_asset_refs"]
+    assert "pa://governance-document/tkt_parent_governance_doc@1" in created_spec["input_process_asset_refs"]
 
 
 def test_ceo_validator_rejects_create_ticket_when_assignee_is_missing_or_incapable(client):
@@ -3925,7 +3788,7 @@ def test_ceo_shadow_run_marks_deferred_board_escalation(client, monkeypatch):
     assert run["deterministic_fallback_used"] is False
 
 
-def test_ceo_shadow_run_records_execution_failure_without_breaking_mainline(client, monkeypatch):
+def test_ceo_shadow_run_raises_execution_failure_without_hidden_fallback(client, monkeypatch):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO failed retry execution")
     _create_and_fail_ticket(
@@ -3962,17 +3825,20 @@ def test_ceo_shadow_run_records_execution_failure_without_breaking_mainline(clie
 
     monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
 
-    run = run_ceo_shadow_for_trigger(
-        client.app.state.repository,
-        workflow_id=workflow_id,
-        trigger_type="MANUAL_TEST",
-        trigger_ref="manual:retry-fail",
-        runtime_provider_store=client.app.state.runtime_provider_store,
-    )
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            client.app.state.repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:retry-fail",
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
 
-    assert run["executed_actions"][0]["execution_status"] == "FAILED"
-    assert run["deterministic_fallback_used"] is True
-    assert run["deterministic_fallback_reason"] is not None
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "execution"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["fallback_reason"] is not None
     assert client.app.state.repository.get_current_ticket_projection("tkt_ceo_retry_exhausted")["status"] == "FAILED"
 
 
@@ -3993,7 +3859,7 @@ def test_ticket_fail_triggers_ceo_shadow_audit(client):
     assert client.app.state.repository.get_current_ticket_projection("tkt_ceo_shadow_fail")["status"] == "FAILED"
 
 
-def test_ticket_fail_can_trigger_ceo_meeting_request_in_deterministic_mode(client):
+def test_ticket_fail_records_explicit_ceo_shadow_error_without_hidden_meeting_fallback(client):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_ceo_meeting_auto")
     _create_and_fail_ticket(
@@ -4006,17 +3872,11 @@ def test_ticket_fail_can_trigger_ceo_meeting_request_in_deterministic_mode(clien
 
     runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
     ticket_fail_run = next(run for run in runs if run["trigger_type"] == "TICKET_FAILED")
-    executed_meeting = next(
-        item for item in ticket_fail_run["executed_actions"] if item["action_type"] == "REQUEST_MEETING"
-    )
-    meeting_id = executed_meeting["causation_hint"].split(":", 1)[1]
-    meeting = client.app.state.repository.get_meeting_projection(meeting_id)
 
-    assert ticket_fail_run["accepted_actions"][0]["action_type"] == "REQUEST_MEETING"
-    assert executed_meeting["execution_status"] == "EXECUTED"
-    assert meeting is not None
-    assert meeting["meeting_type"] == "TECHNICAL_DECISION"
-    assert meeting["source_ticket_id"].startswith("tkt_meeting_")
+    assert ticket_fail_run["effective_mode"] == "SHADOW_ERROR"
+    assert ticket_fail_run["accepted_actions"] == []
+    assert ticket_fail_run["executed_actions"] == []
+    assert ticket_fail_run["fallback_reason"] is not None
 
 
 def test_ceo_shadow_snapshot_includes_failed_governance_ticket_meeting_candidate(client):
@@ -4125,6 +3985,7 @@ def test_meeting_escalation_reject_does_not_trigger_recursive_ceo_meeting(client
     set_ticket_time("2026-04-05T11:00:00+08:00")
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_ceo_no_recursion")
+    _set_live_provider(client)
 
     request_response = client.post(
         "/api/v1/commands/meeting-request",
@@ -4154,50 +4015,41 @@ def test_meeting_escalation_reject_does_not_trigger_recursive_ceo_meeting(client
         meeting["source_node_id"],
     )["latest_ticket_id"]
 
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": meeting["source_node_id"],
-            "leased_by": "emp_checker_1",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:checker",
-        },
-    )
-    start_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": meeting["source_node_id"],
-            "started_by": "emp_checker_1",
-            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:checker",
-        },
-    )
-    submit_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": checker_ticket_id,
-            "node_id": meeting["source_node_id"],
-            "submitted_by": "emp_checker_1",
-            "result_status": "completed",
-            "schema_version": "maker_checker_verdict_v1",
-            "payload": {
-                "summary": "Checker approved the meeting output.",
-                "review_status": "APPROVED_WITH_NOTES",
-                "findings": [],
+    lease_response = _assert_command_status(
+        client.post(
+            "/api/v1/commands/ticket-lease",
+            json={
+                "workflow_id": workflow_id,
+                "ticket_id": checker_ticket_id,
+                "node_id": meeting["source_node_id"],
+                "leased_by": "emp_checker_1",
+                "lease_timeout_sec": 600,
+                "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:checker",
             },
-            "artifact_refs": [],
-            "written_artifacts": [],
-            "assumptions": [],
-            "issues": [],
-            "confidence": 0.9,
-            "needs_escalation": False,
-            "summary": "Checker verdict submitted.",
-            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved",
-        },
+        )
+    )
+    start_response = _assert_command_status(
+        client.post(
+            "/api/v1/commands/ticket-start",
+            json={
+                "workflow_id": workflow_id,
+                "ticket_id": checker_ticket_id,
+                "node_id": meeting["source_node_id"],
+                "started_by": "emp_checker_1",
+                "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:checker",
+            },
+        )
+    )
+    submit_response = _assert_command_status(
+        client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=api_test_helpers._maker_checker_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id=checker_ticket_id,
+                node_id=meeting["source_node_id"],
+                idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved",
+            ),
+        )
     )
 
     approval = next(
@@ -4219,14 +4071,14 @@ def test_meeting_escalation_reject_does_not_trigger_recursive_ceo_meeting(client
     runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
     approval_run = next(run for run in runs if run["trigger_type"] == "APPROVAL_RESOLVED")
 
-    assert lease_response.status_code == 200
-    assert start_response.status_code == 200
-    assert submit_response.status_code == 200
+    assert lease_response["status"] == "ACCEPTED"
+    assert start_response["status"] == "ACCEPTED"
+    assert submit_response["status"] == "ACCEPTED"
     assert reject_response.status_code == 200
     assert approval["approval_type"] == "MEETING_ESCALATION"
     assert approval_run["trigger_ref"] == approval["approval_id"]
-    assert approval_run["accepted_actions"][0]["action_type"] == "NO_ACTION"
     assert all(item["action_type"] != "REQUEST_MEETING" for item in approval_run["accepted_actions"])
+    assert all(item["action_type"] != "REQUEST_MEETING" for item in approval_run["executed_actions"])
     assert any(
         event["event_type"] == EVENT_BOARD_REVIEW_REJECTED
         for event in client.app.state.repository.list_events_for_testing()
@@ -4444,8 +4296,8 @@ def test_idle_ceo_maintenance_targets_workflow_with_only_completed_tickets(clien
 
     assert snapshot["ticket_summary"]["completed_count"] == 4
     assert snapshot["ticket_summary"]["working_count"] == 0
-    assert "READY_TICKET" in snapshot["idle_maintenance"]["signal_types"]
-    assert workflow_id in due_workflow_ids
+    assert "NO_TICKET_STARTED" in snapshot["idle_maintenance"]["signal_types"]
+    assert workflow_id not in due_workflow_ids
 
 
 def test_idle_ceo_maintenance_skips_workflow_waiting_for_board_review(client, set_ticket_time):

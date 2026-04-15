@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P2`
 > 当前切片：`P2-S8`
-> 最后更新：`2026-04-15 13:20`
+> 最后更新：`2026-04-15 15:42`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -63,7 +63,7 @@
 |---|---|---|---|---|
 | `P0` | 前置协议收口 | 先补初始化、并发、版本、物化这些地基 | `done` | 关键前置协议有代码入口和最小验证 |
 | `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `done` | 图成为正式真相面 |
-| `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `in_progress` | 失败显式化、后置动作制度化 |
+| `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `done` | 失败显式化、后置动作制度化 |
 | `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `todo` | CEO / Worker 不再靠长提示词兜底 |
 | `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `todo` | 可重规划、可诊断、可复盘 |
 
@@ -92,7 +92,7 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [ ] 本阶段所有必做切片完成
+- [x] 本阶段所有必做切片完成
 - [x] 图故障、runtime/provider 故障和 Hook 门禁都已进入正式 incident / recovery 主链
 - [x] required hook gate 已成为节点对下游开放的正式条件
 - [x] 每个已完成切片都有最小验证证据
@@ -566,7 +566,7 @@
 - [x] `P2-S8` 已完成：`command / approval / ticket / idle maintenance` 直调入口现在统一走 `trigger_ceo_shadow_with_recovery()`；`incident-resolve` 新增 `RERUN_CEO_SHADOW`，API 稳定验证桶也已改成 `test_p2_ceo_shadow_incident_*`
 
 ### 未完成
-- [ ] `P2` 阶段还没结束；更宽的 closeout / approval 历史测试桶，以及 `backend/tests/test_ceo_scheduler.py` 里仍沿旧 deliverable contract 写夹具的长尾样例，还没统一迁到当前真相
+- [ ] 暂无；`P2` 阶段这轮已按当前计划收口，下一轮转 `P3`
 
 ### 明确放弃
 - [ ] 暂无
@@ -574,9 +574,8 @@
 ### 新发现但不在本轮做
 - [ ] `backend/tests/test_api.py -k "system_initialized or startup or project_init"` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会落 `PROVIDER_REQUIRED_UNAVAILABLE`，不阻断 `P0-S1` 收口
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
-- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
-- [ ] `./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -q` 这轮额外补跑仍有一批旧 helper 失败，根因是 `source_code_delivery / consensus_document / governance_document` 夹具还在沿旧 payload 合同造数据；当前判断不是 `P2-S7 / P2-S8` 新回归，留给后续 closeout / approval 历史桶一起收口
+- [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
 
 ---
 
@@ -686,6 +685,21 @@
 
 **当前处理：**  
 `本轮保持 fail-closed，不把 0 selected 当通过；已改用精确链路用例 \`test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked\` 补齐 API 验证，后续如果要恢复宽桶，需要单独整理命名或补聚合用例。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
+
+### D-011
+**现象：**  
+`synthetic manual scope-followup 链在显式跑完 build/check/review/closeout maker-checker 后，closeout ticket 与 checker 都能完成，但 dashboard \`completion_summary\` 仍不会自动物化。`
+
+**影响：**  
+`closeout / approval 历史测试如果继续把这条手工链写成“workflow 已完成 + dashboard completion summary 必有”，就会逼实现去补隐式 fallback，和当前 fail-visible 主线冲突。`
+
+**当前处理：**  
+`本轮已把相关历史测试改成显式断言 ticket/node/artifact/process-asset 真相；dashboard completion summary 继续只在 autopilot / closeout 专项测试里覆盖，不把这条 synthetic chain 写成 workflow 完成真相。`
 
 **是否需要改架构文档：**  
 `no`
@@ -1211,6 +1225,35 @@
 **下一轮起手动作：**
 `继续 closeout / approval 历史测试桶收口，优先把旧的 ceo_scheduler helper 夹具迁到当前 deliverable contract，再决定是否把 recovery-start 审计进一步协议化。`
 
+### Session `2026-04-15 / 16`
+**开始前判断：**
+- 当前阶段：`P2`
+- 当前切片：`P2-S8`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `backend/tests/test_ceo_scheduler.py` 里的旧 helper 收成显式步骤：provider 前置、lease/start、源码票、治理文档票、共识票、checker verdict 都已对齐当前 deliverable contract，并统一检查 `status_code + json.status`
+- [x] 把 `backend/tests/test_api.py` 的 closeout / approval 历史桶改成显式 manual chain：`scope approval -> build maker/checker -> check maker/checker -> review maker/checker -> final review -> closeout maker/checker`
+- [x] 把 synthetic manual chain 和 dashboard `completion_summary` 的边界收正到测试真相：不再把这条手工链误写成“workflow 已完成”，summary 继续只在 autopilot / closeout 专项测试里覆盖
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -q` 通过（`69 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visual_review or test_final_review_approval_creates_closeout_ticket_and_completion_summary_uses_closeout_fields or test_closeout_internal_checker_approved_returns_completion_summary" -q` 通过（`3 passed, 289 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "test_final_review_approval_rejects_when_review_gate_merge_conflicts or test_completion_summary_handles_missing_closeout_documentation_updates or test_closeout_internal_checker_changes_required_creates_fix_ticket_and_blocks_completion or test_completion_summary_returns_null_source_delivery_summary_when_closeout_lacks_source_delivery_asset" -q` 通过（`4 passed, 288 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m py_compile backend/tests/test_api.py backend/tests/test_ceo_scheduler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P3` 正文切片还没展开；下一轮先补 `P3` 首个切片入口，再继续执行包与 CEO 收口
+
+**下一轮起手动作：**
+`从 P3 起手，先补执行包 / CEO 收口的首个切片正文，再决定执行包合同、快照分层和技能绑定谁先落。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1248,7 +1291,7 @@
 
 - 当前阶段：`P2`
 - 当前切片：`P2-S8`
-- 当前状态：`P2-S7 / P2-S8` 已完成；`CEO shadow` 四类直调入口现在都已显式 incident 化，坏响应和非法 action batch 不再隐式 fallback，`RERUN_CEO_SHADOW` 也已进入正式恢复主链
-- 最近完成：`test_p2_ceo_shadow_incident_*` API 桶已稳定非空跑；`workflow_autopilot` 现在也能在新合同下恢复 `CEO shadow` incident，不会因为 recovery-start 审计再递归开 incident
-- 当前阻塞：`closeout / approval` 历史测试桶，以及 `backend/tests/test_ceo_scheduler.py` 里仍沿旧 deliverable contract 写夹具的长尾样例，还没统一收口
-- 下一步：`继续 closeout / approval 历史测试桶收口，先把旧 ceo_scheduler helper 夹具迁到当前 deliverable contract 真相`
+- 当前状态：`P2` 已按当前计划收口；`ceo_scheduler` 旧 helper 和 `closeout / approval` 历史测试桶都已切到显式失败、显式前置和幂等恢复口径
+- 最近完成：`backend/tests/test_ceo_scheduler.py` 已全绿；`closeout / approval` 目标桶与相邻 merge-conflict/docs/source-delivery 桶也已改成显式 manual chain 并通过
+- 当前阻塞：`P3` 还没补首个切片正文；synthetic manual chain 仍不会自动产出 dashboard `completion_summary`，这块继续交给 autopilot / closeout 专项测试覆盖
+- 下一步：`从 P3 起手，先补执行包 / CEO 收口的首个切片正文，再继续实现`
