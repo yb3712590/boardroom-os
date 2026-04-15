@@ -4003,6 +4003,100 @@ def test_check_internal_checker_approved_releases_final_review_ticket(client, se
     assert review_ticket["lease_owner"] == "emp_frontend_2"
 
 
+def test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Review evidence hook gaps must block downstream follow-up tickets."),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_check_gate_block",
+        node_id="node_check_gate_block",
+        role_profile_ref="checker_primary",
+        output_schema_ref="delivery_check_report",
+        allowed_write_set=["reports/check/tkt_check_gate_block/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must check the source code delivery against the approved scope lock.",
+            "Must produce a structured delivery check report.",
+        ],
+        input_artifact_refs=[
+            "art://runtime/tkt_check_gate_block_build/source-code.tsx",
+            "art://meeting/consensus-document.json",
+        ],
+        delivery_stage="CHECK",
+    )
+    followup_create = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_review_waits_for_hook",
+            node_id="node_review_waits_for_hook",
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="ui_milestone_review",
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=[
+                "artifacts/ui/scope-followups/tkt_review_waits_for_hook/*",
+                "reports/review/tkt_review_waits_for_hook/*",
+            ],
+            acceptance_criteria=[
+                "Must prepare the final board-facing review package from the approved implementation.",
+            ],
+            input_artifact_refs=[
+                "art://runtime/tkt_check_gate_block_build/source-code.tsx",
+                "art://runtime/tkt_check_gate_block/delivery-check-report.json",
+            ],
+            delivery_stage="REVIEW",
+            dispatch_intent={
+                "assignee_employee_id": "emp_frontend_2",
+                "selection_reason": "Downstream review should wait for the upstream delivery check hook gate.",
+                "dependency_gate_refs": ["tkt_check_gate_block"],
+                "selected_by": "test",
+                "wakeup_policy": "default",
+            },
+        ),
+    )
+    assert followup_create.status_code == 200
+    assert followup_create.json()["status"] == "ACCEPTED"
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_delivery_check_report_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_check_gate_block",
+            node_id="node_check_gate_block",
+        ),
+    )
+    assert maker_response.status_code == 200
+
+    artifact_capture_path = (
+        get_settings().project_workspace_root
+        / workflow_id
+        / "00-boardroom"
+        / "tickets"
+        / "tkt_check_gate_block"
+        / "hook-receipts"
+        / "artifact-capture.json"
+    )
+    artifact_capture_path.unlink()
+
+    scheduler_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:review-evidence-hook-gate"),
+    )
+    repository = client.app.state.repository
+    followup_ticket = repository.get_current_ticket_projection("tkt_review_waits_for_hook")
+
+    assert scheduler_response.status_code == 200
+    assert scheduler_response.json()["status"] == "ACCEPTED"
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_ticket["lease_owner"] is None
+
+
 def test_check_internal_checker_changes_required_creates_fix_ticket_and_counts_rework_loop(
     client,
     set_ticket_time,

@@ -4,7 +4,9 @@ import json
 
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    MAKER_CHECKER_VERDICT_SCHEMA_REF,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
@@ -18,6 +20,11 @@ from app.core.role_hooks import (
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from tests.test_api import _incident_resolve_payload
+from tests.test_api import (
+    _delivery_check_report_result_submit_payload,
+    _maker_checker_result_submit_payload,
+    _ticket_result_submit_payload,
+)
 from tests.test_project_workspace_hooks import (
     _closeout_result_submit_payload,
     _governance_result_submit_payload,
@@ -42,6 +49,18 @@ def _create_and_start_ticket(
     if output_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF:
         create_payload["allowed_write_set"] = ["10-project/docs/*"]
         create_payload["delivery_stage"] = "BUILD"
+    elif output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
+        create_payload["allowed_write_set"] = [f"reports/check/{ticket_id}/*"]
+        create_payload["delivery_stage"] = "CHECK"
+    elif output_schema_ref == UI_MILESTONE_REVIEW_SCHEMA_REF:
+        create_payload["allowed_write_set"] = [
+            "artifacts/ui/homepage/*",
+            f"reports/review/{ticket_id}/*",
+        ]
+        create_payload["delivery_stage"] = "REVIEW"
+    elif output_schema_ref == MAKER_CHECKER_VERDICT_SCHEMA_REF:
+        create_payload["allowed_write_set"] = [f"reports/review/{ticket_id}/*"]
+        create_payload["delivery_stage"] = "REVIEW"
     elif output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
         create_payload["allowed_write_set"] = [f"20-evidence/closeout/{ticket_id}/*"]
         create_payload["input_artifact_refs"] = ["art://runtime/tkt_build_001/source-code.tsx"]
@@ -73,10 +92,10 @@ def _receipt_root(client, workflow_id: str, ticket_id: str):
     )
 
 
-def test_required_hook_gate_returns_structured_not_applicable_for_review_evidence_ticket(client) -> None:
+def test_required_hook_gate_reports_missing_artifact_capture_for_review_evidence_ticket(client) -> None:
     init_response = client.post(
         "/api/v1/commands/project-init",
-        json=_project_init_payload("Review evidence should stay out of the structured-document hook gate scope."),
+        json=_project_init_payload("Review evidence should block until artifact capture is materialized."),
     )
     workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
     ticket_id = "tkt_review_hook_scope_001"
@@ -88,6 +107,19 @@ def test_required_hook_gate_returns_structured_not_applicable_for_review_evidenc
         node_id=node_id,
         output_schema_ref=UI_MILESTONE_REVIEW_SCHEMA_REF,
     )
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+    assert submit_response.status_code == 200
+
+    artifact_capture_path = _receipt_root(client, workflow_id, ticket_id) / "artifact-capture.json"
+    artifact_capture_path.unlink()
+
     repository = client.app.state.repository
     with repository.connection() as connection:
         ticket = repository.get_current_ticket_projection(ticket_id, connection=connection)
@@ -101,12 +133,14 @@ def test_required_hook_gate_returns_structured_not_applicable_for_review_evidenc
             connection=connection,
         )
 
-    assert result.gate_mode == "not_applicable"
-    assert result.applicability == "out_of_scope_deliverable"
-    assert result.status == HookGateStatus.PASSED
-    assert result.checked_hook_ids == []
-    assert result.reason_code == "HOOK_GATE_NOT_APPLICABLE"
-    assert result.incident_fingerprint is None
+    assert result.gate_mode == "required"
+    assert result.applicability == "workspace_managed_review_evidence"
+    assert result.status == HookGateStatus.BLOCKED
+    assert result.required_hook_ids == ["artifact_capture"]
+    assert result.checked_hook_ids == ["artifact_capture"]
+    assert result.missing_hook_ids == ["artifact_capture"]
+    assert result.reason_code == "REQUIRED_HOOK_PENDING:artifact_capture"
+    assert result.incident_fingerprint is not None
 
 
 def test_required_hook_gate_reports_missing_required_hook_for_workspace_source_delivery(client) -> None:
@@ -203,6 +237,55 @@ def test_required_hook_gate_reports_missing_artifact_capture_for_governance_tick
         )
 
     assert result.gate_mode == "required"
+    assert result.status == HookGateStatus.BLOCKED
+    assert result.required_hook_ids == ["artifact_capture"]
+    assert result.missing_hook_ids == ["artifact_capture"]
+    assert result.reason_code == "REQUIRED_HOOK_PENDING:artifact_capture"
+
+
+def test_required_hook_gate_reports_missing_artifact_capture_for_delivery_check_report(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Delivery check review evidence should also block on missing artifact capture."),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_delivery_check_hook_001"
+    node_id = "node_delivery_check_hook_001"
+    _create_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    )
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_delivery_check_report_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+    assert submit_response.status_code == 200
+
+    artifact_capture_path = _receipt_root(client, workflow_id, ticket_id) / "artifact-capture.json"
+    artifact_capture_path.unlink()
+
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        ticket = repository.get_current_ticket_projection(ticket_id, connection=connection)
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id)
+        assert ticket is not None
+        assert created_spec is not None
+        result = evaluate_ticket_required_hook_gate(
+            repository,
+            ticket=ticket,
+            created_spec=created_spec,
+            connection=connection,
+        )
+
+    assert result.gate_mode == "required"
+    assert result.applicability == "workspace_managed_review_evidence"
     assert result.status == HookGateStatus.BLOCKED
     assert result.required_hook_ids == ["artifact_capture"]
     assert result.missing_hook_ids == ["artifact_capture"]
@@ -313,6 +396,56 @@ def test_replay_required_hook_receipts_restores_missing_receipts_idempotently(cl
     assert second_result.replayed_hook_ids == []
     assert json.loads(postrun_path.read_text(encoding="utf-8")) == original_postrun
     assert json.loads(evidence_path.read_text(encoding="utf-8"))["ticket_id"] == ticket_id
+
+
+def test_replay_required_hook_receipts_restores_missing_review_evidence_receipt_idempotently(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Review evidence replay should restore missing artifact capture only once."),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_review_hook_replay_001"
+    node_id = "node_review_hook_replay_001"
+    _create_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+    )
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+    assert submit_response.status_code == 200
+
+    receipt_root = _receipt_root(client, workflow_id, ticket_id)
+    artifact_capture_path = receipt_root / "artifact-capture.json"
+    artifact_capture_path.unlink()
+
+    repository = client.app.state.repository
+    first_result = replay_required_hook_receipts(
+        repository,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+    )
+    second_result = replay_required_hook_receipts(
+        repository,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+    )
+
+    assert first_result.replayed_hook_ids == ["artifact_capture"]
+    assert second_result.replayed_hook_ids == []
+    assert json.loads(artifact_capture_path.read_text(encoding="utf-8")) == {
+        "ticket_id": ticket_id,
+        "artifact_refs": [],
+        "written_artifact_paths": [],
+    }
 
 
 def test_auto_advance_opens_single_required_hook_gate_incident_for_missing_receipt(client) -> None:
@@ -583,6 +716,84 @@ def test_incident_resolve_rejects_when_artifact_capture_replay_lacks_terminal_wr
         node_id=node_id,
         gate_result=gate_result,
         idempotency_key_base=f"hook-artifact-capture-reject:{workflow_id}",
+    )
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="REPLAY_REQUIRED_HOOKS",
+        ),
+    )
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "REJECTED"
+    refreshed_incident = repository.get_incident_projection(incident_id)
+    assert refreshed_incident is not None
+    assert refreshed_incident["status"] == "OPEN"
+
+
+def test_incident_resolve_rejects_when_review_evidence_replay_lacks_terminal_written_artifacts(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Review evidence replay must fail closed when written artifacts disappear."),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_review_hook_reject_001"
+    node_id = "node_review_hook_reject_001"
+    _create_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref=UI_MILESTONE_REVIEW_SCHEMA_REF,
+    )
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+    assert submit_response.status_code == 200
+
+    receipt_path = _receipt_root(client, workflow_id, ticket_id) / "artifact-capture.json"
+    receipt_path.unlink()
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+        assert terminal_event is not None
+        payload = dict(terminal_event["payload"] or {})
+        payload.pop("written_artifacts", None)
+        connection.execute(
+            """
+            UPDATE events
+            SET payload_json = ?
+            WHERE event_id = ?
+            """,
+            (json.dumps(payload, sort_keys=True), terminal_event["event_id"]),
+        )
+        repository.refresh_projections(connection)
+
+    with repository.connection() as connection:
+        ticket = repository.get_current_ticket_projection(ticket_id, connection=connection)
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id)
+        assert ticket is not None
+        assert created_spec is not None
+        gate_result = evaluate_ticket_required_hook_gate(
+            repository,
+            ticket=ticket,
+            created_spec=created_spec,
+            connection=connection,
+        )
+    incident_id = open_required_hook_gate_incident(
+        repository,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        gate_result=gate_result,
+        idempotency_key_base=f"hook-review-evidence-reject:{workflow_id}",
     )
 
     resolve_response = client.post(

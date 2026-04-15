@@ -23,6 +23,11 @@
 
 ### 2026-04-15
 
+- `P2-S4` 这轮已完成：`review_evidence` 票现在也进入正式 `RoleHook` gate；`delivery_check_report / ui_milestone_review / maker_checker_verdict` 会写最小 `artifact-capture.json`，缺 receipt 时会落 `REQUIRED_HOOK_PENDING:artifact_capture`，不再静默放行下游
+- `ticket-result-submit` 这轮已把 review evidence receipt 写回接到成功路径，但不新加第二套 hook 框架；当前继续复用现有 `artifact_capture` receipt、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery
+- `artifact_capture` replay 这轮已收正成“缺字段 reject、空数组可幂等回放”：`TICKET_COMPLETED.payload` 里只要缺 `artifact_refs` 或 `written_artifacts` 就会显式 `REJECTED` 并保持 incident `OPEN`；字段存在但为空数组时，允许补回最小 receipt，不从正文或目录反推业务状态
+- review evidence 依赖 gate 这轮已补真实 API 链路回归：当上游 `delivery_check_report` 缺 `artifact-capture.json` 时，下游 follow-up 票不会被 scheduler 提前放行；本轮实跑通过 `./backend/.venv/bin/pytest backend/tests/test_role_hooks.py -q`、`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "hook or incident or graph" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "review_evidence_missing_required_hook_keeps_dependency_gate_blocked" -q`、`python3 -m py_compile backend/app/core/role_hooks.py backend/app/core/ticket_handlers.py backend/tests/test_role_hooks.py backend/tests/test_api.py`
+- `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 这轮原样补跑只返回 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 聚合桶，后续如果还想保留这条命令，需要先整理命名或补新的聚合用例
 - `P2-S3` 这轮已完成：`structured_document_delivery` 现在也进入正式 `RoleHook` gate；治理文档和 closeout 会写 `artifact-capture.json`，closeout 还会额外写 `documentation-sync.json`
 - `REPLAY_REQUIRED_HOOKS` 这轮已从“只补源码票 receipt”扩到“也能补文档票 receipt”：replay 现在只读 `TICKET_COMPLETED.payload.artifact_refs / written_artifacts / documentation_updates`，缺字段会显式 `REJECTED`，incident 保持 `OPEN`
 - `TICKET_COMPLETED` payload 这轮新增 `written_artifacts`，这是文档票幂等 replay 的唯一新增真相源；当前实现不会从 Markdown 正文或磁盘目录反推业务状态

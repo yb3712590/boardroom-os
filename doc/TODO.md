@@ -87,7 +87,11 @@
 - 本轮额外补了一条测试运行真相：当仓库位于 Git linked worktree 下时，`backend/tests/conftest.py` 现在会自动把 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT` 改到系统临时目录，避免测试里再创建项目 worktree 时撞上 Git 的 `$GIT_DIR too big`；Windows 下 `pytest` 仍建议继续显式带 repo 内 `--basetemp`
 - 本轮还补了一条 `P0-S1` 验证真相：`./backend/.venv/bin/pytest backend/tests/test_repository.py -k "initialize" -q` 当前已通过；`./backend/.venv/bin/pytest backend/tests/test_api.py -k "system_initialized or startup or project_init" -q` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例，当前环境未配 provider 时会报 `PROVIDER_REQUIRED_UNAVAILABLE`
 - 当前 blocker 仍集中在两块：真实 provider 长测还没在这台机器上重跑通过，`test_api.py / test_scheduler_runner.py` 里那批被 fail-closed 打断的历史测试也还没整体收口
-- 当前 `P2-S3` 已完成：workspace-managed 文档票现在也已经走正式 `RoleHook` registry、required hook gate、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery；下一轮转 `P2-S4`，优先把 `review_evidence` 票型接进同一套 gate / replay，再决定 project-init governance/provider 老 incident 噪音的收口顺序
+- 当前 `P2-S4` 已完成：`review_evidence` 票现在也已经走正式 `RoleHook` registry、`artifact_capture` required hook gate、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery；`delivery_check_report / ui_milestone_review / maker_checker_verdict` 缺 receipt 时会显式阻断下游，不再静默放行
+- 本轮 `review_evidence` replay 已收正成 fail-closed：只要 `TICKET_COMPLETED` 里缺 `artifact_refs` 或 `written_artifacts` 字段就直接 `REJECTED`，incident 保持 `OPEN`；如果字段存在但为空数组，则允许幂等补回最小 `artifact-capture.json`，不从正文或磁盘目录反推
+- 本轮新增并实跑通过 `./backend/.venv/bin/pytest backend/tests/test_role_hooks.py -q`、`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "hook or incident or graph" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "review_evidence_missing_required_hook_keeps_dependency_gate_blocked" -q`、`python3 -m py_compile backend/app/core/role_hooks.py backend/app/core/ticket_handlers.py backend/tests/test_role_hooks.py backend/tests/test_api.py`
+- `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮原样补跑只返回 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 聚合桶，这条不能再当有效验证口径，后续要单独整理
+- 下一轮主方向切到旧的 project-init governance/provider incident 噪音收口，继续把 runtime/provider 恢复主链补齐；这轮不顺手扩新 hook runner，也不改 `reports/check/*`、`reports/review/*` 目录设计
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

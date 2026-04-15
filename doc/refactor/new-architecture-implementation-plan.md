@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P2`
 > 当前切片：`P2-S4`
-> 最后更新：`2026-04-15 07:51`
+> 最后更新：`2026-04-15 10:42`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -92,7 +92,7 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [ ] 本阶段所有必做切片完成
+- [x] 本阶段所有必做切片完成
 - [ ] 图故障、runtime/provider 故障和 Hook 门禁都已进入正式 incident / recovery 主链
 - [x] required hook gate 已成为节点对下游开放的正式条件
 - [x] 每个已完成切片都有最小验证证据
@@ -478,9 +478,10 @@
 - [x] `P2-S1` 已完成：`workflow_auto_advance` 命中 `build_ceo_shadow_snapshot()` 的图不可用异常时，现已打开正式 `TICKET_GRAPH_UNAVAILABLE` incident；incident detail / resolve 与 `IncidentDrawer` 已补 `REBUILD_TICKET_GRAPH`
 - [x] `P2-S2` 已完成：`backend/app/core/role_hooks.py` 已把最小 hook registry、结构化 gate result、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery 收进单点协议；`TicketGraph / workflow_auto_advance / incident detail / resolve / IncidentDrawer` 已开始消费这条新主链
 - [x] `P2-S3` 已完成：`structured_document_delivery` 现已接入正式 `RoleHook` gate；治理文档与 closeout 会写 `artifact-capture.json`，closeout 还会额外写 `documentation-sync.json`，`REPLAY_REQUIRED_HOOKS` 也已能按持久化 terminal truth 幂等重放这两类 receipt
+- [x] `P2-S4` 已完成：`review_evidence` 票现在也已接入正式 `artifact_capture` gate；`delivery_check_report / ui_milestone_review / maker_checker_verdict` 缺 receipt 时会显式阻断下游，`REPLAY_REQUIRED_HOOKS` 也已支持按 terminal truth 幂等补回或 fail-closed reject
 
 ### 未完成
-- [ ] `P2-S4` 还没开始；`review_evidence` 票型仍未进入同一套 hook gate / replay，`run_ceo_shadow_for_trigger` 的其他直调路径和旧的 project-init governance/provider incident 噪音也还没统一收口
+- [ ] `P2` 阶段还没结束；旧的 project-init governance/provider incident 噪音、`run_ceo_shadow_for_trigger` 其他直调路径和 runtime/provider 恢复主链仍未统一收口
 
 ### 明确放弃
 - [ ] 暂无
@@ -493,7 +494,7 @@
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 本轮额外复验时仍会在 `project-init` workflow 上多带一条旧的 provider / auto-advance incident；当前没证据表明是 `P1-S2` 新回归，先继续留给 runtime/provider 历史测试收口
 - [ ] `P2-S1` 这轮只把 `TicketGraph` 真不可用接到了 `workflow_auto_advance` 的正式 incident 主链；其他直接调用 `run_ceo_shadow_for_trigger` 的路径暂时仍沿现状显式失败，留给后续恢复切片统一收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "hook or blocked_reason or incident" -q` 本轮验证时仍有 3 条旧的 `project-init` governance/provider incident 历史用例失败：`test_check_internal_checker_escalated_opens_incident_and_marks_dependency_stop`、`test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_breaker`、`test_employee_freeze_containment_opens_staffing_incident_for_executing_ticket`；当前看到的额外 incident 仍来自旧 `node_ceo_architecture_brief` provider / auto-advance 噪音，不是 `P2-S2` 新 gate 自己开的源码票 incident
-- [ ] `P2-S3` 这轮按最小边界只收了 `structured_document_delivery`；`ui_milestone_review / delivery_check_report / maker_checker_verdict` 这些 `review_evidence` 票型仍故意留在 gate 外，下一轮再按独立票型收口，避免把文档票和审批证据票混成同一个 hook 语义
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 
 ---
 
@@ -588,6 +589,21 @@
 
 **当前处理：**  
 `先把它记成历史问题，继续按当前计划留给 runtime/provider 历史测试收口；本轮不顺手改 project-init governance/provider 老链，避免跨出 Hook 主方向。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
+
+### D-008
+**现象：**  
+`P2-S4` 计划里沿用了 \`./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q\` 这条宽匹配命令，但当前 `backend/tests/test_api.py` 里没有直接按 schema 名命名的 API 用例，原样补跑只会返回 \`286 deselected\`。`
+
+**影响：**  
+`如果后续会话照抄这条命令，会误以为“API 桶通过”，但其实没有真正执行到任何断言；这会让 review_evidence hook gate 的验证口径失真。`
+
+**当前处理：**  
+`本轮保持 fail-closed，不把 0 selected 当通过；已改用精确链路用例 \`test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked\` 补齐 API 验证，后续如果要恢复宽桶，需要单独整理命名或补聚合用例。`
 
 **是否需要改架构文档：**  
 `no`
@@ -954,6 +970,39 @@
 **下一轮起手动作：**
 `从 P2-S4 起手，先把 review evidence 票型按独立语义接进 hook gate / replay，再决定 runtime/provider 老 incident 噪音是否单列一个恢复切片。`
 
+### Session `2026-04-15 / 12`
+**开始前判断：**
+- 当前阶段：`P2`
+- 当前切片：`P2-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `review_evidence` 接进正式 `RoleHook` gate：`delivery_check_report / ui_milestone_review / maker_checker_verdict` 现在都会按独立票型语义走 `artifact_capture`
+- [x] 在 `ticket-result-submit` 成功路径里给 `review_evidence` 票补写 `artifact-capture.json`，并保持只用持久化 terminal truth 做 replay
+- [x] 把 `artifact_capture` replay 收正成“缺字段才 reject，空数组可幂等回放”的 fail-closed 口径
+- [x] 补齐 `backend/tests/test_role_hooks.py` 和 `backend/tests/test_api.py` 的 review evidence gate / replay / dependency gate 回归
+- [x] 更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_role_hooks.py -q` 通过（`13 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "hook or incident or graph" -q` 通过（`3 passed, 8 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "review_evidence_missing_required_hook_keeps_dependency_gate_blocked" -q` 通过（`1 passed`）
+- [x] `python3 -m py_compile backend/app/core/role_hooks.py backend/app/core/ticket_handlers.py backend/tests/test_role_hooks.py backend/tests/test_api.py` 通过
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 原样补跑仅返回 `286 deselected`；已记入 `D-008`，本轮不把它当通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] project-init governance/provider 老 incident 噪音仍未收口
+- [ ] `run_ceo_shadow_for_trigger` 其他直调路径还没统一进恢复主链
+- [ ] API 宽匹配验证命令还没有一个稳定、非空跑的聚合桶
+
+**下一轮起手动作：**
+`从旧的 project-init governance/provider incident 噪音收口切片继续，优先把 runtime/provider 恢复主链和相关历史回归统一到正式 incident / recovery 口径。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -991,7 +1040,7 @@
 
 - 当前阶段：`P2`
 - 当前切片：`P2-S4`
-- 当前状态：`P2-S3` 已完成；`structured_document_delivery` 现在已经有正式 `artifact_capture / documentation_sync` hook receipt、结构化 required hook gate、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` 幂等恢复，不再只靠 schema / 写盘校验放行
-- 最近完成：`TICKET_COMPLETED` payload 现在会带 `written_artifacts`，治理文档和 closeout replay 只读持久化 terminal truth；前端 `IncidentDrawer` 已改成票型无关的 required hook 文案
-- 当前阻塞：`review_evidence` 票型仍未进入同一套 hook gate / replay；旧的 project-init governance/provider incident 噪音也还在宽口径回归桶里`
-- 下一步：`继续 P2-S4，把 review evidence 票型按独立 hook 语义接进正式 gate / replay，并继续把 runtime/provider 老 incident 噪音隔离到单独恢复切片`
+- 当前状态：`P2-S4` 已完成；`review_evidence` 票现在也已经进入正式 `artifact_capture -> REQUIRED_HOOK_GATE_BLOCKED -> REPLAY_REQUIRED_HOOKS` 主链，缺 receipt 不会再静默放行下游
+- 最近完成：`delivery_check_report / ui_milestone_review / maker_checker_verdict` 现在都会按 review evidence 票型写 `artifact-capture.json`；`artifact_capture` replay 也已收正到“缺字段 reject、空数组可幂等回放”
+- 当前阻塞：`project-init` governance/provider 老 incident 噪音、`run_ceo_shadow_for_trigger` 其他直调路径和 API 宽匹配验证桶还没统一收口`
+- 下一步：`切到 runtime/provider 恢复收口，把旧 incident 噪音隔离或并回正式 incident / recovery 主链`

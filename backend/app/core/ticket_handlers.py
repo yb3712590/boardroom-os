@@ -5515,7 +5515,8 @@ def handle_ticket_result_submit(
                 developer_inspector_store.delete_ref(artifact.ref)
         raise
 
-    workspace_has_managed_paths = project_workspace_manifest_exists(payload.workflow_id) and any(
+    workflow_has_project_workspace = project_workspace_manifest_exists(payload.workflow_id)
+    workspace_has_managed_paths = workflow_has_project_workspace and any(
         str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
         for pattern in list(created_spec.get("allowed_write_set") or [])
     )
@@ -5567,7 +5568,21 @@ def handle_ticket_result_submit(
                     ticket_id=payload.ticket_id,
                     documentation_updates=list(result_payload.get("documentation_updates") or []),
                 )
-    if project_workspace_manifest_exists(payload.workflow_id):
+    elif (
+        workflow_has_project_workspace
+        and str(created_spec.get("deliverable_kind") or "") == "review_evidence"
+    ):
+        write_artifact_capture_receipt(
+            workflow_id=payload.workflow_id,
+            ticket_id=payload.ticket_id,
+            artifact_refs=[str(item).strip() for item in payload.artifact_refs if str(item).strip()],
+            written_artifact_paths=[
+                str(item.path or "").strip()
+                for item in effective_written_artifacts
+                if str(item.path or "").strip()
+            ],
+        )
+    if workflow_has_project_workspace:
         sync_ticket_boardroom_views(
             repository,
             workflow_id=payload.workflow_id,
