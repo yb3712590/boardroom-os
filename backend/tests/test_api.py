@@ -18,6 +18,7 @@ from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.execution_targets import infer_execution_contract_payload
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
+from app.core.provider_openai_compat import OpenAICompatProviderResult
 from app.core.process_assets import (
     build_closeout_summary_process_asset_ref,
     build_meeting_decision_process_asset_ref,
@@ -41,6 +42,7 @@ from app.core.constants import (
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_OPENED,
     EVENT_INCIDENT_RECOVERY_STARTED,
+    INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_CANCELLED,
     EVENT_TICKET_CANCEL_REQUESTED,
@@ -10858,6 +10860,76 @@ def test_incident_detail_exposes_rebuild_ticket_graph_recovery_for_graph_unavail
     assert incident_response.json()["data"]["recommended_followup_action"] == "REBUILD_TICKET_GRAPH"
 
 
+def test_p2_ceo_shadow_incident_detail_exposes_rerun_action(client):
+    workflow_id = "wf_ceo_shadow_incident_detail"
+    incident_id = "inc_ceo_shadow_detail"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="CEO shadow incident detail should expose rerun recovery.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": None,
+                "ticket_id": None,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:MANUAL_TEST:manual:rerun:proposal:JSONDecodeError",
+                "trigger_type": "MANUAL_TEST",
+                "trigger_ref": "manual:rerun",
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Invalid provider payload.",
+                "failure_fingerprint": f"{workflow_id}:MANUAL_TEST:manual:rerun:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:MANUAL_TEST:manual:rerun:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["incident"]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RERUN_CEO_SHADOW",
+        "RESTORE_ONLY",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == "RERUN_CEO_SHADOW"
+
+
 def test_incident_resolve_can_rebuild_ticket_graph_when_graph_unavailable_incident_is_open(client, monkeypatch):
     workflow_id = "wf_incident_graph_rebuild"
     incident_id = "inc_graph_rebuild"
@@ -10940,6 +11012,249 @@ def test_incident_resolve_can_rebuild_ticket_graph_when_graph_unavailable_incide
     assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
     assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "REBUILD_TICKET_GRAPH"
+
+
+def test_p2_ceo_shadow_incident_resolve_reruns_shadow_and_closes_incident(client, monkeypatch):
+    workflow_id = "wf_ceo_shadow_incident_resolve"
+    incident_id = "inc_ceo_shadow_resolve"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="CEO shadow incident resolve should rerun and close.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": None,
+                "ticket_id": None,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:APPROVAL_RESOLVED:apr_001:proposal:JSONDecodeError",
+                "trigger_type": "APPROVAL_RESOLVED",
+                "trigger_ref": "apr_001",
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Invalid provider payload.",
+                "failure_fingerprint": f"{workflow_id}:APPROVAL_RESOLVED:apr_001:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:APPROVAL_RESOLVED:apr_001:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    import app.core.ticket_handlers as ticket_handlers_module
+
+    rerun_calls: list[tuple[str, str, str | None]] = []
+
+    def _fake_rerun(repository, *, workflow_id, trigger_type, trigger_ref, runtime_provider_store=None):
+        rerun_calls.append((workflow_id, trigger_type, trigger_ref))
+        return {
+            "workflow_id": workflow_id,
+            "trigger_type": trigger_type,
+            "trigger_ref": trigger_ref,
+            "effective_mode": "LOCAL_DETERMINISTIC",
+            "provider_health_summary": "UNAVAILABLE",
+            "fallback_reason": "deterministic mode",
+            "accepted_actions": [],
+            "rejected_actions": [],
+            "executed_actions": [],
+            "execution_summary": {
+                "attempted_action_count": 0,
+                "executed_action_count": 0,
+                "duplicate_action_count": 0,
+                "passthrough_action_count": 0,
+                "deferred_action_count": 0,
+                "failed_action_count": 0,
+            },
+            "deterministic_fallback_used": False,
+            "deterministic_fallback_reason": None,
+        }
+
+    monkeypatch.setattr(ticket_handlers_module, "run_ceo_shadow_for_trigger", _fake_rerun)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="RERUN_CEO_SHADOW",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert rerun_calls == [(workflow_id, "APPROVAL_RESOLVED", "apr_001")]
+    assert incident_response.json()["data"]["incident"]["status"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "RERUN_CEO_SHADOW"
+
+
+def test_p2_ceo_shadow_incident_command_trigger_opens_incident(client, monkeypatch):
+    provider_upsert = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=_runtime_provider_upsert_payload(idempotency_key="runtime-provider-upsert:ceo-shadow-command"),
+    )
+    assert provider_upsert.status_code == 200
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text="{not-json}",
+            response_id="resp_api_ceo_shadow_command_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Open an explicit CEO shadow incident on command trigger."),
+    )
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    incidents = [
+        item
+        for item in client.app.state.repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert len(incidents) == 1
+    assert incidents[0]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+    assert incidents[0]["payload"]["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED
+
+
+def test_p2_ceo_shadow_incident_approval_trigger_opens_incident(client, monkeypatch):
+    approval = _seed_review_request(client, workflow_id="wf_p2_ceo_shadow_approval")
+    provider_upsert = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=_runtime_provider_upsert_payload(idempotency_key="runtime-provider-upsert:ceo-shadow-approval"),
+    )
+    assert provider_upsert.status_code == 200
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text="{not-json}",
+            response_id="resp_api_ceo_shadow_approval_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": "option_a",
+            "board_comment": "Approve and let CEO shadow continue.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:p2-ceo-shadow-incident",
+        },
+    )
+    incidents = [
+        item
+        for item in client.app.state.repository.list_open_incidents()
+        if item["workflow_id"] == approval["workflow_id"]
+        and item["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+        and str((item.get("payload") or {}).get("trigger_type") or "") == "APPROVAL_RESOLVED"
+        and str((item.get("payload") or {}).get("trigger_ref") or "") == approval["approval_id"]
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert len(incidents) == 1
+    assert incidents[0]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+    assert incidents[0]["payload"]["trigger_type"] == "APPROVAL_RESOLVED"
+    assert incidents[0]["payload"]["trigger_ref"] == approval["approval_id"]
+
+
+def test_p2_ceo_shadow_incident_ticket_trigger_opens_incident(client, monkeypatch):
+    workflow_id = "wf_p2_ceo_shadow_ticket"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Open an explicit CEO shadow incident on ticket trigger.",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_p2_ceo_shadow_ticket",
+        node_id="node_p2_ceo_shadow_ticket",
+    )
+    provider_upsert = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=_runtime_provider_upsert_payload(idempotency_key="runtime-provider-upsert:ceo-shadow-ticket"),
+    )
+    assert provider_upsert.status_code == 200
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text="{not-json}",
+            response_id="resp_api_ceo_shadow_ticket_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_p2_ceo_shadow_ticket",
+            node_id="node_p2_ceo_shadow_ticket",
+            failure_kind="RUNTIME_ERROR",
+            failure_message="Seed the CEO shadow trigger from a ticket failure.",
+        ),
+    )
+    incidents = [
+        item
+        for item in client.app.state.repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert len(incidents) == 1
+    assert incidents[0]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+    assert incidents[0]["payload"]["trigger_type"] == EVENT_TICKET_FAILED
+    assert incidents[0]["payload"]["trigger_ref"] == "tkt_p2_ceo_shadow_ticket"
 
 
 def test_incident_resolve_rejects_rebuild_ticket_graph_when_snapshot_still_unavailable(client, monkeypatch):

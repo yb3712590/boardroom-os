@@ -11,6 +11,7 @@ from app.core.constants import (
     EVENT_INCIDENT_OPENED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
 )
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from tests.test_api import (
@@ -523,6 +524,109 @@ def test_autopilot_auto_advance_opens_ticket_graph_unavailable_incident_and_stop
     assert len(breaker_opened_events) == 1
     assert open_incidents[0]["status"] == "OPEN"
     assert open_incidents[0]["circuit_breaker_state"] == "OPEN"
+
+
+def test_autopilot_auto_advance_reruns_ceo_shadow_pipeline_incident(client, monkeypatch):
+    workflow_id = "wf_autopilot_ceo_shadow_incident"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot should rerun CEO shadow incidents explicitly.",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+
+    incident_id = "inc_autopilot_ceo_shadow_1"
+    fingerprint = f"{workflow_id}:SCHEDULER_IDLE_MAINTENANCE:scheduler:ceo:proposal:JSONDecodeError"
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": fingerprint,
+                "trigger_type": "SCHEDULER_IDLE_MAINTENANCE",
+                "trigger_ref": "scheduler:ceo",
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Invalid provider payload.",
+                "failure_fingerprint": fingerprint,
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": fingerprint,
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    import app.core.ticket_handlers as ticket_handlers_module
+
+    rerun_calls: list[tuple[str, str, str | None]] = []
+
+    def _fake_rerun(repository, *, workflow_id, trigger_type, trigger_ref, runtime_provider_store=None):
+        rerun_calls.append((workflow_id, trigger_type, trigger_ref))
+        return {
+            "workflow_id": workflow_id,
+            "trigger_type": trigger_type,
+            "trigger_ref": trigger_ref,
+            "accepted_actions": [],
+            "rejected_actions": [],
+            "executed_actions": [],
+            "execution_summary": {
+                "attempted_action_count": 0,
+                "executed_action_count": 0,
+                "duplicate_action_count": 0,
+                "passthrough_action_count": 0,
+                "deferred_action_count": 0,
+                "failed_action_count": 0,
+            },
+            "effective_mode": "LOCAL_DETERMINISTIC",
+            "provider_health_summary": "UNAVAILABLE",
+            "fallback_reason": "deterministic mode",
+            "deterministic_fallback_used": False,
+            "deterministic_fallback_reason": None,
+        }
+
+    monkeypatch.setattr(ticket_handlers_module, "run_ceo_shadow_for_trigger", _fake_rerun)
+
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="test-autopilot:ceo-shadow-incident",
+        max_steps=2,
+        max_dispatches=1,
+    )
+
+    recovered_incident = repository.get_incident_projection(incident_id)
+
+    assert rerun_calls == [(workflow_id, "SCHEDULER_IDLE_MAINTENANCE", "scheduler:ceo")]
+    assert recovered_incident is not None
+    assert recovered_incident["status"] == "CLOSED"
+    assert recovered_incident["circuit_breaker_state"] == "CLOSED"
 
 
 def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(client, set_ticket_time):

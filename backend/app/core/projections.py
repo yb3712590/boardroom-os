@@ -94,6 +94,7 @@ from app.core.artifacts import build_artifact_metadata, build_artifact_retention
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_OPEN,
+    INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
@@ -2225,6 +2226,12 @@ def build_incident_detail_projection(
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
         recommended_followup_action = IncidentFollowupAction.REBUILD_TICKET_GRAPH.value
+    elif incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
+        available_followup_actions = [
+            IncidentFollowupAction.RERUN_CEO_SHADOW.value,
+            IncidentFollowupAction.RESTORE_ONLY.value,
+        ]
+        recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
     elif incident_type == INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
         available_followup_actions = [
             IncidentFollowupAction.REPLAY_REQUIRED_HOOKS.value,

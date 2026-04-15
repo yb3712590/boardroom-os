@@ -21,7 +21,7 @@ from app.core.ceo_execution_presets import (
     build_project_init_scope_ticket_id,
     build_ceo_create_ticket_command,
 )
-from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
+from app.core.ceo_scheduler import trigger_ceo_shadow_with_recovery
 from app.core.constants import (
     APPROVAL_STATUS_APPROVED,
     APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
@@ -127,15 +127,13 @@ def _trigger_ceo_shadow_safely(
     workflow_id: str,
     approval_id: str,
 ) -> None:
-    try:
-        run_ceo_shadow_for_trigger(
-            repository,
-            workflow_id=workflow_id,
-            trigger_type="APPROVAL_RESOLVED",
-            trigger_ref=approval_id,
-        )
-    except Exception:
-        return
+    trigger_ceo_shadow_with_recovery(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="APPROVAL_RESOLVED",
+        trigger_ref=approval_id,
+        idempotency_key_base=f"approval-trigger:{workflow_id}:{approval_id}",
+    )
 
 
 def _rejected_ack(

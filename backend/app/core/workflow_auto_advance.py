@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from app.contracts.commands import IncidentFollowupAction, IncidentResolveCommand
 from app.config import get_settings
-from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
+from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER, is_ticket_graph_unavailable_error
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.constants import (
     EVENT_TICKET_FAILED,
+    INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
@@ -91,6 +92,8 @@ def _recommended_incident_followup_action(
         return IncidentFollowupAction.REBUILD_TICKET_GRAPH
     if incident_type == INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
         return IncidentFollowupAction.REPLAY_REQUIRED_HOOKS
+    if incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
+        return IncidentFollowupAction.RERUN_CEO_SHADOW
     if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
         return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
     if incident_type == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
@@ -150,11 +153,6 @@ def _maybe_write_autopilot_chain_report(
     ensure_workflow_atomic_chain_report(repository, workflow_id=workflow_id)
 
 
-def _is_ticket_graph_unavailable_error(error: Exception) -> bool:
-    message = str(error).strip().lower()
-    return "graph" in message and "unavailable" in message
-
-
 def auto_advance_workflow_to_next_stop(
     repository: ControlPlaneRepository,
     *,
@@ -175,7 +173,7 @@ def auto_advance_workflow_to_next_stop(
                 trigger_ref=f"{idempotency_key_prefix}:{step_index}:controller-probe",
             )
         except Exception as exc:
-            if not _is_ticket_graph_unavailable_error(exc):
+            if not is_ticket_graph_unavailable_error(exc):
                 raise
             open_ticket_graph_unavailable_incident(
                 repository,

@@ -16,7 +16,7 @@ from app.core.requirement_elicitation import (
     build_requirement_elicitation_review_payload,
     should_require_requirement_elicitation,
 )
-from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
+from app.core.ceo_scheduler import trigger_ceo_shadow_with_recovery
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.core.workflow_scope import default_workflow_scope
@@ -251,17 +251,19 @@ def handle_project_init(
                 command_key=command_key,
             )
     else:
-        run_ceo_shadow_for_trigger(
+        ceo_run = trigger_ceo_shadow_with_recovery(
             repository,
             workflow_id=workflow_id,
             trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
             trigger_ref=f"project-init:{workflow_id}",
+            idempotency_key_base=f"{command_key}:ceo-shadow",
         )
-        _auto_advance_project_init_to_first_review(
-            repository,
-            workflow_id=workflow_id,
-            command_key=command_key,
-        )
+        if ceo_run is not None:
+            _auto_advance_project_init_to_first_review(
+                repository,
+                workflow_id=workflow_id,
+                command_key=command_key,
+            )
 
     return CommandAckEnvelope(
         command_id=command_id,

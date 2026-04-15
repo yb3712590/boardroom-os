@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P2`
-> 当前切片：`P2-S6`
-> 最后更新：`2026-04-15 20:25`
+> 当前切片：`P2-S8`
+> 最后更新：`2026-04-15 13:20`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -93,7 +93,7 @@
 
 ### 当前阶段出口条件
 - [ ] 本阶段所有必做切片完成
-- [ ] 图故障、runtime/provider 故障和 Hook 门禁都已进入正式 incident / recovery 主链
+- [x] 图故障、runtime/provider 故障和 Hook 门禁都已进入正式 incident / recovery 主链
 - [x] required hook gate 已成为节点对下游开放的正式条件
 - [x] 每个已完成切片都有最小验证证据
 - [x] 涉及的运行文档已同步
@@ -562,9 +562,11 @@
 - [x] `P2-S4` 已完成：`review_evidence` 票现在也已接入正式 `artifact_capture` gate；`delivery_check_report / ui_milestone_review / maker_checker_verdict` 缺 receipt 时会显式阻断下游，`REPLAY_REQUIRED_HOOKS` 也已支持按 terminal truth 幂等补回或 fail-closed reject
 - [x] `P2-S5` 已完成：provider unavailable 现在会先写 `TICKET_EXECUTION_PRECONDITION_BLOCKED`、把 ticket/node 固定阻断到 `BLOCKING_REASON_PROVIDER_REQUIRED`，不再误走 `TICKET_FAILED -> TICKET_RETRY_SCHEDULED -> REPEATED_FAILURE_ESCALATION`；provider 恢复后会幂等写 `TICKET_EXECUTION_PRECONDITION_CLEARED`，同一阻断不会重复落事件
 - [x] `P2-S6` 已完成：`scheduler_runner` 的 provider incident / recovery 历史测试现在已切到 provider center + explicit target binding 真相；auth / bad response / rate limit 断言不再把失败包装成 `COMPLETED`，mainline recovery 也不再假设 `project-init` 直接打开旧 scope approval
+- [x] `P2-S7` 已完成：`run_ceo_shadow_for_trigger` 现在已经改成严格路径；显式 deterministic mode 继续保留，但 live provider 坏响应、非法 action batch 和执行失败不再隐式 fallback，而是落 `CEO_SHADOW_PIPELINE_FAILED` incident
+- [x] `P2-S8` 已完成：`command / approval / ticket / idle maintenance` 直调入口现在统一走 `trigger_ceo_shadow_with_recovery()`；`incident-resolve` 新增 `RERUN_CEO_SHADOW`，API 稳定验证桶也已改成 `test_p2_ceo_shadow_incident_*`
 
 ### 未完成
-- [ ] `P2` 阶段还没结束；`run_ceo_shadow_for_trigger` 其他直调路径、API 宽匹配验证桶，以及 runtime/provider 恢复主链剩余历史债仍未统一收口
+- [ ] `P2` 阶段还没结束；更宽的 closeout / approval 历史测试桶，以及 `backend/tests/test_ceo_scheduler.py` 里仍沿旧 deliverable contract 写夹具的长尾样例，还没统一迁到当前真相
 
 ### 明确放弃
 - [ ] 暂无
@@ -573,8 +575,8 @@
 - [ ] `backend/tests/test_api.py -k "system_initialized or startup or project_init"` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会落 `PROVIDER_REQUIRED_UNAVAILABLE`，不阻断 `P0-S1` 收口
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
-- [ ] `P2-S1` 这轮只把 `TicketGraph` 真不可用接到了 `workflow_auto_advance` 的正式 incident 主链；其他直接调用 `run_ceo_shadow_for_trigger` 的路径暂时仍沿现状显式失败，留给后续恢复切片统一收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -q` 这轮额外补跑仍有一批旧 helper 失败，根因是 `source_code_delivery / consensus_document / governance_document` 夹具还在沿旧 payload 合同造数据；当前判断不是 `P2-S7 / P2-S8` 新回归，留给后续 closeout / approval 历史桶一起收口
 
 ---
 
@@ -714,6 +716,21 @@
 
 **当前处理：**  
 `已在 P2-S6 收口：helper 现在会补最小 provider center + target binding；5 条 provider incident / recovery 历史测试已转绿，并且断言口径已经改成显式失败与幂等恢复真相。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `closed`
+
+### D-010
+**现象：**  
+`如果把 \`EVENT_INCIDENT_RECOVERY_STARTED\` 的 CEO 审计触发也强接到新的 incident helper，provider recovery 的 autopilot 主链会在恢复中途再打开一条 \`CEO_SHADOW_PIPELINE_FAILED\`，把原本已经进入 RECOVERING 的 incident 主链二次打断。`
+
+**影响：**  
+`本轮要收的是 command / approval / ticket / idle maintenance 这些直调入口；如果连 recovery-start 审计也一起 incident 化，会把“审计附加动作”和“主恢复动作”重新耦合，反而破坏当前 runtime/provider 恢复闭环。`
+
+**当前处理：**  
+`本轮只把四类直调入口统一到 \`trigger_ceo_shadow_with_recovery()\`；\`EVENT_INCIDENT_RECOVERY_STARTED\` 继续保留 audit-only 的 best-effort shadow append，不再额外开第二层 incident。`
 
 **是否需要改架构文档：**  
 `no`
@@ -1162,6 +1179,38 @@
 **下一轮起手动作：**
 `继续 runtime/provider 恢复主链收口，优先把 run_ceo_shadow_for_trigger 的直调路径和 API 宽匹配验证桶统一到当前显式错误 / 幂等恢复真相。`
 
+### Session `2026-04-15 / 15`
+**开始前判断：**
+- 当前阶段：`P2`
+- 当前切片：`P2-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `run_ceo_shadow_for_trigger` 改成严格路径：live provider 坏响应、非法 action batch 和执行失败现在都会抛 `CeoShadowPipelineError`，不再隐式 fallback
+- [x] 新增 `CEO_SHADOW_PIPELINE_FAILED` incident，并把 `command / approval / ticket / idle maintenance` 四类直调入口统一接到 `trigger_ceo_shadow_with_recovery()`
+- [x] 给 `incident-resolve` 补 `RERUN_CEO_SHADOW`，incident detail / autopilot 推荐动作也已接上同一条恢复合同
+- [x] 把 API 恢复验证桶收正成稳定、非空跑的 `test_p2_ceo_shadow_incident_*`，并把 `workflow_autopilot` 回归补到新口径
+- [x] 更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "ceo_shadow_pipeline_failed or rerun_ceo_shadow" -q` 通过（`2 passed, 67 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "p2_ceo_shadow_incident" -q` 通过（`5 passed, 287 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_workflow_autopilot.py -k "ceo_shadow or incident" -q` 通过（`4 passed, 8 deselected`）
+- [x] `python -m py_compile backend/app/core/ceo_scheduler.py backend/app/core/ticket_handlers.py backend/app/core/projections.py backend/tests/test_ceo_scheduler.py backend/tests/test_api.py backend/tests/test_workflow_autopilot.py` 通过
+- [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -q` 额外补跑仍有一批旧 helper 失败；当前判断是旧 deliverable contract 夹具没有迁到现状，不算本轮 blocker，已记到“新发现但不在本轮做”
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] 更宽的 closeout / approval 历史测试桶还没收口
+- [ ] `backend/tests/test_ceo_scheduler.py` 里仍有一批旧 helper 夹具没有迁到当前 deliverable contract
+
+**下一轮起手动作：**
+`继续 closeout / approval 历史测试桶收口，优先把旧的 ceo_scheduler helper 夹具迁到当前 deliverable contract，再决定是否把 recovery-start 审计进一步协议化。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1198,8 +1247,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P2`
-- 当前切片：`P2-S6`
-- 当前状态：`P2-S6` 已完成；`scheduler_runner` 的 provider incident / recovery 历史测试已经切到 provider center + explicit target binding 真相，失败不再被包装成 `COMPLETED`
-- 最近完成：`test_scheduler_runner.py -k "provider_incident or provider_recovery"` 已全绿；mainline recovery 现在会先补 governance-first 前置，再测 provider 恢复，不再把 `project-init` 首跳写死成旧 scope approval
-- 当前阻塞：`run_ceo_shadow_for_trigger` 其他直调恢复路径、API 宽匹配验证桶，以及更宽的 closeout / approval 历史测试还没统一收口
-- 下一步：`继续 runtime/provider 恢复主链收口，优先把 run_ceo_shadow_for_trigger 的直调路径和 API 宽匹配验证桶统一到当前显式错误 / 幂等恢复真相`
+- 当前切片：`P2-S8`
+- 当前状态：`P2-S7 / P2-S8` 已完成；`CEO shadow` 四类直调入口现在都已显式 incident 化，坏响应和非法 action batch 不再隐式 fallback，`RERUN_CEO_SHADOW` 也已进入正式恢复主链
+- 最近完成：`test_p2_ceo_shadow_incident_*` API 桶已稳定非空跑；`workflow_autopilot` 现在也能在新合同下恢复 `CEO shadow` incident，不会因为 recovery-start 审计再递归开 incident
+- 当前阻塞：`closeout / approval` 历史测试桶，以及 `backend/tests/test_ceo_scheduler.py` 里仍沿旧 deliverable contract 写夹具的长尾样例，还没统一收口
+- 下一步：`继续 closeout / approval 历史测试桶收口，先把旧 ceo_scheduler helper 夹具迁到当前 deliverable contract 真相`

@@ -22,10 +22,12 @@ from app.core.output_schemas import (
     TECHNOLOGY_DECISION_SCHEMA_REF,
 )
 from app.core.ceo_scheduler import (
+    CeoShadowPipelineError,
     SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
     list_due_ceo_maintenance_workflows,
     run_ceo_shadow_for_trigger,
     run_due_ceo_maintenance,
+    trigger_ceo_shadow_with_recovery,
 )
 from app.core.constants import (
     EVENT_BOARD_REVIEW_REJECTED,
@@ -33,6 +35,7 @@ from app.core.constants import (
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_EMPLOYEE_HIRED,
     EVENT_INCIDENT_OPENED,
+    INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     EVENT_WORKFLOW_CREATED,
 )
 from app.core.persona_profiles import clone_persona_template, get_hire_persona_template_id
@@ -1161,6 +1164,83 @@ def test_ceo_shadow_run_records_fallback_without_touching_mainline_state(client)
     assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
     assert run["deterministic_fallback_used"] is True
     assert run["deterministic_fallback_reason"] is not None
+
+
+def test_ceo_shadow_pipeline_failed_raises_without_hidden_fallback(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_shadow_pipeline_error", goal="CEO shadow pipeline failure")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text="{not-json}",
+            response_id="resp_ceo_pipeline_error_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            client.app.state.repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:proposal-error",
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
+
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert exc_info.value.workflow_id == workflow_id
+    assert exc_info.value.trigger_type == "MANUAL_TEST"
+    assert exc_info.value.trigger_ref == "manual:proposal-error"
+    assert runs[0]["trigger_type"] == "MANUAL_TEST"
+    assert runs[0]["fallback_reason"] is not None
+    assert runs[0]["deterministic_fallback_used"] is False
+
+
+def test_trigger_ceo_shadow_with_recovery_opens_ceo_shadow_pipeline_failed_incident(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_ceo_shadow_pipeline_incident",
+        goal="CEO shadow helper should open explicit incident.",
+    )
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text="{not-json}",
+            response_id="resp_ceo_pipeline_incident_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = trigger_ceo_shadow_with_recovery(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:helper-incident",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+        idempotency_key_base="test-ceo-shadow-helper-incident",
+    )
+
+    incidents = [
+        item
+        for item in client.app.state.repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id
+    ]
+
+    assert run is None
+    assert len(incidents) == 1
+    assert incidents[0]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+    assert incidents[0]["payload"]["trigger_type"] == "MANUAL_TEST"
+    assert incidents[0]["payload"]["trigger_ref"] == "manual:helper-incident"
+    assert incidents[0]["payload"]["source_stage"] == "proposal"
 
 
 def test_autopilot_completed_atomic_task_does_not_auto_create_closeout_ticket_before_full_delivery_chain(client):

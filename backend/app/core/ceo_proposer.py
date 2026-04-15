@@ -972,6 +972,7 @@ def propose_ceo_action_batch(
             provider_response_id=provider_result.response_id,
         )
     except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        terminal_exception: Exception = exc
         failure_kind = (
             exc.failure_kind if isinstance(exc, (OpenAICompatProviderError, ClaudeCodeProviderError)) else None
         )
@@ -999,6 +1000,7 @@ def propose_ceo_action_batch(
                         provider_response_id=provider_result.response_id,
                     )
                 except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as failover_exc:
+                    terminal_exception = failover_exc
                     failover_failure_kind = (
                         failover_exc.failure_kind
                         if isinstance(failover_exc, (OpenAICompatProviderError, ClaudeCodeProviderError))
@@ -1007,17 +1009,4 @@ def propose_ceo_action_batch(
                     if failover_failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
                         continue
                     break
-        fallback_reason = str(exc)
-        return CEOProposalResult(
-            action_batch=build_deterministic_fallback_batch(repository, snapshot, fallback_reason),
-            effective_mode=provider_mode,
-            provider_health_summary=provider_health_summary,
-            model=selection.actual_model or selection.provider.model,
-            preferred_provider_id=selection.preferred_provider_id,
-            preferred_model=selection.preferred_model,
-            actual_provider_id=selection.provider.provider_id,
-            actual_model=selection.actual_model or selection.provider.model,
-            selection_reason=selection.selection_reason,
-            policy_reason=selection.policy_reason,
-            fallback_reason=fallback_reason,
-        )
+        raise terminal_exception

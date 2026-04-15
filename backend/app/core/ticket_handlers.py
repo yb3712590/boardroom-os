@@ -65,6 +65,7 @@ from app.core.constants import (
     FAILURE_KIND_UPSTREAM_UNAVAILABLE,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
+    INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
     INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
@@ -94,7 +95,12 @@ from app.core.constants import (
     BLOCKING_REASON_PROVIDER_REQUIRED,
 )
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
-from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
+from app.core.ceo_scheduler import (
+    CeoShadowPipelineError,
+    is_ticket_graph_unavailable_error,
+    run_ceo_shadow_for_trigger,
+    trigger_ceo_shadow_with_recovery,
+)
 from app.core.ceo_execution_presets import build_internal_governance_review_request
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.execution_targets import (
@@ -240,15 +246,24 @@ def _trigger_ceo_shadow_safely(
     trigger_type: str,
     trigger_ref: str | None,
 ) -> None:
-    try:
-        run_ceo_shadow_for_trigger(
-            repository,
-            workflow_id=workflow_id,
-            trigger_type=trigger_type,
-            trigger_ref=trigger_ref,
-        )
-    except Exception:
+    if trigger_type == EVENT_INCIDENT_RECOVERY_STARTED:
+        try:
+            run_ceo_shadow_for_trigger(
+                repository,
+                workflow_id=workflow_id,
+                trigger_type=trigger_type,
+                trigger_ref=trigger_ref,
+            )
+        except Exception:
+            return
         return
+    trigger_ceo_shadow_with_recovery(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=trigger_type,
+        trigger_ref=trigger_ref,
+        idempotency_key_base=f"ticket-trigger:{workflow_id}:{trigger_type}:{trigger_ref or 'none'}",
+    )
 
 
 def _duplicate_ack(
@@ -1810,6 +1825,16 @@ def _resolve_ticket_graph_unavailable_incident_fingerprint(
     return f"{workflow_id}:{INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE}:{source_component}"
 
 
+def _resolve_ceo_shadow_pipeline_failure_fingerprint(
+    workflow_id: str,
+    trigger_type: str,
+    trigger_ref: str | None,
+    source_stage: str,
+    error_class: str,
+) -> str:
+    return f"{workflow_id}:{trigger_type}:{trigger_ref or 'none'}:{source_stage}:{error_class}"
+
+
 def _resolve_provider_id_for_ticket(
     repository: ControlPlaneRepository,
     connection,
@@ -3260,6 +3285,94 @@ def open_ticket_graph_unavailable_incident(
         return incident_id
 
 
+def open_ceo_shadow_pipeline_failed_incident(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    error: CeoShadowPipelineError,
+    idempotency_key_base: str,
+    actor_id: str = "ceo-shadow-trigger",
+) -> str:
+    command_id = new_prefixed_id("cmd")
+    occurred_at = now_local()
+    fingerprint = _resolve_ceo_shadow_pipeline_failure_fingerprint(
+        workflow_id,
+        error.trigger_type,
+        error.trigger_ref,
+        error.source_stage,
+        error.error_class,
+    )
+
+    with repository.transaction() as connection:
+        existing_row = connection.execute(
+            """
+            SELECT incident_id
+            FROM incident_projection
+            WHERE workflow_id = ? AND fingerprint = ? AND status = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            LIMIT 1
+            """,
+            (workflow_id, fingerprint, INCIDENT_STATUS_OPEN),
+        ).fetchone()
+        if existing_row is not None:
+            return str(existing_row["incident_id"])
+
+        incident_id = new_prefixed_id("inc")
+        incident_payload = {
+            "incident_id": incident_id,
+            "ticket_id": None,
+            "node_id": None,
+            "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+            "status": INCIDENT_STATUS_OPEN,
+            "severity": "high",
+            "fingerprint": fingerprint,
+            "trigger_type": error.trigger_type,
+            "trigger_ref": error.trigger_ref,
+            "source_stage": error.source_stage,
+            "error_class": error.error_class,
+            "error_message": error.error_message,
+            "failure_fingerprint": fingerprint,
+        }
+        incident_event = repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:incident-opened:{error.source_stage}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload=incident_payload,
+            occurred_at=occurred_at,
+        )
+        if incident_event is None:
+            raise RuntimeError("CEO shadow pipeline incident opening idempotency conflict.")
+
+        breaker_event = repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:{error.source_stage}",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+                "fingerprint": fingerprint,
+            },
+            occurred_at=occurred_at,
+        )
+        if breaker_event is None:
+            raise RuntimeError("CEO shadow pipeline circuit breaker opening idempotency conflict.")
+
+        repository.refresh_projections(connection)
+        return incident_id
+
+
 def _dispatch_sort_key(ticket: dict[str, Any]) -> tuple[int, datetime, str]:
     priority_rank = {
         "critical": 0,
@@ -4104,6 +4217,7 @@ def handle_incident_resolve(
         retry_ticket: dict[str, Any] | None = None
         retry_created_spec: dict[str, Any] | None = None
         replay_result = None
+        rerun_context: dict[str, Any] | None = None
         if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
             if incident["incident_type"] != INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
                 return _incident_rejected_ack(
@@ -4267,127 +4381,275 @@ def handle_incident_resolve(
                     incident_id=payload.incident_id,
                     reason=f"Ticket graph rebuild failed: {exc}",
                 )
+        elif payload.followup_action == IncidentFollowupAction.RERUN_CEO_SHADOW:
+            if incident["incident_type"] != INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=f"Incident {payload.incident_id} does not support CEO shadow rerun recovery.",
+                )
+            rerun_context = {
+                "workflow_id": workflow_id,
+                "trigger_type": str((incident.get("payload") or {}).get("trigger_type") or "").strip(),
+                "trigger_ref": (
+                    str((incident.get("payload") or {}).get("trigger_ref"))
+                    if (incident.get("payload") or {}).get("trigger_ref") is not None
+                    else None
+                ),
+                "incident": incident,
+            }
+            if not rerun_context["trigger_type"]:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason="CEO shadow incident is missing its original trigger_type.",
+                )
 
-        resolution_payload = {
-            "incident_id": payload.incident_id,
-            "node_id": incident.get("node_id"),
-            "ticket_id": incident.get("ticket_id"),
-            "provider_id": incident.get("provider_id"),
-            "resolved_by": payload.resolved_by,
-            "resolution_summary": payload.resolution_summary,
-            "followup_action": followup_action,
-            "followup_ticket_id": None,
-            "incident_type": incident["incident_type"],
-        }
-        if payload.followup_action == IncidentFollowupAction.REPLAY_REQUIRED_HOOKS:
-            resolution_payload["replayed_hook_ids"] = list(replay_result.replayed_hook_ids)
+        if rerun_context is None:
+            resolution_payload = {
+                "incident_id": payload.incident_id,
+                "node_id": incident.get("node_id"),
+                "ticket_id": incident.get("ticket_id"),
+                "provider_id": incident.get("provider_id"),
+                "resolved_by": payload.resolved_by,
+                "resolution_summary": payload.resolution_summary,
+                "followup_action": followup_action,
+                "followup_ticket_id": None,
+                "incident_type": incident["incident_type"],
+            }
+            if payload.followup_action == IncidentFollowupAction.REPLAY_REQUIRED_HOOKS:
+                resolution_payload["replayed_hook_ids"] = list(replay_result.replayed_hook_ids)
 
-        breaker_closed_event = repository.insert_event(
-            connection,
-            event_type=EVENT_CIRCUIT_BREAKER_CLOSED,
-            actor_type="operator",
-            actor_id=payload.resolved_by,
-            workflow_id=workflow_id,
-            idempotency_key=f"{payload.idempotency_key}:breaker-closed",
-            causation_id=command_id,
-            correlation_id=workflow_id,
-            payload={
-                **resolution_payload,
-                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_CLOSED,
-            },
-            occurred_at=received_at,
-        )
-        if breaker_closed_event is None:
-            return _incident_duplicate_ack(
+            breaker_closed_event = repository.insert_event(
+                connection,
+                event_type=EVENT_CIRCUIT_BREAKER_CLOSED,
+                actor_type="operator",
+                actor_id=payload.resolved_by,
+                workflow_id=workflow_id,
+                idempotency_key=f"{payload.idempotency_key}:breaker-closed",
+                causation_id=command_id,
+                correlation_id=workflow_id,
+                payload={
+                    **resolution_payload,
+                    "circuit_breaker_state": CIRCUIT_BREAKER_STATE_CLOSED,
+                },
+                occurred_at=received_at,
+            )
+            if breaker_closed_event is None:
+                return _incident_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                )
+
+            if payload.followup_action in {
+                IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE,
+                IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT,
+                IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE,
+                IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT,
+            }:
+                assert retry_ticket is not None
+                assert retry_created_spec is not None
+                if (
+                    payload.followup_action
+                    == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT
+                ):
+                    followup_ticket_id = _schedule_staffing_recovery_followup(
+                        repository=repository,
+                        connection=connection,
+                        command_id=command_id,
+                        occurred_at=received_at,
+                        workflow_id=workflow_id,
+                        source_ticket=retry_ticket,
+                        created_spec=retry_created_spec,
+                        idempotency_key_base=f"{payload.idempotency_key}:followup-staffing",
+                    )
+                else:
+                    retry_source_event_type = (
+                        EVENT_TICKET_TIMED_OUT
+                        if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
+                        else EVENT_TICKET_FAILED
+                    )
+                    followup_ticket_id = _schedule_retry(
+                        repository=repository,
+                        connection=connection,
+                        command_id=command_id,
+                        occurred_at=received_at,
+                        workflow_id=workflow_id,
+                        failed_ticket_id=str(incident["ticket_id"]),
+                        node_id=str(incident["node_id"]),
+                        created_spec=retry_created_spec,
+                        failure_payload={
+                            "failure_fingerprint": (
+                                (incident.get("payload") or {}).get("latest_failure_fingerprint")
+                                or incident.get("fingerprint")
+                            ),
+                        },
+                        retry_source_event_type=retry_source_event_type,
+                        idempotency_key_base=f"{payload.idempotency_key}:followup-timeout",
+                    )
+                    _recreate_pending_delivery_descendants_for_retry(
+                        repository=repository,
+                        connection=connection,
+                        command_id=command_id,
+                        occurred_at=received_at,
+                        workflow_id=workflow_id,
+                        failed_ticket_id=str(incident["ticket_id"]),
+                        replacement_ticket_id=followup_ticket_id,
+                        replacement_created_spec=retry_created_spec,
+                        idempotency_key_base=f"{payload.idempotency_key}:followup-descendants",
+                    )
+                resolution_payload["followup_ticket_id"] = followup_ticket_id
+
+            incident_recovery_event = repository.insert_event(
+                connection,
+                event_type=EVENT_INCIDENT_RECOVERY_STARTED,
+                actor_type="operator",
+                actor_id=payload.resolved_by,
+                workflow_id=workflow_id,
+                idempotency_key=payload.idempotency_key,
+                causation_id=command_id,
+                correlation_id=workflow_id,
+                payload={
+                    **resolution_payload,
+                    "status": INCIDENT_STATUS_RECOVERING,
+                },
+                occurred_at=received_at,
+            )
+            if incident_recovery_event is None:
+                return _incident_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                )
+
+            repository.refresh_projections(connection)
+
+    if rerun_context is not None:
+        try:
+            run_ceo_shadow_for_trigger(
+                repository,
+                workflow_id=str(rerun_context["workflow_id"]),
+                trigger_type=str(rerun_context["trigger_type"]),
+                trigger_ref=rerun_context["trigger_ref"],
+            )
+        except CeoShadowPipelineError as exc:
+            return _incident_rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 incident_id=payload.incident_id,
+                reason=str(exc),
+            )
+        except Exception as exc:
+            reason = (
+                f"CEO shadow rerun failed because the ticket graph is still unavailable: {exc}"
+                if is_ticket_graph_unavailable_error(exc)
+                else f"CEO shadow rerun failed: {exc}"
+            )
+            return _incident_rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                incident_id=payload.incident_id,
+                reason=reason,
             )
 
-        if payload.followup_action in {
-            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE,
-            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT,
-            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE,
-            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT,
-        }:
-            assert retry_ticket is not None
-            assert retry_created_spec is not None
-            if (
-                payload.followup_action
-                == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT
-            ):
-                followup_ticket_id = _schedule_staffing_recovery_followup(
-                    repository=repository,
-                    connection=connection,
+        with repository.transaction() as connection:
+            resolution_payload = {
+                "incident_id": payload.incident_id,
+                "node_id": None,
+                "ticket_id": None,
+                "provider_id": None,
+                "resolved_by": payload.resolved_by,
+                "resolution_summary": payload.resolution_summary,
+                "followup_action": followup_action,
+                "followup_ticket_id": None,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+            }
+            incident_recovery_event = repository.insert_event(
+                connection,
+                event_type=EVENT_INCIDENT_RECOVERY_STARTED,
+                actor_type="operator",
+                actor_id=payload.resolved_by,
+                workflow_id=str(rerun_context["workflow_id"]),
+                idempotency_key=payload.idempotency_key,
+                causation_id=command_id,
+                correlation_id=str(rerun_context["workflow_id"]),
+                payload={
+                    **resolution_payload,
+                    "status": INCIDENT_STATUS_RECOVERING,
+                },
+                occurred_at=received_at,
+            )
+            if incident_recovery_event is None:
+                return _incident_duplicate_ack(
                     command_id=command_id,
-                    occurred_at=received_at,
-                    workflow_id=workflow_id,
-                    source_ticket=retry_ticket,
-                    created_spec=retry_created_spec,
-                    idempotency_key_base=f"{payload.idempotency_key}:followup-staffing",
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
                 )
-            else:
-                retry_source_event_type = (
-                    EVENT_TICKET_TIMED_OUT
-                    if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
-                    else EVENT_TICKET_FAILED
-                )
-                followup_ticket_id = _schedule_retry(
-                    repository=repository,
-                    connection=connection,
+            breaker_closed_event = repository.insert_event(
+                connection,
+                event_type=EVENT_CIRCUIT_BREAKER_CLOSED,
+                actor_type="operator",
+                actor_id=payload.resolved_by,
+                workflow_id=str(rerun_context["workflow_id"]),
+                idempotency_key=f"{payload.idempotency_key}:breaker-closed",
+                causation_id=command_id,
+                correlation_id=str(rerun_context["workflow_id"]),
+                payload={
+                    **resolution_payload,
+                    "circuit_breaker_state": CIRCUIT_BREAKER_STATE_CLOSED,
+                },
+                occurred_at=received_at,
+            )
+            if breaker_closed_event is None:
+                return _incident_duplicate_ack(
                     command_id=command_id,
-                    occurred_at=received_at,
-                    workflow_id=workflow_id,
-                    failed_ticket_id=str(incident["ticket_id"]),
-                    node_id=str(incident["node_id"]),
-                    created_spec=retry_created_spec,
-                    failure_payload={
-                        "failure_fingerprint": (
-                            (incident.get("payload") or {}).get("latest_failure_fingerprint")
-                            or incident.get("fingerprint")
-                        ),
-                    },
-                    retry_source_event_type=retry_source_event_type,
-                    idempotency_key_base=f"{payload.idempotency_key}:followup-timeout",
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
                 )
-                _recreate_pending_delivery_descendants_for_retry(
-                    repository=repository,
-                    connection=connection,
+            incident_closed_event = repository.insert_event(
+                connection,
+                event_type=EVENT_INCIDENT_CLOSED,
+                actor_type="operator",
+                actor_id=payload.resolved_by,
+                workflow_id=str(rerun_context["workflow_id"]),
+                idempotency_key=f"{payload.idempotency_key}:incident-closed",
+                causation_id=command_id,
+                correlation_id=str(rerun_context["workflow_id"]),
+                payload={
+                    **resolution_payload,
+                    "status": INCIDENT_STATUS_CLOSED,
+                    "close_reason": "CEO shadow rerun completed successfully.",
+                },
+                occurred_at=received_at,
+            )
+            if incident_closed_event is None:
+                return _incident_duplicate_ack(
                     command_id=command_id,
-                    occurred_at=received_at,
-                    workflow_id=workflow_id,
-                    failed_ticket_id=str(incident["ticket_id"]),
-                    replacement_ticket_id=followup_ticket_id,
-                    replacement_created_spec=retry_created_spec,
-                    idempotency_key_base=f"{payload.idempotency_key}:followup-descendants",
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
                 )
-            resolution_payload["followup_ticket_id"] = followup_ticket_id
+            repository.refresh_projections(connection)
 
-        incident_recovery_event = repository.insert_event(
-            connection,
-            event_type=EVENT_INCIDENT_RECOVERY_STARTED,
-            actor_type="operator",
-            actor_id=payload.resolved_by,
-            workflow_id=workflow_id,
+        return CommandAckEnvelope(
+            command_id=command_id,
             idempotency_key=payload.idempotency_key,
-            causation_id=command_id,
-            correlation_id=workflow_id,
-            payload={
-                **resolution_payload,
-                "status": INCIDENT_STATUS_RECOVERING,
-            },
-            occurred_at=received_at,
+            status=CommandAckStatus.ACCEPTED,
+            received_at=received_at,
+            reason=None,
+            causation_hint=f"incident:{payload.incident_id}",
         )
-        if incident_recovery_event is None:
-            return _incident_duplicate_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                incident_id=payload.incident_id,
-            )
-
-        repository.refresh_projections(connection)
 
     _trigger_ceo_shadow_safely(
         repository,
