@@ -53,6 +53,8 @@ from app.core.constants import (
     EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
     EVENT_TICKET_FAILED,
     EVENT_TICKET_HEARTBEAT_RECORDED,
     EVENT_TICKET_LEASED,
@@ -89,12 +91,17 @@ from app.core.constants import (
     TICKET_STATUS_FAILED,
     TICKET_STATUS_TIMED_OUT,
     TIMEOUT_FAMILY_RUNTIME,
+    BLOCKING_REASON_PROVIDER_REQUIRED,
 )
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
 from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
 from app.core.ceo_execution_presets import build_internal_governance_review_request
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
-from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
+from app.core.execution_targets import (
+    employee_supports_execution_contract,
+    infer_execution_contract_payload,
+    resolve_execution_target_ref_from_ticket_spec,
+)
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -136,7 +143,13 @@ from app.core.process_assets import (
     merge_input_process_asset_refs,
     parse_process_asset_ref,
 )
-from app.core.runtime_provider_config import find_provider_entry, resolve_runtime_provider_config
+from app.core.runtime_provider_config import (
+    find_provider_entry,
+    provider_effective_mode,
+    resolve_provider_failover_selections,
+    resolve_provider_selection,
+    resolve_runtime_provider_config,
+)
 from app.core.project_workspaces import (
     build_effective_workspace_written_artifacts,
     bootstrap_ticket_dossier,
@@ -1852,6 +1865,254 @@ def _allow_paused_provider_start(provider_id: str | None) -> bool:
     return provider is not None and provider.enabled
 
 
+def _build_provider_candidate_chain(
+    primary_selection,
+    failover_selections: list[Any],
+) -> list[str]:
+    candidate_chain: list[str] = []
+    for selection in [primary_selection, *failover_selections]:
+        if selection is None:
+            continue
+        provider_id = str(selection.provider.provider_id)
+        if provider_id not in candidate_chain:
+            candidate_chain.append(provider_id)
+    return candidate_chain
+
+
+def _build_ticket_execution_precondition_fingerprint(
+    *,
+    ticket_id: str,
+    reason_code: str,
+    execution_target_ref: str,
+    provider_effective_mode: str,
+    provider_candidate_chain: list[str],
+    provider_reason: str,
+) -> str:
+    fingerprint_source = {
+        "ticket_id": ticket_id,
+        "reason_code": reason_code,
+        "execution_target_ref": execution_target_ref,
+        "provider_effective_mode": provider_effective_mode,
+        "provider_candidate_chain": list(provider_candidate_chain),
+        "provider_reason": provider_reason,
+    }
+    digest = hashlib.sha256(
+        json.dumps(fingerprint_source, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    return f"{ticket_id}:{reason_code}:{digest}"
+
+
+def _evaluate_ticket_execution_precondition(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    ticket: dict[str, Any],
+    created_spec: dict[str, Any] | None,
+    lease_owner: str | None,
+) -> dict[str, Any] | None:
+    execution_target_ref = resolve_execution_target_ref_from_ticket_spec(created_spec)
+    if execution_target_ref is None:
+        return None
+
+    config = resolve_runtime_provider_config()
+    selection = resolve_provider_selection(
+        config,
+        target_ref=execution_target_ref,
+        employee_provider_id=_resolve_provider_id_for_ticket(
+            repository,
+            connection,
+            ticket=ticket,
+            lease_owner=lease_owner,
+        ),
+        runtime_preference=(created_spec or {}).get("runtime_preference"),
+    )
+    if selection is None:
+        unavailable_effective_mode = "PROVIDER_REQUIRED_UNAVAILABLE"
+        provider_reason = "No live provider was available for runtime execution."
+        provider_candidate_chain: list[str] = []
+        return {
+            "blocked": True,
+            "reason_code": BLOCKING_REASON_PROVIDER_REQUIRED,
+            "execution_target_ref": execution_target_ref,
+            "provider_candidate_chain": provider_candidate_chain,
+            "provider_effective_mode": unavailable_effective_mode,
+            "provider_reason": provider_reason,
+            "fingerprint": _build_ticket_execution_precondition_fingerprint(
+                ticket_id=str(ticket["ticket_id"]),
+                reason_code=BLOCKING_REASON_PROVIDER_REQUIRED,
+                execution_target_ref=execution_target_ref,
+                provider_effective_mode=unavailable_effective_mode,
+                provider_candidate_chain=provider_candidate_chain,
+                provider_reason=provider_reason,
+            ),
+        }
+
+    failover_selections = resolve_provider_failover_selections(
+        config,
+        repository,
+        target_ref=execution_target_ref,
+        primary_selection=selection,
+    )
+    provider_candidate_chain = _build_provider_candidate_chain(selection, failover_selections)
+    provider_effective_mode_value, effective_reason = provider_effective_mode(selection.provider, repository)
+    provider_reason = effective_reason
+    blocked = False
+    if repository.has_open_circuit_breaker_for_provider(selection.provider.provider_id, connection=connection):
+        blocked = True
+        provider_reason = "Provider execution is currently paused by an open incident."
+    elif selection.provider.adapter_kind == "openai_compat" and not all(
+        (selection.provider.base_url, selection.provider.api_key, selection.actual_model or selection.provider.model)
+    ):
+        blocked = True
+        provider_reason = "Provider config is incomplete for OpenAI Compat execution."
+    elif selection.provider.adapter_kind == "claude_code_cli" and not all(
+        (selection.provider.command_path, selection.actual_model or selection.provider.model)
+    ):
+        blocked = True
+        provider_reason = "Provider config is incomplete for Claude Code execution."
+
+    result = {
+        "blocked": blocked,
+        "reason_code": BLOCKING_REASON_PROVIDER_REQUIRED,
+        "execution_target_ref": execution_target_ref,
+        "provider_candidate_chain": provider_candidate_chain,
+        "provider_effective_mode": provider_effective_mode_value,
+        "provider_reason": provider_reason,
+        "fingerprint": None,
+    }
+    if blocked:
+        result["fingerprint"] = _build_ticket_execution_precondition_fingerprint(
+            ticket_id=str(ticket["ticket_id"]),
+            reason_code=BLOCKING_REASON_PROVIDER_REQUIRED,
+            execution_target_ref=execution_target_ref,
+            provider_effective_mode=provider_effective_mode_value,
+            provider_candidate_chain=provider_candidate_chain,
+            provider_reason=provider_reason,
+        )
+    return result
+
+
+def _latest_ticket_execution_precondition_block_fingerprint(
+    connection,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    reason_code: str,
+) -> str | None:
+    row = connection.execute(
+        """
+        SELECT payload_json
+        FROM events
+        WHERE workflow_id = ? AND event_type = ?
+        ORDER BY sequence_no DESC
+        """,
+        (workflow_id, EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED),
+    ).fetchall()
+    for item in row:
+        payload = json.loads(item["payload_json"])
+        if (
+            str(payload.get("ticket_id") or "") == ticket_id
+            and str(payload.get("reason_code") or "") == reason_code
+        ):
+            fingerprint = str(payload.get("fingerprint") or "").strip()
+            if fingerprint:
+                return fingerprint
+    return None
+
+
+def _sync_ticket_execution_precondition_state(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket: dict[str, Any],
+    node_id: str,
+    precondition_result: dict[str, Any] | None,
+    actor_id: str,
+) -> bool:
+    if precondition_result is None:
+        return False
+
+    current_ticket = repository.get_current_ticket_projection(str(ticket["ticket_id"]), connection=connection)
+    current_node = repository.get_current_node_projection(workflow_id, node_id, connection=connection)
+    current_blocking_reason = str(
+        (current_ticket or {}).get("blocking_reason_code")
+        or (current_node or {}).get("blocking_reason_code")
+        or ""
+    ).strip()
+
+    if precondition_result["blocked"]:
+        event_row = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=(
+                f"ticket-precondition-blocked:{workflow_id}:{ticket['ticket_id']}:"
+                f"{precondition_result['reason_code']}:{precondition_result['fingerprint']}"
+            ),
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": ticket["ticket_id"],
+                "node_id": node_id,
+                "reason_code": precondition_result["reason_code"],
+                "execution_target_ref": precondition_result["execution_target_ref"],
+                "provider_candidate_chain": list(precondition_result["provider_candidate_chain"]),
+                "provider_effective_mode": precondition_result["provider_effective_mode"],
+                "provider_reason": precondition_result["provider_reason"],
+                "fingerprint": precondition_result["fingerprint"],
+            },
+            occurred_at=occurred_at,
+        )
+        if event_row is not None:
+            repository.refresh_projections(connection)
+        return True
+
+    if current_blocking_reason != BLOCKING_REASON_PROVIDER_REQUIRED:
+        return False
+
+    previous_fingerprint = _latest_ticket_execution_precondition_block_fingerprint(
+        connection,
+        workflow_id=workflow_id,
+        ticket_id=str(ticket["ticket_id"]),
+        reason_code=BLOCKING_REASON_PROVIDER_REQUIRED,
+    )
+    if not previous_fingerprint:
+        return False
+
+    event_row = repository.insert_event(
+        connection,
+        event_type=EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
+        actor_type="system",
+        actor_id=actor_id,
+        workflow_id=workflow_id,
+        idempotency_key=(
+            f"ticket-precondition-cleared:{workflow_id}:{ticket['ticket_id']}:"
+            f"{BLOCKING_REASON_PROVIDER_REQUIRED}:{previous_fingerprint}"
+        ),
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "ticket_id": ticket["ticket_id"],
+            "node_id": node_id,
+            "reason_code": BLOCKING_REASON_PROVIDER_REQUIRED,
+            "execution_target_ref": precondition_result["execution_target_ref"],
+            "provider_candidate_chain": list(precondition_result["provider_candidate_chain"]),
+            "provider_effective_mode": precondition_result["provider_effective_mode"],
+            "provider_reason": precondition_result["provider_reason"],
+            "previous_fingerprint": previous_fingerprint,
+        },
+        occurred_at=occurred_at,
+    )
+    if event_row is not None:
+        repository.refresh_projections(connection)
+    return False
+
+
 def _resolve_timeout_root_created_spec(
     repository: ControlPlaneRepository,
     connection,
@@ -3451,6 +3712,7 @@ def run_scheduler_tick(
                 else excluded_employee_ids
             )
             selected_worker_id: str | None = None
+            selected_worker_precondition: dict[str, Any] | None = None
             selected_assignee_employee_id = _resolve_dispatch_assignee_employee_id(created_spec)
             if selected_assignee_employee_id is not None:
                 if selected_assignee_employee_id not in worker_by_id:
@@ -3506,6 +3768,13 @@ def run_scheduler_tick(
                 else:
                     dispatch_failure_payload = None
                     selected_worker_id = selected_assignee_employee_id
+                    selected_worker_precondition = _evaluate_ticket_execution_precondition(
+                        repository,
+                        connection,
+                        ticket=ticket,
+                        created_spec=created_spec,
+                        lease_owner=selected_worker_id,
+                    )
                 if dispatch_failure_payload is not None:
                     failed_event = _build_scheduler_failure_event(
                         repository,
@@ -3531,23 +3800,62 @@ def run_scheduler_tick(
                     ceo_failure_triggers.append((ticket["workflow_id"], ticket["ticket_id"]))
                     continue
             else:
-                selected_worker_id = next(
-                    (
-                        worker_id
-                        for worker_id in worker_candidates
-                        if worker_id not in effective_excluded_employee_ids
-                        and _worker_is_dispatchable_for_ticket(
-                            repository,
-                            connection,
-                            worker_id=worker_id,
-                            target_role_profile=str(target_role_profile),
-                            worker_by_id=worker_by_id,
-                            busy_workers=busy_workers,
-                        )
-                    ),
-                    None,
-                )
+                blocked_precondition_result: dict[str, Any] | None = None
+                for worker_id in worker_candidates:
+                    if worker_id in effective_excluded_employee_ids:
+                        continue
+                    if not _worker_is_dispatchable_for_ticket(
+                        repository,
+                        connection,
+                        worker_id=worker_id,
+                        target_role_profile=str(target_role_profile),
+                        worker_by_id=worker_by_id,
+                        busy_workers=busy_workers,
+                    ):
+                        continue
+                    precondition_result = _evaluate_ticket_execution_precondition(
+                        repository,
+                        connection,
+                        ticket=ticket,
+                        created_spec=created_spec,
+                        lease_owner=worker_id,
+                    )
+                    if precondition_result is not None and precondition_result["blocked"]:
+                        if blocked_precondition_result is None:
+                            blocked_precondition_result = precondition_result
+                        continue
+                    selected_worker_id = worker_id
+                    selected_worker_precondition = precondition_result
+                    break
+                if selected_worker_id is None and blocked_precondition_result is not None:
+                    _sync_ticket_execution_precondition_state(
+                        repository,
+                        connection,
+                        command_id=command_id,
+                        occurred_at=received_at,
+                        workflow_id=ticket["workflow_id"],
+                        ticket=ticket,
+                        node_id=ticket["node_id"],
+                        precondition_result=blocked_precondition_result,
+                        actor_id="scheduler",
+                    )
+                    changed_state = True
+                    continue
             if selected_worker_id is None:
+                continue
+
+            if selected_worker_precondition is not None and _sync_ticket_execution_precondition_state(
+                repository,
+                connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=ticket["workflow_id"],
+                ticket=ticket,
+                node_id=ticket["node_id"],
+                precondition_result=selected_worker_precondition,
+                actor_id="scheduler",
+            ):
+                changed_state = True
                 continue
 
             lease_event = repository.insert_event(
@@ -4503,6 +4811,33 @@ def handle_ticket_lease(
                 ),
             )
 
+        created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
+        precondition_result = _evaluate_ticket_execution_precondition(
+            repository,
+            connection,
+            ticket=current_ticket,
+            created_spec=created_spec,
+            lease_owner=payload.leased_by,
+        )
+        if precondition_result is not None and _sync_ticket_execution_precondition_state(
+            repository,
+            connection,
+            command_id=command_id,
+            occurred_at=received_at,
+            workflow_id=payload.workflow_id,
+            ticket=current_ticket,
+            node_id=payload.node_id,
+            precondition_result=precondition_result,
+            actor_id="ticket-lease",
+        ):
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=str(precondition_result["provider_reason"]),
+            )
+
         event_row = repository.insert_event(
             connection,
             event_type=EVENT_TICKET_LEASED,
@@ -4717,6 +5052,33 @@ def handle_ticket_start(
                     f"Ticket {payload.ticket_id} cannot start because worker provider {provider_id} "
                     "is currently paused."
                 ),
+            )
+
+        created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
+        precondition_result = _evaluate_ticket_execution_precondition(
+            repository,
+            connection,
+            ticket=current_ticket,
+            created_spec=created_spec,
+            lease_owner=str(lease_owner),
+        )
+        if precondition_result is not None and _sync_ticket_execution_precondition_state(
+            repository,
+            connection,
+            command_id=command_id,
+            occurred_at=received_at,
+            workflow_id=payload.workflow_id,
+            ticket=current_ticket,
+            node_id=payload.node_id,
+            precondition_result=precondition_result,
+            actor_id="ticket-start",
+        ):
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=str(precondition_result["provider_reason"]),
             )
 
         event_row = repository.insert_event(

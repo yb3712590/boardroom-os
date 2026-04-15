@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.context_compiler import compile_and_persist_execution_artifacts
+from app.core.execution_targets import infer_execution_contract_payload
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.process_assets import (
@@ -30,6 +31,7 @@ from app.core.constants import (
     BLOCKING_REASON_BOARD_REJECTED,
     BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
     BLOCKING_REASON_MODIFY_CONSTRAINTS,
+    BLOCKING_REASON_PROVIDER_REQUIRED,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
@@ -44,6 +46,8 @@ from app.core.constants import (
     EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
     EVENT_TICKET_FAILED,
     EVENT_TICKET_HEARTBEAT_RECORDED,
     EVENT_TICKET_LEASED,
@@ -2023,6 +2027,63 @@ def _incident_resolve_payload(
     return payload
 
 
+def _ensure_runtime_provider_ready_for_ticket(
+    client,
+    *,
+    role_profile_ref: str | None,
+    output_schema_ref: str,
+) -> None:
+    resolved_role_profile_ref = role_profile_ref
+    if resolved_role_profile_ref is None:
+        resolved_role_profile_ref = (
+            "ui_designer_primary" if output_schema_ref == "consensus_document" else "frontend_engineer_primary"
+        )
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref=resolved_role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    )
+    if execution_contract is None:
+        return
+
+    target_ref = str(execution_contract["execution_target_ref"])
+    provider_projection = client.get("/api/v1/projections/runtime-provider")
+    assert provider_projection.status_code == 200
+    projection_data = provider_projection.json()["data"]
+    has_enabled_provider = any(
+        provider["provider_id"] == "prov_openai_compat" and provider["enabled"]
+        for provider in projection_data["providers"]
+    )
+    has_target_binding = any(
+        binding["target_ref"] == target_ref and binding["provider_model_entry_refs"]
+        for binding in projection_data["role_bindings"]
+    )
+    if has_enabled_provider and has_target_binding:
+        return
+
+    upsert_response = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=_runtime_provider_upsert_payload(
+            role_bindings=[
+                {
+                    "target_ref": "ceo_shadow",
+                    "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                },
+                {
+                    "target_ref": target_ref,
+                    "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                },
+            ],
+            idempotency_key=f"runtime-provider-upsert:test-helper:{target_ref}",
+        ),
+    )
+    assert upsert_response.status_code == 200
+    assert upsert_response.json()["status"] == "ACCEPTED"
+
+
 def _create_and_lease_ticket(
     client,
     workflow_id: str = "wf_seed",
@@ -2058,6 +2119,11 @@ def _create_and_lease_ticket(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
         )
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    )
     create_response = client.post(
         "/api/v1/commands/ticket-create",
         json=_ticket_create_payload(
@@ -4996,6 +5062,112 @@ def test_dashboard_pipeline_summary_shows_review_stage_for_open_board_approval(c
     assert check_phase["status"] == "COMPLETED"
     assert review_phase["status"] == "BLOCKED_FOR_BOARD"
     assert review_phase["node_counts"]["blocked_for_board"] == 1
+
+
+def test_project_init_without_live_provider_writes_precondition_block_and_clears_after_provider_restore(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    kickoff_ticket_id = build_project_init_scope_ticket_id(workflow_id)
+    repository = client.app.state.repository
+
+    kickoff_ticket = repository.get_current_ticket_projection(kickoff_ticket_id)
+    kickoff_node = repository.get_current_node_projection(workflow_id, "node_ceo_architecture_brief")
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    initial_block_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED
+    ]
+
+    assert workflow_response.status_code == 200
+    assert workflow_response.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED) == 1
+    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED) == 0
+    assert repository.count_events_by_type(EVENT_TICKET_FAILED) == 0
+    assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 0
+    assert repository.count_events_by_type(EVENT_INCIDENT_OPENED) == 0
+    assert kickoff_ticket is not None
+    assert kickoff_ticket["status"] == TICKET_STATUS_PENDING
+    assert kickoff_ticket["lease_owner"] is None
+    assert kickoff_ticket["blocking_reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
+    assert kickoff_node is not None
+    assert kickoff_node["status"] == NODE_STATUS_PENDING
+    assert kickoff_node["blocking_reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
+    assert len(initial_block_events) == 1
+    assert initial_block_events[0]["payload"]["ticket_id"] == kickoff_ticket_id
+    assert initial_block_events[0]["payload"]["node_id"] == "node_ceo_architecture_brief"
+    assert initial_block_events[0]["payload"]["reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
+    assert initial_block_events[0]["payload"]["execution_target_ref"] == "execution_target:frontend_governance_document"
+    assert initial_block_events[0]["payload"]["provider_effective_mode"] == "PROVIDER_REQUIRED_UNAVAILABLE"
+    assert dashboard_response.json()["data"]["pipeline_summary"]["phases"][1]["status"] == "PENDING"
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    repeat_tick = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:project-init-provider-blocked-repeat"),
+    )
+    repeated_ticket = repository.get_current_ticket_projection(kickoff_ticket_id)
+
+    assert repeat_tick.status_code == 200
+    assert repeat_tick.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED) == 1
+    assert repeated_ticket is not None
+    assert repeated_ticket["status"] == TICKET_STATUS_PENDING
+    assert repeated_ticket["lease_owner"] is None
+
+    provider_upsert = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=_runtime_provider_upsert_payload(
+            role_bindings=[
+                {
+                    "target_ref": "ceo_shadow",
+                    "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                },
+                {
+                    "target_ref": "execution_target:frontend_governance_document",
+                    "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                },
+            ],
+            idempotency_key="runtime-provider-upsert:project-init-provider-restore",
+        ),
+    )
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    resume_tick = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:project-init-provider-restored"),
+    )
+    resumed_ticket = repository.get_current_ticket_projection(kickoff_ticket_id)
+    resumed_node = repository.get_current_node_projection(workflow_id, "node_ceo_architecture_brief")
+    clear_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED
+    ]
+
+    assert provider_upsert.status_code == 200
+    assert provider_upsert.json()["status"] == "ACCEPTED"
+    assert resume_tick.status_code == 200
+    assert resume_tick.json()["status"] == "ACCEPTED"
+    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED) == 1
+    assert len(clear_events) == 1
+    assert clear_events[0]["payload"]["ticket_id"] == kickoff_ticket_id
+    assert clear_events[0]["payload"]["node_id"] == "node_ceo_architecture_brief"
+    assert clear_events[0]["payload"]["reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
+    assert resumed_ticket is not None
+    assert resumed_ticket["status"] == TICKET_STATUS_LEASED
+    assert resumed_ticket["lease_owner"] == "emp_frontend_2"
+    assert resumed_ticket["blocking_reason_code"] is None
+    assert resumed_node is not None
+    assert resumed_node["status"] == NODE_STATUS_PENDING
+    assert resumed_node["blocking_reason_code"] is None
 
 
 def test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_breaker(client):
@@ -12548,8 +12720,8 @@ def test_employee_freeze_containment_opens_staffing_incident_for_executing_ticke
     assert dashboard_response.json()["data"]["ops_strip"]["open_circuit_breakers"] == 1
     assert dashboard_response.json()["data"]["inbox_counts"]["incidents_pending"] == 1
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == [
+        "node_ceo_architecture_brief",
         "node_frozen_executing",
-        "node_scope_decision",
     ]
     inbox_items = [
         item for item in inbox_response.json()["data"]["items"] if item["source_ref"] == open_incidents[0]["incident_id"]

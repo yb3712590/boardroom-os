@@ -14,7 +14,14 @@ import pytest
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED, EVENT_TICKET_CREATED
-from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF, TECHNOLOGY_DECISION_SCHEMA_REF
+from app.core.execution_targets import infer_execution_contract_payload
+from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    DETAILED_DESIGN_SCHEMA_REF,
+    MILESTONE_PLAN_SCHEMA_REF,
+    TECHNOLOGY_DECISION_SCHEMA_REF,
+)
 from app.core.runtime import RuntimeExecutionResult, run_leased_ticket_runtime
 from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
@@ -102,6 +109,82 @@ def _project_init(client, goal: str = "Scheduler staffing") -> str:
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     return response.json()["causation_hint"].split(":", 1)[1]
+
+
+def _ensure_runtime_provider_ready_for_ticket(
+    client,
+    *,
+    role_profile_ref: str,
+    output_schema_ref: str,
+) -> None:
+    resolved_role_profile_ref = (
+        "frontend_engineer_primary"
+        if role_profile_ref == "ui_designer_primary"
+        else role_profile_ref
+    )
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref=resolved_role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    )
+    if execution_contract is None:
+        return
+
+    target_ref = str(execution_contract["execution_target_ref"])
+    provider_projection = client.get("/api/v1/projections/runtime-provider")
+    assert provider_projection.status_code == 200
+    projection_data = provider_projection.json()["data"]
+    has_enabled_provider = any(
+        provider["provider_id"] == OPENAI_COMPAT_PROVIDER_ID and provider["enabled"]
+        for provider in projection_data["providers"]
+    )
+    has_target_binding = any(
+        binding["target_ref"] == target_ref and binding["provider_model_entry_refs"]
+        for binding in projection_data["role_bindings"]
+    )
+    if has_enabled_provider and has_target_binding:
+        return
+
+    upsert_response = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json={
+            "providers": [
+                {
+                    "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+                    "type": "openai_responses_stream",
+                    "enabled": True,
+                    "base_url": "https://api.example.test/v1",
+                    "api_key": "sk-test-secret",
+                    "alias": "",
+                    "preferred_model": "gpt-5.3-codex",
+                    "max_context_window": None,
+                    "reasoning_effort": "high",
+                },
+            ],
+            "provider_model_entries": [
+                {
+                    "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+                    "model_name": "gpt-5.3-codex",
+                }
+            ],
+            "role_bindings": [
+                {
+                    "target_ref": "ceo_shadow",
+                    "provider_model_entry_refs": [f"{OPENAI_COMPAT_PROVIDER_ID}::gpt-5.3-codex"],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                },
+                {
+                    "target_ref": target_ref,
+                    "provider_model_entry_refs": [f"{OPENAI_COMPAT_PROVIDER_ID}::gpt-5.3-codex"],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                },
+            ],
+            "idempotency_key": f"runtime-provider-upsert:test-scheduler-helper:{target_ref}",
+        },
+    )
+    assert upsert_response.status_code == 200
+    assert upsert_response.json()["status"] == "ACCEPTED"
 
 
 def _approve_hire_worker(
@@ -468,6 +551,234 @@ def _followup_ticket_from_scope_approval(client, repository, approval: dict, *, 
     )
 
 
+def _create_scope_consensus_approval(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    summary: str,
+) -> dict:
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=node_id,
+                role_profile_ref="ui_designer_primary",
+                output_schema_ref="consensus_document",
+            ),
+            "allowed_write_set": [f"reports/meeting/{ticket_id}/*"],
+            "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+            "acceptance_criteria": [
+                "Must produce a consensus document.",
+                "Must include follow-up tickets.",
+            ],
+            "allowed_tools": ["read_artifact", "write_artifact"],
+            "context_query_plan": {
+                "keywords": ["scope", "decision", "meeting"],
+                "semantic_queries": ["current scope tradeoffs"],
+                "max_context_tokens": 3000,
+            },
+            "retry_budget": 0,
+        },
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}:scope-consensus",
+        },
+    )
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_frontend_2",
+            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}:scope-consensus",
+        },
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+
+    artifact_ref = f"art://meeting/{ticket_id}/scope-consensus.json"
+    result_payload = {
+        "topic": f"Consensus for {ticket_id}",
+        "participants": ["emp_frontend_2", "emp_checker_1"],
+        "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/scope-notes.md"],
+        "consensus_summary": summary,
+        "rejected_options": ["Do not widen the MVP scope in this round."],
+        "open_questions": ["Whether non-blocking polish should move after board approval."],
+        "followup_tickets": [
+            {
+                "ticket_id": "tkt_scope_provider_build",
+                "task_title": "Build the provider-backed homepage foundation",
+                "owner_role": "frontend_engineer",
+                "summary": "Build the approved homepage foundation without widening scope.",
+                "delivery_stage": "BUILD",
+            },
+            {
+                "ticket_id": "tkt_scope_provider_check",
+                "task_title": "Check the provider-backed homepage foundation",
+                "owner_role": "checker",
+                "summary": "Check the source code delivery against the locked scope.",
+                "delivery_stage": "CHECK",
+            },
+            {
+                "ticket_id": "tkt_scope_provider_review",
+                "task_title": "Prepare the provider-backed review package",
+                "owner_role": "frontend_engineer",
+                "summary": "Prepare the final board-facing review package.",
+                "delivery_stage": "REVIEW",
+            },
+        ],
+    }
+    review_request = {
+        "review_type": "MEETING_ESCALATION",
+        "priority": "high",
+        "title": "Review scope decision consensus",
+        "subtitle": "Meeting output is ready for board lock-in.",
+        "blocking_scope": "WORKFLOW",
+        "trigger_reason": "Cross-role scope decision needs explicit board confirmation.",
+        "why_now": "Implementation should not continue before this decision is locked.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "consensus_scope_lock",
+        "recommendation_summary": summary,
+        "options": [
+            {
+                "option_id": "consensus_scope_lock",
+                "label": "Lock consensus scope",
+                    "summary": summary,
+                    "artifact_refs": [artifact_ref],
+                    "pros": ["Keeps the next step aligned."],
+                    "cons": ["Defers non-critical stretch ideas."],
+                    "risks": ["A later change needs a fresh governance pass."],
+                }
+        ],
+        "evidence_summary": [
+                {
+                    "evidence_id": "ev_scope_consensus",
+                    "source_type": "CONSENSUS_DOCUMENT",
+                    "headline": "Meeting converged on one scope",
+                    "summary": summary,
+                    "source_ref": artifact_ref,
+                }
+            ],
+            "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+            "draft_selected_option_id": "consensus_scope_lock",
+            "comment_template": "",
+            "inbox_title": "Review scope decision consensus",
+            "inbox_summary": "A consensus document is ready for board review.",
+            "badges": ["meeting", "board_gate", "scope"],
+        }
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": "consensus_document_v1",
+            "payload": result_payload,
+            "artifact_refs": [artifact_ref],
+            "written_artifacts": [
+                {
+                    "path": f"reports/meeting/{ticket_id}/scope-consensus.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": result_payload,
+                }
+            ],
+            "assumptions": ["The governance-first chain has converged on a single delivery scope."],
+            "issues": [],
+            "confidence": 0.86,
+            "needs_escalation": False,
+            "summary": summary,
+            "review_request": review_request,
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:scope-consensus",
+        },
+    )
+    assert submit_response.status_code == 200
+    assert submit_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_checker_1",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{checker_ticket_id}:scope-consensus-checker",
+        },
+    )
+    assert checker_lease_response.status_code == 200
+    assert checker_lease_response.json()["status"] == "ACCEPTED"
+
+    checker_start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_checker_1",
+            "idempotency_key": f"ticket-start:{workflow_id}:{checker_ticket_id}:scope-consensus-checker",
+        },
+    )
+    assert checker_start_response.status_code == 200
+    assert checker_start_response.json()["status"] == "ACCEPTED"
+
+    checker_submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": checker_ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_checker_1",
+            "result_status": "completed",
+            "schema_version": "maker_checker_verdict_v1",
+            "payload": {
+                "summary": "Checker approved the consensus output.",
+                "review_status": "APPROVED_WITH_NOTES",
+                "findings": [],
+            },
+            "artifact_refs": [],
+            "written_artifacts": [],
+            "assumptions": [],
+            "issues": [],
+            "confidence": 0.9,
+            "needs_escalation": False,
+            "summary": "Checker verdict submitted.",
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:scope-consensus-approved",
+        },
+    )
+    assert checker_submit_response.status_code == 200
+    assert checker_submit_response.json()["status"] == "ACCEPTED"
+
+    return next(
+        approval
+        for approval in repository.list_open_approvals()
+        if approval["workflow_id"] == workflow_id and approval["approval_type"] == "MEETING_ESCALATION"
+    )
+
+
 def _run_scheduler_until_workflow_stop(
     repository,
     *,
@@ -495,6 +806,82 @@ def _run_scheduler_until_workflow_stop(
 
 
 def _mock_provider_payload_for_schema(schema_ref: str) -> dict:
+    if schema_ref in {
+        ARCHITECTURE_BRIEF_SCHEMA_REF,
+        TECHNOLOGY_DECISION_SCHEMA_REF,
+        MILESTONE_PLAN_SCHEMA_REF,
+        DETAILED_DESIGN_SCHEMA_REF,
+    }:
+        return {
+            "document_kind_ref": schema_ref,
+            "title": f"{schema_ref} title",
+            "summary": f"{schema_ref} is complete and ready for the next governance step.",
+            "linked_document_refs": ["doc://governance/upstream/current"],
+            "linked_artifact_refs": [f"art://runtime/provider/{schema_ref}.json"],
+            "source_process_asset_refs": [],
+            "decisions": ["Keep the delivery sequence explicit and governance-first."],
+            "constraints": ["Do not widen the current MVP boundary."],
+            "sections": [
+                {
+                    "section_id": "section_overview",
+                    "label": "Overview",
+                    "summary": f"{schema_ref} summary",
+                    "content_markdown": "Document-first guidance for the next delivery slice.",
+                }
+            ],
+            "followup_recommendations": [
+                {
+                    "recommendation_id": "rec_next_governance_step",
+                    "summary": "Continue the governance chain.",
+                    "target_role": "frontend_engineer",
+                }
+            ],
+        }
+    if schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF:
+        return {
+            "document_kind_ref": schema_ref,
+            "title": "Provider-backed backlog recommendation",
+            "summary": "Turn the approved governance chain into executable tickets.",
+            "linked_document_refs": ["doc://governance/upstream/current"],
+            "linked_artifact_refs": ["art://runtime/provider/backlog-recommendation.json"],
+            "source_process_asset_refs": [],
+            "decisions": ["Continue with the approved narrow MVP sequence."],
+            "constraints": ["Keep governance explicit before execution fanout."],
+            "sections": [
+                {
+                    "section_id": "recommended_ticket_split",
+                    "label": "Recommended ticket split",
+                    "summary": "Split the next delivery steps into executable tickets.",
+                    "content_markdown": "Create build, check, and review follow-ups.",
+                    "content_json": {
+                        "tickets": [
+                            {
+                                "ticket_id": "BR-FE-01",
+                                "name": "Provider-backed homepage build",
+                                "priority": "P0",
+                                "target_role": "frontend_engineer",
+                                "scope": ["homepage foundation"],
+                            }
+                        ],
+                        "dependency_graph": [
+                            {
+                                "ticket_id": "BR-FE-01",
+                                "depends_on": [],
+                                "reason": "The approved scope can move into implementation.",
+                            }
+                        ],
+                        "recommended_sequence": ["BR-FE-01 Provider-backed homepage build"],
+                    },
+                }
+            ],
+            "followup_recommendations": [
+                {
+                    "recommendation_id": "rec_build_followup",
+                    "summary": "Create the implementation follow-up ticket.",
+                    "target_role": "frontend_engineer",
+                }
+            ],
+        }
     if schema_ref == "consensus_document":
         return {
             "topic": "Homepage scope consensus",
@@ -2453,13 +2840,41 @@ def test_provider_incident_recovery_on_mainline_still_reaches_final_review_gate(
     monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
+    from tests.test_ceo_scheduler import (
+        _create_and_complete_minimum_governance_chain,
+    )
 
     workflow_id = _project_init(client, goal="Provider incident recovery reaches completion")
     repository = client.app.state.repository
-    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
+    for role_profile_ref, output_schema_ref in [
+        ("frontend_engineer_primary", "architecture_brief"),
+        ("frontend_engineer_primary", "technology_decision"),
+        ("frontend_engineer_primary", "milestone_plan"),
+        ("frontend_engineer_primary", "detailed_design"),
+        ("ui_designer_primary", "consensus_document"),
+        ("frontend_engineer_primary", "source_code_delivery"),
+        ("checker_primary", "delivery_check_report"),
+        ("frontend_engineer_primary", "ui_milestone_review"),
+        ("frontend_engineer_primary", "delivery_closeout_package"),
+        ("checker_primary", "maker_checker_verdict"),
+    ]:
+        _ensure_runtime_provider_ready_for_ticket(
+            client,
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        )
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="provider_incident_mainline",
+    )
+    scope_approval = _create_scope_consensus_approval(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_provider_scope_lock",
+        node_id="node_provider_scope_lock",
+        summary="Governance-first scope lock is ready for provider-backed delivery recovery.",
+    )
     build_followup = _followup_ticket_from_scope_approval(
         client,
         repository,
@@ -2475,23 +2890,34 @@ def test_provider_incident_recovery_on_mainline_still_reaches_final_review_gate(
 
     build_ticket = repository.get_current_ticket_projection(build_followup["ticket_id"])
     assert build_ticket is not None
-    client.post(
+    lease_build_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": build_ticket["ticket_id"],
+            "node_id": build_ticket["node_id"],
+            "leased_by": "emp_frontend_2",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{build_ticket['ticket_id']}:provider-recovery-build",
+        },
+    )
+    start_build_response = client.post(
         "/api/v1/commands/ticket-start",
         json={
             "workflow_id": workflow_id,
             "ticket_id": build_ticket["ticket_id"],
             "node_id": build_ticket["node_id"],
-            "started_by": build_ticket["lease_owner"],
+            "started_by": "emp_frontend_2",
             "idempotency_key": f"ticket-start:{workflow_id}:{build_ticket['ticket_id']}",
         },
     )
-    client.post(
+    fail_build_response = client.post(
         "/api/v1/commands/ticket-fail",
         json={
             "workflow_id": workflow_id,
             "ticket_id": build_ticket["ticket_id"],
             "node_id": build_ticket["node_id"],
-            "failed_by": build_ticket["lease_owner"],
+            "failed_by": "emp_frontend_2",
             "failure_kind": "PROVIDER_RATE_LIMITED",
             "failure_message": "Provider quota exhausted.",
             "failure_detail": {
@@ -2501,6 +2927,12 @@ def test_provider_incident_recovery_on_mainline_still_reaches_final_review_gate(
             "idempotency_key": f"ticket-fail:{workflow_id}:{build_ticket['ticket_id']}:provider",
         },
     )
+    assert lease_build_response.status_code == 200
+    assert lease_build_response.json()["status"] == "ACCEPTED"
+    assert start_build_response.status_code == 200
+    assert start_build_response.json()["status"] == "ACCEPTED"
+    assert fail_build_response.status_code == 200
+    assert fail_build_response.json()["status"] == "ACCEPTED"
 
     blocked_ticket_id = "tkt_provider_recovery_probe"
     create_response = client.post(
@@ -2528,7 +2960,6 @@ def test_provider_incident_recovery_on_mainline_still_reaches_final_review_gate(
     )
     provider_responder_after_restore, observed_after_restore = _build_mock_provider_responder()
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder_after_restore)
-    monkeypatch.setattr(ceo_proposer_module, "invoke_openai_compat_response", provider_responder_after_restore)
 
     resolve_response = client.post(
         "/api/v1/commands/incident-resolve",
@@ -2588,11 +3019,13 @@ def test_provider_incident_recovery_on_mainline_still_reaches_final_review_gate(
 
 def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_auth", provider_id="prov_openai_compat")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
 
     client.post(
         "/api/v1/commands/ticket-create",
@@ -2635,19 +3068,25 @@ def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, s
 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_auth")
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_auth")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_auth"]
-    assert ticket_projection["status"] == "COMPLETED"
+    assert ticket_projection["status"] == "FAILED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_AUTH_FAILED"
     assert repository.list_open_incidents() == []
 
 
 def test_runtime_provider_bad_response_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_bad_response", provider_id="prov_openai_compat")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
 
     client.post(
         "/api/v1/commands/ticket-create",
@@ -2681,9 +3120,13 @@ def test_runtime_provider_bad_response_does_not_open_provider_incident(client, s
 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_bad_response")
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_bad_response")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_bad_response"]
-    assert ticket_projection["status"] == "COMPLETED"
+    assert ticket_projection["status"] == "FAILED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_BAD_RESPONSE"
     assert repository.list_open_incidents() == []
 
 
@@ -2734,11 +3177,13 @@ def test_runtime_load_provider_payload_reports_parse_stage_and_repairs_for_irrep
 
 def test_runtime_provider_rate_limited_response_opens_provider_incident(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_rate_limited", provider_id="prov_openai_compat")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
 
     client.post(
         "/api/v1/commands/ticket-create",
@@ -2776,11 +3221,16 @@ def test_runtime_provider_rate_limited_response_opens_provider_incident(client, 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_live_rate_limit")
     open_incidents = repository.list_open_incidents()
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_live_rate_limit")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_live_rate_limit"]
-    assert ticket_projection["status"] == "COMPLETED"
+    assert ticket_projection["status"] == "FAILED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_REQUIRED_UNAVAILABLE"
     assert len(open_incidents) == 1
     assert open_incidents[0]["provider_id"] == "prov_openai_compat"
+    assert open_incidents[0]["payload"]["pause_reason"] == "PROVIDER_RATE_LIMITED"
 
 
 def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic(
@@ -3508,6 +3958,11 @@ def test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_wor
     )
 
     repository = client.app.state.repository
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
     create_source_response = client.post(
         "/api/v1/commands/ticket-create",
         json=_ticket_create_payload(
@@ -3616,8 +4071,11 @@ def test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_wor
 
     monkeypatch.setattr(
         runtime_module,
-        "_execute_compiled_execution_package",
-        lambda _execution_package: _runtime_success_result(),
+        "invoke_openai_compat_response",
+        lambda *_args, **_kwargs: OpenAICompatProviderResult(
+            output_text=json.dumps(_mock_provider_payload_for_schema("ui_milestone_review")),
+            response_id="resp_ui_milestone_review_recovered",
+        ),
     )
 
     run_scheduler_once(

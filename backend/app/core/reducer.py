@@ -9,6 +9,7 @@ from app.core.constants import (
     BLOCKING_REASON_BOARD_REJECTED,
     BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
     BLOCKING_REASON_MODIFY_CONSTRAINTS,
+    BLOCKING_REASON_PROVIDER_REQUIRED,
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
     DEFAULT_BOARD_GATE_STATE,
@@ -35,6 +36,8 @@ from app.core.constants import (
     EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
     EVENT_TICKET_FAILED,
     EVENT_TICKET_HEARTBEAT_RECORDED,
     EVENT_TICKET_LEASED,
@@ -763,6 +766,50 @@ def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
             }
             continue
 
+        if event_type == EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED:
+            ticket_id = payload["ticket_id"]
+            previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            tenant_id, workspace_id = _resolve_scope(payload, previous_projection)
+            projections[ticket_id] = {
+                **previous_projection,
+                "workflow_id": event["workflow_id"],
+                "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+                "status": TICKET_STATUS_PENDING,
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
+                "blocking_reason_code": payload.get("reason_code", BLOCKING_REASON_PROVIDER_REQUIRED),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED:
+            ticket_id = payload["ticket_id"]
+            previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
+            tenant_id, workspace_id = _resolve_scope(payload, previous_projection)
+            projections[ticket_id] = {
+                **previous_projection,
+                "workflow_id": event["workflow_id"],
+                "node_id": payload["node_id"],
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+                "status": TICKET_STATUS_PENDING,
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "started_at": None,
+                "last_heartbeat_at": None,
+                "heartbeat_expires_at": None,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
         if event_type == EVENT_TICKET_HEARTBEAT_RECORDED:
             ticket_id = payload["ticket_id"]
             previous_projection = projections.get(ticket_id, _base_ticket_projection(event, payload))
@@ -1039,6 +1086,32 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
                 **projections.get(key, _base_node_projection(event, payload)),
                 "latest_ticket_id": payload["ticket_id"],
                 "status": NODE_STATUS_EXECUTING,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED:
+            node_id = payload["node_id"]
+            key = (workflow_id, node_id)
+            projections[key] = {
+                **projections.get(key, _base_node_projection(event, payload)),
+                "latest_ticket_id": payload["ticket_id"],
+                "status": NODE_STATUS_PENDING,
+                "blocking_reason_code": payload.get("reason_code", BLOCKING_REASON_PROVIDER_REQUIRED),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED:
+            node_id = payload["node_id"]
+            key = (workflow_id, node_id)
+            projections[key] = {
+                **projections.get(key, _base_node_projection(event, payload)),
+                "latest_ticket_id": payload["ticket_id"],
+                "status": NODE_STATUS_PENDING,
                 "blocking_reason_code": None,
                 "updated_at": occurred_at,
                 "version": version,

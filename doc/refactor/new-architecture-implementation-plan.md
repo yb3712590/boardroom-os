@@ -2,8 +2,8 @@
 
 > 状态：`active`
 > 当前阶段：`P2`
-> 当前切片：`P2-S4`
-> 最后更新：`2026-04-15 10:42`
+> 当前切片：`P2-S6`
+> 最后更新：`2026-04-15 20:25`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -92,7 +92,7 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [x] 本阶段所有必做切片完成
+- [ ] 本阶段所有必做切片完成
 - [ ] 图故障、runtime/provider 故障和 Hook 门禁都已进入正式 incident / recovery 主链
 - [x] required hook gate 已成为节点对下游开放的正式条件
 - [x] 每个已完成切片都有最小验证证据
@@ -461,6 +461,87 @@
 
 **状态：** `done`
 
+### 切片 `P2-S5`
+**名称：**  
+`Provider 前置门禁、显式阻断与幂等解阻`
+
+**现实问题：**  
+`project-init -> node_ceo_architecture_brief` 在无 live provider 时会误走成普通执行失败，继续触发 retry / repeated failure / incident 噪音，既不符合 fail-closed，也不符合幂等审计。`
+
+**对应架构文档：**
+- `doc/new-architecture/05-incident-idempotency-and-recovery.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/12-architecture-audit-report.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 给 scheduler dispatch 和 ticket start 补统一 provider precondition gate
+  - [x] 新增 `TICKET_EXECUTION_PRECONDITION_BLOCKED / CLEARED`，把“无 live provider”显式写成 append-only 真相
+  - [x] 给 ticket/node/graph/dashboard 接 `BLOCKING_REASON_PROVIDER_REQUIRED`
+- 不做什么：
+  - [x] 不新增新的 provider incident type
+  - [x] 不改 `doc/new-architecture/**`
+  - [x] 不顺手重做 scheduler_runner 的 legacy env-config provider 测试体系
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] `project-init` 在无 live provider 时会写 `PRECONDITION_BLOCKED`，且不再产出 `TICKET_FAILED / TICKET_RETRY_SCHEDULED / REPEATED_FAILURE_ESCALATION`
+- [x] provider 恢复后会写 `PRECONDITION_CLEARED`，同一阻断不会重复记事件
+- [x] 3 条历史 API 噪音用例已转绿，provider incident 主链 API / autopilot 子集未回归
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
+### 切片 `P2-S6`
+**名称：**  
+`scheduler_runner provider recovery 历史测试收口`
+
+**现实问题：**  
+`scheduler_runner` 的 provider incident / recovery 历史测试还在沿旧 env-config / deterministic fallback 口径写断言；即使 `P2-S5` 主线已经收口，这组测试仍会把旧假设误报成主线回归。`
+
+**对应架构文档：**
+- `doc/new-architecture/05-incident-idempotency-and-recovery.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/12-architecture-audit-report.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 给 `scheduler_runner` 测试补最小 provider center + target binding helper
+  - [x] 把 provider auth / bad response / rate limit 相关断言收正到显式失败与 incident 真相
+  - [x] 把 mainline recovery 测试从旧 `project-init -> MEETING_ESCALATION` 假设改成“先有 governance-first 前置，再测 provider 恢复”
+- 不做什么：
+  - [x] 不改 `run_ceo_shadow_for_trigger` 的异常 fallback 主链
+  - [x] 不重做 scheduler / runtime / provider center
+  - [x] 不顺手清扫全部历史测试桶
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_scheduler_runner.py -k "provider_incident or provider_recovery" -q` 通过（`5 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "provider or incident" -q` 通过（`3 passed, 8 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "project_init_without_live_provider_writes_precondition_block_and_clears_after_provider_restore or test_provider_failure_still_uses_provider_incident_path_not_repeated_failure_incident or test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure" -q` 通过（`3 passed, 284 deselected`）
+- [x] `python3 -m py_compile backend/tests/test_scheduler_runner.py backend/tests/test_workflow_autopilot.py backend/tests/test_api.py` 通过
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
 ---
 
 ## 8. 任务清单核对区
@@ -479,9 +560,11 @@
 - [x] `P2-S2` 已完成：`backend/app/core/role_hooks.py` 已把最小 hook registry、结构化 gate result、`REQUIRED_HOOK_GATE_BLOCKED` incident 和 `REPLAY_REQUIRED_HOOKS` recovery 收进单点协议；`TicketGraph / workflow_auto_advance / incident detail / resolve / IncidentDrawer` 已开始消费这条新主链
 - [x] `P2-S3` 已完成：`structured_document_delivery` 现已接入正式 `RoleHook` gate；治理文档与 closeout 会写 `artifact-capture.json`，closeout 还会额外写 `documentation-sync.json`，`REPLAY_REQUIRED_HOOKS` 也已能按持久化 terminal truth 幂等重放这两类 receipt
 - [x] `P2-S4` 已完成：`review_evidence` 票现在也已接入正式 `artifact_capture` gate；`delivery_check_report / ui_milestone_review / maker_checker_verdict` 缺 receipt 时会显式阻断下游，`REPLAY_REQUIRED_HOOKS` 也已支持按 terminal truth 幂等补回或 fail-closed reject
+- [x] `P2-S5` 已完成：provider unavailable 现在会先写 `TICKET_EXECUTION_PRECONDITION_BLOCKED`、把 ticket/node 固定阻断到 `BLOCKING_REASON_PROVIDER_REQUIRED`，不再误走 `TICKET_FAILED -> TICKET_RETRY_SCHEDULED -> REPEATED_FAILURE_ESCALATION`；provider 恢复后会幂等写 `TICKET_EXECUTION_PRECONDITION_CLEARED`，同一阻断不会重复落事件
+- [x] `P2-S6` 已完成：`scheduler_runner` 的 provider incident / recovery 历史测试现在已切到 provider center + explicit target binding 真相；auth / bad response / rate limit 断言不再把失败包装成 `COMPLETED`，mainline recovery 也不再假设 `project-init` 直接打开旧 scope approval
 
 ### 未完成
-- [ ] `P2` 阶段还没结束；旧的 project-init governance/provider incident 噪音、`run_ceo_shadow_for_trigger` 其他直调路径和 runtime/provider 恢复主链仍未统一收口
+- [ ] `P2` 阶段还没结束；`run_ceo_shadow_for_trigger` 其他直调路径、API 宽匹配验证桶，以及 runtime/provider 恢复主链剩余历史债仍未统一收口
 
 ### 明确放弃
 - [ ] 暂无
@@ -489,11 +572,8 @@
 ### 新发现但不在本轮做
 - [ ] `backend/tests/test_api.py -k "system_initialized or startup or project_init"` 仍会命中一组依赖 live provider 的旧 `project-init` 自动推进用例；当前环境未配 provider 时会落 `PROVIDER_REQUIRED_UNAVAILABLE`，不阻断 `P0-S1` 收口
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
-- [ ] 宽口径 `board_approve` 回归桶当前仍会被一组旧的 governance/provider auto-advance 用例打断：scope review 批准后会在 `node_ceo_architecture_brief` 打开 `PROVIDER_REQUIRED_UNAVAILABLE -> REPEATED_FAILURE_ESCALATION` incident；这组不是本轮 stale-guard 主链回归，但下一轮要和 runtime/provider 历史测试一起收口
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "closeout_internal_checker_approved_returns_completion_summary" -q` 当前在本 worktree 和原工作区同提交都会因拿不到 `VISUAL_MILESTONE` 开放审批而失败；已确认不是本轮 `P0-S4` 引入的回归，后续和 closeout / approval 历史测试一起收口
-- [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 本轮额外复验时仍会在 `project-init` workflow 上多带一条旧的 provider / auto-advance incident；当前没证据表明是 `P1-S2` 新回归，先继续留给 runtime/provider 历史测试收口
 - [ ] `P2-S1` 这轮只把 `TicketGraph` 真不可用接到了 `workflow_auto_advance` 的正式 incident 主链；其他直接调用 `run_ceo_shadow_for_trigger` 的路径暂时仍沿现状显式失败，留给后续恢复切片统一收口
-- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "hook or blocked_reason or incident" -q` 本轮验证时仍有 3 条旧的 `project-init` governance/provider incident 历史用例失败：`test_check_internal_checker_escalated_opens_incident_and_marks_dependency_stop`、`test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_breaker`、`test_employee_freeze_containment_opens_staffing_incident_for_executing_ticket`；当前看到的额外 incident 仍来自旧 `node_ceo_architecture_brief` provider / auto-advance 噪音，不是 `P2-S2` 新 gate 自己开的源码票 incident
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 
 ---
@@ -588,12 +668,12 @@
 `P2-S2` 的 required hook gate 主链本身已可验证，但当回归桶直接按“当前 workflow 的 open incident 数量 / fused 节点数”做强断言时，会被这条旧噪音打断。`
 
 **当前处理：**  
-`先把它记成历史问题，继续按当前计划留给 runtime/provider 历史测试收口；本轮不顺手改 project-init governance/provider 老链，避免跨出 Hook 主方向。`
+`已在 P2-S5 收口：provider unavailable 现在会先写 `TICKET_EXECUTION_PRECONDITION_BLOCKED`、把 ticket/node 固定阻断到 `BLOCKING_REASON_PROVIDER_REQUIRED`，不再误走 `TICKET_FAILED / TICKET_RETRY_SCHEDULED / REPEATED_FAILURE_ESCALATION`；对应 3 条 API 历史噪音用例本轮已转绿。`
 
 **是否需要改架构文档：**  
 `no`
 
-**状态：** `open`
+**状态：** `closed`
 
 ### D-008
 **现象：**  
@@ -624,6 +704,21 @@
 `no`
 
 **状态：** `open`
+
+### D-009
+**现象：**  
+`scheduler_runner` 的 provider recovery 历史测试此前沿用旧 env-config / deterministic fallback 口径，没有切到当前 provider center + target binding 真相。`
+
+**影响：**  
+`如果继续保留旧断言，这组测试会把“显式失败 + incident + recovery”误报成回归，反过来驱动代码去兼容旧假成功语义。`
+
+**当前处理：**  
+`已在 P2-S6 收口：helper 现在会补最小 provider center + target binding；5 条 provider incident / recovery 历史测试已转绿，并且断言口径已经改成显式失败与幂等恢复真相。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `closed`
 
 ---
 
@@ -1003,6 +1098,70 @@
 **下一轮起手动作：**
 `从旧的 project-init governance/provider incident 噪音收口切片继续，优先把 runtime/provider 恢复主链和相关历史回归统一到正式 incident / recovery 口径。`
 
+### Session `2026-04-15 / 13`
+**开始前判断：**
+- 当前阶段：`P2`
+- 当前切片：`P2-S5`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 scheduler dispatch、`ticket-lease` 和 `ticket-start` 接上统一 provider precondition gate
+- [x] 新增 `TICKET_EXECUTION_PRECONDITION_BLOCKED / TICKET_EXECUTION_PRECONDITION_CLEARED` 和 `BLOCKING_REASON_PROVIDER_REQUIRED`
+- [x] 把 `project-init -> node_ceo_architecture_brief` 的“无 live provider”从普通失败链剥离，改成显式阻断 + 幂等解阻
+- [x] 同步 API 测试夹具，让直接造执行票的测试默认补最小 provider binding，不靠旧的隐式 deterministic 口径混过去
+- [x] 更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "project_init_without_live_provider_writes_precondition_block_and_clears_after_provider_restore or test_check_internal_checker_escalated_opens_incident_and_marks_dependency_stop or test_dashboard_pipeline_summary_shows_fused_build_stage_for_open_incident_breaker or test_employee_freeze_containment_opens_staffing_incident_for_executing_ticket or test_provider_failure_still_uses_provider_incident_path_not_repeated_failure_incident or test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure" -q` 通过（`6 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "provider or incident" -q` 通过（`3 passed, 8 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -q` 通过（`6 passed`）
+- [x] `python3 -m py_compile backend/app/core/constants.py backend/app/core/reducer.py backend/app/core/ticket_handlers.py backend/tests/test_api.py` 通过
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_scheduler_runner.py -k "provider_incident or provider_recovery" -q` 额外复验仍有 5 条旧测试失败；当前判断是 legacy env-config / deterministic fallback 口径未迁到 provider center + target binding，不作为本轮 blocker，已记到 `D-009`
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `run_ceo_shadow_for_trigger` 其他直调路径还没统一进恢复主链
+- [ ] scheduler_runner 的 provider recovery 历史测试还没迁到 provider center + target binding 口径
+- [ ] API 宽匹配验证命令仍没有稳定、非空跑的聚合桶
+
+**下一轮起手动作：**
+`继续 runtime/provider 历史测试收口，先把 scheduler_runner 的 provider recovery 夹具和直调恢复路径统一到当前 provider center 真相。`
+
+### Session `2026-04-15 / 14`
+**开始前判断：**
+- 当前阶段：`P2`
+- 当前切片：`P2-S5`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 `backend/tests/test_scheduler_runner.py` 补最小 provider center + target binding helper
+- [x] 把 provider auth / bad response / rate limit 相关 runner 断言改成显式失败与 incident 真相
+- [x] 把 mainline recovery 测试改成“先补 governance-first 前置，再测 provider 恢复”，不再把 `project-init` 和旧 scope approval 首跳绑死
+- [x] 更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_scheduler_runner.py -k "provider_incident or provider_recovery" -q` 通过（`5 passed, 46 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "provider or incident" -q` 通过（`3 passed, 8 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "project_init_without_live_provider_writes_precondition_block_and_clears_after_provider_restore or test_provider_failure_still_uses_provider_incident_path_not_repeated_failure_incident or test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure" -q` 通过（`3 passed, 284 deselected`）
+- [x] `python3 -m py_compile backend/tests/test_scheduler_runner.py backend/tests/test_workflow_autopilot.py backend/tests/test_api.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `run_ceo_shadow_for_trigger` 其他直调恢复路径还没统一进正式 incident / recovery 主链
+- [ ] API 宽匹配验证桶仍没有稳定、非空跑的聚合口径
+- [ ] 更宽的 closeout / approval 历史测试桶还没收口
+
+**下一轮起手动作：**
+`继续 runtime/provider 恢复主链收口，优先把 run_ceo_shadow_for_trigger 的直调路径和 API 宽匹配验证桶统一到当前显式错误 / 幂等恢复真相。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1039,8 +1198,8 @@
 这一段保持短，方便下次打开 10 秒内看懂。
 
 - 当前阶段：`P2`
-- 当前切片：`P2-S4`
-- 当前状态：`P2-S4` 已完成；`review_evidence` 票现在也已经进入正式 `artifact_capture -> REQUIRED_HOOK_GATE_BLOCKED -> REPLAY_REQUIRED_HOOKS` 主链，缺 receipt 不会再静默放行下游
-- 最近完成：`delivery_check_report / ui_milestone_review / maker_checker_verdict` 现在都会按 review evidence 票型写 `artifact-capture.json`；`artifact_capture` replay 也已收正到“缺字段 reject、空数组可幂等回放”
-- 当前阻塞：`project-init` governance/provider 老 incident 噪音、`run_ceo_shadow_for_trigger` 其他直调路径和 API 宽匹配验证桶还没统一收口`
-- 下一步：`切到 runtime/provider 恢复收口，把旧 incident 噪音隔离或并回正式 incident / recovery 主链`
+- 当前切片：`P2-S6`
+- 当前状态：`P2-S6` 已完成；`scheduler_runner` 的 provider incident / recovery 历史测试已经切到 provider center + explicit target binding 真相，失败不再被包装成 `COMPLETED`
+- 最近完成：`test_scheduler_runner.py -k "provider_incident or provider_recovery"` 已全绿；mainline recovery 现在会先补 governance-first 前置，再测 provider 恢复，不再把 `project-init` 首跳写死成旧 scope approval
+- 当前阻塞：`run_ceo_shadow_for_trigger` 其他直调恢复路径、API 宽匹配验证桶，以及更宽的 closeout / approval 历史测试还没统一收口
+- 下一步：`继续 runtime/provider 恢复主链收口，优先把 run_ceo_shadow_for_trigger 的直调路径和 API 宽匹配验证桶统一到当前显式错误 / 幂等恢复真相`
