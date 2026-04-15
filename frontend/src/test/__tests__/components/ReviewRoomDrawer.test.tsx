@@ -288,4 +288,105 @@ describe('ReviewRoomDrawer', () => {
       ],
     })
   })
+
+  it('renders advisory context and submits governance patch through modify constraints', async () => {
+    const user = userEvent.setup()
+    const onModifyConstraints = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ReviewRoomDrawer
+        isOpen
+        loading={false}
+        reviewData={{
+          review_pack: {
+            meta: {
+              approval_id: 'apr_004',
+              review_pack_id: 'brp_004',
+              review_pack_version: 1,
+              workflow_id: 'wf_004',
+              review_type: 'VISUAL_MILESTONE',
+              created_at: '2026-04-15T12:00:00+08:00',
+              priority: 'high',
+            },
+            subject: {
+              title: 'Replan the current delivery branch',
+            },
+            trigger: {
+              trigger_event_id: 'evt_004',
+              trigger_reason: 'The board wants a tighter replan baseline.',
+              why_now: 'Need an advisory decision before the next pass.',
+            },
+            recommendation: {
+              recommended_action: 'MODIFY_CONSTRAINTS',
+              recommended_option_id: 'replan_delivery',
+              summary: 'Tighten governance before the next pass.',
+            },
+            options: [
+              {
+                option_id: 'replan_delivery',
+                label: 'Replan delivery',
+                summary: 'Tighten governance before the next pass.',
+              },
+            ],
+            advisory_context: {
+              session_id: 'adv_001',
+              approval_id: 'apr_004',
+              review_pack_id: 'brp_004',
+              trigger_type: 'CONSTRAINT_CHANGE',
+              status: 'OPEN',
+              source_version: 'gv_14',
+              governance_profile_ref: 'gp_001',
+              affected_nodes: ['node_homepage_visual'],
+              decision_pack_refs: [],
+              approved_patch_ref: null,
+              current_governance_modes: {
+                approval_mode: 'AUTO_CEO',
+                audit_mode: 'MINIMAL',
+              },
+              supports_governance_patch: true,
+            },
+            decision_form: {
+              allowed_actions: ['MODIFY_CONSTRAINTS'],
+              command_target_version: 1,
+              requires_comment_on_reject: true,
+              requires_constraint_patch_on_modify: true,
+            },
+          } as never,
+          available_actions: ['MODIFY_CONSTRAINTS'],
+          draft_defaults: {
+            selected_option_id: 'replan_delivery',
+            comment_template: '',
+          } as never,
+        }}
+        inspectorData={null}
+        inspectorLoading={false}
+        error={null}
+        submittingAction={null}
+        onClose={vi.fn()}
+        onOpenInspector={vi.fn()}
+        onOpenArtifact={vi.fn()}
+        onApprove={vi.fn().mockResolvedValue(undefined)}
+        onReject={vi.fn().mockResolvedValue(undefined)}
+        onModifyConstraints={onModifyConstraints}
+      />,
+    )
+
+    expect(screen.getByText('adv_001')).toBeInTheDocument()
+    expect(screen.getByText('AUTO_CEO / MINIMAL')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Approval mode'), 'EXPERT_GATED')
+    await user.selectOptions(screen.getByLabelText('Audit mode'), 'FULL_TIMELINE')
+    await user.click(screen.getByRole('button', { name: 'Submit constraint changes' }))
+
+    expect(onModifyConstraints).toHaveBeenCalledWith({
+      boardComment: 'Apply the updated board constraints.',
+      addRules: [],
+      removeRules: [],
+      replaceRules: [],
+      governancePatch: {
+        approval_mode: 'EXPERT_GATED',
+        audit_mode: 'FULL_TIMELINE',
+      },
+      elicitationAnswers: undefined,
+    })
+  })
 })

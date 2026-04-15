@@ -432,6 +432,10 @@ export type ModifyConstraintsRequest = {
     remove_rules: string[]
     replace_rules: string[]
   }
+  governance_patch?: {
+    approval_mode?: string
+    audit_mode?: string
+  }
   board_comment: string
   elicitation_answers?: ElicitationAnswerRequest[]
   idempotency_key: string

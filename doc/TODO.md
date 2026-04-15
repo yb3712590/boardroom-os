@@ -104,8 +104,11 @@
 - 2026-04-15 本轮已完成 `P3-S1`：`GovernanceProfile` 现已补齐 `auto_approval_scope / expert_review_targets / audit_materialization_policy`，`project-init` 会稳定写默认治理档位；`CompileRequest / CompiledExecutionPackage` 也已显式带 `governance_profile_ref / governance_mode_slice / task_frame / required_doc_surfaces / context_layer_summary`
 - 2026-04-15 本轮已完成 `P3-S2`：`build_ceo_shadow_snapshot()` 现在会稳定产出 `projection_snapshot / replan_focus`；`ceo_prompts / proposer / validator / scheduler / workflow_controller` 已切到新快照合同，缺结构时显式失败，不再从旧顶层隐式补读
 - 2026-04-15 本轮已完成 `P3-S3`：新增最小 `skill_runtime`，当前已稳定解析 `implementation / review / debugging / planning_governance` 四类技能；未知 `forced_skill_ids` 或冲突组合会直接拒绝组包，执行包和执行卡片都会带 `skill_binding`
+- 2026-04-15 本轮已完成 `P4-S1`：新增正式 `BoardAdvisorySession` 合同、schema 和 repository helper；`requires_constraint_patch_on_modify=true` 的 review pack 现在会自动绑定单条 advisory session，Review Room 也会暴露 `advisory_context`
+- 2026-04-15 本轮已完成 `P4-S2`：`MODIFY_CONSTRAINTS` 现在会显式写 advisory decision truth、`DECISION_SUMMARY` 过程资产和可选 `GovernanceProfile` supersede；非法 `governance_patch` 会 fail-closed reject，不再静默忽略
+- 2026-04-15 本轮已完成 `P4-S3`：`build_ceo_shadow_snapshot()` 已补 `board_advisory_sessions / latest_advisory_decision`，`ceo_prompts` 会显式提示先读顾问决策；现有 `ReviewRoomDrawer` 也已补最小 governance patch 控件，不新开页面
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮主方向切到 `P4`：先补顾问环 / ProjectMap 接入的首个切片正文，再决定 `BoardAdvisorySession` 和 `ProjectMap` 谁先落；这轮不顺手扩前端壳，也不碰 `doc/new-architecture/**`
+- 下一轮主方向继续留在 `P4`：先从 `P4-S4` 补 `ProjectMap / FailureFingerprint / GraphHealthReport` 的最小合同，再决定 graph patch engine 和图健康 incident 谁先落；这轮仍不碰 `doc/new-architecture/**`
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

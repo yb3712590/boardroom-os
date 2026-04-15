@@ -31,6 +31,10 @@ type ReviewRoomDrawerProps = {
     addRules: string[]
     removeRules: string[]
     replaceRules: string[]
+    governancePatch?: {
+      approval_mode?: string
+      audit_mode?: string
+    }
     elicitationAnswers?: Array<{
       question_id: string
       selected_option_ids: string[]
@@ -44,6 +48,9 @@ const EMPTY_ELICITATION_ANSWERS: Array<{
   selected_option_ids: string[]
   text: string
 }> = []
+
+const GOVERNANCE_APPROVAL_MODE_OPTIONS = ['AUTO_CEO', 'EXPERT_GATED'] as const
+const GOVERNANCE_AUDIT_MODE_OPTIONS = ['MINIMAL', 'TICKET_TRACE', 'FULL_TIMELINE'] as const
 
 function splitRules(value: string) {
   return value
@@ -163,6 +170,8 @@ export function ReviewRoomDrawer({
   const [addRules, setAddRules] = useState('')
   const [removeRules, setRemoveRules] = useState('')
   const [replaceRules, setReplaceRules] = useState('')
+  const [patchApprovalMode, setPatchApprovalMode] = useState('')
+  const [patchAuditMode, setPatchAuditMode] = useState('')
   const [inspectorVisible, setInspectorVisible] = useState(false)
   const reviewPackIdentity =
     reviewData?.review_pack != null
@@ -181,6 +190,8 @@ export function ReviewRoomDrawer({
   const reviewPack = reviewData?.review_pack
   const availableActions = reviewData?.available_actions ?? []
   const employeeChange = reviewPack?.employee_change ?? null
+  const advisoryContext = reviewPack?.advisory_context ?? null
+  const currentGovernanceModes = advisoryContext?.current_governance_modes ?? null
   const questionnaire = reviewPack?.elicitation_questionnaire ?? []
   const isRequirementElicitation = reviewPack?.meta.review_type === 'REQUIREMENT_ELICITATION'
   const deltaSummaryNote = formatDeltaSummary(reviewPack?.delta_summary)
@@ -203,6 +214,8 @@ export function ReviewRoomDrawer({
     setAddRules('')
     setRemoveRules('')
     setReplaceRules('')
+    setPatchApprovalMode('')
+    setPatchAuditMode('')
     setElicitationAnswers(initialElicitationAnswers)
     setInspectorVisible(false)
     hydratedDraftIdentityRef.current = reviewPackIdentity
@@ -243,6 +256,20 @@ export function ReviewRoomDrawer({
       text: existing?.text ?? '',
     }
   })
+  const governancePatch = {
+    approval_mode:
+      patchApprovalMode && patchApprovalMode !== currentGovernanceModes?.approval_mode
+        ? patchApprovalMode
+        : undefined,
+    audit_mode:
+      patchAuditMode && patchAuditMode !== currentGovernanceModes?.audit_mode
+        ? patchAuditMode
+        : undefined,
+  }
+  const hasGovernancePatch =
+    governancePatch.approval_mode !== undefined || governancePatch.audit_mode !== undefined
+  const hasConstraintRules =
+    addRules.trim().length > 0 || removeRules.trim().length > 0 || replaceRules.trim().length > 0
 
   return (
     <Drawer
@@ -275,6 +302,26 @@ export function ReviewRoomDrawer({
               <p>{deltaSummaryNote ?? 'This board gate did not include a delta summary.'}</p>
             </div>
           </section>
+
+          {advisoryContext ? (
+            <section className="review-room-overview">
+              <div>
+                <span className="eyebrow">Advisory session</span>
+                <p>{advisoryContext.session_id}</p>
+              </div>
+              <div>
+                <span className="eyebrow">Current governance</span>
+                <p>
+                  {advisoryContext.current_governance_modes.approval_mode} /{' '}
+                  {advisoryContext.current_governance_modes.audit_mode}
+                </p>
+              </div>
+              <div>
+                <span className="eyebrow">Graph version</span>
+                <p>{advisoryContext.source_version}</p>
+              </div>
+            </section>
+          ) : null}
 
           {reviewPack.options.length > 0 ? (
             <section className="review-room-options">
@@ -561,16 +608,51 @@ export function ReviewRoomDrawer({
                   />
                 </label>
               </div>
+              {advisoryContext?.supports_governance_patch ? (
+                <div className="constraint-grid">
+                  <label>
+                    <span className="field-label">Approval mode</span>
+                    <select
+                      aria-label="Approval mode"
+                      value={patchApprovalMode}
+                      onChange={(event) => setPatchApprovalMode(event.target.value)}
+                    >
+                      <option value="">Keep current ({currentGovernanceModes?.approval_mode ?? 'unknown'})</option>
+                      {GOVERNANCE_APPROVAL_MODE_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span className="field-label">Audit mode</span>
+                    <select
+                      aria-label="Audit mode"
+                      value={patchAuditMode}
+                      onChange={(event) => setPatchAuditMode(event.target.value)}
+                    >
+                      <option value="">Keep current ({currentGovernanceModes?.audit_mode ?? 'unknown'})</option>
+                      {GOVERNANCE_AUDIT_MODE_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="secondary-button"
-                disabled={submittingAction !== null || addRules.trim().length === 0}
+                disabled={submittingAction !== null || (!hasConstraintRules && !hasGovernancePatch)}
                 onClick={() =>
                   void onModifyConstraints({
                     boardComment: modifyNote.trim() || 'Apply the updated board constraints.',
                     addRules: splitRules(addRules),
                     removeRules: splitRules(removeRules),
                     replaceRules: splitRules(replaceRules),
+                    governancePatch: hasGovernancePatch ? governancePatch : undefined,
                     elicitationAnswers: isRequirementElicitation ? normalizedElicitationAnswers : undefined,
                   })
                 }

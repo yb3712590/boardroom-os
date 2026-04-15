@@ -229,6 +229,23 @@ CREATE TABLE IF NOT EXISTS compiled_execution_package (
     payload_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS board_advisory_session (
+    session_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    approval_id TEXT NOT NULL UNIQUE,
+    review_pack_id TEXT NOT NULL UNIQUE,
+    trigger_type TEXT NOT NULL,
+    source_version TEXT NOT NULL,
+    governance_profile_ref TEXT NOT NULL,
+    affected_nodes_json TEXT NOT NULL,
+    decision_pack_refs_json TEXT NOT NULL,
+    board_decision_json TEXT,
+    approved_patch_ref TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ceo_shadow_run (
     run_id TEXT PRIMARY KEY,
     workflow_id TEXT NOT NULL,
@@ -300,6 +317,15 @@ ON compiled_execution_package(ticket_id);
 
 CREATE INDEX IF NOT EXISTS idx_compiled_execution_package_compile_request_id
 ON compiled_execution_package(compile_request_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_board_advisory_session_approval_id
+ON board_advisory_session(approval_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_board_advisory_session_review_pack_id
+ON board_advisory_session(review_pack_id);
+
+CREATE INDEX IF NOT EXISTS idx_board_advisory_session_workflow_id
+ON board_advisory_session(workflow_id);
 
 CREATE INDEX IF NOT EXISTS idx_artifact_index_ticket_id
 ON artifact_index(ticket_id);

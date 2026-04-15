@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.contracts.advisory import BoardAdvisorySession
 from app.config import get_settings
 from app.contracts.governance import GovernanceProfile
 from app.contracts.runtime import CompileManifest, CompiledContextBundle, CompiledExecutionPackage
@@ -40,6 +41,7 @@ from app.core.constants import (
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_COMPLETED,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
+    EVENT_BOARD_ADVISORY_SESSION_OPENED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
@@ -74,10 +76,15 @@ from app.core.persona_profiles import (
     build_default_employee_roster,
     normalize_employee_projection_profiles,
 )
+from app.core.board_advisory import (
+    build_board_advisory_session,
+    review_pack_requires_board_advisory,
+)
 from app.core.versioning import (
     build_compiled_context_bundle_version_ref,
     build_compiled_execution_package_version_ref,
     build_compile_manifest_version_ref,
+    resolve_workflow_graph_version,
     validate_supersedes_ref,
 )
 from app.core.reducer import (
@@ -135,6 +142,7 @@ class ControlPlaneRepository:
             self._ensure_compile_manifest_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_governance_profile_shape(connection)
+            self._ensure_board_advisory_session_shape(connection)
             self._ensure_ceo_shadow_run_shape(connection)
             self._ensure_artifact_index_shape(connection)
             self._ensure_artifact_upload_session_shape(connection)
@@ -2909,6 +2917,190 @@ class ControlPlaneRepository:
             rows = owned_connection.execute(query, (workflow_id,)).fetchall()
             return [self._convert_governance_profile_row(row) for row in rows]
 
+    def create_board_advisory_session(
+        self,
+        connection: sqlite3.Connection,
+        session: BoardAdvisorySession,
+    ) -> dict[str, Any]:
+        connection.execute(
+            """
+            INSERT INTO board_advisory_session (
+                session_id,
+                workflow_id,
+                approval_id,
+                review_pack_id,
+                trigger_type,
+                source_version,
+                governance_profile_ref,
+                affected_nodes_json,
+                decision_pack_refs_json,
+                board_decision_json,
+                approved_patch_ref,
+                status,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.session_id,
+                session.workflow_id,
+                session.approval_id,
+                session.review_pack_id,
+                session.trigger_type,
+                session.source_version,
+                session.governance_profile_ref,
+                json.dumps(session.affected_nodes, sort_keys=True),
+                json.dumps(session.decision_pack_refs, sort_keys=True),
+                (
+                    json.dumps(session.board_decision.model_dump(mode="json"), sort_keys=True)
+                    if session.board_decision is not None
+                    else None
+                ),
+                session.approved_patch_ref,
+                session.status,
+                now_local().isoformat(),
+                now_local().isoformat(),
+            ),
+        )
+        created = self.get_board_advisory_session(session.session_id, connection=connection)
+        if created is None:
+            raise RuntimeError("Board advisory session row was not persisted.")
+        return created
+
+    def get_board_advisory_session(
+        self,
+        session_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM board_advisory_session
+            WHERE session_id = ?
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (session_id,)).fetchone()
+            return None if row is None else self._convert_board_advisory_session_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (session_id,)).fetchone()
+            return None if row is None else self._convert_board_advisory_session_row(row)
+
+    def get_board_advisory_session_for_approval(
+        self,
+        approval_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM board_advisory_session
+            WHERE approval_id = ?
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (approval_id,)).fetchone()
+            return None if row is None else self._convert_board_advisory_session_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (approval_id,)).fetchone()
+            return None if row is None else self._convert_board_advisory_session_row(row)
+
+    def list_board_advisory_sessions(
+        self,
+        workflow_id: str,
+        *,
+        statuses: list[str] | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [workflow_id]
+        status_clause = ""
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            status_clause = f" AND status IN ({placeholders})"
+            params.extend(statuses)
+        query = f"""
+            SELECT * FROM board_advisory_session
+            WHERE workflow_id = ?{status_clause}
+            ORDER BY updated_at DESC, session_id DESC
+        """
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_board_advisory_session_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_board_advisory_session_row(row) for row in rows]
+
+    def decide_board_advisory_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        board_decision: dict[str, Any],
+        decision_pack_refs: list[str],
+        approved_patch_ref: str,
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_session(session_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory session is missing.")
+        if str(current.get("status") or "") != "OPEN":
+            raise ValueError("Board advisory session must stay OPEN until the board records a decision.")
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET decision_pack_refs_json = ?,
+                board_decision_json = ?,
+                approved_patch_ref = ?,
+                status = ?,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                json.dumps(list(decision_pack_refs), sort_keys=True),
+                json.dumps(board_decision, sort_keys=True),
+                approved_patch_ref,
+                "DECIDED",
+                updated_at.isoformat(),
+                session_id,
+            ),
+        )
+        updated = self.get_board_advisory_session(session_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory session row vanished after decision update.")
+        return updated
+
+    def dismiss_board_advisory_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_session(session_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory session is missing.")
+        if str(current.get("status") or "") != "OPEN":
+            raise ValueError("Board advisory session must stay OPEN until it is dismissed.")
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET status = ?,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                "DISMISSED",
+                updated_at.isoformat(),
+                session_id,
+            ),
+        )
+        updated = self.get_board_advisory_session(session_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory session row vanished after dismissal.")
+        return updated
+
     def get_cursor_and_version(
         self,
         connection: sqlite3.Connection | None = None,
@@ -4448,6 +4640,12 @@ class ControlPlaneRepository:
             existing = self.get_approval_by_id(connection, approval_id)
             if existing is None:
                 raise RuntimeError("Approval request idempotency conflict without existing approval row.")
+            if review_pack_requires_board_advisory(review_pack_payload):
+                self._ensure_board_advisory_session_for_approval(
+                    connection,
+                    approval=existing,
+                    review_pack=review_pack_payload,
+                )
             return existing
 
         command_target_version = int(event_row["sequence_no"])
@@ -4503,6 +4701,15 @@ class ControlPlaneRepository:
         created = self.get_approval_by_id(connection, approval_id)
         if created is None:
             raise RuntimeError("Approval row was not persisted.")
+        if review_pack_requires_board_advisory(review_pack_payload):
+            self._ensure_board_advisory_session_for_approval(
+                connection,
+                approval=created,
+                review_pack=review_pack_payload,
+            )
+            created = self.get_approval_by_id(connection, approval_id)
+            if created is None:
+                raise RuntimeError("Approval row vanished after advisory session creation.")
         return created
 
     def resolve_approval(
@@ -4551,6 +4758,57 @@ class ControlPlaneRepository:
         if updated is None:
             raise RuntimeError("Approval disappeared after resolution.")
         return updated
+
+    def _ensure_board_advisory_session_for_approval(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        approval: dict[str, Any],
+        review_pack: dict[str, Any],
+    ) -> dict[str, Any]:
+        existing = self.get_board_advisory_session_for_approval(
+            str(approval["approval_id"]),
+            connection=connection,
+        )
+        if existing is not None:
+            return existing
+        workflow_id = str(approval["workflow_id"])
+        governance_profile = self.get_latest_governance_profile(workflow_id, connection=connection)
+        if governance_profile is None:
+            raise RuntimeError("Governance profile is required before creating a board advisory session.")
+        session = build_board_advisory_session(
+            workflow_id=workflow_id,
+            approval_id=str(approval["approval_id"]),
+            review_pack_id=str(approval["review_pack_id"]),
+            review_pack=review_pack,
+            source_version=resolve_workflow_graph_version(self, workflow_id, connection=connection),
+            governance_profile_ref=str(governance_profile["profile_id"]),
+        )
+        created = self.create_board_advisory_session(connection, session)
+        advisory_event = self.insert_event(
+            connection,
+            event_type=EVENT_BOARD_ADVISORY_SESSION_OPENED,
+            actor_type="system",
+            actor_id="board-review",
+            workflow_id=workflow_id,
+            idempotency_key=f"board-advisory-open:{approval['approval_id']}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "session_id": created["session_id"],
+                "approval_id": created["approval_id"],
+                "review_pack_id": created["review_pack_id"],
+                "trigger_type": created["trigger_type"],
+                "source_version": created["source_version"],
+                "governance_profile_ref": created["governance_profile_ref"],
+                "affected_nodes": list(created["affected_nodes"]),
+                "status": created["status"],
+            },
+            occurred_at=approval["created_at"],
+        )
+        if advisory_event is None:
+            raise RuntimeError("Board advisory session open event idempotency conflict.")
+        return created
 
     def list_events_for_testing(self) -> list[dict[str, Any]]:
         self.initialize()
@@ -4620,6 +4878,23 @@ class ControlPlaneRepository:
         converted.pop("auto_approval_scope_json", None)
         converted.pop("expert_review_targets_json", None)
         converted.pop("audit_materialization_policy_json", None)
+        return converted
+
+    def _convert_board_advisory_session_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["affected_nodes"] = json.loads(converted.get("affected_nodes_json") or "[]")
+        converted["decision_pack_refs"] = json.loads(converted.get("decision_pack_refs_json") or "[]")
+        converted["board_decision"] = (
+            json.loads(converted["board_decision_json"])
+            if converted.get("board_decision_json") not in {None, ""}
+            else None
+        )
+        for field in ("created_at", "updated_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted.pop("affected_nodes_json", None)
+        converted.pop("decision_pack_refs_json", None)
+        converted.pop("board_decision_json", None)
         return converted
 
     def _convert_ceo_shadow_run_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -6484,6 +6759,65 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_ceo_shadow_run_occurred_at ON ceo_shadow_run(occurred_at)"
+        )
+
+    def _ensure_board_advisory_session_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS board_advisory_session (
+                session_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                approval_id TEXT NOT NULL UNIQUE,
+                review_pack_id TEXT NOT NULL UNIQUE,
+                trigger_type TEXT NOT NULL,
+                source_version TEXT NOT NULL,
+                governance_profile_ref TEXT NOT NULL,
+                affected_nodes_json TEXT NOT NULL,
+                decision_pack_refs_json TEXT NOT NULL,
+                board_decision_json TEXT,
+                approved_patch_ref TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(board_advisory_session)").fetchall()
+        }
+        required_columns = {
+            "session_id": "TEXT",
+            "workflow_id": "TEXT",
+            "approval_id": "TEXT",
+            "review_pack_id": "TEXT",
+            "trigger_type": "TEXT",
+            "source_version": "TEXT",
+            "governance_profile_ref": "TEXT",
+            "affected_nodes_json": "TEXT NOT NULL DEFAULT '[]'",
+            "decision_pack_refs_json": "TEXT NOT NULL DEFAULT '[]'",
+            "board_decision_json": "TEXT",
+            "approved_patch_ref": "TEXT",
+            "status": "TEXT",
+            "created_at": "TEXT",
+            "updated_at": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE board_advisory_session ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_board_advisory_session_approval_id ON board_advisory_session(approval_id)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_board_advisory_session_review_pack_id ON board_advisory_session(review_pack_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_board_advisory_session_workflow_id ON board_advisory_session(workflow_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_board_advisory_session_status ON board_advisory_session(status)"
         )
 
     def _ensure_artifact_index_shape(self, connection: sqlite3.Connection) -> None:

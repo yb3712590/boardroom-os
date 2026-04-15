@@ -232,6 +232,29 @@ export type ReviewPack = {
     budget_delta_tokens?: number
     summary?: string
   } | null
+  advisory_context?: {
+    session_id: string
+    approval_id: string
+    review_pack_id: string
+    trigger_type: string
+    status: string
+    source_version: string
+    governance_profile_ref: string
+    affected_nodes: string[]
+    decision_pack_refs: string[]
+    approved_patch_ref?: string | null
+    current_governance_modes: {
+      approval_mode: string
+      audit_mode: string
+    }
+    supports_governance_patch: boolean
+    board_decision?: {
+      decision_action?: string
+      board_comment?: string
+      constraint_patch?: Record<string, string[]>
+      governance_patch?: Record<string, string>
+    } | null
+  } | null
   decision_form: {
     allowed_actions: string[]
     command_target_version: number

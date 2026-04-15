@@ -91,6 +91,7 @@ from app.contracts.commands import IncidentFollowupAction
 from app.config import get_settings
 from app.core.artifact_store import ArtifactStore
 from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
+from app.core.board_advisory import build_board_advisory_context
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_OPEN,
@@ -1883,6 +1884,19 @@ def build_review_room_projection(
     available_actions = payload.get("available_actions", [])
     if approval["status"] != APPROVAL_STATUS_OPEN:
         available_actions = []
+    review_pack = payload.get("review_pack")
+    if isinstance(review_pack, dict):
+        advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+        if advisory_session is not None:
+            current_profile = repository.get_latest_governance_profile(approval["workflow_id"])
+            if current_profile is not None:
+                review_pack = {
+                    **review_pack,
+                    "advisory_context": build_board_advisory_context(
+                        advisory_session,
+                        current_profile=current_profile,
+                    ),
+                }
 
     return ReviewRoomProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
@@ -1890,7 +1904,7 @@ def build_review_room_projection(
         projection_version=projection_version,
         cursor=cursor,
         data=ReviewRoomProjectionData(
-            review_pack=payload.get("review_pack"),
+            review_pack=review_pack,
             available_actions=available_actions,
             draft_defaults=ReviewRoomDraftDefaults(**payload.get("draft_defaults", {})),
         ),

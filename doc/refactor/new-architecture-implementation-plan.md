@@ -1,9 +1,9 @@
 # 新架构重构实施计划
 
 > 状态：`active`
-> 当前阶段：`P3`
-> 当前切片：`P3-S3`
-> 最后更新：`2026-04-15 18:33`
+> 当前阶段：`P4`
+> 当前切片：`P4-S3`
+> 最后更新：`2026-04-15 19:50`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -65,7 +65,7 @@
 | `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `done` | 图成为正式真相面 |
 | `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `done` | 失败显式化、后置动作制度化 |
 | `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `done` | CEO / Worker 不再靠长提示词兜底 |
-| `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `todo` | 可重规划、可诊断、可复盘 |
+| `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `in_progress` | 可重规划、可诊断、可复盘 |
 
 状态只允许用：
 
@@ -79,10 +79,10 @@
 ## 6. 当前阶段
 
 ### 当前阶段编号
-`P3`
+`P4`
 
 ### 当前阶段目标
-先把执行包、CEO 快照和技能绑定收成正式 runtime 合同，让 Worker / CEO 都先读结构化包和结构化快照，再决定执行与恢复。
+先把 Board 顾问环先接进当前主线，让 `MODIFY_CONSTRAINTS` 不再只是板审结果，而是显式顾问决策真相；同时把 advisory 摘要接进 CEO 快照和 Review Room，再继续往 `ProjectMap / GraphHealth` 推进。
 
 ### 当前阶段入口条件
 - [x] 当前代码现实已核对
@@ -92,14 +92,15 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [x] 本阶段所有必做切片完成
-- [x] `GovernanceProfile` 已进入 workflow / compile / worker-runtime 主链
-- [x] `CompiledExecutionPackage` 已带 `governance_mode_slice / task_frame / required_doc_surfaces / context_layer_summary / skill_binding`
-- [x] `build_ceo_shadow_snapshot()` 已输出 `projection_snapshot / replan_focus`，CEO 消费面已切到新形状
-- [x] `SkillBinding` 已按任务类别显式解析，并对未知或冲突绑定 fail-closed
+- [ ] 本阶段所有必做切片完成
+- [x] `BoardAdvisorySession` 已进入正式合同、持久化和只读投影
+- [x] `MODIFY_CONSTRAINTS` 已收成显式顾问决策、`DECISION_SUMMARY` 过程资产和可选治理档位 supersede
+- [x] `build_ceo_shadow_snapshot()` 已输出 `board_advisory_sessions / latest_advisory_decision`，CEO prompt 已切到新读面
+- [x] `Review Room` 已暴露 `advisory_context`，现有抽屉已能显示最小 advisory 摘要和治理档位 patch 控件
+- [ ] `ProjectMap` 已进入正式合同和可消费读面
+- [ ] `GraphHealthMonitor` 已进入正式合同和 incident / snapshot 主链
 - [x] 每个已完成切片都有最小验证证据
 - [x] 涉及的运行文档已同步
-- [x] 未完成项已明确转移到下阶段或阻塞区
 - [x] `doc/history/memory-log.md` 已补记
 
 ---
@@ -544,6 +545,125 @@
 
 **状态：** `done`
 
+### 切片 `P4-S1`
+**名称：**  
+`BoardAdvisorySession 最小合同与存储`
+
+**现实问题：**  
+`当前 board review 只有 approval 结果，没有正式顾问环真相；Review Room 能改 constraints，但系统里没有一等 advisory session 可追。`
+
+**对应架构文档：**
+- `doc/new-architecture/08-board-advisor-and-replanning.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/11-governance-profile-and-audit-modes.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 新增最小 `BoardAdvisorySession` 合同
+  - [x] 给 repository / schema 补 advisory session 持久化和只读查询
+  - [x] 让 `requires_constraint_patch_on_modify=true` 的 review pack 自动绑定单条 advisory session
+- 不做什么：
+  - [x] 不新开 advisory 页面
+  - [x] 不补 graph patch engine
+  - [x] 不补 `ProjectMap`
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] 新 advisory session 能自动创建
+- [x] review room 已能读到 advisory 上下文
+- [x] 相关 API 测试通过
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
+### 切片 `P4-S2`
+**名称：**  
+`顾问决策真相与治理档位 supersede`
+
+**现实问题：**  
+`MODIFY_CONSTRAINTS` 之前只会 resolve approval 并触发后续动作，没有正式顾问决策资产，也不会把治理档位变更收成 append-only 真相。`
+
+**对应架构文档：**
+- `doc/new-architecture/08-board-advisor-and-replanning.md`
+- `doc/new-architecture/10-migration-map.md`
+- `doc/new-architecture/11-governance-profile-and-audit-modes.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 给 `modify-constraints` 增加显式 advisory decision 链
+  - [x] 新增 `DECISION_SUMMARY` 过程资产和 artifact 留痕
+  - [x] 支持最小 `governance_patch(approval_mode / audit_mode)` 并 append-only supersede `GovernanceProfile`
+- 不做什么：
+  - [x] 不静默忽略非法 `governance_patch`
+  - [x] 不新建独立 graph patch 结构
+  - [x] 不顺手扩 `ProjectMap / GraphHealth`
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] `MODIFY_CONSTRAINTS` 会写顾问决策真相和 `DECISION_SUMMARY`
+- [x] 非法 `governance_patch` 会 fail-closed reject
+- [x] 治理档位 supersede 和板审 idempotency 行为可验证
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+
+**状态：** `done`
+
+### 切片 `P4-S3`
+**名称：**  
+`CEO Snapshot / Review Room 顾问摘要接线`
+
+**现实问题：**  
+`就算 advisory 决策已经存在，CEO snapshot 和现有 Review Room 也看不到；系统仍可能继续按旧约束推进。`
+
+**对应架构文档：**
+- `doc/new-architecture/04-ceo-memory-model.md`
+- `doc/new-architecture/08-board-advisor-and-replanning.md`
+- `doc/new-architecture/10-migration-map.md`
+
+**实施边界：**
+- 做什么：
+  - [x] 给 `ProjectionSnapshot` 补 `board_advisory_sessions[]`
+  - [x] 给 `ReplanFocus` 补 `latest_advisory_decision`
+  - [x] 给现有 `Review Room / ReviewRoomDrawer` 补 advisory 摘要和最小 governance patch 控件
+- 不做什么：
+  - [x] 不改 CEO hidden fallback 语义
+  - [x] 不新开前端路由
+  - [x] 不把 advisory 扩成通用项目地图
+
+**代码任务：**
+- [x] 任务 1
+- [x] 任务 2
+- [x] 任务 3
+
+**验证：**
+- [x] `ceo_shadow_snapshot` 能读到最新 advisory 决策
+- [x] `ceo_prompts` 已显式消费 advisory 摘要
+- [x] `ReviewRoomDrawer` 测试和 frontend build 通过
+
+**文档更新：**
+- [x] 更新本计划文档
+- [x] 更新 `doc/TODO.md`
+- [x] 更新 `doc/history/memory-log.md`
+- [x] 如果没改 `README.md`，在收尾说明原因
+
+**状态：** `done`
+
 ---
 
 ## 8. 任务清单核对区
@@ -569,9 +689,13 @@
 - [x] `P3-S1` 已完成：`GovernanceProfile` 现在已补 `auto_approval_scope / expert_review_targets / audit_materialization_policy`，`project-init` 会稳定落默认治理档位；`CompileRequest / CompiledExecutionPackage` 已带 `governance_profile_ref`、`governance_mode_slice`、`task_frame`、`required_doc_surfaces` 与 `context_layer_summary`
 - [x] `P3-S2` 已完成：`build_ceo_shadow_snapshot()` 现在会稳定产出 `projection_snapshot / replan_focus`；`ceo_prompts / proposer / validator / scheduler / workflow_controller` 已切到新读面，缺少新结构时直接显式失败，不再从旧顶层隐式兜底
 - [x] `P3-S3` 已完成：新增最小 `skill_runtime`，当前已稳定解析 `implementation / review / debugging / planning_governance` 四类技能；未知 `forced_skill_ids` 或冲突组合会直接拒绝组包，执行包与执行卡片都会带 `skill_binding`
+- [x] `P4-S1` 已完成：新增正式 `BoardAdvisorySession` 合同、schema 和 repository helper；凡是 `requires_constraint_patch_on_modify=true` 的 review pack，当前都会自动绑定单条 advisory session，并在 review-room 读面暴露 `advisory_context`
+- [x] `P4-S2` 已完成：`MODIFY_CONSTRAINTS` 现在会显式写 advisory decision truth、`DECISION_SUMMARY` 过程资产和可选 `GovernanceProfile` supersede；非法 `governance_patch` 不再隐式忽略，而是直接 reject
+- [x] `P4-S3` 已完成：`build_ceo_shadow_snapshot()` 现在会输出 `projection_snapshot.board_advisory_sessions[] / replan_focus.latest_advisory_decision`；`ceo_prompts` 已显式提示先读顾问决策，现有 `ReviewRoomDrawer` 也已补最小 governance patch 控件
 
 ### 未完成
-- [ ] 暂无；`P3` 阶段这轮已按当前计划收口，下一轮转 `P4`
+- [ ] `P4-S4` 还没开始；`ProjectMap / FailureFingerprint / GraphHealthReport` 仍未进入正式合同和 CEO 可消费读面
+- [ ] `BoardAdvisorySession.approved_patch_ref` 当前先指向 `DECISION_SUMMARY` 过程资产，不是独立 graph patch engine
 
 ### 明确放弃
 - [ ] 暂无
@@ -582,6 +706,7 @@
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
+- [ ] `ProjectMap / GraphHealthMonitor` 这轮仍未开工；当前 advisory 主链已经能审计和 rerun，但还没有把地图切片、失败热区和图健康检查并入 CEO 快照
 
 ---
 
@@ -756,6 +881,21 @@
 `no`
 
 **状态：** `closed`
+
+### D-012
+**现象：**  
+`架构文档里的 \`approved_patch_ref\` 指向最终 graph patch；但这轮最小闭环里，\`BoardAdvisorySession.approved_patch_ref\` 先指向了 \`DECISION_SUMMARY\` 过程资产，由 CEO rerun 消费结构化决策，而不是独立 graph patch engine。`
+
+**影响：**  
+`P4` 第一批已经有了可审计的顾问决策真相，也能 fail-closed 地影响下一次 CEO 运行；但它还没有把“Board 决策 -> 正式 graph patch -> 新 graph_version”这段补齐。后续如果直接把这层写成“graph patch 已上线”，会误导下一轮实现判断。`
+
+**当前处理：**  
+`本轮先保守收口到 \`DECISION_SUMMARY\` 过程资产 + advisory session + CEO rerun；\`ProjectMap / graph patch engine / GraphHealthMonitor\` 继续留到后续 P4 切片，不在这一轮顺手扩。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `open`
 
 ---
 
@@ -1294,6 +1434,37 @@
 **下一轮起手动作：**
 `从 P4 起手，先补顾问环 / ProjectMap 接入的首个切片正文，再决定 BoardAdvisorySession 和 ProjectMap 谁先落。`
 
+### Session `2026-04-15 / 18`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S1`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `BoardAdvisorySession` 合同、schema、repository helper 和只读查询；`requires_constraint_patch_on_modify=true` 的 review pack 现在会自动绑定单条 advisory session
+- [x] 把 `MODIFY_CONSTRAINTS` 收成显式顾问决策链：会写 advisory decision truth、`DECISION_SUMMARY` 过程资产，并在需要时 append-only supersede `GovernanceProfile`
+- [x] 把 `build_ceo_shadow_snapshot()` 和现有 `Review Room / ReviewRoomDrawer` 接到 advisory 摘要；CEO prompt 现在会显式提示先读 `board_advisory_sessions / latest_advisory_decision`
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `python -m py_compile backend/app/contracts/advisory.py backend/app/contracts/commands.py backend/app/contracts/ceo.py backend/app/contracts/process_assets.py backend/app/core/board_advisory.py backend/app/core/approval_handlers.py backend/app/core/ceo_snapshot.py backend/app/core/ceo_prompts.py backend/app/core/process_assets.py backend/app/core/projections.py backend/app/core/constants.py backend/app/db/repository.py backend/app/db/schema.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py` 通过
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "review_room_route_returns_existing_projection or review_room_route_includes_board_advisory_context or modify_constraints or board_approve_dismisses_linked_board_advisory_session" -q` 通过（`7 passed, 290 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "latest_board_advisory_decision or prompt_mentions_latest_board_advisory_decision" -q` 通过（`2 passed, 71 deselected`）
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/ReviewRoomDrawer.test.tsx src/test/__tests__/components/ReviewRoomDrawer.persistence.test.tsx` 通过（`5 passed`）
+- [x] `cd frontend && npm run build` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `P4-S4` 还没开始；`ProjectMap / FailureFingerprint / GraphHealthReport` 仍未进入正式合同和 CEO 可消费读面
+- [ ] `approved_patch_ref -> graph patch engine` 这层当前仍是 open deviation，后续要单独收口
+
+**下一轮起手动作：**
+`从 P4-S4 继续，先补 ProjectMap 最小合同和 process asset / advisory 的血缘接线，再决定 graph patch engine 和 GraphHealthMonitor 谁先落。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1329,9 +1500,9 @@
 
 这一段保持短，方便下次打开 10 秒内看懂。
 
-- 当前阶段：`P3`
-- 当前切片：`P3-S3`
-- 当前状态：`P3` 已按当前计划收口；默认 `GovernanceProfile`、执行包治理切片、`projection_snapshot / replan_focus` 和 `skill_binding` 都已进入正式运行时合同
-- 最近完成：`worker_runtime` 执行包、`ticket_context_archive`、`ceo_shadow` 读面和 `skill_runtime` 已全部对齐新协议；相关后端专项回归均已实跑通过
-- 当前阻塞：`P4` 还没补首个切片正文；`scheduler_runner -k "ceo_shadow"` 仍没有稳定、非空跑的聚合桶；synthetic manual closeout 链仍不会自动产出 dashboard `completion_summary`
-- 下一步：`从 P4 起手，先补顾问环 / ProjectMap 接入的首个切片正文，再继续实现`
+- 当前阶段：`P4`
+- 当前切片：`P4-S3`
+- 当前状态：`P4` 第一批顾问环切片已落地；`BoardAdvisorySession`、`DECISION_SUMMARY`、可选治理档位 supersede、`board_advisory_sessions / latest_advisory_decision` 和 `review_pack.advisory_context` 都已进入正式主链
+- 最近完成：`modify-constraints` 现在会显式写 advisory decision truth 和最小 governance patch；现有 `ReviewRoomDrawer` 也已能显示 advisory 摘要并提交最小 governance patch
+- 当前阻塞：`P4-S4` 还没开始；`approved_patch_ref` 当前先指向 `DECISION_SUMMARY` 过程资产，不是独立 graph patch engine；`scheduler_runner -k "ceo_shadow"` 仍没有稳定、非空跑的聚合桶
+- 下一步：`从 P4-S4 起手，优先补 ProjectMap 最小合同和 advisory / process asset 血缘接线，再继续图健康与重规划主链`

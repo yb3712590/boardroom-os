@@ -76,6 +76,10 @@ def build_compiled_execution_package_process_asset_ref(
     return _process_asset_ref("compiled-execution-package", ticket_id, version_int=version_int)
 
 
+def build_decision_summary_process_asset_ref(session_id: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("decision-summary", session_id, version_int=version_int)
+
+
 def build_meeting_decision_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
     return _process_asset_ref("meeting-decision-record", ticket_id, version_int=version_int)
 
@@ -339,6 +343,13 @@ def resolve_process_asset(
             builder=build_compiled_execution_package_process_asset_ref,
             connection=connection,
         )
+    if kind == "decision-summary":
+        return _resolve_decision_summary_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            session_id=target,
+            connection=connection,
+        )
     if kind == "meeting-decision-record":
         return _resolve_meeting_decision_process_asset(
             repository,
@@ -558,6 +569,51 @@ def _resolve_json_payload_process_asset(
         json_content=transform_payload(payload),
         schema_ref=schema_ref,
     )
+
+
+def _resolve_decision_summary_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    session_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        session = repository.get_board_advisory_session(session_id, connection=resolved_connection)
+        if session is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        board_decision = dict(session.get("board_decision") or {})
+        artifact_ref = str(board_decision.get("source_artifact_ref") or "").strip()
+        if not artifact_ref:
+            raise ValueError(f"Process asset {process_asset_ref} is missing its source artifact.")
+
+        def _transform(payload: dict[str, Any]) -> dict[str, Any]:
+            return dict(payload)
+
+        base = _resolve_json_payload_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            process_asset_kind="DECISION_SUMMARY",
+            ticket_id=str(session.get("approval_id") or session_id),
+            artifact_ref=artifact_ref,
+            schema_ref="decision_summary@1",
+            summary=(
+                str(board_decision.get("board_comment") or "").strip()
+                or f"Board advisory decision summary for {session_id}"
+            ),
+            transform_payload=_transform,
+            connection=resolved_connection,
+        )
+        canonical_ref = build_decision_summary_process_asset_ref(session_id, version_int=1)
+        base.process_asset_ref = canonical_ref
+        base.canonical_ref = canonical_ref
+        base.version_int = 1
+        base.process_asset_kind = "DECISION_SUMMARY"
+        base.consumable_by = ["ceo", "review"]
+        if isinstance(base.source_metadata, dict):
+            base.source_metadata["approval_id"] = session.get("approval_id")
+            base.source_metadata["review_pack_id"] = session.get("review_pack_id")
+        return base
 
 
 def _resolve_meeting_decision_process_asset(

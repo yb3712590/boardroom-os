@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.config import get_settings
+from app.contracts.advisory import GovernancePatch
 from app.contracts.commands import (
     BoardApproveCommand,
     BoardRejectCommand,
@@ -29,6 +30,8 @@ from app.core.constants import (
     APPROVAL_STATUS_REJECTED,
     EMPLOYEE_STATE_ACTIVE,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
+    EVENT_BOARD_ADVISORY_DECISION_RECORDED,
+    EVENT_BOARD_ADVISORY_SESSION_DISMISSED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_EMPLOYEE_HIRED,
@@ -39,6 +42,17 @@ from app.core.constants import (
     INCIDENT_TYPE_REVIEW_GATE_MERGE_FAILED,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+)
+from app.core.board_advisory import (
+    advisory_decision_artifact_ref,
+    advisory_decision_logical_path,
+    advisory_decision_process_asset_ref,
+    advisory_supports_governance_patch,
+    build_board_advisory_context,
+    build_board_advisory_decision,
+    build_board_advisory_decision_artifact_payload,
+    build_governance_profile_from_patch,
+    review_pack_requires_board_advisory,
 )
 from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
 from app.core.ids import new_prefixed_id
@@ -67,6 +81,7 @@ from app.core.project_workspaces import (
     sync_ticket_boardroom_views,
 )
 from app.core.process_assets import (
+    build_decision_summary_process_asset_ref,
     build_source_code_delivery_process_asset_ref,
     get_ticket_output_process_asset_refs,
     merge_input_process_asset_refs,
@@ -594,6 +609,240 @@ def _save_text_artifact(
         delete_reason=None,
         created_at=occurred_at,
     )
+
+
+def _save_json_artifact(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    artifact_ref: str,
+    logical_path: str,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    payload: dict[str, Any],
+    kind: str,
+    occurred_at,
+) -> None:
+    artifact_store = repository.artifact_store
+    if artifact_store is None:
+        raise ValueError("Artifact store is required to record board advisory artifacts.")
+    materialized = artifact_store.materialize_json(
+        logical_path,
+        payload,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        artifact_ref=artifact_ref,
+    )
+    repository.save_artifact_record(
+        connection,
+        artifact_ref=artifact_ref,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        logical_path=logical_path,
+        kind=kind,
+        media_type="application/json",
+        materialization_status="MATERIALIZED",
+        lifecycle_status="ACTIVE",
+        storage_backend=materialized.storage_backend,
+        storage_relpath=materialized.storage_relpath,
+        storage_object_key=materialized.storage_object_key,
+        storage_delete_status=materialized.storage_delete_status,
+        storage_delete_error=None,
+        content_hash=materialized.content_hash,
+        size_bytes=materialized.size_bytes,
+        retention_class="PERSISTENT",
+        retention_class_source="explicit",
+        retention_ttl_sec=None,
+        retention_policy_source="explicit_class",
+        expires_at=None,
+        deleted_at=None,
+        deleted_by=None,
+        delete_reason=None,
+        created_at=occurred_at,
+    )
+
+
+def _require_board_advisory_session(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+) -> dict[str, Any] | None:
+    review_pack = ((approval.get("payload") or {}).get("review_pack") or {})
+    if not review_pack_requires_board_advisory(review_pack):
+        return None
+    session = repository.get_board_advisory_session_for_approval(
+        str(approval["approval_id"]),
+        connection=connection,
+    )
+    if session is None:
+        raise ValueError("Board advisory session is required before resolving this review pack.")
+    return session
+
+
+def _dismiss_board_advisory_session_if_needed(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+    command_id: str,
+    occurred_at,
+    idempotency_key: str,
+) -> None:
+    session = _require_board_advisory_session(repository, connection, approval=approval)
+    if session is None:
+        return
+    repository.dismiss_board_advisory_session(
+        connection,
+        session_id=str(session["session_id"]),
+        updated_at=occurred_at,
+    )
+    advisory_event = repository.insert_event(
+        connection,
+        event_type=EVENT_BOARD_ADVISORY_SESSION_DISMISSED,
+        actor_type="board",
+        actor_id="board",
+        workflow_id=approval["workflow_id"],
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=approval["workflow_id"],
+        payload={
+            "session_id": session["session_id"],
+            "approval_id": approval["approval_id"],
+            "review_pack_id": approval["review_pack_id"],
+            "trigger_type": session["trigger_type"],
+            "status": "DISMISSED",
+        },
+        occurred_at=occurred_at,
+    )
+    if advisory_event is None:
+        raise RuntimeError("Board advisory dismissal idempotency conflict.")
+
+
+def _resolve_governance_patch_or_reject(
+    payload: ModifyConstraintsCommand,
+) -> tuple[GovernancePatch | None, str | None]:
+    raw_patch = payload.governance_patch
+    if raw_patch is None:
+        return None, None
+    try:
+        return GovernancePatch.model_validate(raw_patch), None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _record_board_advisory_decision(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+    governance_patch: GovernancePatch | None,
+    constraint_patch: dict[str, list[str]],
+    board_comment: str,
+    command_id: str,
+    occurred_at,
+    idempotency_key: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    session = _require_board_advisory_session(repository, connection, approval=approval)
+    if session is None:
+        raise ValueError("Board advisory decision is only valid for advisory-backed review packs.")
+    workflow_id = str(approval["workflow_id"])
+    review_pack = ((approval.get("payload") or {}).get("review_pack") or {})
+    subject = review_pack.get("subject") or {}
+    source_ticket_id = str(subject.get("source_ticket_id") or approval["approval_id"]).strip() or str(
+        approval["approval_id"]
+    )
+    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
+    current_profile = repository.get_latest_governance_profile(workflow_id, connection=connection)
+    if current_profile is None:
+        raise ValueError("Governance profile is required before recording a board advisory decision.")
+    next_profile = (
+        build_governance_profile_from_patch(
+            current_profile,
+            governance_patch,
+            source_ref=advisory_decision_process_asset_ref(str(session["session_id"])),
+            effective_from_event="pending-board-advisory-decision",
+        )
+        if governance_patch is not None
+        else None
+    )
+    artifact_ref = advisory_decision_artifact_ref(
+        workflow_id=workflow_id,
+        session_id=str(session["session_id"]),
+    )
+    board_decision = build_board_advisory_decision(
+        board_comment=board_comment,
+        constraint_patch=constraint_patch,
+        governance_patch=governance_patch,
+        source_artifact_ref=artifact_ref,
+    )
+    decision_payload = build_board_advisory_decision_artifact_payload(
+        session=session,
+        board_decision=board_decision,
+        current_profile=current_profile,
+        next_profile=next_profile,
+    )
+    _save_json_artifact(
+        repository,
+        connection,
+        artifact_ref=artifact_ref,
+        logical_path=advisory_decision_logical_path(session_id=str(session["session_id"])),
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        payload=decision_payload,
+        kind="JSON",
+        occurred_at=occurred_at,
+    )
+    decision_process_asset_ref = build_decision_summary_process_asset_ref(str(session["session_id"]), version_int=1)
+    advisory_event = repository.insert_event(
+        connection,
+        event_type=EVENT_BOARD_ADVISORY_DECISION_RECORDED,
+        actor_type="board",
+        actor_id="board",
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "session_id": session["session_id"],
+            "approval_id": approval["approval_id"],
+            "review_pack_id": approval["review_pack_id"],
+            "decision_action": "MODIFY_CONSTRAINTS",
+            "decision_pack_refs": [decision_process_asset_ref],
+            "approved_patch_ref": decision_process_asset_ref,
+            "board_comment": board_comment,
+            "constraint_patch": constraint_patch,
+            "governance_patch": (
+                governance_patch.model_dump(mode="json", exclude_none=True)
+                if governance_patch is not None
+                else None
+            ),
+        },
+        occurred_at=occurred_at,
+    )
+    if advisory_event is None:
+        raise RuntimeError("Board advisory decision idempotency conflict.")
+    updated_session = repository.decide_board_advisory_session(
+        connection,
+        session_id=str(session["session_id"]),
+        board_decision=board_decision.model_dump(mode="json", exclude_none=True),
+        decision_pack_refs=[decision_process_asset_ref],
+        approved_patch_ref=decision_process_asset_ref,
+        updated_at=occurred_at,
+    )
+    if next_profile is not None:
+        next_profile = next_profile.model_copy(
+            update={
+                "source_ref": decision_process_asset_ref,
+                "effective_from_event": str(advisory_event["event_id"]),
+            }
+        )
+        repository.save_governance_profile(connection, next_profile)
+        return updated_session, next_profile.model_dump(mode="json")
+    return updated_session, None
 
 
 def _normalize_requirement_elicitation_answers(
@@ -1559,6 +1808,14 @@ def _handle_board_approve(
                 ],
             },
         )
+        _dismiss_board_advisory_session_if_needed(
+            repository,
+            connection,
+            approval=approval,
+            command_id=command_id,
+            occurred_at=received_at,
+            idempotency_key=f"{payload.idempotency_key}:board-advisory-dismiss",
+        )
         if approval["approval_type"] == "REQUIREMENT_ELICITATION":
             elicitation_artifact_ref, enriched_brief_artifact_ref = _record_requirement_elicitation_artifacts(
                 repository,
@@ -1772,6 +2029,14 @@ def handle_board_reject(
                 "rejection_reasons": payload.rejection_reasons,
             },
         )
+        _dismiss_board_advisory_session_if_needed(
+            repository,
+            connection,
+            approval=approval,
+            command_id=command_id,
+            occurred_at=received_at,
+            idempotency_key=f"{payload.idempotency_key}:board-advisory-dismiss",
+        )
         repository.refresh_projections(connection)
 
     if approval["approval_type"] == "VISUAL_MILESTONE":
@@ -1856,7 +2121,25 @@ def handle_modify_constraints(
                 causation_hint=f"approval:{payload.approval_id}",
             )
 
-        subject = approval["payload"].get("review_pack", {}).get("subject", {})
+        review_pack = (approval["payload"].get("review_pack") or {})
+        subject = review_pack.get("subject", {})
+        governance_patch, governance_patch_error = _resolve_governance_patch_or_reject(payload)
+        if governance_patch_error is not None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=governance_patch_error,
+                causation_hint=f"approval:{payload.approval_id}",
+            )
+        if governance_patch is not None and not advisory_supports_governance_patch(review_pack):
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason="This review pack does not support governance_patch.",
+                causation_hint=f"approval:{payload.approval_id}",
+            )
         normalized_elicitation_answers: list[ElicitationAnswer] = []
         if approval["approval_type"] == "REQUIREMENT_ELICITATION":
             try:
@@ -1889,6 +2172,11 @@ def handle_modify_constraints(
                 "ticket_id": subject.get("source_ticket_id"),
                 "board_comment": payload.board_comment,
                 "constraint_patch": payload.constraint_patch.model_dump(mode="json"),
+                "governance_patch": (
+                    governance_patch.model_dump(mode="json", exclude_none=True)
+                    if governance_patch is not None
+                    else None
+                ),
                 "decision_action": "MODIFY_CONSTRAINTS",
                 "elicitation_answers": [
                     item.model_dump(mode="json") for item in normalized_elicitation_answers
@@ -1904,6 +2192,19 @@ def handle_modify_constraints(
                 approval_id=payload.approval_id,
             )
 
+        superseding_governance_profile: dict[str, Any] | None = None
+        if review_pack_requires_board_advisory(review_pack):
+            _, superseding_governance_profile = _record_board_advisory_decision(
+                repository,
+                connection,
+                approval=approval,
+                governance_patch=governance_patch,
+                constraint_patch=payload.constraint_patch.model_dump(mode="json"),
+                board_comment=payload.board_comment,
+                command_id=command_id,
+                occurred_at=received_at,
+                idempotency_key=f"{payload.idempotency_key}:board-advisory-decision",
+            )
         repository.resolve_approval(
             connection,
             approval_id=payload.approval_id,
@@ -1916,6 +2217,16 @@ def handle_modify_constraints(
                 "decision_action": "MODIFY_CONSTRAINTS",
                 "board_comment": payload.board_comment,
                 "constraint_patch": payload.constraint_patch.model_dump(mode="json"),
+                "governance_patch": (
+                    governance_patch.model_dump(mode="json", exclude_none=True)
+                    if governance_patch is not None
+                    else None
+                ),
+                "superseding_governance_profile_ref": (
+                    superseding_governance_profile.get("profile_id")
+                    if isinstance(superseding_governance_profile, dict)
+                    else None
+                ),
                 "elicitation_answers": [
                     item.model_dump(mode="json") for item in normalized_elicitation_answers
                 ],

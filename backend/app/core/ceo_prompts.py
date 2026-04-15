@@ -27,6 +27,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
     controller_state = controller_state_view(snapshot)
     capability_plan = capability_plan_view(snapshot)
     task_sensemaking = task_sensemaking_view(snapshot)
+    latest_advisory_decision = (snapshot.get("replan_focus") or {}).get("latest_advisory_decision")
     kickoff_instruction = ""
     if trigger_type == EVENT_BOARD_DIRECTIVE_RECEIVED and int(ticket_summary.get("total") or 0) == 0:
         kickoff_spec = build_project_init_kickoff_spec(workflow)
@@ -71,6 +72,8 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "Do not use backend_engineer_primary, database_engineer_primary, or platform_sre_primary for direct CEO CREATE_TICKET unless snapshot.replan_focus.capability_plan.followup_ticket_plans explicitly routes a backlog follow-up there.\n"
         "Read snapshot.projection_snapshot before anything else.\n"
         "Then read snapshot.replan_focus.task_sensemaking, snapshot.replan_focus.capability_plan, and snapshot.replan_focus.controller_state before proposing actions.\n"
+        "Then inspect snapshot.projection_snapshot.board_advisory_sessions and snapshot.replan_focus.latest_advisory_decision.\n"
+        "If snapshot.replan_focus.latest_advisory_decision exists, treat it as the current execution baseline before proposing any new action.\n"
         "When snapshot.replan_focus.controller_state.state is GOVERNANCE_REQUIRED, ARCHITECT_REQUIRED, MEETING_REQUIRED, or STAFFING_REQUIRED, satisfy that gate first instead of forcing implementation tickets through.\n"
         "If snapshot.replan_focus.capability_plan.required_governance_ticket_plan exists, only CREATE_TICKET that exact governance ticket before implementation fanout resumes.\n"
         "If snapshot.replan_focus.capability_plan.followup_ticket_plans exists, keep CREATE_TICKET proposals aligned with those planned node_id / role_profile_ref pairs.\n"
@@ -88,6 +91,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         f"Current task_sensemaking summary: {task_sensemaking}.\n"
         f"Current controller_state summary: {controller_state}.\n"
         f"Current capability_plan summary: {capability_plan}.\n"
+        f"Current latest_advisory_decision summary: {latest_advisory_decision}.\n"
         "Return strict JSON matching ceo_action_batch_v1 with a short summary and actions array.\n"
         "Supported actions: CREATE_TICKET, RETRY_TICKET, HIRE_EMPLOYEE, REQUEST_MEETING, ESCALATE_TO_BOARD, NO_ACTION."
     )

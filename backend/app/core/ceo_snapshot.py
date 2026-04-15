@@ -4,6 +4,12 @@ from datetime import datetime
 from typing import Any
 
 from app.contracts.ceo import ProjectionSnapshot, RecentAssetDigest, ReplanFocus
+from app.core.board_advisory import (
+    BOARD_ADVISORY_STATUS_DECIDED,
+    BOARD_ADVISORY_STATUS_OPEN,
+    build_board_advisory_snapshot_entry,
+    build_latest_advisory_decision,
+)
 from app.core.constants import NODE_STATUS_COMPLETED
 from app.core.ceo_meeting_policy import build_ceo_meeting_candidates
 from app.core.governance_profiles import require_governance_profile
@@ -49,6 +55,7 @@ _DEFAULT_READ_ORDER = [
     "ticket_graph",
     "open_incidents",
     "open_board_items",
+    "board_advisory_sessions",
     "recent_asset_digests",
 ]
 
@@ -362,6 +369,11 @@ def build_ceo_shadow_snapshot(
                 connection=connection,
             ),
         }
+        advisory_sessions = repository.list_board_advisory_sessions(
+            workflow_id,
+            statuses=[BOARD_ADVISORY_STATUS_OPEN, BOARD_ADVISORY_STATUS_DECIDED],
+            connection=connection,
+        )
         controller_view = build_workflow_controller_view(
             repository,
             workflow=workflow,
@@ -405,6 +417,10 @@ def build_ceo_shadow_snapshot(
         ),
         recent_asset_digests=_build_recent_asset_digests(reuse_candidates),
         reuse_candidates=reuse_candidates,
+        board_advisory_sessions=[
+            build_board_advisory_snapshot_entry(item)
+            for item in advisory_sessions
+        ],
         memory_budget_ratios=dict(_MEMORY_BUDGET_RATIOS),
         default_read_order=list(_DEFAULT_READ_ORDER),
     )
@@ -413,6 +429,10 @@ def build_ceo_shadow_snapshot(
         capability_plan=controller_view["capability_plan"],
         controller_state=controller_view["controller_state"],
         meeting_candidates=controller_view["meeting_candidates"],
+        latest_advisory_decision=build_latest_advisory_decision(
+            advisory_sessions[0] if advisory_sessions else None,
+            current_profile=governance_profile,
+        ),
     )
 
     return {

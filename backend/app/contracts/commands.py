@@ -728,6 +728,7 @@ class ModifyConstraintsCommand(StrictModel):
     command_target_version: int = Field(ge=0)
     approval_id: str = Field(min_length=1)
     constraint_patch: ConstraintPatch
+    governance_patch: dict[str, str] | None = None
     board_comment: str = Field(min_length=1)
     elicitation_answers: list[ElicitationAnswer] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1)

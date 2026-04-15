@@ -12575,6 +12575,26 @@ def test_review_room_route_returns_existing_projection(client):
     assert body["available_actions"] == ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"]
 
 
+def test_review_room_route_includes_board_advisory_context(client):
+    approval = _seed_review_request(client, workflow_id="wf_review_room_advisory")
+
+    response = client.get(f"/api/v1/projections/review-room/{approval['review_pack_id']}")
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    advisory_context = body["review_pack"]["advisory_context"]
+    assert advisory_context["approval_id"] == approval["approval_id"]
+    assert advisory_context["review_pack_id"] == approval["review_pack_id"]
+    assert advisory_context["trigger_type"] == "CONSTRAINT_CHANGE"
+    assert advisory_context["status"] == "OPEN"
+    assert advisory_context["supports_governance_patch"] is True
+    assert advisory_context["current_governance_modes"] == {
+        "approval_mode": "AUTO_CEO",
+        "audit_mode": "MINIMAL",
+    }
+    assert advisory_context["affected_nodes"] == ["node_homepage_visual"]
+
+
 def test_review_room_developer_inspector_returns_materialized_payloads(client):
     _seed_cross_workflow_compile_history(client)
     approval = _seed_review_request(client, materialize_real_compile=True)
@@ -15243,6 +15263,121 @@ def test_modify_constraints_command_resolves_open_approval(client):
     assert ticket_projection["blocking_reason_code"] == BLOCKING_REASON_MODIFY_CONSTRAINTS
     assert node_projection["status"] == NODE_STATUS_REWORK_REQUIRED
     assert node_projection["blocking_reason_code"] == BLOCKING_REASON_MODIFY_CONSTRAINTS
+
+
+def test_modify_constraints_records_board_advisory_decision_and_supersedes_governance_profile(client):
+    workflow_id = "wf_modify_advisory"
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    original_profile = repository.get_latest_governance_profile(workflow_id)
+    assert original_profile is not None
+
+    response = client.post(
+        "/api/v1/commands/modify-constraints",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "constraint_patch": {
+                "add_rules": ["Preserve the current implementation slice but raise review rigor."],
+                "remove_rules": [],
+                "replace_rules": [],
+            },
+            "governance_patch": {
+                "approval_mode": "EXPERT_GATED",
+                "audit_mode": "TICKET_TRACE",
+            },
+            "board_comment": "Tighten governance before the next replan pass.",
+            "idempotency_key": f"board-modify:{approval['approval_id']}:advisory",
+        },
+    )
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    latest_profile = repository.get_latest_governance_profile(workflow_id)
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert advisory_session is not None
+    assert advisory_session["status"] == "DECIDED"
+    assert advisory_session["approved_patch_ref"] is not None
+    assert advisory_session["decision_pack_refs"] == [advisory_session["approved_patch_ref"]]
+    assert advisory_session["board_decision"]["decision_action"] == "MODIFY_CONSTRAINTS"
+    assert advisory_session["board_decision"]["board_comment"] == "Tighten governance before the next replan pass."
+    assert advisory_session["board_decision"]["constraint_patch"]["add_rules"] == [
+        "Preserve the current implementation slice but raise review rigor."
+    ]
+    assert advisory_session["board_decision"]["governance_patch"] == {
+        "approval_mode": "EXPERT_GATED",
+        "audit_mode": "TICKET_TRACE",
+    }
+    assert latest_profile is not None
+    assert latest_profile["profile_id"] != original_profile["profile_id"]
+    assert latest_profile["supersedes_ref"] == original_profile["profile_id"]
+    assert latest_profile["approval_mode"] == "EXPERT_GATED"
+    assert latest_profile["audit_mode"] == "TICKET_TRACE"
+
+
+def test_board_approve_dismisses_linked_board_advisory_session(client):
+    workflow_id = "wf_board_advisory_dismissed"
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    session_before = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert session_before is not None
+    assert session_before["status"] == "OPEN"
+
+    response = _approve_open_review(client, approval, idempotency_suffix="dismiss-advisory")
+
+    session_after = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert session_after is not None
+    assert session_after["session_id"] == session_before["session_id"]
+    assert session_after["status"] == "DISMISSED"
+    assert session_after["decision_pack_refs"] == []
+    assert session_after["approved_patch_ref"] is None
+    assert session_after["board_decision"] is None
+
+
+def test_modify_constraints_rejects_invalid_governance_patch(client):
+    approval = _seed_review_request(client, workflow_id="wf_invalid_governance_patch")
+    repository = client.app.state.repository
+
+    response = client.post(
+        "/api/v1/commands/modify-constraints",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "constraint_patch": {
+                "add_rules": ["Do not continue until governance is corrected."],
+                "remove_rules": [],
+                "replace_rules": [],
+            },
+            "governance_patch": {
+                "approval_mode": "AUTO_CEO",
+                "audit_mode": "INVALID_AUDIT_MODE",
+            },
+            "board_comment": "This governance patch is intentionally invalid.",
+            "idempotency_key": f"board-modify:{approval['approval_id']}:invalid-governance",
+        },
+    )
+
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    latest_profile = repository.get_latest_governance_profile("wf_invalid_governance_patch")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "audit_mode" in str(response.json()["reason"] or "")
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert advisory_session is not None
+    assert advisory_session["status"] == "OPEN"
+    assert advisory_session["decision_pack_refs"] == []
+    assert advisory_session["approved_patch_ref"] is None
+    assert latest_profile is not None
+    assert latest_profile["approval_mode"] == "AUTO_CEO"
+    assert latest_profile["audit_mode"] == "MINIMAL"
 
 
 def test_stale_board_command_is_rejected_without_resolving_approval(client):

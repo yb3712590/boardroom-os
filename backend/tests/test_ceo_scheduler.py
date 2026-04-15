@@ -1325,6 +1325,7 @@ def test_ceo_shadow_snapshot_exposes_projection_snapshot_and_replan_focus(client
         "ticket_graph",
         "open_incidents",
         "open_board_items",
+        "board_advisory_sessions",
         "recent_asset_digests",
     ]
     assert replan_focus["task_sensemaking"] == snapshot["task_sensemaking"]
@@ -4236,6 +4237,97 @@ def test_ceo_shadow_projection_route_exposes_execution_fields(client, monkeypatc
     assert "execution_summary" in payload
     assert "deterministic_fallback_used" in payload
     assert payload["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+
+def test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision(client):
+    workflow_id = "wf_ceo_advisory_snapshot"
+    _seed_workflow(client, workflow_id, "CEO advisory snapshot")
+    approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
+
+    modify_response = client.post(
+        "/api/v1/commands/modify-constraints",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "constraint_patch": {
+                "add_rules": ["Hold execution until the advisory decision is reflected in the next run."],
+                "remove_rules": [],
+                "replace_rules": [],
+            },
+            "governance_patch": {
+                "approval_mode": "EXPERT_GATED",
+                "audit_mode": "TICKET_TRACE",
+            },
+            "board_comment": "Route the next pass through the tighter advisory decision.",
+            "idempotency_key": f"modify-constraints:{approval['approval_id']}:snapshot",
+        },
+    )
+    assert modify_response.status_code == 200
+    assert modify_response.json()["status"] == "ACCEPTED"
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="APPROVAL_RESOLVED",
+        trigger_ref=approval["approval_id"],
+    )
+
+    board_advisory_sessions = snapshot["projection_snapshot"]["board_advisory_sessions"]
+    latest_advisory_decision = snapshot["replan_focus"]["latest_advisory_decision"]
+
+    assert len(board_advisory_sessions) == 1
+    assert board_advisory_sessions[0]["approval_id"] == approval["approval_id"]
+    assert board_advisory_sessions[0]["status"] == "DECIDED"
+    assert latest_advisory_decision["approval_id"] == approval["approval_id"]
+    assert latest_advisory_decision["governance_patch"] == {
+        "approval_mode": "EXPERT_GATED",
+        "audit_mode": "TICKET_TRACE",
+    }
+    assert latest_advisory_decision["constraint_patch"]["add_rules"] == [
+        "Hold execution until the advisory decision is reflected in the next run."
+    ]
+
+
+def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client):
+    workflow_id = "wf_ceo_advisory_prompt"
+    _seed_workflow(client, workflow_id, "CEO advisory prompt")
+    approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
+
+    modify_response = client.post(
+        "/api/v1/commands/modify-constraints",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "constraint_patch": {
+                "add_rules": ["Escalate the next step to expert approval."],
+                "remove_rules": [],
+                "replace_rules": [],
+            },
+            "governance_patch": {
+                "approval_mode": "EXPERT_GATED",
+            },
+            "board_comment": "Treat this advisory decision as the new execution baseline.",
+            "idempotency_key": f"modify-constraints:{approval['approval_id']}:prompt",
+        },
+    )
+    assert modify_response.status_code == 200
+    assert modify_response.json()["status"] == "ACCEPTED"
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="APPROVAL_RESOLVED",
+        trigger_ref=approval["approval_id"],
+    )
+    prompt = build_ceo_shadow_system_prompt(snapshot)
+
+    assert "latest_advisory_decision" in prompt
+    assert "board_advisory_sessions" in prompt
+    assert "Treat this advisory decision as the new execution baseline." in prompt
 
 
 def test_incident_resolve_triggers_ceo_shadow_audit(client):

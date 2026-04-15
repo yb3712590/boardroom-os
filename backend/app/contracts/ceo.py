@@ -13,6 +13,21 @@ class RecentAssetDigest(StrictModel):
     summary: str = Field(min_length=1)
 
 
+class BoardAdvisorySessionDigest(StrictModel):
+    session_id: str = Field(min_length=1)
+    approval_id: str = Field(min_length=1)
+    review_pack_id: str = Field(min_length=1)
+    trigger_type: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    source_version: str = Field(min_length=1)
+    governance_profile_ref: str = Field(min_length=1)
+    affected_nodes: list[str] = Field(default_factory=list)
+    decision_pack_refs: list[str] = Field(default_factory=list)
+    approved_patch_ref: str | None = None
+    decision_action: str | None = None
+    board_comment: str | None = None
+
+
 class ProjectionSnapshot(StrictModel):
     workflow_status: str = Field(min_length=1)
     graph_version: str = Field(min_length=1)
@@ -26,6 +41,7 @@ class ProjectionSnapshot(StrictModel):
     pending_expert_gates: list[str] = Field(default_factory=list)
     recent_asset_digests: list[RecentAssetDigest] = Field(default_factory=list)
     reuse_candidates: dict[str, Any] = Field(default_factory=dict)
+    board_advisory_sessions: list[BoardAdvisorySessionDigest] = Field(default_factory=list)
     memory_budget_ratios: dict[str, int] = Field(default_factory=dict)
     default_read_order: list[str] = Field(default_factory=list)
 
@@ -35,3 +51,4 @@ class ReplanFocus(StrictModel):
     capability_plan: dict[str, Any] = Field(default_factory=dict)
     controller_state: dict[str, Any] = Field(default_factory=dict)
     meeting_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    latest_advisory_decision: dict[str, Any] | None = None

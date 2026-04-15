@@ -364,6 +364,10 @@ export function useDashboardPageActions({
     addRules: string[]
     removeRules: string[]
     replaceRules: string[]
+    governancePatch?: {
+      approval_mode?: string
+      audit_mode?: string
+    }
     elicitationAnswers?: Array<{
       question_id: string
       selected_option_ids: string[]
@@ -385,6 +389,7 @@ export function useDashboardPageActions({
           remove_rules: input.removeRules,
           replace_rules: input.replaceRules,
         },
+        governance_patch: input.governancePatch,
         board_comment: input.boardComment,
         elicitation_answers: input.elicitationAnswers,
         idempotency_key: newPrefixedId('modify-constraints'),
