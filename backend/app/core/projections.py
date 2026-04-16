@@ -98,6 +98,8 @@ from app.core.constants import (
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+    INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
+    INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
@@ -2242,12 +2244,18 @@ def build_incident_detail_projection(
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
         recommended_followup_action = IncidentFollowupAction.REBUILD_TICKET_GRAPH.value
-    elif incident_type == INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL:
+    elif incident_type in {
+        INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+        INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
+    }:
         available_followup_actions = [
             IncidentFollowupAction.RERUN_CEO_SHADOW.value,
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
         recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
+    elif incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE:
+        available_followup_actions = [IncidentFollowupAction.RESTORE_ONLY.value]
+        recommended_followup_action = IncidentFollowupAction.RESTORE_ONLY.value
     elif incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
         available_followup_actions = [
             IncidentFollowupAction.RERUN_CEO_SHADOW.value,

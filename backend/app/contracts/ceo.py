@@ -56,6 +56,15 @@ class GraphHealthReportDigest(StrictModel):
     recommended_actions: list[str] = Field(default_factory=list)
 
 
+class RuntimeLivenessReportDigest(StrictModel):
+    report_id: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    graph_version: str = Field(min_length=1)
+    overall_health: str = Field(min_length=1)
+    findings: list[GraphHealthFindingDigest] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
+
+
 class BoardAdvisorySessionDigest(StrictModel):
     session_id: str = Field(min_length=1)
     approval_id: str = Field(min_length=1)
@@ -99,6 +108,7 @@ class ProjectionSnapshot(StrictModel):
     board_advisory_sessions: list[BoardAdvisorySessionDigest] = Field(default_factory=list)
     project_map_slices: list[ProjectMapSliceDigest] = Field(default_factory=list)
     graph_health_report: GraphHealthReportDigest | None = None
+    runtime_liveness_report: RuntimeLivenessReportDigest | None = None
     memory_budget_ratios: dict[str, int] = Field(default_factory=dict)
     default_read_order: list[str] = Field(default_factory=list)
 

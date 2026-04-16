@@ -9,6 +9,7 @@ GRAPH_LANE_EXECUTION = "execution"
 GRAPH_LANE_REVIEW = "review"
 _REVIEW_SUFFIX = "::review"
 _MAKER_CHECKER_REVIEW_TICKET_KIND = "MAKER_CHECKER_REVIEW"
+_MAKER_REWORK_FIX_TICKET_KIND = "MAKER_REWORK_FIX"
 
 
 class GraphIdentityResolutionError(RuntimeError):
@@ -46,15 +47,27 @@ def _resolve_graph_contract_lane_kind(created_spec: dict[str, Any]) -> str | Non
     return None
 
 
-def _resolve_legacy_graph_lane_kind(created_spec: dict[str, Any]) -> str:
+def apply_legacy_graph_contract_compat(created_spec: dict[str, Any] | None) -> dict[str, Any]:
+    created_spec = dict(created_spec or {})
+    graph_contract = created_spec.get("graph_contract")
+    if isinstance(graph_contract, dict) and str(graph_contract.get("lane_kind") or "").strip():
+        return created_spec
     ticket_kind = str(created_spec.get("ticket_kind") or "").strip().upper()
     output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    lane_kind: str | None = None
     if (
         ticket_kind == _MAKER_CHECKER_REVIEW_TICKET_KIND
         or output_schema_ref == MAKER_CHECKER_VERDICT_SCHEMA_REF
     ):
-        return GRAPH_LANE_REVIEW
-    return GRAPH_LANE_EXECUTION
+        lane_kind = GRAPH_LANE_REVIEW
+    elif ticket_kind == _MAKER_REWORK_FIX_TICKET_KIND:
+        lane_kind = GRAPH_LANE_EXECUTION
+    if lane_kind is None:
+        return created_spec
+    created_spec["graph_contract"] = {
+        "lane_kind": lane_kind,
+    }
+    return created_spec
 
 
 def resolve_graph_lane_kind(created_spec: dict[str, Any] | None) -> str:
@@ -62,7 +75,7 @@ def resolve_graph_lane_kind(created_spec: dict[str, Any] | None) -> str:
     graph_contract_lane_kind = _resolve_graph_contract_lane_kind(created_spec)
     if graph_contract_lane_kind is not None:
         return graph_contract_lane_kind
-    return _resolve_legacy_graph_lane_kind(created_spec)
+    raise GraphIdentityResolutionError("graph identity requires graph_contract.lane_kind.")
 
 
 def resolve_ticket_graph_identity(

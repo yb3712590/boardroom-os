@@ -33,6 +33,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
     project_map_slices = projection_snapshot.get("project_map_slices") or []
     failure_fingerprints = replan_focus.get("failure_fingerprints") or []
     graph_health_report = projection_snapshot.get("graph_health_report") or {}
+    runtime_liveness_report = projection_snapshot.get("runtime_liveness_report") or {}
     kickoff_instruction = ""
     if trigger_type == EVENT_BOARD_DIRECTIVE_RECEIVED and int(ticket_summary.get("total") or 0) == 0:
         kickoff_spec = build_project_init_kickoff_spec(workflow)
@@ -78,9 +79,11 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "Read snapshot.projection_snapshot before anything else.\n"
         "Then read snapshot.replan_focus.task_sensemaking, snapshot.replan_focus.capability_plan, and snapshot.replan_focus.controller_state before proposing actions.\n"
         "Then inspect snapshot.projection_snapshot.board_advisory_sessions and snapshot.replan_focus.latest_advisory_decision.\n"
-        "Then inspect snapshot.projection_snapshot.project_map_slices, snapshot.replan_focus.failure_fingerprints, and snapshot.projection_snapshot.graph_health_report.\n"
+        "Then inspect snapshot.projection_snapshot.project_map_slices, snapshot.replan_focus.failure_fingerprints, "
+        "snapshot.projection_snapshot.graph_health_report, and snapshot.projection_snapshot.runtime_liveness_report.\n"
         "If snapshot.replan_focus.latest_advisory_decision exists, treat it as the current execution baseline before proposing any new action.\n"
-        "If snapshot.projection_snapshot.graph_health_report.overall_health is CRITICAL, treat graph stabilization as a blocking risk before proposing new fanout.\n"
+        "If snapshot.projection_snapshot.graph_health_report.overall_health is CRITICAL or "
+        "snapshot.projection_snapshot.runtime_liveness_report.overall_health is CRITICAL, treat stabilization as a blocking risk before proposing new fanout.\n"
         "When snapshot.replan_focus.controller_state.state is GOVERNANCE_REQUIRED, ARCHITECT_REQUIRED, MEETING_REQUIRED, or STAFFING_REQUIRED, satisfy that gate first instead of forcing implementation tickets through.\n"
         "If snapshot.replan_focus.capability_plan.required_governance_ticket_plan exists, only CREATE_TICKET that exact governance ticket before implementation fanout resumes.\n"
         "If snapshot.replan_focus.capability_plan.followup_ticket_plans exists, keep CREATE_TICKET proposals aligned with those planned node_id / role_profile_ref pairs.\n"
@@ -102,6 +105,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         f"Current project_map_slices summary: {project_map_slices}.\n"
         f"Current failure_fingerprints summary: {failure_fingerprints}.\n"
         f"Current graph_health_report summary: {graph_health_report}.\n"
+        f"Current runtime_liveness_report summary: {runtime_liveness_report}.\n"
         "Return strict JSON matching ceo_action_batch_v1 with a short summary and actions array.\n"
         "Supported actions: CREATE_TICKET, RETRY_TICKET, HIRE_EMPLOYEE, REQUEST_MEETING, ESCALATE_TO_BOARD, NO_ACTION."
     )

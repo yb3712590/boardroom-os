@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 import app.core.graph_health as graph_health_module
@@ -1331,11 +1332,14 @@ def test_ceo_shadow_snapshot_exposes_projection_snapshot_and_replan_focus(client
         "project_map_slices",
         "failure_fingerprints",
         "graph_health_report",
+        "runtime_liveness_report",
         "recent_asset_digests",
     ]
     assert projection_snapshot["project_map_slices"][0]["workflow_id"] == workflow_id
     assert projection_snapshot["graph_health_report"]["workflow_id"] == workflow_id
     assert projection_snapshot["graph_health_report"]["overall_health"] == "HEALTHY"
+    assert projection_snapshot["runtime_liveness_report"]["workflow_id"] == workflow_id
+    assert projection_snapshot["runtime_liveness_report"]["overall_health"] == "HEALTHY"
     assert replan_focus["failure_fingerprints"] == []
     assert replan_focus["task_sensemaking"] == snapshot["task_sensemaking"]
     assert replan_focus["capability_plan"] == snapshot["capability_plan"]
@@ -4252,7 +4256,14 @@ def test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision(client, monk
     workflow_id = "wf_ceo_advisory_snapshot"
     _seed_workflow(client, workflow_id, "CEO advisory snapshot")
     approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
-    monkeypatch.setattr(client.app.state.repository, "list_employee_projections", lambda **kwargs: [])
+    api_test_helpers._seed_worker(
+        client,
+        employee_id="emp_cto_advisory_snapshot",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _set_live_provider(client)
 
     with api_test_helpers._suppress_ceo_shadow_side_effects():
         modify_response = client.post(
@@ -4280,13 +4291,31 @@ def test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision(client, monk
     advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
 
-    analysis_response = client.post(
-        "/api/v1/commands/board-advisory-request-analysis",
-        json={
-            "session_id": advisory_session["session_id"],
-            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:snapshot",
-        },
-    )
+    proposal_payload = {
+        "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+        "workflow_id": workflow_id,
+        "session_id": advisory_session["session_id"],
+        "base_graph_version": advisory_session["source_version"],
+        "proposal_summary": "Freeze the current execution node until the advisory decision lands.",
+        "impact_summary": "Keep the graph aligned with the latest board decision.",
+        "freeze_node_ids": ["node_homepage_visual"],
+        "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+        "proposal_hash": "hash-ceo-advisory-snapshot",
+    }
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        return_value=OpenAICompatProviderResult(
+            output_text=json.dumps(proposal_payload),
+            response_id="resp_ceo_advisory_snapshot",
+        ),
+    ):
+        analysis_response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:snapshot",
+            },
+        )
     assert analysis_response.status_code == 200
     assert analysis_response.json()["status"] == "ACCEPTED"
 
@@ -4333,7 +4362,14 @@ def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client, monke
     workflow_id = "wf_ceo_advisory_prompt"
     _seed_workflow(client, workflow_id, "CEO advisory prompt")
     approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
-    monkeypatch.setattr(client.app.state.repository, "list_employee_projections", lambda **kwargs: [])
+    api_test_helpers._seed_worker(
+        client,
+        employee_id="emp_cto_advisory_prompt",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _set_live_provider(client)
 
     with api_test_helpers._suppress_ceo_shadow_side_effects():
         modify_response = client.post(
@@ -4360,13 +4396,31 @@ def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client, monke
     advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
 
-    analysis_response = client.post(
-        "/api/v1/commands/board-advisory-request-analysis",
-        json={
-            "session_id": advisory_session["session_id"],
-            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:prompt",
-        },
-    )
+    proposal_payload = {
+        "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+        "workflow_id": workflow_id,
+        "session_id": advisory_session["session_id"],
+        "base_graph_version": advisory_session["source_version"],
+        "proposal_summary": "Escalate the next step through the advisory decision baseline.",
+        "impact_summary": "Keep the prompt aligned with the latest board decision.",
+        "freeze_node_ids": ["node_homepage_visual"],
+        "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+        "proposal_hash": "hash-ceo-advisory-prompt",
+    }
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        return_value=OpenAICompatProviderResult(
+            output_text=json.dumps(proposal_payload),
+            response_id="resp_ceo_advisory_prompt",
+        ),
+    ):
+        analysis_response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:prompt",
+            },
+        )
     assert analysis_response.status_code == 200
     assert analysis_response.json()["status"] == "ACCEPTED"
 
@@ -4400,7 +4454,14 @@ def test_ceo_shadow_snapshot_exposes_full_timeline_archive_refs_for_applied_advi
     workflow_id = "wf_ceo_advisory_timeline_refs"
     _seed_workflow(client, workflow_id, "CEO advisory timeline refs")
     approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
-    monkeypatch.setattr(client.app.state.repository, "list_employee_projections", lambda **kwargs: [])
+    api_test_helpers._seed_worker(
+        client,
+        employee_id="emp_cto_advisory_timeline_refs",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _set_live_provider(client)
 
     with api_test_helpers._suppress_ceo_shadow_side_effects():
         modify_response = client.post(
@@ -4428,13 +4489,31 @@ def test_ceo_shadow_snapshot_exposes_full_timeline_archive_refs_for_applied_advi
     advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
 
-    analysis_response = client.post(
-        "/api/v1/commands/board-advisory-request-analysis",
-        json={
-            "session_id": advisory_session["session_id"],
-            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:timeline-refs",
-        },
-    )
+    proposal_payload = {
+        "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+        "workflow_id": workflow_id,
+        "session_id": advisory_session["session_id"],
+        "base_graph_version": advisory_session["source_version"],
+        "proposal_summary": "Persist the advisory decision with full timeline refs.",
+        "impact_summary": "Freeze the current execution node while the archived advisory path is applied.",
+        "freeze_node_ids": ["node_homepage_visual"],
+        "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+        "proposal_hash": "hash-ceo-advisory-timeline-refs",
+    }
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        return_value=OpenAICompatProviderResult(
+            output_text=json.dumps(proposal_payload),
+            response_id="resp_ceo_advisory_timeline_refs",
+        ),
+    ):
+        analysis_response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:timeline-refs",
+            },
+        )
     assert analysis_response.status_code == 200
     assert analysis_response.json()["status"] == "ACCEPTED"
 
@@ -4491,6 +4570,7 @@ def test_ceo_shadow_prompt_mentions_project_map_and_graph_health(client):
     assert "project_map_slices" in prompt
     assert "failure_fingerprints" in prompt
     assert "graph_health_report" in prompt
+    assert "runtime_liveness_report" in prompt
 
 
 def test_ceo_shadow_snapshot_exposes_graph_thrashing_finding(client):
@@ -4583,13 +4663,17 @@ def test_ceo_shadow_snapshot_exposes_queue_starvation_finding(client, monkeypatc
         trigger_ref="manual:ceo-graph-health-queue-starvation",
     )
     prompt = build_ceo_shadow_system_prompt(snapshot)
-    findings = snapshot["projection_snapshot"]["graph_health_report"]["findings"]
-    finding_types = [item["finding_type"] for item in findings]
+    graph_health_findings = snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    runtime_liveness_findings = snapshot["projection_snapshot"]["runtime_liveness_report"]["findings"]
+    finding_types = [item["finding_type"] for item in runtime_liveness_findings]
     queue_starvation_finding = next(
-        item for item in findings if item["finding_type"] == "QUEUE_STARVATION"
+        item for item in runtime_liveness_findings if item["finding_type"] == "QUEUE_STARVATION"
     )
 
     assert "QUEUE_STARVATION" in finding_types
+    assert "QUEUE_STARVATION" not in [
+        item["finding_type"] for item in graph_health_findings
+    ]
     assert queue_starvation_finding["affected_graph_node_ids"] == [
         "node_ceo_graph_health_queue_starvation"
     ]

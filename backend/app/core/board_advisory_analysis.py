@@ -80,9 +80,9 @@ from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
 BOARD_ADVISORY_ANALYSIS_ROLE_TYPE = "governance_architect"
-_SYNTHETIC_BOARD_ADVISORY_ANALYSIS_ROLE_PROFILE_REF = "architect_primary"
 BOARD_ADVISORY_ANALYSIS_CONSTRAINTS_REF = "board_advisory_analysis_constraints_v1"
 BOARD_ADVISORY_ANALYSIS_OVERFLOW_POLICY = "FAIL_CLOSED"
+BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_EXECUTOR_SELECTION = "executor_selection"
 BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_SELECTION = "provider_selection"
 BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_EXECUTION = "provider_execution"
 BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_OUTPUT_VALIDATION = "output_validation"
@@ -107,7 +107,7 @@ class _AdvisoryAnalysisExecutor:
 @dataclass(frozen=True)
 class _ResolvedAnalysisExecutionPlan:
     execution_contract: dict[str, Any]
-    executor: _AdvisoryAnalysisExecutor
+    executor: _AdvisoryAnalysisExecutor | None
     provider_selection: RuntimeProviderSelection | None
     executor_mode: str
     has_any_real_employee: bool
@@ -215,7 +215,7 @@ def _resolve_analysis_executor(
     repository: ControlPlaneRepository,
     *,
     execution_contract: dict[str, Any],
-) -> tuple[_AdvisoryAnalysisExecutor, bool]:
+) -> tuple[_AdvisoryAnalysisExecutor | None, bool]:
     employees = repository.list_employee_projections(states=["ACTIVE"], board_approved_only=True)
     has_any_real_employee = any(isinstance(employee, dict) for employee in employees)
     for employee in employees:
@@ -247,17 +247,7 @@ def _resolve_analysis_executor(
             provider_id=str(employee.get("provider_id") or "").strip() or None,
             is_real_employee=True,
         ), has_any_real_employee
-    normalized = normalize_persona_profiles(BOARD_ADVISORY_ANALYSIS_ROLE_TYPE)
-    return _AdvisoryAnalysisExecutor(
-        employee_id="emp_board_advisory_architect",
-        role_type=BOARD_ADVISORY_ANALYSIS_ROLE_TYPE,
-        role_profile_ref=_SYNTHETIC_BOARD_ADVISORY_ANALYSIS_ROLE_PROFILE_REF,
-        skill_profile=dict(normalized["skill_profile"]),
-        personality_profile=dict(normalized["personality_profile"]),
-        aesthetic_profile=dict(normalized["aesthetic_profile"]),
-        provider_id=None,
-        is_real_employee=False,
-    ), has_any_real_employee
+    return None, has_any_real_employee
 
 
 def _resolve_analysis_execution_plan(
@@ -270,7 +260,7 @@ def _resolve_analysis_execution_plan(
     )
     provider_selection: RuntimeProviderSelection | None = None
     failure_reason: str | None = None
-    if executor.is_real_employee:
+    if executor is not None:
         provider_selection = resolve_provider_selection(
             resolve_runtime_provider_config(),
             target_ref=str(execution_contract.get("execution_target_ref") or ""),
@@ -287,7 +277,7 @@ def _resolve_analysis_execution_plan(
         execution_contract=execution_contract,
         executor=executor,
         provider_selection=provider_selection,
-        executor_mode="LIVE_PROVIDER" if provider_selection is not None else "DETERMINISTIC",
+        executor_mode="LIVE_PROVIDER",
         has_any_real_employee=has_any_real_employee,
         failure_reason=failure_reason,
     )
@@ -442,6 +432,10 @@ def _build_board_advisory_analysis_compile_request(
         *affected_nodes,
     ]
     executor = execution_plan.executor
+    if executor is None:
+        raise RuntimeError(
+            "Board advisory analysis compile request requires a board-approved contract-matching executor."
+        )
     ticket_stub = {
         "workflow_id": workflow_id,
         "ticket_id": ticket_id,
@@ -950,6 +944,20 @@ def run_board_advisory_analysis(
             if current_profile is None:
                 raise ValueError("Governance profile is required before advisory analysis can run.")
             execution_plan = _resolve_analysis_execution_plan(repository)
+            if execution_plan.executor is None:
+                failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_EXECUTOR_SELECTION
+                if execution_plan.failure_reason == "no_contract_matching_executor":
+                    raise RuntimeError(
+                        "No board-approved executor satisfies the advisory analysis execution contract."
+                    )
+                raise RuntimeError(
+                    "Board advisory analysis requires a board-approved contract-matching executor."
+                )
+            if execution_plan.provider_selection is None:
+                failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_SELECTION
+                raise RuntimeError(
+                    "No live provider selection is available for the advisory analysis execution contract."
+                )
             compile_request = _build_board_advisory_analysis_compile_request(
                 repository,
                 session=session,
@@ -982,50 +990,30 @@ def run_board_advisory_analysis(
         if run is None:
             raise ValueError("Board advisory analysis run vanished before execution.")
 
-        if str(run.get("executor_mode") or "") == "LIVE_PROVIDER":
-            failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_SELECTION
-            execution_plan = _resolve_analysis_execution_plan(repository)
-            if not execution_plan.executor.is_real_employee:
-                raise RuntimeError(
-                    "Board advisory analysis live execution requires a board-approved contract-matching executor."
-                )
-            provider_selection = execution_plan.provider_selection
-            if provider_selection is None:
-                raise RuntimeError(
-                    "No live provider selection is available for the advisory analysis execution contract."
-                )
-            failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_EXECUTION
-            live_result = _execute_live_provider_mode(
-                repository,
-                execution_package=execution_package,
-                selection=provider_selection,
-            )
-            proposal_payload = dict(live_result.proposal_payload)
-            provider_response_id = live_result.provider_response_id
-        else:
-            execution_plan = _resolve_analysis_execution_plan(repository)
+        execution_plan = _resolve_analysis_execution_plan(repository)
+        if execution_plan.executor is None:
+            failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_EXECUTOR_SELECTION
             if execution_plan.failure_reason == "no_contract_matching_executor":
                 raise RuntimeError(
                     "No board-approved executor satisfies the advisory analysis execution contract."
                 )
-            if execution_plan.failure_reason == "missing_provider_selection":
-                failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_SELECTION
-                raise RuntimeError(
-                    "No live provider selection is available for the advisory analysis execution contract."
-                )
-            failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_OUTPUT_VALIDATION
-            proposal_payload = build_graph_patch_proposal(
-                session=session,
-                board_decision=BoardAdvisoryDecision.model_validate(dict(session.get("board_decision") or {})),
-                current_profile=current_profile,
-                base_graph_version=str(run.get("source_graph_version") or ""),
-            ).model_dump(mode="json")
-            validate_output_payload(
-                schema_ref=GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
-                schema_version=GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION,
-                submitted_schema_version=f"{GRAPH_PATCH_PROPOSAL_SCHEMA_REF}_v{GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION}",
-                payload=proposal_payload,
+            raise RuntimeError(
+                "Board advisory analysis requires a board-approved contract-matching executor."
             )
+        provider_selection = execution_plan.provider_selection
+        if provider_selection is None:
+            failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_SELECTION
+            raise RuntimeError(
+                "No live provider selection is available for the advisory analysis execution contract."
+            )
+        failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_EXECUTION
+        live_result = _execute_live_provider_mode(
+            repository,
+            execution_package=execution_package,
+            selection=provider_selection,
+        )
+        proposal_payload = dict(live_result.proposal_payload)
+        provider_response_id = live_result.provider_response_id
 
         with repository.transaction() as connection:
             run = repository.get_board_advisory_analysis_run(run_id, connection=connection)

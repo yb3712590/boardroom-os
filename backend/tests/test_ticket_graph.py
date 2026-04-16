@@ -4,10 +4,12 @@ from datetime import datetime
 
 import pytest
 import app.core.graph_health as graph_health_module
+import app.core.runtime_liveness as runtime_liveness_module
 from pydantic import ValidationError
 
 from app.contracts.advisory import BoardAdvisorySession, GraphPatch, GraphPatchProposal
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
+from app.core.graph_identity import GraphIdentityResolutionError, resolve_ticket_graph_identity
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
@@ -391,6 +393,7 @@ def test_ticket_graph_snapshot_builds_parent_dependency_and_review_edges(client)
                     "wakeup_policy": "default",
                 },
             ),
+            "graph_contract": None,
             "ticket_kind": "MAKER_CHECKER_REVIEW",
             "maker_checker_context": {
                 "maker_ticket_id": "tkt_build_frontend",
@@ -464,6 +467,7 @@ def test_ticket_graph_snapshot_assigns_graph_identity_lanes_for_shared_runtime_n
                     "wakeup_policy": "default",
                 },
             ),
+            "graph_contract": None,
             "ticket_kind": "MAKER_CHECKER_REVIEW",
             "maker_checker_context": {
                 "maker_ticket_id": "tkt_shared_runtime_maker",
@@ -536,6 +540,52 @@ def test_ticket_graph_snapshot_uses_graph_contract_review_lane_without_taxonomy_
 
     assert f"{node_id}::review" in node_by_graph_id
     assert node_by_graph_id[f"{node_id}::review"].graph_lane_kind == "review"
+
+
+def test_resolve_ticket_graph_identity_rejects_missing_graph_contract():
+    with pytest.raises(GraphIdentityResolutionError, match="graph_contract"):
+        resolve_ticket_graph_identity(
+            ticket_id="tkt_missing_graph_contract",
+            runtime_node_id="node_missing_graph_contract",
+            created_spec={
+                "ticket_id": "tkt_missing_graph_contract",
+                "node_id": "node_missing_graph_contract",
+                "role_profile_ref": "frontend_engineer_primary",
+                "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                "delivery_stage": "BUILD",
+            },
+        )
+
+
+def test_ticket_graph_snapshot_rejects_non_legacy_ticket_without_graph_contract(client):
+    workflow_id = "wf_ticket_graph_missing_contract_non_legacy"
+    node_id = "node_missing_contract_non_legacy"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph core should fail closed when a non-legacy ticket is missing graph_contract.",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_missing_contract_non_legacy",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_missing_contract_non_legacy",
+                node_id=node_id,
+                role_profile_ref="frontend_engineer_primary",
+                output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                delivery_stage="BUILD",
+            ),
+            "graph_contract": None,
+        },
+    )
+
+    with pytest.raises(GraphIdentityResolutionError, match="graph_contract"):
+        build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
 
 
 def test_ticket_graph_snapshot_prefers_graph_contract_execution_lane_over_review_taxonomy(client):
@@ -616,6 +666,7 @@ def test_ticket_graph_snapshot_collapses_rework_back_to_execution_lane(client):
                     "wakeup_policy": "default",
                 },
             ),
+            "graph_contract": None,
             "ticket_kind": "MAKER_CHECKER_REVIEW",
             "maker_checker_context": {
                 "maker_ticket_id": "tkt_shared_runtime_rework_maker",
@@ -648,6 +699,7 @@ def test_ticket_graph_snapshot_collapses_rework_back_to_execution_lane(client):
                 delivery_stage="BUILD",
                 parent_ticket_id="tkt_shared_runtime_rework_checker",
             ),
+            "graph_contract": None,
             "ticket_kind": "MAKER_REWORK_FIX",
             "maker_checker_context": {
                 "maker_ticket_id": "tkt_shared_runtime_rework_maker",
@@ -1137,7 +1189,7 @@ def test_graph_health_report_exposes_affected_graph_node_ids(client, monkeypatch
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
     )
@@ -1161,7 +1213,7 @@ def test_graph_health_report_exposes_affected_graph_node_ids(client, monkeypatch
 
     finding = next(
         item
-        for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+        for item in snapshot["projection_snapshot"]["runtime_liveness_report"]["findings"]
         if item["finding_type"] == "READY_NODE_STALE"
     )
 
@@ -1622,7 +1674,7 @@ def test_graph_health_report_does_not_flag_graph_thrashing_below_threshold(clien
     assert "GRAPH_THRASHING" not in finding_types
 
 
-def test_graph_health_report_detects_ready_node_stale(client, monkeypatch):
+def test_runtime_liveness_report_detects_ready_node_stale(client, monkeypatch):
     workflow_id = "wf_graph_health_ready_node_stale"
     _ensure_scoped_workflow(
         client,
@@ -1641,7 +1693,7 @@ def test_graph_health_report_detects_ready_node_stale(client, monkeypatch):
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
     )
@@ -1663,7 +1715,7 @@ def test_graph_health_report_detects_ready_node_stale(client, monkeypatch):
         trigger_ref="manual:graph-health-ready-node-stale",
     )
 
-    report = snapshot["projection_snapshot"]["graph_health_report"]
+    report = snapshot["projection_snapshot"]["runtime_liveness_report"]
     finding = next(
         item for item in report["findings"] if item["finding_type"] == "READY_NODE_STALE"
     )
@@ -1673,7 +1725,7 @@ def test_graph_health_report_detects_ready_node_stale(client, monkeypatch):
     assert finding["metric_value"] == 10800
 
 
-def test_graph_health_report_detects_queue_starvation(client, monkeypatch):
+def test_runtime_liveness_report_detects_queue_starvation(client, monkeypatch):
     workflow_id = "wf_graph_health_queue_starvation"
     ticket_id = "tkt_graph_health_queue_starvation"
     node_id = "node_graph_health_queue_starvation"
@@ -1694,7 +1746,7 @@ def test_graph_health_report_detects_queue_starvation(client, monkeypatch):
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
     )
@@ -1716,7 +1768,7 @@ def test_graph_health_report_detects_queue_starvation(client, monkeypatch):
         trigger_ref="manual:graph-health-queue-starvation",
     )
 
-    report = snapshot["projection_snapshot"]["graph_health_report"]
+    report = snapshot["projection_snapshot"]["runtime_liveness_report"]
     finding = next(
         item for item in report["findings"] if item["finding_type"] == "QUEUE_STARVATION"
     )
@@ -1726,7 +1778,7 @@ def test_graph_health_report_detects_queue_starvation(client, monkeypatch):
     assert finding["metric_value"] == 14400
 
 
-def test_graph_health_report_ignores_queue_starvation_when_work_is_in_flight(client, monkeypatch):
+def test_runtime_liveness_report_ignores_queue_starvation_when_work_is_in_flight(client, monkeypatch):
     workflow_id = "wf_graph_health_queue_starvation_in_flight"
     ready_ticket_id = "tkt_graph_health_queue_starvation_ready"
     ready_node_id = "node_graph_health_queue_starvation_ready"
@@ -1755,7 +1807,7 @@ def test_graph_health_report_ignores_queue_starvation_when_work_is_in_flight(cli
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
     )
@@ -1777,13 +1829,14 @@ def test_graph_health_report_ignores_queue_starvation_when_work_is_in_flight(cli
         trigger_ref="manual:graph-health-queue-starvation-in-flight",
     )
     finding_types = [
-        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+        item["finding_type"]
+        for item in snapshot["projection_snapshot"]["runtime_liveness_report"]["findings"]
     ]
 
     assert "QUEUE_STARVATION" not in finding_types
 
 
-def test_graph_health_report_detects_ready_blocked_thrashing(client, monkeypatch):
+def test_runtime_liveness_report_detects_ready_blocked_thrashing(client, monkeypatch):
     workflow_id = "wf_graph_health_ready_blocked_thrashing"
     ticket_id = "tkt_graph_health_ready_blocked_thrashing"
     node_id = "node_graph_health_ready_blocked_thrashing"
@@ -1804,7 +1857,7 @@ def test_graph_health_report_detects_ready_blocked_thrashing(client, monkeypatch
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T10:06:00+08:00"),
     )
@@ -1836,7 +1889,7 @@ def test_graph_health_report_detects_ready_blocked_thrashing(client, monkeypatch
         trigger_ref="manual:graph-health-ready-blocked-thrashing",
     )
 
-    report = snapshot["projection_snapshot"]["graph_health_report"]
+    report = snapshot["projection_snapshot"]["runtime_liveness_report"]
     finding = next(
         item
         for item in report["findings"]
@@ -1848,7 +1901,7 @@ def test_graph_health_report_detects_ready_blocked_thrashing(client, monkeypatch
     assert finding["metric_value"] == 3
 
 
-def test_graph_health_report_ignores_ready_blocked_thrashing_below_threshold(client, monkeypatch):
+def test_runtime_liveness_report_ignores_ready_blocked_thrashing_below_threshold(client, monkeypatch):
     workflow_id = "wf_graph_health_ready_blocked_thrashing_low"
     ticket_id = "tkt_graph_health_ready_blocked_thrashing_low"
     node_id = "node_graph_health_ready_blocked_thrashing_low"
@@ -1869,7 +1922,7 @@ def test_graph_health_report_ignores_ready_blocked_thrashing_below_threshold(cli
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T10:05:00+08:00"),
     )
@@ -1899,13 +1952,14 @@ def test_graph_health_report_ignores_ready_blocked_thrashing_below_threshold(cli
         trigger_ref="manual:graph-health-ready-blocked-thrashing-low",
     )
     finding_types = [
-        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+        item["finding_type"]
+        for item in snapshot["projection_snapshot"]["runtime_liveness_report"]["findings"]
     ]
 
     assert "READY_BLOCKED_THRASHING" not in finding_types
 
 
-def test_graph_health_report_detects_cross_version_sla_breach(client, monkeypatch):
+def test_runtime_liveness_report_detects_cross_version_sla_breach(client, monkeypatch):
     workflow_id = "wf_graph_health_cross_version_sla"
     ticket_id = "tkt_graph_health_cross_version_sla"
     node_id = "node_graph_health_cross_version_sla"
@@ -1935,7 +1989,7 @@ def test_graph_health_report_detects_cross_version_sla_breach(client, monkeypatc
         occurred_at="2026-04-16T09:00:00+08:00",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T12:30:00+08:00"),
     )
@@ -1966,7 +2020,7 @@ def test_graph_health_report_detects_cross_version_sla_breach(client, monkeypatc
         trigger_ref="manual:graph-health-cross-version-sla",
     )
 
-    report = snapshot["projection_snapshot"]["graph_health_report"]
+    report = snapshot["projection_snapshot"]["runtime_liveness_report"]
     finding = next(
         item
         for item in report["findings"]
@@ -1978,7 +2032,7 @@ def test_graph_health_report_detects_cross_version_sla_breach(client, monkeypatc
     assert finding["metric_value"] == 3
 
 
-def test_graph_health_report_ignores_cross_version_sla_breach_below_version_threshold(client, monkeypatch):
+def test_runtime_liveness_report_ignores_cross_version_sla_breach_below_version_threshold(client, monkeypatch):
     workflow_id = "wf_graph_health_cross_version_sla_low"
     ticket_id = "tkt_graph_health_cross_version_sla_low"
     node_id = "node_graph_health_cross_version_sla_low"
@@ -2008,7 +2062,7 @@ def test_graph_health_report_ignores_cross_version_sla_breach_below_version_thre
         occurred_at="2026-04-16T09:00:00+08:00",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T12:30:00+08:00"),
     )
@@ -2039,13 +2093,14 @@ def test_graph_health_report_ignores_cross_version_sla_breach_below_version_thre
         trigger_ref="manual:graph-health-cross-version-sla-low",
     )
     finding_types = [
-        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+        item["finding_type"]
+        for item in snapshot["projection_snapshot"]["runtime_liveness_report"]["findings"]
     ]
 
     assert "CROSS_VERSION_SLA_BREACH" not in finding_types
 
 
-def test_graph_health_report_does_not_flag_ready_node_stale_within_sla(client, monkeypatch):
+def test_runtime_liveness_report_does_not_flag_ready_node_stale_within_sla(client, monkeypatch):
     workflow_id = "wf_graph_health_ready_node_fresh"
     _ensure_scoped_workflow(
         client,
@@ -2064,7 +2119,7 @@ def test_graph_health_report_does_not_flag_ready_node_stale_within_sla(client, m
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T10:00:00+08:00"),
     )
@@ -2087,13 +2142,14 @@ def test_graph_health_report_does_not_flag_ready_node_stale_within_sla(client, m
     )
 
     finding_types = [
-        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+        item["finding_type"]
+        for item in snapshot["projection_snapshot"]["runtime_liveness_report"]["findings"]
     ]
 
     assert "READY_NODE_STALE" not in finding_types
 
 
-def test_graph_health_report_uses_policy_override_for_ready_node_stale_threshold(client, monkeypatch):
+def test_runtime_liveness_report_uses_policy_override_for_ready_node_stale_threshold(client, monkeypatch):
     workflow_id = "wf_graph_health_policy_override_ready_node_stale"
     ticket_id = "tkt_graph_health_policy_override_ready_node_stale"
     node_id = "node_graph_health_policy_override_ready_node_stale"
@@ -2114,7 +2170,7 @@ def test_graph_health_report_uses_policy_override_for_ready_node_stale_threshold
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
     )
@@ -2138,7 +2194,7 @@ def test_graph_health_report_uses_policy_override_for_ready_node_stale_threshold
         }
     )
 
-    report = graph_health_module.build_graph_health_report(
+    report = runtime_liveness_module.build_runtime_liveness_report(
         repository,
         workflow_id,
         policy=policy,
@@ -2172,7 +2228,7 @@ def test_graph_health_report_rejects_malformed_graph_patch_timeline(client):
         )
 
 
-def test_graph_health_report_rejects_ready_node_missing_updated_at(client, monkeypatch):
+def test_runtime_liveness_report_rejects_ready_node_missing_updated_at(client, monkeypatch):
     workflow_id = "wf_graph_health_missing_updated_at"
     ticket_id = "tkt_graph_health_missing_updated_at"
     node_id = "node_graph_health_missing_updated_at"
@@ -2193,7 +2249,7 @@ def test_graph_health_report_rejects_ready_node_missing_updated_at(client, monke
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
     )
@@ -2212,11 +2268,11 @@ def test_graph_health_report_rejects_ready_node_missing_updated_at(client, monke
         _convert_ticket_projection_row_without_updated_at,
     )
 
-    with pytest.raises(RuntimeError, match="graph unavailable"):
-        graph_health_module.build_graph_health_report(repository, workflow_id)
+    with pytest.raises(RuntimeError, match="runtime liveness unavailable"):
+        runtime_liveness_module.build_runtime_liveness_report(repository, workflow_id)
 
 
-def test_graph_health_report_rejects_ready_node_missing_timeout_sla_sec(client, monkeypatch):
+def test_runtime_liveness_report_rejects_ready_node_missing_timeout_sla_sec(client, monkeypatch):
     workflow_id = "wf_graph_health_missing_timeout_sla_sec"
     ticket_id = "tkt_graph_health_missing_timeout_sla_sec"
     node_id = "node_graph_health_missing_timeout_sla_sec"
@@ -2237,7 +2293,7 @@ def test_graph_health_report_rejects_ready_node_missing_timeout_sla_sec(client, 
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
     )
@@ -2252,11 +2308,11 @@ def test_graph_health_report_rejects_ready_node_missing_timeout_sla_sec(client, 
             (None, ticket_id),
         )
 
-    with pytest.raises(RuntimeError, match="graph unavailable"):
-        graph_health_module.build_graph_health_report(repository, workflow_id)
+    with pytest.raises(RuntimeError, match="runtime liveness unavailable"):
+        runtime_liveness_module.build_runtime_liveness_report(repository, workflow_id)
 
 
-def test_graph_health_report_rejects_ready_node_missing_version_for_queue_starvation(client, monkeypatch):
+def test_runtime_liveness_report_rejects_ready_node_missing_version_for_queue_starvation(client, monkeypatch):
     workflow_id = "wf_graph_health_missing_version"
     ticket_id = "tkt_graph_health_missing_version"
     node_id = "node_graph_health_missing_version"
@@ -2277,7 +2333,7 @@ def test_graph_health_report_rejects_ready_node_missing_version_for_queue_starva
         delivery_stage="BUILD",
     )
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
     )
@@ -2296,8 +2352,8 @@ def test_graph_health_report_rejects_ready_node_missing_version_for_queue_starva
         _convert_ticket_projection_row_without_version,
     )
 
-    with pytest.raises(RuntimeError, match="graph unavailable"):
-        graph_health_module.build_graph_health_report(repository, workflow_id)
+    with pytest.raises(RuntimeError, match="runtime liveness unavailable"):
+        runtime_liveness_module.build_runtime_liveness_report(repository, workflow_id)
 
 
 def test_ticket_graph_snapshot_summarizes_board_review_and_incident_blockers(client):

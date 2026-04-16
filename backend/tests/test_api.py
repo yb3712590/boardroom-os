@@ -318,6 +318,12 @@ def _seed_created_ticket(
     )
     if input_process_asset_refs is not None:
         payload["input_process_asset_refs"] = input_process_asset_refs
+    payload.setdefault(
+        "graph_contract",
+        {
+            "lane_kind": "execution",
+        },
+    )
     with repository.transaction() as connection:
         repository.insert_event(
             connection,
@@ -1957,6 +1963,9 @@ def _ticket_create_payload(
         "priority": "high",
         "timeout_sla_sec": 1800,
         "deadline_at": "2026-03-28T18:00:00+08:00",
+        "graph_contract": {
+            "lane_kind": "execution",
+        },
         "escalation_policy": {
             "on_timeout": on_timeout,
             "on_schema_error": on_schema_error,
@@ -11591,10 +11600,10 @@ def test_graph_health_ready_node_stale_stays_in_snapshot_without_opening_inciden
         output_schema_ref="source_code_delivery",
         delivery_stage="BUILD",
     )
-    import app.core.graph_health as graph_health_module
+    import app.core.runtime_liveness as runtime_liveness_module
 
     monkeypatch.setattr(
-        graph_health_module,
+        runtime_liveness_module,
         "now_local",
         lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
     )
@@ -11617,7 +11626,8 @@ def test_graph_health_ready_node_stale_stays_in_snapshot_without_opening_inciden
     )
 
     finding_types = [
-        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+        item["finding_type"]
+        for item in snapshot["projection_snapshot"]["runtime_liveness_report"]["findings"]
     ]
 
     assert "READY_NODE_STALE" in finding_types
@@ -11675,10 +11685,62 @@ def test_graph_health_queue_starvation_opens_critical_incident_via_auto_advance(
     ]
 
     assert len(open_incidents) == 1
-    assert open_incidents[0]["incident_type"] == "GRAPH_HEALTH_CRITICAL"
+    assert open_incidents[0]["incident_type"] == "RUNTIME_LIVENESS_CRITICAL"
     assert open_incidents[0]["payload"]["finding_type"] == "QUEUE_STARVATION"
     assert open_incidents[0]["payload"]["affected_nodes"] == [node_id]
     assert open_incidents[0]["payload"]["affected_graph_node_ids"] == [node_id]
+
+
+def test_runtime_liveness_unavailable_opens_runtime_liveness_unavailable_incident(client, monkeypatch):
+    workflow_id = "wf_runtime_liveness_unavailable_incident"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Runtime liveness failure should open its own explicit incident path.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_runtime_liveness_unavailable_incident",
+        node_id="node_runtime_liveness_unavailable_incident",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    import app.core.ceo_snapshot as ceo_snapshot_module
+    import app.core.runtime_liveness as runtime_liveness_module
+
+    def _raise_runtime_liveness_unavailable(*args, **kwargs):
+        raise runtime_liveness_module.RuntimeLivenessUnavailableError(
+            "runtime liveness unavailable: malformed runtime timeline"
+        )
+
+    monkeypatch.setattr(
+        ceo_snapshot_module,
+        "build_runtime_liveness_report",
+        _raise_runtime_liveness_unavailable,
+        raising=False,
+    )
+
+    auto_advance_workflow_to_next_stop(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix=f"test-runtime-liveness-unavailable:{workflow_id}",
+        max_steps=1,
+        max_dispatches=1,
+    )
+
+    open_incidents = [
+        item
+        for item in client.app.state.repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id
+    ]
+
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["incident_type"] == "RUNTIME_LIVENESS_UNAVAILABLE"
+    assert open_incidents[0]["payload"]["error_class"] == "RuntimeLivenessUnavailableError"
 
 
 def test_graph_health_unavailable_error_opens_ticket_graph_unavailable_incident(client, monkeypatch):
@@ -15966,7 +16028,7 @@ def test_board_advisory_analysis_run_uses_live_mode_when_real_architect_and_defa
     assert run["executor_mode"] == "LIVE_PROVIDER"
 
 
-def test_board_advisory_analysis_run_ignores_legacy_architect_target_binding_without_advisory_target(
+def test_board_advisory_analysis_run_rejects_legacy_architect_target_binding_without_advisory_target(
     client,
 ):
     workflow_id = "wf_advisory_analysis_legacy_architect_binding_only"
@@ -16025,52 +16087,81 @@ def test_board_advisory_analysis_run_ignores_legacy_architect_target_binding_wit
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
 
-    with patch("app.core.approval_handlers.run_board_advisory_analysis", return_value=None, create=True):
-        response = client.post(
-            "/api/v1/commands/board-advisory-request-analysis",
-            json={
-                "session_id": advisory_session["session_id"],
-                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:legacy-architect-binding-only",
-            },
-        )
+    response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:legacy-architect-binding-only",
+        },
+    )
 
     updated_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    open_incidents = [
+        item
+        for item in repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id and item["incident_type"] == "BOARD_ADVISORY_ANALYSIS_FAILED"
+    ]
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert updated_session is not None
     run = repository.get_board_advisory_analysis_run(str(updated_session["latest_analysis_run_id"]))
     assert run is not None
-    assert run["executor_mode"] == "DETERMINISTIC"
+    assert updated_session["status"] == "ANALYSIS_REJECTED"
+    assert updated_session["latest_analysis_status"] == "FAILED"
+    assert updated_session["latest_patch_proposal_ref"] is None
+    assert len(open_incidents) == 1
 
 
-def test_board_advisory_analysis_run_stays_deterministic_without_real_architect_even_if_provider_binding_exists(
+def test_board_advisory_analysis_run_fails_without_real_contract_matching_executor_even_if_provider_binding_exists(
     client,
     monkeypatch,
 ):
-    workflow_id = "wf_advisory_analysis_deterministic_without_real_architect"
+    workflow_id = "wf_advisory_analysis_fails_without_real_executor"
     _ensure_scoped_workflow(
         client,
         workflow_id=workflow_id,
         tenant_id="tenant_default",
         workspace_id="ws_default",
-        goal="Synthetic architect fallback must not unlock live advisory analysis.",
+        goal="Mainline advisory analysis must fail when no board-approved contract-matching executor exists.",
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
-    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
+    _seed_worker(
+        client,
+        employee_id="emp_cto_advisory_incident",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
     _assert_command_accepted(
         client.post(
             "/api/v1/commands/runtime-provider-upsert",
             json=_runtime_provider_upsert_payload(
                 role_bindings=[
                     {
-                        "target_ref": EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
+                        "target_ref": "execution_target:board_advisory_analysis",
                         "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
                         "max_context_window_override": None,
                         "reasoning_effort_override": None,
                     }
                 ],
-                idempotency_key=f"runtime-provider-upsert:{workflow_id}:synthetic-architect",
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:advisory-incident",
+            ),
+        )
+    )
+    _assert_command_accepted(
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                role_bindings=[
+                    {
+                        "target_ref": "execution_target:board_advisory_analysis",
+                        "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                        "max_context_window_override": None,
+                        "reasoning_effort_override": None,
+                    }
+                ],
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:no-real-executor",
             ),
         )
     )
@@ -16084,12 +16175,12 @@ def test_board_advisory_analysis_run_stays_deterministic_without_real_architect_
                 "command_target_version": approval["command_target_version"],
                 "approval_id": approval["approval_id"],
                 "constraint_patch": {
-                    "add_rules": ["Do not let synthetic architect fallbacks unlock live provider execution."],
+                    "add_rules": ["Fail advisory analysis when no board-approved contract-matching executor exists."],
                     "remove_rules": [],
                     "replace_rules": [],
                 },
-                "board_comment": "No real architect is on the roster for this flow.",
-                "idempotency_key": f"board-modify:{approval['approval_id']}:synthetic-architect",
+                "board_comment": "No real contract-matching executor is on the roster for this flow.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:no-real-executor",
             },
         )
     _assert_command_accepted(enter_response)
@@ -16097,22 +16188,29 @@ def test_board_advisory_analysis_run_stays_deterministic_without_real_architect_
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
 
-    with patch("app.core.approval_handlers.run_board_advisory_analysis", return_value=None, create=True):
-        response = client.post(
-            "/api/v1/commands/board-advisory-request-analysis",
-            json={
-                "session_id": advisory_session["session_id"],
-                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:synthetic-architect",
-            },
-        )
+    response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:no-real-executor",
+        },
+    )
 
     updated_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    open_incidents = [
+        item
+        for item in repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id and item["incident_type"] == "BOARD_ADVISORY_ANALYSIS_FAILED"
+    ]
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert updated_session is not None
     run = repository.get_board_advisory_analysis_run(str(updated_session["latest_analysis_run_id"]))
     assert run is not None
-    assert run["executor_mode"] == "DETERMINISTIC"
+    assert updated_session["status"] == "ANALYSIS_REJECTED"
+    assert updated_session["latest_analysis_status"] == "FAILED"
+    assert updated_session["latest_patch_proposal_ref"] is None
+    assert len(open_incidents) == 1
 
 
 def test_board_advisory_analysis_contract_mismatch_opens_incident_without_synthetic_fallback(
@@ -16410,7 +16508,29 @@ def test_board_advisory_request_analysis_accepts_add_node_patch_proposal(client,
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
-    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
+    _seed_worker(
+        client,
+        employee_id="emp_cto_advisory_incident",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _assert_command_accepted(
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                role_bindings=[
+                    {
+                        "target_ref": "execution_target:board_advisory_analysis",
+                        "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                        "max_context_window_override": None,
+                        "reasoning_effort_override": None,
+                    }
+                ],
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:advisory-incident",
+            ),
+        )
+    )
 
     with _suppress_ceo_shadow_side_effects():
         enter_response = client.post(
@@ -16491,7 +16611,29 @@ def test_board_advisory_analysis_failure_opens_incident_and_rerun_recovery(clien
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
-    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
+    _seed_worker(
+        client,
+        employee_id="emp_cto_advisory_incident",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _assert_command_accepted(
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                role_bindings=[
+                    {
+                        "target_ref": "execution_target:board_advisory_analysis",
+                        "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                        "max_context_window_override": None,
+                        "reasoning_effort_override": None,
+                    }
+                ],
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:advisory-incident",
+            ),
+        )
+    )
 
     with _suppress_ceo_shadow_side_effects():
         enter_response = client.post(
@@ -16516,19 +16658,36 @@ def test_board_advisory_analysis_failure_opens_incident_and_rerun_recovery(clien
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
 
-    with (
-        patch(
-            "app.core.approval_handlers.build_graph_patch_proposal",
-            side_effect=ValueError("simulated advisory analysis failure"),
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+            "workflow_id": workflow_id,
+            "session_id": advisory_session["session_id"],
+            "base_graph_version": build_ticket_graph_snapshot(repository, workflow_id).graph_version,
+            "proposal_summary": "Recover the advisory flow after the provider comes back.",
+            "impact_summary": "Freeze the current execution node until the tighter advisory policy lands.",
+            "freeze_node_ids": ["node_homepage_visual"],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-advisory-rerun-recovery",
+        }
+    )
+    provider_results = [
+        RuntimeError("simulated advisory analysis failure"),
+        OpenAICompatProviderResult(
+            output_text=json.dumps(proposal.model_dump(mode="json")),
+            response_id="resp_advisory_rerun_recovery",
         ),
-        patch(
-            "app.core.board_advisory_analysis.build_graph_patch_proposal",
-            side_effect=ValueError("simulated advisory analysis failure"),
-        ),
-        patch(
-            "app.core.board_advisory.build_graph_patch_proposal",
-            side_effect=ValueError("simulated advisory analysis failure"),
-        ),
+    ]
+
+    def _fake_invoke_openai_compat_response(*args, **kwargs):
+        next_result = provider_results.pop(0)
+        if isinstance(next_result, Exception):
+            raise next_result
+        return next_result
+
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        side_effect=_fake_invoke_openai_compat_response,
     ):
         response = client.post(
             "/api/v1/commands/board-advisory-request-analysis",
@@ -16566,15 +16725,19 @@ def test_board_advisory_analysis_failure_opens_incident_and_rerun_recovery(clien
     ]
     assert incident_response.json()["data"]["recommended_followup_action"] == "RERUN_BOARD_ADVISORY_ANALYSIS"
 
-    rerun_response = client.post(
-        "/api/v1/commands/incident-resolve",
-        json=_incident_resolve_payload(
-            incident_id,
-            idempotency_key=f"incident-resolve:{incident_id}:rerun-advisory-analysis",
-            followup_action="RERUN_BOARD_ADVISORY_ANALYSIS",
-            resolution_summary="Rerun the advisory analysis after the analysis harness is available again.",
-        ),
-    )
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        side_effect=_fake_invoke_openai_compat_response,
+    ):
+        rerun_response = client.post(
+            "/api/v1/commands/incident-resolve",
+            json=_incident_resolve_payload(
+                incident_id,
+                idempotency_key=f"incident-resolve:{incident_id}:rerun-advisory-analysis",
+                followup_action="RERUN_BOARD_ADVISORY_ANALYSIS",
+                resolution_summary="Rerun the advisory analysis after the analysis harness is available again.",
+            ),
+        )
 
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
@@ -16698,7 +16861,22 @@ def test_board_advisory_apply_patch_accepts_add_node_placeholder_without_runtime
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
-    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
+    _seed_worker(
+        client,
+        employee_id="emp_cto_advisory_incident",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _assert_command_accepted(
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:advisory-incident",
+            ),
+        )
+    )
     monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
 
     with _suppress_ceo_shadow_side_effects():

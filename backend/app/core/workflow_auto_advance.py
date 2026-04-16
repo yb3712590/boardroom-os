@@ -8,6 +8,8 @@ from app.core.constants import (
     EVENT_TICKET_FAILED,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+    INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
+    INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
@@ -16,10 +18,16 @@ from app.core.constants import (
     INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
     PROVIDER_PAUSE_FAILURE_KINDS,
 )
+from app.core.runtime_liveness import RuntimeLivenessUnavailableError
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.role_hooks import scan_and_open_required_hook_gate_incidents
-from app.core.ticket_handlers import open_ticket_graph_unavailable_incident, run_scheduler_tick
-from app.core.ticket_handlers import open_graph_health_critical_incident
+from app.core.ticket_handlers import (
+    open_graph_health_critical_incident,
+    open_runtime_liveness_critical_incident,
+    open_runtime_liveness_unavailable_incident,
+    open_ticket_graph_unavailable_incident,
+    run_scheduler_tick,
+)
 from app.core.workflow_controller import workflow_controller_effect
 from app.core.workflow_autopilot import ensure_workflow_atomic_chain_report, workflow_uses_ceo_board_delegate
 from app.db.repository import ControlPlaneRepository
@@ -96,6 +104,10 @@ def _recommended_incident_followup_action(
         return IncidentFollowupAction.REPLAY_REQUIRED_HOOKS
     if incident_type == INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL:
         return IncidentFollowupAction.RERUN_CEO_SHADOW
+    if incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL:
+        return IncidentFollowupAction.RERUN_CEO_SHADOW
+    if incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE:
+        return IncidentFollowupAction.RESTORE_ONLY
     if incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
         return IncidentFollowupAction.RERUN_CEO_SHADOW
     if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
@@ -176,6 +188,14 @@ def auto_advance_workflow_to_next_stop(
                 trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
                 trigger_ref=f"{idempotency_key_prefix}:{step_index}:controller-probe",
             )
+        except RuntimeLivenessUnavailableError as exc:
+            open_runtime_liveness_unavailable_incident(
+                repository,
+                workflow_id=workflow_id,
+                error=exc,
+                idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:runtime-liveness-unavailable",
+            )
+            return
         except Exception as exc:
             if not is_ticket_graph_unavailable_error(exc):
                 raise
@@ -194,6 +214,17 @@ def auto_advance_workflow_to_next_stop(
                 workflow_id=workflow_id,
                 report=graph_health_report,
                 idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:graph-health-critical",
+            )
+            return
+        runtime_liveness_report = (
+            (snapshot.get("projection_snapshot") or {}).get("runtime_liveness_report") or {}
+        )
+        if str(runtime_liveness_report.get("overall_health") or "") == "CRITICAL":
+            open_runtime_liveness_critical_incident(
+                repository,
+                workflow_id=workflow_id,
+                report=runtime_liveness_report,
+                idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:runtime-liveness-critical",
             )
             return
         hook_incident_scan = scan_and_open_required_hook_gate_incidents(

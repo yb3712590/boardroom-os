@@ -10,6 +10,7 @@ from app.contracts.ceo import (
     ProjectMapSliceDigest,
     RecentAssetDigest,
     ReplanFocus,
+    RuntimeLivenessReportDigest,
 )
 from app.core.board_advisory import (
     BOARD_ADVISORY_STATUS_OPEN,
@@ -19,6 +20,7 @@ from app.core.board_advisory import (
 from app.core.constants import NODE_STATUS_COMPLETED
 from app.core.ceo_meeting_policy import build_ceo_meeting_candidates
 from app.core.graph_health import build_graph_health_report
+from app.core.runtime_liveness import build_runtime_liveness_report
 from app.core.governance_profiles import require_governance_profile
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -71,6 +73,7 @@ _DEFAULT_READ_ORDER = [
     "project_map_slices",
     "failure_fingerprints",
     "graph_health_report",
+    "runtime_liveness_report",
     "recent_asset_digests",
 ]
 
@@ -482,6 +485,13 @@ def build_ceo_shadow_snapshot(
                 connection=connection,
             )
         ).model_dump(mode="json")
+        runtime_liveness_report = RuntimeLivenessReportDigest.model_validate(
+            build_runtime_liveness_report(
+                repository,
+                workflow_id,
+                connection=connection,
+            )
+        ).model_dump(mode="json")
         controller_view = build_workflow_controller_view(
             repository,
             workflow=workflow,
@@ -532,6 +542,7 @@ def build_ceo_shadow_snapshot(
         ],
         project_map_slices=project_map_slices,
         graph_health_report=graph_health_report,
+        runtime_liveness_report=runtime_liveness_report,
         memory_budget_ratios=dict(_MEMORY_BUDGET_RATIOS),
         default_read_order=list(_DEFAULT_READ_ORDER),
     )

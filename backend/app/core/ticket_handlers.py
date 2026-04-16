@@ -68,6 +68,8 @@ from app.core.constants import (
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+    INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
+    INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_STAFFING_CONTAINMENT,
     INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
@@ -115,6 +117,7 @@ from app.core.execution_targets import (
     infer_execution_contract_payload,
     resolve_execution_target_ref_from_ticket_spec,
 )
+from app.core.graph_identity import GRAPH_LANE_EXECUTION
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -1161,6 +1164,11 @@ def _ensure_ticket_execution_contract_payload(ticket_payload: dict[str, Any]) ->
         )
         if inferred_execution_contract is not None:
             resolved_payload["execution_contract"] = inferred_execution_contract
+    graph_contract = resolved_payload.get("graph_contract")
+    if not isinstance(graph_contract, dict) or not str(graph_contract.get("lane_kind") or "").strip():
+        resolved_payload["graph_contract"] = {
+            "lane_kind": GRAPH_LANE_EXECUTION,
+        }
     if (
         resolved_payload.get("auto_review_request") is None
         and str(resolved_payload.get("output_schema_ref") or "") in GOVERNANCE_DOCUMENT_SCHEMA_REFS
@@ -3316,6 +3324,46 @@ def open_graph_health_critical_incident(
     idempotency_key_base: str,
     actor_id: str = "autopilot-controller",
 ) -> str | None:
+    return _open_monitor_critical_incident(
+        repository,
+        workflow_id=workflow_id,
+        report=report,
+        idempotency_key_base=idempotency_key_base,
+        actor_id=actor_id,
+        incident_type=INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+        incident_label="Graph health",
+    )
+
+
+def open_runtime_liveness_critical_incident(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    report: dict[str, Any],
+    idempotency_key_base: str,
+    actor_id: str = "autopilot-controller",
+) -> str | None:
+    return _open_monitor_critical_incident(
+        repository,
+        workflow_id=workflow_id,
+        report=report,
+        idempotency_key_base=idempotency_key_base,
+        actor_id=actor_id,
+        incident_type=INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
+        incident_label="Runtime liveness",
+    )
+
+
+def _open_monitor_critical_incident(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    report: dict[str, Any],
+    idempotency_key_base: str,
+    actor_id: str,
+    incident_type: str,
+    incident_label: str,
+) -> str | None:
     if str(report.get("overall_health") or "") != "CRITICAL":
         return None
     findings = [
@@ -3380,7 +3428,7 @@ def open_graph_health_critical_incident(
             "incident_id": incident_id,
             "ticket_id": linked_ticket_id,
             "node_id": linked_node_id,
-            "incident_type": INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+            "incident_type": incident_type,
             "status": INCIDENT_STATUS_OPEN,
             "severity": "high",
             "fingerprint": fingerprint,
@@ -3409,7 +3457,7 @@ def open_graph_health_critical_incident(
             occurred_at=occurred_at,
         )
         if incident_event is None:
-            raise RuntimeError("Graph health critical incident opening idempotency conflict.")
+            raise RuntimeError(f"{incident_label} critical incident opening idempotency conflict.")
 
         breaker_event = repository.insert_event(
             connection,
@@ -3430,7 +3478,89 @@ def open_graph_health_critical_incident(
             occurred_at=occurred_at,
         )
         if breaker_event is None:
-            raise RuntimeError("Graph health critical circuit breaker opening idempotency conflict.")
+            raise RuntimeError(f"{incident_label} critical circuit breaker opening idempotency conflict.")
+
+        repository.refresh_projections(connection)
+        return incident_id
+
+
+def open_runtime_liveness_unavailable_incident(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    error: Exception,
+    idempotency_key_base: str,
+    actor_id: str = "autopilot-controller",
+) -> str:
+    command_id = new_prefixed_id("cmd")
+    occurred_at = now_local()
+    fingerprint = (
+        f"{workflow_id}:runtime-liveness:{error.__class__.__name__}:{str(error).strip() or 'error'}"
+    )
+
+    with repository.transaction() as connection:
+        existing_row = connection.execute(
+            """
+            SELECT incident_id
+            FROM incident_projection
+            WHERE workflow_id = ? AND fingerprint = ? AND status = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            LIMIT 1
+            """,
+            (workflow_id, fingerprint, INCIDENT_STATUS_OPEN),
+        ).fetchone()
+        if existing_row is not None:
+            return str(existing_row["incident_id"])
+
+        incident_id = new_prefixed_id("inc")
+        incident_payload = {
+            "incident_id": incident_id,
+            "ticket_id": None,
+            "node_id": None,
+            "incident_type": INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
+            "status": INCIDENT_STATUS_OPEN,
+            "severity": "high",
+            "fingerprint": fingerprint,
+            "source_component": "runtime_liveness_report",
+            "source_stage": "runtime_liveness_report",
+            "error_class": error.__class__.__name__,
+            "error_message": str(error),
+        }
+        incident_event = repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:incident-opened:runtime-liveness",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload=incident_payload,
+            occurred_at=occurred_at,
+        )
+        if incident_event is None:
+            raise RuntimeError("Runtime liveness unavailable incident opening idempotency conflict.")
+
+        breaker_event = repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:runtime-liveness",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+                "fingerprint": fingerprint,
+            },
+            occurred_at=occurred_at,
+        )
+        if breaker_event is None:
+            raise RuntimeError("Runtime liveness unavailable circuit breaker opening idempotency conflict.")
 
         repository.refresh_projections(connection)
         return incident_id
@@ -4537,6 +4667,7 @@ def handle_incident_resolve(
             if incident["incident_type"] not in {
                 INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
                 INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+                INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
             }:
                 return _incident_rejected_ack(
                     command_id=command_id,
@@ -4551,7 +4682,10 @@ def handle_incident_resolve(
                     (incident.get("payload") or {}).get("trigger_type")
                     or (
                         SCHEDULER_IDLE_MAINTENANCE_TRIGGER
-                        if incident["incident_type"] == INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL
+                        if incident["incident_type"] in {
+                            INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+                            INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
+                        }
                         else ""
                     )
                 ).strip(),

@@ -23,6 +23,14 @@
 
 ### 2026-04-16
 
+- `P4-S4` 这轮已把 `board_advisory_analysis` 主线收成 live-only success path：没有真实 board-approved contract-matching executor、没有 advisory target provider selection、或 provider paused 时都会显式失败；synthetic executor 已退出 command 主链成功路径
+- `graph_identity.py` 这轮已进一步收口成 contract-only lane core：`resolve_graph_lane_kind()` 现在只认 `graph_contract.lane_kind`；legacy maker-checker / rework taxonomy 已移到单点 compat adapter，新票路径也会补正式 execution lane contract
+- `P4-S4` 这轮已新增 `backend/app/core/runtime_liveness.py` 与 `RuntimeLivenessReport`，把 `QUEUE_STARVATION / READY_BLOCKED_THRASHING / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 从 `GraphHealthReport` 主读面拆出；`ProjectionSnapshot / CEO prompt / workflow_auto_advance` 现在会同时读 `graph_health_report + runtime_liveness_report`
+- liveness incident 主链这轮也已拆开：结构类 critical 保持 `GRAPH_HEALTH_CRITICAL`；liveness critical 改走 `RUNTIME_LIVENESS_CRITICAL`；liveness 构建失败改走 `RUNTIME_LIVENESS_UNAVAILABLE`，不再把 runtime timeline 坏数据伪装成 `GraphHealthUnavailableError`
+- 当前还有一条会直接影响下轮判断的事实：`RuntimeLivenessReport` 虽已独立，但 policy 仍复用 `graph_health_policy.py`；如果下一轮继续瘦监视层，应先决定 graph policy / liveness policy 是否继续拆成两个正式合同
+- 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health or runtime_liveness or advisory" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory_analysis or graph_health or runtime_liveness" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/contracts/ceo.py backend/app/core/board_advisory_analysis.py backend/app/core/graph_identity.py backend/app/core/graph_health.py backend/app/core/runtime_liveness.py backend/app/core/ceo_snapshot.py backend/app/core/ceo_prompts.py backend/app/core/workflow_auto_advance.py backend/app/core/ticket_handlers.py backend/app/core/ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py backend/tests/test_ticket_graph.py`
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先决定 placeholder runtime materialization 是否拆独立切片；runtime `node_projection` 双层真相继续保持后置，`RuntimeLiveness/GraphHealth` 的 policy contract 是否继续拆层单独决策
+
 - `P4-S4` 这轮已完成第十二批：新增正式 `execution_target:board_advisory_analysis`，`board_advisory_analysis.py` 现已改成 execution contract 驱动；真人 executor 改按 capability tags 选，旧的 `architect_primary + architect_governance_document` 直绑已退出核心判断
 - advisory analysis 这轮继续坚持 harness engineering 口径：run 创建、compile worker binding、live provider selection 和 deterministic guard 现在共用单点 execution plan；命中 contract mismatch / missing provider selection / provider paused 时都会显式失败，并继续复用现有幂等 incident / recovery
 - `graph_identity.py` 这轮已改成 `graph_contract.lane_kind` 优先；maker-checker review / rework 建票路径会显式写入 lane contract，旧 taxonomy 只保留在单点 legacy adapter，不再散落到 `TicketGraph` 或其他 graph 内核判断
