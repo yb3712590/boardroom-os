@@ -6196,6 +6196,109 @@ def test_ticket_create_accepts_placeholder_node_and_materializes_runtime_truth(c
     assert "cannot accept a new ticket while status is PENDING" in duplicate_response.json()["reason"]
 
 
+def test_ticket_start_rejects_planned_placeholder_before_materialization(client):
+    workflow_id = "wf_ticket_start_placeholder_gate"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket-start should fail closed for graph-only placeholders.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ticket_start_placeholder_parent",
+        node_id="node_ticket_start_placeholder_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_ticket_start_placeholder_target"],
+        add_nodes=[
+            {
+                "node_id": "node_ticket_start_placeholder_target",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_ticket_start_placeholder_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_ticket_start_placeholder_target",
+            node_id="node_ticket_start_placeholder_target",
+        ),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "REJECTED"
+    assert "PLANNED_PLACEHOLDER_NOT_MATERIALIZED" in str(body["reason"])
+
+
+def test_ticket_result_submit_rejects_planned_placeholder_before_materialization(client):
+    workflow_id = "wf_ticket_result_placeholder_gate"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket result submit should fail closed for graph-only placeholders.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ticket_result_placeholder_parent",
+        node_id="node_ticket_result_placeholder_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_ticket_result_placeholder_target"],
+        add_nodes=[
+            {
+                "node_id": "node_ticket_result_placeholder_target",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_ticket_result_placeholder_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_ticket_result_placeholder_target",
+            node_id="node_ticket_result_placeholder_target",
+            idempotency_key="ticket-result-submit:wf_ticket_result_placeholder_gate:planned-placeholder",
+        ),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "REJECTED"
+    assert "PLANNED_PLACEHOLDER_NOT_MATERIALIZED" in str(body["reason"])
+
+
 def test_dashboard_workforce_summary_reflects_seeded_roster_and_busy_worker(client, set_ticket_time):
     initial_response = client.get("/api/v1/projections/dashboard")
 

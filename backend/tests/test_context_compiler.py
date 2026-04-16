@@ -9,6 +9,7 @@ import tests.test_api as api_test_helpers
 from app.contracts.commands import DeveloperInspectorRefs
 from app.contracts.governance import GovernanceProfile
 
+from app.core.constants import EVENT_TICKET_CREATED
 from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     build_compile_request,
@@ -1901,6 +1902,85 @@ def test_build_compile_request_resolves_governance_document_process_asset(client
     assert compile_request.explicit_sources[0].inline_content_json["linked_document_refs"] == [
         "doc://governance/technology-decision/current"
     ]
+
+
+def test_compile_and_persist_execution_artifacts_rejects_planned_placeholder_before_materialization(client):
+    workflow_id = "wf_compile_planned_placeholder"
+    repository = client.app.state.repository
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Compile should fail closed for graph-only placeholders.",
+    )
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_compile_placeholder_parent",
+        node_id="node_compile_placeholder_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    api_test_helpers._seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_compile_placeholder_target"],
+        add_nodes=[
+            {
+                "node_id": "node_compile_placeholder_target",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_compile_placeholder_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+    _seed_governance_profile(repository, workflow_id=workflow_id, profile_id="gp_compile_placeholder")
+
+    created_payload = _ticket_create_payload(
+        workflow_id=workflow_id,
+        ticket_id="tkt_compile_placeholder_target",
+        node_id="node_compile_placeholder_target",
+        input_artifact_refs=[],
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key="test-compile-placeholder-ticket-created",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=created_payload,
+            occurred_at=datetime.fromisoformat("2026-04-16T23:10:00+08:00"),
+        )
+
+    with pytest.raises(Exception) as exc_info:
+        compile_and_persist_execution_artifacts(
+            repository,
+            {
+                "ticket_id": "tkt_compile_placeholder_target",
+                "workflow_id": workflow_id,
+                "node_id": "node_compile_placeholder_target",
+                "lease_owner": "emp_frontend_2",
+                "tenant_id": "tenant_default",
+                "workspace_id": "ws_default",
+                "version": 1,
+            },
+        )
+
+    assert getattr(exc_info.value, "reason_code", None) == "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+    assert "node_compile_placeholder_target" in str(exc_info.value)
 
 
 def test_build_compile_request_auto_injects_project_map_and_failure_fingerprint_assets(

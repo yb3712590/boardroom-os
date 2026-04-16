@@ -23,6 +23,12 @@
 
 ### 2026-04-16
 
+- `P4-S5` 这轮已新增 `backend/app/core/runtime_node_lifecycle.py`，把 runtime node lifecycle 收成单点 gate、稳定 reason code 和 typed error；命中 graph/runtime 真相冲突时不再静默猜状态
+- `ticket-create / CEO create-ticket` 这轮继续允许 absorb placeholder，但判断入口现已统一走 lifecycle gate；本轮触达路径里原先直接拿 `node_projection` 缺失猜 runtime 状态的旧兼容已经退出
+- `context_compiler / ticket-start / ticket-result-submit` 这轮已统一命中 planned placeholder 时显式 fail-closed，当前稳定暴露 `PLANNED_PLACEHOLDER_NOT_MATERIALIZED`；这层恢复口径现已锁成“先正式建票，再继续执行”
+- 当前还有一条会直接影响下轮判断的事实：placeholder lifecycle 虽已收硬，但 placeholder 仍没有进入持久化 `node_projection` 真相、scheduler 自动 materialization 或 graph-first placeholder lifecycle；如果后续继续推进，应该从新切片 `P4-S6` 决定这层是否进入正式恢复链
+- 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k planned_placeholder -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "ticket_start_rejects_planned_placeholder_before_materialization or ticket_result_submit_rejects_planned_placeholder_before_materialization or ticket_create_accepts_placeholder_node_and_materializes_runtime_truth" -q`、`./backend/.venv/bin/pytest backend/tests/test_scheduler_runner.py -k graph_only_placeholder -q`、`./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "placeholder or advisory" -q`、`python3 -m py_compile backend/app/core/runtime_node_lifecycle.py backend/app/core/runtime_node_views.py backend/app/core/ticket_handlers.py backend/app/core/context_compiler.py backend/app/core/ceo_validator.py backend/app/core/ceo_proposer.py`
+
 - `P4-S4` 这轮已新增 `backend/app/core/runtime_node_views.py`，把 execution-lane graph node、graph-only placeholder 和持久化 `node_projection` 收成单点三态读面；同一 `node_id` 命中 placeholder/materialized 冲突、或 graph/runtime 真相不一致时现在会显式抛 `RuntimeNodeViewResolutionError`
 - `Dependency Inspector` 这轮已接到 placeholder runtime 挂载读面：graph-only placeholder 现在会直接显示在节点列表里，并新增 `is_placeholder / materialization_state`；依赖链继续按 graph truth 读取 `PARENT_OF + DEPENDS_ON`，不再因为缺 `node_projection` 就把 placeholder 当成缺失节点
 - `ticket-create / CEO create-ticket` 这轮已把节点存在性判断切到 runtime node view；placeholder `node_id` 现在允许进入正式建票并由现有 `EVENT_TICKET_CREATED -> node_projection` 主链物化，已 materialized 节点继续显式 reject，执行态 compile/runtime 内核保持不变

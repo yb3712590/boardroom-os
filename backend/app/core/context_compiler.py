@@ -87,6 +87,11 @@ from app.core.project_workspaces import (
     resolve_ticket_checkout_truth,
     write_worker_preflight_receipt,
 )
+from app.core.runtime_node_lifecycle import (
+    REASON_CODE_RUNTIME_NODE_TRUTH_CONFLICT,
+    RuntimeNodeLifecycleError,
+    require_materialized_runtime_node,
+)
 from app.core.process_assets import (
     build_failure_fingerprint_process_asset_ref,
     build_project_map_slice_process_asset_ref,
@@ -1804,13 +1809,26 @@ def build_compile_request(
     attempt_no = int(created_spec.get("attempt_no") or 0)
     if attempt_no <= 0:
         raise ValueError("Ticket attempt_no is missing for runtime compilation.")
+    require_materialized_runtime_node(
+        repository,
+        str(ticket["workflow_id"]),
+        str(ticket["node_id"]),
+        operation="runtime compilation",
+        connection=connection,
+    )
     node_projection = repository.get_current_node_projection(
         str(ticket["workflow_id"]),
         str(ticket["node_id"]),
         connection=connection,
     )
     if node_projection is None:
-        raise ValueError("Node projection is missing for runtime compilation.")
+        raise RuntimeNodeLifecycleError(
+            workflow_id=str(ticket["workflow_id"]),
+            node_id=str(ticket["node_id"]),
+            reason_code=REASON_CODE_RUNTIME_NODE_TRUTH_CONFLICT,
+            operation="runtime compilation",
+            detail="node_projection is missing after lifecycle gate accepted the node as materialized.",
+        )
     _, source_projection_version = repository.get_cursor_and_version(connection=connection)
     if source_projection_version <= 0:
         raise ValueError("Source projection version is missing for runtime compilation.")

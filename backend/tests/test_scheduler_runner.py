@@ -11,6 +11,7 @@ import app.core.ceo_proposer as ceo_proposer_module
 import app.core.runtime as runtime_module
 import app.core.workflow_auto_advance as workflow_auto_advance_module
 import pytest
+import tests.test_api as api_test_helpers
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED, EVENT_TICKET_CREATED
@@ -38,6 +39,8 @@ from app.core.runtime_provider_config import (
     RuntimeProviderRoleBinding,
     RuntimeProviderStoredConfig,
 )
+from app.core.ticket_graph import build_ticket_graph_snapshot
+from app.core.ticket_handlers import run_scheduler_tick
 from app.scheduler_runner import run_scheduler_loop, run_scheduler_once
 
 
@@ -185,6 +188,61 @@ def _ensure_runtime_provider_ready_for_ticket(
     )
     assert upsert_response.status_code == 200
     assert upsert_response.json()["status"] == "ACCEPTED"
+
+
+def test_run_scheduler_tick_does_not_materialize_graph_only_placeholder_node(client):
+    workflow_id = "wf_scheduler_placeholder_gate"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Scheduler should ignore graph-only placeholders.",
+    )
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scheduler_placeholder_parent",
+        node_id="node_scheduler_placeholder_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    api_test_helpers._seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_scheduler_placeholder_target"],
+        add_nodes=[
+            {
+                "node_id": "node_scheduler_placeholder_target",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_scheduler_placeholder_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+
+    repository = client.app.state.repository
+    created_before = repository.count_events_by_type(EVENT_TICKET_CREATED)
+    ack = run_scheduler_tick(
+        repository,
+        idempotency_key="scheduler-tick:placeholder-gate",
+        max_dispatches=1,
+    )
+    created_after = repository.count_events_by_type(EVENT_TICKET_CREATED)
+    graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+    placeholder = next(
+        node for node in graph_snapshot.nodes if node.graph_node_id == "node_scheduler_placeholder_target"
+    )
+
+    assert ack.status.value == "ACCEPTED"
+    assert created_after == created_before
+    assert repository.get_current_node_projection(workflow_id, "node_scheduler_placeholder_target") is None
+    assert placeholder.is_placeholder is True
 
 
 def _approve_hire_worker(

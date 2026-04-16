@@ -188,9 +188,15 @@ from app.core.project_workspaces import (
     write_git_closeout_receipt,
     write_worker_postrun_receipt,
 )
+from app.core.runtime_node_lifecycle import (
+    REASON_CODE_PLANNED_PLACEHOLDER_NOT_MATERIALIZED,
+    RuntimeNodeLifecycleError,
+    build_runtime_node_lifecycle_reason,
+    resolve_runtime_node_lifecycle,
+)
 from app.core.runtime_node_views import (
     MATERIALIZATION_STATE_MATERIALIZED,
-    resolve_runtime_node_view,
+    MATERIALIZATION_STATE_PLANNED,
 )
 from app.core.role_hooks import HookGateStatus, evaluate_ticket_required_hook_gate, replay_required_hook_receipts
 from app.core.ticket_graph import build_ticket_graph_snapshot
@@ -5285,12 +5291,21 @@ def handle_ticket_create(
                 reason=f"Ticket {payload.ticket_id} already exists in projection state.",
             )
 
-        node_view = resolve_runtime_node_view(
-            repository,
-            payload.workflow_id,
-            payload.node_id,
-            connection=connection,
-        )
+        try:
+            node_view = resolve_runtime_node_lifecycle(
+                repository,
+                payload.workflow_id,
+                payload.node_id,
+                connection=connection,
+            )
+        except RuntimeNodeLifecycleError as exc:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=str(exc),
+            )
         current_node = repository.get_current_node_projection(
             payload.workflow_id,
             payload.node_id,
@@ -5650,6 +5665,34 @@ def handle_ticket_start(
                 action="ticket-start",
             )
 
+        try:
+            node_view = resolve_runtime_node_lifecycle(
+                repository,
+                payload.workflow_id,
+                payload.node_id,
+                connection=connection,
+            )
+        except RuntimeNodeLifecycleError as exc:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=str(exc),
+            )
+        if node_view.materialization_state == MATERIALIZATION_STATE_PLANNED:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=build_runtime_node_lifecycle_reason(
+                    workflow_id=payload.workflow_id,
+                    node_id=payload.node_id,
+                    reason_code=REASON_CODE_PLANNED_PLACEHOLDER_NOT_MATERIALIZED,
+                    operation="ticket-start",
+                ),
+            )
         current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
         current_node = repository.get_current_node_projection(
             payload.workflow_id,
@@ -6159,6 +6202,33 @@ def handle_ticket_result_submit(
     developer_inspector_store: DeveloperInspectorStore | None = None,
     artifact_store: ArtifactStore | None = None,
 ) -> CommandAckEnvelope:
+    try:
+        node_view = resolve_runtime_node_lifecycle(
+            repository,
+            payload.workflow_id,
+            payload.node_id,
+        )
+    except RuntimeNodeLifecycleError as exc:
+        return _rejected_ack(
+            command_id=new_prefixed_id("cmd"),
+            idempotency_key=payload.idempotency_key,
+            received_at=now_local(),
+            ticket_id=payload.ticket_id,
+            reason=str(exc),
+        )
+    if node_view.materialization_state == MATERIALIZATION_STATE_PLANNED:
+        return _rejected_ack(
+            command_id=new_prefixed_id("cmd"),
+            idempotency_key=payload.idempotency_key,
+            received_at=now_local(),
+            ticket_id=payload.ticket_id,
+            reason=build_runtime_node_lifecycle_reason(
+                workflow_id=payload.workflow_id,
+                node_id=payload.node_id,
+                reason_code=REASON_CODE_PLANNED_PLACEHOLDER_NOT_MATERIALIZED,
+                operation="ticket-result-submit",
+            ),
+        )
     current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
     current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
     if current_ticket is None or current_node is None:

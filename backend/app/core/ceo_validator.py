@@ -29,7 +29,9 @@ from app.config import get_settings
 from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
 from app.core.runtime_node_views import (
     MATERIALIZATION_STATE_MATERIALIZED,
-    resolve_runtime_node_view,
+)
+from app.core.runtime_node_lifecycle import (
+    resolve_runtime_node_lifecycle,
 )
 from app.db.repository import ControlPlaneRepository
 
@@ -292,7 +294,7 @@ def validate_ceo_action_batch(
                     )
                     continue
                 expected_ticket_id = build_project_init_scope_ticket_id(action.payload.workflow_id)
-                project_init_node_view = resolve_runtime_node_view(
+                project_init_node_view = resolve_runtime_node_lifecycle(
                     repository,
                     action.payload.workflow_id,
                     PROJECT_INIT_SCOPE_NODE_ID,
@@ -307,7 +309,7 @@ def validate_ceo_action_batch(
                         _action_entry(action, "Project-init kickoff ticket already exists in projection state.")
                     )
                     continue
-            node_view = resolve_runtime_node_view(
+            node_view = resolve_runtime_node_lifecycle(
                 repository,
                 action.payload.workflow_id,
                 action.payload.node_id,

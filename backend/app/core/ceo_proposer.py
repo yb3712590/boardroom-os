@@ -44,7 +44,9 @@ from app.core.output_schemas import (
 )
 from app.core.runtime_node_views import (
     MATERIALIZATION_STATE_MATERIALIZED,
-    resolve_runtime_node_view,
+)
+from app.core.runtime_node_lifecycle import (
+    resolve_runtime_node_lifecycle,
 )
 from app.core.workflow_completion import ticket_has_delivery_mainline_evidence
 from app.core.workflow_progression import (
@@ -650,7 +652,7 @@ def _build_required_governance_ticket_batch(
         return None
 
     with repository.connection() as connection:
-        node_view = resolve_runtime_node_view(
+        node_view = resolve_runtime_node_lifecycle(
             repository,
             workflow_id,
             node_id,
