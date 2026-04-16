@@ -356,6 +356,206 @@ def test_ticket_graph_snapshot_builds_parent_dependency_and_review_edges(client)
     assert ("REVIEWS", "tkt_check_frontend", "tkt_build_frontend") in edge_tuples
 
 
+def test_ticket_graph_snapshot_assigns_graph_identity_lanes_for_shared_runtime_node(client):
+    workflow_id = "wf_ticket_graph_shared_runtime_node"
+    shared_node_id = "node_shared_runtime_review"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Shared runtime nodes should split execution and review graph identities.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_shared_runtime_maker",
+        node_id=shared_node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_shared_runtime_checker",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_shared_runtime_checker",
+                node_id=shared_node_id,
+                role_profile_ref="checker_primary",
+                output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+                delivery_stage="CHECK",
+                parent_ticket_id="tkt_shared_runtime_maker",
+                dispatch_intent={
+                    "assignee_employee_id": "emp_checker_1",
+                    "selection_reason": "Seed shared runtime checker lane",
+                    "dependency_gate_refs": ["tkt_shared_runtime_maker"],
+                    "selected_by": "test",
+                    "wakeup_policy": "default",
+                },
+            ),
+            "ticket_kind": "MAKER_CHECKER_REVIEW",
+            "maker_checker_context": {
+                "maker_ticket_id": "tkt_shared_runtime_maker",
+                "maker_completed_by": "emp_frontend_2",
+                "maker_artifact_refs": ["art://delivery/shared-runtime-maker.json"],
+                "maker_process_asset_refs": [
+                    "SOURCE_CODE_DELIVERY:scd_tkt_shared_runtime_maker@1"
+                ],
+                "maker_ticket_spec": {
+                    "ticket_id": "tkt_shared_runtime_maker",
+                    "node_id": shared_node_id,
+                    "role_profile_ref": "frontend_engineer_primary",
+                    "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    "delivery_stage": "BUILD",
+                },
+                "original_review_request": {
+                    "review_type": "INTERNAL_DELIVERY_REVIEW",
+                },
+            },
+        },
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    node_by_graph_id = {node.graph_node_id: node for node in snapshot.nodes}
+    review_edge = next(edge for edge in snapshot.edges if edge.edge_type == "REVIEWS")
+
+    assert shared_node_id in node_by_graph_id
+    assert f"{shared_node_id}::review" in node_by_graph_id
+    assert node_by_graph_id[shared_node_id].graph_lane_kind == "execution"
+    assert node_by_graph_id[f"{shared_node_id}::review"].graph_lane_kind == "review"
+    assert node_by_graph_id[shared_node_id].runtime_node_id == shared_node_id
+    assert node_by_graph_id[f"{shared_node_id}::review"].runtime_node_id == shared_node_id
+    assert review_edge.source_graph_node_id == f"{shared_node_id}::review"
+    assert review_edge.target_graph_node_id == shared_node_id
+    assert review_edge.source_runtime_node_id == shared_node_id
+    assert review_edge.target_runtime_node_id == shared_node_id
+
+
+def test_ticket_graph_snapshot_collapses_rework_back_to_execution_lane(client):
+    workflow_id = "wf_ticket_graph_shared_runtime_rework"
+    shared_node_id = "node_shared_runtime_rework"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Rework fixes should replace the execution lane ticket without creating a third graph lane.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_shared_runtime_rework_maker",
+        node_id=shared_node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_shared_runtime_rework_checker",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_shared_runtime_rework_checker",
+                node_id=shared_node_id,
+                role_profile_ref="checker_primary",
+                output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+                delivery_stage="CHECK",
+                parent_ticket_id="tkt_shared_runtime_rework_maker",
+                dispatch_intent={
+                    "assignee_employee_id": "emp_checker_1",
+                    "selection_reason": "Seed shared runtime checker lane for rework coverage",
+                    "dependency_gate_refs": ["tkt_shared_runtime_rework_maker"],
+                    "selected_by": "test",
+                    "wakeup_policy": "default",
+                },
+            ),
+            "ticket_kind": "MAKER_CHECKER_REVIEW",
+            "maker_checker_context": {
+                "maker_ticket_id": "tkt_shared_runtime_rework_maker",
+                "maker_completed_by": "emp_frontend_2",
+                "maker_ticket_spec": {
+                    "ticket_id": "tkt_shared_runtime_rework_maker",
+                    "node_id": shared_node_id,
+                    "role_profile_ref": "frontend_engineer_primary",
+                    "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    "output_schema_version": 1,
+                    "delivery_stage": "BUILD",
+                },
+                "original_review_request": {
+                    "review_type": "INTERNAL_DELIVERY_REVIEW",
+                },
+            },
+        },
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_shared_runtime_rework_fix",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_shared_runtime_rework_fix",
+                node_id=shared_node_id,
+                role_profile_ref="frontend_engineer_primary",
+                output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                delivery_stage="BUILD",
+                parent_ticket_id="tkt_shared_runtime_rework_checker",
+            ),
+            "ticket_kind": "MAKER_REWORK_FIX",
+            "maker_checker_context": {
+                "maker_ticket_id": "tkt_shared_runtime_rework_maker",
+                "maker_completed_by": "emp_frontend_2",
+                "maker_ticket_spec": {
+                    "ticket_id": "tkt_shared_runtime_rework_maker",
+                    "node_id": shared_node_id,
+                    "role_profile_ref": "frontend_engineer_primary",
+                    "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    "output_schema_version": 1,
+                    "delivery_stage": "BUILD",
+                },
+                "original_review_request": {
+                    "review_type": "INTERNAL_DELIVERY_REVIEW",
+                },
+                "checker_ticket_id": "tkt_shared_runtime_rework_checker",
+                "blocking_finding_refs": ["finding_shared_runtime_rework"],
+                "required_fixes": [
+                    {
+                        "finding_id": "finding_shared_runtime_rework",
+                        "headline": "Shared runtime node still needs a rework pass.",
+                        "required_action": "Apply the blocking fix on the execution lane.",
+                        "severity": "high",
+                        "category": "delivery",
+                    }
+                ],
+                "rework_fingerprint": "mkrw:shared-runtime-rework",
+                "rework_streak_count": 1,
+            },
+        },
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    lane_nodes = [
+        node for node in snapshot.nodes if node.runtime_node_id == shared_node_id
+    ]
+    node_by_graph_id = {node.graph_node_id: node for node in lane_nodes}
+
+    assert len(lane_nodes) == 2
+    assert node_by_graph_id[shared_node_id].graph_lane_kind == "execution"
+    assert node_by_graph_id[shared_node_id].ticket_id == "tkt_shared_runtime_rework_fix"
+    assert node_by_graph_id[f"{shared_node_id}::review"].graph_lane_kind == "review"
+    assert node_by_graph_id[f"{shared_node_id}::review"].ticket_id == "tkt_shared_runtime_rework_checker"
+    assert not any(
+        edge.source_graph_node_id == edge.target_graph_node_id
+        for edge in snapshot.edges
+        if edge.edge_type in {"PARENT_OF", "DEPENDS_ON", "REVIEWS"}
+    )
+
+
 def test_ticket_graph_snapshot_fail_closes_invalid_legacy_dependency(client):
     workflow_id = "wf_ticket_graph_invalid_dependency"
     _ensure_scoped_workflow(
@@ -629,6 +829,57 @@ def test_graph_health_report_detects_fanout_too_wide(client):
 
     assert "FANOUT_TOO_WIDE" in finding_types
     assert report["overall_health"] in {"WARNING", "CRITICAL"}
+
+
+def test_graph_health_report_exposes_affected_graph_node_ids(client, monkeypatch):
+    workflow_id = "wf_graph_health_graph_identity_field"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose graph node ids alongside runtime node ids.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_graph_identity_field",
+        node_id="node_graph_health_graph_identity_field",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", "tkt_graph_health_graph_identity_field"),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-graph-identity-field",
+    )
+
+    finding = next(
+        item
+        for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+        if item["finding_type"] == "READY_NODE_STALE"
+    )
+
+    assert finding["affected_nodes"] == ["node_graph_health_graph_identity_field"]
+    assert finding["affected_graph_node_ids"] == ["node_graph_health_graph_identity_field"]
 
 
 def test_graph_health_report_detects_persistent_failure_zone(client):

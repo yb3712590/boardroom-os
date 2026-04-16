@@ -23,6 +23,13 @@
 
 ### 2026-04-16
 
+- `P4-S4` 这轮已完成第十批：新增单点 `backend/app/core/graph_identity.py`，graph lane 身份现在有正式真相；普通执行票固定走 execution lane，`MAKER_CHECKER_REVIEW` 固定走 `runtime_node_id::review`，`MAKER_REWORK_FIX` 会回 execution lane 替换当前绑定 ticket
+- `TicketGraph` 这轮已删掉 ticket-derived `graph_node_id=ticket:<ticket_id>` 旧兼容；shared runtime `node_id` 的 maker/checker/rework 现在会显式拆成 execution / review 两条 graph lane，不再靠 inherited self-loop 跳过污染图真相
+- `graph_patch_reducer / graph_health / GRAPH_HEALTH_CRITICAL incident / CEO snapshot` 这轮都已切到 graph identity；graph health finding 和 incident payload 现在都会额外带 `affected_graph_node_ids`，旧兼容读面 `affected_nodes` 继续只保留 runtime node id
+- 这轮继续坚持 fail-closed：advisory patch 如果指到 synthetic review lane，不再落成“unknown node”模糊拒绝，而是显式报 review-lane target 非法；graph path 上的 self-loop 跳过兼容也已删除
+- `GraphIdentityResolutionError` 这轮已接进现有 `TICKET_GRAPH_UNAVAILABLE` 恢复链；命中 graph identity 解析失败时，会显式暴露异常并继续走既有幂等 recovery，不做任何隐式 fallback
+- 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_identity or graph_patch or graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health or incident_detail or advisory_patch" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health or advisory" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/graph_identity.py backend/app/core/ticket_graph.py backend/app/core/graph_patch_reducer.py backend/app/core/graph_health.py backend/app/core/ceo_scheduler.py backend/app/core/approval_handlers.py backend/app/core/board_advisory_analysis.py backend/app/core/ticket_handlers.py backend/app/contracts/ticket_graph.py backend/app/contracts/ceo.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py`
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先决定 `true add_node / placeholder node` 是否拆独立切片；runtime `node_projection` 是否继续拆成 graph-first 双层真相保持后置单独决策
 - `P4-S4` 这轮已完成第九批：`graph_health.py` 现已补第四批规则 `QUEUE_STARVATION / READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH`；三条规则都只读现有 `events + graph_version + ticket/node projection.version/updated_at`
 - `QUEUE_STARVATION / CROSS_VERSION_SLA_BREACH` 这轮都已进入现有 `GRAPH_HEALTH_CRITICAL` incident 主链；`READY_BLOCKED_THRASHING` 当前只保留 `WARNING` 读面，不新开 incident
 - 这轮没有新增 graph health history 表、projection 或 process asset；如果后续要补 dedicated history、workflow 级 SLA 或更细 blocker-source attribution，必须单独开切片，不能在现有规则里偷偷落新真相层

@@ -11678,6 +11678,7 @@ def test_graph_health_queue_starvation_opens_critical_incident_via_auto_advance(
     assert open_incidents[0]["incident_type"] == "GRAPH_HEALTH_CRITICAL"
     assert open_incidents[0]["payload"]["finding_type"] == "QUEUE_STARVATION"
     assert open_incidents[0]["payload"]["affected_nodes"] == [node_id]
+    assert open_incidents[0]["payload"]["affected_graph_node_ids"] == [node_id]
 
 
 def test_graph_health_unavailable_error_opens_ticket_graph_unavailable_incident(client, monkeypatch):
@@ -16500,6 +16501,84 @@ def test_board_advisory_apply_patch_rejects_patch_that_removes_executing_node(cl
     assert apply_response.status_code == 200
     assert apply_response.json()["status"] == "REJECTED"
     assert "execut" in str(apply_response.json()["reason"] or "").lower()
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert advisory_session is not None
+    assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"
+    assert advisory_session["approved_patch_ref"] is None
+
+
+def test_board_advisory_apply_patch_rejects_synthetic_review_lane_targets(client):
+    workflow_id = "wf_advisory_apply_review_lane"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Reject advisory patches that try to target synthetic review graph lanes.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Reject graph patches that point at synthetic review lanes."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "The patch layer must reject review-lane targets explicitly.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:review-lane",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+            "workflow_id": workflow_id,
+            "session_id": advisory_session["session_id"],
+            "base_graph_version": build_ticket_graph_snapshot(repository, workflow_id).graph_version,
+            "proposal_summary": "Freeze the synthetic review lane.",
+            "impact_summary": "This proposal should fail because review lanes are not valid patch targets.",
+            "freeze_node_ids": ["node_homepage_visual::review"],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-review-lane-target",
+        }
+    )
+    with repository.transaction() as connection:
+        repository.store_board_advisory_patch_proposal(
+            connection,
+            session_id=advisory_session["session_id"],
+            proposal_ref=proposal.proposal_ref,
+            proposal=proposal.model_dump(mode="json"),
+            decision_pack_refs=list(advisory_session["decision_pack_refs"]),
+            updated_at=datetime.fromisoformat("2026-04-16T21:40:00+08:00"),
+        )
+
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": proposal.proposal_ref,
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:review-lane",
+        },
+    )
+
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "REJECTED"
+    assert "review lane" in str(apply_response.json()["reason"] or "").lower()
     assert updated["status"] == APPROVAL_STATUS_OPEN
     assert advisory_session is not None
     assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"

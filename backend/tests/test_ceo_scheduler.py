@@ -4580,11 +4580,16 @@ def test_ceo_shadow_snapshot_exposes_queue_starvation_finding(client, monkeypatc
         trigger_ref="manual:ceo-graph-health-queue-starvation",
     )
     prompt = build_ceo_shadow_system_prompt(snapshot)
-    finding_types = [
-        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
-    ]
+    findings = snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    finding_types = [item["finding_type"] for item in findings]
+    queue_starvation_finding = next(
+        item for item in findings if item["finding_type"] == "QUEUE_STARVATION"
+    )
 
     assert "QUEUE_STARVATION" in finding_types
+    assert queue_starvation_finding["affected_graph_node_ids"] == [
+        "node_ceo_graph_health_queue_starvation"
+    ]
     assert "QUEUE_STARVATION" in prompt
 
 

@@ -1301,21 +1301,31 @@ def _apply_board_advisory_patch(
                     patch=graph_patch,
                 )
             ],
-            known_node_ids={node.node_id for node in graph_snapshot.nodes if node.node_id},
+            known_node_ids={
+                str(node.graph_node_id or "").strip()
+                for node in graph_snapshot.nodes
+                if str(node.graph_node_id or "").strip()
+            },
+            known_patch_target_node_ids={
+                str(node.runtime_node_id or node.node_id or "").strip()
+                for node in graph_snapshot.nodes
+                if str(node.graph_lane_kind or "") == "execution"
+                and str(node.runtime_node_id or node.node_id or "").strip()
+            },
             base_edge_keys={
-                (edge.edge_type, edge.source_node_id, edge.target_node_id)
+                (edge.edge_type, edge.source_graph_node_id, edge.target_graph_node_id)
                 for edge in graph_snapshot.edges
                 if edge.edge_type != "REPLACES"
             },
             ticket_status_by_node_id={
-                node.node_id: node.ticket_status
+                str(node.graph_node_id or "").strip(): node.ticket_status
                 for node in graph_snapshot.nodes
-                if node.node_id
+                if str(node.graph_node_id or "").strip()
             },
             node_status_by_node_id={
-                node.node_id: node.node_status
+                str(node.graph_node_id or "").strip(): node.node_status
                 for node in graph_snapshot.nodes
-                if node.node_id
+                if str(node.graph_node_id or "").strip()
             },
         )
     except GraphPatchReducerUnavailableError as exc:

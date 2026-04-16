@@ -44,6 +44,7 @@ from app.core.constants import (
 )
 from app.core.context_compiler import _build_fragment_candidate, _build_org_context, compile_audit_artifacts
 from app.core.execution_targets import EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT
+from app.core.graph_identity import GraphIdentityResolutionError, ensure_patch_targets_are_execution_node_ids
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
@@ -588,7 +589,6 @@ def _validate_graph_patch_nodes(
     connection,
 ) -> None:
     graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id, connection=connection)
-    known_node_ids = {node.node_id for node in graph_snapshot.nodes if node.node_id}
     proposal = GraphPatchProposal.model_validate(proposal_payload)
     referenced_node_ids = {
         *proposal.freeze_node_ids,
@@ -602,11 +602,19 @@ def _validate_graph_patch_nodes(
         *(item.source_node_id for item in proposal.edge_removals),
         *(item.target_node_id for item in proposal.edge_removals),
     }
-    unknown_node_ids = sorted(node_id for node_id in referenced_node_ids if node_id not in known_node_ids)
-    if unknown_node_ids:
-        raise ValueError(
-            f"Advisory patch proposal references unknown node ids: {', '.join(unknown_node_ids)}"
+    try:
+        ensure_patch_targets_are_execution_node_ids(
+            event_id=f"proposal:{proposal.proposal_ref}",
+            referenced_node_ids=referenced_node_ids,
+            known_execution_node_ids={
+                str(node.runtime_node_id or node.node_id or "").strip()
+                for node in graph_snapshot.nodes
+                if str(node.graph_lane_kind or "") == "execution"
+                and str(node.runtime_node_id or node.node_id or "").strip()
+            },
         )
+    except GraphIdentityResolutionError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _build_selection_summary_from_failure(

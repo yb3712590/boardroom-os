@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 15:35`
+> 最后更新：`2026-04-16 17:31`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -719,10 +719,14 @@
 - [x] `P4-S4` 已完成第九批：`graph_health.py` 现已补第四批规则 `QUEUE_STARVATION / READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH`；三条规则都只读现有 `events + graph_version + ticket/node projection.version/updated_at`
 - [x] `P4-S4` 已完成第九批：`QUEUE_STARVATION` 与 `CROSS_VERSION_SLA_BREACH` 现在都会以正式 `CRITICAL` finding 进入现有 `GRAPH_HEALTH_CRITICAL -> RERUN_CEO_SHADOW / RESTORE_ONLY` incident 主链；`READY_BLOCKED_THRASHING` 当前只保留 `WARNING` 读面，不新开 incident
 - [x] `P4-S4` 已完成第九批：这轮没有新增 graph health history 表、projection 或 process asset；旧的“从模糊 blocker 或当前快照猜历史”的兼容推导也没有回流，缺 `updated_at / timeout_sla_sec / version / 合法事件 payload` 时继续显式抛 `GraphHealthUnavailableError`
+- [x] `P4-S4` 已完成第十批：新增单点 `graph_identity.py`，graph lane 身份现在有正式真相；普通执行票固定走 execution lane，`MAKER_CHECKER_REVIEW` 固定走 `runtime_node_id::review`，`MAKER_REWORK_FIX` 会回 execution lane 替换当前绑定 ticket
+- [x] `P4-S4` 已完成第十批：`TicketGraph` 已删掉 ticket-derived `graph_node_id=ticket:<ticket_id>` 旧兼容；shared runtime `node_id` 的 maker/checker/rework 现在会显式拆成 execution / review 两条 graph lane，不再靠 inherited self-loop 跳过污染图真相
+- [x] `P4-S4` 已完成第十批：`graph_patch_reducer / graph_health / GRAPH_HEALTH_CRITICAL incident / CEO snapshot` 已统一切到 graph identity；graph health finding 和 incident payload 现在都会额外带 `affected_graph_node_ids`，旧兼容读面 `affected_nodes` 继续只保留 runtime node id
+- [x] `P4-S4` 已完成第十批：advisory patch 如果指到 synthetic review lane，现在会显式 `REJECTED`；`GraphIdentityResolutionError` 也已接进现有 `TICKET_GRAPH_UNAVAILABLE` 恢复链，不做隐式 fallback
 
 ### 未完成
 - [ ] 真 `add_node` / placeholder node 仍未进入主链；当前 advisory patch v2 只允许在 existing node 上做 `REPLACES / remove_node / add-remove edge`
-- [ ] maker/checker 仍沿用同一 `node_id` 收口；当前只是在 reducer / graph health 里显式跳过 inherited self-loop，不等于 graph-first node identity 已经完成
+- [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；这轮只把 graph layer identity 收口成 execution / review 双 lane，未继续把运行时身份拆成 graph-first 双层真相
 - [ ] `GraphHealthReport` 第四批规则虽已落地，但 dedicated graph health history / workflow 级 SLA 配置 / 更细的 blocker-source attribution 仍未进入主链
 
 ### 明确放弃
@@ -738,6 +742,7 @@
 - [ ] `GraphHealthReport` 第四批现已锁成“只读 `events + graph_version + ticket/node projection.version/updated_at`”；如果后续要补 dedicated history 或 workflow 级 SLA，必须单独开切片，不能在现有规则里偷偷落新真相层
 - [ ] `READY_BLOCKED_THRASHING` 这轮只按最近 `24` 条显式事件窗口做 `WARNING` 检测；如果后续要做更细的 blocker-source 分层、跨窗口趋势分析或自动升级 incident，必须单独扩正式规则，不回退到当前快照猜历史
 - [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
+- [ ] graph layer 这轮已完成 execution / review 双 lane identity；如果后续要继续拆 runtime `node_projection`、approval target 和 worker runtime 到 graph-first 双层真相，必须单独开切片，不能在现有 `P4-S4` 图层收口里偷渡
 
 ---
 
@@ -981,12 +986,12 @@
 `graph patch reducer` 和 `GraphHealthReport` 不能把这类 inherited self-loop 误判成新 patch 引入的 cycle；否则 advisory freeze-only patch 和 CEO advisory snapshot 都会被旧图形状反向打断。`
 
 **当前处理：**
-`已在 2026-04-16 做最小 fail-closed 收口：graph patch validation 与 graph health depth 现在会显式跳过 inherited self-loop，只避免旧图污染当前 patch/replan 主链；并没有回退到旧 session JSON 推导，也没有把 graph-first node identity 问题冒充成已解决。`
+`已在 2026-04-16 完成图层收口：新增单点 graph identity resolver，shared runtime node 的 maker/checker/rework 现在会显式拆成 execution / review 两条 graph lane；graph patch validation 与 graph health 已删除 inherited self-loop 跳过兼容，不再回退到旧 session JSON 或 runtime latest-ticket 半猜推导。运行时 node_projection 主键保持不动，后续如果要继续拆 runtime identity，单独开切片。`
 
 **是否需要改架构文档：**
 `no`
 
-**状态：** `open`
+**状态：** `closed`
 
 ---
 
@@ -1849,6 +1854,39 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先处理 maker/checker 的 graph-first node identity，再决定 true add_node / placeholder node 是否拆成下一独立切片。`
 
+### Session `2026-04-16 / 28`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `backend/app/core/graph_identity.py`，把 graph lane 身份收成单点真相；普通执行票固定走 execution lane，`MAKER_CHECKER_REVIEW` 固定走 `runtime_node_id::review`，`MAKER_REWORK_FIX` 固定回 execution lane
+- [x] 重写 `TicketGraph` 的 graph node 语义：删除 ticket-derived `graph_node_id=ticket:<ticket_id>` 旧兼容，shared runtime `node_id` 的 maker/checker/rework 现在会显式拆成 execution / review 两条 graph lane，并按当前 lane 聚合最新 ticket
+- [x] 把 `graph_patch_reducer / graph_health / GRAPH_HEALTH_CRITICAL incident / CEO snapshot` 全切到新 graph identity；graph health finding 和 incident payload 现在会额外带 `affected_graph_node_ids`，旧兼容读面 `affected_nodes` 继续只保留 runtime node id
+- [x] 删掉污染新架构真相的旧兼容：path self-loop 跳过、advisory patch 对 review lane 的“unknown node”模糊拒绝、以及 graph 层按 runtime latest-ticket 半猜 graph node 的旧推导都已移除；命中这类问题时现在会显式抛 `GraphIdentityResolutionError` 或显式 `REJECTED`
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_identity or graph_patch or graph_health" -q` 通过（`25 passed, 8 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health or incident_detail or advisory_patch" -q` 通过（`7 passed, 308 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health or advisory" -q` 通过（`5 passed, 73 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/graph_identity.py backend/app/core/ticket_graph.py backend/app/core/graph_patch_reducer.py backend/app/core/graph_health.py backend/app/core/ceo_scheduler.py backend/app/core/approval_handlers.py backend/app/core/board_advisory_analysis.py backend/app/core/ticket_handlers.py backend/app/contracts/ticket_graph.py backend/app/contracts/ceo.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只收口 graph layer identity 和 graph health/incident 合同，没有改变仓库级入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] 真 `add_node` / placeholder node 仍未进入主链
+- [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；这轮只完成 graph layer identity 收口，没有继续拆运行时身份
+- [ ] dedicated graph health history / workflow 级 SLA 配置 / 更细的 blocker-source attribution 仍未进入主链
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先决定 true add_node / placeholder node 是否拆成独立切片；runtime node_projection 是否继续拆成 graph-first 双层真相保持后置单独决策。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1886,7 +1924,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第九批已落地；`QUEUE_STARVATION / READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH` 已进入正式 `GraphHealthReport` 主链，且继续坚持只读事件/图/投影真相
-- 最近完成：`graph_health.py` 已补事件时间线 helper 和第四批规则；`QUEUE_STARVATION / CROSS_VERSION_SLA_BREACH` 已接进现有 `GRAPH_HEALTH_CRITICAL` incident，`READY_BLOCKED_THRASHING` 已进入 CEO snapshot / prompt 读面
-- 当前阻塞：真 `add_node` / placeholder node 仍后置；maker/checker inherited self-loop 还没推进到 graph-first node identity 真相；dedicated graph health history / workflow 级 SLA 配置还没进主链
-- 下一步：`继续从 P4-S4 续跑，优先处理 maker/checker 的 graph-first node identity，再决定 true add_node / placeholder node 是否拆成下一独立切片`
+- 当前状态：`P4-S4` 第十批已落地；graph layer identity 现已正式拆成 execution / review 双 lane，旧的 ticket-derived graph node 和 inherited self-loop 兼容已删除，且继续坚持错误显式化与幂等恢复
+- 最近完成：`graph_identity.py` 已落单点真相；`TicketGraph / graph_patch_reducer / graph_health / GRAPH_HEALTH_CRITICAL incident / CEO snapshot` 都已切到新 graph identity，`affected_graph_node_ids` 也已进入 graph health digest 和 incident payload
+- 当前阻塞：真 `add_node` / placeholder node 仍后置；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键，尚未拆成 graph-first 双层真相；dedicated graph health history / workflow 级 SLA 配置还没进主链
+- 下一步：`继续从 P4-S4 续跑，优先决定 true add_node / placeholder node 是否拆成独立切片；runtime node_projection 是否继续拆成 graph-first 双层真相保持后置单独决策`

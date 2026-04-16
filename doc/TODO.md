@@ -133,9 +133,13 @@
 - 2026-04-16 本轮顺手补了一条实现判断真相：maker/checker 仍会把多张 ticket 收到同一 `node_id`，当前只是在 reducer / graph health 里显式跳过 inherited self-loop，没把 graph-first node identity 冒充成已完成
 - 2026-04-16 本轮已完成 `P4-S4` 第九批：`graph_health.py` 现已补第四批规则 `QUEUE_STARVATION / READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH`；三条规则都只读现有 `events + graph_version + ticket/node projection.version/updated_at`，没有新增 graph health history 表、projection 或 process asset
 - 2026-04-16 本轮还把 fail-closed 口径继续收紧到新规则：ready / blocked 节点缺 `updated_at / timeout_sla_sec / version`、或参与时间线重建的事件 payload 非法时，现在会继续显式抛 `GraphHealthUnavailableError`，不回退到当前快照、session JSON 或 ticket-only 快捷推导
+- 2026-04-16 本轮已完成 `P4-S4` 第十批：新增单点 `graph_identity.py`，把 graph lane 身份收成正式真相；普通执行票固定收口到 execution lane，`MAKER_CHECKER_REVIEW` 固定收口到 `runtime_node_id::review`，`MAKER_REWORK_FIX` 则回 execution lane 替换当前绑定 ticket
+- 2026-04-16 本轮已把 `TicketGraph` 收正到 graph-first lane 口径：旧的 ticket-derived `graph_node_id=ticket:<ticket_id>` 已删除；shared runtime `node_id` 的 maker/checker/rework 现在会显式拆成 execution / review 两条 graph lane，不再靠 inherited self-loop 跳过兼容
+- 2026-04-16 本轮已把 `graph_patch_reducer / graph_health / GRAPH_HEALTH_CRITICAL incident / CEO snapshot` 全切到新 graph identity；`affected_graph_node_ids` 已进入 graph health digest 和 incident payload，旧兼容读面 `affected_nodes` 继续只保留 runtime node id
+- 2026-04-16 本轮还删掉了会污染新架构真相的旧兼容：path self-loop 跳过、advisory patch 对 review lane 的“未知 node”模糊拒绝、以及 graph 层按 runtime latest-ticket 半猜 graph node 的旧推导都已移除；命中这类问题时现在会显式抛 `GraphIdentityResolutionError` 或显式 `REJECTED`
 - 2026-04-16 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health" -q`、`python -m py_compile backend/app/core/graph_health.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py`
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先处理 maker/checker 的 graph-first node identity，再决定 `true add_node / placeholder node` 是否拆独立切片；`doc/new-architecture/**` 仍保持只读
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先决定 `true add_node / placeholder node` 是否拆独立切片；graph layer identity 已收口，runtime `node_projection` 是否需要继续拆层保持后置单独决策；`doc/new-architecture/**` 仍保持只读
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

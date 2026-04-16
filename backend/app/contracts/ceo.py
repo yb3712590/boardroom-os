@@ -40,6 +40,7 @@ class GraphHealthFindingDigest(StrictModel):
     finding_type: str = Field(min_length=1)
     severity: str = Field(min_length=1)
     affected_nodes: list[str] = Field(default_factory=list)
+    affected_graph_node_ids: list[str] = Field(default_factory=list)
     metric_value: int | float
     threshold: int | float
     description: str = Field(min_length=1)

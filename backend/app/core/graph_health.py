@@ -118,15 +118,87 @@ def _workflow_node_projections(
     }
 
 
-def _latest_ticket_id_by_node_id(graph_snapshot) -> dict[str, str]:
-    latest_ticket_id_by_node_id: dict[str, str] = {}
+def _latest_ticket_id_by_graph_node_id(graph_snapshot) -> dict[str, str]:
+    latest_ticket_id_by_graph_node_id: dict[str, str] = {}
     for node in graph_snapshot.nodes:
-        node_id = str(node.node_id or "").strip()
+        node_id = str(node.graph_node_id or "").strip()
         ticket_id = str(node.ticket_id or "").strip()
         if not node_id or not ticket_id:
             continue
-        latest_ticket_id_by_node_id[node_id] = ticket_id
-    return latest_ticket_id_by_node_id
+        latest_ticket_id_by_graph_node_id[node_id] = ticket_id
+    return latest_ticket_id_by_graph_node_id
+
+
+def _graph_node_by_graph_node_id(graph_snapshot) -> dict[str, Any]:
+    return {
+        str(node.graph_node_id or "").strip(): node
+        for node in graph_snapshot.nodes
+        if str(node.graph_node_id or "").strip()
+    }
+
+
+def _runtime_node_ids_for_graph_node_ids(
+    graph_snapshot,
+    graph_node_ids: list[str] | tuple[str, ...] | set[str],
+) -> list[str]:
+    graph_node_by_id = _graph_node_by_graph_node_id(graph_snapshot)
+    runtime_node_ids: set[str] = set()
+    for graph_node_id in graph_node_ids:
+        graph_node = graph_node_by_id.get(str(graph_node_id or "").strip())
+        if graph_node is None:
+            continue
+        runtime_node_id = str(graph_node.runtime_node_id or graph_node.node_id or "").strip()
+        if runtime_node_id:
+            runtime_node_ids.add(runtime_node_id)
+    return sorted(runtime_node_ids)
+
+
+def _graph_node_ids_for_runtime_node_ids(
+    graph_snapshot,
+    runtime_node_ids: list[str] | tuple[str, ...] | set[str],
+) -> list[str]:
+    runtime_node_id_set = {
+        str(node_id or "").strip()
+        for node_id in runtime_node_ids
+        if str(node_id or "").strip()
+    }
+    graph_node_ids = {
+        str(node.graph_node_id or "").strip()
+        for node in graph_snapshot.nodes
+        if str(node.graph_node_id or "").strip()
+        and str(node.runtime_node_id or node.node_id or "").strip() in runtime_node_id_set
+    }
+    return sorted(graph_node_ids)
+
+
+def _finding_digest(
+    graph_snapshot,
+    *,
+    finding_type: str,
+    severity: str,
+    affected_graph_node_ids: list[str] | tuple[str, ...] | set[str],
+    metric_value: int | float,
+    threshold: int | float,
+    description: str,
+    suggested_action: str,
+) -> GraphHealthFindingDigest:
+    normalized_graph_node_ids = sorted(
+        {
+            str(node_id or "").strip()
+            for node_id in affected_graph_node_ids
+            if str(node_id or "").strip()
+        }
+    )
+    return GraphHealthFindingDigest(
+        finding_type=finding_type,
+        severity=severity,
+        affected_nodes=_runtime_node_ids_for_graph_node_ids(graph_snapshot, normalized_graph_node_ids),
+        affected_graph_node_ids=normalized_graph_node_ids,
+        metric_value=metric_value,
+        threshold=threshold,
+        description=description,
+        suggested_action=suggested_action,
+    )
 
 
 def _require_datetime(
@@ -215,20 +287,21 @@ def _fanout_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
     for edge in graph_snapshot.edges:
         if edge.edge_type != "PARENT_OF":
             continue
-        edge_counts[edge.source_node_id] = edge_counts.get(edge.source_node_id, 0) + 1
+        edge_counts[edge.source_graph_node_id] = edge_counts.get(edge.source_graph_node_id, 0) + 1
     findings: list[GraphHealthFindingDigest] = []
-    for node_id, count in sorted(edge_counts.items()):
+    for graph_node_id, count in sorted(edge_counts.items()):
         if count <= _FANOUT_TOO_WIDE_THRESHOLD:
             continue
         findings.append(
-            GraphHealthFindingDigest(
+            _finding_digest(
+                graph_snapshot,
                 finding_type="FANOUT_TOO_WIDE",
                 severity="WARNING",
-                affected_nodes=[node_id],
+                affected_graph_node_ids=[graph_node_id],
                 metric_value=count,
                 threshold=_FANOUT_TOO_WIDE_THRESHOLD,
                 description=(
-                    f"Node {node_id} fans out to {count} direct child nodes, exceeding the "
+                    f"Node {graph_node_id} fans out to {count} direct child nodes, exceeding the "
                     f"current threshold {_FANOUT_TOO_WIDE_THRESHOLD}."
                 ),
                 suggested_action="Split the wide branch behind an intermediate aggregation step.",
@@ -244,24 +317,25 @@ def _bottleneck_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
     for edge in graph_snapshot.edges:
         if edge.edge_type != "DEPENDS_ON":
             continue
-        dependent_counts[edge.source_node_id] = dependent_counts.get(edge.source_node_id, 0) + 1
+        dependent_counts[edge.source_graph_node_id] = dependent_counts.get(edge.source_graph_node_id, 0) + 1
     if not dependent_counts:
         return []
     average_dependents = sum(dependent_counts.values()) / max(len(graph_snapshot.nodes), 1)
     threshold = round(average_dependents * _BOTTLENECK_MULTIPLIER, 2)
     findings: list[GraphHealthFindingDigest] = []
-    for node_id, count in sorted(dependent_counts.items()):
+    for graph_node_id, count in sorted(dependent_counts.items()):
         if count <= threshold:
             continue
         findings.append(
-            GraphHealthFindingDigest(
+            _finding_digest(
+                graph_snapshot,
                 finding_type="BOTTLENECK_DETECTED",
                 severity="WARNING",
-                affected_nodes=[node_id],
+                affected_graph_node_ids=[graph_node_id],
                 metric_value=count,
                 threshold=threshold,
                 description=(
-                    f"Node {node_id} is a dependency bottleneck with {count} downstream nodes, "
+                    f"Node {graph_node_id} is a dependency bottleneck with {count} downstream nodes, "
                     f"exceeding the current threshold {threshold}."
                 ),
                 suggested_action="Split the shared dependency or introduce an intermediate aggregation boundary.",
@@ -272,9 +346,9 @@ def _bottleneck_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
 
 def _critical_path_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
     incoming_nodes_by_node_id: dict[str, list[str]] = {
-        node.node_id: []
+        node.graph_node_id: []
         for node in graph_snapshot.nodes
-        if node.node_id
+        if node.graph_node_id
     }
     depth_cache: dict[str, int] = {}
     active_node_ids: set[str] = set()
@@ -282,9 +356,7 @@ def _critical_path_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
     for edge in graph_snapshot.edges:
         if edge.edge_type not in _PATH_EDGE_TYPES:
             continue
-        if edge.source_node_id == edge.target_node_id:
-            continue
-        incoming_nodes_by_node_id.setdefault(edge.target_node_id, []).append(edge.source_node_id)
+        incoming_nodes_by_node_id.setdefault(edge.target_graph_node_id, []).append(edge.source_graph_node_id)
 
     def _depth(node_id: str) -> int:
         if node_id in depth_cache:
@@ -301,24 +373,25 @@ def _critical_path_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
         active_node_ids.discard(node_id)
         return depth_cache[node_id]
 
-    deepest_node_id: str | None = None
+    deepest_graph_node_id: str | None = None
     deepest_depth = 0
     for node in graph_snapshot.nodes:
-        node_id = str(node.node_id or "").strip()
-        if not node_id:
+        graph_node_id = str(node.graph_node_id or "").strip()
+        if not graph_node_id:
             continue
-        depth = _depth(node_id)
+        depth = _depth(graph_node_id)
         if depth > deepest_depth:
             deepest_depth = depth
-            deepest_node_id = node_id
+            deepest_graph_node_id = graph_node_id
 
-    if deepest_depth <= _CRITICAL_PATH_TOO_DEEP_THRESHOLD or deepest_node_id is None:
+    if deepest_depth <= _CRITICAL_PATH_TOO_DEEP_THRESHOLD or deepest_graph_node_id is None:
         return []
     return [
-        GraphHealthFindingDigest(
+        _finding_digest(
+            graph_snapshot,
             finding_type="CRITICAL_PATH_TOO_DEEP",
             severity="WARNING",
-            affected_nodes=[deepest_node_id],
+            affected_graph_node_ids=[deepest_graph_node_id],
             metric_value=deepest_depth,
             threshold=_CRITICAL_PATH_TOO_DEEP_THRESHOLD,
             description=(
@@ -332,9 +405,9 @@ def _critical_path_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
 
 def _orphan_subgraph_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
     closeout_node_ids = {
-        str(node.node_id).strip()
+        str(node.graph_node_id).strip()
         for node in graph_snapshot.nodes
-        if str(node.node_id or "").strip() and str(node.node_kind or "").strip() == "CLOSEOUT"
+        if str(node.graph_node_id or "").strip() and str(node.node_kind or "").strip() == "CLOSEOUT"
     }
     if not closeout_node_ids:
         return []
@@ -343,7 +416,7 @@ def _orphan_subgraph_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
     for edge in graph_snapshot.edges:
         if edge.edge_type not in _PATH_EDGE_TYPES:
             continue
-        reverse_adjacency.setdefault(edge.target_node_id, set()).add(edge.source_node_id)
+        reverse_adjacency.setdefault(edge.target_graph_node_id, set()).add(edge.source_graph_node_id)
 
     reachable_node_ids = set(closeout_node_ids)
     frontier = list(closeout_node_ids)
@@ -356,18 +429,19 @@ def _orphan_subgraph_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
             frontier.append(parent_node_id)
 
     orphan_node_ids = sorted(
-        str(node.node_id).strip()
+        str(node.graph_node_id).strip()
         for node in graph_snapshot.nodes
-        if str(node.node_id or "").strip()
-        and str(node.node_id).strip() not in reachable_node_ids
+        if str(node.graph_node_id or "").strip()
+        and str(node.graph_node_id).strip() not in reachable_node_ids
     )
     if not orphan_node_ids:
         return []
     return [
-        GraphHealthFindingDigest(
+        _finding_digest(
+            graph_snapshot,
             finding_type="ORPHAN_SUBGRAPH",
             severity="CRITICAL",
-            affected_nodes=orphan_node_ids,
+            affected_graph_node_ids=orphan_node_ids,
             metric_value=len(orphan_node_ids),
             threshold=0,
             description=(
@@ -382,6 +456,7 @@ def _orphan_subgraph_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
 def _persistent_failure_zone_findings(
     repository: ControlPlaneRepository,
     *,
+    graph_snapshot,
     workflow_id: str,
     connection,
 ) -> list[GraphHealthFindingDigest]:
@@ -403,10 +478,14 @@ def _persistent_failure_zone_findings(
         if count < _PERSISTENT_FAILURE_ZONE_THRESHOLD:
             continue
         findings.append(
-            GraphHealthFindingDigest(
+            _finding_digest(
+                graph_snapshot,
                 finding_type="PERSISTENT_FAILURE_ZONE",
                 severity="CRITICAL",
-                affected_nodes=[node_id],
+                affected_graph_node_ids=_graph_node_ids_for_runtime_node_ids(
+                    graph_snapshot,
+                    [node_id],
+                ),
                 metric_value=count,
                 threshold=_PERSISTENT_FAILURE_ZONE_THRESHOLD,
                 description=(
@@ -420,7 +499,9 @@ def _persistent_failure_zone_findings(
 
 
 def _freeze_spread_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
-    total_node_count = len([node for node in graph_snapshot.nodes if str(node.node_id or "").strip()])
+    total_node_count = len(
+        [node for node in graph_snapshot.nodes if str(node.graph_node_id or "").strip()]
+    )
     if total_node_count <= 0:
         return []
     frozen_reason = next(
@@ -436,15 +517,21 @@ def _freeze_spread_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
         for node_id in list(getattr(frozen_reason, "node_ids", []) or [])
         if str(node_id).strip()
     )
-    frozen_count = len(frozen_node_ids)
+    frozen_graph_node_ids = sorted(
+        graph_node_id
+        for graph_node_id in list(graph_snapshot.index_summary.blocked_graph_node_ids or [])
+        if graph_node_id in _graph_node_ids_for_runtime_node_ids(graph_snapshot, frozen_node_ids)
+    )
+    frozen_count = len(frozen_graph_node_ids)
     frozen_ratio = frozen_count / total_node_count
     if frozen_ratio <= _FREEZE_SPREAD_RATIO_THRESHOLD:
         return []
     return [
-        GraphHealthFindingDigest(
+        _finding_digest(
+            graph_snapshot,
             finding_type="FREEZE_SPREAD_TOO_WIDE",
             severity="WARNING",
-            affected_nodes=frozen_node_ids,
+            affected_graph_node_ids=frozen_graph_node_ids,
             metric_value=frozen_count,
             threshold=round(total_node_count * _FREEZE_SPREAD_RATIO_THRESHOLD, 2),
             description=(
@@ -459,6 +546,7 @@ def _freeze_spread_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
 def _graph_thrashing_findings(
     repository: ControlPlaneRepository,
     *,
+    graph_snapshot,
     workflow_id: str,
     connection,
 ) -> list[GraphHealthFindingDigest]:
@@ -480,10 +568,11 @@ def _graph_thrashing_findings(
         if count <= _GRAPH_THRASHING_THRESHOLD:
             continue
         findings.append(
-            GraphHealthFindingDigest(
+            _finding_digest(
+                graph_snapshot,
                 finding_type="GRAPH_THRASHING",
                 severity="CRITICAL",
-                affected_nodes=list(touched_node_ids),
+                affected_graph_node_ids=list(touched_node_ids),
                 metric_value=count,
                 threshold=_GRAPH_THRASHING_THRESHOLD,
                 description=(
@@ -505,13 +594,13 @@ def _queue_starvation_findings(
 ) -> list[GraphHealthFindingDigest]:
     ready_node_ids = [
         str(node_id).strip()
-        for node_id in list(graph_snapshot.index_summary.ready_node_ids or [])
+        for node_id in list(graph_snapshot.index_summary.ready_graph_node_ids or [])
         if str(node_id).strip()
     ]
-    if not ready_node_ids or list(graph_snapshot.index_summary.in_flight_node_ids or []):
+    if not ready_node_ids or list(graph_snapshot.index_summary.in_flight_graph_node_ids or []):
         return []
 
-    latest_ticket_id_by_node_id = _latest_ticket_id_by_node_id(graph_snapshot)
+    latest_ticket_id_by_node_id = _latest_ticket_id_by_graph_node_id(graph_snapshot)
     ticket_by_ticket_id = _workflow_ticket_projections(
         repository,
         workflow_id=workflow_id,
@@ -547,10 +636,11 @@ def _queue_starvation_findings(
         if starvation_age_sec <= starvation_threshold_sec:
             continue
         findings.append(
-            GraphHealthFindingDigest(
+            _finding_digest(
+                graph_snapshot,
                 finding_type="QUEUE_STARVATION",
                 severity="CRITICAL",
-                affected_nodes=[node_id],
+                affected_graph_node_ids=[node_id],
                 metric_value=starvation_age_sec,
                 threshold=starvation_threshold_sec,
                 description=(
@@ -566,6 +656,7 @@ def _queue_starvation_findings(
 def _ready_blocked_thrashing_findings(
     repository: ControlPlaneRepository,
     *,
+    graph_snapshot,
     workflow_id: str,
     connection,
 ) -> list[GraphHealthFindingDigest]:
@@ -635,10 +726,14 @@ def _ready_blocked_thrashing_findings(
         if oscillation_count < _READY_BLOCKED_THRASHING_THRESHOLD:
             continue
         findings.append(
-            GraphHealthFindingDigest(
+            _finding_digest(
+                graph_snapshot,
                 finding_type="READY_BLOCKED_THRASHING",
                 severity="WARNING",
-                affected_nodes=[node_id],
+                affected_graph_node_ids=_graph_node_ids_for_runtime_node_ids(
+                    graph_snapshot,
+                    [node_id],
+                ),
                 metric_value=oscillation_count,
                 threshold=_READY_BLOCKED_THRASHING_THRESHOLD,
                 description=(
@@ -660,12 +755,12 @@ def _ready_node_stale_findings(
 ) -> list[GraphHealthFindingDigest]:
     ready_node_ids = [
         str(node_id).strip()
-        for node_id in list(graph_snapshot.index_summary.ready_node_ids or [])
+        for node_id in list(graph_snapshot.index_summary.ready_graph_node_ids or [])
         if str(node_id).strip()
     ]
     if not ready_node_ids:
         return []
-    latest_ticket_id_by_node_id = _latest_ticket_id_by_node_id(graph_snapshot)
+    latest_ticket_id_by_node_id = _latest_ticket_id_by_graph_node_id(graph_snapshot)
     ticket_by_ticket_id = _workflow_ticket_projections(
         repository,
         workflow_id=workflow_id,
@@ -697,10 +792,11 @@ def _ready_node_stale_findings(
         if stale_age_sec <= stale_threshold_sec:
             continue
         findings.append(
-            GraphHealthFindingDigest(
+            _finding_digest(
+                graph_snapshot,
                 finding_type="READY_NODE_STALE",
                 severity="WARNING",
-                affected_nodes=[node_id],
+                affected_graph_node_ids=[node_id],
                 metric_value=stale_age_sec,
                 threshold=stale_threshold_sec,
                 description=(
@@ -722,14 +818,14 @@ def _cross_version_sla_breach_findings(
 ) -> list[GraphHealthFindingDigest]:
     blocked_node_ids = [
         str(node_id).strip()
-        for node_id in list(graph_snapshot.index_summary.blocked_node_ids or [])
+        for node_id in list(graph_snapshot.index_summary.blocked_graph_node_ids or [])
         if str(node_id).strip()
     ]
     if not blocked_node_ids:
         return []
 
     current_graph_version_int = _graph_version_int(graph_snapshot.graph_version)
-    latest_ticket_id_by_node_id = _latest_ticket_id_by_node_id(graph_snapshot)
+    latest_ticket_id_by_node_id = _latest_ticket_id_by_graph_node_id(graph_snapshot)
     ticket_by_ticket_id = _workflow_ticket_projections(
         repository,
         workflow_id=workflow_id,
@@ -740,6 +836,7 @@ def _cross_version_sla_breach_findings(
         workflow_id=workflow_id,
         connection=connection,
     )
+    graph_node_by_graph_node_id = _graph_node_by_graph_node_id(graph_snapshot)
     current_time = now_local()
     findings: list[GraphHealthFindingDigest] = []
     for node_id in blocked_node_ids:
@@ -753,7 +850,11 @@ def _cross_version_sla_breach_findings(
             _raise_graph_health_unavailable(
                 f"blocked node {node_id} points to missing ticket {ticket_id}."
             )
-        node_projection = node_by_node_id.get(node_id)
+        graph_node = graph_node_by_graph_node_id.get(node_id)
+        runtime_node_id = str(
+            graph_node.runtime_node_id if graph_node is not None else ""
+        ).strip()
+        node_projection = node_by_node_id.get(runtime_node_id)
         if node_projection is None:
             _raise_graph_health_unavailable(
                 f"blocked node {node_id} is missing node projection."
@@ -788,10 +889,11 @@ def _cross_version_sla_breach_findings(
         if blocked_age_sec <= blocked_threshold_sec:
             continue
         findings.append(
-            GraphHealthFindingDigest(
+            _finding_digest(
+                graph_snapshot,
                 finding_type="CROSS_VERSION_SLA_BREACH",
                 severity="CRITICAL",
-                affected_nodes=[node_id],
+                affected_graph_node_ids=[node_id],
                 metric_value=version_delta,
                 threshold=_CROSS_VERSION_SLA_VERSION_DELTA_THRESHOLD,
                 description=(
@@ -829,17 +931,20 @@ def build_graph_health_report(
             ),
             *_graph_thrashing_findings(
                 repository,
+                graph_snapshot=graph_snapshot,
                 workflow_id=workflow_id,
                 connection=resolved_connection,
             ),
             *_persistent_failure_zone_findings(
                 repository,
+                graph_snapshot=graph_snapshot,
                 workflow_id=workflow_id,
                 connection=resolved_connection,
             ),
             *_freeze_spread_findings(graph_snapshot),
             *_ready_blocked_thrashing_findings(
                 repository,
+                graph_snapshot=graph_snapshot,
                 workflow_id=workflow_id,
                 connection=resolved_connection,
             ),

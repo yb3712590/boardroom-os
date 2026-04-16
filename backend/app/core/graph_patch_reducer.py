@@ -18,6 +18,10 @@ from app.core.constants import (
     TICKET_STATUS_EXECUTING,
     TICKET_STATUS_LEASED,
 )
+from app.core.graph_identity import (
+    GraphIdentityResolutionError,
+    ensure_patch_targets_are_execution_node_ids,
+)
 from app.db.repository import ControlPlaneRepository
 
 _PATH_EDGE_TYPES = {"PARENT_OF", "DEPENDS_ON"}
@@ -220,8 +224,6 @@ def _validate_path_dag(
             continue
         if source_node_id not in active_node_ids or target_node_id not in active_node_ids:
             continue
-        if source_node_id == target_node_id:
-            continue
         adjacency.setdefault(source_node_id, set()).add(target_node_id)
 
     visiting: set[str] = set()
@@ -271,6 +273,7 @@ def reduce_graph_patch_overlay(
     *,
     patch_records: list[GraphPatchEventRecord],
     known_node_ids: set[str],
+    known_patch_target_node_ids: set[str] | None = None,
     base_edge_keys: set[tuple[str, str, str]],
     ticket_status_by_node_id: dict[str, str | None],
     node_status_by_node_id: dict[str, str | None],
@@ -296,6 +299,14 @@ def reduce_graph_patch_overlay(
     for record in patch_records:
         patch = record.patch
         event_id = record.event_id
+        try:
+            ensure_patch_targets_are_execution_node_ids(
+                event_id=event_id,
+                referenced_node_ids=graph_patch_target_node_ids(patch),
+                known_execution_node_ids=set(known_patch_target_node_ids or known_node_ids),
+            )
+        except GraphIdentityResolutionError as exc:
+            _raise_graph_patch_unavailable(str(exc))
         _validate_known_nodes(
             event_id=event_id,
             referenced_node_ids=graph_patch_target_node_ids(patch),

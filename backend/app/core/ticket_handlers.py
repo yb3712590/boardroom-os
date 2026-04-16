@@ -3331,6 +3331,11 @@ def open_graph_health_critical_incident(
         for node_id in list(primary_finding.get("affected_nodes") or [])
         if str(node_id).strip()
     ]
+    affected_graph_node_ids = [
+        str(node_id).strip()
+        for node_id in list(primary_finding.get("affected_graph_node_ids") or [])
+        if str(node_id).strip()
+    ]
     fingerprint = _resolve_graph_health_critical_incident_fingerprint(
         workflow_id,
         graph_version,
@@ -3377,6 +3382,7 @@ def open_graph_health_critical_incident(
             "graph_version": graph_version,
             "finding_type": finding_type,
             "affected_nodes": affected_nodes,
+            "affected_graph_node_ids": affected_graph_node_ids,
             "metric_value": primary_finding.get("metric_value"),
             "threshold": primary_finding.get("threshold"),
             "description": primary_finding.get("description"),
