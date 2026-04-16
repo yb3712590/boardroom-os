@@ -16134,6 +16134,86 @@ def test_board_advisory_request_analysis_creates_patch_proposal_without_resolvin
     assert advisory_context["risk_alerts"]
 
 
+def test_board_advisory_request_analysis_accepts_add_node_patch_proposal(client):
+    workflow_id = "wf_modify_advisory_add_node"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Persist add-node placeholder proposals without resolving the approval.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Allow the advisory flow to propose a graph-only placeholder node."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "The analysis output should be able to add a new placeholder node.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:advisory-add-node-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+            "workflow_id": workflow_id,
+            "session_id": advisory_session["session_id"],
+            "base_graph_version": build_ticket_graph_snapshot(repository, workflow_id).graph_version,
+            "proposal_summary": "Add a placeholder node for the follow-up implementation slice.",
+            "impact_summary": "The graph should show a planned node before a real ticket exists.",
+            "add_nodes": [
+                {
+                    "node_id": "node_advisory_placeholder_build",
+                    "node_kind": "IMPLEMENTATION",
+                    "deliverable_kind": "source_code_delivery",
+                    "role_hint": "frontend_engineer_primary",
+                    "parent_node_id": "node_homepage_visual",
+                    "dependency_node_ids": [],
+                }
+            ],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-advisory-add-node-proposal",
+        }
+    )
+
+    with (
+        patch("app.core.approval_handlers.build_graph_patch_proposal", return_value=proposal),
+        patch("app.core.board_advisory_analysis.build_graph_patch_proposal", return_value=proposal),
+        patch("app.core.board_advisory.build_graph_patch_proposal", return_value=proposal),
+    ):
+        response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:add-node",
+            },
+        )
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert advisory_session is not None
+    assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"
+    assert advisory_session["latest_patch_proposal_ref"] == proposal.proposal_ref
+    assert advisory_session["latest_patch_proposal"]["add_nodes"][0]["node_id"] == "node_advisory_placeholder_build"
+
+
 def test_board_advisory_analysis_failure_opens_incident_and_rerun_recovery(client):
     workflow_id = "wf_advisory_analysis_incident"
     _ensure_scoped_workflow(
@@ -16338,6 +16418,98 @@ def test_board_advisory_apply_patch_resolves_approval_and_advances_graph_version
         and "node_homepage_visual" in item.node_ids
         for item in graph_snapshot.index_summary.blocked_reasons
     )
+
+
+def test_board_advisory_apply_patch_accepts_add_node_placeholder_without_runtime_ready_pollution(client):
+    workflow_id = "wf_advisory_apply_add_node"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Apply an advisory add-node patch as a graph-only placeholder.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Plan a placeholder node before runtime ticket creation."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "Import the placeholder into the graph without treating it as ready work.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:apply-add-node-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+            "workflow_id": workflow_id,
+            "session_id": advisory_session["session_id"],
+            "base_graph_version": build_ticket_graph_snapshot(repository, workflow_id).graph_version,
+            "proposal_summary": "Add the planned implementation node.",
+            "impact_summary": "The graph should show a placeholder node without creating a runtime ticket.",
+            "add_nodes": [
+                {
+                    "node_id": "node_apply_placeholder_build",
+                    "node_kind": "IMPLEMENTATION",
+                    "deliverable_kind": "source_code_delivery",
+                    "role_hint": "frontend_engineer_primary",
+                    "parent_node_id": "node_homepage_visual",
+                    "dependency_node_ids": [],
+                }
+            ],
+            "focus_node_ids": ["node_apply_placeholder_build"],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-apply-add-node-placeholder",
+        }
+    )
+    with repository.transaction() as connection:
+        repository.store_board_advisory_patch_proposal(
+            connection,
+            session_id=advisory_session["session_id"],
+            proposal_ref=proposal.proposal_ref,
+            proposal=proposal.model_dump(mode="json"),
+            decision_pack_refs=list(advisory_session["decision_pack_refs"]),
+            updated_at=datetime.fromisoformat("2026-04-16T22:10:00+08:00"),
+        )
+
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": proposal.proposal_ref,
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:add-node",
+        },
+    )
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+    placeholder_node = next(
+        node for node in graph_snapshot.nodes if node.graph_node_id == "node_apply_placeholder_build"
+    )
+
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "ACCEPTED"
+    assert advisory_session is not None
+    assert advisory_session["status"] == "APPLIED"
+    assert placeholder_node.is_placeholder is True
+    assert placeholder_node.ticket_id is None
+    assert "node_apply_placeholder_build" not in graph_snapshot.index_summary.ready_graph_node_ids
+    assert "node_apply_placeholder_build" not in graph_snapshot.index_summary.ready_node_ids
 
 
 def test_board_advisory_apply_patch_rejects_stale_proposal(client):

@@ -1288,6 +1288,23 @@ def _apply_board_advisory_patch(
         str(session["workflow_id"]),
         connection=connection,
     )
+    existing_graph_node_ids = {
+        str(node.graph_node_id or "").strip()
+        for node in graph_snapshot.nodes
+        if str(node.graph_node_id or "").strip()
+    }
+    duplicate_add_node_ids = sorted(
+        {
+            str(item.node_id).strip()
+            for item in list(normalized_proposal.add_nodes or [])
+            if str(item.node_id).strip() in existing_graph_node_ids
+        }
+    )
+    if duplicate_add_node_ids:
+        raise ValueError(
+            "Graph patch proposal add_nodes must use new node ids: "
+            + ", ".join(duplicate_add_node_ids)
+        )
     graph_patch = build_graph_patch_from_proposal(
         normalized_proposal,
         session_id=session_id,

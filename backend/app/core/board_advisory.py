@@ -484,6 +484,7 @@ def build_graph_patch_from_proposal(
         focus_node_ids=list(normalized.focus_node_ids),
         replacements=[item.model_copy() for item in normalized.replacements],
         remove_node_ids=list(normalized.remove_node_ids),
+        add_nodes=[item.model_copy() for item in normalized.add_nodes],
         edge_additions=[item.model_copy() for item in normalized.edge_additions],
         edge_removals=[item.model_copy() for item in normalized.edge_removals],
         reason_summary=normalized.proposal_summary,

@@ -147,7 +147,9 @@ def _runtime_node_ids_for_graph_node_ids(
         graph_node = graph_node_by_id.get(str(graph_node_id or "").strip())
         if graph_node is None:
             continue
-        runtime_node_id = str(graph_node.runtime_node_id or graph_node.node_id or "").strip()
+        runtime_node_id = str(graph_node.runtime_node_id or "").strip()
+        if not runtime_node_id and not bool(getattr(graph_node, "is_placeholder", False)):
+            runtime_node_id = str(graph_node.node_id or "").strip()
         if runtime_node_id:
             runtime_node_ids.add(runtime_node_id)
     return sorted(runtime_node_ids)
@@ -166,7 +168,15 @@ def _graph_node_ids_for_runtime_node_ids(
         str(node.graph_node_id or "").strip()
         for node in graph_snapshot.nodes
         if str(node.graph_node_id or "").strip()
-        and str(node.runtime_node_id or node.node_id or "").strip() in runtime_node_id_set
+        and (
+            str(node.runtime_node_id or "").strip()
+            or (
+                str(node.node_id or "").strip()
+                if not bool(getattr(node, "is_placeholder", False))
+                else ""
+            )
+        )
+        in runtime_node_id_set
     }
     return sorted(graph_node_ids)
 

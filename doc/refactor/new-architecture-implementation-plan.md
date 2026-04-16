@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 17:31`
+> 最后更新：`2026-04-16 18:09`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -723,9 +723,13 @@
 - [x] `P4-S4` 已完成第十批：`TicketGraph` 已删掉 ticket-derived `graph_node_id=ticket:<ticket_id>` 旧兼容；shared runtime `node_id` 的 maker/checker/rework 现在会显式拆成 execution / review 两条 graph lane，不再靠 inherited self-loop 跳过污染图真相
 - [x] `P4-S4` 已完成第十批：`graph_patch_reducer / graph_health / GRAPH_HEALTH_CRITICAL incident / CEO snapshot` 已统一切到 graph identity；graph health finding 和 incident payload 现在都会额外带 `affected_graph_node_ids`，旧兼容读面 `affected_nodes` 继续只保留 runtime node id
 - [x] `P4-S4` 已完成第十批：advisory patch 如果指到 synthetic review lane，现在会显式 `REJECTED`；`GraphIdentityResolutionError` 也已接进现有 `TICKET_GRAPH_UNAVAILABLE` 恢复链，不做隐式 fallback
+- [x] `P4-S4` 已完成第十一批：`GraphPatchProposal / GraphPatch` 现已正式支持 `add_nodes[]`；`GraphPatchAddedNode` 已固定 `node_id / node_kind / deliverable_kind / role_hint / parent_node_id / dependency_node_ids[]`，`graph_patch_proposal` output schema 也已升到 `v2`
+- [x] `P4-S4` 已完成第十一批：`graph_patch_reducer.py` 现已支持 graph-only placeholder node overlay；`add_node` 必须显式声明 parent/dependency，same-patch `edge_additions / edge_removals` 不能再拿来偷接 placeholder，坏 patch 继续显式失败并复用既有幂等恢复链
+- [x] `P4-S4` 已完成第十一批：`TicketGraph` 现在会物化 `is_placeholder=true / node_status=PLANNED / ticket_id=null / runtime_node_id=null` 的 placeholder node；`ready / blocked / in_flight` 继续只统计 ticket-backed node，placeholder 不再伪造 ticket 绑定
+- [x] `P4-S4` 已完成第十一批：历史 `add_node` 在真实 ticket 创建后现在会被 graph replay 显式吸收，不再把图重算炸成 `graph unavailable`；`GraphHealthReport` 的结构类规则也已纳入 placeholder，`affected_nodes` 不再回退到 placeholder `node_id` 伪装成 runtime node
 
 ### 未完成
-- [ ] 真 `add_node` / placeholder node 仍未进入主链；当前 advisory patch v2 只允许在 existing node 上做 `REPLACES / remove_node / add-remove edge`
+- [ ] graph-only `add_node / placeholder node` 已进入 `TicketGraph / GraphHealth / advisory patch` 主链；但还没进入 runtime `node_projection`、ticket-create 自动 materialization 或 graph-first placeholder lifecycle
 - [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；这轮只把 graph layer identity 收口成 execution / review 双 lane，未继续把运行时身份拆成 graph-first 双层真相
 - [ ] `GraphHealthReport` 第四批规则虽已落地，但 dedicated graph health history / workflow 级 SLA 配置 / 更细的 blocker-source attribution 仍未进入主链
 
@@ -738,7 +742,7 @@
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
-- [ ] 当前 advisory patch v2 已显式禁止 `add_node`；如果后续要做 graph-first placeholder node，必须单独开切片，不能回到 session JSON 或隐式 fallback 口径
+- [ ] placeholder node 当前只支持 graph-only execution lane；同一 patch 里的 placeholder-to-placeholder 接线、review lane placeholder 和 runtime 自动 materialization 仍未支持，后续若要补必须单独开切片
 - [ ] `GraphHealthReport` 第四批现已锁成“只读 `events + graph_version + ticket/node projection.version/updated_at`”；如果后续要补 dedicated history 或 workflow 级 SLA，必须单独开切片，不能在现有规则里偷偷落新真相层
 - [ ] `READY_BLOCKED_THRASHING` 这轮只按最近 `24` 条显式事件窗口做 `WARNING` 检测；如果后续要做更细的 blocker-source 分层、跨窗口趋势分析或自动升级 incident，必须单独扩正式规则，不回退到当前快照猜历史
 - [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
@@ -1887,6 +1891,40 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先决定 true add_node / placeholder node 是否拆成独立切片；runtime node_projection 是否继续拆成 graph-first 双层真相保持后置单独决策。`
 
+### Session `2026-04-16 / 29`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 `GraphPatchProposal / GraphPatch` 新增正式 `add_nodes[]`，补最小 `GraphPatchAddedNode` 合同；`graph_patch_proposal` output schema 已升到 `v2`
+- [x] 把 `board_advisory_analysis.py` 的 analysis output 校验收正到新合同：旧的“只认 existing node rewiring”提示已删掉，`add_node` 现在要显式带 parent/dependency，重复 node_id 也会显式 reject
+- [x] 把 `graph_patch_reducer.py` 扩成 graph-only placeholder overlay：`add_node` 现在会物化 parent/dependency 边并参与 DAG / orphan 校验；same-patch edge delta 指向 placeholder 会 fail-closed；历史 add-node 遇到后续真实 ticket 时会显式吸收，不再把 replay 打成 graph unavailable
+- [x] 把 `TicketGraph / GraphHealth` 接到 placeholder 真相：placeholder node 现在会以 `is_placeholder=true / node_status=PLANNED / ticket_id=null / runtime_node_id=null` 出现在 graph snapshot；结构类 graph health 已纳入 placeholder，`affected_nodes` 不再把 placeholder `node_id` 冒充成 runtime node
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -q` 通过（`37 passed`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory and patch" -q` 通过（`7 passed, 310 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_process_assets.py -k "graph_patch or board_advisory" -q` 通过（`2 passed, 5 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "advisory or graph_health" -q` 通过（`5 passed, 73 deselected`）
+- [x] `python -m py_compile backend/app/contracts/advisory.py backend/app/contracts/ticket_graph.py backend/app/core/output_schemas.py backend/app/core/board_advisory.py backend/app/core/board_advisory_analysis.py backend/app/core/process_assets.py backend/app/core/graph_patch_reducer.py backend/app/core/ticket_graph.py backend/app/core/graph_health.py backend/app/core/approval_handlers.py backend/tests/test_ticket_graph.py backend/tests/test_api.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只收口 graph patch / ticket graph / graph health 的内部合同，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder node 仍是 graph-only 真相，还没进入 runtime `node_projection` 或自动建票 materialization
+- [ ] same-patch placeholder-to-placeholder 接线、review lane placeholder 仍未支持
+- [ ] dedicated graph health history / workflow 级 SLA 配置 / 更细的 blocker-source attribution 仍未进入主链
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先决定 placeholder node 的 runtime materialization 是否拆成独立切片；runtime node_projection 的 graph-first 双层真相继续保持后置单独决策。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1924,7 +1962,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第十批已落地；graph layer identity 现已正式拆成 execution / review 双 lane，旧的 ticket-derived graph node 和 inherited self-loop 兼容已删除，且继续坚持错误显式化与幂等恢复
-- 最近完成：`graph_identity.py` 已落单点真相；`TicketGraph / graph_patch_reducer / graph_health / GRAPH_HEALTH_CRITICAL incident / CEO snapshot` 都已切到新 graph identity，`affected_graph_node_ids` 也已进入 graph health digest 和 incident payload
-- 当前阻塞：真 `add_node` / placeholder node 仍后置；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键，尚未拆成 graph-first 双层真相；dedicated graph health history / workflow 级 SLA 配置还没进主链
-- 下一步：`继续从 P4-S4 续跑，优先决定 true add_node / placeholder node 是否拆成独立切片；runtime node_projection 是否继续拆成 graph-first 双层真相保持后置单独决策`
+- 当前状态：`P4-S4` 第十一批已落地；graph-only `add_node / placeholder node` 现已进入正式 graph patch、ticket graph 和 graph health 主链，且继续坚持错误显式化与幂等恢复
+- 最近完成：`GraphPatchAddedNode`、placeholder overlay 和 `TicketGraph.is_placeholder` 已落地；历史 add-node 在真实 ticket 创建后会被显式吸收，placeholder finding 也不再伪装成 runtime node
+- 当前阻塞：placeholder node 仍只停在 graph-only 真相；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；same-patch placeholder-to-placeholder 接线与 review lane placeholder 还没进主链
+- 下一步：`继续从 P4-S4 续跑，优先决定 placeholder node 的 runtime materialization 是否拆成独立切片；runtime node_projection 的 graph-first 双层真相继续保持后置单独决策`

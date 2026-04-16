@@ -805,7 +805,7 @@ def _resolve_graph_patch_proposal_process_asset(
             },
             content_type="JSON",
             json_content=payload,
-            schema_ref="graph_patch_proposal@1",
+            schema_ref="graph_patch_proposal@2",
         )
 
 

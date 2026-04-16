@@ -88,12 +88,12 @@ def _append_edge(
     edge_type: str,
     graph_version: str,
     workflow_id: str,
-    source_ticket_id: str,
-    target_ticket_id: str,
+    source_ticket_id: str | None,
+    target_ticket_id: str | None,
     source_graph_node_id: str,
     target_graph_node_id: str,
-    source_runtime_node_id: str,
-    target_runtime_node_id: str,
+    source_runtime_node_id: str | None,
+    target_runtime_node_id: str | None,
 ) -> None:
     key = (edge_type, source_graph_node_id, target_graph_node_id)
     if key in seen_edges:
@@ -108,8 +108,8 @@ def _append_edge(
             target_graph_node_id=target_graph_node_id,
             source_ticket_id=source_ticket_id,
             target_ticket_id=target_ticket_id,
-            source_node_id=source_runtime_node_id,
-            target_node_id=target_runtime_node_id,
+            source_node_id=source_runtime_node_id or source_graph_node_id,
+            target_node_id=target_runtime_node_id or target_graph_node_id,
             source_runtime_node_id=source_runtime_node_id,
             target_runtime_node_id=target_runtime_node_id,
         )
@@ -317,6 +317,8 @@ def build_ticket_graph_snapshot(
                 runtime_node_id=identity.runtime_node_id,
                 graph_lane_kind=identity.graph_lane_kind,
                 node_kind=_resolve_node_kind(created_spec),
+                deliverable_kind=str(created_spec.get("deliverable_kind") or "").strip() or None,
+                role_hint=str(created_spec.get("role_profile_ref") or "").strip() or None,
                 ticket_status=str(ticket_projection.get("status") or "").strip() or None,
                 node_status=_effective_graph_node_status(
                     graph_node_id=identity.graph_node_id,
@@ -335,13 +337,9 @@ def build_ticket_graph_snapshot(
                     runtime_node_projection=runtime_node_projection,
                     is_runtime_latest_ticket=is_runtime_latest_ticket,
                 ),
+                is_placeholder=False,
             )
         )
-
-    current_node_by_graph_node_id = {
-        node.graph_node_id: node
-        for node in nodes
-    }
 
     edges: list[TicketGraphEdge] = []
     seen_edges: set[tuple[str, str, str]] = set()
@@ -561,6 +559,42 @@ def build_ticket_graph_snapshot(
         override_status = node_status_overrides.get(node.graph_node_id)
         if override_status:
             node.node_status = override_status
+    existing_graph_node_ids = {
+        str(node.graph_node_id or "").strip()
+        for node in nodes
+        if str(node.graph_node_id or "").strip()
+    }
+    for placeholder_node_id, placeholder_node in sorted(graph_patch_overlay.placeholder_nodes.items()):
+        if placeholder_node_id in existing_graph_node_ids:
+            continue
+        override_status = str(node_status_overrides.get(placeholder_node_id) or "").strip()
+        if override_status in {NODE_STATUS_CANCELLED, NODE_STATUS_SUPERSEDED}:
+            continue
+        nodes.append(
+            TicketGraphNode(
+                graph_node_id=placeholder_node_id,
+                workflow_id=workflow_id,
+                graph_version=graph_version,
+                ticket_id=None,
+                node_id=placeholder_node_id,
+                runtime_node_id=None,
+                graph_lane_kind=GRAPH_LANE_EXECUTION,
+                node_kind=str(placeholder_node.node_kind or "").strip(),
+                deliverable_kind=str(placeholder_node.deliverable_kind or "").strip() or None,
+                role_hint=str(placeholder_node.role_hint or "").strip() or None,
+                ticket_status=None,
+                node_status=override_status or "PLANNED",
+                role_profile_ref=str(placeholder_node.role_hint or "").strip() or None,
+                output_schema_ref=None,
+                delivery_stage=None,
+                parent_ticket_id=None,
+                dependency_ticket_ids=[],
+                blocking_reason_code=None,
+                is_placeholder=True,
+            )
+        )
+
+    current_node_by_graph_node_id = {node.graph_node_id: node for node in nodes}
 
     effective_edges: list[TicketGraphEdge] = []
     effective_seen_edges: set[tuple[str, str, str]] = set()
@@ -624,8 +658,10 @@ def build_ticket_graph_snapshot(
 
     for node in nodes:
         graph_node_id = str(node.graph_node_id or "").strip()
-        runtime_node_id = str(node.runtime_node_id or node.node_id or "").strip()
+        runtime_node_id = str(node.runtime_node_id or "").strip()
         ticket_id = str(node.ticket_id or "").strip()
+        if bool(getattr(node, "is_placeholder", False)):
+            continue
         ticket_projection = ticket_projection_by_ticket_id.get(ticket_id)
         if ticket_projection is None:
             record_issue(

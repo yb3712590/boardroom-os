@@ -37,7 +37,7 @@ MAKER_CHECKER_VERDICT_SCHEMA_VERSION = 1
 CEO_ACTION_BATCH_SCHEMA_REF = "ceo_action_batch"
 CEO_ACTION_BATCH_SCHEMA_VERSION = 1
 GRAPH_PATCH_PROPOSAL_SCHEMA_REF = "graph_patch_proposal"
-GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION = 1
+GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION = 2
 DOCUMENTATION_UPDATE_STATUSES = {"UPDATED", "NO_CHANGE_REQUIRED", "FOLLOW_UP_REQUIRED"}
 GOVERNANCE_DOCUMENT_SCHEMA_REFS = (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -1364,6 +1364,7 @@ def _graph_patch_proposal_schema_body() -> dict[str, Any]:
             "focus_node_ids",
             "replacements",
             "remove_node_ids",
+            "add_nodes",
             "edge_additions",
             "edge_removals",
         ],

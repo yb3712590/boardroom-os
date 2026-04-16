@@ -412,8 +412,9 @@ def _build_board_advisory_analysis_compile_request(
         ],
         "acceptance_criteria": [
             "Return a valid graph_patch_proposal payload.",
-            "Only reference existing node ids in freeze_node_ids, unfreeze_node_ids, focus_node_ids, replacements, remove_node_ids, edge_additions, and edge_removals.",
-            "Do not invent add_node-style operations; advisory graph patch v2 only rewires existing nodes.",
+            "Only reference existing execution node ids in freeze_node_ids, unfreeze_node_ids, replacements, remove_node_ids, edge_additions, and edge_removals.",
+            "If you use add_nodes, every new node must declare node_id, node_kind, deliverable_kind, role_hint, parent_node_id, and dependency_node_ids.",
+            "Do not target synthetic review lanes, and do not use edge_additions or edge_removals to wire placeholder nodes in the same patch.",
             "Keep the proposal scoped to the current board advisory session.",
         ],
         "forced_skill_ids": ["planning_governance"],
@@ -590,10 +591,14 @@ def _validate_graph_patch_nodes(
 ) -> None:
     graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id, connection=connection)
     proposal = GraphPatchProposal.model_validate(proposal_payload)
-    referenced_node_ids = {
+    add_node_ids = {
+        str(item.node_id).strip()
+        for item in proposal.add_nodes
+        if str(item.node_id).strip()
+    }
+    referenced_existing_node_ids = {
         *proposal.freeze_node_ids,
         *proposal.unfreeze_node_ids,
-        *proposal.focus_node_ids,
         *proposal.remove_node_ids,
         *(item.old_node_id for item in proposal.replacements),
         *(item.new_node_id for item in proposal.replacements),
@@ -602,19 +607,51 @@ def _validate_graph_patch_nodes(
         *(item.source_node_id for item in proposal.edge_removals),
         *(item.target_node_id for item in proposal.edge_removals),
     }
+    referenced_existing_node_ids.update(
+        node_id
+        for node_id in proposal.focus_node_ids
+        if str(node_id).strip() and str(node_id).strip() not in add_node_ids
+    )
+    known_execution_node_ids = {
+        str(node.runtime_node_id or node.node_id or "").strip()
+        for node in graph_snapshot.nodes
+        if str(node.graph_lane_kind or "") == "execution"
+        and str(node.runtime_node_id or node.node_id or "").strip()
+    }
     try:
         ensure_patch_targets_are_execution_node_ids(
             event_id=f"proposal:{proposal.proposal_ref}",
-            referenced_node_ids=referenced_node_ids,
-            known_execution_node_ids={
-                str(node.runtime_node_id or node.node_id or "").strip()
-                for node in graph_snapshot.nodes
-                if str(node.graph_lane_kind or "") == "execution"
-                and str(node.runtime_node_id or node.node_id or "").strip()
-            },
+            referenced_node_ids=referenced_existing_node_ids,
+            known_execution_node_ids=known_execution_node_ids,
         )
     except GraphIdentityResolutionError as exc:
         raise ValueError(str(exc)) from exc
+    try:
+        ensure_patch_targets_are_execution_node_ids(
+            event_id=f"proposal:{proposal.proposal_ref}:add_nodes",
+            referenced_node_ids=add_node_ids,
+            known_execution_node_ids=known_execution_node_ids | add_node_ids,
+        )
+    except GraphIdentityResolutionError as exc:
+        raise ValueError(str(exc)) from exc
+    duplicate_add_node_ids = sorted(node_id for node_id in add_node_ids if node_id in known_execution_node_ids)
+    if duplicate_add_node_ids:
+        raise ValueError(
+            "graph patch proposal add_nodes must use new node ids: "
+            + ", ".join(duplicate_add_node_ids)
+        )
+    for added_node in proposal.add_nodes:
+        try:
+            ensure_patch_targets_are_execution_node_ids(
+                event_id=f"proposal:{proposal.proposal_ref}:add_node:{added_node.node_id}",
+                referenced_node_ids=[
+                    added_node.parent_node_id,
+                    *list(added_node.dependency_node_ids or []),
+                ],
+                known_execution_node_ids=known_execution_node_ids,
+            )
+        except GraphIdentityResolutionError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 def _build_selection_summary_from_failure(

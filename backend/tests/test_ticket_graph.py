@@ -62,6 +62,7 @@ def _seed_graph_patch_applied_event(
     focus_node_ids: list[str] | None = None,
     replacements: list[dict[str, str]] | None = None,
     remove_node_ids: list[str] | None = None,
+    add_nodes: list[dict[str, object]] | None = None,
     edge_additions: list[dict[str, str]] | None = None,
     edge_removals: list[dict[str, str]] | None = None,
     payload_override=None,
@@ -92,6 +93,7 @@ def _seed_graph_patch_applied_event(
                     "focus_node_ids": list(focus_node_ids or freeze_node_ids),
                     "replacements": list(replacements or []),
                     "remove_node_ids": list(remove_node_ids or []),
+                    "add_nodes": list(add_nodes or []),
                     "edge_additions": list(edge_additions or []),
                     "edge_removals": list(edge_removals or []),
                     "reason_summary": "Seed graph patch event for graph health coverage.",
@@ -203,6 +205,49 @@ def test_graph_patch_contract_accepts_replacements_remove_and_edge_deltas():
     assert patch.replacements[0].new_node_id == "node_new"
 
 
+def test_graph_patch_contract_accepts_added_placeholder_nodes():
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": "pa://graph-patch-proposal/adv_add_node@1",
+            "workflow_id": "wf_graph_patch_add_node",
+            "session_id": "adv_add_node",
+            "base_graph_version": "gv_1",
+            "proposal_summary": "Add a placeholder node for the new implementation slice.",
+            "impact_summary": "Create a planned node under the existing parent and keep its dependency explicit.",
+            "add_nodes": [
+                {
+                    "node_id": "node_placeholder_build",
+                    "node_kind": "IMPLEMENTATION",
+                    "deliverable_kind": "source_code_delivery",
+                    "role_hint": "frontend_engineer_primary",
+                    "parent_node_id": "node_existing_parent",
+                    "dependency_node_ids": ["node_existing_dependency"],
+                }
+            ],
+            "source_decision_pack_ref": "pa://decision-summary/adv_add_node@1",
+            "proposal_hash": "hash-graph-patch-add-node",
+        }
+    )
+
+    patch = GraphPatch.model_validate(
+        {
+            "patch_ref": "pa://graph-patch/adv_add_node@1",
+            "workflow_id": proposal.workflow_id,
+            "session_id": proposal.session_id,
+            "proposal_ref": proposal.proposal_ref,
+            "base_graph_version": proposal.base_graph_version,
+            "add_nodes": [item.model_dump(mode="json") for item in proposal.add_nodes],
+            "reason_summary": proposal.proposal_summary,
+            "patch_hash": proposal.proposal_hash,
+        }
+    )
+
+    assert proposal.add_nodes[0].node_id == "node_placeholder_build"
+    assert proposal.add_nodes[0].parent_node_id == "node_existing_parent"
+    assert proposal.add_nodes[0].dependency_node_ids == ["node_existing_dependency"]
+    assert patch.add_nodes[0].deliverable_kind == "source_code_delivery"
+
+
 def test_graph_patch_contract_rejects_add_node_and_conflicting_replace_remove():
     with pytest.raises(ValidationError, match="add_node_ids"):
         GraphPatchProposal.model_validate(
@@ -237,6 +282,29 @@ def test_graph_patch_contract_rejects_add_node_and_conflicting_replace_remove():
                 "remove_node_ids": ["node_old"],
                 "reason_summary": "Conflicting remove and replace for the same node.",
                 "patch_hash": "hash-graph-patch-contract-conflict",
+            }
+        )
+
+    with pytest.raises(ValidationError, match="parent_node_id"):
+        GraphPatchProposal.model_validate(
+            {
+                "proposal_ref": "pa://graph-patch-proposal/adv_contract_missing_parent@1",
+                "workflow_id": "wf_graph_patch_contract_invalid",
+                "session_id": "adv_contract_invalid",
+                "base_graph_version": "gv_1",
+                "proposal_summary": "Missing parent metadata should fail closed.",
+                "impact_summary": "Placeholder nodes must declare their parent edge explicitly.",
+                "add_nodes": [
+                    {
+                        "node_id": "node_missing_parent",
+                        "node_kind": "IMPLEMENTATION",
+                        "deliverable_kind": "source_code_delivery",
+                        "role_hint": "frontend_engineer_primary",
+                        "dependency_node_ids": [],
+                    }
+                ],
+                "source_decision_pack_ref": "pa://decision-summary/adv_contract_missing_parent@1",
+                "proposal_hash": "hash-graph-patch-contract-missing-parent",
             }
         )
 
@@ -554,6 +622,151 @@ def test_ticket_graph_snapshot_collapses_rework_back_to_execution_lane(client):
         for edge in snapshot.edges
         if edge.edge_type in {"PARENT_OF", "DEPENDS_ON", "REVIEWS"}
     )
+
+
+def test_ticket_graph_snapshot_materializes_placeholder_nodes_without_marking_them_ready(client):
+    workflow_id = "wf_ticket_graph_placeholder_node"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph-only placeholder nodes should be visible without entering the runtime ready queue.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_placeholder_parent",
+        node_id="node_placeholder_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_placeholder_dependency",
+        node_id="node_placeholder_dependency",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_placeholder_build"],
+        add_nodes=[
+            {
+                "node_id": "node_placeholder_build",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_placeholder_parent",
+                "dependency_node_ids": ["node_placeholder_dependency"],
+            }
+        ],
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    node_by_graph_id = {node.graph_node_id: node for node in snapshot.nodes}
+    placeholder = node_by_graph_id["node_placeholder_build"]
+    edge_tuples = {
+        (
+            edge.edge_type,
+            edge.source_graph_node_id,
+            edge.target_graph_node_id,
+            edge.source_ticket_id,
+            edge.target_ticket_id,
+        )
+        for edge in snapshot.edges
+    }
+
+    assert placeholder.is_placeholder is True
+    assert placeholder.ticket_id is None
+    assert placeholder.runtime_node_id is None
+    assert placeholder.graph_lane_kind == "execution"
+    assert placeholder.node_status == "PLANNED"
+    assert placeholder.graph_node_id not in snapshot.index_summary.ready_graph_node_ids
+    assert "node_placeholder_build" not in snapshot.index_summary.ready_node_ids
+    assert (
+        "PARENT_OF",
+        "node_placeholder_parent",
+        "node_placeholder_build",
+        "tkt_placeholder_parent",
+        None,
+    ) in edge_tuples
+    assert (
+        "DEPENDS_ON",
+        "node_placeholder_dependency",
+        "node_placeholder_build",
+        "tkt_placeholder_dependency",
+        None,
+    ) in edge_tuples
+
+
+def test_ticket_graph_snapshot_absorbs_placeholder_node_when_real_ticket_is_created(client):
+    workflow_id = "wf_ticket_graph_placeholder_absorbed"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="A graph-only placeholder should disappear once a real ticket is created for the same node.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_placeholder_absorb_parent",
+        node_id="node_placeholder_absorb_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_placeholder_absorb"],
+        add_nodes=[
+            {
+                "node_id": "node_placeholder_absorb",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_placeholder_absorb_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+
+    placeholder_snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    assert next(
+        node for node in placeholder_snapshot.nodes if node.graph_node_id == "node_placeholder_absorb"
+    ).is_placeholder is True
+
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_placeholder_absorb_real",
+        node_id="node_placeholder_absorb",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+        parent_ticket_id="tkt_placeholder_absorb_parent",
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    materialized_nodes = [
+        node for node in snapshot.nodes if node.graph_node_id == "node_placeholder_absorb"
+    ]
+
+    assert len(materialized_nodes) == 1
+    assert materialized_nodes[0].is_placeholder is False
+    assert materialized_nodes[0].ticket_id == "tkt_placeholder_absorb_real"
+    assert materialized_nodes[0].runtime_node_id == "node_placeholder_absorb"
 
 
 def test_ticket_graph_snapshot_fail_closes_invalid_legacy_dependency(client):
@@ -1115,6 +1328,68 @@ def test_graph_health_report_detects_orphan_subgraph(client):
     )
 
     assert finding["affected_nodes"] == ["node_graph_health_orphan_build"]
+
+
+def test_graph_health_report_detects_orphan_placeholder_node_without_runtime_node_ids(client):
+    workflow_id = "wf_graph_health_orphan_placeholder"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Placeholder nodes should still participate in structural graph health checks.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_placeholder_root",
+        node_id="node_graph_health_placeholder_root",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_placeholder_closeout",
+        node_id="node_graph_health_placeholder_closeout",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+        delivery_stage="CLOSEOUT",
+        parent_ticket_id="tkt_graph_health_placeholder_root",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_graph_health_placeholder_orphan"],
+        add_nodes=[
+            {
+                "node_id": "node_graph_health_placeholder_orphan",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_graph_health_placeholder_root",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-orphan-placeholder",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "ORPHAN_SUBGRAPH"
+    )
+
+    assert finding["affected_nodes"] == []
+    assert finding["affected_graph_node_ids"] == ["node_graph_health_placeholder_orphan"]
 
 
 def test_graph_health_report_detects_freeze_spread_too_wide(client):

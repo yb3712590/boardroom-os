@@ -6,7 +6,7 @@ from typing import Iterable
 
 from pydantic import ValidationError
 
-from app.contracts.advisory import GraphPatch
+from app.contracts.advisory import GraphPatch, GraphPatchAddedNode
 from app.core.constants import (
     EVENT_GRAPH_PATCH_APPLIED,
     NODE_STATUS_CANCELLED,
@@ -49,6 +49,7 @@ class GraphPatchOverlay:
     focus_node_ids: set[str] = field(default_factory=set)
     node_status_overrides: dict[str, str] = field(default_factory=dict)
     effective_edge_keys: set[tuple[str, str, str]] = field(default_factory=set)
+    placeholder_nodes: dict[str, GraphPatchAddedNode] = field(default_factory=dict)
 
 
 def _load_graph_patch_event_records_with_connection(
@@ -147,6 +148,9 @@ def graph_patch_target_node_ids(patch: GraphPatch) -> tuple[str, ...]:
         *patch.unfreeze_node_ids,
         *patch.focus_node_ids,
         *patch.remove_node_ids,
+        *(item.node_id for item in patch.add_nodes),
+        *(item.parent_node_id for item in patch.add_nodes),
+        *(dependency_node_id for item in patch.add_nodes for dependency_node_id in item.dependency_node_ids),
         *(item.old_node_id for item in patch.replacements),
         *(item.new_node_id for item in patch.replacements),
         *(item.source_node_id for item in patch.edge_additions),
@@ -168,6 +172,57 @@ def _validate_known_nodes(
         _raise_graph_patch_unavailable(
             f"graph patch event {event_id} references unknown node ids: {', '.join(unknown_node_ids)}."
         )
+
+
+def _validate_add_nodes(
+    *,
+    event_id: str,
+    added_nodes: list[GraphPatchAddedNode],
+    active_patch_target_node_ids: set[str],
+    known_node_ids: set[str],
+    placeholder_node_ids: set[str],
+) -> list[GraphPatchAddedNode]:
+    added_node_ids = {str(item.node_id).strip() for item in added_nodes if str(item.node_id).strip()}
+    try:
+        ensure_patch_targets_are_execution_node_ids(
+            event_id=f"{event_id}:add_nodes",
+            referenced_node_ids=added_node_ids,
+            known_execution_node_ids=active_patch_target_node_ids | added_node_ids,
+        )
+    except GraphIdentityResolutionError as exc:
+        _raise_graph_patch_unavailable(str(exc))
+    duplicate_node_ids = sorted(node_id for node_id in added_node_ids if node_id in placeholder_node_ids)
+    if duplicate_node_ids:
+        _raise_graph_patch_unavailable(
+            f"graph patch event {event_id} cannot add existing node ids: {', '.join(duplicate_node_ids)}."
+        )
+    effective_added_nodes = [
+        added_node
+        for added_node in added_nodes
+        if str(added_node.node_id).strip() not in known_node_ids
+    ]
+    for added_node in effective_added_nodes:
+        referenced_parent_and_deps = [
+            str(added_node.parent_node_id).strip(),
+            *[
+                str(node_id).strip()
+                for node_id in list(added_node.dependency_node_ids or [])
+                if str(node_id).strip()
+            ],
+        ]
+        if any(node_id in added_node_ids for node_id in referenced_parent_and_deps):
+            _raise_graph_patch_unavailable(
+                f"graph patch event {event_id} cannot wire add_nodes through other add_nodes in the same patch."
+            )
+        try:
+            ensure_patch_targets_are_execution_node_ids(
+                event_id=f"{event_id}:add_node:{added_node.node_id}",
+                referenced_node_ids=referenced_parent_and_deps,
+                known_execution_node_ids=active_patch_target_node_ids,
+            )
+        except GraphIdentityResolutionError as exc:
+            _raise_graph_patch_unavailable(str(exc))
+    return effective_added_nodes
 
 
 def _validate_mutable_node(
@@ -299,20 +354,37 @@ def reduce_graph_patch_overlay(
     for record in patch_records:
         patch = record.patch
         event_id = record.event_id
+        placeholder_node_ids = set(overlay.placeholder_nodes)
+        active_patch_target_node_ids = (
+            set(known_patch_target_node_ids or known_node_ids) | placeholder_node_ids
+        ) - set(inactive_node_ids)
+        added_node_ids = {
+            str(item.node_id).strip()
+            for item in list(patch.add_nodes or [])
+            if str(item.node_id).strip()
+        }
         try:
             ensure_patch_targets_are_execution_node_ids(
                 event_id=event_id,
-                referenced_node_ids=graph_patch_target_node_ids(patch),
-                known_execution_node_ids=set(known_patch_target_node_ids or known_node_ids),
+                referenced_node_ids=[
+                    node_id
+                    for node_id in graph_patch_target_node_ids(patch)
+                    if node_id not in added_node_ids
+                ],
+                known_execution_node_ids=active_patch_target_node_ids | added_node_ids,
             )
         except GraphIdentityResolutionError as exc:
             _raise_graph_patch_unavailable(str(exc))
         _validate_known_nodes(
             event_id=event_id,
-            referenced_node_ids=graph_patch_target_node_ids(patch),
-            known_node_ids=known_node_ids,
+            referenced_node_ids=[
+                node_id
+                for node_id in graph_patch_target_node_ids(patch)
+                if node_id not in added_node_ids
+            ],
+            known_node_ids=set(known_node_ids) | placeholder_node_ids,
         )
-        active_node_ids = set(known_node_ids) - set(inactive_node_ids)
+        active_node_ids = (set(known_node_ids) | placeholder_node_ids) - set(inactive_node_ids)
         for node_id in patch.remove_node_ids:
             if node_id not in active_node_ids:
                 _raise_graph_patch_unavailable(
@@ -348,10 +420,22 @@ def reduce_graph_patch_overlay(
         }
         active_after_patch = active_node_ids - inactive_this_patch
 
+        effective_added_nodes = _validate_add_nodes(
+            event_id=event_id,
+            added_nodes=list(patch.add_nodes or []),
+            active_patch_target_node_ids=active_after_patch,
+            known_node_ids=set(known_node_ids),
+            placeholder_node_ids=placeholder_node_ids,
+        )
+
         for edge in [*patch.edge_additions, *patch.edge_removals]:
             if edge.source_node_id not in active_node_ids or edge.target_node_id not in active_node_ids:
                 _raise_graph_patch_unavailable(
                     f"graph patch event {event_id} references edge endpoint outside the active graph."
+                )
+            if edge.source_node_id in added_node_ids or edge.target_node_id in added_node_ids:
+                _raise_graph_patch_unavailable(
+                    f"graph patch event {event_id} cannot use edge deltas to wire add_nodes in the same patch."
                 )
         for edge in patch.edge_additions:
             if edge.source_node_id not in active_after_patch or edge.target_node_id not in active_after_patch:
@@ -383,15 +467,35 @@ def reduce_graph_patch_overlay(
                 expected_present=False,
             )
             candidate_edge_keys.add(edge_key)
+        for added_node in effective_added_nodes:
+            parent_edge_key = ("PARENT_OF", added_node.parent_node_id, added_node.node_id)
+            _validate_edge_membership(
+                event_id=event_id,
+                edge_key=parent_edge_key,
+                current_edge_keys=candidate_edge_keys,
+                expected_present=False,
+            )
+            candidate_edge_keys.add(parent_edge_key)
+            for dependency_node_id in list(added_node.dependency_node_ids or []):
+                dependency_edge_key = ("DEPENDS_ON", dependency_node_id, added_node.node_id)
+                _validate_edge_membership(
+                    event_id=event_id,
+                    edge_key=dependency_edge_key,
+                    current_edge_keys=candidate_edge_keys,
+                    expected_present=False,
+                )
+                candidate_edge_keys.add(dependency_edge_key)
 
         _validate_path_dag(
             event_id=event_id,
-            active_node_ids=active_after_patch,
+            active_node_ids=active_after_patch
+            | {str(item.node_id).strip() for item in effective_added_nodes if str(item.node_id).strip()},
             edge_keys=candidate_edge_keys,
         )
         _validate_parent_orphans(
             event_id=event_id,
-            active_node_ids=active_after_patch,
+            active_node_ids=active_after_patch
+            | {str(item.node_id).strip() for item in effective_added_nodes if str(item.node_id).strip()},
             edge_keys=candidate_edge_keys,
             allowed_root_node_ids=allowed_root_node_ids,
         )
@@ -399,6 +503,8 @@ def reduce_graph_patch_overlay(
         inactive_node_ids.update(inactive_this_patch)
         current_edge_keys = candidate_edge_keys
         overlay.effective_edge_keys = set(candidate_edge_keys)
+        for added_node in effective_added_nodes:
+            overlay.placeholder_nodes[added_node.node_id] = added_node.model_copy()
 
         for node_id in patch.remove_node_ids:
             overlay.node_status_overrides[node_id] = NODE_STATUS_CANCELLED
