@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 14:21`
+> 最后更新：`2026-04-16 17:34`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -713,9 +713,13 @@
 - [x] `P4-S4` 已完成第七批：advisory analysis live gate 已从“只认员工 `provider_id`”的旧兼容推导，收口到“真实 board-approved architect + 正式 runtime provider 选路”；`role_binding / ceo_binding_inheritance / default_provider` 命中时都可进入 `LIVE_PROVIDER`
 - [x] `P4-S4` 已完成第七批：`board_advisory_analysis.py` 现已补单点 `execution plan` helper；run 创建、compile worker binding 和 live 执行现在共用同一套 executor / provider selection 真相，不再各自二次猜测
 - [x] `P4-S4` 已完成第七批：advisory analysis live mode 命中 `no real architect / no live provider selection / provider paused` 时现在都会显式失败，并继续走现有 `BOARD_ADVISORY_ANALYSIS_FAILED -> RERUN_BOARD_ADVISORY_ANALYSIS / RESTORE_ONLY` 幂等恢复链，不再隐式降回 deterministic
+- [x] `P4-S4` 已完成第八批：`GraphPatchProposal / GraphPatch` 现已正式支持 `replacements / remove_node_ids / edge_additions / edge_removals`；`add_node` 没有再用旧兼容偷渡，当前会显式 reject
+- [x] `P4-S4` 已完成第八批：新增单点 `graph_patch_reducer.py`；`TicketGraph / GraphHealth / apply-patch` 现在都只消费正式 `GRAPH_PATCH_APPLIED` 事件和不可变 artifact，不再从 session 内嵌 patch JSON 反推真相
+- [x] `P4-S4` 已完成第八批：advisory patch v2 现已支持 `REPLACES / remove_node / add-remove edge` 的 reducer overlay、显式校验和失败拒绝；`GraphHealthReport` 的 `GRAPH_THRASHING` 也已纳入 replacement / edge delta 目标集
 
 ### 未完成
-- [ ] advisory graph patch engine 仍只支持 `freeze / unfreeze / focus`；`REPLACES`、增删节点和增删边还没进入正式 patch 合同
+- [ ] 真 `add_node` / placeholder node 仍未进入主链；当前 advisory patch v2 只允许在 existing node 上做 `REPLACES / remove_node / add-remove edge`
+- [ ] maker/checker 仍沿用同一 `node_id` 收口；当前只是在 reducer / graph health 里显式跳过 inherited self-loop，不等于 graph-first node identity 已经完成
 - [ ] `GraphHealthReport` 当前已到第三批时间线规则，但 queue starvation、多次 ready/blocked 往返和跨版本调度 SLA 还没进入主链
 
 ### 明确放弃
@@ -727,7 +731,7 @@
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
-- [ ] advisory graph patch engine 这轮只落第一版 `freeze / unfreeze / focus`；`REPLACES`、增删节点和增删边仍未进入主链
+- [ ] 当前 advisory patch v2 已显式禁止 `add_node`；如果后续要做 graph-first placeholder node，必须单独开切片，不能回到 session JSON 或隐式 fallback 口径
 - [ ] `GraphHealthReport` 第三批现已只读 `GRAPH_PATCH_APPLIED` 和 ready ticket `updated_at / timeout_sla_sec`；更细的 queue starvation、多次 ready/blocked 往返和跨版本调度 SLA 还没进入主链
 - [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
 
@@ -964,6 +968,21 @@
 `no`
 
 **状态：** `closed`
+
+### D-016
+**现象：**
+`maker / checker` 当前仍会把多张 ticket 收到同一个 `node_id`，所以把图按 node 视角归约时，会出现 inherited `DEPENDS_ON self-loop`。`
+
+**影响：**
+`graph patch reducer` 和 `GraphHealthReport` 不能把这类 inherited self-loop 误判成新 patch 引入的 cycle；否则 advisory freeze-only patch 和 CEO advisory snapshot 都会被旧图形状反向打断。`
+
+**当前处理：**
+`已在 2026-04-16 做最小 fail-closed 收口：graph patch validation 与 graph health depth 现在会显式跳过 inherited self-loop，只避免旧图污染当前 patch/replan 主链；并没有回退到旧 session JSON 推导，也没有把 graph-first node identity 问题冒充成已解决。`
+
+**是否需要改架构文档：**
+`no`
+
+**状态：** `open`
 
 ---
 
@@ -1757,6 +1776,40 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先补 advisory graph patch engine 第二版，把 REPLACES / 增删节点 / 增删边收成正式 patch 合同。`
 
+### Session `2026-04-16 / 26`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `GraphPatchProposal / GraphPatch` 扩成正式 patch v2 合同，新增 `replacements / remove_node_ids / edge_additions / edge_removals`，并显式拒绝 `add_node`
+- [x] 新增单点 `graph_patch_reducer.py`，把 patch 校验、overlay 归约和 touched-node 统计收成单一真相层；`TicketGraph / GraphHealth / apply-patch` 现已共用
+- [x] 删掉 `TicketGraph` 直接读 `session.approved_patch` 的旧推导；`GRAPH_PATCH_PROPOSAL / GRAPH_PATCH` resolver 也已改成读不可变 artifact，不再从 session JSON 回填正文
+- [x] 把 advisory patch v2 接进 `TicketGraph`：`REPLACES` 会物化正式图边，`remove_node` 会把旧节点转成 `CANCELLED`，`replacement` 会把旧节点转成 `SUPERSEDED`，`edge_additions / edge_removals` 会真实影响 blocked / critical-path
+- [x] 把 graph patch 失败口径收正到显式拒绝：未知 node、重复边、缺失边、orphan、cycle、执行中/已完成节点 remove/replace 都会 fail-closed；旧 maker/checker inherited self-loop 只做显式跳过，不再污染 patch 校验和 graph health depth
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_patch or graph_health" -q` 通过（`16 passed, 7 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_process_assets.py -k "graph_patch or board_advisory" -q` 通过（`2 passed, 5 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory and patch" -q` 通过（`4 passed, 309 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "advisory or graph_health or ticket_graph_unavailable" -q` 通过（`5 passed, 72 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/contracts/advisory.py backend/app/core/board_advisory.py backend/app/core/board_advisory_analysis.py backend/app/core/approval_handlers.py backend/app/core/ceo_scheduler.py backend/app/core/constants.py backend/app/core/graph_health.py backend/app/core/graph_patch_reducer.py backend/app/core/output_schemas.py backend/app/core/process_assets.py backend/app/core/ticket_graph.py backend/tests/test_api.py backend/tests/test_process_assets.py backend/tests/test_ticket_graph.py backend/tests/test_ceo_scheduler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] 真 `add_node` / placeholder node 仍未进入主链；当前 patch v2 只允许 existing-node rewiring
+- [ ] maker/checker 的 inherited self-loop 只做了显式跳过，还没有推进到 graph-first node identity 真相
+- [ ] `GraphHealthReport` 的 queue starvation、多次 ready/blocked 往返和跨版本调度 SLA 还没进入主链
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先补 GraphHealthReport 的 queue starvation / ready-blocked thrash / cross-version SLA 规则；true add_node 继续保持 graph-first 后置，不在现有 patch v2 里偷渡。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1794,7 +1847,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第七批已落地；advisory analysis live gate 已收口到真实 architect + 正式 runtime provider 选路，旧 `employee.provider_id` 兼容已退出主链
-- 最近完成：`board_advisory_analysis.py` 已补单点 execution plan helper；role binding / CEO 继承 / default provider 都可为真实 architect advisory analysis 解 live，paused provider 也会显式失败并继续走既有 recovery
-- 当前阻塞：advisory graph patch engine 仍只支持 `freeze / unfreeze / focus`；更细的 `GraphHealthReport` 调度时间线规则还没进主链
-- 下一步：`继续从 P4-S4 续跑，优先补 advisory graph patch engine 第二版，把 REPLACES / 增删节点 / 增删边收成正式 patch 合同`
+- 当前状态：`P4-S4` 第八批已落地；advisory patch v2 已收口到正式 contract + reducer + artifact/event 真相，旧 session patch JSON 已退出 reducer / process asset 主链
+- 最近完成：`graph_patch_reducer.py` 已接进 `TicketGraph / GraphHealth / apply-patch`；`REPLACES / remove_node / add-remove edge` 已真实改图，`GRAPH_THRASHING` 也已开始统计 replacement / edge delta 目标集
+- 当前阻塞：真 `add_node` / placeholder node 仍后置；maker/checker inherited self-loop 还没推进到 graph-first node identity 真相；更细的 `GraphHealthReport` 调度 SLA 规则还没进主链
+- 下一步：`继续从 P4-S4 续跑，优先补 GraphHealthReport 的 queue starvation / ready-blocked thrash / cross-version SLA 规则；true add_node 继续保持 graph-first 后置`

@@ -22,6 +22,7 @@ GovernanceAuditMode = Literal["MINIMAL", "TICKET_TRACE", "FULL_TIMELINE"]
 AdvisoryTurnActorType = Literal["board", "ceo", "architect"]
 BoardAdvisoryAnalysisRunStatus = Literal["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]
 BoardAdvisoryAnalysisExecutorMode = Literal["DETERMINISTIC", "LIVE_PROVIDER"]
+GraphPatchEdgeType = Literal["PARENT_OF", "DEPENDS_ON", "REVIEWS"]
 
 
 class GovernancePatch(StrictModel):
@@ -50,6 +51,29 @@ class BoardAdvisoryTurn(StrictModel):
     created_at: datetime
 
 
+class GraphPatchReplacement(StrictModel):
+    old_node_id: str = Field(min_length=1)
+    new_node_id: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_nodes(self) -> "GraphPatchReplacement":
+        if self.old_node_id == self.new_node_id:
+            raise ValueError("graph patch replacement must reference two different node ids.")
+        return self
+
+
+class GraphPatchEdgeDelta(StrictModel):
+    edge_type: GraphPatchEdgeType
+    source_node_id: str = Field(min_length=1)
+    target_node_id: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_nodes(self) -> "GraphPatchEdgeDelta":
+        if self.source_node_id == self.target_node_id:
+            raise ValueError("graph patch edge delta cannot use the same node as both source and target.")
+        return self
+
+
 class GraphPatchProposal(StrictModel):
     proposal_ref: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
@@ -63,6 +87,10 @@ class GraphPatchProposal(StrictModel):
     freeze_node_ids: list[str] = Field(default_factory=list)
     unfreeze_node_ids: list[str] = Field(default_factory=list)
     focus_node_ids: list[str] = Field(default_factory=list)
+    replacements: list[GraphPatchReplacement] = Field(default_factory=list)
+    remove_node_ids: list[str] = Field(default_factory=list)
+    edge_additions: list[GraphPatchEdgeDelta] = Field(default_factory=list)
+    edge_removals: list[GraphPatchEdgeDelta] = Field(default_factory=list)
     source_decision_pack_ref: str = Field(min_length=1)
     proposal_hash: str = Field(min_length=1)
 
@@ -70,9 +98,37 @@ class GraphPatchProposal(StrictModel):
     def validate_patch_targets(self) -> "GraphPatchProposal":
         freeze_node_ids = {node_id for node_id in self.freeze_node_ids if node_id}
         unfreeze_node_ids = {node_id for node_id in self.unfreeze_node_ids if node_id}
+        focus_node_ids = {node_id for node_id in self.focus_node_ids if node_id}
+        remove_node_ids = {node_id for node_id in self.remove_node_ids if node_id}
+        replacement_old_node_ids = {item.old_node_id for item in self.replacements}
+        replacement_new_node_ids = {item.new_node_id for item in self.replacements}
+        edge_additions = {
+            (item.edge_type, item.source_node_id, item.target_node_id)
+            for item in self.edge_additions
+        }
+        edge_removals = {
+            (item.edge_type, item.source_node_id, item.target_node_id)
+            for item in self.edge_removals
+        }
         if freeze_node_ids & unfreeze_node_ids:
             raise ValueError("graph patch proposal cannot freeze and unfreeze the same node.")
-        if not freeze_node_ids and not unfreeze_node_ids and not self.focus_node_ids:
+        if remove_node_ids & (replacement_old_node_ids | replacement_new_node_ids):
+            raise ValueError("graph patch proposal cannot both remove and replace the same node.")
+        if len(replacement_old_node_ids) != len(self.replacements):
+            raise ValueError("graph patch proposal cannot replace the same old node more than once.")
+        if len(replacement_new_node_ids) != len(self.replacements):
+            raise ValueError("graph patch proposal cannot fan multiple replacements into the same new node.")
+        if edge_additions & edge_removals:
+            raise ValueError("graph patch proposal cannot add and remove the same edge in one patch.")
+        if not (
+            freeze_node_ids
+            or unfreeze_node_ids
+            or focus_node_ids
+            or replacement_old_node_ids
+            or remove_node_ids
+            or edge_additions
+            or edge_removals
+        ):
             raise ValueError("graph patch proposal must change at least one node.")
         return self
 
@@ -86,6 +142,10 @@ class GraphPatch(StrictModel):
     freeze_node_ids: list[str] = Field(default_factory=list)
     unfreeze_node_ids: list[str] = Field(default_factory=list)
     focus_node_ids: list[str] = Field(default_factory=list)
+    replacements: list[GraphPatchReplacement] = Field(default_factory=list)
+    remove_node_ids: list[str] = Field(default_factory=list)
+    edge_additions: list[GraphPatchEdgeDelta] = Field(default_factory=list)
+    edge_removals: list[GraphPatchEdgeDelta] = Field(default_factory=list)
     reason_summary: str = Field(min_length=1)
     patch_hash: str = Field(min_length=1)
 
@@ -93,9 +153,37 @@ class GraphPatch(StrictModel):
     def validate_patch_targets(self) -> "GraphPatch":
         freeze_node_ids = {node_id for node_id in self.freeze_node_ids if node_id}
         unfreeze_node_ids = {node_id for node_id in self.unfreeze_node_ids if node_id}
+        focus_node_ids = {node_id for node_id in self.focus_node_ids if node_id}
+        remove_node_ids = {node_id for node_id in self.remove_node_ids if node_id}
+        replacement_old_node_ids = {item.old_node_id for item in self.replacements}
+        replacement_new_node_ids = {item.new_node_id for item in self.replacements}
+        edge_additions = {
+            (item.edge_type, item.source_node_id, item.target_node_id)
+            for item in self.edge_additions
+        }
+        edge_removals = {
+            (item.edge_type, item.source_node_id, item.target_node_id)
+            for item in self.edge_removals
+        }
         if freeze_node_ids & unfreeze_node_ids:
             raise ValueError("graph patch cannot freeze and unfreeze the same node.")
-        if not freeze_node_ids and not unfreeze_node_ids and not self.focus_node_ids:
+        if remove_node_ids & (replacement_old_node_ids | replacement_new_node_ids):
+            raise ValueError("graph patch cannot both remove and replace the same node.")
+        if len(replacement_old_node_ids) != len(self.replacements):
+            raise ValueError("graph patch cannot replace the same old node more than once.")
+        if len(replacement_new_node_ids) != len(self.replacements):
+            raise ValueError("graph patch cannot fan multiple replacements into the same new node.")
+        if edge_additions & edge_removals:
+            raise ValueError("graph patch cannot add and remove the same edge in one patch.")
+        if not (
+            freeze_node_ids
+            or unfreeze_node_ids
+            or focus_node_ids
+            or replacement_old_node_ids
+            or remove_node_ids
+            or edge_additions
+            or edge_removals
+        ):
             raise ValueError("graph patch must change at least one node.")
         return self
 

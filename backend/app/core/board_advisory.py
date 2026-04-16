@@ -482,6 +482,10 @@ def build_graph_patch_from_proposal(
         freeze_node_ids=list(normalized.freeze_node_ids),
         unfreeze_node_ids=list(normalized.unfreeze_node_ids),
         focus_node_ids=list(normalized.focus_node_ids),
+        replacements=[item.model_copy() for item in normalized.replacements],
+        remove_node_ids=list(normalized.remove_node_ids),
+        edge_additions=[item.model_copy() for item in normalized.edge_additions],
+        edge_removals=[item.model_copy() for item in normalized.edge_removals],
         reason_summary=normalized.proposal_summary,
         patch_hash=normalized.proposal_hash,
     )

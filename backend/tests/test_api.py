@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
+from app.contracts.advisory import GraphPatchProposal
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.context_compiler import compile_and_persist_execution_artifacts
@@ -22,6 +23,7 @@ from app.core.execution_targets import (
     infer_execution_contract_payload,
 )
 from app.core.governance_profiles import build_default_governance_profile
+from app.core.output_schemas import SOURCE_CODE_DELIVERY_SCHEMA_REF
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.provider_openai_compat import OpenAICompatProviderResult
@@ -16356,6 +16358,92 @@ def test_board_advisory_apply_patch_rejects_stale_proposal(client):
     assert apply_response.status_code == 200
     assert apply_response.json()["status"] == "REJECTED"
     assert "stale" in str(apply_response.json()["reason"] or "").lower()
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert advisory_session is not None
+    assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"
+    assert advisory_session["approved_patch_ref"] is None
+
+
+def test_board_advisory_apply_patch_rejects_patch_that_removes_executing_node(client):
+    workflow_id = "wf_advisory_apply_remove_executing"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Reject advisory patches that try to remove executing nodes.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_advisory_remove_executing",
+        node_id="node_advisory_remove_executing",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Do not let graph patches silently remove executing nodes."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "Patch validation must reject executing-node removal.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:remove-executing",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+            "workflow_id": workflow_id,
+            "session_id": advisory_session["session_id"],
+            "base_graph_version": build_ticket_graph_snapshot(repository, workflow_id).graph_version,
+            "proposal_summary": "Remove the executing node from the graph.",
+            "impact_summary": "This proposal should fail because the target node is still executing.",
+            "remove_node_ids": ["node_advisory_remove_executing"],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-remove-executing-node",
+        }
+    )
+    with repository.transaction() as connection:
+        repository.store_board_advisory_patch_proposal(
+            connection,
+            session_id=advisory_session["session_id"],
+            proposal_ref=proposal.proposal_ref,
+            proposal=proposal.model_dump(mode="json"),
+            decision_pack_refs=list(advisory_session["decision_pack_refs"]),
+            updated_at=datetime.fromisoformat("2026-04-16T21:30:00+08:00"),
+        )
+
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": proposal.proposal_ref,
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:remove-executing",
+        },
+    )
+
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "REJECTED"
+    assert "execut" in str(apply_response.json()["reason"] or "").lower()
     assert updated["status"] == APPROVAL_STATUS_OPEN
     assert advisory_session is not None
     assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"

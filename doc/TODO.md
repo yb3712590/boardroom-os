@@ -127,8 +127,12 @@
 - 2026-04-16 本轮已完成 `P4-S4` 第七批：advisory analysis live gate 已从员工 `provider_id` 旧兼容收口到“真实 board-approved architect + 正式 runtime provider 选路”；`role_binding / ceo_binding_inheritance / default_provider` 命中时都可进入 `LIVE_PROVIDER`
 - 2026-04-16 本轮还把 `board_advisory_analysis.py` 收成单点 `execution plan` helper；run 创建、compile worker binding 和 live 执行现在共用同一套 executor / provider selection 真相，synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`
 - 2026-04-16 本轮已补 fresh 验证：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory and analysis" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/board_advisory_analysis.py backend/tests/test_api.py` 都已通过；paused provider 现在也会显式失败并继续走既有 `BOARD_ADVISORY_ANALYSIS_FAILED` recovery
+- 2026-04-16 本轮已完成 `P4-S4` 第八批：`GraphPatchProposal / GraphPatch` 已扩成正式 patch v2 合同，新增 `replacements / remove_node_ids / edge_additions / edge_removals`；`add_node` 当前会显式 reject，不再借旧兼容偷渡
+- 2026-04-16 本轮已新增单点 `graph_patch_reducer.py`：`TicketGraph / GraphHealth / board-advisory-apply-patch` 现在统一消费 `GRAPH_PATCH_APPLIED` 真相；`GRAPH_PATCH_PROPOSAL / GRAPH_PATCH` resolver 也已改成读不可变 artifact，不再从 session 内嵌 JSON 回填正文
+- 2026-04-16 本轮还补了 graph patch v2 的 fail-closed 校验：未知 node、重复边、缺失边、orphan、cycle、执行中/已完成节点 remove/replace 都会显式 `REJECTED`；`GRAPH_THRASHING` 也已开始统计 replacement / edge delta 目标集
+- 2026-04-16 本轮顺手补了一条实现判断真相：maker/checker 仍会把多张 ticket 收到同一 `node_id`，当前只是在 reducer / graph health 里显式跳过 inherited self-loop，没把 graph-first node identity 冒充成已完成
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先补 advisory graph patch engine 第二版，把 `REPLACES / 增删节点 / 增删边` 收成正式 patch 合同；仍不碰 `doc/new-architecture/**`
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先补 `GraphHealthReport` 的 queue starvation / ready-blocked thrash / cross-version SLA 规则；`true add_node` 继续保持 graph-first 后置，仍不碰 `doc/new-architecture/**`
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

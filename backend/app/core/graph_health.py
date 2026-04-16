@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import json
 from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 
 from app.contracts.ceo import GraphHealthFindingDigest, GraphHealthReportDigest
-from app.core.constants import BLOCKING_REASON_ADVISORY_PATCH_FROZEN, EVENT_GRAPH_PATCH_APPLIED
+from app.core.constants import BLOCKING_REASON_ADVISORY_PATCH_FROZEN
+from app.core.graph_patch_reducer import (
+    graph_patch_target_node_ids,
+    load_graph_patch_event_records,
+)
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -121,6 +124,8 @@ def _critical_path_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
 
     for edge in graph_snapshot.edges:
         if edge.edge_type not in _PATH_EDGE_TYPES:
+            continue
+        if edge.source_node_id == edge.target_node_id:
             continue
         incoming_nodes_by_node_id.setdefault(edge.target_node_id, []).append(edge.source_node_id)
 
@@ -294,106 +299,24 @@ def _freeze_spread_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
     ]
 
 
-def _workflow_graph_patch_events(
-    repository: ControlPlaneRepository,
-    *,
-    workflow_id: str,
-    connection,
-) -> list[dict[str, Any]]:
-    rows = connection.execute(
-        """
-        SELECT event_id, sequence_no, payload_json, occurred_at
-        FROM events
-        WHERE workflow_id = ? AND event_type = ?
-        ORDER BY sequence_no DESC
-        LIMIT ?
-        """,
-        (workflow_id, EVENT_GRAPH_PATCH_APPLIED, _GRAPH_THRASHING_WINDOW),
-    ).fetchall()
-    events: list[dict[str, Any]] = []
-    for row in reversed(rows):
-        try:
-            payload = json.loads(str(row["payload_json"]))
-        except json.JSONDecodeError as exc:
-            _raise_graph_health_unavailable(
-                f"graph patch event {row['event_id']} carries invalid JSON: {exc.msg}."
-            )
-        events.append(
-            {
-                "event_id": str(row["event_id"]),
-                "sequence_no": int(row["sequence_no"]),
-                "occurred_at": datetime.fromisoformat(str(row["occurred_at"])),
-                "payload": payload,
-            }
-        )
-    return events
-
-
-def _normalize_graph_patch_node_ids(
-    payload: Any,
-    *,
-    event_id: str,
-    field_name: str,
-) -> list[str]:
-    if not isinstance(payload, dict):
-        _raise_graph_health_unavailable(
-            f"graph patch event {event_id} must carry an object payload."
-        )
-    raw_value = payload.get(field_name)
-    if not isinstance(raw_value, list):
-        _raise_graph_health_unavailable(
-            f"graph patch event {event_id} field {field_name} must be a list of node ids."
-        )
-    normalized: list[str] = []
-    for item in raw_value:
-        if not isinstance(item, str) or not item.strip():
-            _raise_graph_health_unavailable(
-                f"graph patch event {event_id} field {field_name} must contain non-empty string node ids."
-            )
-        node_id = item.strip()
-        if node_id not in normalized:
-            normalized.append(node_id)
-    return normalized
-
-
 def _graph_thrashing_findings(
     repository: ControlPlaneRepository,
     *,
     workflow_id: str,
     connection,
 ) -> list[GraphHealthFindingDigest]:
-    patch_events = _workflow_graph_patch_events(
+    patch_events = load_graph_patch_event_records(
         repository,
-        workflow_id=workflow_id,
+        workflow_id,
         connection=connection,
+        limit=_GRAPH_THRASHING_WINDOW,
     )
     touched_counts: dict[tuple[str, ...], int] = {}
     for event in patch_events:
-        payload = event["payload"]
-        event_id = str(event["event_id"])
-        touched_node_ids = sorted(
-            {
-                *_normalize_graph_patch_node_ids(
-                    payload,
-                    event_id=event_id,
-                    field_name="freeze_node_ids",
-                ),
-                *_normalize_graph_patch_node_ids(
-                    payload,
-                    event_id=event_id,
-                    field_name="unfreeze_node_ids",
-                ),
-                *_normalize_graph_patch_node_ids(
-                    payload,
-                    event_id=event_id,
-                    field_name="focus_node_ids",
-                ),
-            }
-        )
+        touched_node_ids = tuple(sorted(graph_patch_target_node_ids(event.patch)))
         if not touched_node_ids:
             continue
-        touched_key = tuple(touched_node_ids)
-        touched_counts[touched_key] = touched_counts.get(touched_key, 0) + 1
+        touched_counts[touched_node_ids] = touched_counts.get(touched_node_ids, 0) + 1
 
     findings: list[GraphHealthFindingDigest] = []
     for touched_node_ids, count in sorted(touched_counts.items()):

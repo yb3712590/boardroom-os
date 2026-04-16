@@ -411,7 +411,8 @@ def _build_board_advisory_analysis_compile_request(
         ],
         "acceptance_criteria": [
             "Return a valid graph_patch_proposal payload.",
-            "Only reference existing node ids in freeze_node_ids, unfreeze_node_ids, and focus_node_ids.",
+            "Only reference existing node ids in freeze_node_ids, unfreeze_node_ids, focus_node_ids, replacements, remove_node_ids, edge_additions, and edge_removals.",
+            "Do not invent add_node-style operations; advisory graph patch v2 only rewires existing nodes.",
             "Keep the proposal scoped to the current board advisory session.",
         ],
         "forced_skill_ids": ["planning_governance"],
@@ -593,6 +594,13 @@ def _validate_graph_patch_nodes(
         *proposal.freeze_node_ids,
         *proposal.unfreeze_node_ids,
         *proposal.focus_node_ids,
+        *proposal.remove_node_ids,
+        *(item.old_node_id for item in proposal.replacements),
+        *(item.new_node_id for item in proposal.replacements),
+        *(item.source_node_id for item in proposal.edge_additions),
+        *(item.target_node_id for item in proposal.edge_additions),
+        *(item.source_node_id for item in proposal.edge_removals),
+        *(item.target_node_id for item in proposal.edge_removals),
     }
     unknown_node_ids = sorted(node_id for node_id in referenced_node_ids if node_id not in known_node_ids)
     if unknown_node_ids:

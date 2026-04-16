@@ -855,6 +855,16 @@ def test_resolve_board_advisory_graph_patch_assets(client) -> None:
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
     proposal_ref = str(advisory_session["latest_patch_proposal_ref"])
+    proposal_payload = dict(advisory_session["latest_patch_proposal"] or {})
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET latest_patch_proposal_json = NULL
+            WHERE session_id = ?
+            """,
+            (advisory_session["session_id"],),
+        )
     resolved_proposal = resolve_process_asset(repository, proposal_ref)
 
     assert resolved_proposal.process_asset_kind == "GRAPH_PATCH_PROPOSAL"
@@ -862,6 +872,15 @@ def test_resolve_board_advisory_graph_patch_assets(client) -> None:
     assert resolved_proposal.json_content["proposal_ref"] == proposal_ref
     assert resolved_proposal.json_content["freeze_node_ids"] == ["node_homepage_visual"]
     assert resolved_proposal.json_content["focus_node_ids"] == ["node_homepage_visual"]
+    with repository.transaction() as connection:
+        repository.store_board_advisory_patch_proposal(
+            connection,
+            session_id=advisory_session["session_id"],
+            proposal_ref=proposal_ref,
+            proposal=proposal_payload,
+            decision_pack_refs=list(advisory_session["decision_pack_refs"]),
+            updated_at=datetime.fromisoformat("2026-04-16T22:00:00+08:00"),
+        )
 
     apply_response = client.post(
         "/api/v1/commands/board-advisory-apply-patch",
@@ -877,6 +896,15 @@ def test_resolve_board_advisory_graph_patch_assets(client) -> None:
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
     patch_ref = str(advisory_session["approved_patch_ref"])
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET approved_patch_json = NULL
+            WHERE session_id = ?
+            """,
+            (advisory_session["session_id"],),
+        )
     resolved_patch = resolve_process_asset(repository, patch_ref)
 
     assert resolved_patch.process_asset_kind == "GRAPH_PATCH"

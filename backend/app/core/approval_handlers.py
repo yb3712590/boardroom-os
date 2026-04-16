@@ -86,6 +86,11 @@ from app.core.board_advisory_analysis import (
     run_board_advisory_analysis,
 )
 from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
+from app.core.graph_patch_reducer import (
+    GraphPatchEventRecord,
+    GraphPatchReducerUnavailableError,
+    reduce_graph_patch_overlay,
+)
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -1283,19 +1288,38 @@ def _apply_board_advisory_patch(
         str(session["workflow_id"]),
         connection=connection,
     )
-    node_ids = {node.node_id for node in graph_snapshot.nodes if node.node_id}
-    patch_nodes = {
-        *normalized_proposal.freeze_node_ids,
-        *normalized_proposal.unfreeze_node_ids,
-        *normalized_proposal.focus_node_ids,
-    }
-    unknown_nodes = sorted(node_id for node_id in patch_nodes if node_id not in node_ids)
-    if unknown_nodes:
-        raise ValueError(f"Graph patch references unknown node ids: {', '.join(unknown_nodes)}")
     graph_patch = build_graph_patch_from_proposal(
         normalized_proposal,
         session_id=session_id,
     )
+    try:
+        reduce_graph_patch_overlay(
+            patch_records=[
+                GraphPatchEventRecord(
+                    event_id=f"pending:{session_id}",
+                    sequence_no=0,
+                    patch=graph_patch,
+                )
+            ],
+            known_node_ids={node.node_id for node in graph_snapshot.nodes if node.node_id},
+            base_edge_keys={
+                (edge.edge_type, edge.source_node_id, edge.target_node_id)
+                for edge in graph_snapshot.edges
+                if edge.edge_type != "REPLACES"
+            },
+            ticket_status_by_node_id={
+                node.node_id: node.ticket_status
+                for node in graph_snapshot.nodes
+                if node.node_id
+            },
+            node_status_by_node_id={
+                node.node_id: node.node_status
+                for node in graph_snapshot.nodes
+                if node.node_id
+            },
+        )
+    except GraphPatchReducerUnavailableError as exc:
+        raise ValueError(str(exc)) from exc
     board_decision = BoardAdvisoryDecision.model_validate(session.get("board_decision") or {})
     workflow_id = str(session["workflow_id"])
     review_pack = ((repository.get_approval_by_id(connection, str(session["approval_id"])) or {}).get("payload") or {}).get(

@@ -4,7 +4,9 @@ from datetime import datetime
 
 import pytest
 import app.core.graph_health as graph_health_module
-from app.contracts.advisory import BoardAdvisorySession
+from pydantic import ValidationError
+
+from app.contracts.advisory import BoardAdvisorySession, GraphPatch, GraphPatchProposal
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -58,6 +60,10 @@ def _seed_graph_patch_applied_event(
     freeze_node_ids: list[str],
     unfreeze_node_ids: list[str] | None = None,
     focus_node_ids: list[str] | None = None,
+    replacements: list[dict[str, str]] | None = None,
+    remove_node_ids: list[str] | None = None,
+    edge_additions: list[dict[str, str]] | None = None,
+    edge_removals: list[dict[str, str]] | None = None,
     payload_override=None,
     occurred_at: str | None = None,
 ) -> None:
@@ -84,6 +90,10 @@ def _seed_graph_patch_applied_event(
                     "freeze_node_ids": list(freeze_node_ids),
                     "unfreeze_node_ids": list(unfreeze_node_ids or []),
                     "focus_node_ids": list(focus_node_ids or freeze_node_ids),
+                    "replacements": list(replacements or []),
+                    "remove_node_ids": list(remove_node_ids or []),
+                    "edge_additions": list(edge_additions or []),
+                    "edge_removals": list(edge_removals or []),
                     "reason_summary": "Seed graph patch event for graph health coverage.",
                     "patch_hash": f"hash-{workflow_id}-{patch_index}",
                 }
@@ -94,6 +104,107 @@ def _seed_graph_patch_applied_event(
         )
         if payload_override is None or isinstance(payload_override, dict):
             repository.refresh_projections(connection)
+
+
+def test_graph_patch_contract_accepts_replacements_remove_and_edge_deltas():
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": "pa://graph-patch-proposal/adv_contracts@1",
+            "workflow_id": "wf_graph_patch_contracts",
+            "session_id": "adv_contracts",
+            "base_graph_version": "gv_1",
+            "proposal_summary": "Replace the stale branch with the new branch and rewire the parent edge.",
+            "impact_summary": "Supersede node_old, remove node_removed, and connect node_parent to node_new.",
+            "freeze_node_ids": ["node_new"],
+            "unfreeze_node_ids": [],
+            "focus_node_ids": ["node_new"],
+            "replacements": [
+                {
+                    "old_node_id": "node_old",
+                    "new_node_id": "node_new",
+                }
+            ],
+            "remove_node_ids": ["node_removed"],
+            "edge_additions": [
+                {
+                    "edge_type": "PARENT_OF",
+                    "source_node_id": "node_parent",
+                    "target_node_id": "node_new",
+                }
+            ],
+            "edge_removals": [
+                {
+                    "edge_type": "PARENT_OF",
+                    "source_node_id": "node_parent",
+                    "target_node_id": "node_old",
+                }
+            ],
+            "source_decision_pack_ref": "pa://decision-summary/adv_contracts@1",
+            "proposal_hash": "hash-graph-patch-contracts",
+        }
+    )
+
+    patch = GraphPatch.model_validate(
+        {
+            "patch_ref": "pa://graph-patch/adv_contracts@1",
+            "workflow_id": proposal.workflow_id,
+            "session_id": proposal.session_id,
+            "proposal_ref": proposal.proposal_ref,
+            "base_graph_version": proposal.base_graph_version,
+            "freeze_node_ids": list(proposal.freeze_node_ids),
+            "unfreeze_node_ids": list(proposal.unfreeze_node_ids),
+            "focus_node_ids": list(proposal.focus_node_ids),
+            "replacements": [item.model_dump(mode="json") for item in proposal.replacements],
+            "remove_node_ids": list(proposal.remove_node_ids),
+            "edge_additions": [item.model_dump(mode="json") for item in proposal.edge_additions],
+            "edge_removals": [item.model_dump(mode="json") for item in proposal.edge_removals],
+            "reason_summary": proposal.proposal_summary,
+            "patch_hash": proposal.proposal_hash,
+        }
+    )
+
+    assert proposal.replacements[0].old_node_id == "node_old"
+    assert proposal.edge_additions[0].edge_type == "PARENT_OF"
+    assert patch.remove_node_ids == ["node_removed"]
+    assert patch.replacements[0].new_node_id == "node_new"
+
+
+def test_graph_patch_contract_rejects_add_node_and_conflicting_replace_remove():
+    with pytest.raises(ValidationError, match="add_node_ids"):
+        GraphPatchProposal.model_validate(
+            {
+                "proposal_ref": "pa://graph-patch-proposal/adv_contract_invalid@1",
+                "workflow_id": "wf_graph_patch_contract_invalid",
+                "session_id": "adv_contract_invalid",
+                "base_graph_version": "gv_1",
+                "proposal_summary": "This proposal should be rejected because add_node is not part of v2.",
+                "impact_summary": "It tries to introduce a brand-new node.",
+                "remove_node_ids": ["node_old"],
+                "add_node_ids": ["node_new"],
+                "source_decision_pack_ref": "pa://decision-summary/adv_contract_invalid@1",
+                "proposal_hash": "hash-graph-patch-contract-invalid",
+            }
+        )
+
+    with pytest.raises(ValidationError, match="cannot both remove and replace"):
+        GraphPatch.model_validate(
+            {
+                "patch_ref": "pa://graph-patch/adv_contract_invalid@1",
+                "workflow_id": "wf_graph_patch_contract_invalid",
+                "session_id": "adv_contract_invalid",
+                "proposal_ref": "pa://graph-patch-proposal/adv_contract_invalid@1",
+                "base_graph_version": "gv_1",
+                "replacements": [
+                    {
+                        "old_node_id": "node_old",
+                        "new_node_id": "node_new",
+                    }
+                ],
+                "remove_node_ids": ["node_old"],
+                "reason_summary": "Conflicting remove and replace for the same node.",
+                "patch_hash": "hash-graph-patch-contract-conflict",
+            }
+        )
 
 
 def test_ticket_graph_snapshot_builds_parent_dependency_and_review_edges(client):
@@ -306,6 +417,132 @@ def test_ticket_graph_snapshot_indexes_in_flight_and_critical_path(client):
     assert snapshot.index_summary.in_flight_ticket_ids == [ticket_id]
     assert snapshot.index_summary.in_flight_node_ids == [node_id]
     assert snapshot.index_summary.critical_path_node_ids == [node_id]
+
+
+def test_ticket_graph_snapshot_applies_replacement_and_edge_delta_from_graph_patch_events(client):
+    workflow_id = "wf_ticket_graph_patch_replace"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Apply replacement and edge delta overlays from graph patch events.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_patch_parent",
+        node_id="node_patch_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_patch_old",
+        node_id="node_patch_old",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+        parent_ticket_id="tkt_patch_parent",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_patch_new",
+        node_id="node_patch_new",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=["node_patch_new"],
+        focus_node_ids=["node_patch_new"],
+        replacements=[
+            {
+                "old_node_id": "node_patch_old",
+                "new_node_id": "node_patch_new",
+            }
+        ],
+        edge_additions=[
+            {
+                "edge_type": "PARENT_OF",
+                "source_node_id": "node_patch_parent",
+                "target_node_id": "node_patch_new",
+            }
+        ],
+        edge_removals=[
+            {
+                "edge_type": "PARENT_OF",
+                "source_node_id": "node_patch_parent",
+                "target_node_id": "node_patch_old",
+            }
+        ],
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    edge_tuples = {(edge.edge_type, edge.source_node_id, edge.target_node_id) for edge in snapshot.edges}
+    node_by_id = {node.node_id: node for node in snapshot.nodes}
+
+    assert node_by_id["node_patch_old"].node_status == "SUPERSEDED"
+    assert ("REPLACES", "node_patch_new", "node_patch_old") in edge_tuples
+    assert ("PARENT_OF", "node_patch_parent", "node_patch_old") not in edge_tuples
+    assert ("PARENT_OF", "node_patch_parent", "node_patch_new") in edge_tuples
+    assert "node_patch_new" in snapshot.index_summary.blocked_node_ids
+    assert "node_patch_old" not in snapshot.index_summary.blocked_node_ids
+    assert "node_patch_new" in snapshot.index_summary.critical_path_node_ids
+    assert "node_patch_parent" in snapshot.index_summary.critical_path_node_ids
+
+
+def test_ticket_graph_snapshot_applies_remove_node_patch_and_excludes_cancelled_node_from_ready_index(client):
+    workflow_id = "wf_ticket_graph_patch_remove"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Remove nodes through graph patch overlays without treating them as ready work.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_patch_remove_parent",
+        node_id="node_patch_remove_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_patch_remove_target",
+        node_id="node_patch_remove_target",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+        parent_ticket_id="tkt_patch_remove_parent",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=[],
+        remove_node_ids=["node_patch_remove_target"],
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    edge_tuples = {(edge.edge_type, edge.source_node_id, edge.target_node_id) for edge in snapshot.edges}
+    node_by_id = {node.node_id: node for node in snapshot.nodes}
+
+    assert node_by_id["node_patch_remove_target"].node_status == "CANCELLED"
+    assert ("PARENT_OF", "node_patch_remove_parent", "node_patch_remove_target") not in edge_tuples
+    assert "node_patch_remove_target" not in snapshot.index_summary.ready_node_ids
+    assert "node_patch_remove_target" not in snapshot.index_summary.blocked_node_ids
 
 
 def test_graph_health_report_detects_fanout_too_wide(client):
@@ -613,61 +850,16 @@ def test_graph_health_report_detects_freeze_spread_too_wide(client):
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         delivery_stage="BUILD",
     )
-
-    repository = client.app.state.repository
-    source_version = build_ticket_graph_snapshot(repository, workflow_id).graph_version
-    latest_profile = repository.get_latest_governance_profile(workflow_id)
-    assert latest_profile is not None
-
-    with repository.transaction() as connection:
-        repository.create_board_advisory_session(
-            connection,
-            BoardAdvisorySession.model_validate(
-                {
-                    "session_id": "adv_graph_health_freeze_spread",
-                    "workflow_id": workflow_id,
-                    "approval_id": "apr_graph_health_freeze_spread",
-                    "review_pack_id": "rp_graph_health_freeze_spread",
-                    "trigger_type": "CONSTRAINT_CHANGE",
-                    "source_version": source_version,
-                    "governance_profile_ref": latest_profile["profile_id"],
-                    "affected_nodes": ["node_graph_health_freeze_target"],
-                    "decision_pack_refs": [],
-                    "focus_node_ids": ["node_graph_health_freeze_target"],
-                    "status": "OPEN",
-                }
-            ),
-        )
-        repository.decide_board_advisory_session(
-            connection,
-            session_id="adv_graph_health_freeze_spread",
-            board_decision={
-                "decision_action": "MODIFY_CONSTRAINTS",
-                "board_comment": "Freeze the branch until the graph stabilizes.",
-                "constraint_patch": {"add_rules": [], "remove_rules": [], "replace_rules": []},
-                "governance_patch": None,
-            },
-            decision_pack_refs=["pa://decision-summary/adv_graph_health_freeze_spread@1"],
-            approved_patch_ref="pa://graph-patch/adv_graph_health_freeze_spread@1",
-            approved_patch={
-                "patch_ref": "pa://graph-patch/adv_graph_health_freeze_spread@1",
-                "workflow_id": workflow_id,
-                "session_id": "adv_graph_health_freeze_spread",
-                "proposal_ref": "pa://graph-patch-proposal/adv_graph_health_freeze_spread@1",
-                "base_graph_version": source_version,
-                "freeze_node_ids": ["node_graph_health_freeze_target"],
-                "unfreeze_node_ids": [],
-                "focus_node_ids": ["node_graph_health_freeze_target"],
-                "reason_summary": "Freeze the branch while the board confirms the new path.",
-                "patch_hash": "hash-graph-health-freeze-spread",
-            },
-            patched_graph_version="gv_freeze_spread",
-            focus_node_ids=["node_graph_health_freeze_target"],
-            updated_at=datetime.fromisoformat("2026-04-16T20:00:00+08:00"),
-        )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=["node_graph_health_freeze_target"],
+        focus_node_ids=["node_graph_health_freeze_target"],
+    )
 
     snapshot = build_ceo_shadow_snapshot(
-        repository,
+        client.app.state.repository,
         workflow_id=workflow_id,
         trigger_type="MANUAL_TEST",
         trigger_ref="manual:graph-health-freeze-spread",
@@ -694,18 +886,46 @@ def test_graph_health_report_detects_graph_thrashing(client):
     _seed_created_ticket(
         client,
         workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_thrashing_parent",
+        node_id="node_graph_health_thrashing_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
         ticket_id="tkt_graph_health_thrashing_target",
         node_id="node_graph_health_thrashing_target",
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         delivery_stage="BUILD",
     )
-    for patch_index in range(1, 5):
+    for patch_index, operation in ((1, "add"), (2, "remove"), (3, "add"), (4, "remove")):
         _seed_graph_patch_applied_event(
             client,
             workflow_id=workflow_id,
             patch_index=patch_index,
-            freeze_node_ids=["node_graph_health_thrashing_target"],
+            freeze_node_ids=[],
+            focus_node_ids=[],
+            edge_additions=[
+                {
+                    "edge_type": "PARENT_OF",
+                    "source_node_id": "node_graph_health_thrashing_parent",
+                    "target_node_id": "node_graph_health_thrashing_target",
+                }
+            ]
+            if operation == "add"
+            else [],
+            edge_removals=[
+                {
+                    "edge_type": "PARENT_OF",
+                    "source_node_id": "node_graph_health_thrashing_parent",
+                    "target_node_id": "node_graph_health_thrashing_target",
+                }
+            ]
+            if operation == "remove"
+            else [],
         )
 
     snapshot = build_ceo_shadow_snapshot(
@@ -721,7 +941,10 @@ def test_graph_health_report_detects_graph_thrashing(client):
     )
 
     assert report["overall_health"] == "CRITICAL"
-    assert finding["affected_nodes"] == ["node_graph_health_thrashing_target"]
+    assert set(finding["affected_nodes"]) == {
+        "node_graph_health_thrashing_parent",
+        "node_graph_health_thrashing_target",
+    }
     assert finding["metric_value"] == 4
 
 

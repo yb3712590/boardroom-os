@@ -1362,6 +1362,10 @@ def _graph_patch_proposal_schema_body() -> dict[str, Any]:
             "freeze_node_ids",
             "unfreeze_node_ids",
             "focus_node_ids",
+            "replacements",
+            "remove_node_ids",
+            "edge_additions",
+            "edge_removals",
         ],
     }
 

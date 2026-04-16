@@ -10,7 +10,15 @@ from app.contracts.ticket_graph import (
     TicketGraphReductionIssue,
     TicketGraphSnapshot,
 )
-from app.core.constants import BLOCKING_REASON_ADVISORY_PATCH_FROZEN
+from app.core.constants import (
+    BLOCKING_REASON_ADVISORY_PATCH_FROZEN,
+    NODE_STATUS_CANCELLED,
+    NODE_STATUS_SUPERSEDED,
+)
+from app.core.graph_patch_reducer import (
+    load_graph_patch_event_records,
+    reduce_graph_patch_overlay,
+)
 from app.core.output_schemas import (
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
@@ -96,39 +104,6 @@ def _append_blocked_reason(
         entry["ticket_ids"].add(ticket_id)
     if node_id:
         entry["node_ids"].add(node_id)
-
-
-def _resolve_advisory_patch_state(
-    repository: "ControlPlaneRepository",
-    *,
-    workflow_id: str,
-    connection: "sqlite3.Connection",
-) -> tuple[set[str], set[str]]:
-    frozen_node_ids: set[str] = set()
-    focus_node_ids: set[str] = set()
-    sessions = sorted(
-        repository.list_board_advisory_sessions(
-            workflow_id,
-            statuses=["APPLIED"],
-            connection=connection,
-        ),
-        key=lambda item: (item.get("updated_at"), item.get("session_id")),
-    )
-    for session in sessions:
-        approved_patch = session.get("approved_patch") or {}
-        for node_id in list(approved_patch.get("freeze_node_ids") or []):
-            normalized = str(node_id).strip()
-            if normalized:
-                frozen_node_ids.add(normalized)
-        for node_id in list(approved_patch.get("unfreeze_node_ids") or []):
-            normalized = str(node_id).strip()
-            if normalized:
-                frozen_node_ids.discard(normalized)
-        for node_id in list(approved_patch.get("focus_node_ids") or []):
-            normalized = str(node_id).strip()
-            if normalized:
-                focus_node_ids.add(normalized)
-    return frozen_node_ids, focus_node_ids
 
 
 def build_ticket_graph_snapshot(
@@ -239,11 +214,6 @@ def build_ticket_graph_snapshot(
     blocked_ticket_ids_from_issues: set[str] = set()
     blocked_node_ids_from_issues: set[str] = set()
     blocked_reason_map: dict[str, dict[str, set[str]]] = {}
-    advisory_frozen_node_ids, _ = _resolve_advisory_patch_state(
-        repository,
-        workflow_id=workflow_id,
-        connection=connection,
-    )
 
     def record_issue(
         *,
@@ -353,16 +323,71 @@ def build_ticket_graph_snapshot(
                     target_node_id=maker_node_id,
                 )
 
+    base_edge_keys = {
+        (edge.edge_type, edge.source_node_id, edge.target_node_id)
+        for edge in edges
+        if edge.source_node_id and edge.target_node_id
+    }
+    ticket_status_by_node_id = {
+        node_id: str((ticket_projection_by_ticket_id.get(ticket_id) or {}).get("status") or "").strip() or None
+        for node_id, ticket_id in latest_ticket_id_by_node_id.items()
+    }
+    node_status_by_node_id = {
+        node_id: str((node_projection_by_node_id.get(node_id) or {}).get("status") or "").strip() or None
+        for node_id in latest_ticket_id_by_node_id
+    }
+    graph_patch_overlay = reduce_graph_patch_overlay(
+        patch_records=load_graph_patch_event_records(
+            repository,
+            workflow_id,
+            connection=connection,
+        ),
+        known_node_ids=set(latest_ticket_id_by_node_id),
+        base_edge_keys=base_edge_keys,
+        ticket_status_by_node_id=ticket_status_by_node_id,
+        node_status_by_node_id=node_status_by_node_id,
+    )
+    node_status_overrides = dict(graph_patch_overlay.node_status_overrides)
+    for node in nodes:
+        override_status = node_status_overrides.get(node.node_id)
+        if override_status:
+            node.node_status = override_status
+
+    effective_edges: list[TicketGraphEdge] = []
+    effective_seen_edges: set[tuple[str, str, str]] = set()
+    for edge_type, source_node_id, target_node_id in sorted(graph_patch_overlay.effective_edge_keys):
+        source_ticket_id = latest_ticket_id_by_node_id.get(source_node_id)
+        target_ticket_id = latest_ticket_id_by_node_id.get(target_node_id)
+        if not source_ticket_id or not target_ticket_id:
+            record_issue(
+                issue_code="graph.patch.edge.missing_latest_ticket",
+                detail=(
+                    f"Graph patch edge {edge_type}:{source_node_id}->{target_node_id} cannot be materialized "
+                    "because one endpoint has no latest ticket projection."
+                ),
+                ticket_id=source_ticket_id or target_ticket_id,
+                node_id=source_node_id if not source_ticket_id else target_node_id,
+            )
+            continue
+        _append_edge(
+            effective_edges,
+            effective_seen_edges,
+            edge_type=edge_type,
+            graph_version=graph_version,
+            workflow_id=workflow_id,
+            source_ticket_id=source_ticket_id,
+            target_ticket_id=target_ticket_id,
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+        )
+    edges = effective_edges
+
     ready_ticket_ids: list[str] = []
     ready_node_ids: list[str] = []
     blocked_ticket_ids: list[str] = []
     blocked_node_ids: list[str] = []
     in_flight_ticket_ids: list[str] = []
     in_flight_node_ids: list[str] = []
-    parent_ticket_id_by_ticket_id = {
-        ticket_id: str((created_specs_by_ticket_id.get(ticket_id) or {}).get("parent_ticket_id") or "").strip() or None
-        for ticket_id in ticket_projection_by_ticket_id
-    }
 
     for node_id, latest_ticket_id in latest_ticket_id_by_node_id.items():
         ticket_projection = ticket_projection_by_ticket_id.get(latest_ticket_id)
@@ -375,7 +400,12 @@ def build_ticket_graph_snapshot(
             )
             continue
         ticket_status = str(ticket_projection.get("status") or "").strip()
-        node_status = str((node_projection_by_node_id.get(node_id) or {}).get("status") or "").strip()
+        node_status = (
+            node_status_overrides.get(node_id)
+            or str((node_projection_by_node_id.get(node_id) or {}).get("status") or "").strip()
+        )
+        if node_status in {NODE_STATUS_CANCELLED, NODE_STATUS_SUPERSEDED}:
+            continue
         created_spec = created_specs_by_ticket_id.get(latest_ticket_id) or {}
         blocking_reason_code = str(
             ticket_projection.get("blocking_reason_code")
@@ -390,7 +420,7 @@ def build_ticket_graph_snapshot(
         )
         hook_gate_blocked = hook_gate_result.status == HookGateStatus.BLOCKED
         blocked_by_graph = latest_ticket_id in blocked_ticket_ids_from_issues or node_id in blocked_node_ids_from_issues
-        blocked_by_advisory_patch = node_id in advisory_frozen_node_ids
+        blocked_by_advisory_patch = node_id in graph_patch_overlay.frozen_node_ids
         is_board_review_open = (
             ticket_status == "BLOCKED_FOR_BOARD_REVIEW" or node_status == "BLOCKED_FOR_BOARD_REVIEW"
         )
@@ -459,15 +489,21 @@ def build_ticket_graph_snapshot(
             )
 
     critical_path_node_ids: set[str] = set()
-    for current_ticket_id in [*blocked_ticket_ids, *in_flight_ticket_ids]:
-        parent_cursor = current_ticket_id
-        visited_ticket_ids: set[str] = set()
-        while parent_cursor and parent_cursor not in visited_ticket_ids:
-            visited_ticket_ids.add(parent_cursor)
-            node_cursor = ticket_node_id_by_ticket_id.get(parent_cursor)
-            if node_cursor:
-                critical_path_node_ids.add(node_cursor)
-            parent_cursor = parent_ticket_id_by_ticket_id.get(parent_cursor) or None
+    reverse_path_adjacency: dict[str, set[str]] = {}
+    for edge in edges:
+        if edge.edge_type not in {"PARENT_OF", "DEPENDS_ON"}:
+            continue
+        reverse_path_adjacency.setdefault(edge.target_node_id, set()).add(edge.source_node_id)
+    for current_node_id in [*blocked_node_ids, *in_flight_node_ids]:
+        node_cursor_stack = [current_node_id]
+        visited_node_ids: set[str] = set()
+        while node_cursor_stack:
+            node_cursor = node_cursor_stack.pop()
+            if node_cursor in visited_node_ids:
+                continue
+            visited_node_ids.add(node_cursor)
+            critical_path_node_ids.add(node_cursor)
+            node_cursor_stack.extend(sorted(reverse_path_adjacency.get(node_cursor, set())))
 
     blocked_reasons = [
         TicketGraphBlockedReasonSummary(

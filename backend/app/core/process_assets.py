@@ -12,7 +12,11 @@ from app.core.artifacts import (
     is_artifact_readable,
     normalize_artifact_kind,
 )
-from app.core.board_advisory import advisory_timeline_index_artifact_ref
+from app.core.board_advisory import (
+    advisory_graph_patch_artifact_ref,
+    advisory_patch_proposal_artifact_ref,
+    advisory_timeline_index_artifact_ref,
+)
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -771,7 +775,17 @@ def _resolve_graph_patch_proposal_process_asset(
         session = repository.get_board_advisory_session(session_id, connection=resolved_connection)
         if session is None:
             raise ValueError(f"Process asset {process_asset_ref} is missing.")
-        payload = dict(session.get("latest_patch_proposal") or {})
+        workflow_id = str(session.get("workflow_id") or "").strip()
+        if not workflow_id:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        artifact_ref = advisory_patch_proposal_artifact_ref(workflow_id=workflow_id, session_id=session_id)
+        resolved_artifact = _resolve_artifact_process_asset(
+            repository,
+            process_asset_ref=build_artifact_process_asset_ref(artifact_ref, version_int=1),
+            artifact_ref=artifact_ref,
+            connection=resolved_connection,
+        )
+        payload = dict(resolved_artifact.json_content or {})
         if not payload:
             raise ValueError(f"Process asset {process_asset_ref} is missing.")
         canonical_ref = build_graph_patch_proposal_process_asset_ref(session_id, version_int=1)
@@ -806,7 +820,17 @@ def _resolve_graph_patch_process_asset(
         session = repository.get_board_advisory_session(session_id, connection=resolved_connection)
         if session is None:
             raise ValueError(f"Process asset {process_asset_ref} is missing.")
-        payload = dict(session.get("approved_patch") or {})
+        workflow_id = str(session.get("workflow_id") or "").strip()
+        if not workflow_id:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        artifact_ref = advisory_graph_patch_artifact_ref(workflow_id=workflow_id, session_id=session_id)
+        resolved_artifact = _resolve_artifact_process_asset(
+            repository,
+            process_asset_ref=build_artifact_process_asset_ref(artifact_ref, version_int=1),
+            artifact_ref=artifact_ref,
+            connection=resolved_connection,
+        )
+        payload = dict(resolved_artifact.json_content or {})
         if not payload:
             raise ValueError(f"Process asset {process_asset_ref} is missing.")
         canonical_ref = build_graph_patch_process_asset_ref(session_id, version_int=1)
