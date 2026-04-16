@@ -106,6 +106,40 @@ def _seed_graph_patch_applied_event(
             repository.refresh_projections(connection)
 
 
+def _seed_ticket_precondition_event(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    event_type: str,
+    idempotency_key: str,
+    occurred_at: str,
+    reason_code: str = "PROVIDER_REQUIRED_UNAVAILABLE",
+) -> None:
+    repository = client.app.state.repository
+    payload = {
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+    }
+    if event_type == "TICKET_EXECUTION_PRECONDITION_BLOCKED":
+        payload["reason_code"] = reason_code
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=event_type,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=idempotency_key,
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=payload,
+            occurred_at=datetime.fromisoformat(occurred_at),
+        )
+        repository.refresh_projections(connection)
+
+
 def test_graph_patch_contract_accepts_replacements_remove_and_edge_deltas():
     proposal = GraphPatchProposal.model_validate(
         {
@@ -1039,6 +1073,378 @@ def test_graph_health_report_detects_ready_node_stale(client, monkeypatch):
     assert finding["metric_value"] == 10800
 
 
+def test_graph_health_report_detects_queue_starvation(client, monkeypatch):
+    workflow_id = "wf_graph_health_queue_starvation"
+    ticket_id = "tkt_graph_health_queue_starvation"
+    node_id = "node_graph_health_queue_starvation"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose starving ready queues.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", ticket_id),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-queue-starvation",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "QUEUE_STARVATION"
+    )
+
+    assert finding["severity"] == "CRITICAL"
+    assert finding["affected_nodes"] == [node_id]
+    assert finding["metric_value"] == 14400
+
+
+def test_graph_health_report_ignores_queue_starvation_when_work_is_in_flight(client, monkeypatch):
+    workflow_id = "wf_graph_health_queue_starvation_in_flight"
+    ready_ticket_id = "tkt_graph_health_queue_starvation_ready"
+    ready_node_id = "node_graph_health_queue_starvation_ready"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should ignore ready queue starvation while runtime is still active.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ready_ticket_id,
+        node_id=ready_node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_queue_starvation_executing",
+        node_id="node_graph_health_queue_starvation_executing",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", ready_ticket_id),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-queue-starvation-in-flight",
+    )
+    finding_types = [
+        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    ]
+
+    assert "QUEUE_STARVATION" not in finding_types
+
+
+def test_graph_health_report_detects_ready_blocked_thrashing(client, monkeypatch):
+    workflow_id = "wf_graph_health_ready_blocked_thrashing"
+    ticket_id = "tkt_graph_health_ready_blocked_thrashing"
+    node_id = "node_graph_health_ready_blocked_thrashing"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose ready blocked thrashing from explicit event truth.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T10:06:00+08:00"),
+    )
+    for index, event_type in enumerate(
+        (
+            "TICKET_EXECUTION_PRECONDITION_BLOCKED",
+            "TICKET_EXECUTION_PRECONDITION_CLEARED",
+            "TICKET_EXECUTION_PRECONDITION_BLOCKED",
+            "TICKET_EXECUTION_PRECONDITION_CLEARED",
+            "TICKET_EXECUTION_PRECONDITION_BLOCKED",
+            "TICKET_EXECUTION_PRECONDITION_CLEARED",
+        ),
+        start=1,
+    ):
+        _seed_ticket_precondition_event(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            event_type=event_type,
+            idempotency_key=f"test-ready-blocked-thrashing:{workflow_id}:{index}",
+            occurred_at=f"2026-04-16T10:0{index}:00+08:00",
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-ready-blocked-thrashing",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item
+        for item in report["findings"]
+        if item["finding_type"] == "READY_BLOCKED_THRASHING"
+    )
+
+    assert finding["severity"] == "WARNING"
+    assert finding["affected_nodes"] == [node_id]
+    assert finding["metric_value"] == 3
+
+
+def test_graph_health_report_ignores_ready_blocked_thrashing_below_threshold(client, monkeypatch):
+    workflow_id = "wf_graph_health_ready_blocked_thrashing_low"
+    ticket_id = "tkt_graph_health_ready_blocked_thrashing_low"
+    node_id = "node_graph_health_ready_blocked_thrashing_low"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should ignore low ready blocked oscillation.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T10:05:00+08:00"),
+    )
+    for index, event_type in enumerate(
+        (
+            "TICKET_EXECUTION_PRECONDITION_BLOCKED",
+            "TICKET_EXECUTION_PRECONDITION_CLEARED",
+            "TICKET_EXECUTION_PRECONDITION_BLOCKED",
+            "TICKET_EXECUTION_PRECONDITION_CLEARED",
+        ),
+        start=1,
+    ):
+        _seed_ticket_precondition_event(
+            client,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            event_type=event_type,
+            idempotency_key=f"test-ready-blocked-thrashing-low:{workflow_id}:{index}",
+            occurred_at=f"2026-04-16T10:0{index}:00+08:00",
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-ready-blocked-thrashing-low",
+    )
+    finding_types = [
+        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    ]
+
+    assert "READY_BLOCKED_THRASHING" not in finding_types
+
+
+def test_graph_health_report_detects_cross_version_sla_breach(client, monkeypatch):
+    workflow_id = "wf_graph_health_cross_version_sla"
+    ticket_id = "tkt_graph_health_cross_version_sla"
+    node_id = "node_graph_health_cross_version_sla"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose blocked nodes that breach SLA across graph versions.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_ticket_precondition_event(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        event_type="TICKET_EXECUTION_PRECONDITION_BLOCKED",
+        idempotency_key=f"test-cross-version-sla-blocked:{workflow_id}",
+        occurred_at="2026-04-16T09:00:00+08:00",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T12:30:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", ticket_id),
+        )
+    for patch_index in range(1, 4):
+        _seed_graph_patch_applied_event(
+            client,
+            workflow_id=workflow_id,
+            patch_index=patch_index,
+            freeze_node_ids=[node_id],
+            focus_node_ids=[node_id],
+            occurred_at=f"2026-04-16T09:1{patch_index}:00+08:00",
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-cross-version-sla",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item
+        for item in report["findings"]
+        if item["finding_type"] == "CROSS_VERSION_SLA_BREACH"
+    )
+
+    assert finding["severity"] == "CRITICAL"
+    assert finding["affected_nodes"] == [node_id]
+    assert finding["metric_value"] == 3
+
+
+def test_graph_health_report_ignores_cross_version_sla_breach_below_version_threshold(client, monkeypatch):
+    workflow_id = "wf_graph_health_cross_version_sla_low"
+    ticket_id = "tkt_graph_health_cross_version_sla_low"
+    node_id = "node_graph_health_cross_version_sla_low"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should ignore blocked nodes below the cross version threshold.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_ticket_precondition_event(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        event_type="TICKET_EXECUTION_PRECONDITION_BLOCKED",
+        idempotency_key=f"test-cross-version-sla-low-blocked:{workflow_id}",
+        occurred_at="2026-04-16T09:00:00+08:00",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T12:30:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", ticket_id),
+        )
+    for patch_index in range(1, 3):
+        _seed_graph_patch_applied_event(
+            client,
+            workflow_id=workflow_id,
+            patch_index=patch_index,
+            freeze_node_ids=[node_id],
+            focus_node_ids=[node_id],
+            occurred_at=f"2026-04-16T09:1{patch_index}:00+08:00",
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-cross-version-sla-low",
+    )
+    finding_types = [
+        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    ]
+
+    assert "CROSS_VERSION_SLA_BREACH" not in finding_types
+
+
 def test_graph_health_report_does_not_flag_ready_node_stale_within_sla(client, monkeypatch):
     workflow_id = "wf_graph_health_ready_node_fresh"
     _ensure_scoped_workflow(
@@ -1190,6 +1596,50 @@ def test_graph_health_report_rejects_ready_node_missing_timeout_sla_sec(client, 
             """,
             (None, ticket_id),
         )
+
+    with pytest.raises(RuntimeError, match="graph unavailable"):
+        graph_health_module.build_graph_health_report(repository, workflow_id)
+
+
+def test_graph_health_report_rejects_ready_node_missing_version_for_queue_starvation(client, monkeypatch):
+    workflow_id = "wf_graph_health_missing_version"
+    ticket_id = "tkt_graph_health_missing_version"
+    node_id = "node_graph_health_missing_version"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should fail closed when queue starvation lacks projection version truth.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    original_convert = repository._convert_ticket_projection_row
+
+    def _convert_ticket_projection_row_without_version(row):
+        converted = original_convert(row)
+        if converted["ticket_id"] == ticket_id:
+            converted["version"] = None
+        return converted
+
+    monkeypatch.setattr(
+        repository,
+        "_convert_ticket_projection_row",
+        _convert_ticket_projection_row_without_version,
+    )
 
     with pytest.raises(RuntimeError, match="graph unavailable"):
         graph_health_module.build_graph_health_report(repository, workflow_id)

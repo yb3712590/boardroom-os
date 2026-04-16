@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 17:34`
+> 最后更新：`2026-04-16 15:35`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -716,11 +716,14 @@
 - [x] `P4-S4` 已完成第八批：`GraphPatchProposal / GraphPatch` 现已正式支持 `replacements / remove_node_ids / edge_additions / edge_removals`；`add_node` 没有再用旧兼容偷渡，当前会显式 reject
 - [x] `P4-S4` 已完成第八批：新增单点 `graph_patch_reducer.py`；`TicketGraph / GraphHealth / apply-patch` 现在都只消费正式 `GRAPH_PATCH_APPLIED` 事件和不可变 artifact，不再从 session 内嵌 patch JSON 反推真相
 - [x] `P4-S4` 已完成第八批：advisory patch v2 现已支持 `REPLACES / remove_node / add-remove edge` 的 reducer overlay、显式校验和失败拒绝；`GraphHealthReport` 的 `GRAPH_THRASHING` 也已纳入 replacement / edge delta 目标集
+- [x] `P4-S4` 已完成第九批：`graph_health.py` 现已补第四批规则 `QUEUE_STARVATION / READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH`；三条规则都只读现有 `events + graph_version + ticket/node projection.version/updated_at`
+- [x] `P4-S4` 已完成第九批：`QUEUE_STARVATION` 与 `CROSS_VERSION_SLA_BREACH` 现在都会以正式 `CRITICAL` finding 进入现有 `GRAPH_HEALTH_CRITICAL -> RERUN_CEO_SHADOW / RESTORE_ONLY` incident 主链；`READY_BLOCKED_THRASHING` 当前只保留 `WARNING` 读面，不新开 incident
+- [x] `P4-S4` 已完成第九批：这轮没有新增 graph health history 表、projection 或 process asset；旧的“从模糊 blocker 或当前快照猜历史”的兼容推导也没有回流，缺 `updated_at / timeout_sla_sec / version / 合法事件 payload` 时继续显式抛 `GraphHealthUnavailableError`
 
 ### 未完成
 - [ ] 真 `add_node` / placeholder node 仍未进入主链；当前 advisory patch v2 只允许在 existing node 上做 `REPLACES / remove_node / add-remove edge`
 - [ ] maker/checker 仍沿用同一 `node_id` 收口；当前只是在 reducer / graph health 里显式跳过 inherited self-loop，不等于 graph-first node identity 已经完成
-- [ ] `GraphHealthReport` 当前已到第三批时间线规则，但 queue starvation、多次 ready/blocked 往返和跨版本调度 SLA 还没进入主链
+- [ ] `GraphHealthReport` 第四批规则虽已落地，但 dedicated graph health history / workflow 级 SLA 配置 / 更细的 blocker-source attribution 仍未进入主链
 
 ### 明确放弃
 - [ ] 暂无
@@ -732,7 +735,8 @@
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
 - [ ] 当前 advisory patch v2 已显式禁止 `add_node`；如果后续要做 graph-first placeholder node，必须单独开切片，不能回到 session JSON 或隐式 fallback 口径
-- [ ] `GraphHealthReport` 第三批现已只读 `GRAPH_PATCH_APPLIED` 和 ready ticket `updated_at / timeout_sla_sec`；更细的 queue starvation、多次 ready/blocked 往返和跨版本调度 SLA 还没进入主链
+- [ ] `GraphHealthReport` 第四批现已锁成“只读 `events + graph_version + ticket/node projection.version/updated_at`”；如果后续要补 dedicated history 或 workflow 级 SLA，必须单独开切片，不能在现有规则里偷偷落新真相层
+- [ ] `READY_BLOCKED_THRASHING` 这轮只按最近 `24` 条显式事件窗口做 `WARNING` 检测；如果后续要做更细的 blocker-source 分层、跨窗口趋势分析或自动升级 incident，必须单独扩正式规则，不回退到当前快照猜历史
 - [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
 
 ---
@@ -1810,6 +1814,41 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先补 GraphHealthReport 的 queue starvation / ready-blocked thrash / cross-version SLA 规则；true add_node 继续保持 graph-first 后置，不在现有 patch v2 里偷渡。`
 
+### Session `2026-04-16 / 27`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 `graph_health.py` 新增事件时间线 helper，并把 projection 读取收成单点；新规则只读 `events + graph_version + ticket/node projection.version/updated_at`
+- [x] 新增 `QUEUE_STARVATION`：当前有 ready、没有 in-flight，且 ready 票停滞超过 `timeout_sla_sec * 3` 时现在会显式报 `CRITICAL`
+- [x] 新增 `READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH`：前者只认显式 blocker/unblocker 事件窗口并保留 `WARNING` 读面；后者只认当前 blocked 节点的 projection version 与当前 `graph_version` 差值，再叠加 `timeout_sla_sec * 2` 的停滞阈值，命中时显式报 `CRITICAL`
+- [x] 这轮没有加新表、新 projection 或新 process asset；同时保持 fail-closed：缺 `updated_at / timeout_sla_sec / version` 或事件 payload 非法时继续抛 `GraphHealthUnavailableError`
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "queue_starvation or ready_blocked_thrashing or cross_version_sla or missing_version" -q` 通过（`7 passed`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "queue_starvation" -q` 通过（`1 passed, 313 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "queue_starvation" -q` 通过（`1 passed, 77 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q` 通过（`20 passed, 10 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health" -q` 通过（`5 passed, 309 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health" -q` 通过（`2 passed, 76 deselected`）
+- [x] `python -m py_compile backend/app/core/graph_health.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] 真 `add_node` / placeholder node 仍未进入主链
+- [ ] maker/checker inherited self-loop 仍只做显式跳过，还没有推进到 graph-first node identity 真相
+- [ ] dedicated graph health history / workflow 级 SLA 配置 / 更细的 blocker-source attribution 仍未进入主链
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先处理 maker/checker 的 graph-first node identity，再决定 true add_node / placeholder node 是否拆成下一独立切片。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1847,7 +1886,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第八批已落地；advisory patch v2 已收口到正式 contract + reducer + artifact/event 真相，旧 session patch JSON 已退出 reducer / process asset 主链
-- 最近完成：`graph_patch_reducer.py` 已接进 `TicketGraph / GraphHealth / apply-patch`；`REPLACES / remove_node / add-remove edge` 已真实改图，`GRAPH_THRASHING` 也已开始统计 replacement / edge delta 目标集
-- 当前阻塞：真 `add_node` / placeholder node 仍后置；maker/checker inherited self-loop 还没推进到 graph-first node identity 真相；更细的 `GraphHealthReport` 调度 SLA 规则还没进主链
-- 下一步：`继续从 P4-S4 续跑，优先补 GraphHealthReport 的 queue starvation / ready-blocked thrash / cross-version SLA 规则；true add_node 继续保持 graph-first 后置`
+- 当前状态：`P4-S4` 第九批已落地；`QUEUE_STARVATION / READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH` 已进入正式 `GraphHealthReport` 主链，且继续坚持只读事件/图/投影真相
+- 最近完成：`graph_health.py` 已补事件时间线 helper 和第四批规则；`QUEUE_STARVATION / CROSS_VERSION_SLA_BREACH` 已接进现有 `GRAPH_HEALTH_CRITICAL` incident，`READY_BLOCKED_THRASHING` 已进入 CEO snapshot / prompt 读面
+- 当前阻塞：真 `add_node` / placeholder node 仍后置；maker/checker inherited self-loop 还没推进到 graph-first node identity 真相；dedicated graph health history / workflow 级 SLA 配置还没进主链
+- 下一步：`继续从 P4-S4 续跑，优先处理 maker/checker 的 graph-first node identity，再决定 true add_node / placeholder node 是否拆成下一独立切片`

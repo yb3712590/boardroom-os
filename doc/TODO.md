@@ -131,8 +131,11 @@
 - 2026-04-16 本轮已新增单点 `graph_patch_reducer.py`：`TicketGraph / GraphHealth / board-advisory-apply-patch` 现在统一消费 `GRAPH_PATCH_APPLIED` 真相；`GRAPH_PATCH_PROPOSAL / GRAPH_PATCH` resolver 也已改成读不可变 artifact，不再从 session 内嵌 JSON 回填正文
 - 2026-04-16 本轮还补了 graph patch v2 的 fail-closed 校验：未知 node、重复边、缺失边、orphan、cycle、执行中/已完成节点 remove/replace 都会显式 `REJECTED`；`GRAPH_THRASHING` 也已开始统计 replacement / edge delta 目标集
 - 2026-04-16 本轮顺手补了一条实现判断真相：maker/checker 仍会把多张 ticket 收到同一 `node_id`，当前只是在 reducer / graph health 里显式跳过 inherited self-loop，没把 graph-first node identity 冒充成已完成
+- 2026-04-16 本轮已完成 `P4-S4` 第九批：`graph_health.py` 现已补第四批规则 `QUEUE_STARVATION / READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH`；三条规则都只读现有 `events + graph_version + ticket/node projection.version/updated_at`，没有新增 graph health history 表、projection 或 process asset
+- 2026-04-16 本轮还把 fail-closed 口径继续收紧到新规则：ready / blocked 节点缺 `updated_at / timeout_sla_sec / version`、或参与时间线重建的事件 payload 非法时，现在会继续显式抛 `GraphHealthUnavailableError`，不回退到当前快照、session JSON 或 ticket-only 快捷推导
+- 2026-04-16 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health" -q`、`python -m py_compile backend/app/core/graph_health.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py`
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先补 `GraphHealthReport` 的 queue starvation / ready-blocked thrash / cross-version SLA 规则；`true add_node` 继续保持 graph-first 后置，仍不碰 `doc/new-architecture/**`
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先处理 maker/checker 的 graph-first node identity，再决定 `true add_node / placeholder node` 是否拆独立切片；`doc/new-architecture/**` 仍保持只读
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

@@ -4545,6 +4545,49 @@ def test_ceo_shadow_snapshot_exposes_graph_thrashing_finding(client):
     assert "GRAPH_THRASHING" in prompt
 
 
+def test_ceo_shadow_snapshot_exposes_queue_starvation_finding(client, monkeypatch):
+    workflow_id = "wf_ceo_graph_health_queue_starvation"
+    _seed_workflow(client, workflow_id, "CEO graph health queue starvation prompt")
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_graph_health_queue_starvation",
+        node_id="node_ceo_graph_health_queue_starvation",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", "tkt_ceo_graph_health_queue_starvation"),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:ceo-graph-health-queue-starvation",
+    )
+    prompt = build_ceo_shadow_system_prompt(snapshot)
+    finding_types = [
+        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    ]
+
+    assert "QUEUE_STARVATION" in finding_types
+    assert "QUEUE_STARVATION" in prompt
+
+
 def test_is_ticket_graph_unavailable_error_recognizes_graph_health_unavailable_error():
     assert hasattr(graph_health_module, "GraphHealthUnavailableError")
     error = graph_health_module.GraphHealthUnavailableError(

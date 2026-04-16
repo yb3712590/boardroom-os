@@ -5,7 +5,15 @@ from datetime import datetime
 from typing import Any
 
 from app.contracts.ceo import GraphHealthFindingDigest, GraphHealthReportDigest
-from app.core.constants import BLOCKING_REASON_ADVISORY_PATCH_FROZEN
+from app.core.constants import (
+    BLOCKING_REASON_ADVISORY_PATCH_FROZEN,
+    EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_GRAPH_PATCH_APPLIED,
+    EVENT_INCIDENT_CLOSED,
+    EVENT_INCIDENT_OPENED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
+)
 from app.core.graph_patch_reducer import (
     graph_patch_target_node_ids,
     load_graph_patch_event_records,
@@ -22,8 +30,21 @@ _GRAPH_THRASHING_THRESHOLD = 3
 _GRAPH_THRASHING_WINDOW = 10
 _PERSISTENT_FAILURE_ZONE_THRESHOLD = 3
 _PERSISTENT_FAILURE_ZONE_WINDOW = 10
+_QUEUE_STARVATION_MULTIPLIER = 3
+_READY_BLOCKED_THRASHING_THRESHOLD = 3
+_READY_BLOCKED_THRASHING_WINDOW = 24
 _READY_NODE_STALE_MULTIPLIER = 2
+_CROSS_VERSION_SLA_MULTIPLIER = 2
+_CROSS_VERSION_SLA_VERSION_DELTA_THRESHOLD = 3
 _PATH_EDGE_TYPES = {"PARENT_OF", "DEPENDS_ON"}
+_READY_BLOCKED_EVENT_TYPES = (
+    EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
+    EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_INCIDENT_OPENED,
+    EVENT_INCIDENT_CLOSED,
+    EVENT_GRAPH_PATCH_APPLIED,
+)
 
 
 class GraphHealthUnavailableError(RuntimeError):
@@ -51,6 +72,142 @@ def _workflow_incidents(
         (workflow_id, _PERSISTENT_FAILURE_ZONE_WINDOW),
     ).fetchall()
     return [repository._convert_incident_projection_row(row) for row in rows]
+
+
+def _workflow_ticket_projections(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> dict[str, dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM ticket_projection
+        WHERE workflow_id = ?
+        ORDER BY updated_at ASC, ticket_id ASC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    return {
+        str(row["ticket_id"]).strip(): repository._convert_ticket_projection_row(row)
+        for row in rows
+        if str(row["ticket_id"]).strip()
+    }
+
+
+def _workflow_node_projections(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> dict[str, dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM node_projection
+        WHERE workflow_id = ?
+        ORDER BY updated_at ASC, node_id ASC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    return {
+        str(row["node_id"]).strip(): repository._convert_node_projection_row(row)
+        for row in rows
+        if str(row["node_id"]).strip()
+    }
+
+
+def _latest_ticket_id_by_node_id(graph_snapshot) -> dict[str, str]:
+    latest_ticket_id_by_node_id: dict[str, str] = {}
+    for node in graph_snapshot.nodes:
+        node_id = str(node.node_id or "").strip()
+        ticket_id = str(node.ticket_id or "").strip()
+        if not node_id or not ticket_id:
+            continue
+        latest_ticket_id_by_node_id[node_id] = ticket_id
+    return latest_ticket_id_by_node_id
+
+
+def _require_datetime(
+    value: Any,
+    *,
+    reason: str,
+) -> datetime:
+    if not isinstance(value, datetime):
+        _raise_graph_health_unavailable(reason)
+    return value
+
+
+def _require_int(
+    value: Any,
+    *,
+    reason: str,
+) -> int:
+    if not isinstance(value, int):
+        _raise_graph_health_unavailable(reason)
+    return int(value)
+
+
+def _graph_version_int(graph_version: str) -> int:
+    normalized = str(graph_version or "").strip()
+    if not normalized.startswith("gv_") or not normalized[3:].isdigit():
+        _raise_graph_health_unavailable(f"invalid graph version {normalized or '<empty>'}.")
+    return int(normalized[3:])
+
+
+def _normalize_node_id(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _require_string_node_list(
+    value: Any,
+    *,
+    event_id: str,
+    field_name: str,
+) -> list[str]:
+    if not isinstance(value, list):
+        _raise_graph_health_unavailable(
+            f"{event_id} field {field_name} must be list[str]."
+        )
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            _raise_graph_health_unavailable(
+                f"{event_id} field {field_name} must be list[str]."
+            )
+        node_id = item.strip()
+        if node_id:
+            normalized.append(node_id)
+    return normalized
+
+
+def _workflow_timeline_events(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    event_types: tuple[str, ...],
+    connection,
+    limit: int,
+) -> list[dict[str, Any]]:
+    placeholders = ", ".join("?" for _ in event_types)
+    rows = list(
+        connection.execute(
+            f"""
+            SELECT *
+            FROM (
+                SELECT *
+                FROM events
+                WHERE workflow_id = ? AND event_type IN ({placeholders})
+                ORDER BY sequence_no DESC
+                LIMIT ?
+            )
+            ORDER BY sequence_no ASC
+            """,
+            (workflow_id, *event_types, limit),
+        ).fetchall()
+    )
+    return [repository._convert_event_row(row) for row in rows]
 
 
 def _fanout_findings(graph_snapshot) -> list[GraphHealthFindingDigest]:
@@ -339,6 +496,161 @@ def _graph_thrashing_findings(
     return findings
 
 
+def _queue_starvation_findings(
+    repository: ControlPlaneRepository,
+    *,
+    graph_snapshot,
+    workflow_id: str,
+    connection,
+) -> list[GraphHealthFindingDigest]:
+    ready_node_ids = [
+        str(node_id).strip()
+        for node_id in list(graph_snapshot.index_summary.ready_node_ids or [])
+        if str(node_id).strip()
+    ]
+    if not ready_node_ids or list(graph_snapshot.index_summary.in_flight_node_ids or []):
+        return []
+
+    latest_ticket_id_by_node_id = _latest_ticket_id_by_node_id(graph_snapshot)
+    ticket_by_ticket_id = _workflow_ticket_projections(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
+    current_time = now_local()
+    findings: list[GraphHealthFindingDigest] = []
+    for node_id in ready_node_ids:
+        ticket_id = latest_ticket_id_by_node_id.get(node_id)
+        if not ticket_id:
+            _raise_graph_health_unavailable(
+                f"ready node {node_id} is missing its latest ticket projection."
+            )
+        ticket = ticket_by_ticket_id.get(ticket_id)
+        if ticket is None:
+            _raise_graph_health_unavailable(
+                f"ready node {node_id} points to missing ticket {ticket_id}."
+            )
+        updated_at = _require_datetime(
+            ticket.get("updated_at"),
+            reason=f"ready ticket {ticket_id} is missing updated_at.",
+        )
+        timeout_sla_sec = _require_int(
+            ticket.get("timeout_sla_sec"),
+            reason=f"ready ticket {ticket_id} is missing timeout_sla_sec.",
+        )
+        _require_int(
+            ticket.get("version"),
+            reason=f"ready ticket {ticket_id} is missing version.",
+        )
+        starvation_threshold_sec = timeout_sla_sec * _QUEUE_STARVATION_MULTIPLIER
+        starvation_age_sec = int((current_time - updated_at).total_seconds())
+        if starvation_age_sec <= starvation_threshold_sec:
+            continue
+        findings.append(
+            GraphHealthFindingDigest(
+                finding_type="QUEUE_STARVATION",
+                severity="CRITICAL",
+                affected_nodes=[node_id],
+                metric_value=starvation_age_sec,
+                threshold=starvation_threshold_sec,
+                description=(
+                    f"Ready node {node_id} has been waiting {starvation_age_sec} seconds with "
+                    "no in-flight execution, so the queue is starving."
+                ),
+                suggested_action="Rerun the CEO or inspect scheduler progress before the ready queue stalls further.",
+            )
+        )
+    return findings
+
+
+def _ready_blocked_thrashing_findings(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> list[GraphHealthFindingDigest]:
+    events = _workflow_timeline_events(
+        repository,
+        workflow_id=workflow_id,
+        event_types=_READY_BLOCKED_EVENT_TYPES,
+        connection=connection,
+        limit=_READY_BLOCKED_THRASHING_WINDOW,
+    )
+    state_history_by_node_id: dict[str, list[str]] = {}
+
+    for event in events:
+        event_type = str(event.get("event_type") or "").strip()
+        event_id = str(event.get("event_id") or "").strip() or "event"
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            _raise_graph_health_unavailable(f"{event_id} payload must be an object.")
+
+        transitions: list[tuple[str, str]] = []
+        if event_type == EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED:
+            node_id = _normalize_node_id(payload.get("node_id"))
+            if not node_id:
+                _raise_graph_health_unavailable(f"{event_id} is missing node_id.")
+            transitions.append((node_id, "BLOCKED"))
+        elif event_type == EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED:
+            node_id = _normalize_node_id(payload.get("node_id"))
+            if not node_id:
+                _raise_graph_health_unavailable(f"{event_id} is missing node_id.")
+            transitions.append((node_id, "READY"))
+        elif event_type == EVENT_BOARD_REVIEW_REQUIRED:
+            node_id = _normalize_node_id(payload.get("node_id"))
+            if not node_id:
+                _raise_graph_health_unavailable(f"{event_id} is missing node_id.")
+            transitions.append((node_id, "BLOCKED"))
+        elif event_type == EVENT_INCIDENT_OPENED:
+            node_id = _normalize_node_id(payload.get("node_id"))
+            if node_id:
+                transitions.append((node_id, "BLOCKED"))
+        elif event_type == EVENT_INCIDENT_CLOSED:
+            node_id = _normalize_node_id(payload.get("node_id"))
+            if node_id:
+                transitions.append((node_id, "READY"))
+        elif event_type == EVENT_GRAPH_PATCH_APPLIED:
+            for node_id in _require_string_node_list(
+                payload.get("freeze_node_ids") or [],
+                event_id=event_id,
+                field_name="freeze_node_ids",
+            ):
+                transitions.append((node_id, "BLOCKED"))
+            for node_id in _require_string_node_list(
+                payload.get("unfreeze_node_ids") or [],
+                event_id=event_id,
+                field_name="unfreeze_node_ids",
+            ):
+                transitions.append((node_id, "READY"))
+
+        for node_id, next_state in transitions:
+            history = state_history_by_node_id.setdefault(node_id, [])
+            if history and history[-1] == next_state:
+                continue
+            history.append(next_state)
+
+    findings: list[GraphHealthFindingDigest] = []
+    for node_id, history in sorted(state_history_by_node_id.items()):
+        oscillation_count = min(history.count("READY"), history.count("BLOCKED"))
+        if oscillation_count < _READY_BLOCKED_THRASHING_THRESHOLD:
+            continue
+        findings.append(
+            GraphHealthFindingDigest(
+                finding_type="READY_BLOCKED_THRASHING",
+                severity="WARNING",
+                affected_nodes=[node_id],
+                metric_value=oscillation_count,
+                threshold=_READY_BLOCKED_THRASHING_THRESHOLD,
+                description=(
+                    f"Node {node_id} oscillated between READY and BLOCKED {oscillation_count} "
+                    f"times in the last {_READY_BLOCKED_THRASHING_WINDOW} explicit timeline events."
+                ),
+                suggested_action="Stabilize the blocking source before requeueing more work on the same node.",
+            )
+        )
+    return findings
+
+
 def _ready_node_stale_findings(
     repository: ControlPlaneRepository,
     *,
@@ -353,25 +665,12 @@ def _ready_node_stale_findings(
     ]
     if not ready_node_ids:
         return []
-    latest_ticket_id_by_node_id = {
-        str(node.node_id).strip(): str(node.ticket_id).strip()
-        for node in graph_snapshot.nodes
-        if str(node.node_id or "").strip() and str(node.ticket_id or "").strip()
-    }
-    ticket_rows = connection.execute(
-        """
-        SELECT *
-        FROM ticket_projection
-        WHERE workflow_id = ?
-        ORDER BY updated_at ASC, ticket_id ASC
-        """,
-        (workflow_id,),
-    ).fetchall()
-    ticket_by_ticket_id = {
-        str(row["ticket_id"]).strip(): repository._convert_ticket_projection_row(row)
-        for row in ticket_rows
-        if str(row["ticket_id"]).strip()
-    }
+    latest_ticket_id_by_node_id = _latest_ticket_id_by_node_id(graph_snapshot)
+    ticket_by_ticket_id = _workflow_ticket_projections(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
     current_time = now_local()
     findings: list[GraphHealthFindingDigest] = []
     for node_id in ready_node_ids:
@@ -385,16 +684,14 @@ def _ready_node_stale_findings(
             _raise_graph_health_unavailable(
                 f"ready node {node_id} points to missing ticket {ticket_id}."
             )
-        updated_at = ticket.get("updated_at")
-        if not isinstance(updated_at, datetime):
-            _raise_graph_health_unavailable(
-                f"ready ticket {ticket_id} is missing updated_at."
-            )
-        timeout_sla_sec = ticket.get("timeout_sla_sec")
-        if not isinstance(timeout_sla_sec, int):
-            _raise_graph_health_unavailable(
-                f"ready ticket {ticket_id} is missing timeout_sla_sec."
-            )
+        updated_at = _require_datetime(
+            ticket.get("updated_at"),
+            reason=f"ready ticket {ticket_id} is missing updated_at.",
+        )
+        timeout_sla_sec = _require_int(
+            ticket.get("timeout_sla_sec"),
+            reason=f"ready ticket {ticket_id} is missing timeout_sla_sec.",
+        )
         stale_threshold_sec = timeout_sla_sec * _READY_NODE_STALE_MULTIPLIER
         stale_age_sec = int((current_time - updated_at).total_seconds())
         if stale_age_sec <= stale_threshold_sec:
@@ -411,6 +708,97 @@ def _ready_node_stale_findings(
                     f"ticket update, exceeding the current stale threshold {stale_threshold_sec}."
                 ),
                 suggested_action="Check scheduler progress or rerun the CEO before the ready node goes stale.",
+            )
+        )
+    return findings
+
+
+def _cross_version_sla_breach_findings(
+    repository: ControlPlaneRepository,
+    *,
+    graph_snapshot,
+    workflow_id: str,
+    connection,
+) -> list[GraphHealthFindingDigest]:
+    blocked_node_ids = [
+        str(node_id).strip()
+        for node_id in list(graph_snapshot.index_summary.blocked_node_ids or [])
+        if str(node_id).strip()
+    ]
+    if not blocked_node_ids:
+        return []
+
+    current_graph_version_int = _graph_version_int(graph_snapshot.graph_version)
+    latest_ticket_id_by_node_id = _latest_ticket_id_by_node_id(graph_snapshot)
+    ticket_by_ticket_id = _workflow_ticket_projections(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
+    node_by_node_id = _workflow_node_projections(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
+    current_time = now_local()
+    findings: list[GraphHealthFindingDigest] = []
+    for node_id in blocked_node_ids:
+        ticket_id = latest_ticket_id_by_node_id.get(node_id)
+        if not ticket_id:
+            _raise_graph_health_unavailable(
+                f"blocked node {node_id} is missing its latest ticket projection."
+            )
+        ticket = ticket_by_ticket_id.get(ticket_id)
+        if ticket is None:
+            _raise_graph_health_unavailable(
+                f"blocked node {node_id} points to missing ticket {ticket_id}."
+            )
+        node_projection = node_by_node_id.get(node_id)
+        if node_projection is None:
+            _raise_graph_health_unavailable(
+                f"blocked node {node_id} is missing node projection."
+            )
+        ticket_updated_at = _require_datetime(
+            ticket.get("updated_at"),
+            reason=f"blocked ticket {ticket_id} is missing updated_at.",
+        )
+        node_updated_at = _require_datetime(
+            node_projection.get("updated_at"),
+            reason=f"blocked node {node_id} is missing updated_at.",
+        )
+        timeout_sla_sec = _require_int(
+            ticket.get("timeout_sla_sec"),
+            reason=f"blocked ticket {ticket_id} is missing timeout_sla_sec.",
+        )
+        ticket_version = _require_int(
+            ticket.get("version"),
+            reason=f"blocked ticket {ticket_id} is missing version.",
+        )
+        node_version = _require_int(
+            node_projection.get("version"),
+            reason=f"blocked node {node_id} is missing version.",
+        )
+        latest_projection_version = max(ticket_version, node_version)
+        version_delta = current_graph_version_int - latest_projection_version
+        if version_delta < _CROSS_VERSION_SLA_VERSION_DELTA_THRESHOLD:
+            continue
+        blocked_updated_at = max(ticket_updated_at, node_updated_at)
+        blocked_age_sec = int((current_time - blocked_updated_at).total_seconds())
+        blocked_threshold_sec = timeout_sla_sec * _CROSS_VERSION_SLA_MULTIPLIER
+        if blocked_age_sec <= blocked_threshold_sec:
+            continue
+        findings.append(
+            GraphHealthFindingDigest(
+                finding_type="CROSS_VERSION_SLA_BREACH",
+                severity="CRITICAL",
+                affected_nodes=[node_id],
+                metric_value=version_delta,
+                threshold=_CROSS_VERSION_SLA_VERSION_DELTA_THRESHOLD,
+                description=(
+                    f"Blocked node {node_id} stayed unresolved for {blocked_age_sec} seconds "
+                    f"while the graph advanced {version_delta} versions."
+                ),
+                suggested_action="Rerun the CEO or clear the blocker before more graph versions accumulate on stale work.",
             )
         )
     return findings
@@ -433,6 +821,12 @@ def build_graph_health_report(
             *_bottleneck_findings(graph_snapshot),
             *_critical_path_findings(graph_snapshot),
             *_orphan_subgraph_findings(graph_snapshot),
+            *_queue_starvation_findings(
+                repository,
+                graph_snapshot=graph_snapshot,
+                workflow_id=workflow_id,
+                connection=resolved_connection,
+            ),
             *_graph_thrashing_findings(
                 repository,
                 workflow_id=workflow_id,
@@ -444,7 +838,18 @@ def build_graph_health_report(
                 connection=resolved_connection,
             ),
             *_freeze_spread_findings(graph_snapshot),
+            *_ready_blocked_thrashing_findings(
+                repository,
+                workflow_id=workflow_id,
+                connection=resolved_connection,
+            ),
             *_ready_node_stale_findings(
+                repository,
+                graph_snapshot=graph_snapshot,
+                workflow_id=workflow_id,
+                connection=resolved_connection,
+            ),
+            *_cross_version_sla_breach_findings(
                 repository,
                 graph_snapshot=graph_snapshot,
                 workflow_id=workflow_id,

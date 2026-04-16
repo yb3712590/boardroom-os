@@ -23,6 +23,12 @@
 
 ### 2026-04-16
 
+- `P4-S4` 这轮已完成第九批：`graph_health.py` 现已补第四批规则 `QUEUE_STARVATION / READY_BLOCKED_THRASHING / CROSS_VERSION_SLA_BREACH`；三条规则都只读现有 `events + graph_version + ticket/node projection.version/updated_at`
+- `QUEUE_STARVATION / CROSS_VERSION_SLA_BREACH` 这轮都已进入现有 `GRAPH_HEALTH_CRITICAL` incident 主链；`READY_BLOCKED_THRASHING` 当前只保留 `WARNING` 读面，不新开 incident
+- 这轮没有新增 graph health history 表、projection 或 process asset；如果后续要补 dedicated history、workflow 级 SLA 或更细 blocker-source attribution，必须单独开切片，不能在现有规则里偷偷落新真相层
+- 这轮继续坚持 fail-closed：ready / blocked 节点缺 `updated_at / timeout_sla_sec / version`、或参与时间线重建的事件 payload 非法时，会继续显式抛 `GraphHealthUnavailableError`，不回退到当前快照、session JSON 或 ticket-only 快捷推导
+- 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health" -q`、`python -m py_compile backend/app/core/graph_health.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py`
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先处理 maker/checker 的 graph-first node identity，再决定 `true add_node / placeholder node` 是否拆独立切片
 - `P4-S4` 这轮已完成第八批：`GraphPatchProposal / GraphPatch` 已扩成正式 patch v2 合同，新增 `replacements / remove_node_ids / edge_additions / edge_removals`；`add_node` 当前会显式 reject，不再借旧兼容偷渡
 - `P4-S4` 这轮已新增单点 `graph_patch_reducer.py`；`TicketGraph / GraphHealth / board-advisory-apply-patch` 现在统一消费正式 `GRAPH_PATCH_APPLIED` 事件，`GRAPH_PATCH_PROPOSAL / GRAPH_PATCH` resolver 也已改成读不可变 artifact，不再从 session 内嵌 JSON 回填正文
 - `P4-S4` 这轮已把 graph patch v2 收成 fail-closed：未知 node、重复边、缺失边、orphan、cycle、执行中/已完成节点 remove/replace 都会显式 `REJECTED`；`GRAPH_THRASHING` 也已纳入 replacement / edge delta 目标集
@@ -31,7 +37,6 @@
 - `board_advisory_analysis.py` 这轮已补单点 `execution plan` helper；run 创建、compile worker binding 和 live 执行现在共用同一套 executor / provider selection 真相，synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`
 - advisory analysis live mode 这轮已把 `no real architect / no live provider selection / provider paused` 都收成显式失败；不会再偷偷降回 deterministic，而是继续走现有 `BOARD_ADVISORY_ANALYSIS_FAILED -> RERUN_BOARD_ADVISORY_ANALYSIS / RESTORE_ONLY`
 - 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "advisory_analysis_run_uses_live_mode or advisory_analysis_run_stays_deterministic_without_real_architect or advisory_analysis_live_provider_pause_opens_incident_without_deterministic_fallback" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory and analysis" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/board_advisory_analysis.py backend/tests/test_api.py`
-- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先补 `GraphHealthReport` 的 queue starvation / ready-blocked thrash / cross-version SLA 规则；`true add_node` 继续保持 graph-first 后置
 - `P4-S4` 这轮已完成第六批：`GraphHealthReport` 现已补第三批时间线规则 `GRAPH_THRASHING / READY_NODE_STALE`；前者只读真实 `GRAPH_PATCH_APPLIED`，后者只读 ready ticket `updated_at / timeout_sla_sec`，不再从 advisory session 时间、incident 时间或文档正文反推图时间线
 - `graph_health.py` 这轮新增正式 `GraphHealthUnavailableError`；graph patch payload 非对象、patch node list 非 `list[str]`、ready ticket 缺 `updated_at / timeout_sla_sec` 时会显式失败，不再静默跳过或隐式 fallback
 - `resolve_workflow_graph_version()` 这轮已删掉对完整事件 payload 转换的旧依赖，改成按 `workflow_id + graph mutation event + sequence_no` 直接取最新 graph version；坏 payload 不再顺带污染 graph version 主链

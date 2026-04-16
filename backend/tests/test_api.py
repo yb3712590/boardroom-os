@@ -11624,6 +11624,62 @@ def test_graph_health_ready_node_stale_stays_in_snapshot_without_opening_inciden
     assert repository.list_open_incidents() == []
 
 
+def test_graph_health_queue_starvation_opens_critical_incident_via_auto_advance(client, monkeypatch):
+    workflow_id = "wf_graph_health_queue_starvation_incident"
+    ticket_id = "tkt_graph_health_queue_starvation_incident"
+    node_id = "node_graph_health_queue_starvation_incident"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Queue starvation should open a graph health critical incident.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    import app.core.graph_health as graph_health_module
+
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", ticket_id),
+        )
+
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix=f"test-graph-health-queue-starvation:{workflow_id}",
+        max_steps=1,
+        max_dispatches=1,
+    )
+
+    open_incidents = [
+        item for item in repository.list_open_incidents() if item["workflow_id"] == workflow_id
+    ]
+
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["incident_type"] == "GRAPH_HEALTH_CRITICAL"
+    assert open_incidents[0]["payload"]["finding_type"] == "QUEUE_STARVATION"
+    assert open_incidents[0]["payload"]["affected_nodes"] == [node_id]
+
+
 def test_graph_health_unavailable_error_opens_ticket_graph_unavailable_incident(client, monkeypatch):
     workflow_id = "wf_graph_health_unavailable_incident"
     _ensure_scoped_workflow(
