@@ -250,10 +250,35 @@ CREATE TABLE IF NOT EXISTS board_advisory_session (
     latest_transcript_archive_artifact_ref TEXT,
     timeline_archive_version_int INTEGER,
     focus_node_ids_json TEXT NOT NULL DEFAULT '[]',
+    latest_analysis_run_id TEXT,
+    latest_analysis_status TEXT,
+    latest_analysis_incident_id TEXT,
     latest_analysis_error TEXT,
+    latest_analysis_trace_artifact_ref TEXT,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS board_advisory_analysis_run (
+    run_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    workflow_id TEXT NOT NULL,
+    source_graph_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    attempt_int INTEGER NOT NULL,
+    executor_mode TEXT NOT NULL,
+    compile_request_id TEXT,
+    compiled_execution_package_ref TEXT,
+    proposal_ref TEXT,
+    analysis_trace_artifact_ref TEXT,
+    incident_id TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ceo_shadow_run (
@@ -336,6 +361,15 @@ ON board_advisory_session(review_pack_id);
 
 CREATE INDEX IF NOT EXISTS idx_board_advisory_session_workflow_id
 ON board_advisory_session(workflow_id);
+
+CREATE INDEX IF NOT EXISTS idx_board_advisory_analysis_run_session_id
+ON board_advisory_analysis_run(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_board_advisory_analysis_run_workflow_id
+ON board_advisory_analysis_run(workflow_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_board_advisory_analysis_run_idempotency_key
+ON board_advisory_analysis_run(idempotency_key);
 
 CREATE INDEX IF NOT EXISTS idx_artifact_index_ticket_id
 ON artifact_index(ticket_id);

@@ -15414,6 +15414,73 @@ def test_board_advisory_append_turn_persists_working_context_without_changing_gr
     ]
 
 
+def test_board_advisory_request_analysis_records_pending_run_before_execution(client):
+    workflow_id = "wf_modify_advisory_pending"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Queue advisory analysis before the dedicated run executes.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Queue the advisory analysis run before any patch proposal is imported."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "Create the analysis run first, then execute it outside the request transaction.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:pending-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    with patch("app.core.approval_handlers.run_board_advisory_analysis", return_value=None, create=True):
+        response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:pending",
+            },
+        )
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    review_room = client.get(f"/api/v1/projections/review-room/{approval['review_pack_id']}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert advisory_session is not None
+    assert advisory_session["status"] == "PENDING_ANALYSIS"
+    assert advisory_session["latest_patch_proposal_ref"] is None
+    assert advisory_session["approved_patch_ref"] is None
+    assert advisory_session["latest_analysis_run_id"]
+    assert advisory_session["latest_analysis_status"] == "PENDING"
+    assert advisory_session["latest_analysis_incident_id"] is None
+    assert advisory_session["latest_analysis_error"] is None
+    assert updated is not None
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert repository.count_events_by_type("BOARD_ADVISORY_ANALYSIS_REQUESTED") == 1
+    advisory_context = review_room.json()["data"]["review_pack"]["advisory_context"]
+    assert advisory_context["change_flow_status"] == "PENDING_ANALYSIS"
+    assert advisory_context["latest_analysis_run_id"] == advisory_session["latest_analysis_run_id"]
+    assert advisory_context["latest_analysis_status"] == "PENDING"
+
+
 def test_board_advisory_request_analysis_creates_patch_proposal_without_resolving_approval(client):
     workflow_id = "wf_modify_advisory"
     _ensure_scoped_workflow(
@@ -15473,6 +15540,11 @@ def test_board_advisory_request_analysis_creates_patch_proposal_without_resolvin
     assert response.json()["status"] == "ACCEPTED"
     assert advisory_session is not None
     assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"
+    assert advisory_session["latest_analysis_run_id"]
+    assert advisory_session["latest_analysis_status"] == "SUCCEEDED"
+    assert advisory_session["latest_analysis_incident_id"] is None
+    assert advisory_session["latest_analysis_error"] is None
+    assert advisory_session["latest_analysis_trace_artifact_ref"] is not None
     assert advisory_session["latest_patch_proposal_ref"] is not None
     assert advisory_session["approved_patch_ref"] is None
     updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
@@ -15484,10 +15556,128 @@ def test_board_advisory_request_analysis_creates_patch_proposal_without_resolvin
     advisory_context = review_room.json()["data"]["review_pack"]["advisory_context"]
     assert advisory_context["change_flow_status"] == "PENDING_BOARD_CONFIRMATION"
     assert advisory_context["latest_patch_proposal_ref"] == advisory_session["latest_patch_proposal_ref"]
+    assert advisory_context["latest_analysis_run_id"] == advisory_session["latest_analysis_run_id"]
+    assert advisory_context["latest_analysis_status"] == "SUCCEEDED"
+    assert advisory_context["latest_analysis_trace_artifact_ref"] == advisory_session["latest_analysis_trace_artifact_ref"]
     assert advisory_context["proposal_summary"]
     assert advisory_context["pros"]
     assert advisory_context["cons"]
     assert advisory_context["risk_alerts"]
+
+
+def test_board_advisory_analysis_failure_opens_incident_and_rerun_recovery(client):
+    workflow_id = "wf_advisory_analysis_incident"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Fail advisory analysis explicitly and recover it with an idempotent rerun.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Fail the analysis explicitly if the patch proposal cannot be produced."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "This change flow must open an incident instead of silently falling back.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:analysis-incident-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    with (
+        patch(
+            "app.core.approval_handlers.build_graph_patch_proposal",
+            side_effect=ValueError("simulated advisory analysis failure"),
+        ),
+        patch(
+            "app.core.board_advisory_analysis.build_graph_patch_proposal",
+            side_effect=ValueError("simulated advisory analysis failure"),
+        ),
+        patch(
+            "app.core.board_advisory.build_graph_patch_proposal",
+            side_effect=ValueError("simulated advisory analysis failure"),
+        ),
+    ):
+        response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:incident",
+            },
+        )
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    open_incidents = [
+        item
+        for item in repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id and item["incident_type"] == "BOARD_ADVISORY_ANALYSIS_FAILED"
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert advisory_session is not None
+    assert advisory_session["status"] == "ANALYSIS_REJECTED"
+    assert advisory_session["latest_analysis_status"] == "FAILED"
+    assert advisory_session["latest_analysis_incident_id"] is not None
+    assert advisory_session["latest_analysis_error"]
+    assert advisory_session["latest_patch_proposal_ref"] is None
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["incident_type"] == "BOARD_ADVISORY_ANALYSIS_FAILED"
+    assert open_incidents[0]["incident_id"] == advisory_session["latest_analysis_incident_id"]
+
+    incident_id = str(advisory_session["latest_analysis_incident_id"])
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RERUN_BOARD_ADVISORY_ANALYSIS",
+        "RESTORE_ONLY",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == "RERUN_BOARD_ADVISORY_ANALYSIS"
+
+    rerun_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key=f"incident-resolve:{incident_id}:rerun-advisory-analysis",
+            followup_action="RERUN_BOARD_ADVISORY_ANALYSIS",
+            resolution_summary="Rerun the advisory analysis after the analysis harness is available again.",
+        ),
+    )
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    open_incidents = [
+        item
+        for item in repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id and item["incident_type"] == "BOARD_ADVISORY_ANALYSIS_FAILED"
+    ]
+
+    assert rerun_response.status_code == 200
+    assert rerun_response.json()["status"] == "ACCEPTED"
+    assert advisory_session is not None
+    assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"
+    assert advisory_session["latest_analysis_status"] == "SUCCEEDED"
+    assert advisory_session["latest_analysis_incident_id"] is None
+    assert advisory_session["latest_patch_proposal_ref"] is not None
+    assert updated is not None
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert open_incidents == []
 
 
 def test_board_advisory_apply_patch_resolves_approval_and_advances_graph_version(client):

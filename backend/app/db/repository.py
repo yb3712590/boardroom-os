@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.contracts.advisory import BoardAdvisorySession
+from app.contracts.advisory import BoardAdvisoryAnalysisRun, BoardAdvisorySession
 from app.config import get_settings
 from app.contracts.governance import GovernanceProfile
 from app.contracts.runtime import CompileManifest, CompiledContextBundle, CompiledExecutionPackage
@@ -143,6 +143,7 @@ class ControlPlaneRepository:
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_governance_profile_shape(connection)
             self._ensure_board_advisory_session_shape(connection)
+            self._ensure_board_advisory_analysis_run_shape(connection)
             self._ensure_ceo_shadow_run_shape(connection)
             self._ensure_artifact_index_shape(connection)
             self._ensure_artifact_upload_session_shape(connection)
@@ -2945,11 +2946,15 @@ class ControlPlaneRepository:
                 latest_transcript_archive_artifact_ref,
                 timeline_archive_version_int,
                 focus_node_ids_json,
+                latest_analysis_run_id,
+                latest_analysis_status,
+                latest_analysis_incident_id,
                 latest_analysis_error,
+                latest_analysis_trace_artifact_ref,
                 status,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.session_id,
@@ -2984,7 +2989,11 @@ class ControlPlaneRepository:
                 session.latest_transcript_archive_artifact_ref,
                 session.timeline_archive_version_int,
                 json.dumps(session.focus_node_ids, sort_keys=True),
+                session.latest_analysis_run_id,
+                session.latest_analysis_status,
+                session.latest_analysis_incident_id,
                 session.latest_analysis_error,
+                session.latest_analysis_trace_artifact_ref,
                 session.status,
                 now_local().isoformat(),
                 now_local().isoformat(),
@@ -3202,7 +3211,11 @@ class ControlPlaneRepository:
                 approved_patch_json = NULL,
                 patched_graph_version = NULL,
                 focus_node_ids_json = '[]',
+                latest_analysis_run_id = NULL,
+                latest_analysis_status = NULL,
+                latest_analysis_incident_id = NULL,
                 latest_analysis_error = NULL,
+                latest_analysis_trace_artifact_ref = NULL,
                 status = ?,
                 updated_at = ?
             WHERE session_id = ?
@@ -3241,7 +3254,11 @@ class ControlPlaneRepository:
             UPDATE board_advisory_session
             SET working_turns_json = ?,
                 status = ?,
+                latest_analysis_run_id = NULL,
+                latest_analysis_status = NULL,
+                latest_analysis_incident_id = NULL,
                 latest_analysis_error = NULL,
+                latest_analysis_trace_artifact_ref = NULL,
                 updated_at = ?
             WHERE session_id = ?
             """,
@@ -3276,6 +3293,8 @@ class ControlPlaneRepository:
             SET latest_patch_proposal_ref = ?,
                 latest_patch_proposal_json = ?,
                 decision_pack_refs_json = ?,
+                latest_analysis_status = 'SUCCEEDED',
+                latest_analysis_incident_id = NULL,
                 latest_analysis_error = NULL,
                 status = ?,
                 updated_at = ?
@@ -3310,6 +3329,7 @@ class ControlPlaneRepository:
             """
             UPDATE board_advisory_session
             SET latest_analysis_error = ?,
+                latest_analysis_status = 'FAILED',
                 status = ?,
                 updated_at = ?
             WHERE session_id = ?
@@ -3324,6 +3344,319 @@ class ControlPlaneRepository:
         updated = self.get_board_advisory_session(session_id, connection=connection)
         if updated is None:
             raise RuntimeError("Board advisory session row vanished after analysis rejection.")
+        return updated
+
+    def create_board_advisory_analysis_run(
+        self,
+        connection: sqlite3.Connection,
+        run: BoardAdvisoryAnalysisRun,
+    ) -> dict[str, Any]:
+        connection.execute(
+            """
+            INSERT INTO board_advisory_analysis_run (
+                run_id,
+                session_id,
+                workflow_id,
+                source_graph_version,
+                status,
+                idempotency_key,
+                attempt_int,
+                executor_mode,
+                compile_request_id,
+                compiled_execution_package_ref,
+                proposal_ref,
+                analysis_trace_artifact_ref,
+                incident_id,
+                error_code,
+                error_message,
+                created_at,
+                started_at,
+                finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run.run_id,
+                run.session_id,
+                run.workflow_id,
+                run.source_graph_version,
+                run.status,
+                run.idempotency_key,
+                run.attempt_int,
+                run.executor_mode,
+                run.compile_request_id,
+                run.compiled_execution_package_ref,
+                run.proposal_ref,
+                run.analysis_trace_artifact_ref,
+                run.incident_id,
+                run.error_code,
+                run.error_message,
+                run.created_at.isoformat(),
+                run.started_at.isoformat() if run.started_at is not None else None,
+                run.finished_at.isoformat() if run.finished_at is not None else None,
+            ),
+        )
+        created = self.get_board_advisory_analysis_run(run.run_id, connection=connection)
+        if created is None:
+            raise RuntimeError("Board advisory analysis run row was not persisted.")
+        return created
+
+    def get_board_advisory_analysis_run(
+        self,
+        run_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM board_advisory_analysis_run
+            WHERE run_id = ?
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (run_id,)).fetchone()
+            return None if row is None else self._convert_board_advisory_analysis_run_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (run_id,)).fetchone()
+            return None if row is None else self._convert_board_advisory_analysis_run_row(row)
+
+    def get_latest_board_advisory_analysis_run(
+        self,
+        session_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM board_advisory_analysis_run
+            WHERE session_id = ?
+            ORDER BY attempt_int DESC, created_at DESC, run_id DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (session_id,)).fetchone()
+            return None if row is None else self._convert_board_advisory_analysis_run_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (session_id,)).fetchone()
+            return None if row is None else self._convert_board_advisory_analysis_run_row(row)
+
+    def list_board_advisory_analysis_runs(
+        self,
+        session_id: str,
+        *,
+        statuses: list[str] | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [session_id]
+        status_clause = ""
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            status_clause = f" AND status IN ({placeholders})"
+            params.extend(statuses)
+        query = f"""
+            SELECT * FROM board_advisory_analysis_run
+            WHERE session_id = ?{status_clause}
+            ORDER BY attempt_int DESC, created_at DESC, run_id DESC
+        """
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_board_advisory_analysis_run_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_board_advisory_analysis_run_row(row) for row in rows]
+
+    def queue_board_advisory_analysis_run(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        run_id: str,
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_session(session_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory session is missing.")
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET latest_analysis_run_id = ?,
+                latest_analysis_status = 'PENDING',
+                latest_analysis_incident_id = NULL,
+                latest_analysis_error = NULL,
+                latest_analysis_trace_artifact_ref = NULL,
+                status = 'PENDING_ANALYSIS',
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                run_id,
+                updated_at.isoformat(),
+                session_id,
+            ),
+        )
+        updated = self.get_board_advisory_session(session_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory session row vanished after analysis queue.")
+        return updated
+
+    def start_board_advisory_analysis_run(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        run_id: str,
+        compile_request_id: str,
+        compiled_execution_package_ref: str,
+        started_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_analysis_run(run_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory analysis run is missing.")
+        connection.execute(
+            """
+            UPDATE board_advisory_analysis_run
+            SET status = 'RUNNING',
+                compile_request_id = ?,
+                compiled_execution_package_ref = ?,
+                started_at = ?
+            WHERE run_id = ?
+            """,
+            (
+                compile_request_id,
+                compiled_execution_package_ref,
+                started_at.isoformat(),
+                run_id,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET latest_analysis_status = 'RUNNING',
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                started_at.isoformat(),
+                current["session_id"],
+            ),
+        )
+        updated = self.get_board_advisory_analysis_run(run_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory analysis run row vanished after start.")
+        return updated
+
+    def complete_board_advisory_analysis_run(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        run_id: str,
+        proposal_ref: str,
+        analysis_trace_artifact_ref: str | None,
+        finished_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_analysis_run(run_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory analysis run is missing.")
+        connection.execute(
+            """
+            UPDATE board_advisory_analysis_run
+            SET status = 'SUCCEEDED',
+                proposal_ref = ?,
+                analysis_trace_artifact_ref = ?,
+                incident_id = NULL,
+                error_code = NULL,
+                error_message = NULL,
+                finished_at = ?
+            WHERE run_id = ?
+            """,
+            (
+                proposal_ref,
+                analysis_trace_artifact_ref,
+                finished_at.isoformat(),
+                run_id,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET latest_analysis_run_id = ?,
+                latest_analysis_status = 'SUCCEEDED',
+                latest_analysis_incident_id = NULL,
+                latest_analysis_error = NULL,
+                latest_analysis_trace_artifact_ref = ?,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                run_id,
+                analysis_trace_artifact_ref,
+                finished_at.isoformat(),
+                current["session_id"],
+            ),
+        )
+        updated = self.get_board_advisory_analysis_run(run_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory analysis run row vanished after completion.")
+        return updated
+
+    def fail_board_advisory_analysis_run(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        run_id: str,
+        incident_id: str | None,
+        error_code: str,
+        error_message: str,
+        analysis_trace_artifact_ref: str | None,
+        finished_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_analysis_run(run_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory analysis run is missing.")
+        connection.execute(
+            """
+            UPDATE board_advisory_analysis_run
+            SET status = 'FAILED',
+                incident_id = ?,
+                error_code = ?,
+                error_message = ?,
+                analysis_trace_artifact_ref = ?,
+                finished_at = ?
+            WHERE run_id = ?
+            """,
+            (
+                incident_id,
+                error_code,
+                error_message,
+                analysis_trace_artifact_ref,
+                finished_at.isoformat(),
+                run_id,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET latest_analysis_run_id = ?,
+                latest_analysis_status = 'FAILED',
+                latest_analysis_incident_id = ?,
+                latest_analysis_error = ?,
+                latest_analysis_trace_artifact_ref = ?,
+                status = 'ANALYSIS_REJECTED',
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                run_id,
+                incident_id,
+                error_message,
+                analysis_trace_artifact_ref,
+                finished_at.isoformat(),
+                current["session_id"],
+            ),
+        )
+        updated = self.get_board_advisory_analysis_run(run_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory analysis run row vanished after failure.")
         return updated
 
     def get_cursor_and_version(
@@ -5136,6 +5469,14 @@ class ControlPlaneRepository:
         converted.pop("latest_patch_proposal_json", None)
         converted.pop("approved_patch_json", None)
         converted.pop("focus_node_ids_json", None)
+        return converted
+
+    def _convert_board_advisory_analysis_run_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("created_at", "started_at", "finished_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["attempt_int"] = int(converted.get("attempt_int") or 0)
         return converted
 
     def _convert_ceo_shadow_run_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -7055,14 +7396,18 @@ class ControlPlaneRepository:
             "approved_patch_json": "TEXT",
             "patched_graph_version": "TEXT",
             "latest_timeline_index_ref": "TEXT",
-            "latest_transcript_archive_artifact_ref": "TEXT",
-            "timeline_archive_version_int": "INTEGER",
-            "focus_node_ids_json": "TEXT NOT NULL DEFAULT '[]'",
-            "latest_analysis_error": "TEXT",
-            "status": "TEXT",
-            "created_at": "TEXT",
-            "updated_at": "TEXT",
-        }
+                "latest_transcript_archive_artifact_ref": "TEXT",
+                "timeline_archive_version_int": "INTEGER",
+                "focus_node_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+                "latest_analysis_run_id": "TEXT",
+                "latest_analysis_status": "TEXT",
+                "latest_analysis_incident_id": "TEXT",
+                "latest_analysis_error": "TEXT",
+                "latest_analysis_trace_artifact_ref": "TEXT",
+                "status": "TEXT",
+                "created_at": "TEXT",
+                "updated_at": "TEXT",
+            }
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
                 connection.execute(
@@ -7079,6 +7424,70 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_board_advisory_session_status ON board_advisory_session(status)"
+        )
+
+    def _ensure_board_advisory_analysis_run_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS board_advisory_analysis_run (
+                run_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                source_graph_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                attempt_int INTEGER NOT NULL,
+                executor_mode TEXT NOT NULL,
+                compile_request_id TEXT,
+                compiled_execution_package_ref TEXT,
+                proposal_ref TEXT,
+                analysis_trace_artifact_ref TEXT,
+                incident_id TEXT,
+                error_code TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(board_advisory_analysis_run)").fetchall()
+        }
+        required_columns = {
+            "run_id": "TEXT",
+            "session_id": "TEXT",
+            "workflow_id": "TEXT",
+            "source_graph_version": "TEXT",
+            "status": "TEXT",
+            "idempotency_key": "TEXT",
+            "attempt_int": "INTEGER",
+            "executor_mode": "TEXT",
+            "compile_request_id": "TEXT",
+            "compiled_execution_package_ref": "TEXT",
+            "proposal_ref": "TEXT",
+            "analysis_trace_artifact_ref": "TEXT",
+            "incident_id": "TEXT",
+            "error_code": "TEXT",
+            "error_message": "TEXT",
+            "created_at": "TEXT",
+            "started_at": "TEXT",
+            "finished_at": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE board_advisory_analysis_run ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_board_advisory_analysis_run_session_id ON board_advisory_analysis_run(session_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_board_advisory_analysis_run_workflow_id ON board_advisory_analysis_run(workflow_id)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_board_advisory_analysis_run_idempotency_key ON board_advisory_analysis_run(idempotency_key)"
         )
 
     def _ensure_artifact_index_shape(self, connection: sqlite3.Connection) -> None:

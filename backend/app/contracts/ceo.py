@@ -73,6 +73,11 @@ class BoardAdvisorySessionDigest(StrictModel):
     latest_timeline_index_ref: str | None = None
     latest_transcript_archive_artifact_ref: str | None = None
     timeline_archive_version_int: int | None = Field(default=None, ge=1)
+    latest_analysis_run_id: str | None = None
+    latest_analysis_status: str | None = None
+    latest_analysis_incident_id: str | None = None
+    latest_analysis_error: str | None = None
+    latest_analysis_trace_artifact_ref: str | None = None
     decision_action: str | None = None
     board_comment: str | None = None
 

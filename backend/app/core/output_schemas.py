@@ -4,6 +4,7 @@ from collections.abc import Callable
 import re
 from typing import Any
 
+from app.contracts.advisory import GraphPatchProposal
 from app.contracts.commands import DeliveryStage
 from app.contracts.ceo_actions import CEOActionBatch
 
@@ -35,6 +36,8 @@ MAKER_CHECKER_VERDICT_SCHEMA_REF = "maker_checker_verdict"
 MAKER_CHECKER_VERDICT_SCHEMA_VERSION = 1
 CEO_ACTION_BATCH_SCHEMA_REF = "ceo_action_batch"
 CEO_ACTION_BATCH_SCHEMA_VERSION = 1
+GRAPH_PATCH_PROPOSAL_SCHEMA_REF = "graph_patch_proposal"
+GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION = 1
 DOCUMENTATION_UPDATE_STATUSES = {"UPDATED", "NO_CHANGE_REQUIRED", "FOLLOW_UP_REQUIRED"}
 GOVERNANCE_DOCUMENT_SCHEMA_REFS = (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -1338,6 +1341,35 @@ def _validate_ceo_action_batch_payload(payload: dict[str, Any]) -> None:
     CEOActionBatch.model_validate(payload)
 
 
+def _graph_patch_proposal_schema_body() -> dict[str, Any]:
+    return {
+        "schema_id": schema_id(GRAPH_PATCH_PROPOSAL_SCHEMA_REF, GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION),
+        "description": "Structured board advisory graph patch proposal.",
+        "required_fields": [
+            "proposal_ref",
+            "workflow_id",
+            "session_id",
+            "base_graph_version",
+            "proposal_summary",
+            "impact_summary",
+            "source_decision_pack_ref",
+            "proposal_hash",
+        ],
+        "optional_fields": [
+            "pros",
+            "cons",
+            "risk_alerts",
+            "freeze_node_ids",
+            "unfreeze_node_ids",
+            "focus_node_ids",
+        ],
+    }
+
+
+def _validate_graph_patch_proposal_payload(payload: dict[str, Any]) -> None:
+    GraphPatchProposal.model_validate(payload)
+
+
 OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (UI_MILESTONE_REVIEW_SCHEMA_REF, UI_MILESTONE_REVIEW_SCHEMA_VERSION): {
         "body": _ui_milestone_review_schema_body,
@@ -1401,6 +1433,10 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (CEO_ACTION_BATCH_SCHEMA_REF, CEO_ACTION_BATCH_SCHEMA_VERSION): {
         "body": _ceo_action_batch_schema_body,
         "validator": _validate_ceo_action_batch_payload,
+    },
+    (GRAPH_PATCH_PROPOSAL_SCHEMA_REF, GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION): {
+        "body": _graph_patch_proposal_schema_body,
+        "validator": _validate_graph_patch_proposal_payload,
     },
 }
 

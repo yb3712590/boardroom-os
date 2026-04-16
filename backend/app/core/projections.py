@@ -96,6 +96,7 @@ from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_OPEN,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+    INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
@@ -2253,6 +2254,12 @@ def build_incident_detail_projection(
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
         recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
+    elif incident_type == INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED:
+        available_followup_actions = [
+            IncidentFollowupAction.RERUN_BOARD_ADVISORY_ANALYSIS.value,
+            IncidentFollowupAction.RESTORE_ONLY.value,
+        ]
+        recommended_followup_action = IncidentFollowupAction.RERUN_BOARD_ADVISORY_ANALYSIS.value
     elif incident_type == INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
         available_followup_actions = [
             IncidentFollowupAction.REPLAY_REQUIRED_HOOKS.value,

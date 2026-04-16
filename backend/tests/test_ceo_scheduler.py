@@ -4457,17 +4457,17 @@ def test_ceo_shadow_snapshot_exposes_full_timeline_archive_refs_for_applied_advi
     latest_advisory_decision = snapshot["replan_focus"]["latest_advisory_decision"]
 
     assert len(board_advisory_sessions) == 1
-    assert board_advisory_sessions[0]["timeline_archive_version_int"] == 3
+    assert board_advisory_sessions[0]["timeline_archive_version_int"] == 4
     assert board_advisory_sessions[0]["latest_timeline_index_ref"] == (
-        f"pa://timeline-index/{board_advisory_sessions[0]['session_id']}@3"
+        f"pa://timeline-index/{board_advisory_sessions[0]['session_id']}@4"
     )
     assert board_advisory_sessions[0]["latest_transcript_archive_artifact_ref"] == (
-        f"art://board-advisory/{workflow_id}/{board_advisory_sessions[0]['session_id']}/transcript-v3.json"
+        f"art://board-advisory/{workflow_id}/{board_advisory_sessions[0]['session_id']}/transcript-v4.json"
     )
     assert latest_advisory_decision is not None
-    assert latest_advisory_decision["timeline_archive_version_int"] == 3
+    assert latest_advisory_decision["timeline_archive_version_int"] == 4
     assert latest_advisory_decision["latest_timeline_index_ref"] == (
-        f"pa://timeline-index/{board_advisory_sessions[0]['session_id']}@3"
+        f"pa://timeline-index/{board_advisory_sessions[0]['session_id']}@4"
     )
 
 

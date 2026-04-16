@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 10:06`
+> 最后更新：`2026-04-16 12:06`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -700,9 +700,12 @@
 - [x] `P4-S4` 已完成第三批：`audit_mode = FULL_TIMELINE` 的 advisory change flow 现在会把 transcript archive 物化到 `90-archive/transcripts/board-advisory/<session>/v<N>.json`，并同步写正式 `TIMELINE_INDEX` 资产；archive 版本只增不改
 - [x] `P4-S4` 已完成第三批：`BoardAdvisorySession / Review Room / build_ceo_shadow_snapshot() / latest_advisory_decision` 现已补 `latest_timeline_index_ref / latest_transcript_archive_artifact_ref / timeline_archive_version_int`
 - [x] `P4-S4` 已完成第三批：`FULL_TIMELINE` archive 写失败时，相关 advisory 命令现在会显式 `REJECTED` 并回滚事务，不再留下半写 session 状态
+- [x] `P4-S4` 已完成第四批：`board-advisory-request-analysis` 现在会先创建独立 `BoardAdvisoryAnalysisRun`，把 `BoardAdvisorySession` 切到 `PENDING_ANALYSIS`，再在事务外跑 analysis harness；不再在 board command 事务里同步直算 proposal
+- [x] `P4-S4` 已完成第四批：advisory analysis harness 现已朝 `CompiledExecutionPackage` 收口，固定只读 `DECISION_SUMMARY / PROJECT_MAP_SLICE / FAILURE_FINGERPRINT / TIMELINE_INDEX`，并显式区分 `DETERMINISTIC / LIVE_PROVIDER`；live 失败不再隐式回退 deterministic
+- [x] `P4-S4` 已完成第四批：新增正式 `BOARD_ADVISORY_ANALYSIS_FAILED` incident 和 `RERUN_BOARD_ADVISORY_ANALYSIS` recovery；`Review Room / Incident Detail / IncidentDrawer` 现已暴露 pending / failed / rerun 主链，analysis trace 也会落正式 artifact
 
 ### 未完成
-- [ ] advisory analysis 当前先走最小 deterministic compiler；还没把 CEO 与架构侧的内部讨论真相收成独立运行链和 recovery 动作
+- [ ] `legacy / 非 workspace-managed source_code_delivery` 的 `ProjectMapSlice` 仍是保守精度，不等于 workspace-managed 主链的正式地图精度
 
 ### 明确放弃
 - [ ] 暂无
@@ -715,6 +718,7 @@
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
 - [ ] advisory graph patch engine 这轮只落第一版 `freeze / unfreeze / focus`；`REPLACES`、增删节点和增删边仍未进入主链
 - [ ] `legacy / 非 workspace-managed source_code_delivery` 的 `ProjectMapSlice` 当前对 `module_paths / document_surfaces` 先走结构化保守回退：优先读源码票显式 payload 和 source delivery asset，缺失时再退到 `allowed_write_set`，不会读 Markdown 正文或目录扫描反推真相
+- [ ] advisory analysis 当前只在存在 board-approved architect 且该员工显式绑定 `provider_id` 时切到 `LIVE_PROVIDER`；如果后续要放宽到纯 role-binding live analysis，需要单独锁定“谁为 advisory analysis provider 选路背书”的边界
 
 ---
 
@@ -1600,6 +1604,40 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先补 advisory analysis 的独立运行链和 recovery 动作，再决定是否扩第二批 GraphHealth 规则。`
 
+### Session `2026-04-16 / 22`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `BoardAdvisoryAnalysisRun` 合同、schema 和 repository helper，把 advisory analysis 收成独立运行链，不再让 `board-advisory-request-analysis` 直接在 command 事务里同步算 proposal
+- [x] 新增 `backend/app/core/board_advisory_analysis.py`，把 advisory analysis 的 compile request / compiled execution package / explicit deterministic-vs-live execution / proposal 校验 / trace artifact / FULL_TIMELINE archive 收到单点 harness
+- [x] 新增 `BOARD_ADVISORY_ANALYSIS_FAILED` incident 和 `RERUN_BOARD_ADVISORY_ANALYSIS` recovery；`incident-resolve` 现在能基于最新 session 真相幂等补一轮 analysis rerun
+- [x] 把 `Review Room / Incident Detail / IncidentDrawer / CEO snapshot` 接到 analysis run 新读面；pending analysis、failed analysis 和 rerun recovery 现在都能从正式只读投影里看见
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "board_advisory and (analysis or incident)" -q` 通过（`3 passed, 302 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_process_assets.py -k "board_advisory or timeline_index" -q` 通过（`2 passed, 3 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "advisory or timeline" -q` 通过（`3 passed, 72 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "graph_health" -q` 通过（`2 passed, 6 deselected`）
+- [x] `python3 -m py_compile backend/app/contracts/advisory.py backend/app/contracts/commands.py backend/app/contracts/ceo.py backend/app/core/board_advisory.py backend/app/core/board_advisory_analysis.py backend/app/core/output_schemas.py backend/app/core/approval_handlers.py backend/app/core/projections.py backend/app/core/ticket_handlers.py backend/app/core/constants.py backend/app/db/repository.py backend/app/db/schema.py backend/tests/test_api.py backend/tests/test_process_assets.py backend/tests/test_ceo_scheduler.py backend/tests/test_ticket_graph.py` 通过
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/ReviewRoomDrawer.test.tsx src/test/__tests__/components/IncidentDrawer.test.tsx` 通过（`14 passed`）
+- [x] `cd frontend && npm run build` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `legacy / 非 workspace-managed source_code_delivery` 的 `ProjectMapSlice` 仍是保守精度
+- [ ] advisory analysis 的 live 选路当前仍收得很窄，只在存在 board-approved architect 且该员工显式绑定 `provider_id` 时启用
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先处理 legacy 非 workspace-managed 代码票的 ProjectMapSlice 精度，再决定是否扩第二批 GraphHealth 规则。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1637,7 +1675,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第三批已落地；`FULL_TIMELINE` advisory transcript archive 和 `TIMELINE_INDEX` 已进正式主链，archive 失败也会显式 reject 并回滚
-- 最近完成：`BoardAdvisorySession / Review Room / CEO snapshot` 已补最新 archive refs；`ReviewRoomDrawer` 现在可以直接打开 transcript archive 和 timeline index
-- 当前阻塞：advisory analysis 还没收成独立运行链和 recovery 动作；legacy 非 workspace-managed 代码票的地图切片仍是保守精度
-- 下一步：`继续从 P4-S4 续跑，优先补 advisory analysis 的独立运行链和 recovery 动作，再决定是否扩第二批 GraphHealth 规则`
+- 当前状态：`P4-S4` 第四批已落地；advisory analysis 现已收成独立 run、显式 incident 和幂等 rerun recovery，`board-advisory-request-analysis` 不再在 command 事务里同步直算 proposal
+- 最近完成：`BoardAdvisoryAnalysisRun / Review Room pending state / BOARD_ADVISORY_ANALYSIS_FAILED / RERUN_BOARD_ADVISORY_ANALYSIS` 已进正式主链；analysis trace 也已落正式 artifact
+- 当前阻塞：legacy 非 workspace-managed 代码票的地图切片仍是保守精度；advisory analysis live 选路当前只在 board-approved architect 显式绑 `provider_id` 时启用
+- 下一步：`继续从 P4-S4 续跑，优先处理 legacy 非 workspace-managed 代码票的 ProjectMapSlice 精度，再决定是否扩第二批 GraphHealth 规则`

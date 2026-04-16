@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-15
+> 最后更新：2026-04-16
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
@@ -115,8 +115,11 @@
 - 2026-04-16 本轮已完成 `P4-S4` 第三批：`audit_mode = FULL_TIMELINE` 的 advisory change flow 现在会把 transcript archive 物化到 `90-archive/transcripts/board-advisory/<session>/v<N>.json`，并同步写正式 `TIMELINE_INDEX` 资产；archive 版本只增不改
 - 2026-04-16 本轮已完成 `P4-S4` 第三批：`BoardAdvisorySession / Review Room / build_ceo_shadow_snapshot() / latest_advisory_decision` 已补 `latest_timeline_index_ref / latest_transcript_archive_artifact_ref / timeline_archive_version_int`；`ReviewRoomDrawer` 也已能直接打开 transcript archive 和 timeline index
 - 2026-04-16 本轮已完成 `P4-S4` 第三批：`FULL_TIMELINE` archive 写失败时，相关 advisory 命令现在会显式 `REJECTED` 并回滚事务，不再留下半写 session 状态
+- 2026-04-16 本轮已完成 `P4-S4` 第四批：`board-advisory-request-analysis` 现在会先创建独立 `BoardAdvisoryAnalysisRun`，把 session 切到 `PENDING_ANALYSIS`，再在事务外跑 analysis harness；不再在 board command 事务里同步直算 proposal
+- 2026-04-16 本轮已完成 `P4-S4` 第四批：advisory analysis harness 已朝 `CompiledExecutionPackage` 收口，固定只读 `DECISION_SUMMARY / PROJECT_MAP_SLICE / FAILURE_FINGERPRINT / TIMELINE_INDEX`，并显式区分 `DETERMINISTIC / LIVE_PROVIDER`；live 失败不会再隐式回退 deterministic
+- 2026-04-16 本轮已完成 `P4-S4` 第四批：新增 `BOARD_ADVISORY_ANALYSIS_FAILED` incident 和 `RERUN_BOARD_ADVISORY_ANALYSIS` recovery；`Review Room / Incident Detail / IncidentDrawer` 也已补 pending / failed / rerun 主链
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮如果继续推进新架构重构，优先补 advisory analysis 的独立运行链和 recovery 动作，再决定是否扩第二批 `GraphHealthReport` 规则；仍不碰 `doc/new-architecture/**`
+- 下一轮如果继续推进新架构重构，优先处理 legacy 非 workspace-managed 代码票的 `ProjectMapSlice` 精度，再决定是否扩第二批 `GraphHealthReport` 规则；仍不碰 `doc/new-architecture/**`
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

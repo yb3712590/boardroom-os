@@ -493,6 +493,100 @@ describe('ReviewRoomDrawer', () => {
     expect(onRequestAdvisoryAnalysis).toHaveBeenCalledWith({ sessionId: 'adv_005' })
   })
 
+  it('renders a pending advisory analysis state without draft actions', () => {
+    render(
+      <ReviewRoomDrawer
+        isOpen
+        loading={false}
+        reviewData={{
+          review_pack: {
+            meta: {
+              approval_id: 'apr_005b',
+              review_pack_id: 'brp_005b',
+              review_pack_version: 1,
+              workflow_id: 'wf_005b',
+              review_type: 'VISUAL_MILESTONE',
+              created_at: '2026-04-16T12:15:00+08:00',
+              priority: 'high',
+            },
+            subject: {
+              title: 'Wait for the advisory analysis run',
+            },
+            trigger: {
+              trigger_event_id: 'evt_005b',
+              trigger_reason: 'The analysis run is executing outside the request transaction.',
+              why_now: 'The board needs to wait for the explicit analysis result before confirming a patch.',
+            },
+            recommendation: {
+              recommended_action: 'MODIFY_CONSTRAINTS',
+              recommended_option_id: 'draft_change_flow',
+              summary: 'Wait for the dedicated advisory analysis run to finish.',
+            },
+            options: [],
+            advisory_context: {
+              session_id: 'adv_005b',
+              approval_id: 'apr_005b',
+              review_pack_id: 'brp_005b',
+              trigger_type: 'CONSTRAINT_CHANGE',
+              status: 'PENDING_ANALYSIS',
+              change_flow_status: 'PENDING_ANALYSIS',
+              source_version: 'gv_23',
+              governance_profile_ref: 'gp_005b',
+              affected_nodes: ['node_homepage_visual'],
+              working_turns: [
+                {
+                  turn_id: 'advturn_005b',
+                  actor_type: 'board',
+                  content: 'Compare the pros and cons before any patch is proposed.',
+                  created_at: '2026-04-16T12:16:00+08:00',
+                },
+              ],
+              decision_pack_refs: ['pa://decision-summary/adv_005b@1'],
+              latest_patch_proposal_ref: null,
+              approved_patch_ref: null,
+              latest_analysis_run_id: 'adrun_005b',
+              latest_analysis_status: 'RUNNING',
+              latest_analysis_error: null,
+              current_governance_modes: {
+                approval_mode: 'AUTO_CEO',
+                audit_mode: 'MINIMAL',
+              },
+              supports_governance_patch: true,
+            },
+            decision_form: {
+              allowed_actions: ['MODIFY_CONSTRAINTS'],
+              command_target_version: 1,
+              requires_comment_on_reject: true,
+              requires_constraint_patch_on_modify: true,
+            },
+          } as never,
+          available_actions: ['MODIFY_CONSTRAINTS'],
+          draft_defaults: {
+            selected_option_id: 'draft_change_flow',
+            comment_template: '',
+          } as never,
+        }}
+        inspectorData={null}
+        inspectorLoading={false}
+        error={null}
+        submittingAction={null}
+        onClose={vi.fn()}
+        onOpenInspector={vi.fn()}
+        onOpenArtifact={vi.fn()}
+        onApprove={vi.fn().mockResolvedValue(undefined)}
+        onReject={vi.fn().mockResolvedValue(undefined)}
+        onModifyConstraints={vi.fn().mockResolvedValue(undefined)}
+        onAppendAdvisoryTurn={vi.fn().mockResolvedValue(undefined)}
+        onRequestAdvisoryAnalysis={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByText(/analysis is running for the current advisory draft/i)).toBeInTheDocument()
+    expect(screen.getByText('adrun_005b')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add draft note' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Request analysis' })).not.toBeInTheDocument()
+  })
+
   it('renders proposal confirmation and applies the approved runtime patch', async () => {
     const user = userEvent.setup()
     const onApplyAdvisoryPatch = vi.fn().mockResolvedValue(undefined)

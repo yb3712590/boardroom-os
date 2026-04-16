@@ -63,6 +63,7 @@ from app.core.constants import (
     EVENT_TICKET_TIMED_OUT,
     FAILURE_KIND_PROVIDER_RATE_LIMITED,
     FAILURE_KIND_UPSTREAM_UNAVAILABLE,
+    INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
@@ -96,6 +97,10 @@ from app.core.constants import (
     BLOCKING_REASON_PROVIDER_REQUIRED,
 )
 from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
+from app.core.board_advisory_analysis import (
+    create_board_advisory_analysis_run,
+    run_board_advisory_analysis,
+)
 from app.core.ceo_scheduler import (
     CeoShadowPipelineError,
     SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
@@ -4352,6 +4357,7 @@ def handle_incident_resolve(
         retry_created_spec: dict[str, Any] | None = None
         replay_result = None
         rerun_context: dict[str, Any] | None = None
+        advisory_rerun_context: dict[str, Any] | None = None
         if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
             if incident["incident_type"] != INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
                 return _incident_rejected_ack(
@@ -4552,8 +4558,31 @@ def handle_incident_resolve(
                     incident_id=payload.incident_id,
                     reason="CEO shadow incident is missing its original trigger_type.",
                 )
+        elif payload.followup_action == IncidentFollowupAction.RERUN_BOARD_ADVISORY_ANALYSIS:
+            if incident["incident_type"] != INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=f"Incident {payload.incident_id} does not support advisory analysis rerun recovery.",
+                )
+            session_id = str((incident.get("payload") or {}).get("session_id") or "").strip()
+            if not session_id:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason="Board advisory analysis incident is missing its session_id.",
+                )
+            advisory_rerun_context = {
+                "workflow_id": workflow_id,
+                "session_id": session_id,
+                "incident": incident,
+            }
 
-        if rerun_context is None:
+        if rerun_context is None and advisory_rerun_context is None:
             resolution_payload = {
                 "incident_id": payload.incident_id,
                 "node_id": incident.get("node_id"),
@@ -4774,6 +4803,129 @@ def handle_incident_resolve(
                     **resolution_payload,
                     "status": INCIDENT_STATUS_CLOSED,
                     "close_reason": "CEO shadow rerun completed successfully.",
+                },
+                occurred_at=received_at,
+            )
+            if incident_closed_event is None:
+                return _incident_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                )
+            repository.refresh_projections(connection)
+
+        return CommandAckEnvelope(
+            command_id=command_id,
+            idempotency_key=payload.idempotency_key,
+            status=CommandAckStatus.ACCEPTED,
+            received_at=received_at,
+            reason=None,
+            causation_hint=f"incident:{payload.incident_id}",
+        )
+
+    if advisory_rerun_context is not None:
+        with repository.transaction() as connection:
+            session = repository.get_board_advisory_session(
+                str(advisory_rerun_context["session_id"]),
+                connection=connection,
+            )
+            if session is None:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason="Board advisory session is missing for advisory analysis rerun.",
+                )
+            rerun = create_board_advisory_analysis_run(
+                repository,
+                connection,
+                session=session,
+                idempotency_key=f"{payload.idempotency_key}:board-advisory-analysis-rerun",
+                occurred_at=received_at,
+            )
+            repository.refresh_projections(connection)
+
+        rerun_session = run_board_advisory_analysis(repository, str(rerun["run_id"]))
+        if str(rerun_session.get("status") or "") != "PENDING_BOARD_CONFIRMATION":
+            return _incident_rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                incident_id=payload.incident_id,
+                reason=str(rerun_session.get("latest_analysis_error") or "Board advisory analysis rerun failed."),
+            )
+
+        with repository.transaction() as connection:
+            resolution_payload = {
+                "incident_id": payload.incident_id,
+                "node_id": incident.get("node_id"),
+                "ticket_id": incident.get("ticket_id"),
+                "provider_id": incident.get("provider_id"),
+                "resolved_by": payload.resolved_by,
+                "resolution_summary": payload.resolution_summary,
+                "followup_action": followup_action,
+                "followup_ticket_id": None,
+                "incident_type": INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED,
+            }
+            incident_recovery_event = repository.insert_event(
+                connection,
+                event_type=EVENT_INCIDENT_RECOVERY_STARTED,
+                actor_type="operator",
+                actor_id=payload.resolved_by,
+                workflow_id=str(advisory_rerun_context["workflow_id"]),
+                idempotency_key=payload.idempotency_key,
+                causation_id=command_id,
+                correlation_id=str(advisory_rerun_context["workflow_id"]),
+                payload={
+                    **resolution_payload,
+                    "status": INCIDENT_STATUS_RECOVERING,
+                },
+                occurred_at=received_at,
+            )
+            if incident_recovery_event is None:
+                return _incident_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                )
+            breaker_closed_event = repository.insert_event(
+                connection,
+                event_type=EVENT_CIRCUIT_BREAKER_CLOSED,
+                actor_type="operator",
+                actor_id=payload.resolved_by,
+                workflow_id=str(advisory_rerun_context["workflow_id"]),
+                idempotency_key=f"{payload.idempotency_key}:breaker-closed",
+                causation_id=command_id,
+                correlation_id=str(advisory_rerun_context["workflow_id"]),
+                payload={
+                    **resolution_payload,
+                    "circuit_breaker_state": CIRCUIT_BREAKER_STATE_CLOSED,
+                },
+                occurred_at=received_at,
+            )
+            if breaker_closed_event is None:
+                return _incident_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                )
+            incident_closed_event = repository.insert_event(
+                connection,
+                event_type=EVENT_INCIDENT_CLOSED,
+                actor_type="operator",
+                actor_id=payload.resolved_by,
+                workflow_id=str(advisory_rerun_context["workflow_id"]),
+                idempotency_key=f"{payload.idempotency_key}:incident-closed",
+                causation_id=command_id,
+                correlation_id=str(advisory_rerun_context["workflow_id"]),
+                payload={
+                    **resolution_payload,
+                    "status": INCIDENT_STATUS_CLOSED,
+                    "close_reason": "Board advisory analysis rerun completed successfully.",
                 },
                 occurred_at=received_at,
             )

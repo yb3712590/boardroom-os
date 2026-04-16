@@ -97,7 +97,11 @@ def build_board_advisory_session(
         latest_transcript_archive_artifact_ref=None,
         timeline_archive_version_int=None,
         focus_node_ids=[],
+        latest_analysis_run_id=None,
+        latest_analysis_status=None,
+        latest_analysis_incident_id=None,
         latest_analysis_error=None,
+        latest_analysis_trace_artifact_ref=None,
         status=BOARD_ADVISORY_STATUS_OPEN,
     )
 
@@ -210,7 +214,11 @@ def build_board_advisory_context(
         "latest_transcript_archive_artifact_ref": session.get("latest_transcript_archive_artifact_ref"),
         "timeline_archive_version_int": session.get("timeline_archive_version_int"),
         "focus_node_ids": list(session.get("focus_node_ids") or []),
+        "latest_analysis_run_id": session.get("latest_analysis_run_id"),
+        "latest_analysis_status": session.get("latest_analysis_status"),
+        "latest_analysis_incident_id": session.get("latest_analysis_incident_id"),
         "latest_analysis_error": session.get("latest_analysis_error"),
+        "latest_analysis_trace_artifact_ref": session.get("latest_analysis_trace_artifact_ref"),
         "current_governance_modes": governance_modes_from_profile(current_profile),
         "supports_governance_patch": True,
     }
@@ -245,6 +253,11 @@ def build_board_advisory_snapshot_entry(session: Mapping[str, Any]) -> dict[str,
         "latest_timeline_index_ref": session.get("latest_timeline_index_ref"),
         "latest_transcript_archive_artifact_ref": session.get("latest_transcript_archive_artifact_ref"),
         "timeline_archive_version_int": session.get("timeline_archive_version_int"),
+        "latest_analysis_run_id": session.get("latest_analysis_run_id"),
+        "latest_analysis_status": session.get("latest_analysis_status"),
+        "latest_analysis_incident_id": session.get("latest_analysis_incident_id"),
+        "latest_analysis_error": session.get("latest_analysis_error"),
+        "latest_analysis_trace_artifact_ref": session.get("latest_analysis_trace_artifact_ref"),
     }
     board_decision = session.get("board_decision")
     if isinstance(board_decision, Mapping):
@@ -553,6 +566,11 @@ def build_board_advisory_transcript_payload(
         ),
         "decision_pack_refs": list(session.get("decision_pack_refs") or []),
         "patched_graph_version": session.get("patched_graph_version"),
+        "latest_analysis_run_id": session.get("latest_analysis_run_id"),
+        "latest_analysis_status": session.get("latest_analysis_status"),
+        "latest_analysis_incident_id": session.get("latest_analysis_incident_id"),
+        "latest_analysis_error": session.get("latest_analysis_error"),
+        "latest_analysis_trace_artifact_ref": session.get("latest_analysis_trace_artifact_ref"),
     }
 
 
@@ -562,8 +580,9 @@ def build_board_advisory_timeline_index_payload(
     current_profile: GovernanceProfile | Mapping[str, Any],
     timeline_archive_version_int: int,
     transcript_archive_artifact_ref: str,
+    latest_analysis_archive_artifact_ref: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "session_id": str(session.get("session_id") or ""),
         "workflow_id": str(session.get("workflow_id") or ""),
         "approval_id": str(session.get("approval_id") or ""),
@@ -579,9 +598,17 @@ def build_board_advisory_timeline_index_payload(
         "latest_patch_proposal_ref": session.get("latest_patch_proposal_ref"),
         "approved_patch_ref": session.get("approved_patch_ref"),
         "patched_graph_version": session.get("patched_graph_version"),
+        "latest_analysis_run_id": session.get("latest_analysis_run_id"),
+        "latest_analysis_status": session.get("latest_analysis_status"),
+        "latest_analysis_incident_id": session.get("latest_analysis_incident_id"),
+        "latest_analysis_error": session.get("latest_analysis_error"),
+        "latest_analysis_trace_artifact_ref": session.get("latest_analysis_trace_artifact_ref"),
         "turn_ids": [
             str(item.get("turn_id") or "").strip()
             for item in list(session.get("working_turns") or [])
             if isinstance(item, Mapping) and str(item.get("turn_id") or "").strip()
         ],
     }
+    if latest_analysis_archive_artifact_ref is not None:
+        payload["latest_analysis_archive_artifact_ref"] = latest_analysis_archive_artifact_ref
+    return payload

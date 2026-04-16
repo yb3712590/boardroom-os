@@ -20,6 +20,8 @@ AdvisoryStatus = Literal[
 GovernanceApprovalMode = Literal["AUTO_CEO", "EXPERT_GATED"]
 GovernanceAuditMode = Literal["MINIMAL", "TICKET_TRACE", "FULL_TIMELINE"]
 AdvisoryTurnActorType = Literal["board", "ceo", "architect"]
+BoardAdvisoryAnalysisRunStatus = Literal["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]
+BoardAdvisoryAnalysisExecutorMode = Literal["DETERMINISTIC", "LIVE_PROVIDER"]
 
 
 class GovernancePatch(StrictModel):
@@ -119,5 +121,30 @@ class BoardAdvisorySession(StrictModel):
     latest_transcript_archive_artifact_ref: str | None = None
     timeline_archive_version_int: int | None = Field(default=None, ge=1)
     focus_node_ids: list[str] = Field(default_factory=list)
+    latest_analysis_run_id: str | None = None
+    latest_analysis_status: BoardAdvisoryAnalysisRunStatus | None = None
+    latest_analysis_incident_id: str | None = None
     latest_analysis_error: str | None = None
+    latest_analysis_trace_artifact_ref: str | None = None
     status: AdvisoryStatus
+
+
+class BoardAdvisoryAnalysisRun(StrictModel):
+    run_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    source_graph_version: str = Field(min_length=1)
+    status: BoardAdvisoryAnalysisRunStatus
+    idempotency_key: str = Field(min_length=1)
+    attempt_int: int = Field(ge=1)
+    executor_mode: BoardAdvisoryAnalysisExecutorMode
+    compile_request_id: str | None = None
+    compiled_execution_package_ref: str | None = None
+    proposal_ref: str | None = None
+    analysis_trace_artifact_ref: str | None = None
+    incident_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None

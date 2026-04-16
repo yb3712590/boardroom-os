@@ -256,7 +256,11 @@ export type ReviewPack = {
     latest_transcript_archive_artifact_ref?: string | null
     timeline_archive_version_int?: number | null
     focus_node_ids?: string[]
+    latest_analysis_run_id?: string | null
+    latest_analysis_status?: string | null
+    latest_analysis_incident_id?: string | null
     latest_analysis_error?: string | null
+    latest_analysis_trace_artifact_ref?: string | null
     proposal_summary?: string
     pros?: string[]
     cons?: string[]

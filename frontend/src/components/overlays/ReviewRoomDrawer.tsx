@@ -205,6 +205,9 @@ export function ReviewRoomDrawer({
   const riskSummaryNote = formatRiskSummary(reviewPack?.risk_summary)
   const advisoryTurns = advisoryContext?.working_turns ?? []
   const advisoryProposalRef = advisoryContext?.latest_patch_proposal_ref ?? null
+  const advisoryAnalysisRunId = advisoryContext?.latest_analysis_run_id ?? null
+  const advisoryAnalysisStatus = advisoryContext?.latest_analysis_status ?? null
+  const advisoryAnalysisIncidentId = advisoryContext?.latest_analysis_incident_id ?? null
   const advisoryTimelineArchiveVersion = advisoryContext?.timeline_archive_version_int ?? null
   const advisoryTranscriptArchiveArtifactRef = advisoryContext?.latest_transcript_archive_artifact_ref ?? null
   const advisoryTimelineIndexArtifactRef =
@@ -222,6 +225,7 @@ export function ReviewRoomDrawer({
     advisoryTimelineArchiveVersion !== undefined &&
     advisoryTimelineIndexArtifactRef !== null
   const canEnterChangeFlow = advisoryFlowStatus === 'OPEN'
+  const isPendingAnalysis = advisoryFlowStatus === 'PENDING_ANALYSIS'
   const canDraftChangeFlow = advisoryFlowStatus === 'DRAFTING' || advisoryFlowStatus === 'ANALYSIS_REJECTED'
   const canConfirmChangeFlow = advisoryFlowStatus === 'PENDING_BOARD_CONFIRMATION'
 
@@ -348,6 +352,23 @@ export function ReviewRoomDrawer({
                 <span className="eyebrow">Graph version</span>
                 <p>{advisoryContext.source_version}</p>
               </div>
+            </section>
+          ) : null}
+
+          {advisoryContext && isPendingAnalysis ? (
+            <section className="review-room-action-panel">
+              <h3>Analysis status</h3>
+              <p className="muted-copy">Analysis is running for the current advisory draft.</p>
+              <ul className="review-room-list">
+                <li>
+                  <strong>Run</strong>
+                  <span>{advisoryAnalysisRunId ?? 'Pending run id'}</span>
+                </li>
+                <li>
+                  <strong>Status</strong>
+                  <span>{advisoryAnalysisStatus ?? 'PENDING'}</span>
+                </li>
+              </ul>
             </section>
           ) : null}
 
@@ -732,6 +753,9 @@ export function ReviewRoomDrawer({
                   <p className="muted-copy">Draft the board intent here, then request an evaluated patch proposal.</p>
                   {advisoryContext?.latest_analysis_error ? (
                     <p className="review-room-state review-room-error">{advisoryContext.latest_analysis_error}</p>
+                  ) : null}
+                  {advisoryAnalysisIncidentId ? (
+                    <p className="muted-copy">Latest analysis incident: {advisoryAnalysisIncidentId}</p>
                   ) : null}
                   {advisoryTurns.length > 0 ? (
                     <ul className="review-room-list">

@@ -183,4 +183,38 @@ describe('IncidentDrawer', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toHaveValue('RERUN_CEO_SHADOW')
   })
+
+  it('describes board advisory analysis incidents and defaults to rerun recovery', () => {
+    render(
+      <IncidentDrawer
+        isOpen={true}
+        loading={false}
+        error={null}
+        submitting={false}
+        onClose={vi.fn()}
+        onResolve={vi.fn().mockResolvedValue(undefined)}
+        incidentData={{
+          incident: {
+            ...buildIncidentData().incident,
+            incident_id: 'inc_advisory_analysis_001',
+            incident_type: 'BOARD_ADVISORY_ANALYSIS_FAILED',
+            provider_id: null,
+            payload: {
+              session_id: 'adv_009',
+              run_id: 'adrun_009',
+              failure_phase: 'provider_execution',
+              error_message: 'The advisory analysis provider returned an invalid graph patch proposal payload.',
+            },
+          },
+          available_followup_actions: ['RERUN_BOARD_ADVISORY_ANALYSIS', 'RESTORE_ONLY'],
+          recommended_followup_action: 'RERUN_BOARD_ADVISORY_ANALYSIS',
+        }}
+      />,
+    )
+
+    expect(
+      screen.getByText(/board advisory analysis failed, so the change flow stays fail-closed until recovery reruns the latest advisory analysis attempt/i),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toHaveValue('RERUN_BOARD_ADVISORY_ANALYSIS')
+  })
 })
