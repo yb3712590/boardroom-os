@@ -34,8 +34,19 @@ def is_review_graph_node_id(node_id: str) -> bool:
     return str(node_id or "").strip().endswith(_REVIEW_SUFFIX)
 
 
-def resolve_graph_lane_kind(created_spec: dict[str, Any] | None) -> str:
-    created_spec = created_spec or {}
+def _resolve_graph_contract_lane_kind(created_spec: dict[str, Any]) -> str | None:
+    graph_contract = created_spec.get("graph_contract")
+    if not isinstance(graph_contract, dict):
+        return None
+    lane_kind = str(graph_contract.get("lane_kind") or "").strip().lower()
+    if lane_kind in {GRAPH_LANE_EXECUTION, GRAPH_LANE_REVIEW}:
+        return lane_kind
+    if lane_kind:
+        raise GraphIdentityResolutionError(f"unsupported graph lane kind {lane_kind}.")
+    return None
+
+
+def _resolve_legacy_graph_lane_kind(created_spec: dict[str, Any]) -> str:
     ticket_kind = str(created_spec.get("ticket_kind") or "").strip().upper()
     output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
     if (
@@ -44,6 +55,14 @@ def resolve_graph_lane_kind(created_spec: dict[str, Any] | None) -> str:
     ):
         return GRAPH_LANE_REVIEW
     return GRAPH_LANE_EXECUTION
+
+
+def resolve_graph_lane_kind(created_spec: dict[str, Any] | None) -> str:
+    created_spec = created_spec or {}
+    graph_contract_lane_kind = _resolve_graph_contract_lane_kind(created_spec)
+    if graph_contract_lane_kind is not None:
+        return graph_contract_lane_kind
+    return _resolve_legacy_graph_lane_kind(created_spec)
 
 
 def resolve_ticket_graph_identity(

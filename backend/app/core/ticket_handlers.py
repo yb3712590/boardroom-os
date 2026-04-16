@@ -926,6 +926,9 @@ def _build_maker_checker_ticket_payload(
         "delivery_stage": created_spec.get("delivery_stage"),
         "escalation_policy": dict(created_spec.get("escalation_policy") or {}),
         "ticket_kind": MAKER_CHECKER_REVIEW_TICKET_KIND,
+        "graph_contract": {
+            "lane_kind": "review",
+        },
         "maker_checker_context": {
             "maker_ticket_id": source_ticket_id,
             "maker_completed_by": maker_completed_by,
@@ -1026,6 +1029,9 @@ def _build_fix_ticket_payload(
         "excluded_employee_ids": excluded_employee_ids,
         "escalation_policy": dict(maker_ticket_spec.get("escalation_policy") or {}),
         "ticket_kind": MAKER_REWORK_FIX_TICKET_KIND,
+        "graph_contract": {
+            "lane_kind": "execution",
+        },
         "maker_checker_context": {
             "maker_ticket_id": maker_checker_context.get("maker_ticket_id"),
             "maker_completed_by": maker_checker_context.get("maker_completed_by"),

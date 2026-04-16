@@ -334,6 +334,10 @@ class ExecutionContract(StrictModel):
     runtime_contract_version: str = Field(min_length=1)
 
 
+class GraphContract(StrictModel):
+    lane_kind: str = Field(min_length=1)
+
+
 class DispatchIntent(StrictModel):
     assignee_employee_id: str = Field(min_length=1)
     selection_reason: str = Field(min_length=1)
@@ -384,6 +388,7 @@ class TicketCreateCommand(StrictModel):
     auto_review_request: TicketBoardReviewRequest | None = None
     meeting_context: dict | None = None
     execution_contract: ExecutionContract | None = None
+    graph_contract: GraphContract | None = None
     dispatch_intent: DispatchIntent | None = None
     runtime_preference: RuntimeSelectionPreference | None = None
     project_workspace_ref: str | None = None

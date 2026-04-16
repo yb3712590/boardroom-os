@@ -23,6 +23,13 @@
 
 ### 2026-04-16
 
+- `P4-S4` 这轮已完成第十二批：新增正式 `execution_target:board_advisory_analysis`，`board_advisory_analysis.py` 现已改成 execution contract 驱动；真人 executor 改按 capability tags 选，旧的 `architect_primary + architect_governance_document` 直绑已退出核心判断
+- advisory analysis 这轮继续坚持 harness engineering 口径：run 创建、compile worker binding、live provider selection 和 deterministic guard 现在共用单点 execution plan；命中 contract mismatch / missing provider selection / provider paused 时都会显式失败，并继续复用现有幂等 incident / recovery
+- `graph_identity.py` 这轮已改成 `graph_contract.lane_kind` 优先；maker-checker review / rework 建票路径会显式写入 lane contract，旧 taxonomy 只保留在单点 legacy adapter，不再散落到 `TicketGraph` 或其他 graph 内核判断
+- `graph_health.py` 这轮已把 policy 常量抽离到新文件 `backend/app/core/graph_health_policy.py`；`threshold / multiplier / timeline window / event whitelist / severity` 现已集中配置，`build_graph_health_report()` 也已支持显式 `policy` 注入
+- 当前还保留一条会直接影响下轮判断的事实：`GraphHealth` 虽然已经把 policy 常量外提，但 `QUEUE_STARVATION / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 仍继续读取 runtime ticket/node projection 的时间与 SLA 字段；如果下一轮继续瘦 graph 内核，应优先决定这批 runtime-liveness 规则是否后移出 graph 读面
+- 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory_analysis" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_identity or graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health or advisory" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/board_advisory_analysis.py backend/app/core/graph_identity.py backend/app/core/graph_health.py backend/app/core/graph_health_policy.py backend/app/core/execution_targets.py backend/tests/test_api.py backend/tests/test_ticket_graph.py backend/tests/test_ceo_scheduler.py`
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先决定 `GraphHealth` 的 runtime-liveness 规则是否后移出 graph 内核；placeholder runtime materialization 和 runtime `node_projection` 双层真相继续保持后置单独决策
 - `P4-S4` 这轮已完成第十一批：`GraphPatchProposal / GraphPatch` 现已正式支持 `add_nodes[]`；最小 `GraphPatchAddedNode` 已固定 `node_id / node_kind / deliverable_kind / role_hint / parent_node_id / dependency_node_ids[]`，`graph_patch_proposal` output schema 也已升到 `v2`
 - `graph_patch_reducer.py` 这轮已扩成 graph-only placeholder overlay：`add_node` 现在会显式物化 parent/dependency 边并参与 DAG / orphan 校验；same-patch edge delta 指向 placeholder 会继续 fail-closed，不再回退到隐式补边或 session JSON
 - `TicketGraph` 这轮已开始物化 placeholder node：新节点会以 `is_placeholder=true / node_status=PLANNED / ticket_id=null / runtime_node_id=null` 进入 graph snapshot；`ready / blocked / in_flight` 继续只统计 ticket-backed node，不把图层计划冒充成可执行现实

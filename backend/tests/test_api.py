@@ -15805,6 +15805,89 @@ def test_board_advisory_analysis_run_uses_live_mode_when_real_architect_and_targ
     assert run["executor_mode"] == "LIVE_PROVIDER"
 
 
+def test_board_advisory_analysis_run_uses_live_mode_when_real_contract_matching_executor_and_advisory_target_binding_exist(
+    client,
+):
+    workflow_id = "wf_advisory_analysis_live_contract_executor"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Advisory analysis should enter live mode when a real board-approved executor satisfies the advisory contract.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    _seed_worker(
+        client,
+        employee_id="emp_cto_live_advisory_contract",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _assert_command_accepted(
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                role_bindings=[
+                    {
+                        "target_ref": "ceo_shadow",
+                        "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                        "max_context_window_override": None,
+                        "reasoning_effort_override": None,
+                    },
+                    {
+                        "target_ref": "execution_target:board_advisory_analysis",
+                        "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                        "max_context_window_override": None,
+                        "reasoning_effort_override": None,
+                    },
+                ],
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:advisory-target-binding",
+            ),
+        )
+    )
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Let the advisory contract choose the live executor instead of the architect role preset."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "A contract-matching board-approved executor should be enough for advisory live analysis.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:advisory-contract-executor",
+            },
+        )
+    _assert_command_accepted(enter_response)
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    with patch("app.core.approval_handlers.run_board_advisory_analysis", return_value=None, create=True):
+        response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:live-contract-executor",
+            },
+        )
+
+    updated_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert updated_session is not None
+    run = repository.get_board_advisory_analysis_run(str(updated_session["latest_analysis_run_id"]))
+    assert run is not None
+    assert run["executor_mode"] == "LIVE_PROVIDER"
+
+
 def test_board_advisory_analysis_run_uses_live_mode_when_real_architect_and_default_provider_exist(client):
     workflow_id = "wf_advisory_analysis_live_default_provider"
     _ensure_scoped_workflow(
@@ -15883,8 +15966,86 @@ def test_board_advisory_analysis_run_uses_live_mode_when_real_architect_and_defa
     assert run["executor_mode"] == "LIVE_PROVIDER"
 
 
+def test_board_advisory_analysis_run_ignores_legacy_architect_target_binding_without_advisory_target(
+    client,
+):
+    workflow_id = "wf_advisory_analysis_legacy_architect_binding_only"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Advisory analysis should not treat the old architect target binding as the advisory live target.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    _seed_worker(
+        client,
+        employee_id="emp_cto_legacy_binding_only",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _assert_command_accepted(
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                role_bindings=[
+                    {
+                        "target_ref": EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
+                        "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                        "max_context_window_override": None,
+                        "reasoning_effort_override": None,
+                    }
+                ],
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:legacy-architect-binding-only",
+            ),
+        )
+    )
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Do not let the legacy architect target masquerade as the advisory target."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "The advisory target should be explicit.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:legacy-architect-binding-only",
+            },
+        )
+    _assert_command_accepted(enter_response)
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    with patch("app.core.approval_handlers.run_board_advisory_analysis", return_value=None, create=True):
+        response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:legacy-architect-binding-only",
+            },
+        )
+
+    updated_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert updated_session is not None
+    run = repository.get_board_advisory_analysis_run(str(updated_session["latest_analysis_run_id"]))
+    assert run is not None
+    assert run["executor_mode"] == "DETERMINISTIC"
+
+
 def test_board_advisory_analysis_run_stays_deterministic_without_real_architect_even_if_provider_binding_exists(
     client,
+    monkeypatch,
 ):
     workflow_id = "wf_advisory_analysis_deterministic_without_real_architect"
     _ensure_scoped_workflow(
@@ -15896,6 +16057,7 @@ def test_board_advisory_analysis_run_stays_deterministic_without_real_architect_
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
+    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
     _assert_command_accepted(
         client.post(
             "/api/v1/commands/runtime-provider-upsert",
@@ -15951,6 +16113,109 @@ def test_board_advisory_analysis_run_stays_deterministic_without_real_architect_
     run = repository.get_board_advisory_analysis_run(str(updated_session["latest_analysis_run_id"]))
     assert run is not None
     assert run["executor_mode"] == "DETERMINISTIC"
+
+
+def test_board_advisory_analysis_contract_mismatch_opens_incident_without_synthetic_fallback(
+    client,
+    monkeypatch,
+):
+    workflow_id = "wf_advisory_analysis_contract_mismatch"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="A real executor that does not satisfy the advisory contract should fail explicitly instead of falling back.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    _seed_worker(
+        client,
+        employee_id="emp_backend_advisory_contract_mismatch",
+        role_type="backend_engineer",
+        provider_id="",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr(
+        repository,
+        "list_employee_projections",
+        lambda **kwargs: [
+            {
+                "employee_id": "emp_backend_advisory_contract_mismatch",
+                "role_type": "backend_engineer",
+                "skill_profile_json": {},
+                "personality_profile_json": {},
+                "aesthetic_profile_json": {},
+                "provider_id": "",
+                "role_profile_refs": ["backend_engineer_primary"],
+                "state": "ACTIVE",
+                "board_approved": True,
+            }
+        ],
+    )
+    _assert_command_accepted(
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                role_bindings=[
+                    {
+                        "target_ref": "execution_target:board_advisory_analysis",
+                        "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                        "max_context_window_override": None,
+                        "reasoning_effort_override": None,
+                    }
+                ],
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:contract-mismatch",
+            ),
+        )
+    )
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Fail if only a contract-mismatched executor is available."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "Do not silently use the synthetic advisory executor when a real but incompatible worker exists.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:contract-mismatch",
+            },
+        )
+    _assert_command_accepted(enter_response)
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:contract-mismatch",
+        },
+    )
+
+    updated_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    open_incidents = [
+        item
+        for item in repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id and item["incident_type"] == "BOARD_ADVISORY_ANALYSIS_FAILED"
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert updated_session is not None
+    assert updated_session["status"] == "ANALYSIS_REJECTED"
+    assert updated_session["latest_analysis_status"] == "FAILED"
+    assert updated_session["latest_analysis_incident_id"] is not None
+    assert "contract" in str(updated_session["latest_analysis_error"] or "").lower()
+    assert updated_session["latest_patch_proposal_ref"] is None
+    assert len(open_incidents) == 1
 
 
 def test_board_advisory_analysis_live_provider_pause_opens_incident_without_deterministic_fallback(
@@ -16134,7 +16399,7 @@ def test_board_advisory_request_analysis_creates_patch_proposal_without_resolvin
     assert advisory_context["risk_alerts"]
 
 
-def test_board_advisory_request_analysis_accepts_add_node_patch_proposal(client):
+def test_board_advisory_request_analysis_accepts_add_node_patch_proposal(client, monkeypatch):
     workflow_id = "wf_modify_advisory_add_node"
     _ensure_scoped_workflow(
         client,
@@ -16145,6 +16410,7 @@ def test_board_advisory_request_analysis_accepts_add_node_patch_proposal(client)
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
+    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
 
     with _suppress_ceo_shadow_side_effects():
         enter_response = client.post(
@@ -16214,7 +16480,7 @@ def test_board_advisory_request_analysis_accepts_add_node_patch_proposal(client)
     assert advisory_session["latest_patch_proposal"]["add_nodes"][0]["node_id"] == "node_advisory_placeholder_build"
 
 
-def test_board_advisory_analysis_failure_opens_incident_and_rerun_recovery(client):
+def test_board_advisory_analysis_failure_opens_incident_and_rerun_recovery(client, monkeypatch):
     workflow_id = "wf_advisory_analysis_incident"
     _ensure_scoped_workflow(
         client,
@@ -16225,6 +16491,7 @@ def test_board_advisory_analysis_failure_opens_incident_and_rerun_recovery(clien
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
+    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
 
     with _suppress_ceo_shadow_side_effects():
         enter_response = client.post(
@@ -16420,7 +16687,7 @@ def test_board_advisory_apply_patch_resolves_approval_and_advances_graph_version
     )
 
 
-def test_board_advisory_apply_patch_accepts_add_node_placeholder_without_runtime_ready_pollution(client):
+def test_board_advisory_apply_patch_accepts_add_node_placeholder_without_runtime_ready_pollution(client, monkeypatch):
     workflow_id = "wf_advisory_apply_add_node"
     _ensure_scoped_workflow(
         client,
@@ -16431,6 +16698,8 @@ def test_board_advisory_apply_patch_accepts_add_node_placeholder_without_runtime
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
+    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
+    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
 
     with _suppress_ceo_shadow_side_effects():
         enter_response = client.post(
@@ -16690,6 +16959,7 @@ def test_board_advisory_apply_patch_rejects_synthetic_review_lane_targets(client
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
+    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
 
     with _suppress_ceo_shadow_side_effects():
         enter_response = client.post(

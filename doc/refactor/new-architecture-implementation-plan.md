@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 18:09`
+> 最后更新：`2026-04-16 19:08`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -727,6 +727,10 @@
 - [x] `P4-S4` 已完成第十一批：`graph_patch_reducer.py` 现已支持 graph-only placeholder node overlay；`add_node` 必须显式声明 parent/dependency，same-patch `edge_additions / edge_removals` 不能再拿来偷接 placeholder，坏 patch 继续显式失败并复用既有幂等恢复链
 - [x] `P4-S4` 已完成第十一批：`TicketGraph` 现在会物化 `is_placeholder=true / node_status=PLANNED / ticket_id=null / runtime_node_id=null` 的 placeholder node；`ready / blocked / in_flight` 继续只统计 ticket-backed node，placeholder 不再伪造 ticket 绑定
 - [x] `P4-S4` 已完成第十一批：历史 `add_node` 在真实 ticket 创建后现在会被 graph replay 显式吸收，不再把图重算炸成 `graph unavailable`；`GraphHealthReport` 的结构类规则也已纳入 placeholder，`affected_nodes` 不再回退到 placeholder `node_id` 伪装成 runtime node
+- [x] `P4-S4` 已完成第十二批：`board_advisory_analysis.py` 现已改成 advisory execution contract 驱动；新增独立 `execution_target:board_advisory_analysis`，真人 executor 改按 capability tags 选，旧的 `architect_primary + architect_governance_document` 直绑已退出核心判断
+- [x] `P4-S4` 已完成第十二批：advisory analysis 现在只在 advisory target 真正可解析时进入 `LIVE_PROVIDER`；命中 contract mismatch / selection missing / provider paused 时都会显式失败，并继续复用现有 `BOARD_ADVISORY_ANALYSIS_FAILED -> RERUN_BOARD_ADVISORY_ANALYSIS / RESTORE_ONLY`
+- [x] `P4-S4` 已完成第十二批：`graph_identity.py` 现已改成 `graph_contract.lane_kind` 优先；maker-checker review / rework 建票路径会显式写入 `graph_contract`，旧 taxonomy 只保留在单点 legacy adapter，不再散落到图内核判断
+- [x] `P4-S4` 已完成第十二批：新增 `backend/app/core/graph_health_policy.py`，`GraphHealth` 的 threshold / multiplier / timeline window / event whitelist / severity 现已集中配置；`build_graph_health_report()` 也已支持显式 `policy` 注入，graph health 内核回到“只读图、产出 finding”
 
 ### 未完成
 - [ ] graph-only `add_node / placeholder node` 已进入 `TicketGraph / GraphHealth / advisory patch` 主链；但还没进入 runtime `node_projection`、ticket-create 自动 materialization 或 graph-first placeholder lifecycle
@@ -747,6 +751,7 @@
 - [ ] `READY_BLOCKED_THRASHING` 这轮只按最近 `24` 条显式事件窗口做 `WARNING` 检测；如果后续要做更细的 blocker-source 分层、跨窗口趋势分析或自动升级 incident，必须单独扩正式规则，不回退到当前快照猜历史
 - [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
 - [ ] graph layer 这轮已完成 execution / review 双 lane identity；如果后续要继续拆 runtime `node_projection`、approval target 和 worker runtime 到 graph-first 双层真相，必须单独开切片，不能在现有 `P4-S4` 图层收口里偷渡
+- [ ] `graph_health_policy.py` 这轮虽然已经把策略常量抽离出内核，但 `QUEUE_STARVATION / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 仍继续读取 runtime ticket/node projection 的时间与 SLA 字段；如果下一轮还要继续瘦 graph 内核，应优先决定这批 runtime-liveness 规则是否拆到独立监视层
 
 ---
 
@@ -981,6 +986,21 @@
 `no`
 
 **状态：** `closed`
+
+### D-017
+**现象：**
+`graph_health.py` 这轮虽然已把 policy 常量外提到 `graph_health_policy.py`，但 `QUEUE_STARVATION / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 仍直接读取 runtime ticket/node projection 的 `updated_at / timeout_sla_sec / version`。`
+
+**影响：**
+`GraphHealth` 当前已经比之前更薄，但还没有完全退回“纯图结构读面”；如果后续继续把更多 scheduler / SLA 语义塞回这里，会再次把 graph 内核拉成 policy + runtime 混合层。`
+
+**当前处理：**
+`本轮先把策略常量和 severity 口径抽离成正式 `GraphHealthPolicy` 合同，不在现有切片里继续拆读面层级；下一轮如果继续瘦 graph 内核，优先决定这批 runtime-liveness 规则是否后移到独立监视层。`
+
+**是否需要改架构文档：**
+`no`
+
+**状态：** `open`
 
 ### D-016
 **现象：**
@@ -1925,6 +1945,40 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先决定 placeholder node 的 runtime materialization 是否拆成独立切片；runtime node_projection 的 graph-first 双层真相继续保持后置单独决策。`
 
+### Session `2026-04-16 / 30`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 `execution_targets.py` 新增正式 `execution_target:board_advisory_analysis`，把 advisory analysis 从 `architect_governance_document` 旧 target 里拆出来
+- [x] 把 `board_advisory_analysis.py` 收成 contract 驱动：真人 executor 改按 capability tags 选，compile worker binding / live provider selection / deterministic guard 现在共用同一套 execution plan
+- [x] 把 advisory analysis 的错误口径收正到 fail-closed：命中 contract mismatch / missing provider selection / provider paused 时现在都会显式失败，并复用现有幂等 incident / recovery
+- [x] 给 ticket create 合同新增最小 `graph_contract.lane_kind`；`graph_identity.py` 现已改成 contract 优先，maker-checker review / rework 建票路径也已显式写入 lane contract
+- [x] 新增 `backend/app/core/graph_health_policy.py`，把 `GraphHealth` 的 threshold / multiplier / window / event whitelist / severity 从内核文件抽离；`build_graph_health_report()` 现已支持显式 `policy` 注入
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory_analysis" -q` 通过（`8 passed, 312 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_identity or graph_health" -q` 通过（`24 passed, 16 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health or advisory" -q` 通过（`5 passed, 73 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/board_advisory_analysis.py backend/app/core/graph_identity.py backend/app/core/graph_health.py backend/app/core/graph_health_policy.py backend/app/core/execution_targets.py backend/tests/test_api.py backend/tests/test_ticket_graph.py backend/tests/test_ceo_scheduler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只收口 advisory execution contract、graph lane contract 和 graph health policy，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder node 仍只停在 graph-only 真相，还没进入 runtime `node_projection` 或自动建票 materialization
+- [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；graph-first 双层身份还没拆
+- [ ] `GraphHealth` 虽然已把 policy 常量外提，但 queue / stale / cross-version 这批 runtime-liveness finding 仍继续依赖 ticket/node projection 的时间与 SLA 字段
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先决定 GraphHealth 的 runtime-liveness 规则是否后移出 graph 内核；placeholder runtime materialization 和 runtime node_projection 双层真相继续保持后置单独决策。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1962,7 +2016,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第十一批已落地；graph-only `add_node / placeholder node` 现已进入正式 graph patch、ticket graph 和 graph health 主链，且继续坚持错误显式化与幂等恢复
-- 最近完成：`GraphPatchAddedNode`、placeholder overlay 和 `TicketGraph.is_placeholder` 已落地；历史 add-node 在真实 ticket 创建后会被显式吸收，placeholder finding 也不再伪装成 runtime node
-- 当前阻塞：placeholder node 仍只停在 graph-only 真相；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；same-patch placeholder-to-placeholder 接线与 review lane placeholder 还没进主链
-- 下一步：`继续从 P4-S4 续跑，优先决定 placeholder node 的 runtime materialization 是否拆成独立切片；runtime node_projection 的 graph-first 双层真相继续保持后置单独决策`
+- 当前状态：`P4-S4` 第十二批已落地；advisory analysis 已改成 execution contract 驱动，graph lane identity 已改成 `graph_contract` 优先，GraphHealth policy 也已从内核文件抽离成正式合同
+- 最近完成：`execution_target:board_advisory_analysis`、`graph_contract.lane_kind` 和 `GraphHealthPolicy` 已落地；advisory analysis 的 contract mismatch / selection missing / provider paused 也已全部收正成显式失败
+- 当前阻塞：placeholder node 仍只停在 graph-only 真相；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；`GraphHealth` 的 queue / stale / cross-version finding 仍继续依赖 runtime projection 时间与 SLA 字段
+- 下一步：`继续从 P4-S4 续跑，优先决定 GraphHealth 的 runtime-liveness 规则是否后移出 graph 内核；placeholder runtime materialization 和 runtime node_projection 双层真相继续保持后置单独决策`

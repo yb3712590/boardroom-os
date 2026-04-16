@@ -4248,10 +4248,11 @@ def test_ceo_shadow_projection_route_exposes_execution_fields(client, monkeypatc
     assert payload["executed_actions"][0]["execution_status"] == "EXECUTED"
 
 
-def test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision(client):
+def test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision(client, monkeypatch):
     workflow_id = "wf_ceo_advisory_snapshot"
     _seed_workflow(client, workflow_id, "CEO advisory snapshot")
     approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
+    monkeypatch.setattr(client.app.state.repository, "list_employee_projections", lambda **kwargs: [])
 
     with api_test_helpers._suppress_ceo_shadow_side_effects():
         modify_response = client.post(
@@ -4328,10 +4329,11 @@ def test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision(client):
     ]
 
 
-def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client):
+def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client, monkeypatch):
     workflow_id = "wf_ceo_advisory_prompt"
     _seed_workflow(client, workflow_id, "CEO advisory prompt")
     approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
+    monkeypatch.setattr(client.app.state.repository, "list_employee_projections", lambda **kwargs: [])
 
     with api_test_helpers._suppress_ceo_shadow_side_effects():
         modify_response = client.post(
@@ -4394,10 +4396,11 @@ def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client):
     assert "Treat this advisory decision as the new execution baseline." in prompt
 
 
-def test_ceo_shadow_snapshot_exposes_full_timeline_archive_refs_for_applied_advisory_session(client):
+def test_ceo_shadow_snapshot_exposes_full_timeline_archive_refs_for_applied_advisory_session(client, monkeypatch):
     workflow_id = "wf_ceo_advisory_timeline_refs"
     _seed_workflow(client, workflow_id, "CEO advisory timeline refs")
     approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
+    monkeypatch.setattr(client.app.state.repository, "list_employee_projections", lambda **kwargs: [])
 
     with api_test_helpers._suppress_ceo_shadow_side_effects():
         modify_response = client.post(

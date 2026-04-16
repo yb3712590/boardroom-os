@@ -12,6 +12,7 @@ from app.core.output_schemas import (
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
+    GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     MILESTONE_PLAN_SCHEMA_REF,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
@@ -30,6 +31,7 @@ EXECUTION_TARGET_PLATFORM_BUILD = "execution_target:platform_build"
 EXECUTION_TARGET_FRONTEND_GOVERNANCE_DOCUMENT = "execution_target:frontend_governance_document"
 EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT = "execution_target:architect_governance_document"
 EXECUTION_TARGET_CTO_GOVERNANCE_DOCUMENT = "execution_target:cto_governance_document"
+EXECUTION_TARGET_BOARD_ADVISORY_ANALYSIS = "execution_target:board_advisory_analysis"
 EXECUTION_TARGET_CHECKER_DELIVERY_CHECK = "execution_target:checker_delivery_check"
 EXECUTION_TARGET_CHECKER_MAKER_CHECKER = "execution_target:checker_maker_checker"
 EXECUTION_TARGET_FRONTEND_REVIEW = "execution_target:frontend_review"
@@ -51,7 +53,7 @@ _CTO_GOVERNANCE_DOCUMENT_SCHEMA_REFS = (
 @dataclass(frozen=True)
 class ExecutionTargetDefinition:
     execution_target_ref: str
-    role_profile_ref: str
+    role_profile_ref: str | None
     output_schema_ref: str
     required_capability_tags: tuple[RuntimeProviderCapabilityTag, ...]
     label: str
@@ -119,6 +121,16 @@ EXECUTION_TARGET_DEFINITIONS = (
             label="CTO Governance Document",
         )
         for output_schema_ref in _CTO_GOVERNANCE_DOCUMENT_SCHEMA_REFS
+    ),
+    ExecutionTargetDefinition(
+        execution_target_ref=EXECUTION_TARGET_BOARD_ADVISORY_ANALYSIS,
+        role_profile_ref=None,
+        output_schema_ref=GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
+        required_capability_tags=(
+            RuntimeProviderCapabilityTag.STRUCTURED_OUTPUT,
+            RuntimeProviderCapabilityTag.PLANNING,
+        ),
+        label="Board Advisory Analysis",
     ),
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_FRONTEND_BUILD,
@@ -205,6 +217,7 @@ EXECUTION_TARGET_DEFINITIONS = (
 _EXECUTION_TARGET_BY_COMBO = {
     (definition.role_profile_ref, definition.output_schema_ref): definition
     for definition in EXECUTION_TARGET_DEFINITIONS
+    if definition.role_profile_ref is not None
 }
 _EXECUTION_TARGET_BY_REF = {
     definition.execution_target_ref: definition for definition in EXECUTION_TARGET_DEFINITIONS
@@ -283,6 +296,17 @@ def infer_execution_contract_payload(
     }
 
 
+def build_execution_contract_payload_for_target(execution_target_ref: str | None) -> dict[str, Any] | None:
+    definition = get_execution_target_definition_by_ref(execution_target_ref)
+    if definition is None:
+        return None
+    return {
+        "execution_target_ref": definition.execution_target_ref,
+        "required_capability_tags": [tag.value for tag in definition.required_capability_tags],
+        "runtime_contract_version": EXECUTION_CONTRACT_VERSION,
+    }
+
+
 def resolve_execution_target_ref_from_ticket_spec(created_spec: dict[str, Any] | None) -> str | None:
     if not isinstance(created_spec, dict):
         return None
@@ -307,7 +331,7 @@ def resolve_execution_target_ref_from_ticket_spec(created_spec: dict[str, Any] |
 
 def legacy_target_refs_for_execution_target(execution_target_ref: str | None) -> tuple[str, ...]:
     definition = get_execution_target_definition_by_ref(execution_target_ref)
-    if definition is None:
+    if definition is None or definition.role_profile_ref is None:
         return ()
     return (f"role_profile:{definition.role_profile_ref}",)
 
@@ -328,6 +352,39 @@ def employee_capability_tag_values(employee: dict[str, Any] | None) -> set[str]:
         for capability_tag in _ROLE_PROFILE_CAPABILITY_TAGS.get(str(role_profile_ref), ()):
             tag_values.add(capability_tag.value)
     return tag_values
+
+
+def role_profile_capability_tag_values(role_profile_ref: str | None) -> set[str]:
+    return {
+        tag.value
+        for tag in _ROLE_PROFILE_CAPABILITY_TAGS.get(str(role_profile_ref or "").strip(), ())
+    }
+
+
+def pick_employee_role_profile_for_execution_contract(
+    *,
+    employee: dict[str, Any] | None,
+    execution_contract: dict[str, Any] | None,
+) -> str | None:
+    if not isinstance(employee, dict):
+        return None
+    required_tag_values = {
+        str(tag.value if hasattr(tag, "value") else tag)
+        for tag in (execution_contract or {}).get("required_capability_tags") or []
+    }
+    if not required_tag_values:
+        required_tag_values = execution_target_capability_tag_values(
+            (execution_contract or {}).get("execution_target_ref")
+        )
+    role_profile_refs = [
+        str(role_profile_ref).strip()
+        for role_profile_ref in employee.get("role_profile_refs") or []
+        if str(role_profile_ref).strip()
+    ]
+    for role_profile_ref in role_profile_refs:
+        if required_tag_values.issubset(role_profile_capability_tag_values(role_profile_ref)):
+            return role_profile_ref
+    return role_profile_refs[0] if role_profile_refs else None
 
 
 def employee_supports_execution_contract(

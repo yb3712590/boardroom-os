@@ -502,6 +502,80 @@ def test_ticket_graph_snapshot_assigns_graph_identity_lanes_for_shared_runtime_n
     assert review_edge.target_runtime_node_id == shared_node_id
 
 
+def test_ticket_graph_snapshot_uses_graph_contract_review_lane_without_taxonomy_keywords(client):
+    workflow_id = "wf_ticket_graph_contract_review_lane"
+    node_id = "node_contract_review_lane"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph identity should trust graph_contract lane_kind before old taxonomy keywords.",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_contract_review_lane",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_contract_review_lane",
+                node_id=node_id,
+                role_profile_ref="frontend_engineer_primary",
+                output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                delivery_stage="CHECK",
+            ),
+            "graph_contract": {
+                "lane_kind": "review",
+            },
+        },
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    node_by_graph_id = {node.graph_node_id: node for node in snapshot.nodes}
+
+    assert f"{node_id}::review" in node_by_graph_id
+    assert node_by_graph_id[f"{node_id}::review"].graph_lane_kind == "review"
+
+
+def test_ticket_graph_snapshot_prefers_graph_contract_execution_lane_over_review_taxonomy(client):
+    workflow_id = "wf_ticket_graph_contract_execution_lane"
+    node_id = "node_contract_execution_lane"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph identity should keep execution lane when graph_contract says execution.",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_contract_execution_lane",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_contract_execution_lane",
+                node_id=node_id,
+                role_profile_ref="checker_primary",
+                output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+                delivery_stage="CHECK",
+            ),
+            "ticket_kind": "MAKER_CHECKER_REVIEW",
+            "graph_contract": {
+                "lane_kind": "execution",
+            },
+        },
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    node_by_graph_id = {node.graph_node_id: node for node in snapshot.nodes}
+
+    assert node_id in node_by_graph_id
+    assert f"{node_id}::review" not in node_by_graph_id
+    assert node_by_graph_id[node_id].graph_lane_kind == "execution"
+
+
 def test_ticket_graph_snapshot_collapses_rework_back_to_execution_lane(client):
     workflow_id = "wf_ticket_graph_shared_runtime_rework"
     shared_node_id = "node_shared_runtime_rework"
@@ -2015,6 +2089,61 @@ def test_graph_health_report_does_not_flag_ready_node_stale_within_sla(client, m
     finding_types = [
         item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
     ]
+
+    assert "READY_NODE_STALE" not in finding_types
+
+
+def test_graph_health_report_uses_policy_override_for_ready_node_stale_threshold(client, monkeypatch):
+    workflow_id = "wf_graph_health_policy_override_ready_node_stale"
+    ticket_id = "tkt_graph_health_policy_override_ready_node_stale"
+    node_id = "node_graph_health_policy_override_ready_node_stale"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health policy override should drive ready-node stale behavior.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", ticket_id),
+        )
+
+    import importlib
+
+    graph_health_policy_module = importlib.import_module("app.core.graph_health_policy")
+    policy = graph_health_policy_module.DEFAULT_GRAPH_HEALTH_POLICY.model_copy(
+        update={
+            "ready_node_stale_multiplier": 7,
+        }
+    )
+
+    report = graph_health_module.build_graph_health_report(
+        repository,
+        workflow_id,
+        policy=policy,
+    )
+    finding_types = [item.finding_type for item in report.findings]
 
     assert "READY_NODE_STALE" not in finding_types
 
