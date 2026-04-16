@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 13:05`
+> 最后更新：`2026-04-16 14:21`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -706,9 +706,17 @@
 - [x] `P4-S4` 已完成第五批：`SOURCE_CODE_DELIVERY` 过程资产现已补 `source_paths / written_paths / module_paths / document_surfaces`；`ProjectMapSlice` 会逐票优先消费这层结构化真相，legacy / 非 workspace-managed 代码票只有在本票缺稳定路径时才回退到本票自己的 `allowed_write_set`
 - [x] `P4-S4` 已完成第五批：`ProjectMapSlice` 已删除按 `artifact_index.logical_path` 扫全票路径的旧兼容，不再把 runtime JSON、日志或证据路径混成模块地图
 - [x] `P4-S4` 已完成第五批：`GraphHealthReport` 已补第二批规则 `BOTTLENECK_DETECTED / ORPHAN_SUBGRAPH / FREEZE_SPREAD_TOO_WIDE`；`CRITICAL_PATH_TOO_DEEP` 现在也已改成正式 `PARENT_OF + DEPENDS_ON` DAG 口径
+- [x] `P4-S4` 已完成第六批：`GraphHealthReport` 现已补第三批时间线规则 `GRAPH_THRASHING / READY_NODE_STALE`；前者只认真实 `GRAPH_PATCH_APPLIED` 事件，后者只认 ready ticket 的 `updated_at / timeout_sla_sec`
+- [x] `P4-S4` 已完成第六批：`graph_health.py` 新增正式 `GraphHealthUnavailableError`；graph patch payload 非对象、patch node list 非 `list[str]`、ready ticket 缺 `updated_at / timeout_sla_sec` 时现在都会显式失败，不再静默跳过
+- [x] `P4-S4` 已完成第六批：`resolve_workflow_graph_version()` 已删掉对完整事件 payload 转换的旧兼容依赖，改成只按 `workflow_id + event_type + sequence_no` 取最新 graph mutation，避免坏 payload 污染 graph version 真相
+- [x] `P4-S4` 已完成第六批：`is_ticket_graph_unavailable_error()` 现已显式识别 `GraphHealthUnavailableError`；`workflow_auto_advance / trigger_ceo_shadow_with_recovery` 命中这类 graph health 坏时间线时会继续复用 `TICKET_GRAPH_UNAVAILABLE -> REBUILD_TICKET_GRAPH / RESTORE_ONLY`
+- [x] `P4-S4` 已完成第七批：advisory analysis live gate 已从“只认员工 `provider_id`”的旧兼容推导，收口到“真实 board-approved architect + 正式 runtime provider 选路”；`role_binding / ceo_binding_inheritance / default_provider` 命中时都可进入 `LIVE_PROVIDER`
+- [x] `P4-S4` 已完成第七批：`board_advisory_analysis.py` 现已补单点 `execution plan` helper；run 创建、compile worker binding 和 live 执行现在共用同一套 executor / provider selection 真相，不再各自二次猜测
+- [x] `P4-S4` 已完成第七批：advisory analysis live mode 命中 `no real architect / no live provider selection / provider paused` 时现在都会显式失败，并继续走现有 `BOARD_ADVISORY_ANALYSIS_FAILED -> RERUN_BOARD_ADVISORY_ANALYSIS / RESTORE_ONLY` 幂等恢复链，不再隐式降回 deterministic
 
 ### 未完成
-- [ ] `GraphHealthReport` 仍未补 `GRAPH_THRASHING / READY_NODE_STALE` 这类依赖额外时间序列或调度 SLA 真相的规则
+- [ ] advisory graph patch engine 仍只支持 `freeze / unfreeze / focus`；`REPLACES`、增删节点和增删边还没进入正式 patch 合同
+- [ ] `GraphHealthReport` 当前已到第三批时间线规则，但 queue starvation、多次 ready/blocked 往返和跨版本调度 SLA 还没进入主链
 
 ### 明确放弃
 - [ ] 暂无
@@ -720,8 +728,8 @@
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
 - [ ] advisory graph patch engine 这轮只落第一版 `freeze / unfreeze / focus`；`REPLACES`、增删节点和增删边仍未进入主链
-- [ ] `GraphHealthReport` 当前第二批只补了静态结构规则；`GRAPH_THRASHING / READY_NODE_STALE` 这类要依赖版本时间线或调度 SLA 真相的规则还没进主链
-- [ ] advisory analysis 当前只在存在 board-approved architect 且该员工显式绑定 `provider_id` 时切到 `LIVE_PROVIDER`；如果后续要放宽到纯 role-binding live analysis，需要单独锁定“谁为 advisory analysis provider 选路背书”的边界
+- [ ] `GraphHealthReport` 第三批现已只读 `GRAPH_PATCH_APPLIED` 和 ready ticket `updated_at / timeout_sla_sec`；更细的 queue starvation、多次 ready/blocked 往返和跨版本调度 SLA 还没进入主链
+- [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
 
 ---
 
@@ -936,6 +944,21 @@
 
 **当前处理：**
 `已按 fail-closed 收口：`SOURCE_CODE_DELIVERY` 过程资产现在会稳定写 `source_paths / written_paths / module_paths / document_surfaces`，`ProjectMapSlice` 逐票优先消费这层真相；只有本票完全缺稳定路径时，才退回本票自己的 `allowed_write_set`，且已删除 `artifact_index.logical_path` 扫描这条污染地图的旧兼容。`
+
+**是否需要改架构文档：**
+`no`
+
+**状态：** `closed`
+
+### D-015
+**现象：**
+`advisory analysis` 的 live mode 之前只认 board-approved architect 员工卡上的显式 `provider_id`；即使 runtime provider center 已经给 `architect` target、CEO 继承链或 default provider 配好了 live provider，这条分析链也会被硬压回 deterministic。`
+
+**影响：**
+`P4-S4` 的 advisory analysis 虽然已经有正式 `CompiledExecutionPackage` 和 incident / recovery 主链，但 live provider 入口被旧兼容字段绑死；这会让 provider center 真相和 advisory analysis 真相分叉，也会把 “provider paused / selection missing” 这类运行时问题继续伪装成 deterministic 成功。`
+
+**当前处理：**
+`已在 2026-04-16 收口：advisory analysis live gate 现已改成“真实 board-approved architect + 正式 runtime provider 选路”；run 创建、compile worker binding 和 live 执行共用单点 execution plan helper；synthetic architect 不再解锁 live，live 命中 no real architect / no selection / provider paused 时也会显式失败并继续走现有幂等 incident / recovery。`
 
 **是否需要改架构文档：**
 `no`
@@ -1674,6 +1697,66 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先决定第三批 GraphHealth 是否补版本时间线规则，或单独收 advisory analysis 的 live provider 选路边界。`
 
+### Session `2026-04-16 / 24`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 `GraphHealthReport` 补第三批时间线规则：新增 `GRAPH_THRASHING / READY_NODE_STALE`；前者只读真实 `GRAPH_PATCH_APPLIED`，后者只读 ready ticket `updated_at / timeout_sla_sec`
+- [x] 给 `graph_health.py` 新增正式 `GraphHealthUnavailableError`，把 graph patch payload 非对象、patch node list 非 `list[str]`、ready ticket 缺 `updated_at / timeout_sla_sec` 收成显式异常，不再静默 fallback
+- [x] 删掉 `resolve_workflow_graph_version()` 对完整事件 payload 转换的旧依赖，改成按 graph mutation event 的 `sequence_no` 直接解 graph version，避免坏 payload 污染 graph version 真相
+- [x] 把 `GraphHealthUnavailableError` 接进 `is_ticket_graph_unavailable_error()`；`workflow_auto_advance / trigger_ceo_shadow_with_recovery` 现在会继续复用 `TICKET_GRAPH_UNAVAILABLE` 恢复链
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q` 通过（`13 passed, 6 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health_critical or incident_detail or ticket_graph_unavailable" -q` 通过（`5 passed, 303 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health or ticket_graph_unavailable" -q` 通过（`2 passed, 75 deselected`）
+- [x] `python -m py_compile backend/app/core/graph_health.py backend/app/core/ceo_scheduler.py backend/app/core/versioning.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] advisory analysis 的 live provider 选路当前仍只在 board-approved architect 显式绑定 `provider_id` 时启用
+- [ ] advisory graph patch engine 仍只支持 `freeze / unfreeze / focus`；`REPLACES`、增删节点和增删边还没进主链
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先单独收 advisory analysis 的 live provider 选路边界，再决定是否继续扩更细的 GraphHealth 调度时间线规则。`
+
+### Session `2026-04-16 / 25`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 删除 advisory analysis live gate 对员工 `provider_id` 的旧兼容依赖，收口到“真实 board-approved architect + 正式 runtime provider 选路”
+- [x] 给 `board_advisory_analysis.py` 补单点 `execution plan` helper；run 创建、compile worker binding 和 live 执行现在共用同一套 executor / selection 真相
+- [x] 把 advisory analysis live mode 的失败口径收正到显式错误：`no real architect / no live provider selection / provider paused` 都会直接失败并继续走既有幂等 incident / recovery
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "advisory_analysis_run_uses_live_mode or advisory_analysis_run_stays_deterministic_without_real_architect or advisory_analysis_live_provider_pause_opens_incident_without_deterministic_fallback" -q` 通过（`4 passed, 308 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory and analysis" -q` 通过（`7 passed, 305 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/board_advisory_analysis.py backend/tests/test_api.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] advisory graph patch engine 仍只支持 `freeze / unfreeze / focus`
+- [ ] `GraphHealthReport` 更细的 queue starvation、多次 ready/blocked 往返和跨版本调度 SLA 还没进入主链
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先补 advisory graph patch engine 第二版，把 REPLACES / 增删节点 / 增删边收成正式 patch 合同。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1711,7 +1794,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第五批已落地；legacy / 非 workspace-managed `source_code_delivery` 的 `ProjectMapSlice` 已收成逐票结构化真相，artifact 路径污染也已清掉
-- 最近完成：`SOURCE_CODE_DELIVERY` 资产已补 `source_paths / written_paths / module_paths / document_surfaces`；`GraphHealthReport` 第二批 `BOTTLENECK_DETECTED / ORPHAN_SUBGRAPH / FREEZE_SPREAD_TOO_WIDE` 也已进正式主链，`CRITICAL_PATH_TOO_DEEP` 已切到 DAG 口径
-- 当前阻塞：`GraphHealthReport` 还没补 `GRAPH_THRASHING / READY_NODE_STALE` 这类时间序列规则；advisory analysis live 选路当前仍只在 board-approved architect 显式绑 `provider_id` 时启用
-- 下一步：`继续从 P4-S4 续跑，优先决定第三批 GraphHealth 是否补版本时间线规则，或单独收 advisory analysis 的 live provider 选路边界`
+- 当前状态：`P4-S4` 第七批已落地；advisory analysis live gate 已收口到真实 architect + 正式 runtime provider 选路，旧 `employee.provider_id` 兼容已退出主链
+- 最近完成：`board_advisory_analysis.py` 已补单点 execution plan helper；role binding / CEO 继承 / default provider 都可为真实 architect advisory analysis 解 live，paused provider 也会显式失败并继续走既有 recovery
+- 当前阻塞：advisory graph patch engine 仍只支持 `freeze / unfreeze / focus`；更细的 `GraphHealthReport` 调度时间线规则还没进主链
+- 下一步：`继续从 P4-S4 续跑，优先补 advisory graph patch engine 第二版，把 REPLACES / 增删节点 / 增删边收成正式 patch 合同`

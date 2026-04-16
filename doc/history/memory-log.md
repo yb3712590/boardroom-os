@@ -21,6 +21,19 @@
 
 ## Recent Memory
 
+### 2026-04-16
+
+- `P4-S4` 这轮已完成第七批：advisory analysis live gate 已从员工 `provider_id` 旧兼容收口到“真实 board-approved architect + 正式 runtime provider 选路”；`role_binding / ceo_binding_inheritance / default_provider` 命中时都可为真实 architect advisory analysis 解 live
+- `board_advisory_analysis.py` 这轮已补单点 `execution plan` helper；run 创建、compile worker binding 和 live 执行现在共用同一套 executor / provider selection 真相，synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`
+- advisory analysis live mode 这轮已把 `no real architect / no live provider selection / provider paused` 都收成显式失败；不会再偷偷降回 deterministic，而是继续走现有 `BOARD_ADVISORY_ANALYSIS_FAILED -> RERUN_BOARD_ADVISORY_ANALYSIS / RESTORE_ONLY`
+- 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "advisory_analysis_run_uses_live_mode or advisory_analysis_run_stays_deterministic_without_real_architect or advisory_analysis_live_provider_pause_opens_incident_without_deterministic_fallback" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory and analysis" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/board_advisory_analysis.py backend/tests/test_api.py`
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先补 advisory graph patch engine 第二版，把 `REPLACES / 增删节点 / 增删边` 收成正式 patch 合同
+- `P4-S4` 这轮已完成第六批：`GraphHealthReport` 现已补第三批时间线规则 `GRAPH_THRASHING / READY_NODE_STALE`；前者只读真实 `GRAPH_PATCH_APPLIED`，后者只读 ready ticket `updated_at / timeout_sla_sec`，不再从 advisory session 时间、incident 时间或文档正文反推图时间线
+- `graph_health.py` 这轮新增正式 `GraphHealthUnavailableError`；graph patch payload 非对象、patch node list 非 `list[str]`、ready ticket 缺 `updated_at / timeout_sla_sec` 时会显式失败，不再静默跳过或隐式 fallback
+- `resolve_workflow_graph_version()` 这轮已删掉对完整事件 payload 转换的旧依赖，改成按 `workflow_id + graph mutation event + sequence_no` 直接取最新 graph version；坏 payload 不再顺带污染 graph version 主链
+- `is_ticket_graph_unavailable_error()` 这轮已显式识别 `GraphHealthUnavailableError`；`workflow_auto_advance / trigger_ceo_shadow_with_recovery` 命中这类 graph health 坏时间线时，会继续复用 `TICKET_GRAPH_UNAVAILABLE -> REBUILD_TICKET_GRAPH / RESTORE_ONLY`
+- 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health_critical or incident_detail or ticket_graph_unavailable" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health or ticket_graph_unavailable" -q`、`python -m py_compile backend/app/core/graph_health.py backend/app/core/ceo_scheduler.py backend/app/core/versioning.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py`
+
 ### 2026-04-15
 
 - `P3-S1` 这轮已完成：`GovernanceProfile` 现已补齐 `auto_approval_scope / expert_review_targets / audit_materialization_policy`，`project-init` 会稳定写默认治理档位；`CompileRequest / CompiledExecutionPackage` 也已显式带 `governance_profile_ref / governance_mode_slice / task_frame / required_doc_surfaces / context_layer_summary`

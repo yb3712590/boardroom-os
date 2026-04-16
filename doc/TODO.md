@@ -60,6 +60,9 @@
 - 2026-04-15 本轮已把 `closeout / approval` 历史 API 桶改成显式 manual chain：`scope approval -> build maker/checker -> check maker/checker -> review maker/checker -> final review -> closeout maker/checker`，不再把旧的 `VISUAL_MILESTONE` 快捷链写成当前真相
 - synthetic manual `scope review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这条链现在只验证 ticket/node/artifact/process-asset 真相，dashboard completion summary 继续由 autopilot / closeout 专项测试覆盖
 - 2026-04-14 额外复验 `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "employee_freeze_containment_opens_staffing_incident_for_executing_ticket" -q` 时，`project-init` workflow 仍会多带一条旧的 provider / auto-advance incident；当前先继续留给 runtime/provider 历史测试收口
+- 2026-04-16 本轮已落 `P4-S4` 第六批：`GraphHealthReport` 现已补第三批时间线规则 `GRAPH_THRASHING / READY_NODE_STALE`；前者只读真实 `GRAPH_PATCH_APPLIED`，后者只读 ready ticket `updated_at / timeout_sla_sec`，不再靠 advisory session 时间或其他文档侧信号猜时间线
+- 2026-04-16 本轮还补了显式 `GraphHealthUnavailableError`：graph patch payload 非对象、patch node list 非 `list[str]`、ready ticket 缺 `updated_at / timeout_sla_sec` 时现在会显式失败；`workflow_auto_advance / trigger_ceo_shadow_with_recovery` 继续复用 `TICKET_GRAPH_UNAVAILABLE`
+- 2026-04-16 本轮顺手删掉了 `resolve_workflow_graph_version()` 对完整事件 payload 转换的旧依赖，改成只按 graph mutation event 的 `sequence_no` 取最新 graph version，避免坏 payload 污染 graph version 真相
 
 ## 当前批次
 
@@ -121,8 +124,11 @@
 - 2026-04-16 本轮已完成 `P4-S4` 第五批：`SOURCE_CODE_DELIVERY` 过程资产现已显式带 `source_paths / written_paths / module_paths / document_surfaces`；`ProjectMapSlice` 会逐票优先消费这层结构化真相，legacy / 非 workspace-managed 代码票仅在本票缺稳定路径时才回退到自己的 `allowed_write_set`
 - 2026-04-16 本轮还把 `ProjectMapSlice` 的旧兼容收掉：artifact `logical_path` 不再参与模块地图推导，runtime JSON、日志和证据路径不会再污染 `module_paths`
 - 2026-04-16 本轮还把 `GraphHealthReport` 补到第二批：新增 `BOTTLENECK_DETECTED / ORPHAN_SUBGRAPH / FREEZE_SPREAD_TOO_WIDE`，并把 `CRITICAL_PATH_TOO_DEEP` 收正到正式 `PARENT_OF + DEPENDS_ON` DAG 口径
+- 2026-04-16 本轮已完成 `P4-S4` 第七批：advisory analysis live gate 已从员工 `provider_id` 旧兼容收口到“真实 board-approved architect + 正式 runtime provider 选路”；`role_binding / ceo_binding_inheritance / default_provider` 命中时都可进入 `LIVE_PROVIDER`
+- 2026-04-16 本轮还把 `board_advisory_analysis.py` 收成单点 `execution plan` helper；run 创建、compile worker binding 和 live 执行现在共用同一套 executor / provider selection 真相，synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`
+- 2026-04-16 本轮已补 fresh 验证：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "board_advisory and analysis" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/board_advisory_analysis.py backend/tests/test_api.py` 都已通过；paused provider 现在也会显式失败并继续走既有 `BOARD_ADVISORY_ANALYSIS_FAILED` recovery
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮如果继续推进新架构重构，优先决定第三批 `GraphHealthReport` 是否补版本时间线规则，或单独收 advisory analysis 的 live provider 选路边界；仍不碰 `doc/new-architecture/**`
+- 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先补 advisory graph patch engine 第二版，把 `REPLACES / 增删节点 / 增删边` 收成正式 patch 合同；仍不碰 `doc/new-architecture/**`
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

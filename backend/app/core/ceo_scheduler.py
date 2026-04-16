@@ -10,6 +10,7 @@ from app.core.ceo_proposer import (
     build_no_action_batch,
     propose_ceo_action_batch,
 )
+from app.core.graph_health import GraphHealthUnavailableError
 from app.core.ceo_prompts import CEO_SHADOW_PROMPT_VERSION
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_snapshot_contracts import controller_state_view
@@ -39,6 +40,8 @@ class CeoShadowPipelineError(RuntimeError):
 
 
 def is_ticket_graph_unavailable_error(error: Exception) -> bool:
+    if isinstance(error, GraphHealthUnavailableError):
+        return True
     message = str(error).strip().lower()
     return "graph" in message and "unavailable" in message
 

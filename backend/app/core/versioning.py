@@ -133,17 +133,21 @@ def resolve_workflow_graph_version(
     *,
     connection: "sqlite3.Connection" | None = None,
 ) -> str:
+    event_type_placeholders = ", ".join("?" for _ in _GRAPH_MUTATION_EVENTS)
+    params = [workflow_id, *_GRAPH_MUTATION_EVENTS]
+    query = (
+        "SELECT sequence_no FROM events "
+        "WHERE workflow_id = ? "
+        f"AND event_type IN ({event_type_placeholders}) "
+        "ORDER BY sequence_no DESC "
+        "LIMIT 1"
+    )
     if connection is not None:
-        events = repository.list_all_events(connection)
+        row = connection.execute(query, params).fetchone()
     else:
         repository.initialize()
         with repository.connection() as owned_connection:
-            events = repository.list_all_events(owned_connection)
-
-    for event in reversed(events):
-        if event.get("workflow_id") != workflow_id:
-            continue
-        if str(event.get("event_type") or "") not in _GRAPH_MUTATION_EVENTS:
-            continue
-        return build_graph_version(int(event["sequence_no"]))
+            row = owned_connection.execute(query, params).fetchone()
+    if row is not None:
+        return build_graph_version(int(row["sequence_no"]))
     raise ValueError(f"Workflow {workflow_id} has no graph version because no graph events were found.")

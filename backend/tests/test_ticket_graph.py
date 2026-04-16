@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
+import app.core.graph_health as graph_health_module
 from app.contracts.advisory import BoardAdvisorySession
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.output_schemas import (
@@ -46,6 +48,52 @@ def _seed_ticket_created_event(
             occurred_at=datetime.fromisoformat(occurred_at),
         )
         repository.refresh_projections(connection)
+
+
+def _seed_graph_patch_applied_event(
+    client,
+    *,
+    workflow_id: str,
+    patch_index: int,
+    freeze_node_ids: list[str],
+    unfreeze_node_ids: list[str] | None = None,
+    focus_node_ids: list[str] | None = None,
+    payload_override=None,
+    occurred_at: str | None = None,
+) -> None:
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="GRAPH_PATCH_APPLIED",
+            actor_type="board",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-graph-patch-applied:{workflow_id}:{patch_index}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=(
+                payload_override
+                if payload_override is not None
+                else {
+                    "patch_ref": f"pa://graph-patch/{workflow_id}@{patch_index}",
+                    "workflow_id": workflow_id,
+                    "session_id": f"adv_graph_patch_{patch_index}",
+                    "proposal_ref": f"pa://graph-patch-proposal/{workflow_id}@{patch_index}",
+                    "base_graph_version": f"gv_{patch_index}",
+                    "freeze_node_ids": list(freeze_node_ids),
+                    "unfreeze_node_ids": list(unfreeze_node_ids or []),
+                    "focus_node_ids": list(focus_node_ids or freeze_node_ids),
+                    "reason_summary": "Seed graph patch event for graph health coverage.",
+                    "patch_hash": f"hash-{workflow_id}-{patch_index}",
+                }
+            ),
+            occurred_at=datetime.fromisoformat(
+                occurred_at or f"2026-04-16T20:0{patch_index}:00+08:00"
+            ),
+        )
+        if payload_override is None or isinstance(payload_override, dict):
+            repository.refresh_projections(connection)
 
 
 def test_ticket_graph_snapshot_builds_parent_dependency_and_review_edges(client):
@@ -632,6 +680,296 @@ def test_graph_health_report_detects_freeze_spread_too_wide(client):
 
     assert finding["affected_nodes"] == ["node_graph_health_freeze_target"]
     assert finding["metric_value"] == 1
+
+
+def test_graph_health_report_detects_graph_thrashing(client):
+    workflow_id = "wf_graph_health_thrashing"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose repeated graph patch churn.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_thrashing_target",
+        node_id="node_graph_health_thrashing_target",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    for patch_index in range(1, 5):
+        _seed_graph_patch_applied_event(
+            client,
+            workflow_id=workflow_id,
+            patch_index=patch_index,
+            freeze_node_ids=["node_graph_health_thrashing_target"],
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-thrashing",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "GRAPH_THRASHING"
+    )
+
+    assert report["overall_health"] == "CRITICAL"
+    assert finding["affected_nodes"] == ["node_graph_health_thrashing_target"]
+    assert finding["metric_value"] == 4
+
+
+def test_graph_health_report_does_not_flag_graph_thrashing_below_threshold(client):
+    workflow_id = "wf_graph_health_thrashing_below_threshold"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should ignore low patch churn.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_thrashing_low",
+        node_id="node_graph_health_thrashing_low",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    for patch_index in range(1, 4):
+        _seed_graph_patch_applied_event(
+            client,
+            workflow_id=workflow_id,
+            patch_index=patch_index,
+            freeze_node_ids=["node_graph_health_thrashing_low"],
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-thrashing-below-threshold",
+    )
+
+    finding_types = [
+        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    ]
+
+    assert "GRAPH_THRASHING" not in finding_types
+
+
+def test_graph_health_report_detects_ready_node_stale(client, monkeypatch):
+    workflow_id = "wf_graph_health_ready_node_stale"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose stale ready nodes.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_stale_ready",
+        node_id="node_graph_health_stale_ready",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", "tkt_graph_health_stale_ready"),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-ready-node-stale",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "READY_NODE_STALE"
+    )
+
+    assert finding["severity"] == "WARNING"
+    assert finding["affected_nodes"] == ["node_graph_health_stale_ready"]
+    assert finding["metric_value"] == 10800
+
+
+def test_graph_health_report_does_not_flag_ready_node_stale_within_sla(client, monkeypatch):
+    workflow_id = "wf_graph_health_ready_node_fresh"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should ignore ready nodes within SLA.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_fresh_ready",
+        node_id="node_graph_health_fresh_ready",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T10:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-04-16T09:30:01+08:00", "tkt_graph_health_fresh_ready"),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-ready-node-fresh",
+    )
+
+    finding_types = [
+        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    ]
+
+    assert "READY_NODE_STALE" not in finding_types
+
+
+def test_graph_health_report_rejects_malformed_graph_patch_timeline(client):
+    workflow_id = "wf_graph_health_bad_patch_timeline"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should fail closed on malformed graph patch payloads.",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        payload_override="malformed-graph-patch",
+    )
+
+    with pytest.raises(RuntimeError, match="graph unavailable"):
+        graph_health_module.build_graph_health_report(
+            client.app.state.repository,
+            workflow_id,
+        )
+
+
+def test_graph_health_report_rejects_ready_node_missing_updated_at(client, monkeypatch):
+    workflow_id = "wf_graph_health_missing_updated_at"
+    ticket_id = "tkt_graph_health_missing_updated_at"
+    node_id = "node_graph_health_missing_updated_at"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should fail closed when ready-node timeline fields are missing.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    original_convert = repository._convert_ticket_projection_row
+
+    def _convert_ticket_projection_row_without_updated_at(row):
+        converted = original_convert(row)
+        if converted["ticket_id"] == ticket_id:
+            converted["updated_at"] = None
+        return converted
+
+    monkeypatch.setattr(
+        repository,
+        "_convert_ticket_projection_row",
+        _convert_ticket_projection_row_without_updated_at,
+    )
+
+    with pytest.raises(RuntimeError, match="graph unavailable"):
+        graph_health_module.build_graph_health_report(repository, workflow_id)
+
+
+def test_graph_health_report_rejects_ready_node_missing_timeout_sla_sec(client, monkeypatch):
+    workflow_id = "wf_graph_health_missing_timeout_sla_sec"
+    ticket_id = "tkt_graph_health_missing_timeout_sla_sec"
+    node_id = "node_graph_health_missing_timeout_sla_sec"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should fail closed when ready-node timeout_sla_sec is missing.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    monkeypatch.setattr(
+        graph_health_module,
+        "now_local",
+        lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET timeout_sla_sec = ?
+            WHERE ticket_id = ?
+            """,
+            (None, ticket_id),
+        )
+
+    with pytest.raises(RuntimeError, match="graph unavailable"):
+        graph_health_module.build_graph_health_report(repository, workflow_id)
 
 
 def test_ticket_graph_snapshot_summarizes_board_review_and_incident_blockers(client):

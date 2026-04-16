@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 import pytest
+import app.core.graph_health as graph_health_module
 import tests.test_api as api_test_helpers
 
 from app.contracts.ceo_actions import CEOActionBatch
@@ -26,6 +27,7 @@ from app.core.output_schemas import (
 from app.core.ceo_scheduler import (
     CeoShadowPipelineError,
     SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+    is_ticket_graph_unavailable_error,
     list_due_ceo_maintenance_workflows,
     run_ceo_shadow_for_trigger,
     run_due_ceo_maintenance,
@@ -4486,6 +4488,70 @@ def test_ceo_shadow_prompt_mentions_project_map_and_graph_health(client):
     assert "project_map_slices" in prompt
     assert "failure_fingerprints" in prompt
     assert "graph_health_report" in prompt
+
+
+def test_ceo_shadow_snapshot_exposes_graph_thrashing_finding(client):
+    workflow_id = "wf_ceo_graph_health_thrashing"
+    _seed_workflow(client, workflow_id, "CEO graph thrashing prompt")
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_graph_health_thrashing",
+        node_id="node_ceo_graph_health_thrashing",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        for patch_index in range(1, 5):
+            repository.insert_event(
+                connection,
+                event_type="GRAPH_PATCH_APPLIED",
+                actor_type="board",
+                actor_id="test-seed",
+                workflow_id=workflow_id,
+                idempotency_key=f"graph-patch-applied:{workflow_id}:{patch_index}",
+                causation_id=None,
+                correlation_id=workflow_id,
+                payload={
+                    "patch_ref": f"pa://graph-patch/{workflow_id}@{patch_index}",
+                    "workflow_id": workflow_id,
+                    "session_id": f"adv_ceo_graph_patch_{patch_index}",
+                    "proposal_ref": f"pa://graph-patch-proposal/{workflow_id}@{patch_index}",
+                    "base_graph_version": f"gv_{patch_index}",
+                    "freeze_node_ids": ["node_ceo_graph_health_thrashing"],
+                    "unfreeze_node_ids": [],
+                    "focus_node_ids": ["node_ceo_graph_health_thrashing"],
+                    "reason_summary": "Seed repeated graph patch churn for CEO snapshot coverage.",
+                    "patch_hash": f"hash-ceo-graph-health-{patch_index}",
+                },
+                occurred_at=datetime.fromisoformat(f"2026-04-16T20:1{patch_index}:00+08:00"),
+            )
+        repository.refresh_projections(connection)
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:ceo-graph-health-thrashing",
+    )
+    prompt = build_ceo_shadow_system_prompt(snapshot)
+    finding_types = [
+        item["finding_type"] for item in snapshot["projection_snapshot"]["graph_health_report"]["findings"]
+    ]
+
+    assert "GRAPH_THRASHING" in finding_types
+    assert "GRAPH_THRASHING" in prompt
+
+
+def test_is_ticket_graph_unavailable_error_recognizes_graph_health_unavailable_error():
+    assert hasattr(graph_health_module, "GraphHealthUnavailableError")
+    error = graph_health_module.GraphHealthUnavailableError(
+        "graph unavailable: malformed graph health timeline"
+    )
+
+    assert is_ticket_graph_unavailable_error(error) is True
 
 
 def test_incident_resolve_triggers_ceo_shadow_audit(client):

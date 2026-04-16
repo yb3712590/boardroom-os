@@ -65,6 +65,7 @@ from app.core.provider_claude_code import invoke_claude_code_response
 from app.core.provider_openai_compat import invoke_openai_compat_response
 from app.core.runtime_provider_config import (
     RuntimeProviderAdapterKind,
+    RuntimeProviderSelection,
     resolve_provider_selection,
     resolve_runtime_provider_config,
 )
@@ -93,6 +94,14 @@ class _AdvisoryAnalysisExecutor:
     personality_profile: dict[str, Any]
     aesthetic_profile: dict[str, Any]
     provider_id: str | None
+    is_real_employee: bool
+
+
+@dataclass(frozen=True)
+class _ResolvedAnalysisExecutionPlan:
+    executor: _AdvisoryAnalysisExecutor
+    provider_selection: RuntimeProviderSelection | None
+    executor_mode: str
 
 
 @dataclass(frozen=True)
@@ -203,6 +212,7 @@ def _resolve_analysis_executor(
             personality_profile=dict(normalized["personality_profile"]),
             aesthetic_profile=dict(normalized["aesthetic_profile"]),
             provider_id=str(employee.get("provider_id") or "").strip() or None,
+            is_real_employee=True,
         )
     normalized = normalize_persona_profiles(BOARD_ADVISORY_ANALYSIS_ROLE_TYPE)
     return _AdvisoryAnalysisExecutor(
@@ -212,23 +222,27 @@ def _resolve_analysis_executor(
         personality_profile=dict(normalized["personality_profile"]),
         aesthetic_profile=dict(normalized["aesthetic_profile"]),
         provider_id=None,
+        is_real_employee=False,
     )
 
 
-def _resolve_analysis_executor_mode(
+def _resolve_analysis_execution_plan(
     repository: ControlPlaneRepository,
-    *,
-    employee_provider_id: str | None,
-) -> str:
-    if employee_provider_id is None:
-        return "DETERMINISTIC"
-    selection = resolve_provider_selection(
-        resolve_runtime_provider_config(),
-        target_ref=EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
-        employee_provider_id=employee_provider_id,
-        runtime_preference=None,
+) -> _ResolvedAnalysisExecutionPlan:
+    executor = _resolve_analysis_executor(repository)
+    provider_selection: RuntimeProviderSelection | None = None
+    if executor.is_real_employee:
+        provider_selection = resolve_provider_selection(
+            resolve_runtime_provider_config(),
+            target_ref=EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
+            employee_provider_id=executor.provider_id,
+            runtime_preference=None,
+        )
+    return _ResolvedAnalysisExecutionPlan(
+        executor=executor,
+        provider_selection=provider_selection,
+        executor_mode="LIVE_PROVIDER" if provider_selection is not None else "DETERMINISTIC",
     )
-    return "LIVE_PROVIDER" if selection is not None else "DETERMINISTIC"
 
 
 def create_board_advisory_analysis_run(
@@ -244,7 +258,7 @@ def create_board_advisory_analysis_run(
         connection=connection,
     )
     attempt_int = int((latest_run or {}).get("attempt_int") or 0) + 1
-    executor = _resolve_analysis_executor(repository)
+    execution_plan = _resolve_analysis_execution_plan(repository)
     run = BoardAdvisoryAnalysisRun(
         run_id=new_prefixed_id("adrun"),
         session_id=str(session.get("session_id") or ""),
@@ -253,10 +267,7 @@ def create_board_advisory_analysis_run(
         status="PENDING",
         idempotency_key=idempotency_key,
         attempt_int=attempt_int,
-        executor_mode=_resolve_analysis_executor_mode(
-            repository,
-            employee_provider_id=executor.provider_id,
-        ),
+        executor_mode=execution_plan.executor_mode,
         created_at=occurred_at,
     )
     created = repository.create_board_advisory_analysis_run(connection, run)
@@ -518,16 +529,8 @@ def _execute_live_provider_mode(
     repository: ControlPlaneRepository,
     *,
     execution_package,
-    employee_provider_id: str | None,
+    selection: RuntimeProviderSelection,
 ) -> _LiveExecutionResult:
-    selection = resolve_provider_selection(
-        resolve_runtime_provider_config(),
-        target_ref=EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
-        employee_provider_id=employee_provider_id,
-        runtime_preference=None,
-    )
-    if selection is None:
-        raise RuntimeError("No live provider selection is available for advisory analysis.")
     if repository.has_open_circuit_breaker_for_provider(selection.provider.provider_id):
         raise RuntimeError("Provider execution is currently paused by an open incident.")
 
@@ -877,20 +880,17 @@ def run_board_advisory_analysis(
 
         if str(run.get("executor_mode") or "") == "LIVE_PROVIDER":
             failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_SELECTION
-            executor = _resolve_analysis_executor(repository)
-            provider_selection = resolve_provider_selection(
-                resolve_runtime_provider_config(),
-                target_ref=EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
-                employee_provider_id=executor.provider_id,
-                runtime_preference=None,
-            )
+            execution_plan = _resolve_analysis_execution_plan(repository)
+            if not execution_plan.executor.is_real_employee:
+                raise RuntimeError("Board advisory analysis live execution requires a board-approved architect.")
+            provider_selection = execution_plan.provider_selection
             if provider_selection is None:
                 raise RuntimeError("No live provider selection is available for advisory analysis.")
             failure_phase = BOARD_ADVISORY_ANALYSIS_FAILURE_PHASE_PROVIDER_EXECUTION
             live_result = _execute_live_provider_mode(
                 repository,
                 execution_package=execution_package,
-                employee_provider_id=executor.provider_id,
+                selection=provider_selection,
             )
             proposal_payload = dict(live_result.proposal_payload)
             provider_response_id = live_result.provider_response_id
