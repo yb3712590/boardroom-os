@@ -5,7 +5,7 @@ from datetime import datetime
 import app.core.process_assets as process_assets_module
 import tests.test_api as api_test_helpers
 from app.contracts.runtime import CompiledExecutionPackage
-from app.core.constants import EVENT_INCIDENT_OPENED
+from app.core.constants import EVENT_INCIDENT_OPENED, EVENT_TICKET_COMPLETED
 from app.core.process_assets import (
     build_compiled_execution_package_process_asset_ref,
     build_result_process_assets,
@@ -13,6 +13,89 @@ from app.core.process_assets import (
 )
 from app.core.versioning import build_process_asset_canonical_ref
 from app.db.repository import ControlPlaneRepository
+
+
+def _seed_ticket_completed_event(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    result_payload: dict,
+    written_artifacts: list[dict],
+    artifact_refs: list[str],
+    occurred_at: str,
+) -> None:
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
+        produced_process_assets = build_result_process_assets(
+            ticket_id=ticket_id,
+            created_spec=created_spec,
+            result_payload=result_payload,
+            artifact_refs=artifact_refs,
+            written_artifacts=written_artifacts,
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_COMPLETED,
+            actor_type="worker",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"ticket-completed:{workflow_id}:{ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "completion_summary": str(result_payload.get("summary") or f"Completed {ticket_id}"),
+                "artifact_refs": list(artifact_refs),
+                "written_artifacts": list(written_artifacts),
+                "verification_evidence_refs": [],
+                "git_commit_record": None,
+                "produced_process_assets": list(produced_process_assets),
+                "documentation_updates": list(result_payload.get("documentation_updates") or []),
+                "review_status": None,
+                "board_review_requested": False,
+            },
+            occurred_at=datetime.fromisoformat(occurred_at),
+        )
+        repository.refresh_projections(connection)
+
+
+def _seed_ticket_artifact(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    artifact_ref: str,
+    logical_path: str,
+    created_at: str,
+) -> None:
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.save_artifact_record(
+            connection,
+            artifact_ref=artifact_ref,
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            logical_path=logical_path,
+            kind="JSON",
+            media_type="application/json",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_relpath=None,
+            content_hash="hash-project-map-extra-artifact",
+            size_bytes=32,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat(created_at),
+        )
 
 
 def test_build_result_process_assets_adds_governance_document_asset() -> None:
@@ -241,6 +324,157 @@ def test_resolve_failure_fingerprint_and_project_map_slice_process_assets(client
         "pa://governance-document/tkt_architecture_project_map@1",
         "pa://source-code-delivery/tkt_build_project_map@1",
     ]
+
+
+def test_project_map_slice_falls_back_per_ticket_for_legacy_source_delivery(client) -> None:
+    workflow_id = "wf_project_map_per_ticket_fallback"
+    repository = client.app.state.repository
+
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Project map fallback must stay ticket-local.",
+    )
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_legacy_project_map_missing_paths",
+        node_id="node_legacy_project_map_missing_paths",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=["services/api/*"],
+        input_artifact_refs=[],
+    )
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_legacy_project_map_structured",
+        node_id="node_legacy_project_map_structured",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=["src/ui/*"],
+        input_artifact_refs=[],
+    )
+
+    _seed_ticket_completed_event(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_legacy_project_map_missing_paths",
+        node_id="node_legacy_project_map_missing_paths",
+        result_payload={
+            "summary": "Legacy ticket completed without stable structured paths.",
+            "source_file_refs": [],
+            "source_files": [],
+            "verification_runs": [],
+        },
+        written_artifacts=[],
+        artifact_refs=[],
+        occurred_at="2026-04-16T19:00:00+08:00",
+    )
+    _seed_ticket_completed_event(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_legacy_project_map_structured",
+        node_id="node_legacy_project_map_structured",
+        result_payload={
+            "summary": "Structured ticket keeps its source path explicit.",
+            "source_file_refs": ["art://runtime/tkt_legacy_project_map_structured/source.ts"],
+            "source_files": [
+                {
+                    "artifact_ref": "art://runtime/tkt_legacy_project_map_structured/source.ts",
+                    "path": "src/ui/homepage.ts",
+                    "content": "export const structuredProjectMap = true;\n",
+                }
+            ],
+            "verification_runs": [],
+        },
+        written_artifacts=[
+            {
+                "path": "src/ui/homepage.ts",
+                "artifact_ref": "art://runtime/tkt_legacy_project_map_structured/source.ts",
+                "kind": "TEXT",
+                "content_text": "export const structuredProjectMap = true;\n",
+            }
+        ],
+        artifact_refs=["art://runtime/tkt_legacy_project_map_structured/source.ts"],
+        occurred_at="2026-04-16T19:10:00+08:00",
+    )
+
+    resolved_map = resolve_process_asset(
+        repository,
+        process_assets_module.build_project_map_slice_process_asset_ref(workflow_id),
+    )
+
+    assert resolved_map.json_content["module_paths"] == ["services", "src"]
+
+
+def test_project_map_slice_ignores_non_source_artifact_paths(client) -> None:
+    workflow_id = "wf_project_map_ignores_artifact_noise"
+    repository = client.app.state.repository
+
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Project map must ignore non-source artifact noise.",
+    )
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_project_map_noise",
+        node_id="node_project_map_noise",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=["src/ui/*"],
+        input_artifact_refs=[],
+    )
+    _seed_ticket_completed_event(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_project_map_noise",
+        node_id="node_project_map_noise",
+        result_payload={
+            "summary": "Structured source delivery should stay clean.",
+            "source_file_refs": ["art://runtime/tkt_project_map_noise/source.ts"],
+            "source_files": [
+                {
+                    "artifact_ref": "art://runtime/tkt_project_map_noise/source.ts",
+                    "path": "src/ui/homepage.ts",
+                    "content": "export const cleanMapOnly = true;\n",
+                }
+            ],
+            "verification_runs": [],
+        },
+        written_artifacts=[
+            {
+                "path": "src/ui/homepage.ts",
+                "artifact_ref": "art://runtime/tkt_project_map_noise/source.ts",
+                "kind": "TEXT",
+                "content_text": "export const cleanMapOnly = true;\n",
+            }
+        ],
+        artifact_refs=["art://runtime/tkt_project_map_noise/source.ts"],
+        occurred_at="2026-04-16T19:20:00+08:00",
+    )
+    _seed_ticket_artifact(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_project_map_noise",
+        node_id="node_project_map_noise",
+        artifact_ref="art://runtime/tkt_project_map_noise/runtime-metadata.json",
+        logical_path="logs/runtime/tkt_project_map_noise/metadata.json",
+        created_at="2026-04-16T19:21:00+08:00",
+    )
+
+    resolved_map = resolve_process_asset(
+        repository,
+        process_assets_module.build_project_map_slice_process_asset_ref(workflow_id),
+    )
+
+    assert resolved_map.json_content["module_paths"] == ["src"]
 
 
 def test_resolve_process_asset_accepts_legacy_short_ref_and_returns_canonical_versioned_ref(

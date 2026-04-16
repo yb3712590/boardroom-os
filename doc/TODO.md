@@ -118,8 +118,11 @@
 - 2026-04-16 本轮已完成 `P4-S4` 第四批：`board-advisory-request-analysis` 现在会先创建独立 `BoardAdvisoryAnalysisRun`，把 session 切到 `PENDING_ANALYSIS`，再在事务外跑 analysis harness；不再在 board command 事务里同步直算 proposal
 - 2026-04-16 本轮已完成 `P4-S4` 第四批：advisory analysis harness 已朝 `CompiledExecutionPackage` 收口，固定只读 `DECISION_SUMMARY / PROJECT_MAP_SLICE / FAILURE_FINGERPRINT / TIMELINE_INDEX`，并显式区分 `DETERMINISTIC / LIVE_PROVIDER`；live 失败不会再隐式回退 deterministic
 - 2026-04-16 本轮已完成 `P4-S4` 第四批：新增 `BOARD_ADVISORY_ANALYSIS_FAILED` incident 和 `RERUN_BOARD_ADVISORY_ANALYSIS` recovery；`Review Room / Incident Detail / IncidentDrawer` 也已补 pending / failed / rerun 主链
+- 2026-04-16 本轮已完成 `P4-S4` 第五批：`SOURCE_CODE_DELIVERY` 过程资产现已显式带 `source_paths / written_paths / module_paths / document_surfaces`；`ProjectMapSlice` 会逐票优先消费这层结构化真相，legacy / 非 workspace-managed 代码票仅在本票缺稳定路径时才回退到自己的 `allowed_write_set`
+- 2026-04-16 本轮还把 `ProjectMapSlice` 的旧兼容收掉：artifact `logical_path` 不再参与模块地图推导，runtime JSON、日志和证据路径不会再污染 `module_paths`
+- 2026-04-16 本轮还把 `GraphHealthReport` 补到第二批：新增 `BOTTLENECK_DETECTED / ORPHAN_SUBGRAPH / FREEZE_SPREAD_TOO_WIDE`，并把 `CRITICAL_PATH_TOO_DEEP` 收正到正式 `PARENT_OF + DEPENDS_ON` DAG 口径
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮如果继续推进新架构重构，优先处理 legacy 非 workspace-managed 代码票的 `ProjectMapSlice` 精度，再决定是否扩第二批 `GraphHealthReport` 规则；仍不碰 `doc/new-architecture/**`
+- 下一轮如果继续推进新架构重构，优先决定第三批 `GraphHealthReport` 是否补版本时间线规则，或单独收 advisory analysis 的 live provider 选路边界；仍不碰 `doc/new-architecture/**`
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

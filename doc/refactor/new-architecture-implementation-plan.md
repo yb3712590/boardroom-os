@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 12:06`
+> 最后更新：`2026-04-16 13:05`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -703,9 +703,12 @@
 - [x] `P4-S4` 已完成第四批：`board-advisory-request-analysis` 现在会先创建独立 `BoardAdvisoryAnalysisRun`，把 `BoardAdvisorySession` 切到 `PENDING_ANALYSIS`，再在事务外跑 analysis harness；不再在 board command 事务里同步直算 proposal
 - [x] `P4-S4` 已完成第四批：advisory analysis harness 现已朝 `CompiledExecutionPackage` 收口，固定只读 `DECISION_SUMMARY / PROJECT_MAP_SLICE / FAILURE_FINGERPRINT / TIMELINE_INDEX`，并显式区分 `DETERMINISTIC / LIVE_PROVIDER`；live 失败不再隐式回退 deterministic
 - [x] `P4-S4` 已完成第四批：新增正式 `BOARD_ADVISORY_ANALYSIS_FAILED` incident 和 `RERUN_BOARD_ADVISORY_ANALYSIS` recovery；`Review Room / Incident Detail / IncidentDrawer` 现已暴露 pending / failed / rerun 主链，analysis trace 也会落正式 artifact
+- [x] `P4-S4` 已完成第五批：`SOURCE_CODE_DELIVERY` 过程资产现已补 `source_paths / written_paths / module_paths / document_surfaces`；`ProjectMapSlice` 会逐票优先消费这层结构化真相，legacy / 非 workspace-managed 代码票只有在本票缺稳定路径时才回退到本票自己的 `allowed_write_set`
+- [x] `P4-S4` 已完成第五批：`ProjectMapSlice` 已删除按 `artifact_index.logical_path` 扫全票路径的旧兼容，不再把 runtime JSON、日志或证据路径混成模块地图
+- [x] `P4-S4` 已完成第五批：`GraphHealthReport` 已补第二批规则 `BOTTLENECK_DETECTED / ORPHAN_SUBGRAPH / FREEZE_SPREAD_TOO_WIDE`；`CRITICAL_PATH_TOO_DEEP` 现在也已改成正式 `PARENT_OF + DEPENDS_ON` DAG 口径
 
 ### 未完成
-- [ ] `legacy / 非 workspace-managed source_code_delivery` 的 `ProjectMapSlice` 仍是保守精度，不等于 workspace-managed 主链的正式地图精度
+- [ ] `GraphHealthReport` 仍未补 `GRAPH_THRASHING / READY_NODE_STALE` 这类依赖额外时间序列或调度 SLA 真相的规则
 
 ### 明确放弃
 - [ ] 暂无
@@ -717,7 +720,7 @@
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
 - [ ] advisory graph patch engine 这轮只落第一版 `freeze / unfreeze / focus`；`REPLACES`、增删节点和增删边仍未进入主链
-- [ ] `legacy / 非 workspace-managed source_code_delivery` 的 `ProjectMapSlice` 当前对 `module_paths / document_surfaces` 先走结构化保守回退：优先读源码票显式 payload 和 source delivery asset，缺失时再退到 `allowed_write_set`，不会读 Markdown 正文或目录扫描反推真相
+- [ ] `GraphHealthReport` 当前第二批只补了静态结构规则；`GRAPH_THRASHING / READY_NODE_STALE` 这类要依赖版本时间线或调度 SLA 真相的规则还没进主链
 - [ ] advisory analysis 当前只在存在 board-approved architect 且该员工显式绑定 `provider_id` 时切到 `LIVE_PROVIDER`；如果后续要放宽到纯 role-binding live analysis，需要单独锁定“谁为 advisory analysis provider 选路背书”的边界
 
 ---
@@ -932,12 +935,12 @@
 `P4-S4` 第一批虽然已经把 `ProjectMapSlice` 收成正式资产，但 legacy 代码票的地图切片精度仍弱于 workspace-managed 主链；如果后续直接把这层写成“所有代码票都已有同精度地图”，会误导实现判断。`
 
 **当前处理：**
-`本轮保持 fail-closed，不新增隐式 fallback：`ProjectMapSlice` 只消费结构化 source delivery truth，缺失时最多退到 `allowed_write_set` 的顶层目录，不会从 Markdown 正文、日志文本或目录扫描反推地图。`
+`已按 fail-closed 收口：`SOURCE_CODE_DELIVERY` 过程资产现在会稳定写 `source_paths / written_paths / module_paths / document_surfaces`，`ProjectMapSlice` 逐票优先消费这层真相；只有本票完全缺稳定路径时，才退回本票自己的 `allowed_write_set`，且已删除 `artifact_index.logical_path` 扫描这条污染地图的旧兼容。`
 
 **是否需要改架构文档：**
 `no`
 
-**状态：** `open`
+**状态：** `closed`
 
 ---
 
@@ -1638,6 +1641,39 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先处理 legacy 非 workspace-managed 代码票的 ProjectMapSlice 精度，再决定是否扩第二批 GraphHealth 规则。`
 
+### Session `2026-04-16 / 23`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `SOURCE_CODE_DELIVERY` 过程资产补成稳定地图输入，现已显式带 `source_paths / written_paths / module_paths / document_surfaces`
+- [x] 把 `ProjectMapSlice` 收正到逐票消费 `SOURCE_CODE_DELIVERY` 资产；legacy / 非 workspace-managed 代码票只有在本票完全缺稳定路径时，才回退到本票自己的 `allowed_write_set`
+- [x] 删掉 `ProjectMapSlice` 里按 `artifact_index.logical_path` 扫路径的旧兼容，不再把 runtime JSON、日志或证据路径混进模块地图
+- [x] 把 `GraphHealthReport` 补到第二批：新增 `BOTTLENECK_DETECTED / ORPHAN_SUBGRAPH / FREEZE_SPREAD_TOO_WIDE`，并把 `CRITICAL_PATH_TOO_DEEP` 改成正式 `PARENT_OF + DEPENDS_ON` DAG 口径
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_process_assets.py -q` 通过（`7 passed`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_context_compiler.py -k "project_map or failure_fingerprint" -q` 通过（`1 passed, 34 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q` 通过（`6 passed, 6 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "project_map or graph_health" -q` 通过（`1 passed, 74 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health_critical or incident_detail" -q` 通过（`3 passed, 302 deselected`）
+- [x] `D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m py_compile backend/app/core/process_assets.py backend/app/core/graph_health.py backend/tests/test_process_assets.py backend/tests/test_ticket_graph.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `GraphHealthReport` 仍未补 `GRAPH_THRASHING / READY_NODE_STALE` 这类依赖额外时间序列或调度 SLA 真相的规则
+- [ ] advisory analysis 的 live 选路当前仍收得很窄，只在存在 board-approved architect 且该员工显式绑定 `provider_id` 时启用
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先决定第三批 GraphHealth 是否补版本时间线规则，或单独收 advisory analysis 的 live provider 选路边界。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1675,7 +1711,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第四批已落地；advisory analysis 现已收成独立 run、显式 incident 和幂等 rerun recovery，`board-advisory-request-analysis` 不再在 command 事务里同步直算 proposal
-- 最近完成：`BoardAdvisoryAnalysisRun / Review Room pending state / BOARD_ADVISORY_ANALYSIS_FAILED / RERUN_BOARD_ADVISORY_ANALYSIS` 已进正式主链；analysis trace 也已落正式 artifact
-- 当前阻塞：legacy 非 workspace-managed 代码票的地图切片仍是保守精度；advisory analysis live 选路当前只在 board-approved architect 显式绑 `provider_id` 时启用
-- 下一步：`继续从 P4-S4 续跑，优先处理 legacy 非 workspace-managed 代码票的 ProjectMapSlice 精度，再决定是否扩第二批 GraphHealth 规则`
+- 当前状态：`P4-S4` 第五批已落地；legacy / 非 workspace-managed `source_code_delivery` 的 `ProjectMapSlice` 已收成逐票结构化真相，artifact 路径污染也已清掉
+- 最近完成：`SOURCE_CODE_DELIVERY` 资产已补 `source_paths / written_paths / module_paths / document_surfaces`；`GraphHealthReport` 第二批 `BOTTLENECK_DETECTED / ORPHAN_SUBGRAPH / FREEZE_SPREAD_TOO_WIDE` 也已进正式主链，`CRITICAL_PATH_TOO_DEEP` 已切到 DAG 口径
+- 当前阻塞：`GraphHealthReport` 还没补 `GRAPH_THRASHING / READY_NODE_STALE` 这类时间序列规则；advisory analysis live 选路当前仍只在 board-approved architect 显式绑 `provider_id` 时启用
+- 下一步：`继续从 P4-S4 续跑，优先决定第三批 GraphHealth 是否补版本时间线规则，或单独收 advisory analysis 的 live provider 选路边界`
