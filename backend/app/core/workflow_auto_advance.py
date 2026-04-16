@@ -8,6 +8,7 @@ from app.core.constants import (
     EVENT_TICKET_FAILED,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+    INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
     INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
     INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
@@ -18,11 +19,13 @@ from app.core.constants import (
     INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
     PROVIDER_PAUSE_FAILURE_KINDS,
 )
+from app.core.planned_placeholder_gate import detect_planned_placeholder_gate_block
 from app.core.runtime_liveness import RuntimeLivenessUnavailableError
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.role_hooks import scan_and_open_required_hook_gate_incidents
 from app.core.ticket_handlers import (
     open_graph_health_critical_incident,
+    open_planned_placeholder_gate_blocked_incident,
     open_runtime_liveness_critical_incident,
     open_runtime_liveness_unavailable_incident,
     open_ticket_graph_unavailable_incident,
@@ -104,6 +107,8 @@ def _recommended_incident_followup_action(
         return IncidentFollowupAction.REPLAY_REQUIRED_HOOKS
     if incident_type == INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL:
         return IncidentFollowupAction.RERUN_CEO_SHADOW
+    if incident_type == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED:
+        return IncidentFollowupAction.RERUN_CEO_SHADOW
     if incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL:
         return IncidentFollowupAction.RERUN_CEO_SHADOW
     if incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE:
@@ -140,7 +145,10 @@ def _maybe_auto_resolve_open_incident(
     )
     if incident is None:
         return False
-    if str(incident.get("incident_type") or "") == INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
+    if str(incident.get("incident_type") or "") in {
+        INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
+        INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
+    }:
         return False
 
     from app.core.ticket_handlers import handle_incident_resolve
@@ -288,5 +296,19 @@ def auto_advance_workflow_to_next_stop(
                 continue
             return
         if version_after == version_before:
+            blocked_placeholder = detect_planned_placeholder_gate_block(
+                repository,
+                workflow_id=workflow_id,
+                snapshot=snapshot,
+            )
+            if blocked_placeholder is not None:
+                open_planned_placeholder_gate_blocked_incident(
+                    repository,
+                    workflow_id=workflow_id,
+                    blocked_placeholder=blocked_placeholder,
+                    trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+                    trigger_ref=f"{idempotency_key_prefix}:{step_index}:controller-probe",
+                    idempotency_key_base=f"{idempotency_key_prefix}:{step_index}:planned-placeholder",
+                )
             return
     _maybe_write_autopilot_chain_report(repository, workflow_id=workflow_id)

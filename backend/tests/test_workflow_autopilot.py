@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 
+from app.contracts.advisory import BoardAdvisorySession
 import app.core.runtime as runtime_module
 from app.core.constants import (
     APPROVAL_STATUS_APPROVED,
@@ -12,7 +13,9 @@ from app.core.constants import (
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+    INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
 )
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from tests.test_api import (
     _approve_open_review,
@@ -24,9 +27,11 @@ from tests.test_api import (
     _maker_checker_result_submit_payload,
     _project_init_to_scope_approval,
     _seed_created_ticket,
+    _seed_graph_patch_applied_event,
     _scope_followup_payload,
     _seed_review_request,
     _staged_scope_followup_tickets,
+    _ticket_result_submit_payload,
     _ticket_lease_payload,
     _ticket_start_payload,
 )
@@ -524,6 +529,266 @@ def test_autopilot_auto_advance_opens_ticket_graph_unavailable_incident_and_stop
     assert len(breaker_opened_events) == 1
     assert open_incidents[0]["status"] == "OPEN"
     assert open_incidents[0]["circuit_breaker_state"] == "OPEN"
+
+
+def test_autopilot_auto_advance_opens_placeholder_gate_incident_without_silent_fallback(client, monkeypatch):
+    workflow_id = "wf_autopilot_placeholder_gate_incident"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot should surface planned placeholder stagnation as an explicit incident.",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_placeholder_gate_parent",
+        node_id="node_placeholder_gate_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_COMPLETED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-completed:{workflow_id}:tkt_placeholder_gate_parent",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": "tkt_placeholder_gate_parent",
+                "node_id": "node_placeholder_gate_parent",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-17T09:40:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_placeholder_gate_target"],
+        add_nodes=[
+            {
+                "node_id": "node_placeholder_gate_target",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_placeholder_gate_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+    graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+    with repository.transaction() as connection:
+        repository.create_board_advisory_session(
+            connection,
+            BoardAdvisorySession(
+                session_id="adv_placeholder_gate_focus",
+                workflow_id=workflow_id,
+                approval_id="apr_placeholder_gate_focus",
+                review_pack_id="rp_placeholder_gate_focus",
+                trigger_type="CONSTRAINT_CHANGE",
+                source_version=graph_snapshot.graph_version,
+                governance_profile_ref="gp_placeholder_gate_focus",
+                affected_nodes=["node_placeholder_gate_target"],
+                working_turns=[],
+                decision_pack_refs=[],
+                board_decision=None,
+                latest_patch_proposal_ref=None,
+                latest_patch_proposal=None,
+                approved_patch_ref="gp_placeholder_gate_patch",
+                approved_patch=None,
+                patched_graph_version=graph_snapshot.graph_version,
+                latest_timeline_index_ref=None,
+                latest_transcript_archive_artifact_ref=None,
+                timeline_archive_version_int=None,
+                focus_node_ids=["node_placeholder_gate_target"],
+                latest_analysis_run_id=None,
+                latest_analysis_status=None,
+                latest_analysis_incident_id=None,
+                latest_analysis_error=None,
+                latest_analysis_trace_artifact_ref=None,
+                status="APPLIED",
+            ),
+        )
+        repository.refresh_projections(connection)
+
+    import app.core.workflow_auto_advance as workflow_auto_advance_module
+
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "workflow_controller_effect",
+        lambda snapshot: "NO_IMMEDIATE_FOLLOWUP",
+    )
+
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="test-autopilot:placeholder-gate",
+        max_steps=2,
+        max_dispatches=1,
+    )
+
+    open_incidents = [
+        item for item in repository.list_open_incidents() if item["workflow_id"] == workflow_id
+    ]
+    incident_opened_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["workflow_id"] == workflow_id and event["event_type"] == EVENT_INCIDENT_OPENED
+    ]
+
+    assert len(open_incidents) == 1
+    incident = open_incidents[0]
+    assert incident["incident_type"] == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED
+    assert incident["node_id"] == "node_placeholder_gate_target"
+    assert incident["ticket_id"] is None
+    assert incident["payload"]["reason_code"] == "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+    assert incident["payload"]["graph_version"] == graph_snapshot.graph_version
+    assert incident["payload"]["materialization_hint"] == "create_ticket"
+    assert incident["payload"]["trigger_type"] == "SCHEDULER_IDLE_MAINTENANCE"
+    assert incident["payload"]["trigger_ref"].endswith(":0:controller-probe")
+    assert len(incident_opened_events) == 1
+
+
+def test_autopilot_placeholder_gate_incident_is_idempotent_while_open(client, monkeypatch):
+    workflow_id = "wf_autopilot_placeholder_gate_dedupe"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot should not reopen the same placeholder gate incident while it is still open.",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_placeholder_gate_dedupe_parent",
+        node_id="node_placeholder_gate_dedupe_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_COMPLETED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=(
+                f"test-seed-ticket-completed:{workflow_id}:tkt_placeholder_gate_dedupe_parent"
+            ),
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": "tkt_placeholder_gate_dedupe_parent",
+                "node_id": "node_placeholder_gate_dedupe_parent",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-17T09:41:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_placeholder_gate_dedupe_target"],
+        add_nodes=[
+            {
+                "node_id": "node_placeholder_gate_dedupe_target",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_placeholder_gate_dedupe_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+    graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+    with repository.transaction() as connection:
+        repository.create_board_advisory_session(
+            connection,
+            BoardAdvisorySession(
+                session_id="adv_placeholder_gate_dedupe",
+                workflow_id=workflow_id,
+                approval_id="apr_placeholder_gate_dedupe",
+                review_pack_id="rp_placeholder_gate_dedupe",
+                trigger_type="CONSTRAINT_CHANGE",
+                source_version=graph_snapshot.graph_version,
+                governance_profile_ref="gp_placeholder_gate_dedupe",
+                affected_nodes=["node_placeholder_gate_dedupe_target"],
+                working_turns=[],
+                decision_pack_refs=[],
+                board_decision=None,
+                latest_patch_proposal_ref=None,
+                latest_patch_proposal=None,
+                approved_patch_ref="gp_placeholder_gate_dedupe_patch",
+                approved_patch=None,
+                patched_graph_version=graph_snapshot.graph_version,
+                latest_timeline_index_ref=None,
+                latest_transcript_archive_artifact_ref=None,
+                timeline_archive_version_int=None,
+                focus_node_ids=["node_placeholder_gate_dedupe_target"],
+                latest_analysis_run_id=None,
+                latest_analysis_status=None,
+                latest_analysis_incident_id=None,
+                latest_analysis_error=None,
+                latest_analysis_trace_artifact_ref=None,
+                status="APPLIED",
+            ),
+        )
+        repository.refresh_projections(connection)
+
+    import app.core.workflow_auto_advance as workflow_auto_advance_module
+
+    monkeypatch.setattr(
+        workflow_auto_advance_module,
+        "workflow_controller_effect",
+        lambda snapshot: "NO_IMMEDIATE_FOLLOWUP",
+    )
+
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="test-autopilot:placeholder-gate-dedupe:first",
+        max_steps=2,
+        max_dispatches=1,
+    )
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="test-autopilot:placeholder-gate-dedupe:second",
+        max_steps=2,
+        max_dispatches=1,
+    )
+
+    open_incidents = [
+        item for item in repository.list_open_incidents() if item["workflow_id"] == workflow_id
+    ]
+    incident_opened_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["workflow_id"] == workflow_id
+        and event["event_type"] == EVENT_INCIDENT_OPENED
+        and (event.get("payload") or {}).get("incident_type")
+        == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED
+    ]
+
+    assert len(open_incidents) == 1
+    assert open_incidents[0]["incident_type"] == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED
+    assert len(incident_opened_events) == 1
 
 
 def test_autopilot_auto_advance_reruns_ceo_shadow_pipeline_incident(client, monkeypatch):

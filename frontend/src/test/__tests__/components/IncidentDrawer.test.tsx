@@ -217,4 +217,41 @@ describe('IncidentDrawer', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toHaveValue('RERUN_BOARD_ADVISORY_ANALYSIS')
   })
+
+  it('describes planned placeholder gate incidents and defaults to ceo rerun recovery', () => {
+    render(
+      <IncidentDrawer
+        isOpen={true}
+        loading={false}
+        error={null}
+        submitting={false}
+        onClose={vi.fn()}
+        onResolve={vi.fn().mockResolvedValue(undefined)}
+        incidentData={{
+          incident: {
+            ...buildIncidentData().incident,
+            incident_id: 'inc_placeholder_gate_001',
+            incident_type: 'PLANNED_PLACEHOLDER_GATE_BLOCKED',
+            provider_id: null,
+            payload: {
+              reason_code: 'PLANNED_PLACEHOLDER_NOT_MATERIALIZED',
+              graph_node_id: 'node_placeholder_gate_target',
+              graph_version: 'gv_9',
+              source_component: 'workflow_auto_advance',
+              trigger_type: 'SCHEDULER_IDLE_MAINTENANCE',
+              trigger_ref: 'test-placeholder-probe',
+              materialization_hint: 'create_ticket',
+            },
+          },
+          available_followup_actions: ['RERUN_CEO_SHADOW', 'RESTORE_ONLY'],
+          recommended_followup_action: 'RERUN_CEO_SHADOW',
+        }}
+      />,
+    )
+
+    expect(
+      screen.getByText(/current graph target is still a planned placeholder, so autonomous execution stays fail-closed until recovery reruns the ceo and decides whether to create a real ticket/i),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toHaveValue('RERUN_CEO_SHADOW')
+  })
 })

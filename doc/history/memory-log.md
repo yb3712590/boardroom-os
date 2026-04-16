@@ -21,6 +21,15 @@
 
 ## Recent Memory
 
+### 2026-04-17
+
+- `P4-S6` 这轮已新增 `backend/app/core/planned_placeholder_gate.py`，把 focused planned placeholder 的 autopilot 停滞检测收成单点 helper；当前最小口径只认 snapshot 已正式暴露的 `replan_focus.focus_node_ids`
+- 当前已新增正式 `PLANNED_PLACEHOLDER_GATE_BLOCKED` incident；`workflow_auto_advance` 命中“focused placeholder + 本轮无推进”时不再静默 return，而是显式开 incident、写结构化 payload，并带稳定 fingerprint
+- `incident detail / incident-resolve / IncidentDrawer` 这轮已接到这条新主链；新 incident 固定暴露 `RERUN_CEO_SHADOW + RESTORE_ONLY`，resolve 会复用现有 CEO rerun，缺 `trigger_type` 时显式 reject，不新增 placeholder 专用恢复动作
+- 当前边界继续锁死：graph-only placeholder 仍只存在于 graph truth，autopilot 对这类 incident 不会 auto-resolve，`ticket-create` 继续是唯一合法 materialization 入口
+- 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder_gate" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "placeholder_gate" -q`、`./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "placeholder or incident" -q`、`cd frontend && npm run test:run -- src/test/__tests__/components/IncidentDrawer.test.tsx`、`python3 -m py_compile backend/app/core/planned_placeholder_gate.py backend/app/core/ticket_handlers.py backend/app/core/workflow_auto_advance.py backend/app/core/projections.py backend/app/core/constants.py backend/tests/test_workflow_autopilot.py backend/tests/test_api.py`
+- 当前还有一条会直接影响下轮判断的事实：`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder or incident or ceo_delegate" -q` 这轮会额外暴露 3 条旧 autopilot 宽桶问题：generic approval 没自动 resolve、provider incident 恢复未进入 `RECOVERING`，以及 `build_ceo_shadow_snapshot()` 在单节点 provider 失败流上触发 `GraphHealthReport` cyclic path；这 3 条未在本轮顺手修
+
 ### 2026-04-16
 
 - `P4-S5` 这轮已新增 `backend/app/core/runtime_node_lifecycle.py`，把 runtime node lifecycle 收成单点 gate、稳定 reason code 和 typed error；命中 graph/runtime 真相冲突时不再静默猜状态

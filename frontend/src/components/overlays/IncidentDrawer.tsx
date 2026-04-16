@@ -23,6 +23,8 @@ function describeIncident(incidentType: string) {
       return 'The ticket graph snapshot could not be rebuilt, so controller recovery is blocked until the graph compiles again.'
     case 'GRAPH_HEALTH_CRITICAL':
       return 'Graph health reached a critical state, so execution stays fail-closed until the CEO reruns against the latest graph health snapshot.'
+    case 'PLANNED_PLACEHOLDER_GATE_BLOCKED':
+      return 'Current graph target is still a planned placeholder, so autonomous execution stays fail-closed until recovery reruns the CEO and decides whether to create a real ticket.'
     case 'BOARD_ADVISORY_ANALYSIS_FAILED':
       return 'Board advisory analysis failed, so the change flow stays fail-closed until recovery reruns the latest advisory analysis attempt.'
     case 'REQUIRED_HOOK_GATE_BLOCKED':

@@ -68,6 +68,7 @@ from app.core.constants import (
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+    INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
     INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
     INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
@@ -118,6 +119,7 @@ from app.core.execution_targets import (
     resolve_execution_target_ref_from_ticket_spec,
 )
 from app.core.graph_identity import GRAPH_LANE_EXECUTION
+from app.core.planned_placeholder_gate import PlannedPlaceholderGateBlock
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -1876,6 +1878,17 @@ def _resolve_graph_health_critical_incident_fingerprint(
     return f"{workflow_id}:{graph_version}:{finding_type}:{normalized_nodes or 'workflow'}"
 
 
+def _resolve_planned_placeholder_gate_blocked_incident_fingerprint(
+    workflow_id: str,
+    *,
+    node_id: str,
+    graph_version: str,
+    source_component: str,
+    reason_code: str,
+) -> str:
+    return f"{workflow_id}:{node_id}:{graph_version}:{source_component}:{reason_code}"
+
+
 def _resolve_provider_id_for_ticket(
     repository: ControlPlaneRepository,
     connection,
@@ -3326,6 +3339,97 @@ def open_ticket_graph_unavailable_incident(
         return incident_id
 
 
+def open_planned_placeholder_gate_blocked_incident(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    blocked_placeholder: PlannedPlaceholderGateBlock,
+    trigger_type: str,
+    trigger_ref: str | None,
+    idempotency_key_base: str,
+    actor_id: str = "autopilot-controller",
+) -> str:
+    command_id = new_prefixed_id("cmd")
+    occurred_at = now_local()
+    fingerprint = _resolve_planned_placeholder_gate_blocked_incident_fingerprint(
+        workflow_id,
+        node_id=blocked_placeholder.node_id,
+        graph_version=blocked_placeholder.graph_version,
+        source_component=blocked_placeholder.source_component,
+        reason_code=blocked_placeholder.reason_code,
+    )
+
+    with repository.transaction() as connection:
+        existing_row = connection.execute(
+            """
+            SELECT incident_id
+            FROM incident_projection
+            WHERE workflow_id = ? AND fingerprint = ? AND status = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            LIMIT 1
+            """,
+            (workflow_id, fingerprint, INCIDENT_STATUS_OPEN),
+        ).fetchone()
+        if existing_row is not None:
+            return str(existing_row["incident_id"])
+
+        incident_id = new_prefixed_id("inc")
+        incident_payload = {
+            "incident_id": incident_id,
+            "ticket_id": None,
+            "node_id": blocked_placeholder.node_id,
+            "incident_type": INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
+            "status": INCIDENT_STATUS_OPEN,
+            "severity": "high",
+            "fingerprint": fingerprint,
+            "reason_code": blocked_placeholder.reason_code,
+            "graph_node_id": blocked_placeholder.graph_node_id,
+            "graph_version": blocked_placeholder.graph_version,
+            "source_component": blocked_placeholder.source_component,
+            "trigger_type": trigger_type,
+            "trigger_ref": trigger_ref,
+            "materialization_hint": blocked_placeholder.materialization_hint,
+        }
+        incident_event = repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:incident-opened:planned-placeholder",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload=incident_payload,
+            occurred_at=occurred_at,
+        )
+        if incident_event is None:
+            raise RuntimeError("Planned placeholder gate incident opening idempotency conflict.")
+
+        breaker_event = repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id=actor_id,
+            workflow_id=workflow_id,
+            idempotency_key=f"{idempotency_key_base}:circuit-breaker-opened:planned-placeholder",
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": blocked_placeholder.node_id,
+                "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+                "fingerprint": fingerprint,
+            },
+            occurred_at=occurred_at,
+        )
+        if breaker_event is None:
+            raise RuntimeError("Planned placeholder gate circuit breaker opening idempotency conflict.")
+
+        repository.refresh_projections(connection)
+        return incident_id
+
+
 def open_graph_health_critical_incident(
     repository: ControlPlaneRepository,
     *,
@@ -4677,6 +4781,7 @@ def handle_incident_resolve(
             if incident["incident_type"] not in {
                 INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
                 INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+                INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
                 INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
             }:
                 return _incident_rejected_ack(

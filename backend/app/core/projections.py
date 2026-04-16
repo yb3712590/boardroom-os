@@ -98,6 +98,7 @@ from app.core.constants import (
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+    INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
     INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
     INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
@@ -2391,6 +2392,12 @@ def build_incident_detail_projection(
         available_followup_actions = [IncidentFollowupAction.RESTORE_ONLY.value]
         recommended_followup_action = IncidentFollowupAction.RESTORE_ONLY.value
     elif incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
+        available_followup_actions = [
+            IncidentFollowupAction.RERUN_CEO_SHADOW.value,
+            IncidentFollowupAction.RESTORE_ONLY.value,
+        ]
+        recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
+    elif incident_type == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED:
         available_followup_actions = [
             IncidentFollowupAction.RERUN_CEO_SHADOW.value,
             IncidentFollowupAction.RESTORE_ONLY.value,

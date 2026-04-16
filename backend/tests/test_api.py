@@ -57,6 +57,7 @@ from app.core.constants import (
     EVENT_INCIDENT_OPENED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+    INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_CANCELLED,
     EVENT_TICKET_CANCEL_REQUESTED,
@@ -11753,6 +11754,85 @@ def test_p2_ceo_shadow_incident_detail_exposes_rerun_action(client):
     assert incident_response.json()["data"]["recommended_followup_action"] == "RERUN_CEO_SHADOW"
 
 
+def test_p4_placeholder_gate_incident_detail_exposes_rerun_action(client):
+    workflow_id = "wf_placeholder_gate_incident_detail"
+    incident_id = "inc_placeholder_gate_detail"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Placeholder gate incident detail should expose CEO rerun recovery.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="autopilot-controller",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": "node_placeholder_gate_target",
+                "ticket_id": None,
+                "incident_type": INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": (
+                    f"{workflow_id}:node_placeholder_gate_target:gv_2:workflow_auto_advance:"
+                    "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+                ),
+                "reason_code": "PLANNED_PLACEHOLDER_NOT_MATERIALIZED",
+                "graph_node_id": "node_placeholder_gate_target",
+                "graph_version": "gv_2",
+                "source_component": "workflow_auto_advance",
+                "trigger_type": "SCHEDULER_IDLE_MAINTENANCE",
+                "trigger_ref": "test-placeholder-controller-probe",
+                "materialization_hint": "create_ticket",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-17T10:02:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="autopilot-controller",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": "node_placeholder_gate_target",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": (
+                    f"{workflow_id}:node_placeholder_gate_target:gv_2:workflow_auto_advance:"
+                    "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+                ),
+            },
+            occurred_at=datetime.fromisoformat("2026-04-17T10:02:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["incident"]["incident_type"] == (
+        INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED
+    )
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RERUN_CEO_SHADOW",
+        "RESTORE_ONLY",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == "RERUN_CEO_SHADOW"
+
+
 def test_graph_health_critical_incident_detail_exposes_rerun_action(client):
     workflow_id = "wf_graph_health_critical_detail"
     incident_id = "inc_graph_health_critical_detail"
@@ -12297,6 +12377,197 @@ def test_p2_ceo_shadow_incident_resolve_reruns_shadow_and_closes_incident(client
     assert incident_response.json()["data"]["incident"]["status"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "RERUN_CEO_SHADOW"
+
+
+def test_p4_placeholder_gate_incident_resolve_reruns_shadow_and_closes_incident(client, monkeypatch):
+    workflow_id = "wf_placeholder_gate_incident_resolve"
+    incident_id = "inc_placeholder_gate_resolve"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Placeholder gate incident resolve should rerun CEO shadow and close.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="autopilot-controller",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": "node_placeholder_gate_resolve_target",
+                "ticket_id": None,
+                "incident_type": INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": (
+                    f"{workflow_id}:node_placeholder_gate_resolve_target:gv_9:workflow_auto_advance:"
+                    "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+                ),
+                "reason_code": "PLANNED_PLACEHOLDER_NOT_MATERIALIZED",
+                "graph_node_id": "node_placeholder_gate_resolve_target",
+                "graph_version": "gv_9",
+                "source_component": "workflow_auto_advance",
+                "trigger_type": "SCHEDULER_IDLE_MAINTENANCE",
+                "trigger_ref": "test-placeholder-resolve",
+                "materialization_hint": "create_ticket",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-17T10:12:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="autopilot-controller",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": "node_placeholder_gate_resolve_target",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": (
+                    f"{workflow_id}:node_placeholder_gate_resolve_target:gv_9:workflow_auto_advance:"
+                    "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+                ),
+            },
+            occurred_at=datetime.fromisoformat("2026-04-17T10:12:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    import app.core.ticket_handlers as ticket_handlers_module
+
+    rerun_calls: list[tuple[str, str, str | None]] = []
+
+    def _fake_rerun(repository, *, workflow_id, trigger_type, trigger_ref, runtime_provider_store=None):
+        rerun_calls.append((workflow_id, trigger_type, trigger_ref))
+        return {
+            "workflow_id": workflow_id,
+            "trigger_type": trigger_type,
+            "trigger_ref": trigger_ref,
+            "effective_mode": "LOCAL_DETERMINISTIC",
+            "provider_health_summary": "UNAVAILABLE",
+            "fallback_reason": "deterministic mode",
+            "accepted_actions": [],
+            "rejected_actions": [],
+            "executed_actions": [],
+            "execution_summary": {
+                "attempted_action_count": 0,
+                "executed_action_count": 0,
+                "duplicate_action_count": 0,
+                "passthrough_action_count": 0,
+                "deferred_action_count": 0,
+                "failed_action_count": 0,
+            },
+            "deterministic_fallback_used": False,
+            "deterministic_fallback_reason": None,
+        }
+
+    monkeypatch.setattr(ticket_handlers_module, "run_ceo_shadow_for_trigger", _fake_rerun)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="RERUN_CEO_SHADOW",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert rerun_calls == [(workflow_id, "SCHEDULER_IDLE_MAINTENANCE", "test-placeholder-resolve")]
+    assert incident_response.json()["data"]["incident"]["status"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "RERUN_CEO_SHADOW"
+
+
+def test_p4_placeholder_gate_incident_resolve_rejects_missing_trigger_type(client):
+    workflow_id = "wf_placeholder_gate_missing_trigger"
+    incident_id = "inc_placeholder_gate_missing_trigger"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Placeholder gate incident resolve should fail closed when trigger_type is missing.",
+    )
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="autopilot-controller",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": "node_placeholder_gate_missing_trigger",
+                "ticket_id": None,
+                "incident_type": INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": (
+                    f"{workflow_id}:node_placeholder_gate_missing_trigger:gv_3:workflow_auto_advance:"
+                    "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+                ),
+                "reason_code": "PLANNED_PLACEHOLDER_NOT_MATERIALIZED",
+                "graph_node_id": "node_placeholder_gate_missing_trigger",
+                "graph_version": "gv_3",
+                "source_component": "workflow_auto_advance",
+                "trigger_ref": "missing-trigger-type",
+                "materialization_hint": "create_ticket",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-17T10:22:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="autopilot-controller",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": "node_placeholder_gate_missing_trigger",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": (
+                    f"{workflow_id}:node_placeholder_gate_missing_trigger:gv_3:workflow_auto_advance:"
+                    "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+                ),
+            },
+            occurred_at=datetime.fromisoformat("2026-04-17T10:22:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="RERUN_CEO_SHADOW",
+        ),
+    )
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "REJECTED"
+    assert "missing its original trigger_type" in resolve_response.json()["reason"]
 
 
 def test_p2_ceo_shadow_incident_command_trigger_opens_incident(client, monkeypatch):
