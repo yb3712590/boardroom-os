@@ -239,6 +239,29 @@ def build_result_process_assets(
         )
 
     if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF and isinstance(result_payload, dict):
+        source_paths = [
+            str(item.get("path") or "").strip()
+            for item in list(result_payload.get("source_files") or [])
+            if isinstance(item, dict) and str(item.get("path") or "").strip()
+        ]
+        written_paths = [
+            str(item.get("path") or "").strip()
+            for item in list(written_artifacts or [])
+            if isinstance(item, dict) and str(item.get("path") or "").strip()
+        ]
+        documentation_updates = list(result_payload.get("documentation_updates") or [])
+        document_surfaces = [
+            str(item.get("doc_ref") or "").strip()
+            for item in documentation_updates
+            if isinstance(item, dict) and str(item.get("doc_ref") or "").strip()
+        ]
+        module_paths = [
+            module_path
+            for module_path in (
+                _top_level_module_path(path) for path in [*source_paths, *written_paths]
+            )
+            if module_path
+        ]
         produced_assets.append(
             ProcessAssetReference(
                 process_asset_ref=build_source_code_delivery_process_asset_ref(ticket_id, version_int=1),
@@ -250,13 +273,17 @@ def build_result_process_assets(
                 consumable_by=["context_compiler", "followup_ticket", "review", "closeout"],
                 source_metadata={
                     "source_file_refs": list(result_payload.get("source_file_refs") or []),
+                    "source_paths": dedupe_process_asset_refs(source_paths),
                     "written_artifact_refs": [
                         str(item.get("artifact_ref") or "").strip()
                         for item in list(written_artifacts or [])
                         if isinstance(item, dict) and str(item.get("artifact_ref") or "").strip()
                     ],
+                    "written_paths": dedupe_process_asset_refs(written_paths),
+                    "module_paths": dedupe_process_asset_refs(module_paths),
                     "verification_evidence_refs": list(verification_evidence_refs or []),
-                    "documentation_updates": list(result_payload.get("documentation_updates") or []),
+                    "documentation_updates": documentation_updates,
+                    "document_surfaces": dedupe_process_asset_refs(document_surfaces),
                     "git_commit_record": dict(git_commit_record or {}),
                 },
             )
@@ -989,41 +1016,39 @@ def _resolve_project_map_slice_process_asset(
             if terminal_event is None:
                 continue
             payload = terminal_event.get("payload") or {}
-            result_payload = payload.get("payload") or {}
-            if not isinstance(result_payload, dict):
-                result_payload = {}
             produced_assets = list(payload.get("produced_process_assets") or [])
+            ticket_module_paths: list[str] = []
+            ticket_document_surfaces: list[str] = []
             if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
-                for source_file in list(result_payload.get("source_files") or []):
-                    if not isinstance(source_file, dict):
-                        continue
-                    module_path = _top_level_module_path(str(source_file.get("path") or ""))
-                    if module_path:
-                        module_paths.append(module_path)
-                for written_artifact in list(payload.get("written_artifacts") or []):
-                    if not isinstance(written_artifact, dict):
-                        continue
-                    module_path = _top_level_module_path(str(written_artifact.get("path") or ""))
-                    if module_path:
-                        module_paths.append(module_path)
-                for artifact in repository.list_ticket_artifacts(ticket_id, connection=resolved_connection):
-                    module_path = _top_level_module_path(str(artifact.get("logical_path") or ""))
-                    if module_path:
-                        module_paths.append(module_path)
-                if not module_paths:
+                delivery_asset_refs = [
+                    str(asset.get("process_asset_ref") or "").strip()
+                    for asset in produced_assets
+                    if isinstance(asset, dict)
+                    and str(asset.get("process_asset_kind") or "").strip() == "SOURCE_CODE_DELIVERY"
+                    and str(asset.get("process_asset_ref") or "").strip()
+                ]
+                for asset_ref in delivery_asset_refs:
+                    resolved_delivery_asset = resolve_process_asset(
+                        repository,
+                        asset_ref,
+                        connection=resolved_connection,
+                    )
+                    delivery_payload = dict(resolved_delivery_asset.json_content or {})
+                    ticket_module_paths.extend(
+                        str(item).strip()
+                        for item in list(delivery_payload.get("module_paths") or [])
+                        if str(item).strip()
+                    )
+                    ticket_document_surfaces.extend(
+                        str(item).strip()
+                        for item in list(delivery_payload.get("document_surfaces") or [])
+                        if str(item).strip()
+                    )
+                if not ticket_module_paths:
                     for allowed_pattern in list(created_spec.get("allowed_write_set") or []):
                         module_path = _top_level_module_path(str(allowed_pattern).replace("*", ""))
                         if module_path:
-                            module_paths.append(module_path)
-            documentation_updates = list(result_payload.get("documentation_updates") or [])
-            if not documentation_updates:
-                documentation_updates = list(payload.get("documentation_updates") or [])
-            for documentation_update in documentation_updates:
-                if not isinstance(documentation_update, dict):
-                    continue
-                doc_ref = str(documentation_update.get("doc_ref") or "").strip()
-                if doc_ref:
-                    document_surfaces.append(doc_ref)
+                            ticket_module_paths.append(module_path)
             for asset in produced_assets:
                 if not isinstance(asset, dict):
                     continue
@@ -1035,19 +1060,8 @@ def _resolve_project_map_slice_process_asset(
                     decision_asset_refs.append(asset_ref)
                 if asset_kind in {"GOVERNANCE_DOCUMENT", "SOURCE_CODE_DELIVERY"}:
                     source_process_asset_refs.append(asset_ref)
-                if asset_kind == "SOURCE_CODE_DELIVERY":
-                    resolved_delivery_asset = resolve_process_asset(
-                        repository,
-                        asset_ref,
-                        connection=resolved_connection,
-                    )
-                    delivery_payload = dict(resolved_delivery_asset.json_content or {})
-                    for documentation_update in list(delivery_payload.get("documentation_updates") or []):
-                        if not isinstance(documentation_update, dict):
-                            continue
-                        doc_ref = str(documentation_update.get("doc_ref") or "").strip()
-                        if doc_ref:
-                            document_surfaces.append(doc_ref)
+            module_paths.extend(ticket_module_paths)
+            document_surfaces.extend(ticket_document_surfaces)
 
         for session in repository.list_board_advisory_sessions(workflow_id, connection=resolved_connection):
             approved_patch_ref = str(session.get("approved_patch_ref") or "").strip()
@@ -1173,6 +1187,21 @@ def _resolve_source_code_delivery_process_asset(
                 for item in list(source_metadata.get("verification_evidence_refs") or [])
                 if str(item).strip()
             ]
+        source_paths = [
+            str(item).strip()
+            for item in list(source_metadata.get("source_paths") or [])
+            if str(item).strip()
+        ]
+        written_paths = [
+            str(item).strip()
+            for item in list(source_metadata.get("written_paths") or [])
+            if str(item).strip()
+        ]
+        module_paths = [
+            str(item).strip()
+            for item in list(source_metadata.get("module_paths") or [])
+            if str(item).strip()
+        ]
         git_commit_record = payload.get("git_commit_record")
         if not isinstance(git_commit_record, dict):
             git_commit_record = dict(source_metadata.get("git_commit_record") or {})
@@ -1182,6 +1211,17 @@ def _resolve_source_code_delivery_process_asset(
                 item
                 for item in list(source_metadata.get("documentation_updates") or [])
                 if isinstance(item, dict)
+            ]
+        document_surfaces = [
+            str(item).strip()
+            for item in list(source_metadata.get("document_surfaces") or [])
+            if str(item).strip()
+        ]
+        if not document_surfaces:
+            document_surfaces = [
+                str(item.get("doc_ref") or "").strip()
+                for item in documentation_updates
+                if isinstance(item, dict) and str(item.get("doc_ref") or "").strip()
             ]
         if terminal_event.get("workflow_id"):
             latest_git_closeout = load_git_closeout_receipt(str(terminal_event["workflow_id"]), ticket_id)
@@ -1210,8 +1250,12 @@ def _resolve_source_code_delivery_process_asset(
                     or f"Source code delivery for {ticket_id}"
                 ),
                 "source_file_refs": source_file_refs,
+                "source_paths": source_paths,
+                "written_paths": written_paths,
+                "module_paths": module_paths,
                 "implementation_notes": list(result_payload.get("implementation_notes") or []),
                 "documentation_updates": documentation_updates,
+                "document_surfaces": document_surfaces,
                 "verification_evidence_refs": verification_evidence_refs,
                 "git_commit_record": git_commit_record,
             },

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app.contracts.advisory import BoardAdvisorySession
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
@@ -375,6 +377,261 @@ def test_graph_health_report_detects_persistent_failure_zone(client):
     assert report["overall_health"] == "CRITICAL"
     assert finding["affected_nodes"] == ["node_graph_health_failure"]
     assert finding["metric_value"] == 3
+
+
+def test_graph_health_report_detects_dependency_based_critical_path_depth(client):
+    workflow_id = "wf_graph_health_dependency_depth"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should read critical path depth from DAG edges, not parent-only trees.",
+    )
+
+    previous_ticket_id = None
+    deepest_node_id = None
+    for index in range(16):
+        ticket_id = f"tkt_graph_health_dependency_depth_{index}"
+        node_id = f"node_graph_health_dependency_depth_{index}"
+        deepest_node_id = node_id
+        dispatch_intent = {
+            "assignee_employee_id": "emp_frontend_2",
+            "selection_reason": "Seed dependency depth coverage",
+            "dependency_gate_refs": [previous_ticket_id] if previous_ticket_id else [],
+            "selected_by": "test",
+            "wakeup_policy": "default",
+        }
+        _seed_ticket_created_event(
+            client,
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:{ticket_id}",
+            ticket_payload={
+                **_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=ticket_id,
+                    node_id=node_id,
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    delivery_stage="BUILD",
+                    dispatch_intent=dispatch_intent,
+                ),
+            },
+        )
+        previous_ticket_id = ticket_id
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-dependency-depth",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "CRITICAL_PATH_TOO_DEEP"
+    )
+
+    assert finding["affected_nodes"] == [deepest_node_id]
+    assert finding["metric_value"] == 16
+
+
+def test_graph_health_report_detects_bottleneck_dependency_node(client):
+    workflow_id = "wf_graph_health_bottleneck"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose dependency bottlenecks.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_shared_dependency",
+        node_id="node_graph_health_shared_dependency",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    for index in range(4):
+        _seed_ticket_created_event(
+            client,
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_graph_health_bottleneck_child_{index}",
+            ticket_payload={
+                **_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=f"tkt_graph_health_bottleneck_child_{index}",
+                    node_id=f"node_graph_health_bottleneck_child_{index}",
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    delivery_stage="BUILD",
+                    dispatch_intent={
+                        "assignee_employee_id": "emp_frontend_2",
+                        "selection_reason": "Seed bottleneck coverage",
+                        "dependency_gate_refs": ["tkt_graph_health_shared_dependency"],
+                        "selected_by": "test",
+                        "wakeup_policy": "default",
+                    },
+                ),
+            },
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-bottleneck",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "BOTTLENECK_DETECTED"
+    )
+
+    assert finding["affected_nodes"] == ["node_graph_health_shared_dependency"]
+    assert finding["metric_value"] == 4
+
+
+def test_graph_health_report_detects_orphan_subgraph(client):
+    workflow_id = "wf_graph_health_orphan"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose orphan subgraphs once closeout exists.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_main_build",
+        node_id="node_graph_health_main_build",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_main_closeout",
+        node_id="node_graph_health_main_closeout",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+        delivery_stage="CLOSEOUT",
+        parent_ticket_id="tkt_graph_health_main_build",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_orphan_build",
+        node_id="node_graph_health_orphan_build",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-orphan",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "ORPHAN_SUBGRAPH"
+    )
+
+    assert finding["affected_nodes"] == ["node_graph_health_orphan_build"]
+
+
+def test_graph_health_report_detects_freeze_spread_too_wide(client):
+    workflow_id = "wf_graph_health_freeze_spread"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Graph health should expose advisory freeze spread.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_freeze_target",
+        node_id="node_graph_health_freeze_target",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+
+    repository = client.app.state.repository
+    source_version = build_ticket_graph_snapshot(repository, workflow_id).graph_version
+    latest_profile = repository.get_latest_governance_profile(workflow_id)
+    assert latest_profile is not None
+
+    with repository.transaction() as connection:
+        repository.create_board_advisory_session(
+            connection,
+            BoardAdvisorySession.model_validate(
+                {
+                    "session_id": "adv_graph_health_freeze_spread",
+                    "workflow_id": workflow_id,
+                    "approval_id": "apr_graph_health_freeze_spread",
+                    "review_pack_id": "rp_graph_health_freeze_spread",
+                    "trigger_type": "CONSTRAINT_CHANGE",
+                    "source_version": source_version,
+                    "governance_profile_ref": latest_profile["profile_id"],
+                    "affected_nodes": ["node_graph_health_freeze_target"],
+                    "decision_pack_refs": [],
+                    "focus_node_ids": ["node_graph_health_freeze_target"],
+                    "status": "OPEN",
+                }
+            ),
+        )
+        repository.decide_board_advisory_session(
+            connection,
+            session_id="adv_graph_health_freeze_spread",
+            board_decision={
+                "decision_action": "MODIFY_CONSTRAINTS",
+                "board_comment": "Freeze the branch until the graph stabilizes.",
+                "constraint_patch": {"add_rules": [], "remove_rules": [], "replace_rules": []},
+                "governance_patch": None,
+            },
+            decision_pack_refs=["pa://decision-summary/adv_graph_health_freeze_spread@1"],
+            approved_patch_ref="pa://graph-patch/adv_graph_health_freeze_spread@1",
+            approved_patch={
+                "patch_ref": "pa://graph-patch/adv_graph_health_freeze_spread@1",
+                "workflow_id": workflow_id,
+                "session_id": "adv_graph_health_freeze_spread",
+                "proposal_ref": "pa://graph-patch-proposal/adv_graph_health_freeze_spread@1",
+                "base_graph_version": source_version,
+                "freeze_node_ids": ["node_graph_health_freeze_target"],
+                "unfreeze_node_ids": [],
+                "focus_node_ids": ["node_graph_health_freeze_target"],
+                "reason_summary": "Freeze the branch while the board confirms the new path.",
+                "patch_hash": "hash-graph-health-freeze-spread",
+            },
+            patched_graph_version="gv_freeze_spread",
+            focus_node_ids=["node_graph_health_freeze_target"],
+            updated_at=datetime.fromisoformat("2026-04-16T20:00:00+08:00"),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:graph-health-freeze-spread",
+    )
+
+    report = snapshot["projection_snapshot"]["graph_health_report"]
+    finding = next(
+        item for item in report["findings"] if item["finding_type"] == "FREEZE_SPREAD_TOO_WIDE"
+    )
+
+    assert finding["affected_nodes"] == ["node_graph_health_freeze_target"]
+    assert finding["metric_value"] == 1
 
 
 def test_ticket_graph_snapshot_summarizes_board_review_and_incident_blockers(client):
