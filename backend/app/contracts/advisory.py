@@ -115,6 +115,9 @@ class BoardAdvisorySession(StrictModel):
     approved_patch_ref: str | None = None
     approved_patch: GraphPatch | None = None
     patched_graph_version: str | None = None
+    latest_timeline_index_ref: str | None = None
+    latest_transcript_archive_artifact_ref: str | None = None
+    timeline_archive_version_int: int | None = Field(default=None, ge=1)
     focus_node_ids: list[str] = Field(default_factory=list)
     latest_analysis_error: str | None = None
     status: AdvisoryStatus

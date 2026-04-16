@@ -15662,6 +15662,185 @@ def test_board_advisory_apply_patch_rejects_stale_proposal(client):
     assert advisory_session["approved_patch_ref"] is None
 
 
+def test_board_advisory_full_timeline_archive_materializes_versions_and_surfaces_latest_refs(client):
+    workflow_id = "wf_advisory_full_timeline_archive"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Materialize advisory transcript archives for FULL_TIMELINE governance.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Keep a full advisory transcript for every change-flow step."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "governance_patch": {
+                    "audit_mode": "FULL_TIMELINE",
+                },
+                "board_comment": "Archive every advisory turn before runtime import.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:full-timeline",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    session_id = str(advisory_session["session_id"])
+    expected_v1_timeline_ref = f"pa://timeline-index/{session_id}@1"
+    expected_v1_transcript_artifact_ref = f"art://board-advisory/{workflow_id}/{session_id}/transcript-v1.json"
+    expected_v1_timeline_artifact_ref = f"art://board-advisory/{workflow_id}/{session_id}/timeline-index-v1.json"
+
+    assert advisory_session["timeline_archive_version_int"] == 1
+    assert advisory_session["latest_timeline_index_ref"] == expected_v1_timeline_ref
+    assert advisory_session["latest_transcript_archive_artifact_ref"] == expected_v1_transcript_artifact_ref
+    assert repository.get_artifact_by_ref(expected_v1_transcript_artifact_ref) is not None
+    assert repository.get_artifact_by_ref(expected_v1_timeline_artifact_ref) is not None
+
+    append_response = client.post(
+        "/api/v1/commands/board-advisory-append-turn",
+        json={
+            "session_id": session_id,
+            "actor_type": "board",
+            "content": "Capture the trade-offs before you suggest the next patch.",
+            "idempotency_key": f"board-advisory-turn:{session_id}:full-timeline-v2",
+        },
+    )
+    assert append_response.status_code == 200
+    assert append_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    expected_v2_timeline_ref = f"pa://timeline-index/{session_id}@2"
+    expected_v2_transcript_artifact_ref = f"art://board-advisory/{workflow_id}/{session_id}/transcript-v2.json"
+
+    assert advisory_session["timeline_archive_version_int"] == 2
+    assert advisory_session["latest_timeline_index_ref"] == expected_v2_timeline_ref
+    assert advisory_session["latest_transcript_archive_artifact_ref"] == expected_v2_transcript_artifact_ref
+    assert repository.get_artifact_by_ref(expected_v1_transcript_artifact_ref) is not None
+    assert repository.get_artifact_by_ref(expected_v2_transcript_artifact_ref) is not None
+
+    analysis_response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": session_id,
+            "idempotency_key": f"board-advisory-analysis:{session_id}:full-timeline-v3",
+        },
+    )
+    assert analysis_response.status_code == 200
+    assert analysis_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    assert advisory_session["timeline_archive_version_int"] == 3
+    assert advisory_session["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@3"
+
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": session_id,
+            "proposal_ref": advisory_session["latest_patch_proposal_ref"],
+            "idempotency_key": f"board-advisory-apply:{session_id}:full-timeline-v4",
+        },
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    review_room = client.get(f"/api/v1/projections/review-room/{approval['review_pack_id']}")
+
+    assert advisory_session is not None
+    assert advisory_session["timeline_archive_version_int"] == 4
+    assert advisory_session["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@4"
+    assert advisory_session["latest_transcript_archive_artifact_ref"] == (
+        f"art://board-advisory/{workflow_id}/{session_id}/transcript-v4.json"
+    )
+    assert review_room.status_code == 200
+    advisory_context = review_room.json()["data"]["review_pack"]["advisory_context"]
+    assert advisory_context["timeline_archive_version_int"] == 4
+    assert advisory_context["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@4"
+    assert advisory_context["latest_transcript_archive_artifact_ref"] == (
+        f"art://board-advisory/{workflow_id}/{session_id}/transcript-v4.json"
+    )
+
+
+def test_board_advisory_full_timeline_archive_failure_rejects_without_advancing_state(client):
+    workflow_id = "wf_advisory_full_timeline_archive_failure"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Reject advisory updates when FULL_TIMELINE archive materialization fails.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Keep the archive step explicit."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "governance_patch": {
+                    "audit_mode": "FULL_TIMELINE",
+                },
+                "board_comment": "The archive must succeed before the next advisory step is accepted.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:full-timeline-failure-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    version_before = advisory_session["timeline_archive_version_int"]
+    turn_count_before = len(advisory_session["working_turns"])
+
+    with patch(
+        "app.core.approval_handlers._materialize_board_advisory_full_timeline_archive",
+        side_effect=RuntimeError("simulated full timeline archive failure"),
+    ):
+        append_response = client.post(
+            "/api/v1/commands/board-advisory-append-turn",
+            json={
+                "session_id": advisory_session["session_id"],
+                "actor_type": "board",
+                "content": "This draft note should be rejected because archive materialization failed.",
+                "idempotency_key": f"board-advisory-turn:{advisory_session['session_id']}:full-timeline-failure",
+            },
+        )
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert append_response.status_code == 200
+    assert append_response.json()["status"] == "REJECTED"
+    assert "archive" in str(append_response.json()["reason"] or "").lower()
+    assert advisory_session is not None
+    assert advisory_session["status"] == "DRAFTING"
+    assert advisory_session["timeline_archive_version_int"] == version_before
+    assert len(advisory_session["working_turns"]) == turn_count_before
+
+
 def test_board_approve_dismisses_linked_board_advisory_session(client):
     workflow_id = "wf_board_advisory_dismissed"
     approval = _seed_review_request(client, workflow_id=workflow_id)

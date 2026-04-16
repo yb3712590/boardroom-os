@@ -205,6 +205,22 @@ export function ReviewRoomDrawer({
   const riskSummaryNote = formatRiskSummary(reviewPack?.risk_summary)
   const advisoryTurns = advisoryContext?.working_turns ?? []
   const advisoryProposalRef = advisoryContext?.latest_patch_proposal_ref ?? null
+  const advisoryTimelineArchiveVersion = advisoryContext?.timeline_archive_version_int ?? null
+  const advisoryTranscriptArchiveArtifactRef = advisoryContext?.latest_transcript_archive_artifact_ref ?? null
+  const advisoryTimelineIndexArtifactRef =
+    reviewPack?.meta.workflow_id &&
+    advisoryContext?.session_id &&
+    advisoryTimelineArchiveVersion !== null &&
+    advisoryTimelineArchiveVersion !== undefined
+      ? `art://board-advisory/${reviewPack.meta.workflow_id}/${advisoryContext.session_id}/timeline-index-v${advisoryTimelineArchiveVersion}.json`
+      : null
+  const hasAdvisoryArchiveActions =
+    advisoryTranscriptArchiveArtifactRef !== null &&
+    advisoryTranscriptArchiveArtifactRef !== undefined &&
+    advisoryContext?.latest_timeline_index_ref &&
+    advisoryTimelineArchiveVersion !== null &&
+    advisoryTimelineArchiveVersion !== undefined &&
+    advisoryTimelineIndexArtifactRef !== null
   const canEnterChangeFlow = advisoryFlowStatus === 'OPEN'
   const canDraftChangeFlow = advisoryFlowStatus === 'DRAFTING' || advisoryFlowStatus === 'ANALYSIS_REJECTED'
   const canConfirmChangeFlow = advisoryFlowStatus === 'PENDING_BOARD_CONFIRMATION'
@@ -331,6 +347,41 @@ export function ReviewRoomDrawer({
               <div>
                 <span className="eyebrow">Graph version</span>
                 <p>{advisoryContext.source_version}</p>
+              </div>
+            </section>
+          ) : null}
+
+          {advisoryContext && hasAdvisoryArchiveActions ? (
+            <section className="review-room-overview">
+              <div>
+                <span className="eyebrow">Archive version</span>
+                <p>{advisoryTimelineArchiveVersion}</p>
+              </div>
+              <div>
+                <span className="eyebrow">Transcript archive</span>
+                <button
+                  type="button"
+                  className="ghost-button artifact-ref-button"
+                  onClick={() =>
+                    advisoryTranscriptArchiveArtifactRef
+                      ? onOpenArtifact(advisoryTranscriptArchiveArtifactRef)
+                      : undefined
+                  }
+                >
+                  Open transcript archive
+                </button>
+              </div>
+              <div>
+                <span className="eyebrow">Timeline index</span>
+                <button
+                  type="button"
+                  className="ghost-button artifact-ref-button"
+                  onClick={() =>
+                    advisoryTimelineIndexArtifactRef ? onOpenArtifact(advisoryTimelineIndexArtifactRef) : undefined
+                  }
+                >
+                  Open timeline index
+                </button>
               </div>
             </section>
           ) : null}

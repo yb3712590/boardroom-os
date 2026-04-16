@@ -112,8 +112,11 @@
 - 2026-04-16 本轮已完成 `P4-S4` 第二批：advisory review pack 现在会先显式进入 change flow，再走 drafting / analysis / apply；`modify-constraints` 不再一步式 resolve approval，`board-advisory-append-turn / board-advisory-request-analysis / board-advisory-apply-patch` 也已进正式命令面
 - 2026-04-16 本轮已完成 `P4-S4` 第二批：新增正式 `GRAPH_PATCH_PROPOSAL / GRAPH_PATCH` 过程资产和 resolver，`approved_patch_ref` 现在只会指向真实 graph patch；applied patch 的 `freeze / unfreeze / focus` 也已接进 `TicketGraph`
 - 2026-04-16 本轮已完成 `P4-S4` 第二批：`ReviewRoomDrawer` 已切成“进入变更流程 -> 草拟 / 发分析 -> 确认导入”三段最小闭环，`ceo_shadow_snapshot` 也已补 `change_flow_status / latest_patch_proposal_ref / patched_graph_version / focus_node_ids`
+- 2026-04-16 本轮已完成 `P4-S4` 第三批：`audit_mode = FULL_TIMELINE` 的 advisory change flow 现在会把 transcript archive 物化到 `90-archive/transcripts/board-advisory/<session>/v<N>.json`，并同步写正式 `TIMELINE_INDEX` 资产；archive 版本只增不改
+- 2026-04-16 本轮已完成 `P4-S4` 第三批：`BoardAdvisorySession / Review Room / build_ceo_shadow_snapshot() / latest_advisory_decision` 已补 `latest_timeline_index_ref / latest_transcript_archive_artifact_ref / timeline_archive_version_int`；`ReviewRoomDrawer` 也已能直接打开 transcript archive 和 timeline index
+- 2026-04-16 本轮已完成 `P4-S4` 第三批：`FULL_TIMELINE` archive 写失败时，相关 advisory 命令现在会显式 `REJECTED` 并回滚事务，不再留下半写 session 状态
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮如果继续推进新架构重构，优先补 `FULL_TIMELINE` 的 advisory transcript archive，再决定是否扩更深的 architect discussion / recovery 链和第二批 `GraphHealthReport` 规则；仍不碰 `doc/new-architecture/**`
+- 下一轮如果继续推进新架构重构，优先补 advisory analysis 的独立运行链和 recovery 动作，再决定是否扩第二批 `GraphHealthReport` 规则；仍不碰 `doc/new-architecture/**`
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。

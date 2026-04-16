@@ -70,6 +70,9 @@ class BoardAdvisorySessionDigest(StrictModel):
     latest_patch_proposal_ref: str | None = None
     approved_patch_ref: str | None = None
     patched_graph_version: str | None = None
+    latest_timeline_index_ref: str | None = None
+    latest_transcript_archive_artifact_ref: str | None = None
+    timeline_archive_version_int: int | None = Field(default=None, ge=1)
     decision_action: str | None = None
     board_comment: str | None = None
 

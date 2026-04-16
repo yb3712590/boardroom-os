@@ -2941,12 +2941,15 @@ class ControlPlaneRepository:
                 approved_patch_ref,
                 approved_patch_json,
                 patched_graph_version,
+                latest_timeline_index_ref,
+                latest_transcript_archive_artifact_ref,
+                timeline_archive_version_int,
                 focus_node_ids_json,
                 latest_analysis_error,
                 status,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.session_id,
@@ -2977,6 +2980,9 @@ class ControlPlaneRepository:
                     else None
                 ),
                 session.patched_graph_version,
+                session.latest_timeline_index_ref,
+                session.latest_transcript_archive_artifact_ref,
+                session.timeline_archive_version_int,
                 json.dumps(session.focus_node_ids, sort_keys=True),
                 session.latest_analysis_error,
                 session.status,
@@ -3100,6 +3106,41 @@ class ControlPlaneRepository:
         updated = self.get_board_advisory_session(session_id, connection=connection)
         if updated is None:
             raise RuntimeError("Board advisory session row vanished after decision update.")
+        return updated
+
+    def update_board_advisory_timeline_archive(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        latest_timeline_index_ref: str,
+        latest_transcript_archive_artifact_ref: str,
+        timeline_archive_version_int: int,
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_session(session_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory session is missing.")
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET latest_timeline_index_ref = ?,
+                latest_transcript_archive_artifact_ref = ?,
+                timeline_archive_version_int = ?,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                latest_timeline_index_ref,
+                latest_transcript_archive_artifact_ref,
+                timeline_archive_version_int,
+                updated_at.isoformat(),
+                session_id,
+            ),
+        )
+        updated = self.get_board_advisory_session(session_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory session row vanished after timeline archive update.")
         return updated
 
     def dismiss_board_advisory_session(
@@ -6981,6 +7022,9 @@ class ControlPlaneRepository:
                 approved_patch_ref TEXT,
                 approved_patch_json TEXT,
                 patched_graph_version TEXT,
+                latest_timeline_index_ref TEXT,
+                latest_transcript_archive_artifact_ref TEXT,
+                timeline_archive_version_int INTEGER,
                 focus_node_ids_json TEXT NOT NULL DEFAULT '[]',
                 latest_analysis_error TEXT,
                 status TEXT NOT NULL,
@@ -7010,6 +7054,9 @@ class ControlPlaneRepository:
             "approved_patch_ref": "TEXT",
             "approved_patch_json": "TEXT",
             "patched_graph_version": "TEXT",
+            "latest_timeline_index_ref": "TEXT",
+            "latest_transcript_archive_artifact_ref": "TEXT",
+            "timeline_archive_version_int": "INTEGER",
             "focus_node_ids_json": "TEXT NOT NULL DEFAULT '[]'",
             "latest_analysis_error": "TEXT",
             "status": "TEXT",

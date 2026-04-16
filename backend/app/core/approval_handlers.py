@@ -61,14 +61,22 @@ from app.core.board_advisory import (
     advisory_patch_proposal_artifact_ref,
     advisory_patch_proposal_logical_path,
     advisory_patch_proposal_process_asset_ref,
+    advisory_timeline_index_artifact_ref,
+    advisory_timeline_index_logical_path,
+    advisory_timeline_index_process_asset_ref,
+    advisory_transcript_archive_artifact_ref,
+    advisory_transcript_archive_logical_path,
     advisory_change_flow_can_append_turn,
     advisory_change_flow_can_apply,
     advisory_change_flow_can_request_analysis,
+    board_advisory_requires_full_timeline_archive,
     advisory_supports_governance_patch,
     build_board_advisory_turn,
     build_board_advisory_context,
     build_board_advisory_decision,
     build_board_advisory_decision_artifact_payload,
+    build_board_advisory_timeline_index_payload,
+    build_board_advisory_transcript_payload,
     build_graph_patch_from_proposal,
     build_graph_patch_proposal,
     build_governance_profile_from_patch,
@@ -706,6 +714,133 @@ def _require_board_advisory_session(
     return session
 
 
+def _board_advisory_artifact_subject(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    session: dict[str, Any],
+) -> tuple[str, str]:
+    approval = repository.get_approval_by_id(connection, str(session["approval_id"])) or {}
+    review_pack = ((approval.get("payload") or {}).get("review_pack") or {}) if isinstance(approval, dict) else {}
+    subject = review_pack.get("subject") or {}
+    source_ticket_id = str(subject.get("source_ticket_id") or session["approval_id"]).strip() or str(
+        session["approval_id"]
+    )
+    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
+    return source_ticket_id, source_node_id
+
+
+def _materialize_board_advisory_full_timeline_archive(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    session: dict[str, Any],
+    current_profile: dict[str, Any],
+    occurred_at,
+) -> dict[str, Any]:
+    if not board_advisory_requires_full_timeline_archive(
+        session,
+        current_profile=current_profile,
+    ):
+        return session
+    session_id = str(session.get("session_id") or "").strip()
+    workflow_id = str(session.get("workflow_id") or "").strip()
+    approval_id = str(session.get("approval_id") or "").strip()
+    review_pack_id = str(session.get("review_pack_id") or "").strip()
+    if not session_id or not workflow_id or not approval_id or not review_pack_id:
+        raise ValueError("Board advisory session is missing required identifiers for FULL_TIMELINE archive materialization.")
+
+    timeline_archive_version_int = int(session.get("timeline_archive_version_int") or 0) + 1
+    transcript_artifact_ref = advisory_transcript_archive_artifact_ref(
+        workflow_id=workflow_id,
+        session_id=session_id,
+        version_int=timeline_archive_version_int,
+    )
+    timeline_index_ref = advisory_timeline_index_process_asset_ref(
+        session_id,
+        version_int=timeline_archive_version_int,
+    )
+    timeline_index_artifact_ref = advisory_timeline_index_artifact_ref(
+        workflow_id=workflow_id,
+        session_id=session_id,
+        version_int=timeline_archive_version_int,
+    )
+    source_ticket_id, source_node_id = _board_advisory_artifact_subject(
+        repository,
+        connection,
+        session=session,
+    )
+    transcript_payload = build_board_advisory_transcript_payload(
+        session=session,
+        current_profile=current_profile,
+    )
+    _save_json_artifact(
+        repository,
+        connection,
+        artifact_ref=transcript_artifact_ref,
+        logical_path=advisory_transcript_archive_logical_path(
+            session_id=session_id,
+            version_int=timeline_archive_version_int,
+        ),
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        payload=transcript_payload,
+        kind="JSON",
+        occurred_at=occurred_at,
+    )
+    _save_json_artifact(
+        repository,
+        connection,
+        artifact_ref=timeline_index_artifact_ref,
+        logical_path=advisory_timeline_index_logical_path(
+            session_id=session_id,
+            version_int=timeline_archive_version_int,
+        ),
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        payload=build_board_advisory_timeline_index_payload(
+            session=session,
+            current_profile=current_profile,
+            timeline_archive_version_int=timeline_archive_version_int,
+            transcript_archive_artifact_ref=transcript_artifact_ref,
+        ),
+        kind="JSON",
+        occurred_at=occurred_at,
+    )
+    return repository.update_board_advisory_timeline_archive(
+        connection,
+        session_id=session_id,
+        latest_timeline_index_ref=timeline_index_ref,
+        latest_transcript_archive_artifact_ref=transcript_artifact_ref,
+        timeline_archive_version_int=timeline_archive_version_int,
+        updated_at=occurred_at,
+    )
+
+
+def _materialize_board_advisory_full_timeline_archive_checked(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    session: dict[str, Any],
+    current_profile: dict[str, Any],
+    occurred_at,
+) -> dict[str, Any]:
+    try:
+        return _materialize_board_advisory_full_timeline_archive(
+            repository,
+            connection,
+            session=session,
+            current_profile=current_profile,
+            occurred_at=occurred_at,
+        )
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"Board advisory FULL_TIMELINE archive materialization failed: {exc}") from exc
+
+
 def _dismiss_board_advisory_session_if_needed(
     repository: ControlPlaneRepository,
     connection,
@@ -718,10 +853,20 @@ def _dismiss_board_advisory_session_if_needed(
     session = _require_board_advisory_session(repository, connection, approval=approval)
     if session is None:
         return
-    repository.dismiss_board_advisory_session(
+    updated_session = repository.dismiss_board_advisory_session(
         connection,
         session_id=str(session["session_id"]),
         updated_at=occurred_at,
+    )
+    current_profile = repository.get_latest_governance_profile(str(approval["workflow_id"]), connection=connection)
+    if current_profile is None:
+        raise ValueError("Governance profile is required before dismissing the board advisory session.")
+    updated_session = _materialize_board_advisory_full_timeline_archive_checked(
+        repository,
+        connection,
+        session=updated_session,
+        current_profile=current_profile,
+        occurred_at=occurred_at,
     )
     advisory_event = repository.insert_event(
         connection,
@@ -737,7 +882,7 @@ def _dismiss_board_advisory_session_if_needed(
             "approval_id": approval["approval_id"],
             "review_pack_id": approval["review_pack_id"],
             "trigger_type": session["trigger_type"],
-            "status": "DISMISSED",
+            "status": updated_session["status"],
         },
         occurred_at=occurred_at,
     )
@@ -936,6 +1081,13 @@ def _enter_board_advisory_change_flow(
         working_turn=working_turn,
         updated_at=occurred_at,
     )
+    updated_session = _materialize_board_advisory_full_timeline_archive_checked(
+        repository,
+        connection,
+        session=updated_session,
+        current_profile=current_profile,
+        occurred_at=occurred_at,
+    )
     advisory_event = repository.insert_event(
         connection,
         event_type=EVENT_BOARD_ADVISORY_CHANGE_FLOW_ENTERED,
@@ -984,6 +1136,9 @@ def _append_board_advisory_turn(
         raise ValueError("Board advisory session is missing.")
     if not advisory_change_flow_can_append_turn(str(session.get("status") or "")):
         raise ValueError("Board advisory turn can only be appended while drafting.")
+    current_profile = repository.get_latest_governance_profile(str(session["workflow_id"]), connection=connection)
+    if current_profile is None:
+        raise ValueError("Governance profile is required before appending a board advisory turn.")
     working_turn = build_board_advisory_turn(
         actor_type=actor_type,
         content=content,
@@ -994,6 +1149,13 @@ def _append_board_advisory_turn(
         session_id=session_id,
         working_turn=working_turn,
         updated_at=occurred_at,
+    )
+    updated_session = _materialize_board_advisory_full_timeline_archive_checked(
+        repository,
+        connection,
+        session=updated_session,
+        current_profile=current_profile,
+        occurred_at=occurred_at,
     )
     advisory_event = repository.insert_event(
         connection,
@@ -1071,6 +1233,13 @@ def _request_board_advisory_analysis(
             error_message=str(exc),
             updated_at=occurred_at,
         )
+        updated_session = _materialize_board_advisory_full_timeline_archive_checked(
+            repository,
+            connection,
+            session=updated_session,
+            current_profile=current_profile,
+            occurred_at=occurred_at,
+        )
         advisory_event = repository.insert_event(
             connection,
             event_type=EVENT_BOARD_ADVISORY_ANALYSIS_REJECTED,
@@ -1126,6 +1295,13 @@ def _request_board_advisory_analysis(
         proposal=proposal.model_dump(mode="json"),
         decision_pack_refs=decision_pack_refs,
         updated_at=occurred_at,
+    )
+    updated_session = _materialize_board_advisory_full_timeline_archive_checked(
+        repository,
+        connection,
+        session=updated_session,
+        current_profile=current_profile,
+        occurred_at=occurred_at,
     )
     advisory_event = repository.insert_event(
         connection,
@@ -1331,6 +1507,16 @@ def _apply_board_advisory_patch(
         if next_profile is not None:
             repository.save_governance_profile(connection, next_profile)
             superseding_governance_profile = next_profile.model_dump(mode="json")
+    archive_profile = repository.get_latest_governance_profile(workflow_id, connection=connection)
+    if archive_profile is None:
+        raise ValueError("Governance profile is required before materializing the board advisory timeline archive.")
+    updated_session = _materialize_board_advisory_full_timeline_archive_checked(
+        repository,
+        connection,
+        session=updated_session,
+        current_profile=archive_profile,
+        occurred_at=occurred_at,
+    )
     approval = repository.resolve_approval(
         connection,
         approval_id=str(session["approval_id"]),
@@ -2324,14 +2510,24 @@ def _handle_board_approve(
                 ],
             },
         )
-        _dismiss_board_advisory_session_if_needed(
-            repository,
-            connection,
-            approval=approval,
-            command_id=command_id,
-            occurred_at=received_at,
-            idempotency_key=f"{payload.idempotency_key}:board-advisory-dismiss",
-        )
+        try:
+            _dismiss_board_advisory_session_if_needed(
+                repository,
+                connection,
+                approval=approval,
+                command_id=command_id,
+                occurred_at=received_at,
+                idempotency_key=f"{payload.idempotency_key}:board-advisory-dismiss",
+            )
+        except ValueError as exc:
+            connection.rollback()
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=str(exc),
+                causation_hint=f"approval:{payload.approval_id}",
+            )
         if approval["approval_type"] == "REQUIREMENT_ELICITATION":
             elicitation_artifact_ref, enriched_brief_artifact_ref = _record_requirement_elicitation_artifacts(
                 repository,
@@ -2545,14 +2741,24 @@ def handle_board_reject(
                 "rejection_reasons": payload.rejection_reasons,
             },
         )
-        _dismiss_board_advisory_session_if_needed(
-            repository,
-            connection,
-            approval=approval,
-            command_id=command_id,
-            occurred_at=received_at,
-            idempotency_key=f"{payload.idempotency_key}:board-advisory-dismiss",
-        )
+        try:
+            _dismiss_board_advisory_session_if_needed(
+                repository,
+                connection,
+                approval=approval,
+                command_id=command_id,
+                occurred_at=received_at,
+                idempotency_key=f"{payload.idempotency_key}:board-advisory-dismiss",
+            )
+        except ValueError as exc:
+            connection.rollback()
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=str(exc),
+                causation_hint=f"approval:{payload.approval_id}",
+            )
         repository.refresh_projections(connection)
 
     if approval["approval_type"] == "VISUAL_MILESTONE":
@@ -2673,17 +2879,27 @@ def handle_modify_constraints(
             )
 
         if review_pack_requires_board_advisory(review_pack):
-            _enter_board_advisory_change_flow(
-                repository,
-                connection,
-                approval=approval,
-                governance_patch=governance_patch,
-                constraint_patch=payload.constraint_patch.model_dump(mode="json"),
-                board_comment=payload.board_comment,
-                command_id=command_id,
-                occurred_at=received_at,
-                idempotency_key=payload.idempotency_key,
-            )
+            try:
+                _enter_board_advisory_change_flow(
+                    repository,
+                    connection,
+                    approval=approval,
+                    governance_patch=governance_patch,
+                    constraint_patch=payload.constraint_patch.model_dump(mode="json"),
+                    board_comment=payload.board_comment,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    idempotency_key=payload.idempotency_key,
+                )
+            except ValueError as exc:
+                connection.rollback()
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    reason=str(exc),
+                    causation_hint=f"approval:{payload.approval_id}",
+                )
             repository.refresh_projections(connection)
             return CommandAckEnvelope(
                 command_id=command_id,
@@ -2871,6 +3087,7 @@ def handle_board_advisory_append_turn(
                 idempotency_key=payload.idempotency_key,
             )
         except ValueError as exc:
+            connection.rollback()
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
@@ -2915,6 +3132,7 @@ def handle_board_advisory_request_analysis(
                 idempotency_key=payload.idempotency_key,
             )
         except ValueError as exc:
+            connection.rollback()
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
@@ -2968,6 +3186,7 @@ def handle_board_advisory_apply_patch(
                 idempotency_key=payload.idempotency_key,
             )
         except ValueError as exc:
+            connection.rollback()
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,

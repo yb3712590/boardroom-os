@@ -93,6 +93,9 @@ def build_board_advisory_session(
         approved_patch_ref=None,
         approved_patch=None,
         patched_graph_version=None,
+        latest_timeline_index_ref=None,
+        latest_transcript_archive_artifact_ref=None,
+        timeline_archive_version_int=None,
         focus_node_ids=[],
         latest_analysis_error=None,
         status=BOARD_ADVISORY_STATUS_OPEN,
@@ -105,6 +108,54 @@ def governance_modes_from_profile(profile: GovernanceProfile | Mapping[str, Any]
         "approval_mode": normalized.approval_mode,
         "audit_mode": normalized.audit_mode,
     }
+
+
+def effective_governance_modes_for_board_advisory(
+    session: Mapping[str, Any] | None,
+    *,
+    current_profile: GovernanceProfile | Mapping[str, Any],
+) -> dict[str, str]:
+    modes = governance_modes_from_profile(current_profile)
+    if not isinstance(session, Mapping):
+        return modes
+    board_decision = session.get("board_decision")
+    if not isinstance(board_decision, Mapping):
+        return modes
+    governance_patch = board_decision.get("governance_patch")
+    if not isinstance(governance_patch, Mapping):
+        return modes
+    approval_mode = str(governance_patch.get("approval_mode") or "").strip()
+    audit_mode = str(governance_patch.get("audit_mode") or "").strip()
+    if approval_mode:
+        modes["approval_mode"] = approval_mode
+    if audit_mode:
+        modes["audit_mode"] = audit_mode
+    return modes
+
+
+def effective_audit_mode_for_board_advisory(
+    session: Mapping[str, Any] | None,
+    *,
+    current_profile: GovernanceProfile | Mapping[str, Any],
+) -> str:
+    return effective_governance_modes_for_board_advisory(
+        session,
+        current_profile=current_profile,
+    )["audit_mode"]
+
+
+def board_advisory_requires_full_timeline_archive(
+    session: Mapping[str, Any] | None,
+    *,
+    current_profile: GovernanceProfile | Mapping[str, Any],
+) -> bool:
+    return (
+        effective_audit_mode_for_board_advisory(
+            session,
+            current_profile=current_profile,
+        )
+        == "FULL_TIMELINE"
+    )
 
 
 def build_governance_profile_from_patch(
@@ -155,6 +206,9 @@ def build_board_advisory_context(
         "latest_patch_proposal_ref": session.get("latest_patch_proposal_ref"),
         "approved_patch_ref": session.get("approved_patch_ref"),
         "patched_graph_version": session.get("patched_graph_version"),
+        "latest_timeline_index_ref": session.get("latest_timeline_index_ref"),
+        "latest_transcript_archive_artifact_ref": session.get("latest_transcript_archive_artifact_ref"),
+        "timeline_archive_version_int": session.get("timeline_archive_version_int"),
         "focus_node_ids": list(session.get("focus_node_ids") or []),
         "latest_analysis_error": session.get("latest_analysis_error"),
         "current_governance_modes": governance_modes_from_profile(current_profile),
@@ -188,6 +242,9 @@ def build_board_advisory_snapshot_entry(session: Mapping[str, Any]) -> dict[str,
         "latest_patch_proposal_ref": session.get("latest_patch_proposal_ref"),
         "approved_patch_ref": session.get("approved_patch_ref"),
         "patched_graph_version": session.get("patched_graph_version"),
+        "latest_timeline_index_ref": session.get("latest_timeline_index_ref"),
+        "latest_transcript_archive_artifact_ref": session.get("latest_transcript_archive_artifact_ref"),
+        "timeline_archive_version_int": session.get("timeline_archive_version_int"),
     }
     board_decision = session.get("board_decision")
     if isinstance(board_decision, Mapping):
@@ -220,11 +277,17 @@ def build_latest_advisory_decision(
         "approved_patch_ref": session.get("approved_patch_ref"),
         "latest_patch_proposal_ref": session.get("latest_patch_proposal_ref"),
         "patched_graph_version": session.get("patched_graph_version"),
+        "latest_timeline_index_ref": session.get("latest_timeline_index_ref"),
+        "latest_transcript_archive_artifact_ref": session.get("latest_transcript_archive_artifact_ref"),
+        "timeline_archive_version_int": session.get("timeline_archive_version_int"),
         "focus_node_ids": list(session.get("focus_node_ids") or []),
         "decision_action": str(board_decision.get("decision_action") or ""),
         "board_comment": str(board_decision.get("board_comment") or ""),
         "constraint_patch": dict(board_decision.get("constraint_patch") or {}),
-        "current_governance_modes": governance_modes_from_profile(current_profile),
+        "current_governance_modes": effective_governance_modes_for_board_advisory(
+            session,
+            current_profile=current_profile,
+        ),
     }
     governance_patch = board_decision.get("governance_patch")
     if isinstance(governance_patch, Mapping):
@@ -266,6 +329,36 @@ def advisory_graph_patch_logical_path(*, session_id: str) -> str:
 
 def advisory_graph_patch_process_asset_ref(session_id: str) -> str:
     return build_process_asset_canonical_ref(f"pa://graph-patch/{session_id}", 1)
+
+
+def advisory_timeline_index_artifact_ref(
+    *,
+    workflow_id: str,
+    session_id: str,
+    version_int: int,
+) -> str:
+    return f"art://board-advisory/{workflow_id}/{session_id}/timeline-index-v{version_int}.json"
+
+
+def advisory_timeline_index_logical_path(*, session_id: str, version_int: int) -> str:
+    return f"20-evidence/board-advisory/{session_id}/timeline-index-v{version_int}.json"
+
+
+def advisory_timeline_index_process_asset_ref(session_id: str, *, version_int: int) -> str:
+    return build_process_asset_canonical_ref(f"pa://timeline-index/{session_id}", version_int)
+
+
+def advisory_transcript_archive_artifact_ref(
+    *,
+    workflow_id: str,
+    session_id: str,
+    version_int: int,
+) -> str:
+    return f"art://board-advisory/{workflow_id}/{session_id}/transcript-v{version_int}.json"
+
+
+def advisory_transcript_archive_logical_path(*, session_id: str, version_int: int) -> str:
+    return f"90-archive/transcripts/board-advisory/{session_id}/v{version_int}.json"
 
 
 def build_board_advisory_turn(*, actor_type: str, content: str, created_at) -> BoardAdvisoryTurn:
@@ -423,3 +516,72 @@ def build_board_advisory_decision_artifact_payload(
         payload["next_governance_modes"] = governance_modes_from_profile(next_profile)
         payload["next_governance_profile_ref"] = GovernanceProfile.model_validate(next_profile).profile_id
     return payload
+
+
+def build_board_advisory_transcript_payload(
+    *,
+    session: Mapping[str, Any],
+    current_profile: GovernanceProfile | Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "session_id": str(session.get("session_id") or ""),
+        "workflow_id": str(session.get("workflow_id") or ""),
+        "approval_id": str(session.get("approval_id") or ""),
+        "review_pack_id": str(session.get("review_pack_id") or ""),
+        "change_flow_status": str(session.get("status") or ""),
+        "source_version": str(session.get("source_version") or ""),
+        "governance_profile_ref": str(session.get("governance_profile_ref") or ""),
+        "current_governance_modes": effective_governance_modes_for_board_advisory(
+            session,
+            current_profile=current_profile,
+        ),
+        "working_turns": list(session.get("working_turns") or []),
+        "board_decision": (
+            dict(session.get("board_decision") or {})
+            if isinstance(session.get("board_decision"), Mapping)
+            else None
+        ),
+        "latest_patch_proposal": (
+            dict(session.get("latest_patch_proposal") or {})
+            if isinstance(session.get("latest_patch_proposal"), Mapping)
+            else None
+        ),
+        "approved_patch": (
+            dict(session.get("approved_patch") or {})
+            if isinstance(session.get("approved_patch"), Mapping)
+            else None
+        ),
+        "decision_pack_refs": list(session.get("decision_pack_refs") or []),
+        "patched_graph_version": session.get("patched_graph_version"),
+    }
+
+
+def build_board_advisory_timeline_index_payload(
+    *,
+    session: Mapping[str, Any],
+    current_profile: GovernanceProfile | Mapping[str, Any],
+    timeline_archive_version_int: int,
+    transcript_archive_artifact_ref: str,
+) -> dict[str, Any]:
+    return {
+        "session_id": str(session.get("session_id") or ""),
+        "workflow_id": str(session.get("workflow_id") or ""),
+        "approval_id": str(session.get("approval_id") or ""),
+        "review_pack_id": str(session.get("review_pack_id") or ""),
+        "timeline_archive_version_int": timeline_archive_version_int,
+        "transcript_archive_artifact_ref": transcript_archive_artifact_ref,
+        "change_flow_status": str(session.get("status") or ""),
+        "current_governance_modes": effective_governance_modes_for_board_advisory(
+            session,
+            current_profile=current_profile,
+        ),
+        "decision_pack_refs": list(session.get("decision_pack_refs") or []),
+        "latest_patch_proposal_ref": session.get("latest_patch_proposal_ref"),
+        "approved_patch_ref": session.get("approved_patch_ref"),
+        "patched_graph_version": session.get("patched_graph_version"),
+        "turn_ids": [
+            str(item.get("turn_id") or "").strip()
+            for item in list(session.get("working_turns") or [])
+            if isinstance(item, Mapping) and str(item.get("turn_id") or "").strip()
+        ],
+    }

@@ -252,6 +252,9 @@ export type ReviewPack = {
     latest_patch_proposal_ref?: string | null
     approved_patch_ref?: string | null
     patched_graph_version?: string | null
+    latest_timeline_index_ref?: string | null
+    latest_transcript_archive_artifact_ref?: string | null
+    timeline_archive_version_int?: number | null
     focus_node_ids?: string[]
     latest_analysis_error?: string | null
     proposal_summary?: string

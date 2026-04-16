@@ -12,6 +12,7 @@ from app.core.artifacts import (
     is_artifact_readable,
     normalize_artifact_kind,
 )
+from app.core.board_advisory import advisory_timeline_index_artifact_ref
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -111,6 +112,10 @@ def build_project_map_slice_process_asset_ref(
     version_int: int | None = None,
 ) -> str:
     return _process_asset_ref("project-map-slice", workflow_id, version_int=version_int)
+
+
+def build_timeline_index_process_asset_ref(session_id: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("timeline-index", session_id, version_int=version_int)
 
 
 def build_meeting_decision_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
@@ -410,6 +415,14 @@ def resolve_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             workflow_id=target,
+            connection=connection,
+        )
+    if kind == "timeline-index":
+        return _resolve_timeline_index_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            session_id=target,
+            version_int=version_int,
             connection=connection,
         )
     if kind == "meeting-decision-record":
@@ -789,6 +802,58 @@ def _resolve_graph_patch_process_asset(
             json_content=payload,
             schema_ref="graph_patch@1",
         )
+
+
+def _resolve_timeline_index_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    session_id: str,
+    version_int: int | None,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        session = repository.get_board_advisory_session(session_id, connection=resolved_connection)
+        if session is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        latest_version_int = int(session.get("timeline_archive_version_int") or 0)
+        if latest_version_int <= 0:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        target_version_int = version_int or latest_version_int
+        if target_version_int > latest_version_int:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+
+        def _transform(payload: dict[str, Any]) -> dict[str, Any]:
+            return dict(payload)
+
+        artifact_ref = advisory_timeline_index_artifact_ref(
+            workflow_id=str(session.get("workflow_id") or ""),
+            session_id=session_id,
+            version_int=target_version_int,
+        )
+        base = _resolve_json_payload_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            process_asset_kind="TIMELINE_INDEX",
+            ticket_id=str(session.get("approval_id") or session_id),
+            artifact_ref=artifact_ref,
+            schema_ref="timeline_index@1",
+            summary=f"Board advisory timeline index for {session_id} v{target_version_int}",
+            transform_payload=_transform,
+            connection=resolved_connection,
+        )
+        canonical_ref = build_timeline_index_process_asset_ref(session_id, version_int=target_version_int)
+        base.process_asset_ref = canonical_ref
+        base.canonical_ref = canonical_ref
+        base.version_int = target_version_int
+        base.process_asset_kind = "TIMELINE_INDEX"
+        base.consumable_by = ["ceo", "review"]
+        if isinstance(base.source_metadata, dict):
+            base.source_metadata["workflow_id"] = session.get("workflow_id")
+            base.source_metadata["approval_id"] = session.get("approval_id")
+            base.source_metadata["review_pack_id"] = session.get("review_pack_id")
+            base.source_metadata["timeline_archive_version_int"] = target_version_int
+        return base
 
 
 def _resolve_failure_fingerprint_process_asset(

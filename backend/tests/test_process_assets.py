@@ -650,3 +650,53 @@ def test_resolve_board_advisory_graph_patch_assets(client) -> None:
     assert resolved_patch.json_content["patch_ref"] == patch_ref
     assert resolved_patch.json_content["proposal_ref"] == proposal_ref
     assert resolved_patch.json_content["freeze_node_ids"] == ["node_homepage_visual"]
+
+
+def test_resolve_board_advisory_timeline_index_asset(client) -> None:
+    workflow_id = "wf_process_asset_advisory_timeline"
+    repository = client.app.state.repository
+
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Resolve advisory timeline index assets.",
+    )
+    approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
+
+    with api_test_helpers._suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Keep every advisory turn in the audit archive."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "governance_patch": {
+                    "audit_mode": "FULL_TIMELINE",
+                },
+                "board_comment": "Archive the change flow before the next runtime import.",
+                "idempotency_key": f"modify-constraints:{approval['approval_id']}:timeline-index",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    timeline_ref = f"pa://timeline-index/{advisory_session['session_id']}@1"
+    resolved_timeline_index = resolve_process_asset(repository, timeline_ref)
+
+    assert resolved_timeline_index.process_asset_kind == "TIMELINE_INDEX"
+    assert resolved_timeline_index.process_asset_ref == timeline_ref
+    assert resolved_timeline_index.json_content["timeline_archive_version_int"] == 1
+    assert resolved_timeline_index.json_content["transcript_archive_artifact_ref"] == (
+        f"art://board-advisory/{workflow_id}/{advisory_session['session_id']}/transcript-v1.json"
+    )
+    assert resolved_timeline_index.json_content["turn_ids"]

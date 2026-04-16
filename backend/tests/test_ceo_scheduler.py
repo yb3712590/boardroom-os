@@ -4392,6 +4392,85 @@ def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client):
     assert "Treat this advisory decision as the new execution baseline." in prompt
 
 
+def test_ceo_shadow_snapshot_exposes_full_timeline_archive_refs_for_applied_advisory_session(client):
+    workflow_id = "wf_ceo_advisory_timeline_refs"
+    _seed_workflow(client, workflow_id, "CEO advisory timeline refs")
+    approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
+
+    with api_test_helpers._suppress_ceo_shadow_side_effects():
+        modify_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Persist a full advisory transcript before the next run."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "governance_patch": {
+                    "approval_mode": "EXPERT_GATED",
+                    "audit_mode": "FULL_TIMELINE",
+                },
+                "board_comment": "Carry the archive refs into the CEO snapshot.",
+                "idempotency_key": f"modify-constraints:{approval['approval_id']}:timeline-refs",
+            },
+        )
+    assert modify_response.status_code == 200
+    assert modify_response.json()["status"] == "ACCEPTED"
+    advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    analysis_response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:timeline-refs",
+        },
+    )
+    assert analysis_response.status_code == 200
+    assert analysis_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": advisory_session["latest_patch_proposal_ref"],
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:timeline-refs",
+        },
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "ACCEPTED"
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="APPROVAL_RESOLVED",
+        trigger_ref=approval["approval_id"],
+    )
+
+    board_advisory_sessions = snapshot["projection_snapshot"]["board_advisory_sessions"]
+    latest_advisory_decision = snapshot["replan_focus"]["latest_advisory_decision"]
+
+    assert len(board_advisory_sessions) == 1
+    assert board_advisory_sessions[0]["timeline_archive_version_int"] == 3
+    assert board_advisory_sessions[0]["latest_timeline_index_ref"] == (
+        f"pa://timeline-index/{board_advisory_sessions[0]['session_id']}@3"
+    )
+    assert board_advisory_sessions[0]["latest_transcript_archive_artifact_ref"] == (
+        f"art://board-advisory/{workflow_id}/{board_advisory_sessions[0]['session_id']}/transcript-v3.json"
+    )
+    assert latest_advisory_decision is not None
+    assert latest_advisory_decision["timeline_archive_version_int"] == 3
+    assert latest_advisory_decision["latest_timeline_index_ref"] == (
+        f"pa://timeline-index/{board_advisory_sessions[0]['session_id']}@3"
+    )
+
+
 def test_ceo_shadow_prompt_mentions_project_map_and_graph_health(client):
     workflow_id = "wf_ceo_graph_health_prompt"
     _seed_workflow(client, workflow_id, "CEO project map prompt")

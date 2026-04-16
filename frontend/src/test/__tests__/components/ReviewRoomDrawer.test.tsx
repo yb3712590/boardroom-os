@@ -588,4 +588,181 @@ describe('ReviewRoomDrawer', () => {
       proposalRef: 'pa://graph-patch-proposal/adv_006@1',
     })
   })
+
+  it('renders advisory archive actions when full timeline refs are present', async () => {
+    const user = userEvent.setup()
+    const onOpenArtifact = vi.fn()
+
+    render(
+      <ReviewRoomDrawer
+        isOpen
+        loading={false}
+        reviewData={{
+          review_pack: {
+            meta: {
+              approval_id: 'apr_007',
+              review_pack_id: 'brp_007',
+              review_pack_version: 1,
+              workflow_id: 'wf_007',
+              review_type: 'VISUAL_MILESTONE',
+              created_at: '2026-04-16T12:30:00+08:00',
+              priority: 'high',
+            },
+            subject: {
+              title: 'Inspect the archived advisory transcript',
+            },
+            trigger: {
+              trigger_event_id: 'evt_007',
+              trigger_reason: 'The board wants a full advisory archive before import.',
+              why_now: 'Need quick access to the transcript and timeline index.',
+            },
+            recommendation: {
+              recommended_action: 'MODIFY_CONSTRAINTS',
+              recommended_option_id: 'inspect_archive',
+              summary: 'Review the archived advisory transcript first.',
+            },
+            options: [],
+            advisory_context: {
+              session_id: 'adv_007',
+              approval_id: 'apr_007',
+              review_pack_id: 'brp_007',
+              trigger_type: 'CONSTRAINT_CHANGE',
+              status: 'PENDING_BOARD_CONFIRMATION',
+              change_flow_status: 'PENDING_BOARD_CONFIRMATION',
+              source_version: 'gv_30',
+              governance_profile_ref: 'gp_007',
+              affected_nodes: ['node_homepage_visual'],
+              working_turns: [],
+              decision_pack_refs: ['pa://decision-summary/adv_007@1'],
+              latest_patch_proposal_ref: 'pa://graph-patch-proposal/adv_007@1',
+              approved_patch_ref: null,
+              latest_timeline_index_ref: 'pa://timeline-index/adv_007@3',
+              latest_transcript_archive_artifact_ref: 'art://board-advisory/wf_007/adv_007/transcript-v3.json',
+              timeline_archive_version_int: 3,
+              current_governance_modes: {
+                approval_mode: 'EXPERT_GATED',
+                audit_mode: 'FULL_TIMELINE',
+              },
+              supports_governance_patch: true,
+            },
+            decision_form: {
+              allowed_actions: ['MODIFY_CONSTRAINTS'],
+              command_target_version: 1,
+              requires_comment_on_reject: true,
+              requires_constraint_patch_on_modify: true,
+            },
+          } as never,
+          available_actions: ['MODIFY_CONSTRAINTS'],
+          draft_defaults: {
+            selected_option_id: 'inspect_archive',
+            comment_template: '',
+          } as never,
+        }}
+        inspectorData={null}
+        inspectorLoading={false}
+        error={null}
+        submittingAction={null}
+        onClose={vi.fn()}
+        onOpenInspector={vi.fn()}
+        onOpenArtifact={onOpenArtifact}
+        onApprove={vi.fn().mockResolvedValue(undefined)}
+        onReject={vi.fn().mockResolvedValue(undefined)}
+        onModifyConstraints={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByText('Archive version')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Open transcript archive' }))
+    await user.click(screen.getByRole('button', { name: 'Open timeline index' }))
+
+    expect(onOpenArtifact).toHaveBeenNthCalledWith(
+      1,
+      'art://board-advisory/wf_007/adv_007/transcript-v3.json',
+    )
+    expect(onOpenArtifact).toHaveBeenNthCalledWith(
+      2,
+      'art://board-advisory/wf_007/adv_007/timeline-index-v3.json',
+    )
+  })
+
+  it('hides advisory archive actions when full timeline refs are absent', () => {
+    render(
+      <ReviewRoomDrawer
+        isOpen
+        loading={false}
+        reviewData={{
+          review_pack: {
+            meta: {
+              approval_id: 'apr_008',
+              review_pack_id: 'brp_008',
+              review_pack_version: 1,
+              workflow_id: 'wf_008',
+              review_type: 'VISUAL_MILESTONE',
+              created_at: '2026-04-16T12:40:00+08:00',
+              priority: 'high',
+            },
+            subject: {
+              title: 'Draft without archive refs',
+            },
+            trigger: {
+              trigger_event_id: 'evt_008',
+              trigger_reason: 'Still drafting the change flow.',
+              why_now: 'No archive has been materialized yet.',
+            },
+            recommendation: {
+              recommended_action: 'MODIFY_CONSTRAINTS',
+              recommended_option_id: 'draft_without_archive',
+              summary: 'Keep drafting before archive output exists.',
+            },
+            options: [],
+            advisory_context: {
+              session_id: 'adv_008',
+              approval_id: 'apr_008',
+              review_pack_id: 'brp_008',
+              trigger_type: 'CONSTRAINT_CHANGE',
+              status: 'DRAFTING',
+              change_flow_status: 'DRAFTING',
+              source_version: 'gv_31',
+              governance_profile_ref: 'gp_008',
+              affected_nodes: ['node_homepage_visual'],
+              working_turns: [],
+              decision_pack_refs: ['pa://decision-summary/adv_008@1'],
+              latest_patch_proposal_ref: null,
+              approved_patch_ref: null,
+              current_governance_modes: {
+                approval_mode: 'AUTO_CEO',
+                audit_mode: 'MINIMAL',
+              },
+              supports_governance_patch: true,
+            },
+            decision_form: {
+              allowed_actions: ['MODIFY_CONSTRAINTS'],
+              command_target_version: 1,
+              requires_comment_on_reject: true,
+              requires_constraint_patch_on_modify: true,
+            },
+          } as never,
+          available_actions: ['MODIFY_CONSTRAINTS'],
+          draft_defaults: {
+            selected_option_id: 'draft_without_archive',
+            comment_template: '',
+          } as never,
+        }}
+        inspectorData={null}
+        inspectorLoading={false}
+        error={null}
+        submittingAction={null}
+        onClose={vi.fn()}
+        onOpenInspector={vi.fn()}
+        onOpenArtifact={vi.fn()}
+        onApprove={vi.fn().mockResolvedValue(undefined)}
+        onReject={vi.fn().mockResolvedValue(undefined)}
+        onModifyConstraints={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Open transcript archive' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open timeline index' })).not.toBeInTheDocument()
+  })
 })

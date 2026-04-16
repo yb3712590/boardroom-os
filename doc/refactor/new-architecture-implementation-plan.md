@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 08:12`
+> 最后更新：`2026-04-16 10:06`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -697,9 +697,11 @@
 - [x] `P4-S4` 已完成第二批：`modify-constraints` 对 advisory review pack 现在只会显式进入 change flow，不再直接 resolve approval；`Review Room` 已切成 `进入变更流程 -> 草拟 / 发分析 -> 确认导入` 三段最小闭环
 - [x] `P4-S4` 已完成第二批：新增正式 `GRAPH_PATCH_PROPOSAL / GRAPH_PATCH` 过程资产、`board-advisory-append-turn / board-advisory-request-analysis / board-advisory-apply-patch` 命令和 `EVENT_GRAPH_PATCH_APPLIED`；`approved_patch_ref` 现在只会指向真实 graph patch
 - [x] `P4-S4` 已完成第二批：`TicketGraph` 现在会叠加 applied advisory patch 的 `freeze / unfreeze / focus`，`ceo_shadow_snapshot / Review Room` 也已暴露 `change_flow_status / latest_patch_proposal_ref / patched_graph_version / focus_node_ids`
+- [x] `P4-S4` 已完成第三批：`audit_mode = FULL_TIMELINE` 的 advisory change flow 现在会把 transcript archive 物化到 `90-archive/transcripts/board-advisory/<session>/v<N>.json`，并同步写正式 `TIMELINE_INDEX` 资产；archive 版本只增不改
+- [x] `P4-S4` 已完成第三批：`BoardAdvisorySession / Review Room / build_ceo_shadow_snapshot() / latest_advisory_decision` 现已补 `latest_timeline_index_ref / latest_transcript_archive_artifact_ref / timeline_archive_version_int`
+- [x] `P4-S4` 已完成第三批：`FULL_TIMELINE` archive 写失败时，相关 advisory 命令现在会显式 `REJECTED` 并回滚事务，不再留下半写 session 状态
 
 ### 未完成
-- [ ] advisory change flow 还没把 `audit_mode = FULL_TIMELINE` 的内部 transcript 物化到 `90-archive/transcripts`
 - [ ] advisory analysis 当前先走最小 deterministic compiler；还没把 CEO 与架构侧的内部讨论真相收成独立运行链和 recovery 动作
 
 ### 明确放弃
@@ -908,15 +910,15 @@
 `advisory change flow 这轮已经有显式 drafting / analysis / apply 主链，但 \`audit_mode = FULL_TIMELINE\` 时要求的内部 transcript archive 还没物化到 \`90-archive/transcripts\`。`
 
 **影响：**  
-`当前最小 change flow 已经可审计、可幂等、可失败显式化；但 \`FULL_TIMELINE\` 仍只保留 working turns 和 proposal / patch 资产，达不到完整时间线归档口径。`
+`如果不补 archive，\`FULL_TIMELINE\` 会只剩“声明支持”，达不到不可变时间线归档和 audit replay 的口径。`
 
 **当前处理：**  
-`本轮先保守停在最小主链：保留 session working turns、\`DECISION_SUMMARY / GRAPH_PATCH_PROPOSAL / GRAPH_PATCH\` 资产和 apply 事件；完整 transcript archive 留到后续 P4 续切片。`
+`已补正式 transcript archive / TIMELINE_INDEX 闭环：archive 会按 advisory change flow 的状态点物化到 \`90-archive/transcripts\`，session / review room / ceo snapshot 也已暴露最新 archive refs；archive 写失败时命令显式 reject 并回滚。`
 
 **是否需要改架构文档：**  
 `no`
 
-**状态：** `open`
+**状态：** `closed`
 
 ### D-013
 **现象：**
@@ -1566,6 +1568,38 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先补 FULL_TIMELINE 的 advisory transcript archive 和更完整的 advisory recovery / architect discussion 链。`
 
+### Session `2026-04-16 / 21`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 给 `BoardAdvisorySession` 补 `latest_timeline_index_ref / latest_transcript_archive_artifact_ref / timeline_archive_version_int`，并把 `TIMELINE_INDEX` 收进正式 `ProcessAsset` 合同和 resolver
+- [x] 给 advisory change flow 补 `FULL_TIMELINE` transcript archive helper；`modify-constraints / append-turn / request-analysis / apply-patch / dismiss` 命中 `FULL_TIMELINE` 时现在都会写 archive + timeline index
+- [x] 把 archive refs 接进 `Review Room / ReviewRoomDrawer / build_ceo_shadow_snapshot() / latest_advisory_decision`
+- [x] 把 archive 失败路径收正成显式 `REJECTED + rollback`，不再留下半写 session 状态
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "board_advisory or timeline_index" -q` 通过（`9 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_process_assets.py -k "timeline_index or board_advisory" -q` 通过（`2 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "advisory or timeline" -q` 通过（`3 passed`）
+- [x] `python3 -m py_compile backend/app/contracts/advisory.py backend/app/contracts/ceo.py backend/app/contracts/process_assets.py backend/app/core/board_advisory.py backend/app/core/approval_handlers.py backend/app/core/process_assets.py backend/app/db/repository.py backend/app/db/schema.py backend/tests/test_api.py backend/tests/test_process_assets.py backend/tests/test_ceo_scheduler.py` 通过
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/ReviewRoomDrawer.test.tsx && npm run build` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] advisory analysis 还没把 CEO / 架构侧内部讨论收成独立运行链和 recovery 动作
+- [ ] legacy / 非 workspace-managed 代码票的 `ProjectMapSlice` 仍是保守精度
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先补 advisory analysis 的独立运行链和 recovery 动作，再决定是否扩第二批 GraphHealth 规则。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1603,7 +1637,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第二批已落地；advisory review pack 现已走显式 change flow，`approved_patch_ref` 只指向真实 `GRAPH_PATCH`，applied patch 也已接进 `TicketGraph`
-- 最近完成：`Review Room` 已切成进入流程 / 草拟发分析 / 确认导入三段最小闭环；`ceo_shadow_snapshot` 现已补 `change_flow_status / latest_patch_proposal_ref / patched_graph_version / focus_node_ids`
-- 当前阻塞：`FULL_TIMELINE` 的 advisory transcript archive 还没补；legacy 非 workspace-managed 代码票的地图切片仍是保守精度
-- 下一步：`继续从 P4-S4 续跑，优先补 FULL_TIMELINE 的 advisory transcript archive，再决定是否扩更深的 architect discussion / recovery 链和第二批 GraphHealth 规则`
+- 当前状态：`P4-S4` 第三批已落地；`FULL_TIMELINE` advisory transcript archive 和 `TIMELINE_INDEX` 已进正式主链，archive 失败也会显式 reject 并回滚
+- 最近完成：`BoardAdvisorySession / Review Room / CEO snapshot` 已补最新 archive refs；`ReviewRoomDrawer` 现在可以直接打开 transcript archive 和 timeline index
+- 当前阻塞：advisory analysis 还没收成独立运行链和 recovery 动作；legacy 非 workspace-managed 代码票的地图切片仍是保守精度
+- 下一步：`继续从 P4-S4 续跑，优先补 advisory analysis 的独立运行链和 recovery 动作，再决定是否扩第二批 GraphHealth 规则`
