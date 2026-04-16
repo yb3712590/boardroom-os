@@ -27,6 +27,10 @@ from app.core.persona_profiles import (
 )
 from app.config import get_settings
 from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
+from app.core.runtime_node_views import (
+    MATERIALIZATION_STATE_MATERIALIZED,
+    resolve_runtime_node_view,
+)
 from app.db.repository import ControlPlaneRepository
 
 
@@ -288,10 +292,12 @@ def validate_ceo_action_batch(
                     )
                     continue
                 expected_ticket_id = build_project_init_scope_ticket_id(action.payload.workflow_id)
-                if repository.get_current_node_projection(
+                project_init_node_view = resolve_runtime_node_view(
+                    repository,
                     action.payload.workflow_id,
                     PROJECT_INIT_SCOPE_NODE_ID,
-                ) is not None:
+                )
+                if project_init_node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED:
                     rejected_actions.append(
                         _action_entry(action, "Project-init kickoff node already exists in the current workflow.")
                     )
@@ -301,7 +307,12 @@ def validate_ceo_action_batch(
                         _action_entry(action, "Project-init kickoff ticket already exists in projection state.")
                     )
                     continue
-            if repository.get_current_node_projection(action.payload.workflow_id, action.payload.node_id) is not None:
+            node_view = resolve_runtime_node_view(
+                repository,
+                action.payload.workflow_id,
+                action.payload.node_id,
+            )
+            if node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED:
                 rejected_actions.append(_action_entry(action, "node_id already exists in the current workflow."))
                 continue
             if snapshot is not None:

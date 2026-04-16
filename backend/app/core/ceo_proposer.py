@@ -42,6 +42,10 @@ from app.core.output_schemas import (
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
+from app.core.runtime_node_views import (
+    MATERIALIZATION_STATE_MATERIALIZED,
+    resolve_runtime_node_view,
+)
 from app.core.workflow_completion import ticket_has_delivery_mainline_evidence
 from app.core.workflow_progression import (
     build_project_init_kickoff_spec,
@@ -646,8 +650,13 @@ def _build_required_governance_ticket_batch(
         return None
 
     with repository.connection() as connection:
-        existing_node = repository.get_current_node_projection(workflow_id, node_id, connection=connection)
-    if existing_node is not None:
+        node_view = resolve_runtime_node_view(
+            repository,
+            workflow_id,
+            node_id,
+            connection=connection,
+        )
+    if node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED:
         return None
 
     return CEOActionBatch.model_validate(

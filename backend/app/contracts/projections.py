@@ -430,6 +430,8 @@ class DependencyInspectorNodeProjection(StrictModel):
     node_id: str
     ticket_id: str | None = None
     parent_ticket_id: str | None = None
+    is_placeholder: bool = False
+    materialization_state: str
     phase: str
     delivery_stage: str | None = None
     node_status: str

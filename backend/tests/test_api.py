@@ -53,6 +53,7 @@ from app.core.constants import (
     EVENT_EMPLOYEE_HIRED,
     EVENT_ARTIFACT_CLEANUP_COMPLETED,
     EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_GRAPH_PATCH_APPLIED,
     EVENT_INCIDENT_OPENED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
@@ -340,6 +341,62 @@ def _seed_created_ticket(
         repository.refresh_projections(connection)
 
 
+def _seed_graph_patch_applied_event(
+    client,
+    *,
+    workflow_id: str,
+    patch_index: int,
+    freeze_node_ids: list[str],
+    unfreeze_node_ids: list[str] | None = None,
+    focus_node_ids: list[str] | None = None,
+    replacements: list[dict[str, str]] | None = None,
+    remove_node_ids: list[str] | None = None,
+    add_nodes: list[dict[str, object]] | None = None,
+    edge_additions: list[dict[str, str]] | None = None,
+    edge_removals: list[dict[str, str]] | None = None,
+    payload_override=None,
+    occurred_at: str | None = None,
+) -> None:
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_GRAPH_PATCH_APPLIED,
+            actor_type="board",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-graph-patch-applied:{workflow_id}:{patch_index}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=(
+                payload_override
+                if payload_override is not None
+                else {
+                    "patch_ref": f"pa://graph-patch/{workflow_id}@{patch_index}",
+                    "workflow_id": workflow_id,
+                    "session_id": f"adv_graph_patch_{patch_index}",
+                    "proposal_ref": f"pa://graph-patch-proposal/{workflow_id}@{patch_index}",
+                    "base_graph_version": f"gv_{patch_index}",
+                    "freeze_node_ids": list(freeze_node_ids),
+                    "unfreeze_node_ids": list(unfreeze_node_ids or []),
+                    "focus_node_ids": list(focus_node_ids or freeze_node_ids),
+                    "replacements": list(replacements or []),
+                    "remove_node_ids": list(remove_node_ids or []),
+                    "add_nodes": list(add_nodes or []),
+                    "edge_additions": list(edge_additions or []),
+                    "edge_removals": list(edge_removals or []),
+                    "reason_summary": "Seed graph patch event for placeholder runtime materialization coverage.",
+                    "patch_hash": f"hash-{workflow_id}-{patch_index}",
+                }
+            ),
+            occurred_at=datetime.fromisoformat(
+                occurred_at or f"2026-04-16T20:0{patch_index}:00+08:00"
+            ),
+        )
+        if payload_override is None or isinstance(payload_override, dict):
+            repository.refresh_projections(connection)
+
+
 def _employee_hire_request_payload(
     workflow_id: str,
     *,
@@ -459,6 +516,7 @@ def _employee_restore_payload(
 
 def _runtime_provider_upsert_payload(
     *,
+    default_provider_id: str | None = None,
     openai_enabled: bool = True,
     openai_base_url: str | None = "https://api.example.test/v1",
     openai_api_key: str | None = "sk-test-secret",
@@ -502,6 +560,8 @@ def _runtime_provider_upsert_payload(
         ),
         "idempotency_key": idempotency_key,
     }
+    if default_provider_id is not None:
+        payload["default_provider_id"] = default_provider_id
     if openai_capability_tags is not None:
         payload["providers"][0]["capability_tags"] = list(openai_capability_tags)
     if openai_fallback_provider_ids is not None:
@@ -5984,6 +6044,156 @@ def test_dependency_inspector_surfaces_graph_reduction_issue_without_legacy_fall
     )
     assert invalid_node["block_reason"] == "GRAPH_REDUCTION_ISSUE"
     assert invalid_node["is_blocked"] is True
+
+
+def test_dependency_inspector_shows_graph_only_placeholder_node_with_materialization_state(client):
+    workflow_id = "wf_dependency_inspector_placeholder_node"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dependency inspector should surface graph-only placeholder nodes.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_dependency_placeholder_parent",
+        node_id="node_dependency_placeholder_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_dependency_placeholder_dependency",
+        node_id="node_dependency_placeholder_dependency",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_dependency_placeholder_build"],
+        add_nodes=[
+            {
+                "node_id": "node_dependency_placeholder_build",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_dependency_placeholder_parent",
+                "dependency_node_ids": ["node_dependency_placeholder_dependency"],
+            }
+        ],
+    )
+
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    placeholder_node = next(
+        item for item in body["nodes"] if item["node_id"] == "node_dependency_placeholder_build"
+    )
+
+    assert placeholder_node["ticket_id"] is None
+    assert placeholder_node["is_placeholder"] is True
+    assert placeholder_node["materialization_state"] == "planned"
+    assert placeholder_node["dependency_ticket_ids"] == [
+        "tkt_dependency_placeholder_dependency",
+        "tkt_dependency_placeholder_parent",
+    ]
+    assert placeholder_node["dependent_ticket_ids"] == []
+    assert placeholder_node["block_reason"] == "PENDING"
+    assert placeholder_node["is_blocked"] is False
+    assert body["summary"]["total_nodes"] == 3
+
+
+def test_ticket_create_accepts_placeholder_node_and_materializes_runtime_truth(client):
+    workflow_id = "wf_ticket_create_placeholder_materialization"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Create-ticket should absorb a graph-only placeholder into runtime truth.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_placeholder_materialization_parent",
+        node_id="node_placeholder_materialization_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_placeholder_materialization_build"],
+        add_nodes=[
+            {
+                "node_id": "node_placeholder_materialization_build",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_placeholder_materialization_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_placeholder_materialization_build",
+            node_id="node_placeholder_materialization_build",
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+            delivery_stage="BUILD",
+            parent_ticket_id="tkt_placeholder_materialization_parent",
+        ),
+    )
+
+    repository = client.app.state.repository
+    node_projection = repository.get_current_node_projection(
+        workflow_id,
+        "node_placeholder_materialization_build",
+    )
+    graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+    graph_node = next(
+        node for node in graph_snapshot.nodes if node.graph_node_id == "node_placeholder_materialization_build"
+    )
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    assert node_projection is not None
+    assert node_projection["latest_ticket_id"] == "tkt_placeholder_materialization_build"
+    assert graph_node.is_placeholder is False
+    assert graph_node.ticket_id == "tkt_placeholder_materialization_build"
+
+    duplicate_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_placeholder_materialization_build_retry",
+            node_id="node_placeholder_materialization_build",
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+            delivery_stage="BUILD",
+            parent_ticket_id="tkt_placeholder_materialization_parent",
+        ),
+    )
+
+    assert duplicate_response.status_code == 200
+    assert duplicate_response.json()["status"] == "REJECTED"
+    assert "cannot accept a new ticket while status is PENDING" in duplicate_response.json()["reason"]
 
 
 def test_dashboard_workforce_summary_reflects_seeded_roster_and_busy_worker(client, set_ticket_time):
@@ -16872,7 +17082,6 @@ def test_board_advisory_apply_patch_accepts_add_node_placeholder_without_runtime
         client.post(
             "/api/v1/commands/runtime-provider-upsert",
             json=_runtime_provider_upsert_payload(
-                default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
                 idempotency_key=f"runtime-provider-upsert:{workflow_id}:advisory-incident",
             ),
         )

@@ -188,6 +188,10 @@ from app.core.project_workspaces import (
     write_git_closeout_receipt,
     write_worker_postrun_receipt,
 )
+from app.core.runtime_node_views import (
+    MATERIALIZATION_STATE_MATERIALIZED,
+    resolve_runtime_node_view,
+)
 from app.core.role_hooks import HookGateStatus, evaluate_ticket_required_hook_gate, replay_required_hook_receipts
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.ticket_artifacts import (
@@ -5281,12 +5285,22 @@ def handle_ticket_create(
                 reason=f"Ticket {payload.ticket_id} already exists in projection state.",
             )
 
+        node_view = resolve_runtime_node_view(
+            repository,
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
         current_node = repository.get_current_node_projection(
             payload.workflow_id,
             payload.node_id,
             connection=connection,
         )
-        if current_node is not None and current_node["status"] != NODE_STATUS_REWORK_REQUIRED:
+        if (
+            node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED
+            and current_node is not None
+            and current_node["status"] != NODE_STATUS_REWORK_REQUIRED
+        ):
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,

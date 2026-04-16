@@ -297,6 +297,8 @@ export type DependencyInspectorNode = {
   node_id: string
   ticket_id: string | null
   parent_ticket_id: string | null
+  is_placeholder: boolean
+  materialization_state: 'planned' | 'materialized'
   phase: string
   delivery_stage: string | null
   node_status: string

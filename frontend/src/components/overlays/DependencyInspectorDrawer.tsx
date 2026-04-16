@@ -95,6 +95,11 @@ export function DependencyInspectorDrawer({
                   <div>
                     <p className="eyebrow">{node.phase}</p>
                     <h3>{node.ticket_id ?? node.node_id}</h3>
+                    {node.is_placeholder ? (
+                      <p className="muted-copy">
+                        Planned placeholder · {formatLabel(node.materialization_state)}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="dependency-node-badges">
                     <span>{formatLabel(node.block_reason)}</span>

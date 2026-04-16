@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-16 21:21`
+> 最后更新：`2026-04-16 22:23`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -735,9 +735,12 @@
 - [x] `P4-S4` 已完成第十三批：graph core 现已改成 contract-only lane resolution；`resolve_graph_lane_kind()` 只认 `graph_contract.lane_kind`，legacy maker-checker / rework taxonomy 已移到单点 compat adapter；新票会在建票路径补正式 execution lane contract
 - [x] `P4-S4` 已完成第十三批：新增 `backend/app/core/runtime_liveness.py` 与 `RuntimeLivenessReport`；`QUEUE_STARVATION / READY_BLOCKED_THRASHING / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 已从 `GraphHealthReport` 主读面后移到独立 liveness monitor，`ProjectionSnapshot / CEO prompt / workflow_auto_advance` 现在会同时读 `graph_health_report + runtime_liveness_report`
 - [x] `P4-S4` 已完成第十三批：liveness incident 主链已拆开；结构类 critical 继续走 `GRAPH_HEALTH_CRITICAL`，liveness critical 改走 `RUNTIME_LIVENESS_CRITICAL`，liveness 构建失败改走 `RUNTIME_LIVENESS_UNAVAILABLE`，不再把 runtime timeline 坏数据伪装成 `GraphHealthUnavailableError -> TICKET_GRAPH_UNAVAILABLE`
+- [x] `P4-S4` 已完成第十四批：新增单点 `backend/app/core/runtime_node_views.py`，把 execution-lane graph node、graph-only placeholder 和持久化 `node_projection` 收成显式 `materialized / planned_placeholder / missing` 三态读面；同一 `node_id` 命中 placeholder/materialized 冲突、或 graph/runtime 真相不一致时现在会显式抛 `RuntimeNodeViewResolutionError`
+- [x] `P4-S4` 已完成第十四批：`Dependency Inspector` 现在会显式展示 graph-only placeholder；新字段固定补 `is_placeholder / materialization_state`，依赖链继续按 graph truth 读取 `PARENT_OF + DEPENDS_ON`，不再因为缺 `node_projection` 就把 placeholder 当成缺失节点或把 `None` 混进 ticket 依赖链
+- [x] `P4-S4` 已完成第十四批：`ticket-create / CEO create-ticket` 的节点存在性判断现已切到 runtime node view；placeholder `node_id` 允许进入正式建票并由现有 `EVENT_TICKET_CREATED -> node_projection` 主链物化，已 materialized 节点继续显式 reject，执行态 `context_compiler / ticket-start / runtime / ticket-result-submit` 则继续只认真实 `node_projection`
 
 ### 未完成
-- [ ] graph-only `add_node / placeholder node` 已进入 `TicketGraph / GraphHealth / advisory patch` 主链；但还没进入 runtime `node_projection`、ticket-create 自动 materialization 或 graph-first placeholder lifecycle
+- [ ] placeholder node 已进入 runtime read/create path，但仍没有进入持久化 `node_projection` 真相、自动 scheduler materialization 或 graph-first placeholder lifecycle
 - [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；这轮只把 graph layer identity 收口成 execution / review 双 lane，未继续把运行时身份拆成 graph-first 双层真相
 - [ ] `RuntimeLivenessReport` 现已从 `GraphHealthReport` 拆出，但当前仍复用同一份 `graph_health_policy.py` 字段集合；如果后续还要继续瘦监视层边界，再决定是否把 graph policy / liveness policy 进一步拆成两个正式合同
 
@@ -750,7 +753,7 @@
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
-- [ ] placeholder node 当前只支持 graph-only execution lane；同一 patch 里的 placeholder-to-placeholder 接线、review lane placeholder 和 runtime 自动 materialization 仍未支持，后续若要补必须单独开切片
+- [ ] placeholder node 当前已进入 runtime read/create path，但仍只支持 execution lane；同一 patch 里的 placeholder-to-placeholder 接线、review lane placeholder、scheduler 自动 materialization 和持久化 `node_projection` 真相仍未支持，后续若要补必须单独开切片
 - [ ] `GraphHealthReport` 第四批现已锁成“只读 `events + graph_version + ticket/node projection.version/updated_at`”；如果后续要补 dedicated history 或 workflow 级 SLA，必须单独开切片，不能在现有规则里偷偷落新真相层
 - [ ] `READY_BLOCKED_THRASHING` 这轮只按最近 `24` 条显式事件窗口做 `WARNING` 检测；如果后续要做更细的 blocker-source 分层、跨窗口趋势分析或自动升级 incident，必须单独扩正式规则，不回退到当前快照猜历史
 - [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
@@ -2032,6 +2035,40 @@
 **下一轮起手动作：**
 `继续从 P4-S4 续跑，优先决定 placeholder runtime materialization 是否拆独立切片；runtime node_projection 双层真相继续保持后置，RuntimeLiveness/GraphHealth 的 policy contract 是否继续拆层单独决策。`
 
+### Session `2026-04-16 / 32`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `backend/app/core/runtime_node_views.py`，把 execution-lane graph node、graph-only placeholder 和持久化 `node_projection` 收成单点三态读面；同一 `node_id` 命中 placeholder/materialized 冲突、或 graph/runtime 不一致时现在会显式抛 `RuntimeNodeViewResolutionError`
+- [x] 把 `Dependency Inspector` 接到这条新读面：graph-only placeholder 现在会直接显示在节点列表里，并新增 `is_placeholder / materialization_state`；依赖链继续按 graph truth 读取 `PARENT_OF + DEPENDS_ON`，不再因为缺 `node_projection` 就把 placeholder 当缺失节点
+- [x] 把 `ticket-create / CEO create-ticket` 的节点存在性判断切到 runtime node view；placeholder `node_id` 现在允许进入正式建票并由现有 `EVENT_TICKET_CREATED -> node_projection` 主链物化，已 materialized 节点继续显式 reject
+- [x] 同步更新前端 dependency inspector 类型和抽屉文案，让 placeholder 状态能直接显示给治理壳
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "placeholder or graph_patch" -q` 通过（`8 passed, 34 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "dependency_inspector or placeholder or create_ticket" -q` 通过（`8 passed, 315 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "placeholder or advisory" -q` 通过（`3 passed, 75 deselected`）
+- [x] `python3 -m py_compile backend/app/core/runtime_node_views.py backend/app/core/projections.py backend/app/core/ticket_handlers.py backend/app/core/ceo_validator.py backend/app/core/ceo_proposer.py backend/tests/test_api.py` 通过
+- [x] `cd frontend && npm run build` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只补 placeholder runtime 挂载读面和建票吸收，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder node 已进入 runtime read/create path，但仍没有进入持久化 `node_projection` 真相、scheduler 自动 materialization 或 graph-first placeholder lifecycle
+- [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；graph-first 双层身份还没拆
+- [ ] `RuntimeLivenessReport` 虽已独立，但 policy 仍复用 `graph_health_policy.py`；是否继续拆成双 policy contract 仍待后续单独决策
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先决定 placeholder runtime materialization 是否单独升格为下一切片；runtime node_projection 双层真相继续保持后置，RuntimeLiveness/GraphHealth 的 policy contract 是否继续拆层单独决策。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -2069,7 +2106,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4-S4` 第十三批已落地；advisory analysis 主链已改成 live-only success path，graph core 已改成 contract-only lane resolution，runtime-liveness 也已从 `GraphHealthReport` 主读面拆到独立 `RuntimeLivenessReport`
-- 最近完成：`RuntimeLivenessReport`、`RUNTIME_LIVENESS_CRITICAL / RUNTIME_LIVENESS_UNAVAILABLE` incident 主链、以及建票路径默认 `graph_contract.lane_kind=execution` 都已落地；`board_advisory_analysis` 的 synthetic executor 也已退出 command 主链成功路径
-- 当前阻塞：placeholder node 仍只停在 graph-only 真相；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；`RuntimeLivenessReport` 当前仍复用 `graph_health_policy.py`，还没继续拆成独立 policy contract
-- 下一步：`继续从 P4-S4 续跑，优先决定 placeholder runtime materialization 是否拆独立切片；runtime node_projection 双层真相继续保持后置，RuntimeLiveness/GraphHealth 的 policy contract 是否继续拆层单独决策`
+- 当前状态：`P4-S4` 第十四批已落地；placeholder 现在已从 graph-only 真相进入 runtime read/create path，`Dependency Inspector` 和 create-ticket/CEO create-ticket 都已显式消费 `materialized / planned_placeholder / missing` 三态
+- 最近完成：`runtime_node_views.py`、dependency inspector 的 `is_placeholder / materialization_state` 读面、以及 placeholder `node_id` 的正式建票吸收都已落地；执行态 compile/runtime 内核保持不变
+- 当前阻塞：placeholder node 仍没有进入持久化 `node_projection` 真相或 scheduler 自动 materialization；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；`RuntimeLivenessReport` 当前仍复用 `graph_health_policy.py`
+- 下一步：`继续从 P4-S4 续跑，优先决定 placeholder runtime materialization 是否单独升格成下一切片；runtime node_projection 双层真相继续保持后置，RuntimeLiveness/GraphHealth 的 policy contract 是否继续拆层单独决策`

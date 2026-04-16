@@ -23,6 +23,11 @@
 
 ### 2026-04-16
 
+- `P4-S4` 这轮已新增 `backend/app/core/runtime_node_views.py`，把 execution-lane graph node、graph-only placeholder 和持久化 `node_projection` 收成单点三态读面；同一 `node_id` 命中 placeholder/materialized 冲突、或 graph/runtime 真相不一致时现在会显式抛 `RuntimeNodeViewResolutionError`
+- `Dependency Inspector` 这轮已接到 placeholder runtime 挂载读面：graph-only placeholder 现在会直接显示在节点列表里，并新增 `is_placeholder / materialization_state`；依赖链继续按 graph truth 读取 `PARENT_OF + DEPENDS_ON`，不再因为缺 `node_projection` 就把 placeholder 当成缺失节点
+- `ticket-create / CEO create-ticket` 这轮已把节点存在性判断切到 runtime node view；placeholder `node_id` 现在允许进入正式建票并由现有 `EVENT_TICKET_CREATED -> node_projection` 主链物化，已 materialized 节点继续显式 reject，执行态 compile/runtime 内核保持不变
+- 当前还有一条会直接影响下轮判断的事实：placeholder node 虽然已经进入 runtime read/create path，但仍没有进入持久化 `node_projection` 真相、scheduler 自动 materialization 或 graph-first placeholder lifecycle；如果后续要继续推进，应该单独决定这层是否升格成下一切片
+- 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "placeholder or graph_patch" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "dependency_inspector or placeholder or create_ticket" -q`、`./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "placeholder or advisory" -q`、`python3 -m py_compile backend/app/core/runtime_node_views.py backend/app/core/projections.py backend/app/core/ticket_handlers.py backend/app/core/ceo_validator.py backend/app/core/ceo_proposer.py backend/tests/test_api.py`、`cd frontend && npm run build`
 - `P4-S4` 这轮已把 `board_advisory_analysis` 主线收成 live-only success path：没有真实 board-approved contract-matching executor、没有 advisory target provider selection、或 provider paused 时都会显式失败；synthetic executor 已退出 command 主链成功路径
 - `graph_identity.py` 这轮已进一步收口成 contract-only lane core：`resolve_graph_lane_kind()` 现在只认 `graph_contract.lane_kind`；legacy maker-checker / rework taxonomy 已移到单点 compat adapter，新票路径也会补正式 execution lane contract
 - `P4-S4` 这轮已新增 `backend/app/core/runtime_liveness.py` 与 `RuntimeLivenessReport`，把 `QUEUE_STARVATION / READY_BLOCKED_THRASHING / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 从 `GraphHealthReport` 主读面拆出；`ProjectionSnapshot / CEO prompt / workflow_auto_advance` 现在会同时读 `graph_health_report + runtime_liveness_report`
