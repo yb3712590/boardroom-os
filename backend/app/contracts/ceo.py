@@ -61,11 +61,15 @@ class BoardAdvisorySessionDigest(StrictModel):
     review_pack_id: str = Field(min_length=1)
     trigger_type: str = Field(min_length=1)
     status: str = Field(min_length=1)
+    change_flow_status: str = Field(min_length=1)
     source_version: str = Field(min_length=1)
     governance_profile_ref: str = Field(min_length=1)
     affected_nodes: list[str] = Field(default_factory=list)
+    focus_node_ids: list[str] = Field(default_factory=list)
     decision_pack_refs: list[str] = Field(default_factory=list)
+    latest_patch_proposal_ref: str | None = None
     approved_patch_ref: str | None = None
+    patched_graph_version: str | None = None
     decision_action: str | None = None
     board_comment: str | None = None
 
@@ -96,4 +100,7 @@ class ReplanFocus(StrictModel):
     controller_state: dict[str, Any] = Field(default_factory=dict)
     meeting_candidates: list[dict[str, Any]] = Field(default_factory=list)
     latest_advisory_decision: dict[str, Any] | None = None
+    latest_patch_proposal_ref: str | None = None
+    patched_graph_version: str | None = None
+    focus_node_ids: list[str] = Field(default_factory=list)
     failure_fingerprints: list[FailureFingerprintDigest] = Field(default_factory=list)

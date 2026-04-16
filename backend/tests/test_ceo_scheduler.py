@@ -4251,28 +4251,54 @@ def test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision(client):
     _seed_workflow(client, workflow_id, "CEO advisory snapshot")
     approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
 
-    modify_response = client.post(
-        "/api/v1/commands/modify-constraints",
-        json={
-            "review_pack_id": approval["review_pack_id"],
-            "review_pack_version": approval["review_pack_version"],
-            "command_target_version": approval["command_target_version"],
-            "approval_id": approval["approval_id"],
-            "constraint_patch": {
-                "add_rules": ["Hold execution until the advisory decision is reflected in the next run."],
-                "remove_rules": [],
-                "replace_rules": [],
+    with api_test_helpers._suppress_ceo_shadow_side_effects():
+        modify_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Hold execution until the advisory decision is reflected in the next run."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "governance_patch": {
+                    "approval_mode": "EXPERT_GATED",
+                    "audit_mode": "TICKET_TRACE",
+                },
+                "board_comment": "Route the next pass through the tighter advisory decision.",
+                "idempotency_key": f"modify-constraints:{approval['approval_id']}:snapshot",
             },
-            "governance_patch": {
-                "approval_mode": "EXPERT_GATED",
-                "audit_mode": "TICKET_TRACE",
-            },
-            "board_comment": "Route the next pass through the tighter advisory decision.",
-            "idempotency_key": f"modify-constraints:{approval['approval_id']}:snapshot",
-        },
-    )
+        )
     assert modify_response.status_code == 200
     assert modify_response.json()["status"] == "ACCEPTED"
+    advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    analysis_response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:snapshot",
+        },
+    )
+    assert analysis_response.status_code == 200
+    assert analysis_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": advisory_session["latest_patch_proposal_ref"],
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:snapshot",
+        },
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "ACCEPTED"
 
     snapshot = build_ceo_shadow_snapshot(
         client.app.state.repository,
@@ -4286,7 +4312,10 @@ def test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision(client):
 
     assert len(board_advisory_sessions) == 1
     assert board_advisory_sessions[0]["approval_id"] == approval["approval_id"]
-    assert board_advisory_sessions[0]["status"] == "DECIDED"
+    assert board_advisory_sessions[0]["status"] == "APPLIED"
+    assert board_advisory_sessions[0]["change_flow_status"] == "APPLIED"
+    assert board_advisory_sessions[0]["approved_patch_ref"] is not None
+    assert board_advisory_sessions[0]["patched_graph_version"] == snapshot["projection_snapshot"]["graph_version"]
     assert latest_advisory_decision["approval_id"] == approval["approval_id"]
     assert latest_advisory_decision["governance_patch"] == {
         "approval_mode": "EXPERT_GATED",
@@ -4302,27 +4331,53 @@ def test_ceo_shadow_prompt_mentions_latest_board_advisory_decision(client):
     _seed_workflow(client, workflow_id, "CEO advisory prompt")
     approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
 
-    modify_response = client.post(
-        "/api/v1/commands/modify-constraints",
-        json={
-            "review_pack_id": approval["review_pack_id"],
-            "review_pack_version": approval["review_pack_version"],
-            "command_target_version": approval["command_target_version"],
-            "approval_id": approval["approval_id"],
-            "constraint_patch": {
-                "add_rules": ["Escalate the next step to expert approval."],
-                "remove_rules": [],
-                "replace_rules": [],
+    with api_test_helpers._suppress_ceo_shadow_side_effects():
+        modify_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Escalate the next step to expert approval."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "governance_patch": {
+                    "approval_mode": "EXPERT_GATED",
+                },
+                "board_comment": "Treat this advisory decision as the new execution baseline.",
+                "idempotency_key": f"modify-constraints:{approval['approval_id']}:prompt",
             },
-            "governance_patch": {
-                "approval_mode": "EXPERT_GATED",
-            },
-            "board_comment": "Treat this advisory decision as the new execution baseline.",
-            "idempotency_key": f"modify-constraints:{approval['approval_id']}:prompt",
-        },
-    )
+        )
     assert modify_response.status_code == 200
     assert modify_response.json()["status"] == "ACCEPTED"
+    advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    analysis_response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:prompt",
+        },
+    )
+    assert analysis_response.status_code == 200
+    assert analysis_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = client.app.state.repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": advisory_session["latest_patch_proposal_ref"],
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:prompt",
+        },
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "ACCEPTED"
 
     snapshot = build_ceo_shadow_snapshot(
         client.app.state.repository,

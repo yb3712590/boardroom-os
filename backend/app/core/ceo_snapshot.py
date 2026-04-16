@@ -12,7 +12,6 @@ from app.contracts.ceo import (
     ReplanFocus,
 )
 from app.core.board_advisory import (
-    BOARD_ADVISORY_STATUS_DECIDED,
     BOARD_ADVISORY_STATUS_OPEN,
     build_board_advisory_snapshot_entry,
     build_latest_advisory_decision,
@@ -456,7 +455,14 @@ def build_ceo_shadow_snapshot(
         }
         advisory_sessions = repository.list_board_advisory_sessions(
             workflow_id,
-            statuses=[BOARD_ADVISORY_STATUS_OPEN, BOARD_ADVISORY_STATUS_DECIDED],
+            statuses=[
+                BOARD_ADVISORY_STATUS_OPEN,
+                "DRAFTING",
+                "PENDING_ANALYSIS",
+                "PENDING_BOARD_CONFIRMATION",
+                "ANALYSIS_REJECTED",
+                "APPLIED",
+            ],
             connection=connection,
         )
         project_map_slices = _build_project_map_slices(
@@ -502,6 +508,7 @@ def build_ceo_shadow_snapshot(
         for ticket in tickets
         if str(ticket.get("ticket_id") or "") in ready_ticket_id_set
     ]
+    latest_advisory_session = advisory_sessions[0] if advisory_sessions else None
     projection_snapshot = ProjectionSnapshot(
         workflow_status=str(workflow["status"]),
         graph_version=ticket_graph_snapshot.graph_version,
@@ -534,9 +541,22 @@ def build_ceo_shadow_snapshot(
         controller_state=controller_view["controller_state"],
         meeting_candidates=controller_view["meeting_candidates"],
         latest_advisory_decision=build_latest_advisory_decision(
-            advisory_sessions[0] if advisory_sessions else None,
+            latest_advisory_session,
             current_profile=governance_profile,
         ),
+        latest_patch_proposal_ref=(
+            str(latest_advisory_session.get("latest_patch_proposal_ref") or "")
+            if latest_advisory_session is not None
+            else None
+        )
+        or None,
+        patched_graph_version=(
+            str(latest_advisory_session.get("patched_graph_version") or "")
+            if latest_advisory_session is not None
+            else None
+        )
+        or None,
+        focus_node_ids=list((latest_advisory_session or {}).get("focus_node_ids") or []),
         failure_fingerprints=failure_fingerprints,
     )
 

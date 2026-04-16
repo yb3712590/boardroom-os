@@ -570,3 +570,83 @@ def test_resolve_process_asset_accepts_legacy_short_ref_and_returns_canonical_ve
     assert resolved_from_legacy.version_int == 2
     assert resolved_from_legacy.supersedes_ref == build_process_asset_canonical_ref(legacy_ref, 1)
     assert resolved_from_versioned.process_asset_ref == versioned_ref
+
+
+def test_resolve_board_advisory_graph_patch_assets(client) -> None:
+    workflow_id = "wf_process_asset_advisory_patch"
+    repository = client.app.state.repository
+
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Resolve advisory graph patch proposal and applied patch assets.",
+    )
+    approval = api_test_helpers._seed_review_request(client, workflow_id=workflow_id)
+
+    with api_test_helpers._suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Keep the branch frozen until the board confirms the proposal."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "Draft a reviewed patch before the next runtime pass.",
+                "idempotency_key": f"modify-constraints:{approval['approval_id']}:process-assets",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+
+    analysis_response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:process-assets",
+        },
+    )
+    assert analysis_response.status_code == 200
+    assert analysis_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    proposal_ref = str(advisory_session["latest_patch_proposal_ref"])
+    resolved_proposal = resolve_process_asset(repository, proposal_ref)
+
+    assert resolved_proposal.process_asset_kind == "GRAPH_PATCH_PROPOSAL"
+    assert resolved_proposal.process_asset_ref == proposal_ref
+    assert resolved_proposal.json_content["proposal_ref"] == proposal_ref
+    assert resolved_proposal.json_content["freeze_node_ids"] == ["node_homepage_visual"]
+    assert resolved_proposal.json_content["focus_node_ids"] == ["node_homepage_visual"]
+
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": proposal_ref,
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:process-assets",
+        },
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    patch_ref = str(advisory_session["approved_patch_ref"])
+    resolved_patch = resolve_process_asset(repository, patch_ref)
+
+    assert resolved_patch.process_asset_kind == "GRAPH_PATCH"
+    assert resolved_patch.process_asset_ref == patch_ref
+    assert resolved_patch.json_content["patch_ref"] == patch_ref
+    assert resolved_patch.json_content["proposal_ref"] == proposal_ref
+    assert resolved_patch.json_content["freeze_node_ids"] == ["node_homepage_visual"]

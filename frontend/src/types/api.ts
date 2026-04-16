@@ -441,6 +441,24 @@ export type ModifyConstraintsRequest = {
   idempotency_key: string
 }
 
+export type BoardAdvisoryAppendTurnRequest = {
+  session_id: string
+  actor_type: 'board' | 'ceo' | 'architect'
+  content: string
+  idempotency_key: string
+}
+
+export type BoardAdvisoryRequestAnalysisRequest = {
+  session_id: string
+  idempotency_key: string
+}
+
+export type BoardAdvisoryApplyPatchRequest = {
+  session_id: string
+  proposal_ref: string
+  idempotency_key: string
+}
+
 export type IncidentResolveRequest = {
   incident_id: string
   resolved_by: string

@@ -4,10 +4,13 @@ import json
 from typing import Any
 
 from app.config import get_settings
-from app.contracts.advisory import GovernancePatch
+from app.contracts.advisory import GovernancePatch, GraphPatchProposal, BoardAdvisoryDecision
 from app.contracts.commands import (
+    BoardAdvisoryAppendTurnCommand,
+    BoardAdvisoryApplyPatchCommand,
     BoardApproveCommand,
     BoardRejectCommand,
+    BoardAdvisoryRequestAnalysisCommand,
     CommandAckEnvelope,
     ElicitationQuestion,
     CommandAckStatus,
@@ -30,12 +33,17 @@ from app.core.constants import (
     APPROVAL_STATUS_REJECTED,
     EMPLOYEE_STATE_ACTIVE,
     EVENT_BOARD_DIRECTIVE_RECEIVED,
+    EVENT_BOARD_ADVISORY_ANALYSIS_COMPLETED,
+    EVENT_BOARD_ADVISORY_ANALYSIS_REJECTED,
+    EVENT_BOARD_ADVISORY_CHANGE_FLOW_ENTERED,
     EVENT_BOARD_ADVISORY_DECISION_RECORDED,
     EVENT_BOARD_ADVISORY_SESSION_DISMISSED,
+    EVENT_BOARD_ADVISORY_TURN_APPENDED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_EMPLOYEE_HIRED,
     EVENT_EMPLOYEE_REPLACED,
+    EVENT_GRAPH_PATCH_APPLIED,
     EVENT_INCIDENT_OPENED,
     EVENT_TICKET_CREATED,
     INCIDENT_STATUS_OPEN,
@@ -47,10 +55,22 @@ from app.core.board_advisory import (
     advisory_decision_artifact_ref,
     advisory_decision_logical_path,
     advisory_decision_process_asset_ref,
+    advisory_graph_patch_artifact_ref,
+    advisory_graph_patch_logical_path,
+    advisory_graph_patch_process_asset_ref,
+    advisory_patch_proposal_artifact_ref,
+    advisory_patch_proposal_logical_path,
+    advisory_patch_proposal_process_asset_ref,
+    advisory_change_flow_can_append_turn,
+    advisory_change_flow_can_apply,
+    advisory_change_flow_can_request_analysis,
     advisory_supports_governance_patch,
+    build_board_advisory_turn,
     build_board_advisory_context,
     build_board_advisory_decision,
     build_board_advisory_decision_artifact_payload,
+    build_graph_patch_from_proposal,
+    build_graph_patch_proposal,
     build_governance_profile_from_patch,
     review_pack_requires_board_advisory,
 )
@@ -82,6 +102,8 @@ from app.core.project_workspaces import (
 )
 from app.core.process_assets import (
     build_decision_summary_process_asset_ref,
+    build_graph_patch_process_asset_ref,
+    build_graph_patch_proposal_process_asset_ref,
     build_source_code_delivery_process_asset_ref,
     get_ticket_output_process_asset_refs,
     merge_input_process_asset_refs,
@@ -95,6 +117,7 @@ from app.core.requirement_elicitation import (
     summarize_elicitation_answers,
 )
 from app.core.staffing_containment import contain_employee_active_tickets
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.ticket_handlers import handle_ticket_create
 from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
@@ -107,6 +130,7 @@ from app.core.workflow_progression import (
 )
 from app.core.workflow_scope import with_workflow_scope
 from app.db.repository import ControlPlaneRepository
+from app.core.versioning import resolve_workflow_graph_version
 
 SCOPE_APPROVAL_AUTO_ADVANCE_MAX_STEPS = 6
 FOLLOWUP_OWNER_ROLE_TO_PROFILE_BY_STAGE = {
@@ -843,6 +867,498 @@ def _record_board_advisory_decision(
         repository.save_governance_profile(connection, next_profile)
         return updated_session, next_profile.model_dump(mode="json")
     return updated_session, None
+
+
+def _enter_board_advisory_change_flow(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    approval: dict[str, Any],
+    governance_patch: GovernancePatch | None,
+    constraint_patch: dict[str, list[str]],
+    board_comment: str,
+    command_id: str,
+    occurred_at,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    session = _require_board_advisory_session(repository, connection, approval=approval)
+    if session is None:
+        raise ValueError("Board advisory change flow is only valid for advisory-backed review packs.")
+    workflow_id = str(approval["workflow_id"])
+    review_pack = ((approval.get("payload") or {}).get("review_pack") or {})
+    subject = review_pack.get("subject") or {}
+    source_ticket_id = str(subject.get("source_ticket_id") or approval["approval_id"]).strip() or str(
+        approval["approval_id"]
+    )
+    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
+    current_profile = repository.get_latest_governance_profile(workflow_id, connection=connection)
+    if current_profile is None:
+        raise ValueError("Governance profile is required before entering the advisory change flow.")
+    artifact_ref = advisory_decision_artifact_ref(
+        workflow_id=workflow_id,
+        session_id=str(session["session_id"]),
+    )
+    board_decision = build_board_advisory_decision(
+        board_comment=board_comment,
+        constraint_patch=constraint_patch,
+        governance_patch=governance_patch,
+        source_artifact_ref=artifact_ref,
+    )
+    decision_payload = build_board_advisory_decision_artifact_payload(
+        session=session,
+        board_decision=board_decision,
+        current_profile=current_profile,
+        next_profile=None,
+    )
+    _save_json_artifact(
+        repository,
+        connection,
+        artifact_ref=artifact_ref,
+        logical_path=advisory_decision_logical_path(session_id=str(session["session_id"])),
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        payload=decision_payload,
+        kind="JSON",
+        occurred_at=occurred_at,
+    )
+    decision_process_asset_ref = build_decision_summary_process_asset_ref(str(session["session_id"]), version_int=1)
+    working_turn = build_board_advisory_turn(
+        actor_type="board",
+        content=board_comment,
+        created_at=occurred_at,
+    ).model_dump(mode="json")
+    updated_session = repository.start_board_advisory_change_flow(
+        connection,
+        session_id=str(session["session_id"]),
+        board_decision=board_decision.model_dump(mode="json", exclude_none=True),
+        decision_pack_refs=[decision_process_asset_ref],
+        working_turn=working_turn,
+        updated_at=occurred_at,
+    )
+    advisory_event = repository.insert_event(
+        connection,
+        event_type=EVENT_BOARD_ADVISORY_CHANGE_FLOW_ENTERED,
+        actor_type="board",
+        actor_id="board",
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "session_id": session["session_id"],
+            "approval_id": approval["approval_id"],
+            "review_pack_id": approval["review_pack_id"],
+            "decision_action": "MODIFY_CONSTRAINTS",
+            "decision_pack_refs": [decision_process_asset_ref],
+            "board_comment": board_comment,
+            "constraint_patch": constraint_patch,
+            "governance_patch": (
+                governance_patch.model_dump(mode="json", exclude_none=True)
+                if governance_patch is not None
+                else None
+            ),
+            "working_turn": working_turn,
+            "status": "DRAFTING",
+        },
+        occurred_at=occurred_at,
+    )
+    if advisory_event is None:
+        raise RuntimeError("Board advisory change-flow entry idempotency conflict.")
+    return updated_session
+
+
+def _append_board_advisory_turn(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    session_id: str,
+    actor_type: str,
+    content: str,
+    command_id: str,
+    occurred_at,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    session = repository.get_board_advisory_session(session_id, connection=connection)
+    if session is None:
+        raise ValueError("Board advisory session is missing.")
+    if not advisory_change_flow_can_append_turn(str(session.get("status") or "")):
+        raise ValueError("Board advisory turn can only be appended while drafting.")
+    working_turn = build_board_advisory_turn(
+        actor_type=actor_type,
+        content=content,
+        created_at=occurred_at,
+    ).model_dump(mode="json")
+    updated_session = repository.append_board_advisory_turn(
+        connection,
+        session_id=session_id,
+        working_turn=working_turn,
+        updated_at=occurred_at,
+    )
+    advisory_event = repository.insert_event(
+        connection,
+        event_type=EVENT_BOARD_ADVISORY_TURN_APPENDED,
+        actor_type=actor_type,
+        actor_id=actor_type,
+        workflow_id=str(session["workflow_id"]),
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=str(session["workflow_id"]),
+        payload={
+            "session_id": session_id,
+            "approval_id": session["approval_id"],
+            "review_pack_id": session["review_pack_id"],
+            "working_turn": working_turn,
+            "status": "DRAFTING",
+        },
+        occurred_at=occurred_at,
+    )
+    if advisory_event is None:
+        raise RuntimeError("Board advisory turn idempotency conflict.")
+    return updated_session
+
+
+def _request_board_advisory_analysis(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    session_id: str,
+    command_id: str,
+    occurred_at,
+    idempotency_key: str,
+) -> tuple[dict[str, Any], str | None]:
+    session = repository.get_board_advisory_session(session_id, connection=connection)
+    if session is None:
+        raise ValueError("Board advisory session is missing.")
+    if not advisory_change_flow_can_request_analysis(str(session.get("status") or "")):
+        raise ValueError("Board advisory analysis can only be requested while drafting.")
+    board_decision = session.get("board_decision")
+    if not isinstance(board_decision, dict):
+        raise ValueError("Board advisory session is missing its drafting decision summary.")
+    current_profile = repository.get_latest_governance_profile(str(session["workflow_id"]), connection=connection)
+    if current_profile is None:
+        raise ValueError("Governance profile is required before requesting advisory analysis.")
+    latest_graph_version = resolve_workflow_graph_version(
+        repository,
+        str(session["workflow_id"]),
+        connection=connection,
+    )
+    try:
+        proposal = build_graph_patch_proposal(
+            session=session,
+            board_decision=BoardAdvisoryDecision.model_validate(board_decision),
+            current_profile=current_profile,
+            base_graph_version=latest_graph_version,
+        )
+        graph_snapshot = build_ticket_graph_snapshot(
+            repository,
+            str(session["workflow_id"]),
+            connection=connection,
+        )
+        node_ids = {node.node_id for node in graph_snapshot.nodes if node.node_id}
+        patch_nodes = {
+            *proposal.freeze_node_ids,
+            *proposal.unfreeze_node_ids,
+            *proposal.focus_node_ids,
+        }
+        unknown_nodes = sorted(node_id for node_id in patch_nodes if node_id not in node_ids)
+        if unknown_nodes:
+            raise ValueError(f"Advisory patch proposal references unknown node ids: {', '.join(unknown_nodes)}")
+    except Exception as exc:
+        updated_session = repository.reject_board_advisory_analysis(
+            connection,
+            session_id=session_id,
+            error_message=str(exc),
+            updated_at=occurred_at,
+        )
+        advisory_event = repository.insert_event(
+            connection,
+            event_type=EVENT_BOARD_ADVISORY_ANALYSIS_REJECTED,
+            actor_type="ceo",
+            actor_id="ceo",
+            workflow_id=str(session["workflow_id"]),
+            idempotency_key=idempotency_key,
+            causation_id=command_id,
+            correlation_id=str(session["workflow_id"]),
+            payload={
+                "session_id": session_id,
+                "approval_id": session["approval_id"],
+                "review_pack_id": session["review_pack_id"],
+                "error_message": str(exc),
+                "status": "ANALYSIS_REJECTED",
+            },
+            occurred_at=occurred_at,
+        )
+        if advisory_event is None:
+            raise RuntimeError("Board advisory analysis rejection idempotency conflict.")
+        return updated_session, str(exc)
+
+    review_pack = ((repository.get_approval_by_id(connection, str(session["approval_id"])) or {}).get("payload") or {}).get(
+        "review_pack"
+    ) or {}
+    subject = review_pack.get("subject") or {}
+    source_ticket_id = str(subject.get("source_ticket_id") or session["approval_id"]).strip() or str(session["approval_id"])
+    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
+    proposal_artifact_ref = advisory_patch_proposal_artifact_ref(
+        workflow_id=str(session["workflow_id"]),
+        session_id=session_id,
+    )
+    _save_json_artifact(
+        repository,
+        connection,
+        artifact_ref=proposal_artifact_ref,
+        logical_path=advisory_patch_proposal_logical_path(session_id=session_id),
+        workflow_id=str(session["workflow_id"]),
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        payload=proposal.model_dump(mode="json"),
+        kind="JSON",
+        occurred_at=occurred_at,
+    )
+    proposal_ref = build_graph_patch_proposal_process_asset_ref(session_id, version_int=1)
+    decision_pack_refs = list(session.get("decision_pack_refs") or [])
+    if proposal_ref not in decision_pack_refs:
+        decision_pack_refs.append(proposal_ref)
+    updated_session = repository.store_board_advisory_patch_proposal(
+        connection,
+        session_id=session_id,
+        proposal_ref=proposal_ref,
+        proposal=proposal.model_dump(mode="json"),
+        decision_pack_refs=decision_pack_refs,
+        updated_at=occurred_at,
+    )
+    advisory_event = repository.insert_event(
+        connection,
+        event_type=EVENT_BOARD_ADVISORY_ANALYSIS_COMPLETED,
+        actor_type="ceo",
+        actor_id="ceo",
+        workflow_id=str(session["workflow_id"]),
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=str(session["workflow_id"]),
+        payload={
+            "session_id": session_id,
+            "approval_id": session["approval_id"],
+            "review_pack_id": session["review_pack_id"],
+            "proposal_ref": proposal_ref,
+            "proposal_summary": proposal.proposal_summary,
+            "base_graph_version": proposal.base_graph_version,
+            "status": "PENDING_BOARD_CONFIRMATION",
+        },
+        occurred_at=occurred_at,
+    )
+    if advisory_event is None:
+        raise RuntimeError("Board advisory analysis completion idempotency conflict.")
+    return updated_session, None
+
+
+def _apply_board_advisory_patch(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    session_id: str,
+    proposal_ref: str,
+    command_id: str,
+    occurred_at,
+    idempotency_key: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    session = repository.get_board_advisory_session(session_id, connection=connection)
+    if session is None:
+        raise ValueError("Board advisory session is missing.")
+    if not advisory_change_flow_can_apply(str(session.get("status") or "")):
+        raise ValueError("Board advisory patch can only be applied after a proposal is ready for confirmation.")
+    if str(session.get("latest_patch_proposal_ref") or "") != proposal_ref:
+        raise ValueError("Board advisory patch proposal does not match the latest proposal for this session.")
+    current_graph_version = resolve_workflow_graph_version(
+        repository,
+        str(session["workflow_id"]),
+        connection=connection,
+    )
+    proposal = session.get("latest_patch_proposal")
+    if not isinstance(proposal, dict):
+        raise ValueError("Board advisory session is missing its latest graph patch proposal.")
+    normalized_proposal = GraphPatchProposal.model_validate(proposal)
+    if normalized_proposal.base_graph_version != current_graph_version:
+        raise ValueError(
+            f"Graph patch proposal is stale: expected {normalized_proposal.base_graph_version}, got {current_graph_version}."
+        )
+    graph_snapshot = build_ticket_graph_snapshot(
+        repository,
+        str(session["workflow_id"]),
+        connection=connection,
+    )
+    node_ids = {node.node_id for node in graph_snapshot.nodes if node.node_id}
+    patch_nodes = {
+        *normalized_proposal.freeze_node_ids,
+        *normalized_proposal.unfreeze_node_ids,
+        *normalized_proposal.focus_node_ids,
+    }
+    unknown_nodes = sorted(node_id for node_id in patch_nodes if node_id not in node_ids)
+    if unknown_nodes:
+        raise ValueError(f"Graph patch references unknown node ids: {', '.join(unknown_nodes)}")
+    graph_patch = build_graph_patch_from_proposal(
+        normalized_proposal,
+        session_id=session_id,
+    )
+    board_decision = BoardAdvisoryDecision.model_validate(session.get("board_decision") or {})
+    workflow_id = str(session["workflow_id"])
+    review_pack = ((repository.get_approval_by_id(connection, str(session["approval_id"])) or {}).get("payload") or {}).get(
+        "review_pack"
+    ) or {}
+    subject = review_pack.get("subject") or {}
+    source_ticket_id = str(subject.get("source_ticket_id") or session["approval_id"]).strip() or str(session["approval_id"])
+    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
+    patch_artifact_ref = advisory_graph_patch_artifact_ref(
+        workflow_id=workflow_id,
+        session_id=session_id,
+    )
+    _save_json_artifact(
+        repository,
+        connection,
+        artifact_ref=patch_artifact_ref,
+        logical_path=advisory_graph_patch_logical_path(session_id=session_id),
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        payload=graph_patch.model_dump(mode="json"),
+        kind="JSON",
+        occurred_at=occurred_at,
+    )
+    event_row = repository.insert_event(
+        connection,
+        event_type=EVENT_BOARD_REVIEW_REJECTED,
+        actor_type="board",
+        actor_id="board",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key}:board-review-rejected",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "approval_id": session["approval_id"],
+            "review_pack_id": session["review_pack_id"],
+            "node_id": source_node_id,
+            "ticket_id": source_ticket_id,
+            "board_comment": board_decision.board_comment,
+            "constraint_patch": board_decision.constraint_patch,
+            "governance_patch": (
+                board_decision.governance_patch.model_dump(mode="json", exclude_none=True)
+                if board_decision.governance_patch is not None
+                else None
+            ),
+            "decision_action": "MODIFY_CONSTRAINTS",
+        },
+        occurred_at=occurred_at,
+    )
+    if event_row is None:
+        raise RuntimeError("Board advisory board-review resolution idempotency conflict.")
+    advisory_event = repository.insert_event(
+        connection,
+        event_type=EVENT_BOARD_ADVISORY_DECISION_RECORDED,
+        actor_type="board",
+        actor_id="board",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key}:advisory-decision-recorded",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload={
+            "session_id": session_id,
+            "approval_id": session["approval_id"],
+            "review_pack_id": session["review_pack_id"],
+            "decision_action": "MODIFY_CONSTRAINTS",
+            "decision_pack_refs": [
+                *list(session.get("decision_pack_refs") or []),
+                build_graph_patch_process_asset_ref(session_id, version_int=1),
+            ],
+            "latest_patch_proposal_ref": proposal_ref,
+            "approved_patch_ref": build_graph_patch_process_asset_ref(session_id, version_int=1),
+            "board_comment": board_decision.board_comment,
+            "constraint_patch": board_decision.constraint_patch,
+            "governance_patch": (
+                board_decision.governance_patch.model_dump(mode="json", exclude_none=True)
+                if board_decision.governance_patch is not None
+                else None
+            ),
+        },
+        occurred_at=occurred_at,
+    )
+    if advisory_event is None:
+        raise RuntimeError("Board advisory decision idempotency conflict.")
+    patch_event = repository.insert_event(
+        connection,
+        event_type=EVENT_GRAPH_PATCH_APPLIED,
+        actor_type="board",
+        actor_id="board",
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=graph_patch.model_dump(mode="json"),
+        occurred_at=occurred_at,
+    )
+    if patch_event is None:
+        raise RuntimeError("Graph patch application idempotency conflict.")
+    patched_graph_version = resolve_workflow_graph_version(
+        repository,
+        workflow_id,
+        connection=connection,
+    )
+    decision_pack_refs = list(session.get("decision_pack_refs") or [])
+    patch_ref = build_graph_patch_process_asset_ref(session_id, version_int=1)
+    if patch_ref not in decision_pack_refs:
+        decision_pack_refs.append(patch_ref)
+    updated_session = repository.decide_board_advisory_session(
+        connection,
+        session_id=session_id,
+        board_decision=board_decision.model_dump(mode="json", exclude_none=True),
+        decision_pack_refs=decision_pack_refs,
+        approved_patch_ref=patch_ref,
+        approved_patch=graph_patch.model_dump(mode="json"),
+        patched_graph_version=patched_graph_version,
+        focus_node_ids=list(graph_patch.focus_node_ids),
+        updated_at=occurred_at,
+    )
+    superseding_governance_profile: dict[str, Any] | None = None
+    if board_decision.governance_patch is not None:
+        current_profile = repository.get_latest_governance_profile(workflow_id, connection=connection)
+        if current_profile is None:
+            raise ValueError("Governance profile is required before applying a board advisory patch.")
+        next_profile = build_governance_profile_from_patch(
+            current_profile,
+            board_decision.governance_patch,
+            source_ref=patch_ref,
+            effective_from_event=str(patch_event["event_id"]),
+        )
+        if next_profile is not None:
+            repository.save_governance_profile(connection, next_profile)
+            superseding_governance_profile = next_profile.model_dump(mode="json")
+    approval = repository.resolve_approval(
+        connection,
+        approval_id=str(session["approval_id"]),
+        status=APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
+        resolved_by="board",
+        resolved_at=occurred_at,
+        review_pack_version=int((repository.get_approval_by_id(connection, str(session["approval_id"])) or {}).get("review_pack_version") or 1) + 1,
+        command_target_version=int(event_row["sequence_no"]),
+        resolution={
+            "decision_action": "MODIFY_CONSTRAINTS",
+            "board_comment": board_decision.board_comment,
+            "constraint_patch": board_decision.constraint_patch,
+            "governance_patch": (
+                board_decision.governance_patch.model_dump(mode="json", exclude_none=True)
+                if board_decision.governance_patch is not None
+                else None
+            ),
+            "latest_patch_proposal_ref": proposal_ref,
+            "approved_patch_ref": patch_ref,
+            "patched_graph_version": patched_graph_version,
+            "superseding_governance_profile_ref": (
+                superseding_governance_profile.get("profile_id")
+                if isinstance(superseding_governance_profile, dict)
+                else None
+            ),
+        },
+    )
+    return updated_session, superseding_governance_profile
 
 
 def _normalize_requirement_elicitation_answers(
@@ -2151,10 +2667,31 @@ def handle_modify_constraints(
                 return _rejected_ack(
                     command_id=command_id,
                     idempotency_key=payload.idempotency_key,
-                    received_at=received_at,
-                    reason=str(exc),
-                    causation_hint=f"approval:{payload.approval_id}",
-                )
+                received_at=received_at,
+                reason=str(exc),
+                causation_hint=f"approval:{payload.approval_id}",
+            )
+
+        if review_pack_requires_board_advisory(review_pack):
+            _enter_board_advisory_change_flow(
+                repository,
+                connection,
+                approval=approval,
+                governance_patch=governance_patch,
+                constraint_patch=payload.constraint_patch.model_dump(mode="json"),
+                board_comment=payload.board_comment,
+                command_id=command_id,
+                occurred_at=received_at,
+                idempotency_key=payload.idempotency_key,
+            )
+            repository.refresh_projections(connection)
+            return CommandAckEnvelope(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                status=CommandAckStatus.ACCEPTED,
+                received_at=received_at,
+                causation_hint=f"approval:{payload.approval_id}",
+            )
 
         event_row = repository.insert_event(
             connection,
@@ -2303,4 +2840,152 @@ def handle_modify_constraints(
         received_at=received_at,
         reason=None,
         causation_hint=f"approval:{payload.approval_id}",
+    )
+
+
+def handle_board_advisory_append_turn(
+    repository: ControlPlaneRepository,
+    payload: BoardAdvisoryAppendTurnCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                approval_id=str((existing_event.get("payload") or {}).get("approval_id") or payload.session_id),
+            )
+        try:
+            session = _append_board_advisory_turn(
+                repository,
+                connection,
+                session_id=payload.session_id,
+                actor_type=payload.actor_type,
+                content=payload.content,
+                command_id=command_id,
+                occurred_at=received_at,
+                idempotency_key=payload.idempotency_key,
+            )
+        except ValueError as exc:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=str(exc),
+                causation_hint=f"board-advisory:{payload.session_id}",
+            )
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        causation_hint=f"approval:{session['approval_id']}",
+    )
+
+
+def handle_board_advisory_request_analysis(
+    repository: ControlPlaneRepository,
+    payload: BoardAdvisoryRequestAnalysisCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                approval_id=str((existing_event.get("payload") or {}).get("approval_id") or payload.session_id),
+            )
+        try:
+            session, error_message = _request_board_advisory_analysis(
+                repository,
+                connection,
+                session_id=payload.session_id,
+                command_id=command_id,
+                occurred_at=received_at,
+                idempotency_key=payload.idempotency_key,
+            )
+        except ValueError as exc:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=str(exc),
+                causation_hint=f"board-advisory:{payload.session_id}",
+            )
+        repository.refresh_projections(connection)
+
+    if error_message is not None:
+        return _rejected_ack(
+            command_id=command_id,
+            idempotency_key=payload.idempotency_key,
+            received_at=received_at,
+            reason=error_message,
+            causation_hint=f"approval:{session['approval_id']}",
+        )
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        causation_hint=f"approval:{session['approval_id']}",
+    )
+
+
+def handle_board_advisory_apply_patch(
+    repository: ControlPlaneRepository,
+    payload: BoardAdvisoryApplyPatchCommand,
+) -> CommandAckEnvelope:
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                approval_id=str((existing_event.get("payload") or {}).get("approval_id") or payload.session_id),
+            )
+        try:
+            session, _ = _apply_board_advisory_patch(
+                repository,
+                connection,
+                session_id=payload.session_id,
+                proposal_ref=payload.proposal_ref,
+                command_id=command_id,
+                occurred_at=received_at,
+                idempotency_key=payload.idempotency_key,
+            )
+        except ValueError as exc:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                reason=str(exc),
+                causation_hint=f"board-advisory:{payload.session_id}",
+            )
+        repository.refresh_projections(connection)
+
+    _trigger_ceo_shadow_safely(
+        repository,
+        workflow_id=session["workflow_id"],
+        approval_id=session["approval_id"],
+    )
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        causation_hint=f"approval:{session['approval_id']}",
     )

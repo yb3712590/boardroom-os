@@ -7,8 +7,11 @@ from app.contracts.common import StrictModel
 from app.contracts.commands import (
     ArtifactCleanupCommand,
     ArtifactDeleteCommand,
+    BoardAdvisoryAppendTurnCommand,
+    BoardAdvisoryApplyPatchCommand,
     BoardApproveCommand,
     BoardRejectCommand,
+    BoardAdvisoryRequestAnalysisCommand,
     CommandAckEnvelope,
     EmployeeFreezeCommand,
     EmployeeHireRequestCommand,
@@ -39,6 +42,9 @@ from app.core.artifact_handlers import (
 )
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.approval_handlers import (
+    handle_board_advisory_append_turn,
+    handle_board_advisory_apply_patch,
+    handle_board_advisory_request_analysis,
     handle_board_approve,
     handle_board_reject,
     handle_modify_constraints,
@@ -366,3 +372,30 @@ def board_reject(request: Request, payload: BoardRejectCommand) -> CommandAckEnv
 def modify_constraints(request: Request, payload: ModifyConstraintsCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
     return handle_modify_constraints(repository, payload)
+
+
+@router.post("/board-advisory-append-turn", response_model=CommandAckEnvelope)
+def board_advisory_append_turn(
+    request: Request,
+    payload: BoardAdvisoryAppendTurnCommand,
+) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_board_advisory_append_turn(repository, payload)
+
+
+@router.post("/board-advisory-request-analysis", response_model=CommandAckEnvelope)
+def board_advisory_request_analysis(
+    request: Request,
+    payload: BoardAdvisoryRequestAnalysisCommand,
+) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_board_advisory_request_analysis(repository, payload)
+
+
+@router.post("/board-advisory-apply-patch", response_model=CommandAckEnvelope)
+def board_advisory_apply_patch(
+    request: Request,
+    payload: BoardAdvisoryApplyPatchCommand,
+) -> CommandAckEnvelope:
+    repository: ControlPlaneRepository = request.app.state.repository
+    return handle_board_advisory_apply_patch(repository, payload)

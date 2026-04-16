@@ -734,6 +734,24 @@ class ModifyConstraintsCommand(StrictModel):
     idempotency_key: str = Field(min_length=1)
 
 
+class BoardAdvisoryAppendTurnCommand(StrictModel):
+    session_id: str = Field(min_length=1)
+    actor_type: Literal["board", "ceo", "architect"]
+    content: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class BoardAdvisoryRequestAnalysisCommand(StrictModel):
+    session_id: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
+class BoardAdvisoryApplyPatchCommand(StrictModel):
+    session_id: str = Field(min_length=1)
+    proposal_ref: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+
+
 class CommandAckEnvelope(StrictModel):
     command_id: str
     idempotency_key: str

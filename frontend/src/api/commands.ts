@@ -1,5 +1,8 @@
 import { postJson } from './client'
 import type {
+  BoardAdvisoryAppendTurnRequest,
+  BoardAdvisoryApplyPatchRequest,
+  BoardAdvisoryRequestAnalysisRequest,
   BoardApproveRequest,
   BoardRejectRequest,
   CommandAck,
@@ -47,6 +50,18 @@ export function boardReject(payload: BoardRejectRequest): Promise<CommandAck> {
 
 export function modifyConstraints(payload: ModifyConstraintsRequest): Promise<CommandAck> {
   return postJson<CommandAck>('/api/v1/commands/modify-constraints', payload)
+}
+
+export function boardAdvisoryAppendTurn(payload: BoardAdvisoryAppendTurnRequest): Promise<CommandAck> {
+  return postJson<CommandAck>('/api/v1/commands/board-advisory-append-turn', payload)
+}
+
+export function boardAdvisoryRequestAnalysis(payload: BoardAdvisoryRequestAnalysisRequest): Promise<CommandAck> {
+  return postJson<CommandAck>('/api/v1/commands/board-advisory-request-analysis', payload)
+}
+
+export function boardAdvisoryApplyPatch(payload: BoardAdvisoryApplyPatchRequest): Promise<CommandAck> {
+  return postJson<CommandAck>('/api/v1/commands/board-advisory-apply-patch', payload)
 }
 
 export function incidentResolve(payload: IncidentResolveRequest): Promise<CommandAck> {

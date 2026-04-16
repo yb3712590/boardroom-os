@@ -289,7 +289,7 @@ describe('ReviewRoomDrawer', () => {
     })
   })
 
-  it('renders advisory context and submits governance patch through modify constraints', async () => {
+  it('renders advisory context and enters the change flow through modify constraints', async () => {
     const user = userEvent.setup()
     const onModifyConstraints = vi.fn().mockResolvedValue(undefined)
 
@@ -334,10 +334,13 @@ describe('ReviewRoomDrawer', () => {
               review_pack_id: 'brp_004',
               trigger_type: 'CONSTRAINT_CHANGE',
               status: 'OPEN',
+              change_flow_status: 'OPEN',
               source_version: 'gv_14',
               governance_profile_ref: 'gp_001',
               affected_nodes: ['node_homepage_visual'],
+              working_turns: [],
               decision_pack_refs: [],
+              latest_patch_proposal_ref: null,
               approved_patch_ref: null,
               current_governance_modes: {
                 approval_mode: 'AUTO_CEO',
@@ -375,10 +378,10 @@ describe('ReviewRoomDrawer', () => {
     expect(screen.getByText('AUTO_CEO / MINIMAL')).toBeInTheDocument()
     await user.selectOptions(screen.getByLabelText('Approval mode'), 'EXPERT_GATED')
     await user.selectOptions(screen.getByLabelText('Audit mode'), 'FULL_TIMELINE')
-    await user.click(screen.getByRole('button', { name: 'Submit constraint changes' }))
+    await user.click(screen.getByRole('button', { name: 'Enter change flow' }))
 
     expect(onModifyConstraints).toHaveBeenCalledWith({
-      boardComment: 'Apply the updated board constraints.',
+      boardComment: 'Enter the advisory change flow with these constraints.',
       addRules: [],
       removeRules: [],
       replaceRules: [],
@@ -387,6 +390,202 @@ describe('ReviewRoomDrawer', () => {
         audit_mode: 'FULL_TIMELINE',
       },
       elicitationAnswers: undefined,
+    })
+  })
+
+  it('renders drafting turns and requests analysis', async () => {
+    const user = userEvent.setup()
+    const onAppendAdvisoryTurn = vi.fn().mockResolvedValue(undefined)
+    const onRequestAdvisoryAnalysis = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ReviewRoomDrawer
+        isOpen
+        loading={false}
+        reviewData={{
+          review_pack: {
+            meta: {
+              approval_id: 'apr_005',
+              review_pack_id: 'brp_005',
+              review_pack_version: 1,
+              workflow_id: 'wf_005',
+              review_type: 'VISUAL_MILESTONE',
+              created_at: '2026-04-16T12:00:00+08:00',
+              priority: 'high',
+            },
+            subject: {
+              title: 'Draft an advisory patch',
+            },
+            trigger: {
+              trigger_event_id: 'evt_005',
+              trigger_reason: 'The board opened a dedicated change flow.',
+              why_now: 'Need a structured proposal before runtime import.',
+            },
+            recommendation: {
+              recommended_action: 'MODIFY_CONSTRAINTS',
+              recommended_option_id: 'draft_change_flow',
+              summary: 'Draft the request, then ask for analysis.',
+            },
+            options: [],
+            advisory_context: {
+              session_id: 'adv_005',
+              approval_id: 'apr_005',
+              review_pack_id: 'brp_005',
+              trigger_type: 'CONSTRAINT_CHANGE',
+              status: 'DRAFTING',
+              change_flow_status: 'DRAFTING',
+              source_version: 'gv_22',
+              governance_profile_ref: 'gp_005',
+              affected_nodes: ['node_homepage_visual'],
+              working_turns: [
+                {
+                  turn_id: 'advturn_001',
+                  actor_type: 'board',
+                  content: 'Keep the branch frozen until the proposal is reviewed.',
+                  created_at: '2026-04-16T12:01:00+08:00',
+                },
+              ],
+              decision_pack_refs: ['pa://decision-summary/adv_005@1'],
+              latest_patch_proposal_ref: null,
+              approved_patch_ref: null,
+              current_governance_modes: {
+                approval_mode: 'AUTO_CEO',
+                audit_mode: 'MINIMAL',
+              },
+              supports_governance_patch: true,
+            },
+            decision_form: {
+              allowed_actions: ['MODIFY_CONSTRAINTS'],
+              command_target_version: 1,
+              requires_comment_on_reject: true,
+              requires_constraint_patch_on_modify: true,
+            },
+          } as never,
+          available_actions: ['MODIFY_CONSTRAINTS'],
+          draft_defaults: {
+            selected_option_id: 'draft_change_flow',
+            comment_template: '',
+          } as never,
+        }}
+        inspectorData={null}
+        inspectorLoading={false}
+        error={null}
+        submittingAction={null}
+        onClose={vi.fn()}
+        onOpenInspector={vi.fn()}
+        onOpenArtifact={vi.fn()}
+        onApprove={vi.fn().mockResolvedValue(undefined)}
+        onReject={vi.fn().mockResolvedValue(undefined)}
+        onModifyConstraints={vi.fn().mockResolvedValue(undefined)}
+        onAppendAdvisoryTurn={onAppendAdvisoryTurn}
+        onRequestAdvisoryAnalysis={onRequestAdvisoryAnalysis}
+      />,
+    )
+
+    expect(screen.getByText('Keep the branch frozen until the proposal is reviewed.')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Draft note'), 'Compare the pros and cons before runtime import.')
+    await user.click(screen.getByRole('button', { name: 'Add draft note' }))
+    expect(onAppendAdvisoryTurn).toHaveBeenCalledWith({
+      sessionId: 'adv_005',
+      content: 'Compare the pros and cons before runtime import.',
+    })
+    await user.click(screen.getByRole('button', { name: 'Request analysis' }))
+    expect(onRequestAdvisoryAnalysis).toHaveBeenCalledWith({ sessionId: 'adv_005' })
+  })
+
+  it('renders proposal confirmation and applies the approved runtime patch', async () => {
+    const user = userEvent.setup()
+    const onApplyAdvisoryPatch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ReviewRoomDrawer
+        isOpen
+        loading={false}
+        reviewData={{
+          review_pack: {
+            meta: {
+              approval_id: 'apr_006',
+              review_pack_id: 'brp_006',
+              review_pack_version: 1,
+              workflow_id: 'wf_006',
+              review_type: 'VISUAL_MILESTONE',
+              created_at: '2026-04-16T12:20:00+08:00',
+              priority: 'high',
+            },
+            subject: {
+              title: 'Confirm the advisory patch',
+            },
+            trigger: {
+              trigger_event_id: 'evt_006',
+              trigger_reason: 'Analysis finished and the board can confirm the patch.',
+              why_now: 'Need final confirmation before runtime import.',
+            },
+            recommendation: {
+              recommended_action: 'MODIFY_CONSTRAINTS',
+              recommended_option_id: 'confirm_patch',
+              summary: 'Review the pros and cons, then import the patch.',
+            },
+            options: [],
+            advisory_context: {
+              session_id: 'adv_006',
+              approval_id: 'apr_006',
+              review_pack_id: 'brp_006',
+              trigger_type: 'CONSTRAINT_CHANGE',
+              status: 'PENDING_BOARD_CONFIRMATION',
+              change_flow_status: 'PENDING_BOARD_CONFIRMATION',
+              source_version: 'gv_24',
+              governance_profile_ref: 'gp_006',
+              affected_nodes: ['node_homepage_visual'],
+              working_turns: [],
+              decision_pack_refs: [
+                'pa://decision-summary/adv_006@1',
+                'pa://graph-patch-proposal/adv_006@1',
+              ],
+              latest_patch_proposal_ref: 'pa://graph-patch-proposal/adv_006@1',
+              approved_patch_ref: null,
+              proposal_summary: 'Freeze the affected branch and rerun CEO after board confirmation.',
+              pros: ['Keeps runtime changes gated until the board confirms the patch.'],
+              cons: ['The branch stays blocked until the next replan pass.'],
+              risk_alerts: ['The current proposal freezes the affected node.'],
+              impact_summary: 'Freeze 1 affected node and focus the next CEO pass on it.',
+              current_governance_modes: {
+                approval_mode: 'AUTO_CEO',
+                audit_mode: 'MINIMAL',
+              },
+              supports_governance_patch: true,
+            },
+            decision_form: {
+              allowed_actions: ['MODIFY_CONSTRAINTS'],
+              command_target_version: 1,
+              requires_comment_on_reject: true,
+              requires_constraint_patch_on_modify: true,
+            },
+          } as never,
+          available_actions: ['MODIFY_CONSTRAINTS'],
+          draft_defaults: {
+            selected_option_id: 'confirm_patch',
+            comment_template: '',
+          } as never,
+        }}
+        inspectorData={null}
+        inspectorLoading={false}
+        error={null}
+        submittingAction={null}
+        onClose={vi.fn()}
+        onOpenInspector={vi.fn()}
+        onOpenArtifact={vi.fn()}
+        onApprove={vi.fn().mockResolvedValue(undefined)}
+        onReject={vi.fn().mockResolvedValue(undefined)}
+        onModifyConstraints={vi.fn().mockResolvedValue(undefined)}
+        onApplyAdvisoryPatch={onApplyAdvisoryPatch}
+      />,
+    )
+
+    expect(screen.getByText('Freeze the affected branch and rerun CEO after board confirmation.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Approve runtime patch' }))
+    expect(onApplyAdvisoryPatch).toHaveBeenCalledWith({
+      sessionId: 'adv_006',
+      proposalRef: 'pa://graph-patch-proposal/adv_006@1',
     })
   })
 })

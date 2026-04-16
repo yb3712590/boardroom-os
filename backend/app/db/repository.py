@@ -2933,13 +2933,20 @@ class ControlPlaneRepository:
                 source_version,
                 governance_profile_ref,
                 affected_nodes_json,
+                working_turns_json,
                 decision_pack_refs_json,
                 board_decision_json,
+                latest_patch_proposal_ref,
+                latest_patch_proposal_json,
                 approved_patch_ref,
+                approved_patch_json,
+                patched_graph_version,
+                focus_node_ids_json,
+                latest_analysis_error,
                 status,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.session_id,
@@ -2950,13 +2957,28 @@ class ControlPlaneRepository:
                 session.source_version,
                 session.governance_profile_ref,
                 json.dumps(session.affected_nodes, sort_keys=True),
+                json.dumps([item.model_dump(mode="json") for item in session.working_turns], sort_keys=True),
                 json.dumps(session.decision_pack_refs, sort_keys=True),
                 (
                     json.dumps(session.board_decision.model_dump(mode="json"), sort_keys=True)
                     if session.board_decision is not None
                     else None
                 ),
+                session.latest_patch_proposal_ref,
+                (
+                    json.dumps(session.latest_patch_proposal.model_dump(mode="json"), sort_keys=True)
+                    if session.latest_patch_proposal is not None
+                    else None
+                ),
                 session.approved_patch_ref,
+                (
+                    json.dumps(session.approved_patch.model_dump(mode="json"), sort_keys=True)
+                    if session.approved_patch is not None
+                    else None
+                ),
+                session.patched_graph_version,
+                json.dumps(session.focus_node_ids, sort_keys=True),
+                session.latest_analysis_error,
                 session.status,
                 now_local().isoformat(),
                 now_local().isoformat(),
@@ -3040,19 +3062,25 @@ class ControlPlaneRepository:
         board_decision: dict[str, Any],
         decision_pack_refs: list[str],
         approved_patch_ref: str,
+        approved_patch: dict[str, Any] | None = None,
+        patched_graph_version: str | None = None,
+        focus_node_ids: list[str] | None = None,
         updated_at: datetime,
     ) -> dict[str, Any]:
         current = self.get_board_advisory_session(session_id, connection=connection)
         if current is None:
             raise ValueError("Board advisory session is missing.")
-        if str(current.get("status") or "") != "OPEN":
-            raise ValueError("Board advisory session must stay OPEN until the board records a decision.")
+        if str(current.get("status") or "") not in {"PENDING_BOARD_CONFIRMATION", "OPEN"}:
+            raise ValueError("Board advisory session must be ready for board confirmation.")
         connection.execute(
             """
             UPDATE board_advisory_session
             SET decision_pack_refs_json = ?,
                 board_decision_json = ?,
                 approved_patch_ref = ?,
+                approved_patch_json = ?,
+                patched_graph_version = ?,
+                focus_node_ids_json = ?,
                 status = ?,
                 updated_at = ?
             WHERE session_id = ?
@@ -3061,7 +3089,10 @@ class ControlPlaneRepository:
                 json.dumps(list(decision_pack_refs), sort_keys=True),
                 json.dumps(board_decision, sort_keys=True),
                 approved_patch_ref,
-                "DECIDED",
+                json.dumps(approved_patch, sort_keys=True) if approved_patch is not None else None,
+                patched_graph_version,
+                json.dumps(list(focus_node_ids or []), sort_keys=True),
+                "APPLIED",
                 updated_at.isoformat(),
                 session_id,
             ),
@@ -3081,8 +3112,8 @@ class ControlPlaneRepository:
         current = self.get_board_advisory_session(session_id, connection=connection)
         if current is None:
             raise ValueError("Board advisory session is missing.")
-        if str(current.get("status") or "") != "OPEN":
-            raise ValueError("Board advisory session must stay OPEN until it is dismissed.")
+        if str(current.get("status") or "") in {"APPLIED", "DISMISSED"}:
+            raise ValueError("Board advisory session can no longer be dismissed.")
         connection.execute(
             """
             UPDATE board_advisory_session
@@ -3099,6 +3130,159 @@ class ControlPlaneRepository:
         updated = self.get_board_advisory_session(session_id, connection=connection)
         if updated is None:
             raise RuntimeError("Board advisory session row vanished after dismissal.")
+        return updated
+
+    def start_board_advisory_change_flow(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        board_decision: dict[str, Any],
+        decision_pack_refs: list[str],
+        working_turn: dict[str, Any],
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_session(session_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory session is missing.")
+        if str(current.get("status") or "") not in {"OPEN", "DRAFTING", "ANALYSIS_REJECTED"}:
+            raise ValueError("Board advisory change flow cannot be started from the current state.")
+        existing_turns = list(current.get("working_turns") or [])
+        existing_turns.append(dict(working_turn))
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET working_turns_json = ?,
+                decision_pack_refs_json = ?,
+                board_decision_json = ?,
+                latest_patch_proposal_ref = NULL,
+                latest_patch_proposal_json = NULL,
+                approved_patch_ref = NULL,
+                approved_patch_json = NULL,
+                patched_graph_version = NULL,
+                focus_node_ids_json = '[]',
+                latest_analysis_error = NULL,
+                status = ?,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                json.dumps(existing_turns, sort_keys=True),
+                json.dumps(list(decision_pack_refs), sort_keys=True),
+                json.dumps(board_decision, sort_keys=True),
+                "DRAFTING",
+                updated_at.isoformat(),
+                session_id,
+            ),
+        )
+        updated = self.get_board_advisory_session(session_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory session row vanished after change-flow entry.")
+        return updated
+
+    def append_board_advisory_turn(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        working_turn: dict[str, Any],
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_session(session_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory session is missing.")
+        if str(current.get("status") or "") not in {"DRAFTING", "ANALYSIS_REJECTED"}:
+            raise ValueError("Board advisory turn can only be appended while drafting.")
+        working_turns = list(current.get("working_turns") or [])
+        working_turns.append(dict(working_turn))
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET working_turns_json = ?,
+                status = ?,
+                latest_analysis_error = NULL,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                json.dumps(working_turns, sort_keys=True),
+                "DRAFTING",
+                updated_at.isoformat(),
+                session_id,
+            ),
+        )
+        updated = self.get_board_advisory_session(session_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory session row vanished after turn append.")
+        return updated
+
+    def store_board_advisory_patch_proposal(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        proposal_ref: str,
+        proposal: dict[str, Any],
+        decision_pack_refs: list[str],
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_session(session_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory session is missing.")
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET latest_patch_proposal_ref = ?,
+                latest_patch_proposal_json = ?,
+                decision_pack_refs_json = ?,
+                latest_analysis_error = NULL,
+                status = ?,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                proposal_ref,
+                json.dumps(proposal, sort_keys=True),
+                json.dumps(list(decision_pack_refs), sort_keys=True),
+                "PENDING_BOARD_CONFIRMATION",
+                updated_at.isoformat(),
+                session_id,
+            ),
+        )
+        updated = self.get_board_advisory_session(session_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory session row vanished after proposal update.")
+        return updated
+
+    def reject_board_advisory_analysis(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        error_message: str,
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        current = self.get_board_advisory_session(session_id, connection=connection)
+        if current is None:
+            raise ValueError("Board advisory session is missing.")
+        connection.execute(
+            """
+            UPDATE board_advisory_session
+            SET latest_analysis_error = ?,
+                status = ?,
+                updated_at = ?
+            WHERE session_id = ?
+            """,
+            (
+                error_message,
+                "ANALYSIS_REJECTED",
+                updated_at.isoformat(),
+                session_id,
+            ),
+        )
+        updated = self.get_board_advisory_session(session_id, connection=connection)
+        if updated is None:
+            raise RuntimeError("Board advisory session row vanished after analysis rejection.")
         return updated
 
     def get_cursor_and_version(
@@ -4883,18 +5067,34 @@ class ControlPlaneRepository:
     def _convert_board_advisory_session_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["affected_nodes"] = json.loads(converted.get("affected_nodes_json") or "[]")
+        converted["working_turns"] = json.loads(converted.get("working_turns_json") or "[]")
         converted["decision_pack_refs"] = json.loads(converted.get("decision_pack_refs_json") or "[]")
         converted["board_decision"] = (
             json.loads(converted["board_decision_json"])
             if converted.get("board_decision_json") not in {None, ""}
             else None
         )
+        converted["latest_patch_proposal"] = (
+            json.loads(converted["latest_patch_proposal_json"])
+            if converted.get("latest_patch_proposal_json") not in {None, ""}
+            else None
+        )
+        converted["approved_patch"] = (
+            json.loads(converted["approved_patch_json"])
+            if converted.get("approved_patch_json") not in {None, ""}
+            else None
+        )
+        converted["focus_node_ids"] = json.loads(converted.get("focus_node_ids_json") or "[]")
         for field in ("created_at", "updated_at"):
             if converted.get(field):
                 converted[field] = datetime.fromisoformat(converted[field])
         converted.pop("affected_nodes_json", None)
+        converted.pop("working_turns_json", None)
         converted.pop("decision_pack_refs_json", None)
         converted.pop("board_decision_json", None)
+        converted.pop("latest_patch_proposal_json", None)
+        converted.pop("approved_patch_json", None)
+        converted.pop("focus_node_ids_json", None)
         return converted
 
     def _convert_ceo_shadow_run_row(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -6773,9 +6973,16 @@ class ControlPlaneRepository:
                 source_version TEXT NOT NULL,
                 governance_profile_ref TEXT NOT NULL,
                 affected_nodes_json TEXT NOT NULL,
+                working_turns_json TEXT NOT NULL DEFAULT '[]',
                 decision_pack_refs_json TEXT NOT NULL,
                 board_decision_json TEXT,
+                latest_patch_proposal_ref TEXT,
+                latest_patch_proposal_json TEXT,
                 approved_patch_ref TEXT,
+                approved_patch_json TEXT,
+                patched_graph_version TEXT,
+                focus_node_ids_json TEXT NOT NULL DEFAULT '[]',
+                latest_analysis_error TEXT,
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -6795,9 +7002,16 @@ class ControlPlaneRepository:
             "source_version": "TEXT",
             "governance_profile_ref": "TEXT",
             "affected_nodes_json": "TEXT NOT NULL DEFAULT '[]'",
+            "working_turns_json": "TEXT NOT NULL DEFAULT '[]'",
             "decision_pack_refs_json": "TEXT NOT NULL DEFAULT '[]'",
             "board_decision_json": "TEXT",
+            "latest_patch_proposal_ref": "TEXT",
+            "latest_patch_proposal_json": "TEXT",
             "approved_patch_ref": "TEXT",
+            "approved_patch_json": "TEXT",
+            "patched_graph_version": "TEXT",
+            "focus_node_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+            "latest_analysis_error": "TEXT",
             "status": "TEXT",
             "created_at": "TEXT",
             "updated_at": "TEXT",

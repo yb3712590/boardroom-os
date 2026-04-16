@@ -238,11 +238,27 @@ export type ReviewPack = {
     review_pack_id: string
     trigger_type: string
     status: string
+    change_flow_status?: string
     source_version: string
     governance_profile_ref: string
     affected_nodes: string[]
+    working_turns?: Array<{
+      turn_id: string
+      actor_type: string
+      content: string
+      created_at: string
+    }>
     decision_pack_refs: string[]
+    latest_patch_proposal_ref?: string | null
     approved_patch_ref?: string | null
+    patched_graph_version?: string | null
+    focus_node_ids?: string[]
+    latest_analysis_error?: string | null
+    proposal_summary?: string
+    pros?: string[]
+    cons?: string[]
+    risk_alerts?: string[]
+    impact_summary?: string
     current_governance_modes: {
       approval_mode: string
       audit_mode: string

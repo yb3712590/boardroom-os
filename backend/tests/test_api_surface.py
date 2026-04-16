@@ -28,6 +28,9 @@ def test_collect_api_surface_groups_matches_current_route_families():
     assert set(groups["commands"]) == {
         "POST /api/v1/commands/artifact-cleanup",
         "POST /api/v1/commands/artifact-delete",
+        "POST /api/v1/commands/board-advisory-append-turn",
+        "POST /api/v1/commands/board-advisory-apply-patch",
+        "POST /api/v1/commands/board-advisory-request-analysis",
         "POST /api/v1/commands/board-approve",
         "POST /api/v1/commands/board-reject",
         "POST /api/v1/commands/employee-freeze",

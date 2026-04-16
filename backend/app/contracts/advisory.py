@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -7,9 +8,18 @@ from pydantic import Field, model_validator
 from app.contracts.common import StrictModel
 
 AdvisoryTriggerType = Literal["CONSTRAINT_CHANGE"]
-AdvisoryStatus = Literal["OPEN", "DECIDED", "DISMISSED"]
+AdvisoryStatus = Literal[
+    "OPEN",
+    "DRAFTING",
+    "PENDING_ANALYSIS",
+    "PENDING_BOARD_CONFIRMATION",
+    "APPLIED",
+    "ANALYSIS_REJECTED",
+    "DISMISSED",
+]
 GovernanceApprovalMode = Literal["AUTO_CEO", "EXPERT_GATED"]
 GovernanceAuditMode = Literal["MINIMAL", "TICKET_TRACE", "FULL_TIMELINE"]
+AdvisoryTurnActorType = Literal["board", "ceo", "architect"]
 
 
 class GovernancePatch(StrictModel):
@@ -31,6 +41,63 @@ class BoardAdvisoryDecision(StrictModel):
     source_artifact_ref: str | None = None
 
 
+class BoardAdvisoryTurn(StrictModel):
+    turn_id: str = Field(min_length=1)
+    actor_type: AdvisoryTurnActorType
+    content: str = Field(min_length=1)
+    created_at: datetime
+
+
+class GraphPatchProposal(StrictModel):
+    proposal_ref: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    base_graph_version: str = Field(min_length=1)
+    proposal_summary: str = Field(min_length=1)
+    pros: list[str] = Field(default_factory=list)
+    cons: list[str] = Field(default_factory=list)
+    risk_alerts: list[str] = Field(default_factory=list)
+    impact_summary: str = Field(min_length=1)
+    freeze_node_ids: list[str] = Field(default_factory=list)
+    unfreeze_node_ids: list[str] = Field(default_factory=list)
+    focus_node_ids: list[str] = Field(default_factory=list)
+    source_decision_pack_ref: str = Field(min_length=1)
+    proposal_hash: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_patch_targets(self) -> "GraphPatchProposal":
+        freeze_node_ids = {node_id for node_id in self.freeze_node_ids if node_id}
+        unfreeze_node_ids = {node_id for node_id in self.unfreeze_node_ids if node_id}
+        if freeze_node_ids & unfreeze_node_ids:
+            raise ValueError("graph patch proposal cannot freeze and unfreeze the same node.")
+        if not freeze_node_ids and not unfreeze_node_ids and not self.focus_node_ids:
+            raise ValueError("graph patch proposal must change at least one node.")
+        return self
+
+
+class GraphPatch(StrictModel):
+    patch_ref: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    proposal_ref: str = Field(min_length=1)
+    base_graph_version: str = Field(min_length=1)
+    freeze_node_ids: list[str] = Field(default_factory=list)
+    unfreeze_node_ids: list[str] = Field(default_factory=list)
+    focus_node_ids: list[str] = Field(default_factory=list)
+    reason_summary: str = Field(min_length=1)
+    patch_hash: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_patch_targets(self) -> "GraphPatch":
+        freeze_node_ids = {node_id for node_id in self.freeze_node_ids if node_id}
+        unfreeze_node_ids = {node_id for node_id in self.unfreeze_node_ids if node_id}
+        if freeze_node_ids & unfreeze_node_ids:
+            raise ValueError("graph patch cannot freeze and unfreeze the same node.")
+        if not freeze_node_ids and not unfreeze_node_ids and not self.focus_node_ids:
+            raise ValueError("graph patch must change at least one node.")
+        return self
+
+
 class BoardAdvisorySession(StrictModel):
     session_id: str = Field(min_length=1)
     workflow_id: str = Field(min_length=1)
@@ -40,7 +107,14 @@ class BoardAdvisorySession(StrictModel):
     source_version: str = Field(min_length=1)
     governance_profile_ref: str = Field(min_length=1)
     affected_nodes: list[str] = Field(default_factory=list)
+    working_turns: list[BoardAdvisoryTurn] = Field(default_factory=list)
     decision_pack_refs: list[str] = Field(default_factory=list)
     board_decision: BoardAdvisoryDecision | None = None
+    latest_patch_proposal_ref: str | None = None
+    latest_patch_proposal: GraphPatchProposal | None = None
     approved_patch_ref: str | None = None
+    approved_patch: GraphPatch | None = None
+    patched_graph_version: str | None = None
+    focus_node_ids: list[str] = Field(default_factory=list)
+    latest_analysis_error: str | None = None
     status: AdvisoryStatus

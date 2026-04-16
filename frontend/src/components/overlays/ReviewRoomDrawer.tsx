@@ -41,6 +41,9 @@ type ReviewRoomDrawerProps = {
       text: string
     }>
   }) => Promise<void>
+  onAppendAdvisoryTurn?: (input: { sessionId: string; content: string }) => Promise<void>
+  onRequestAdvisoryAnalysis?: (input: { sessionId: string }) => Promise<void>
+  onApplyAdvisoryPatch?: (input: { sessionId: string; proposalRef: string }) => Promise<void>
 }
 
 const EMPTY_ELICITATION_ANSWERS: Array<{
@@ -155,6 +158,9 @@ export function ReviewRoomDrawer({
   onApprove,
   onReject,
   onModifyConstraints,
+  onAppendAdvisoryTurn,
+  onRequestAdvisoryAnalysis,
+  onApplyAdvisoryPatch,
 }: ReviewRoomDrawerProps) {
   const initialSelectedOptionId =
     reviewData?.draft_defaults.selected_option_id ??
@@ -191,11 +197,17 @@ export function ReviewRoomDrawer({
   const availableActions = reviewData?.available_actions ?? []
   const employeeChange = reviewPack?.employee_change ?? null
   const advisoryContext = reviewPack?.advisory_context ?? null
+  const advisoryFlowStatus = advisoryContext?.change_flow_status ?? advisoryContext?.status ?? null
   const currentGovernanceModes = advisoryContext?.current_governance_modes ?? null
   const questionnaire = reviewPack?.elicitation_questionnaire ?? []
   const isRequirementElicitation = reviewPack?.meta.review_type === 'REQUIREMENT_ELICITATION'
   const deltaSummaryNote = formatDeltaSummary(reviewPack?.delta_summary)
   const riskSummaryNote = formatRiskSummary(reviewPack?.risk_summary)
+  const advisoryTurns = advisoryContext?.working_turns ?? []
+  const advisoryProposalRef = advisoryContext?.latest_patch_proposal_ref ?? null
+  const canEnterChangeFlow = advisoryFlowStatus === 'OPEN'
+  const canDraftChangeFlow = advisoryFlowStatus === 'DRAFTING' || advisoryFlowStatus === 'ANALYSIS_REJECTED'
+  const canConfirmChangeFlow = advisoryFlowStatus === 'PENDING_BOARD_CONFIRMATION'
 
   useEffect(() => {
     if (!isOpen) {
@@ -569,96 +581,210 @@ export function ReviewRoomDrawer({
             </div>
 
             <div className="review-room-action-panel review-room-constraint-panel">
-              <h3>Modify constraints</h3>
-              <label className="field-label" htmlFor="modify-note">
-                Constraint comment
-              </label>
-              <textarea
-                id="modify-note"
-                value={modifyNote}
-                onChange={(event) => setModifyNote(event.target.value)}
-                rows={3}
-              />
-              <div className="constraint-grid">
-                <label>
-                  <span className="field-label">Add rules</span>
-                  <textarea
-                    aria-label="Add rules"
-                    value={addRules}
-                    onChange={(event) => setAddRules(event.target.value)}
-                    rows={3}
-                  />
-                </label>
-                <label>
-                  <span className="field-label">Remove rules</span>
-                  <textarea
-                    aria-label="Remove rules"
-                    value={removeRules}
-                    onChange={(event) => setRemoveRules(event.target.value)}
-                    rows={3}
-                  />
-                </label>
-                <label>
-                  <span className="field-label">Replace rules</span>
-                  <textarea
-                    aria-label="Replace rules"
-                    value={replaceRules}
-                    onChange={(event) => setReplaceRules(event.target.value)}
-                    rows={3}
-                  />
-                </label>
-              </div>
-              {advisoryContext?.supports_governance_patch ? (
-                <div className="constraint-grid">
-                  <label>
-                    <span className="field-label">Approval mode</span>
-                    <select
-                      aria-label="Approval mode"
-                      value={patchApprovalMode}
-                      onChange={(event) => setPatchApprovalMode(event.target.value)}
-                    >
-                      <option value="">Keep current ({currentGovernanceModes?.approval_mode ?? 'unknown'})</option>
-                      {GOVERNANCE_APPROVAL_MODE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
+              <h3>Change flow</h3>
+              {canEnterChangeFlow || !advisoryContext ? (
+                <>
+                  <label className="field-label" htmlFor="modify-note">
+                    Constraint comment
                   </label>
-                  <label>
-                    <span className="field-label">Audit mode</span>
-                    <select
-                      aria-label="Audit mode"
-                      value={patchAuditMode}
-                      onChange={(event) => setPatchAuditMode(event.target.value)}
-                    >
-                      <option value="">Keep current ({currentGovernanceModes?.audit_mode ?? 'unknown'})</option>
-                      {GOVERNANCE_AUDIT_MODE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                  <textarea
+                    id="modify-note"
+                    value={modifyNote}
+                    onChange={(event) => setModifyNote(event.target.value)}
+                    rows={3}
+                  />
+                  <div className="constraint-grid">
+                    <label>
+                      <span className="field-label">Add rules</span>
+                      <textarea
+                        aria-label="Add rules"
+                        value={addRules}
+                        onChange={(event) => setAddRules(event.target.value)}
+                        rows={3}
+                      />
+                    </label>
+                    <label>
+                      <span className="field-label">Remove rules</span>
+                      <textarea
+                        aria-label="Remove rules"
+                        value={removeRules}
+                        onChange={(event) => setRemoveRules(event.target.value)}
+                        rows={3}
+                      />
+                    </label>
+                    <label>
+                      <span className="field-label">Replace rules</span>
+                      <textarea
+                        aria-label="Replace rules"
+                        value={replaceRules}
+                        onChange={(event) => setReplaceRules(event.target.value)}
+                        rows={3}
+                      />
+                    </label>
+                  </div>
+                  {advisoryContext?.supports_governance_patch ? (
+                    <div className="constraint-grid">
+                      <label>
+                        <span className="field-label">Approval mode</span>
+                        <select
+                          aria-label="Approval mode"
+                          value={patchApprovalMode}
+                          onChange={(event) => setPatchApprovalMode(event.target.value)}
+                        >
+                          <option value="">Keep current ({currentGovernanceModes?.approval_mode ?? 'unknown'})</option>
+                          {GOVERNANCE_APPROVAL_MODE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span className="field-label">Audit mode</span>
+                        <select
+                          aria-label="Audit mode"
+                          value={patchAuditMode}
+                          onChange={(event) => setPatchAuditMode(event.target.value)}
+                        >
+                          <option value="">Keep current ({currentGovernanceModes?.audit_mode ?? 'unknown'})</option>
+                          {GOVERNANCE_AUDIT_MODE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={submittingAction !== null || (!hasConstraintRules && !hasGovernancePatch && modifyNote.trim().length === 0)}
+                    onClick={() =>
+                      void onModifyConstraints({
+                        boardComment: modifyNote.trim() || 'Enter the advisory change flow with these constraints.',
+                        addRules: splitRules(addRules),
+                        removeRules: splitRules(removeRules),
+                        replaceRules: splitRules(replaceRules),
+                        governancePatch: hasGovernancePatch ? governancePatch : undefined,
+                        elicitationAnswers: isRequirementElicitation ? normalizedElicitationAnswers : undefined,
+                      })
+                    }
+                  >
+                    {submittingAction === 'MODIFY_CONSTRAINTS' ? 'Submitting…' : 'Enter change flow'}
+                  </button>
+                </>
               ) : null}
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={submittingAction !== null || (!hasConstraintRules && !hasGovernancePatch)}
-                onClick={() =>
-                  void onModifyConstraints({
-                    boardComment: modifyNote.trim() || 'Apply the updated board constraints.',
-                    addRules: splitRules(addRules),
-                    removeRules: splitRules(removeRules),
-                    replaceRules: splitRules(replaceRules),
-                    governancePatch: hasGovernancePatch ? governancePatch : undefined,
-                    elicitationAnswers: isRequirementElicitation ? normalizedElicitationAnswers : undefined,
-                  })
-                }
-              >
-                {submittingAction === 'MODIFY_CONSTRAINTS' ? 'Submitting…' : 'Submit constraint changes'}
-              </button>
+
+              {canDraftChangeFlow ? (
+                <>
+                  <p className="muted-copy">Draft the board intent here, then request an evaluated patch proposal.</p>
+                  {advisoryContext?.latest_analysis_error ? (
+                    <p className="review-room-state review-room-error">{advisoryContext.latest_analysis_error}</p>
+                  ) : null}
+                  {advisoryTurns.length > 0 ? (
+                    <ul className="review-room-list">
+                      {advisoryTurns.map((turn) => (
+                        <li key={turn.turn_id}>
+                          <strong>{turn.actor_type}</strong>
+                          <span>{turn.content}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <label className="field-label" htmlFor="advisory-draft-note">
+                    Draft note
+                  </label>
+                  <textarea
+                    id="advisory-draft-note"
+                    value={modifyNote}
+                    onChange={(event) => setModifyNote(event.target.value)}
+                    rows={3}
+                  />
+                  <div className="constraint-grid">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={
+                        submittingAction !== null ||
+                        modifyNote.trim().length === 0 ||
+                        !advisoryContext ||
+                        !onAppendAdvisoryTurn
+                      }
+                      onClick={() =>
+                        advisoryContext && onAppendAdvisoryTurn
+                          ? void onAppendAdvisoryTurn({
+                              sessionId: advisoryContext.session_id,
+                              content: modifyNote.trim(),
+                            })
+                          : undefined
+                      }
+                    >
+                      {submittingAction === 'ADVISORY_APPEND' ? 'Submitting…' : 'Add draft note'}
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={submittingAction !== null || !advisoryContext || !onRequestAdvisoryAnalysis}
+                      onClick={() =>
+                        advisoryContext && onRequestAdvisoryAnalysis
+                          ? void onRequestAdvisoryAnalysis({ sessionId: advisoryContext.session_id })
+                          : undefined
+                      }
+                    >
+                      {submittingAction === 'ADVISORY_ANALYSIS' ? 'Submitting…' : 'Request analysis'}
+                    </button>
+                  </div>
+                </>
+              ) : null}
+
+              {canConfirmChangeFlow ? (
+                <>
+                  <p className="muted-copy">Review the proposed change. The board only sees the summary, trade-offs, and risk alerts here.</p>
+                  <ul className="review-room-list">
+                    <li>
+                      <strong>Proposal summary</strong>
+                      <span>{advisoryContext?.proposal_summary ?? 'No proposal summary is available yet.'}</span>
+                    </li>
+                    <li>
+                      <strong>Pros</strong>
+                      <span>{(advisoryContext?.pros ?? []).join(' · ') || 'No explicit pros were attached.'}</span>
+                    </li>
+                    <li>
+                      <strong>Cons</strong>
+                      <span>{(advisoryContext?.cons ?? []).join(' · ') || 'No explicit cons were attached.'}</span>
+                    </li>
+                    <li>
+                      <strong>Risk alerts</strong>
+                      <span>{(advisoryContext?.risk_alerts ?? []).join(' · ') || 'No additional risk alerts.'}</span>
+                    </li>
+                    <li>
+                      <strong>Impact summary</strong>
+                      <span>{advisoryContext?.impact_summary ?? 'No impact summary is available.'}</span>
+                    </li>
+                  </ul>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={
+                      submittingAction !== null ||
+                      !advisoryContext ||
+                      !advisoryProposalRef ||
+                      !onApplyAdvisoryPatch
+                    }
+                    onClick={() =>
+                      advisoryContext && advisoryProposalRef && onApplyAdvisoryPatch
+                        ? void onApplyAdvisoryPatch({
+                            sessionId: advisoryContext.session_id,
+                            proposalRef: advisoryProposalRef,
+                          })
+                        : undefined
+                    }
+                  >
+                    {submittingAction === 'ADVISORY_APPLY' ? 'Submitting…' : 'Approve runtime patch'}
+                  </button>
+                </>
+              ) : null}
             </div>
           </section>
 

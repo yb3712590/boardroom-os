@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S4`
-> 最后更新：`2026-04-15 22:06`
+> 最后更新：`2026-04-16 08:12`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -65,7 +65,7 @@
 | `P1` | 图与控制面收口 | 收正图协议、controller、ready 节点选择 | `done` | 图成为正式真相面 |
 | `P2` | 恢复与 Hook 收口 | Incident、Recovery、Hook 门禁接管主链 | `done` | 失败显式化、后置动作制度化 |
 | `P3` | 执行包与 CEO 收口 | 执行包、CEO 快照、技能绑定接管运行时 | `done` | CEO / Worker 不再靠长提示词兜底 |
-| `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `done` | 可重规划、可诊断、可复盘 |
+| `P4` | 顾问环与地图接入 | Board 顾问环、ProjectMap、健康监视接入 | `in_progress` | 可重规划、可诊断、可复盘 |
 
 状态只允许用：
 
@@ -92,7 +92,7 @@
 - [x] 验证方式已明确
 
 ### 当前阶段出口条件
-- [x] 本阶段所有必做切片完成
+- [ ] 本阶段所有必做切片完成
 - [x] `BoardAdvisorySession` 已进入正式合同、持久化和只读投影
 - [x] `MODIFY_CONSTRAINTS` 已收成显式顾问决策、`DECISION_SUMMARY` 过程资产和可选治理档位 supersede
 - [x] `build_ceo_shadow_snapshot()` 已输出 `board_advisory_sessions / latest_advisory_decision`，CEO prompt 已切到新读面
@@ -694,9 +694,13 @@
 - [x] `P4-S3` 已完成：`build_ceo_shadow_snapshot()` 现在会输出 `projection_snapshot.board_advisory_sessions[] / replan_focus.latest_advisory_decision`；`ceo_prompts` 已显式提示先读顾问决策，现有 `ReviewRoomDrawer` 也已补最小 governance patch 控件
 - [x] `P4-S4` 已完成：`FAILURE_FINGERPRINT / PROJECT_MAP_SLICE` 已进入正式 `ProcessAsset` 合同和 resolver；`Context Compiler / CEO Snapshot / CEO prompt` 都已接入 workflow 地图切片和最近失败指纹
 - [x] `P4-S4` 已完成：新增最小 `GraphHealthReport` 首版，只覆盖 `FANOUT_TOO_WIDE / CRITICAL_PATH_TOO_DEEP / PERSISTENT_FAILURE_ZONE` 三类规则；`workflow_auto_advance` 命中 `CRITICAL` 时会显式打开 `GRAPH_HEALTH_CRITICAL`
+- [x] `P4-S4` 已完成第二批：`modify-constraints` 对 advisory review pack 现在只会显式进入 change flow，不再直接 resolve approval；`Review Room` 已切成 `进入变更流程 -> 草拟 / 发分析 -> 确认导入` 三段最小闭环
+- [x] `P4-S4` 已完成第二批：新增正式 `GRAPH_PATCH_PROPOSAL / GRAPH_PATCH` 过程资产、`board-advisory-append-turn / board-advisory-request-analysis / board-advisory-apply-patch` 命令和 `EVENT_GRAPH_PATCH_APPLIED`；`approved_patch_ref` 现在只会指向真实 graph patch
+- [x] `P4-S4` 已完成第二批：`TicketGraph` 现在会叠加 applied advisory patch 的 `freeze / unfreeze / focus`，`ceo_shadow_snapshot / Review Room` 也已暴露 `change_flow_status / latest_patch_proposal_ref / patched_graph_version / focus_node_ids`
 
 ### 未完成
-- [ ] `BoardAdvisorySession.approved_patch_ref` 当前先指向 `DECISION_SUMMARY` 过程资产，不是独立 graph patch engine
+- [ ] advisory change flow 还没把 `audit_mode = FULL_TIMELINE` 的内部 transcript 物化到 `90-archive/transcripts`
+- [ ] advisory analysis 当前先走最小 deterministic compiler；还没把 CEO 与架构侧的内部讨论真相收成独立运行链和 recovery 动作
 
 ### 明确放弃
 - [ ] 暂无
@@ -707,7 +711,7 @@
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
-- [ ] `ProjectMap / GraphHealthMonitor` 第一批虽然已进正式合同、快照和 incident 主链，但 `approved_patch_ref -> graph patch engine` 仍未落；后续如果继续扩 P4，应该把顾问决策和 graph patch 的正式连接单列成后续切片
+- [ ] advisory graph patch engine 这轮只落第一版 `freeze / unfreeze / focus`；`REPLACES`、增删节点和增删边仍未进入主链
 - [ ] `legacy / 非 workspace-managed source_code_delivery` 的 `ProjectMapSlice` 当前对 `module_paths / document_surfaces` 先走结构化保守回退：优先读源码票显式 payload 和 source delivery asset，缺失时再退到 `allowed_write_set`，不会读 Markdown 正文或目录扫描反推真相
 
 ---
@@ -892,7 +896,22 @@
 `P4` 第一批已经有了可审计的顾问决策真相，也能 fail-closed 地影响下一次 CEO 运行；但它还没有把“Board 决策 -> 正式 graph patch -> 新 graph_version”这段补齐。后续如果直接把这层写成“graph patch 已上线”，会误导下一轮实现判断。`
 
 **当前处理：**  
-`本轮先保守收口到 \`DECISION_SUMMARY\` 过程资产 + advisory session + CEO rerun；\`ProjectMap / graph patch engine / GraphHealthMonitor\` 继续留到后续 P4 切片，不在这一轮顺手扩。`
+`已在 2026-04-16 收口：advisory flow 现已补正式 \`GRAPH_PATCH_PROPOSAL / GRAPH_PATCH\` 资产、显式评估 / 导入路由和 \`EVENT_GRAPH_PATCH_APPLIED\`；\`approved_patch_ref\` 不再指向 \`DECISION_SUMMARY\`。`
+
+**是否需要改架构文档：**  
+`no`
+
+**状态：** `closed`
+
+### D-014
+**现象：**  
+`advisory change flow 这轮已经有显式 drafting / analysis / apply 主链，但 \`audit_mode = FULL_TIMELINE\` 时要求的内部 transcript archive 还没物化到 \`90-archive/transcripts\`。`
+
+**影响：**  
+`当前最小 change flow 已经可审计、可幂等、可失败显式化；但 \`FULL_TIMELINE\` 仍只保留 working turns 和 proposal / patch 资产，达不到完整时间线归档口径。`
+
+**当前处理：**  
+`本轮先保守停在最小主链：保留 session working turns、\`DECISION_SUMMARY / GRAPH_PATCH_PROPOSAL / GRAPH_PATCH\` 资产和 apply 事件；完整 transcript archive 留到后续 P4 续切片。`
 
 **是否需要改架构文档：**  
 `no`
@@ -1517,6 +1536,36 @@
 **下一轮起手动作：**
 `如果继续推进新架构重构，优先从 advisory graph patch engine 的独立切片起手，再决定是否扩第二批 GraphHealth 规则和更细的 ProjectMap 切片。`
 
+### Session `2026-04-16 / 20`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S4`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 advisory review pack 的 `modify-constraints` 收正成显式 change flow 入口，不再一步式 resolve approval
+- [x] 给 advisory session 补 `working_turns / latest_patch_proposal_ref / approved_patch_ref / patched_graph_version / focus_node_ids`，并新增 `board-advisory-append-turn / board-advisory-request-analysis / board-advisory-apply-patch`
+- [x] 新增正式 `GRAPH_PATCH_PROPOSAL / GRAPH_PATCH` 过程资产和 resolver，让 `approved_patch_ref` 只指向真实 graph patch
+- [x] 把 applied advisory patch 的 `freeze / unfreeze / focus` 接进 `TicketGraph`，同时更新 `ceo_shadow_snapshot / Review Room / ReviewRoomDrawer`
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py::test_review_room_route_includes_board_advisory_context backend/tests/test_api.py::test_modify_constraints_enters_board_advisory_change_flow_without_resolving_open_approval backend/tests/test_api.py::test_board_advisory_append_turn_persists_working_context_without_changing_graph backend/tests/test_api.py::test_board_advisory_request_analysis_creates_patch_proposal_without_resolving_approval backend/tests/test_api.py::test_board_advisory_apply_patch_resolves_approval_and_advances_graph_version backend/tests/test_api.py::test_board_advisory_apply_patch_rejects_stale_proposal backend/tests/test_api.py::test_board_approve_dismisses_linked_board_advisory_session backend/tests/test_process_assets.py::test_resolve_board_advisory_graph_patch_assets backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision backend/tests/test_ceo_scheduler.py::test_ceo_shadow_prompt_mentions_latest_board_advisory_decision backend/tests/test_api_surface.py -q` 通过（`12 passed`）
+- [x] `python3 -m py_compile backend/app/contracts/advisory.py backend/app/contracts/commands.py backend/app/contracts/ceo.py backend/app/contracts/process_assets.py backend/app/core/board_advisory.py backend/app/core/approval_handlers.py backend/app/core/process_assets.py backend/app/core/ticket_graph.py backend/app/core/ceo_snapshot.py backend/app/core/versioning.py backend/app/api/commands.py backend/app/db/repository.py` 通过
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/ReviewRoomDrawer.test.tsx src/App.test.tsx && npm run build` 通过（`35 passed`，build passed）
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+
+**留下的未完成项：**
+- [ ] `FULL_TIMELINE` 的 advisory transcript archive 还没物化
+- [ ] advisory analysis 还没把 CEO / 架构侧内部讨论收成独立运行链和 recovery 动作
+
+**下一轮起手动作：**
+`继续从 P4-S4 续跑，优先补 FULL_TIMELINE 的 advisory transcript archive 和更完整的 advisory recovery / architect discussion 链。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -1554,7 +1603,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S4`
-- 当前状态：`P4` 第一批地图与健康监视切片已落地；`FAILURE_FINGERPRINT / PROJECT_MAP_SLICE / graph_health_report / GRAPH_HEALTH_CRITICAL` 都已进入正式主链
-- 最近完成：`Context Compiler` 现在会自动注入 workflow 地图切片和最近失败指纹；`CEO Snapshot / prompt` 也已显式读 `project_map_slices / failure_fingerprints / graph_health_report`
-- 当前阻塞：`approved_patch_ref` 仍先指向 `DECISION_SUMMARY` 过程资产，不是独立 graph patch engine；legacy 非 workspace-managed 代码票的地图切片仍是保守精度
-- 下一步：`如果继续推进新架构重构，优先从 advisory graph patch engine 的独立切片起手，再决定是否扩第二批 GraphHealth 规则和更细的 ProjectMap 切片`
+- 当前状态：`P4-S4` 第二批已落地；advisory review pack 现已走显式 change flow，`approved_patch_ref` 只指向真实 `GRAPH_PATCH`，applied patch 也已接进 `TicketGraph`
+- 最近完成：`Review Room` 已切成进入流程 / 草拟发分析 / 确认导入三段最小闭环；`ceo_shadow_snapshot` 现已补 `change_flow_status / latest_patch_proposal_ref / patched_graph_version / focus_node_ids`
+- 当前阻塞：`FULL_TIMELINE` 的 advisory transcript archive 还没补；legacy 非 workspace-managed 代码票的地图切片仍是保守精度
+- 下一步：`继续从 P4-S4 续跑，优先补 FULL_TIMELINE 的 advisory transcript archive，再决定是否扩更深的 architect discussion / recovery 链和第二批 GraphHealth 规则`

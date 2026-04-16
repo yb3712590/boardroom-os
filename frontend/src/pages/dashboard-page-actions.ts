@@ -1,4 +1,7 @@
 import {
+  boardAdvisoryAppendTurn,
+  boardAdvisoryApplyPatch,
+  boardAdvisoryRequestAnalysis,
   boardApprove,
   boardReject,
   employeeFreeze,
@@ -396,9 +399,60 @@ export function useDashboardPageActions({
       })
       assertAcceptedCommand(ack, 'Failed to modify constraints.')
       await loadSnapshot()
-      navigate('/')
     } catch (error) {
       setReviewError(error instanceof Error ? error.message : 'Failed to modify constraints.')
+    } finally {
+      setSubmittingAction(null)
+    }
+  }
+
+  const handleAdvisoryAppendTurn = async (input: { sessionId: string; content: string }) => {
+    setSubmittingAction('ADVISORY_APPEND')
+    try {
+      const ack = await boardAdvisoryAppendTurn({
+        session_id: input.sessionId,
+        actor_type: 'board',
+        content: input.content,
+        idempotency_key: newPrefixedId('board-advisory-turn'),
+      })
+      assertAcceptedCommand(ack, 'Failed to append advisory turn.')
+      await loadSnapshot()
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : 'Failed to append advisory turn.')
+    } finally {
+      setSubmittingAction(null)
+    }
+  }
+
+  const handleAdvisoryRequestAnalysis = async (input: { sessionId: string }) => {
+    setSubmittingAction('ADVISORY_ANALYSIS')
+    try {
+      const ack = await boardAdvisoryRequestAnalysis({
+        session_id: input.sessionId,
+        idempotency_key: newPrefixedId('board-advisory-analysis'),
+      })
+      assertAcceptedCommand(ack, 'Failed to request advisory analysis.')
+      await loadSnapshot()
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : 'Failed to request advisory analysis.')
+    } finally {
+      setSubmittingAction(null)
+    }
+  }
+
+  const handleAdvisoryApplyPatch = async (input: { sessionId: string; proposalRef: string }) => {
+    setSubmittingAction('ADVISORY_APPLY')
+    try {
+      const ack = await boardAdvisoryApplyPatch({
+        session_id: input.sessionId,
+        proposal_ref: input.proposalRef,
+        idempotency_key: newPrefixedId('board-advisory-apply'),
+      })
+      assertAcceptedCommand(ack, 'Failed to import the approved advisory patch.')
+      await loadSnapshot()
+      navigate('/')
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : 'Failed to import the approved advisory patch.')
     } finally {
       setSubmittingAction(null)
     }
@@ -420,6 +474,9 @@ export function useDashboardPageActions({
     handleApprove,
     handleReject,
     handleModifyConstraints,
+    handleAdvisoryAppendTurn,
+    handleAdvisoryRequestAnalysis,
+    handleAdvisoryApplyPatch,
     closeReviewRoom: () => navigate('/'),
     closeMeeting: () => {
       if (!meetingId) {

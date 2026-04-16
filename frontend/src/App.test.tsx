@@ -2913,7 +2913,7 @@ describe('Boardroom UI', () => {
     expect((await screen.findAllByText(/board gate clear/i)).length).toBeGreaterThan(0)
   })
 
-  it('submits modify-constraints and refreshes the snapshot', async () => {
+  it('enters the advisory change flow and refreshes the snapshot', async () => {
     const { fetchMock } = installBoardroomMock({
       dashboard: dashboardData({
         pipeline_summary: {
@@ -2959,7 +2959,7 @@ describe('Boardroom UI', () => {
 
     await user.click(await screen.findByRole('button', { name: /review homepage visual milestone/i }))
     await user.type(await screen.findByLabelText(/add rules/i), 'Keep the board gate copy to one line.')
-    await user.click(await screen.findByRole('button', { name: /submit constraint changes/i }))
+    await user.click(await screen.findByRole('button', { name: /enter change flow/i }))
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(

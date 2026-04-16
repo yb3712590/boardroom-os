@@ -125,6 +125,9 @@ export function DashboardPage() {
     handleApprove,
     handleReject,
     handleModifyConstraints,
+    handleAdvisoryAppendTurn,
+    handleAdvisoryRequestAnalysis,
+    handleAdvisoryApplyPatch,
     closeReviewRoom,
     closeMeeting,
     closeIncident,
@@ -320,6 +323,9 @@ export function DashboardPage() {
           onApprove={handleApprove}
           onReject={handleReject}
           onModifyConstraints={handleModifyConstraints}
+          onAppendAdvisoryTurn={handleAdvisoryAppendTurn}
+          onRequestAdvisoryAnalysis={handleAdvisoryRequestAnalysis}
+          onApplyAdvisoryPatch={handleAdvisoryApplyPatch}
         />
 
         <MeetingRoomDrawer

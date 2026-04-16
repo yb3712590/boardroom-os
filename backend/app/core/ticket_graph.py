@@ -10,6 +10,7 @@ from app.contracts.ticket_graph import (
     TicketGraphReductionIssue,
     TicketGraphSnapshot,
 )
+from app.core.constants import BLOCKING_REASON_ADVISORY_PATCH_FROZEN
 from app.core.output_schemas import (
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
@@ -95,6 +96,39 @@ def _append_blocked_reason(
         entry["ticket_ids"].add(ticket_id)
     if node_id:
         entry["node_ids"].add(node_id)
+
+
+def _resolve_advisory_patch_state(
+    repository: "ControlPlaneRepository",
+    *,
+    workflow_id: str,
+    connection: "sqlite3.Connection",
+) -> tuple[set[str], set[str]]:
+    frozen_node_ids: set[str] = set()
+    focus_node_ids: set[str] = set()
+    sessions = sorted(
+        repository.list_board_advisory_sessions(
+            workflow_id,
+            statuses=["APPLIED"],
+            connection=connection,
+        ),
+        key=lambda item: (item.get("updated_at"), item.get("session_id")),
+    )
+    for session in sessions:
+        approved_patch = session.get("approved_patch") or {}
+        for node_id in list(approved_patch.get("freeze_node_ids") or []):
+            normalized = str(node_id).strip()
+            if normalized:
+                frozen_node_ids.add(normalized)
+        for node_id in list(approved_patch.get("unfreeze_node_ids") or []):
+            normalized = str(node_id).strip()
+            if normalized:
+                frozen_node_ids.discard(normalized)
+        for node_id in list(approved_patch.get("focus_node_ids") or []):
+            normalized = str(node_id).strip()
+            if normalized:
+                focus_node_ids.add(normalized)
+    return frozen_node_ids, focus_node_ids
 
 
 def build_ticket_graph_snapshot(
@@ -205,6 +239,11 @@ def build_ticket_graph_snapshot(
     blocked_ticket_ids_from_issues: set[str] = set()
     blocked_node_ids_from_issues: set[str] = set()
     blocked_reason_map: dict[str, dict[str, set[str]]] = {}
+    advisory_frozen_node_ids, _ = _resolve_advisory_patch_state(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
 
     def record_issue(
         *,
@@ -351,6 +390,7 @@ def build_ticket_graph_snapshot(
         )
         hook_gate_blocked = hook_gate_result.status == HookGateStatus.BLOCKED
         blocked_by_graph = latest_ticket_id in blocked_ticket_ids_from_issues or node_id in blocked_node_ids_from_issues
+        blocked_by_advisory_patch = node_id in advisory_frozen_node_ids
         is_board_review_open = (
             ticket_status == "BLOCKED_FOR_BOARD_REVIEW" or node_status == "BLOCKED_FOR_BOARD_REVIEW"
         )
@@ -363,6 +403,7 @@ def build_ticket_graph_snapshot(
         if (
             ticket_status == "PENDING"
             and not blocked_by_graph
+            and not blocked_by_advisory_patch
             and not hook_gate_blocked
             and not blocking_reason_code
             and not is_board_review_open
@@ -371,9 +412,23 @@ def build_ticket_graph_snapshot(
             ready_ticket_ids.append(latest_ticket_id)
             ready_node_ids.append(node_id)
             continue
-        if blocked_by_graph or hook_gate_blocked or blocking_reason_code or is_board_review_open or has_open_incident:
+        if (
+            blocked_by_graph
+            or blocked_by_advisory_patch
+            or hook_gate_blocked
+            or blocking_reason_code
+            or is_board_review_open
+            or has_open_incident
+        ):
             blocked_ticket_ids.append(latest_ticket_id)
             blocked_node_ids.append(node_id)
+        if blocked_by_advisory_patch:
+            _append_blocked_reason(
+                blocked_reason_map,
+                reason_code=BLOCKING_REASON_ADVISORY_PATCH_FROZEN,
+                ticket_id=latest_ticket_id,
+                node_id=node_id,
+            )
         if hook_gate_blocked:
             _append_blocked_reason(
                 blocked_reason_map,

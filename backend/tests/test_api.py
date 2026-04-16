@@ -15299,93 +15299,367 @@ def test_board_reject_command_resolves_open_approval(client):
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == []
 
 
-def test_modify_constraints_command_resolves_open_approval(client):
-    approval = _seed_review_request(client, workflow_id="wf_modify")
+def test_modify_constraints_enters_board_advisory_change_flow_without_resolving_open_approval(client):
+    workflow_id = "wf_modify"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Enter advisory change flow without resolving the board review.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    graph_version_before = build_ticket_graph_snapshot(repository, workflow_id).graph_version
 
-    response = client.post(
-        "/api/v1/commands/modify-constraints",
-        json={
-            "review_pack_id": approval["review_pack_id"],
-            "review_pack_version": approval["review_pack_version"],
-            "command_target_version": approval["command_target_version"],
-            "approval_id": approval["approval_id"],
-            "constraint_patch": {
-                "add_rules": ["Strengthen first-screen contrast and hierarchy"],
-                "remove_rules": [],
-                "replace_rules": [],
+    with _suppress_ceo_shadow_side_effects():
+        response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Strengthen first-screen contrast and hierarchy"],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "Rework with stronger hierarchy.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:enter-flow",
             },
-            "board_comment": "Rework with stronger hierarchy.",
-            "idempotency_key": f"board-modify:{approval['approval_id']}:1",
+        )
+
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    review_room = client.get(f"/api/v1/projections/review-room/{approval['review_pack_id']}")
+    graph_version_after = build_ticket_graph_snapshot(repository, workflow_id).graph_version
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert updated["payload"].get("resolution") in (None, {})
+    assert advisory_session is not None
+    assert advisory_session["status"] == "DRAFTING"
+    assert advisory_session["approved_patch_ref"] is None
+    assert advisory_session["decision_pack_refs"] == [
+        f"pa://decision-summary/{advisory_session['session_id']}@1"
+    ]
+    assert graph_version_after == graph_version_before
+    assert review_room.status_code == 200
+    advisory_context = review_room.json()["data"]["review_pack"]["advisory_context"]
+    assert advisory_context["status"] == "DRAFTING"
+    assert advisory_context["change_flow_status"] == "DRAFTING"
+    assert advisory_context["working_turns"][0]["actor_type"] == "board"
+    assert advisory_context["working_turns"][0]["content"] == "Rework with stronger hierarchy."
+
+
+def test_board_advisory_append_turn_persists_working_context_without_changing_graph(client):
+    workflow_id = "wf_advisory_append_turn"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Persist advisory working turns without mutating the graph.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Keep the board in the loop before runtime import."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "We need a structured change flow first.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:draft-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    graph_version_before = build_ticket_graph_snapshot(repository, workflow_id).graph_version
+
+    append_response = client.post(
+        "/api/v1/commands/board-advisory-append-turn",
+        json={
+            "session_id": advisory_session["session_id"],
+            "actor_type": "board",
+            "content": "Please compare the pros and cons before you suggest any patch.",
+            "idempotency_key": f"board-advisory-turn:{advisory_session['session_id']}:1",
         },
     )
 
-    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    review_ticket_id = approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
-    ticket_projection = client.app.state.repository.get_current_ticket_projection(review_ticket_id)
-    node_projection = client.app.state.repository.get_current_node_projection(
-        "wf_modify",
-        "node_homepage_visual",
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "ACCEPTED"
-    assert updated["status"] == APPROVAL_STATUS_MODIFIED_CONSTRAINTS
-    assert updated["payload"]["resolution"]["decision_action"] == "MODIFY_CONSTRAINTS"
-    assert ticket_projection["status"] == TICKET_STATUS_REWORK_REQUIRED
-    assert ticket_projection["blocking_reason_code"] == BLOCKING_REASON_MODIFY_CONSTRAINTS
-    assert node_projection["status"] == NODE_STATUS_REWORK_REQUIRED
-    assert node_projection["blocking_reason_code"] == BLOCKING_REASON_MODIFY_CONSTRAINTS
+    review_room = client.get(f"/api/v1/projections/review-room/{approval['review_pack_id']}")
+    graph_version_after = build_ticket_graph_snapshot(repository, workflow_id).graph_version
+
+    assert append_response.status_code == 200
+    assert append_response.json()["status"] == "ACCEPTED"
+    assert graph_version_after == graph_version_before
+    advisory_context = review_room.json()["data"]["review_pack"]["advisory_context"]
+    assert advisory_context["status"] == "DRAFTING"
+    assert [item["content"] for item in advisory_context["working_turns"]] == [
+        "We need a structured change flow first.",
+        "Please compare the pros and cons before you suggest any patch.",
+    ]
 
 
-def test_modify_constraints_records_board_advisory_decision_and_supersedes_governance_profile(client):
+def test_board_advisory_request_analysis_creates_patch_proposal_without_resolving_approval(client):
     workflow_id = "wf_modify_advisory"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Generate a board advisory patch proposal without applying it.",
+    )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
     original_profile = repository.get_latest_governance_profile(workflow_id)
     assert original_profile is not None
 
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Preserve the current implementation slice but raise review rigor."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "governance_patch": {
+                    "approval_mode": "EXPERT_GATED",
+                    "audit_mode": "TICKET_TRACE",
+                },
+                "board_comment": "Tighten governance before the next replan pass.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:advisory-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    graph_version_before = build_ticket_graph_snapshot(repository, workflow_id).graph_version
+
     response = client.post(
-        "/api/v1/commands/modify-constraints",
+        "/api/v1/commands/board-advisory-request-analysis",
         json={
-            "review_pack_id": approval["review_pack_id"],
-            "review_pack_version": approval["review_pack_version"],
-            "command_target_version": approval["command_target_version"],
-            "approval_id": approval["approval_id"],
-            "constraint_patch": {
-                "add_rules": ["Preserve the current implementation slice but raise review rigor."],
-                "remove_rules": [],
-                "replace_rules": [],
-            },
-            "governance_patch": {
-                "approval_mode": "EXPERT_GATED",
-                "audit_mode": "TICKET_TRACE",
-            },
-            "board_comment": "Tighten governance before the next replan pass.",
-            "idempotency_key": f"board-modify:{approval['approval_id']}:advisory",
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:1",
         },
     )
 
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     latest_profile = repository.get_latest_governance_profile(workflow_id)
+    review_room = client.get(f"/api/v1/projections/review-room/{approval['review_pack_id']}")
+    graph_version_after = build_ticket_graph_snapshot(repository, workflow_id).graph_version
+
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert advisory_session is not None
-    assert advisory_session["status"] == "DECIDED"
+    assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"
+    assert advisory_session["latest_patch_proposal_ref"] is not None
+    assert advisory_session["approved_patch_ref"] is None
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    assert updated is not None
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert graph_version_after == graph_version_before
+    assert latest_profile is not None
+    assert latest_profile["profile_id"] == original_profile["profile_id"]
+    advisory_context = review_room.json()["data"]["review_pack"]["advisory_context"]
+    assert advisory_context["change_flow_status"] == "PENDING_BOARD_CONFIRMATION"
+    assert advisory_context["latest_patch_proposal_ref"] == advisory_session["latest_patch_proposal_ref"]
+    assert advisory_context["proposal_summary"]
+    assert advisory_context["pros"]
+    assert advisory_context["cons"]
+    assert advisory_context["risk_alerts"]
+
+
+def test_board_advisory_apply_patch_resolves_approval_and_advances_graph_version(client):
+    workflow_id = "wf_advisory_apply_patch"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Apply an approved advisory patch into the runtime graph.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    original_profile = repository.get_latest_governance_profile(workflow_id)
+    assert original_profile is not None
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Tighten the branch before the next runtime pass."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "governance_patch": {
+                    "approval_mode": "EXPERT_GATED",
+                    "audit_mode": "TICKET_TRACE",
+                },
+                "board_comment": "We need a reviewed patch before runtime import.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:apply-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    graph_version_before = build_ticket_graph_snapshot(repository, workflow_id).graph_version
+
+    analysis_response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:apply",
+        },
+    )
+    assert analysis_response.status_code == 200
+    assert analysis_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": advisory_session["latest_patch_proposal_ref"],
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:1",
+        },
+    )
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    latest_profile = repository.get_latest_governance_profile(workflow_id)
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    graph_snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "ACCEPTED"
+    assert advisory_session is not None
+    assert advisory_session["status"] == "APPLIED"
     assert advisory_session["approved_patch_ref"] is not None
-    assert advisory_session["decision_pack_refs"] == [advisory_session["approved_patch_ref"]]
-    assert advisory_session["board_decision"]["decision_action"] == "MODIFY_CONSTRAINTS"
-    assert advisory_session["board_decision"]["board_comment"] == "Tighten governance before the next replan pass."
-    assert advisory_session["board_decision"]["constraint_patch"]["add_rules"] == [
-        "Preserve the current implementation slice but raise review rigor."
-    ]
-    assert advisory_session["board_decision"]["governance_patch"] == {
-        "approval_mode": "EXPERT_GATED",
-        "audit_mode": "TICKET_TRACE",
-    }
+    assert advisory_session["patched_graph_version"] == graph_snapshot.graph_version
+    assert advisory_session["patched_graph_version"] != graph_version_before
+    assert updated["status"] == APPROVAL_STATUS_MODIFIED_CONSTRAINTS
+    assert updated["payload"]["resolution"]["decision_action"] == "MODIFY_CONSTRAINTS"
     assert latest_profile is not None
     assert latest_profile["profile_id"] != original_profile["profile_id"]
     assert latest_profile["supersedes_ref"] == original_profile["profile_id"]
     assert latest_profile["approval_mode"] == "EXPERT_GATED"
     assert latest_profile["audit_mode"] == "TICKET_TRACE"
+    assert "node_homepage_visual" not in graph_snapshot.index_summary.ready_node_ids
+    assert "node_homepage_visual" in graph_snapshot.index_summary.blocked_node_ids
+    assert any(
+        item.reason_code == "ADVISORY_PATCH_FROZEN"
+        and "node_homepage_visual" in item.node_ids
+        for item in graph_snapshot.index_summary.blocked_reasons
+    )
+
+
+def test_board_advisory_apply_patch_rejects_stale_proposal(client):
+    workflow_id = "wf_advisory_apply_stale"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Reject advisory patch import when the proposal graph version is stale.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        enter_response = client.post(
+            "/api/v1/commands/modify-constraints",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "constraint_patch": {
+                    "add_rules": ["Freeze the current branch until the board confirms the patch."],
+                    "remove_rules": [],
+                    "replace_rules": [],
+                },
+                "board_comment": "Prepare the patch but do not apply it yet.",
+                "idempotency_key": f"board-modify:{approval['approval_id']}:stale-enter",
+            },
+        )
+    assert enter_response.status_code == 200
+    assert enter_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    analysis_response = client.post(
+        "/api/v1/commands/board-advisory-request-analysis",
+        json={
+            "session_id": advisory_session["session_id"],
+            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:stale",
+        },
+    )
+    assert analysis_response.status_code == 200
+    assert analysis_response.json()["status"] == "ACCEPTED"
+
+    mutate_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_advisory_stale_extra",
+            node_id="node_advisory_stale_extra",
+            output_schema_ref="source_code_delivery",
+            delivery_stage="BUILD",
+            parent_ticket_id=approval["payload"]["review_pack"]["subject"]["source_ticket_id"],
+        ),
+    )
+    assert mutate_response.status_code == 200
+    assert mutate_response.json()["status"] == "ACCEPTED"
+
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+    assert advisory_session is not None
+    apply_response = client.post(
+        "/api/v1/commands/board-advisory-apply-patch",
+        json={
+            "session_id": advisory_session["session_id"],
+            "proposal_ref": advisory_session["latest_patch_proposal_ref"],
+            "idempotency_key": f"board-advisory-apply:{advisory_session['session_id']}:stale",
+        },
+    )
+
+    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
+
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "REJECTED"
+    assert "stale" in str(apply_response.json()["reason"] or "").lower()
+    assert updated["status"] == APPROVAL_STATUS_OPEN
+    assert advisory_session is not None
+    assert advisory_session["status"] == "PENDING_BOARD_CONFIRMATION"
+    assert advisory_session["approved_patch_ref"] is None
 
 
 def test_board_approve_dismisses_linked_board_advisory_session(client):

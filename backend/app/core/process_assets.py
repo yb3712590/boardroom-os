@@ -89,6 +89,22 @@ def build_failure_fingerprint_process_asset_ref(
     return _process_asset_ref("failure-fingerprint", incident_id, version_int=version_int)
 
 
+def build_graph_patch_proposal_process_asset_ref(
+    session_id: str,
+    *,
+    version_int: int | None = None,
+) -> str:
+    return _process_asset_ref("graph-patch-proposal", session_id, version_int=version_int)
+
+
+def build_graph_patch_process_asset_ref(
+    session_id: str,
+    *,
+    version_int: int | None = None,
+) -> str:
+    return _process_asset_ref("graph-patch", session_id, version_int=version_int)
+
+
 def build_project_map_slice_process_asset_ref(
     workflow_id: str,
     *,
@@ -373,6 +389,20 @@ def resolve_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             incident_id=target,
+            connection=connection,
+        )
+    if kind == "graph-patch-proposal":
+        return _resolve_graph_patch_proposal_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            session_id=target,
+            connection=connection,
+        )
+    if kind == "graph-patch":
+        return _resolve_graph_patch_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            session_id=target,
             connection=connection,
         )
     if kind == "project-map-slice":
@@ -688,6 +718,77 @@ def _related_process_asset_refs_for_incident(
     elif output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
         refs.append(build_governance_document_process_asset_ref(ticket_id, version_int=1))
     return dedupe_process_asset_refs(refs)
+
+
+def _resolve_graph_patch_proposal_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    session_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        session = repository.get_board_advisory_session(session_id, connection=resolved_connection)
+        if session is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        payload = dict(session.get("latest_patch_proposal") or {})
+        if not payload:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        canonical_ref = build_graph_patch_proposal_process_asset_ref(session_id, version_int=1)
+        return ResolvedProcessAsset(
+            process_asset_ref=canonical_ref,
+            canonical_ref=canonical_ref,
+            version_int=1,
+            supersedes_ref=None,
+            process_asset_kind="GRAPH_PATCH_PROPOSAL",
+            producer_ticket_id=None,
+            summary=str(payload.get("proposal_summary") or "").strip() or f"Graph patch proposal for {session_id}",
+            consumable_by=["ceo", "review"],
+            source_metadata={
+                "workflow_id": session.get("workflow_id"),
+                "approval_id": session.get("approval_id"),
+                "review_pack_id": session.get("review_pack_id"),
+            },
+            content_type="JSON",
+            json_content=payload,
+            schema_ref="graph_patch_proposal@1",
+        )
+
+
+def _resolve_graph_patch_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    session_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        session = repository.get_board_advisory_session(session_id, connection=resolved_connection)
+        if session is None:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        payload = dict(session.get("approved_patch") or {})
+        if not payload:
+            raise ValueError(f"Process asset {process_asset_ref} is missing.")
+        canonical_ref = build_graph_patch_process_asset_ref(session_id, version_int=1)
+        return ResolvedProcessAsset(
+            process_asset_ref=canonical_ref,
+            canonical_ref=canonical_ref,
+            version_int=1,
+            supersedes_ref=None,
+            process_asset_kind="GRAPH_PATCH",
+            producer_ticket_id=None,
+            summary=str(payload.get("reason_summary") or "").strip() or f"Graph patch for {session_id}",
+            consumable_by=["ceo", "review", "ticket_graph"],
+            source_metadata={
+                "workflow_id": session.get("workflow_id"),
+                "approval_id": session.get("approval_id"),
+                "review_pack_id": session.get("review_pack_id"),
+                "patched_graph_version": session.get("patched_graph_version"),
+            },
+            content_type="JSON",
+            json_content=payload,
+            schema_ref="graph_patch@1",
+        )
 
 
 def _resolve_failure_fingerprint_process_asset(
