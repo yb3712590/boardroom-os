@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING
 
 from app.contracts.ticket_graph import TicketGraphSnapshot
 from app.core.graph_identity import GRAPH_LANE_EXECUTION
+from app.core.planned_placeholder_constants import (
+    PLANNED_PLACEHOLDER_STATUS_BLOCKED,
+    PLANNED_PLACEHOLDER_STATUS_PLANNED,
+)
 from app.core.ticket_graph import build_ticket_graph_snapshot
 
 if TYPE_CHECKING:
@@ -31,6 +35,10 @@ class RuntimeNodeView:
     ticket_id: str | None
     is_placeholder: bool
     materialization_state: str
+    placeholder_status: str | None = None
+    reason_code: str | None = None
+    open_incident_id: str | None = None
+    materialization_hint: str | None = None
 
 
 def _execution_graph_nodes_by_node_id(
@@ -84,6 +92,20 @@ def build_runtime_node_views(
             for row in node_rows
             if str(row["node_id"]).strip()
         }
+        placeholder_rows = resolved_connection.execute(
+            """
+            SELECT *
+            FROM planned_placeholder_projection
+            WHERE workflow_id = ?
+            ORDER BY node_id ASC
+            """,
+            (workflow_id,),
+        ).fetchall()
+        placeholder_projection_by_node_id = {
+            str(row["node_id"]).strip(): repository._convert_planned_placeholder_projection_row(row)
+            for row in placeholder_rows
+            if str(row["node_id"]).strip()
+        }
 
     materialized_graph_nodes, placeholder_graph_nodes = _execution_graph_nodes_by_node_id(graph_snapshot)
     valid_ticket_ids_by_node_id: dict[str, set[str]] = {}
@@ -134,10 +156,42 @@ def build_runtime_node_views(
             + "."
         )
 
+    missing_placeholder_projection_ids = sorted(
+        set(placeholder_graph_nodes) - set(placeholder_projection_by_node_id)
+    )
+    if missing_placeholder_projection_ids:
+        raise RuntimeNodeViewResolutionError(
+            "execution graph lane contains placeholder nodes without planned_placeholder_projection: "
+            + ", ".join(missing_placeholder_projection_ids)
+            + "."
+        )
+    extra_placeholder_projection_ids = sorted(
+        set(placeholder_projection_by_node_id) - set(placeholder_graph_nodes)
+    )
+    if extra_placeholder_projection_ids:
+        raise RuntimeNodeViewResolutionError(
+            "planned_placeholder_projection contains nodes missing from the execution graph lane: "
+            + ", ".join(extra_placeholder_projection_ids)
+            + "."
+        )
+
     for node_id, graph_node in sorted(placeholder_graph_nodes.items()):
         if node_id in views:
             raise RuntimeNodeViewResolutionError(
                 f"runtime node {node_id} is both materialized and a placeholder."
+            )
+        placeholder_projection = placeholder_projection_by_node_id.get(node_id)
+        if placeholder_projection is None:
+            raise RuntimeNodeViewResolutionError(
+                f"runtime placeholder {node_id} is missing planned_placeholder_projection."
+            )
+        placeholder_status = str(placeholder_projection.get("status") or "").strip().upper()
+        if placeholder_status not in {
+            PLANNED_PLACEHOLDER_STATUS_PLANNED,
+            PLANNED_PLACEHOLDER_STATUS_BLOCKED,
+        }:
+            raise RuntimeNodeViewResolutionError(
+                f"runtime placeholder {node_id} has invalid placeholder status {placeholder_status!r}."
             )
         views[node_id] = RuntimeNodeView(
             node_id=node_id,
@@ -146,6 +200,10 @@ def build_runtime_node_views(
             ticket_id=None,
             is_placeholder=True,
             materialization_state=MATERIALIZATION_STATE_PLANNED,
+            placeholder_status=placeholder_status,
+            reason_code=str(placeholder_projection.get("reason_code") or "").strip() or None,
+            open_incident_id=str(placeholder_projection.get("open_incident_id") or "").strip() or None,
+            materialization_hint=str(placeholder_projection.get("materialization_hint") or "").strip() or None,
         )
 
     return views
@@ -177,5 +235,9 @@ def resolve_runtime_node_view(
             ticket_id=None,
             is_placeholder=False,
             materialization_state=MATERIALIZATION_STATE_MISSING,
+            placeholder_status=None,
+            reason_code=None,
+            open_incident_id=None,
+            materialization_hint=None,
         ),
     )

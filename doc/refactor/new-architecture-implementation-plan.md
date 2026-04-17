@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S6`
-> 最后更新：`2026-04-17 00:59`
+> 最后更新：`2026-04-17 08:22`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -786,9 +786,13 @@
 - [x] `P4-S6` 已完成：新增 `backend/app/core/planned_placeholder_gate.py` 和正式 `PLANNED_PLACEHOLDER_GATE_BLOCKED` incident；autopilot 命中 focused planned placeholder 且本轮无推进时，现已显式开 incident，不再静默停住
 - [x] `P4-S6` 已完成：`incident detail / incident-resolve / IncidentDrawer` 已接到这条新主链；新 incident 固定暴露 `RERUN_CEO_SHADOW + RESTORE_ONLY`，resolve 继续复用现有 CEO rerun，不新增 placeholder 专用恢复动作
 - [x] `P4-S6` 已完成：autopilot 对 `PLANNED_PLACEHOLDER_GATE_BLOCKED` 不再做隐式 auto-resolve；graph-only placeholder 仍只存在于 graph truth，`ticket-create` 继续是唯一合法 materialization 入口
+- [x] `P4-S6` 已完成第二批：新增独立 `planned_placeholder_projection` 持久化真相层；execution-lane graph-only placeholder 现在会稳定落库 `workflow_id / node_id / graph_node_id / graph_version / status / reason_code / open_incident_id / materialization_hint / updated_at / version`
+- [x] `P4-S6` 已完成第二批：`runtime_node_views` 现在只认 `node_projection + planned_placeholder_projection`；graph 有 placeholder 但缺持久化 placeholder projection、或 placeholder projection 脱离 execution graph lane 时，会显式抛 `RuntimeNodeViewResolutionError`，不再靠缺 `node_projection` 猜 planned
+- [x] `P4-S6` 已完成第二批：`Dependency Inspector / context compiler / ticket-start / ticket-result-submit / workflow_auto_advance` 已切到这层新真相；planned placeholder 命中 open incident 时会稳定变成 `BLOCKED`，真实 `ticket-create` 成功后 placeholder row 会被吸收删除
+- [x] `P4-S6` 已完成第二批：本轮同时删掉了污染新架构真相的旧兼容推导：placeholder 不再从 `node_projection` 缺失、incident detail 或读面空值反向猜状态；graph/runtime/placeholder 真相不一致时统一 fail-closed
 
 ### 未完成
-- [ ] `P4-S6` 已把 placeholder 自动停滞收成显式 incident/recovery，但 placeholder 仍没有进入持久化 `node_projection` 真相、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
 - [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；这轮只把 graph layer identity 收口成 execution / review 双 lane，未继续把运行时身份拆成 graph-first 双层真相
 - [ ] `RuntimeLivenessReport` 现已从 `GraphHealthReport` 拆出，但当前仍复用同一份 `graph_health_policy.py` 字段集合；如果后续还要继续瘦监视层边界，再决定是否把 graph policy / liveness policy 进一步拆成两个正式合同
 
@@ -810,6 +814,7 @@
 - [ ] `RuntimeLivenessReport` 这轮已经从 `GraphHealthReport` 主读面拆出，但 `graph_health_policy.py` 仍同时承载 graph + liveness 两类阈值；如果下一轮继续瘦监视层，应先决定 policy contract 是否也跟着拆层，避免新 monitor 再长回 policy bucket
 - [ ] `P4-S5` 这轮只把 lifecycle gate 收硬，没有给 planned placeholder 新增 incident / recovery 动作；后续如果自动路径还要显式暴露“先建票再继续”，必须单独决定是复用现有 command reject，还是新增正式恢复动作
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder or incident or ceo_delegate" -q` 这轮会额外暴露 3 条旧 autopilot 回归：generic open approval 没自动 resolve、provider incident 恢复未进入 `RECOVERING`，以及 `build_ceo_shadow_snapshot()` 在单节点 provider 失败流上触发 `GraphHealthReport` cyclic path；当前最小验证已覆盖本轮新主链，但这 3 条宽桶问题需要后续单独收口
+- [ ] `planned_placeholder_projection` 当前故意只读 `graph patch events + node_projection + open placeholder incident`；还没有把 review-lane placeholder、patch edge delta 结构真相或 dedicated placeholder history 拉进持久化层，后续若要补必须单独开切片，不回退到 runtime/node 缺失猜状态
 
 ---
 
@@ -2189,6 +2194,42 @@
 **下一轮起手动作：**
 `继续从 P4-S6 后续未完成项续跑；先判断 placeholder 是否需要进入正式 materialization/recovery 之外的真相层，再单独收口 autopilot 宽桶里那 3 条旧回归。`
 
+### Session `2026-04-17 / 35`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S6`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 `backend/app/core/planned_placeholder_projection.py` 和 `backend/app/core/planned_placeholder_constants.py`，把 execution-lane graph-only placeholder 的持久化真相收成单点协议；当前最小状态只保留 `PLANNED / BLOCKED`
+- [x] 在 `backend/app/db/schema.py`、`backend/app/db/repository.py` 新增 `planned_placeholder_projection` 表、仓库读写 helper 和投影刷新接线；placeholder 真相现在会随现有 projection rebuild 幂等重建
+- [x] 把 `runtime_node_views.py` 从“graph + node_projection 现场猜 placeholder”改成“materialized 只认 node_projection、planned 只认 planned_placeholder_projection”；缺持久化 placeholder truth 或 graph/runtime 冲突时现在显式抛 `RuntimeNodeViewResolutionError`
+- [x] 保持 `ticket-create` 仍是唯一合法 materialization 入口；真实建票成功后，placeholder row 会在下一次 refresh 中被吸收删除，incident resolve 不会偷偷把 placeholder 改成 materialized
+- [x] 删除一批会污染新架构真相的旧兼容：placeholder 不再从 `node_projection` 缺失、incident/detail 读面或空值回退反向猜状态；命中这类不一致时统一 fail-closed
+- [x] 顺手修了一条旧事务内快照 bug：`build_ticket_graph_snapshot(..., connection=...)` 现在会显式复用同一连接读取 workflow projection，不再在事务里悄悄读旧连接状态
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "placeholder" -q` 通过（`6 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k planned_placeholder -q` 通过（`1 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder_gate" -q` 通过（`2 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "placeholder or dependency_inspector or create_ticket" -q` 通过（`13 passed`）
+- [x] `python3 -m py_compile backend/app/core/planned_placeholder_constants.py backend/app/core/planned_placeholder_projection.py backend/app/core/runtime_node_views.py backend/app/core/ticket_graph.py backend/app/db/repository.py backend/tests/test_ticket_graph.py backend/tests/test_context_compiler.py backend/tests/test_workflow_autopilot.py backend/tests/test_api.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只补 placeholder 持久化真相和 fail-closed 读面，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 现在已有独立持久化 `planned_placeholder_projection`，但仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；graph-first 双层身份还没拆
+- [ ] autopilot 宽桶里仍有 3 条旧回归待单独收口：generic approval auto-resolve、provider incident 恢复和 graph health cyclic path
+
+**下一轮起手动作：**
+`继续从 P4-S6 续跑，优先决定 placeholder 持久化真相是否要继续升格到 scheduler/recovery 之外的正式 materialization 协议；autopilot 宽桶里的 3 条旧回归继续后置单独收口。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -2226,7 +2267,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S6`
-- 当前状态：`P4-S6` 已完成；autopilot 命中 focused planned placeholder 且本轮无推进时，现已显式打开 `PLANNED_PLACEHOLDER_GATE_BLOCKED`，并把恢复固定收口到 `RERUN_CEO_SHADOW`
-- 最近完成：新增 `planned_placeholder_gate.py`、placeholder 停滞 incident 开口、`incident detail / resolve` 映射和 `IncidentDrawer` 文案；autopilot 对这类 incident 不再 auto-resolve，graph-only placeholder 继续只存在于 graph truth
-- 当前阻塞：placeholder 仍没有进入持久化 `node_projection` 真相或 scheduler 自动 materialization；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；autopilot 宽桶还暴露 3 条旧回归（generic approval auto-resolve、provider incident 恢复、graph health cyclic path）
-- 下一步：`继续从 P4-S6 后续未完成项续跑，优先决定 placeholder 是否进入正式 materialization 真相层，再单独收口 autopilot 宽桶里的 3 条旧回归`
+- 当前状态：`P4-S6` 已完成第二批；execution-lane graph-only placeholder 现已进入独立持久化 `planned_placeholder_projection` 真相，runtime/autopilot 读面不再靠缺 `node_projection` 猜 planned
+- 最近完成：新增 `planned_placeholder_projection.py` 与持久化表、把 `runtime_node_views` 切到 `node_projection + planned_placeholder_projection`、删掉 placeholder 旧兼容推导，并补齐 placeholder 持久化 / 吸收 / 缺失 fail-closed 回归
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；autopilot 宽桶还暴露 3 条旧回归（generic approval auto-resolve、provider incident 恢复、graph health cyclic path）
+- 下一步：`继续从 P4-S6 后续未完成项续跑，优先决定 placeholder 持久化真相是否继续升格到正式 materialization 协议，再单独收口 autopilot 宽桶里的 3 条旧回归`

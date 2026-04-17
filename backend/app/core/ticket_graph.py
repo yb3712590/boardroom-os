@@ -210,7 +210,7 @@ def build_ticket_graph_snapshot(
                 connection=owned_connection,
             )
 
-    workflow = repository.get_workflow_projection(workflow_id)
+    workflow = repository.get_workflow_projection(workflow_id, connection=connection)
     if workflow is None:
         raise ValueError(f"Workflow {workflow_id} does not exist.")
 

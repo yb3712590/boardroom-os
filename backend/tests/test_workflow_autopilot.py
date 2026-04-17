@@ -657,6 +657,14 @@ def test_autopilot_auto_advance_opens_placeholder_gate_incident_without_silent_f
     assert incident["payload"]["trigger_type"] == "SCHEDULER_IDLE_MAINTENANCE"
     assert incident["payload"]["trigger_ref"].endswith(":0:controller-probe")
     assert len(incident_opened_events) == 1
+    placeholder_projection = repository.get_planned_placeholder_projection(
+        workflow_id,
+        "node_placeholder_gate_target",
+    )
+    assert placeholder_projection is not None
+    assert placeholder_projection["status"] == "BLOCKED"
+    assert placeholder_projection["open_incident_id"] == incident["incident_id"]
+    assert placeholder_projection["reason_code"] == "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
 
 
 def test_autopilot_placeholder_gate_incident_is_idempotent_while_open(client, monkeypatch):
@@ -789,6 +797,12 @@ def test_autopilot_placeholder_gate_incident_is_idempotent_while_open(client, mo
     assert len(open_incidents) == 1
     assert open_incidents[0]["incident_type"] == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED
     assert len(incident_opened_events) == 1
+    placeholder_projection = repository.get_planned_placeholder_projection(
+        workflow_id,
+        "node_placeholder_gate_dedupe_target",
+    )
+    assert placeholder_projection is not None
+    assert placeholder_projection["status"] == "BLOCKED"
 
 
 def test_autopilot_auto_advance_reruns_ceo_shadow_pipeline_incident(client, monkeypatch):

@@ -1941,6 +1941,12 @@ def test_compile_and_persist_execution_artifacts_rejects_planned_placeholder_bef
         ],
     )
     _seed_governance_profile(repository, workflow_id=workflow_id, profile_id="gp_compile_placeholder")
+    placeholder_projection = repository.get_planned_placeholder_projection(
+        workflow_id,
+        "node_compile_placeholder_target",
+    )
+    assert placeholder_projection is not None
+    assert placeholder_projection["status"] == "PLANNED"
 
     created_payload = _ticket_create_payload(
         workflow_id=workflow_id,

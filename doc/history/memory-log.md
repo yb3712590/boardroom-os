@@ -23,6 +23,13 @@
 
 ### 2026-04-17
 
+- `P4-S6` 这轮已新增 `planned_placeholder_projection` 持久化真相：execution-lane graph-only placeholder 现在会稳定落库 `workflow_id / node_id / graph_node_id / graph_version / status / reason_code / open_incident_id / materialization_hint / updated_at / version`，不再只停在 graph snapshot 临时读面
+- `runtime_node_views.py` 这轮已从“graph + node_projection 现场猜 planned”收正成“materialized 只认 node_projection、planned 只认 planned_placeholder_projection”；graph 有 placeholder 但缺持久化 placeholder truth、或 placeholder projection 脱离 execution graph lane 时现在会显式抛 `RuntimeNodeViewResolutionError`
+- `Dependency Inspector / context_compiler / ticket-start / ticket-result-submit / workflow_auto_advance` 这轮已统一读这层新真相；planned placeholder 命中 open incident 时会稳定变成 `BLOCKED`，真实 `ticket-create` 成功后 placeholder row 会被吸收删除，incident resolve 不会偷偷改成 materialized
+- 这轮还顺手收掉了一批会污染新架构真相的旧兼容：placeholder 不再从 `node_projection` 缺失、incident/detail 读面或空值回退反向猜状态；graph/runtime/placeholder 三层真相一旦不一致就统一 fail-closed
+- 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "placeholder" -q`、`./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k planned_placeholder -q`、`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder_gate" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "placeholder or dependency_inspector or create_ticket" -q`、`python3 -m py_compile backend/app/core/planned_placeholder_constants.py backend/app/core/planned_placeholder_projection.py backend/app/core/runtime_node_views.py backend/app/core/ticket_graph.py backend/app/db/repository.py backend/tests/test_ticket_graph.py backend/tests/test_context_compiler.py backend/tests/test_workflow_autopilot.py backend/tests/test_api.py`
+- 当前还有一条会直接影响下轮判断的事实：placeholder 虽已进入独立持久化 `planned_placeholder_projection`，但仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；如果后续继续推进，应该从 `P4-S6` 决定这层是否继续升格成正式 materialization 协议
+
 - `P4-S6` 这轮已新增 `backend/app/core/planned_placeholder_gate.py`，把 focused planned placeholder 的 autopilot 停滞检测收成单点 helper；当前最小口径只认 snapshot 已正式暴露的 `replan_focus.focus_node_ids`
 - 当前已新增正式 `PLANNED_PLACEHOLDER_GATE_BLOCKED` incident；`workflow_auto_advance` 命中“focused placeholder + 本轮无推进”时不再静默 return，而是显式开 incident、写结构化 payload，并带稳定 fingerprint
 - `incident detail / incident-resolve / IncidentDrawer` 这轮已接到这条新主链；新 incident 固定暴露 `RERUN_CEO_SHADOW + RESTORE_ONLY`，resolve 会复用现有 CEO rerun，缺 `trigger_type` 时显式 reject，不新增 placeholder 专用恢复动作

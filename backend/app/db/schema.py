@@ -85,6 +85,20 @@ CREATE TABLE IF NOT EXISTS node_projection (
     PRIMARY KEY (workflow_id, node_id)
 );
 
+CREATE TABLE IF NOT EXISTS planned_placeholder_projection (
+    workflow_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    graph_node_id TEXT NOT NULL,
+    graph_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason_code TEXT,
+    open_incident_id TEXT,
+    materialization_hint TEXT,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    PRIMARY KEY (workflow_id, node_id)
+);
+
 CREATE TABLE IF NOT EXISTS employee_projection (
     employee_id TEXT PRIMARY KEY,
     role_type TEXT NOT NULL,

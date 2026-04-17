@@ -18,6 +18,10 @@ from app.core.output_schemas import (
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
 )
+from app.core.runtime_node_views import (
+    RuntimeNodeViewResolutionError,
+    resolve_runtime_node_view,
+)
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from tests.test_api import (
     _create_lease_and_start_ticket,
@@ -893,6 +897,116 @@ def test_ticket_graph_snapshot_absorbs_placeholder_node_when_real_ticket_is_crea
     assert materialized_nodes[0].is_placeholder is False
     assert materialized_nodes[0].ticket_id == "tkt_placeholder_absorb_real"
     assert materialized_nodes[0].runtime_node_id == "node_placeholder_absorb"
+    assert (
+        client.app.state.repository.get_planned_placeholder_projection(
+            workflow_id,
+            "node_placeholder_absorb",
+        )
+        is None
+    )
+
+
+def test_ticket_graph_snapshot_persists_placeholder_projection_until_real_ticket_exists(client):
+    workflow_id = "wf_ticket_graph_placeholder_projection"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Placeholder projection should persist graph-only execution placeholders.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_placeholder_projection_parent",
+        node_id="node_placeholder_projection_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_placeholder_projection_target"],
+        add_nodes=[
+            {
+                "node_id": "node_placeholder_projection_target",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_placeholder_projection_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+
+    placeholder_projection = client.app.state.repository.get_planned_placeholder_projection(
+        workflow_id,
+        "node_placeholder_projection_target",
+    )
+
+    assert placeholder_projection is not None
+    assert placeholder_projection["graph_node_id"] == "node_placeholder_projection_target"
+    assert placeholder_projection["status"] == "PLANNED"
+    assert placeholder_projection["reason_code"] == "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+    assert placeholder_projection["open_incident_id"] is None
+    assert placeholder_projection["materialization_hint"] == "create_ticket"
+
+
+def test_runtime_node_view_fail_closes_when_placeholder_projection_is_missing(client):
+    workflow_id = "wf_runtime_node_view_missing_placeholder_projection"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Runtime node views should fail closed when placeholder projection is missing.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_runtime_node_view_missing_placeholder_parent",
+        node_id="node_runtime_node_view_missing_placeholder_parent",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_graph_patch_applied_event(
+        client,
+        workflow_id=workflow_id,
+        patch_index=1,
+        freeze_node_ids=[],
+        focus_node_ids=["node_runtime_node_view_missing_placeholder_target"],
+        add_nodes=[
+            {
+                "node_id": "node_runtime_node_view_missing_placeholder_target",
+                "node_kind": "IMPLEMENTATION",
+                "deliverable_kind": "source_code_delivery",
+                "role_hint": "frontend_engineer_primary",
+                "parent_node_id": "node_runtime_node_view_missing_placeholder_parent",
+                "dependency_node_ids": [],
+            }
+        ],
+    )
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM planned_placeholder_projection
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            (workflow_id, "node_runtime_node_view_missing_placeholder_target"),
+        )
+
+    with pytest.raises(RuntimeNodeViewResolutionError, match="planned_placeholder_projection"):
+        resolve_runtime_node_view(
+            repository,
+            workflow_id,
+            "node_runtime_node_view_missing_placeholder_target",
+        )
 
 
 def test_ticket_graph_snapshot_fail_closes_invalid_legacy_dependency(client):

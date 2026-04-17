@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-16
+> 最后更新：2026-04-17
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
@@ -154,6 +154,12 @@
 - 2026-04-16 本轮已把 `ticket-create / CEO create-ticket` 的节点存在性判断切到 runtime node view；placeholder `node_id` 现在允许进入正式建票并由现有 `EVENT_TICKET_CREATED -> node_projection` 主链物化，已 materialized 节点继续显式 reject，执行态 compile/runtime 内核保持不变
 - 下一轮如果继续推进 `P4-S4` 收尾瘦身，优先决定 placeholder runtime materialization 是否拆独立切片；runtime `node_projection` 双层真相继续保持后置，`RuntimeLiveness/GraphHealth` 的 policy contract 是否继续拆层单独决策
 - 2026-04-16 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "placeholder or graph_patch" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "dependency_inspector or placeholder or create_ticket" -q`、`./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "placeholder or advisory" -q`、`python3 -m py_compile backend/app/core/runtime_node_views.py backend/app/core/projections.py backend/app/core/ticket_handlers.py backend/app/core/ceo_validator.py backend/app/core/ceo_proposer.py backend/tests/test_api.py`、`cd frontend && npm run build`
+- 2026-04-17 本轮已把 `P4-S6` 正式推进到 placeholder 持久化真相：新增 `planned_placeholder_projection` 表和 `backend/app/core/planned_placeholder_projection.py`，execution-lane graph-only placeholder 现在会稳定落库 `workflow_id / node_id / graph_node_id / graph_version / status / reason_code / open_incident_id / materialization_hint / updated_at / version`
+- 2026-04-17 本轮已把 `runtime_node_views` 收正到 “materialized 只认 `node_projection`、planned 只认 `planned_placeholder_projection`”；graph 有 placeholder 但缺持久化 placeholder truth、或 placeholder projection 脱离 execution graph lane 时，会显式抛 `RuntimeNodeViewResolutionError`，不再靠缺 `node_projection` 猜状态
+- 2026-04-17 本轮已把 placeholder incident / recovery 和真实建票吸收接到同一真相：planned placeholder 命中 open incident 时会稳定变成 `BLOCKED`，真实 `ticket-create` 成功后 placeholder row 会被吸收删除；incident resolve 不会偷偷改成 materialized
+- 2026-04-17 本轮还删掉了会污染新架构真相的旧兼容：placeholder 不再从 `node_projection` 缺失、incident/detail 读面或空值回退反向猜状态；graph/runtime/placeholder 真相不一致时统一 fail-closed
+- 2026-04-17 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "placeholder" -q`、`./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k planned_placeholder -q`、`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder_gate" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "placeholder or dependency_inspector or create_ticket" -q`、`python3 -m py_compile backend/app/core/planned_placeholder_constants.py backend/app/core/planned_placeholder_projection.py backend/app/core/runtime_node_views.py backend/app/core/ticket_graph.py backend/app/db/repository.py backend/tests/test_ticket_graph.py backend/tests/test_context_compiler.py backend/tests/test_workflow_autopilot.py backend/tests/test_api.py`
+- 下一轮如果继续推进 `P4-S6`，优先决定 `planned_placeholder_projection` 是否继续升格到正式 materialization 协议；scheduler 自动建票和 graph-first placeholder lifecycle 继续后置单独决策
 - 2026-04-16 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health" -q`、`python -m py_compile backend/app/core/graph_health.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py`
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
 - 下一轮如果继续推进新架构重构，继续从 `P4-S4` 续跑，优先决定 placeholder runtime materialization 是否单独升格成下一切片；runtime `node_projection` 双层真相继续保持后置，`RuntimeLiveness/GraphHealth` 的 policy contract 是否继续拆层单独决策；`doc/new-architecture/**` 仍保持只读

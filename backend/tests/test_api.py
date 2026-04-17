@@ -6111,6 +6111,12 @@ def test_dependency_inspector_shows_graph_only_placeholder_node_with_materializa
     assert placeholder_node["block_reason"] == "PENDING"
     assert placeholder_node["is_blocked"] is False
     assert body["summary"]["total_nodes"] == 3
+    placeholder_projection = client.app.state.repository.get_planned_placeholder_projection(
+        workflow_id,
+        "node_dependency_placeholder_build",
+    )
+    assert placeholder_projection is not None
+    assert placeholder_projection["status"] == "PLANNED"
 
 
 def test_ticket_create_accepts_placeholder_node_and_materializes_runtime_truth(client):
@@ -6178,6 +6184,13 @@ def test_ticket_create_accepts_placeholder_node_and_materializes_runtime_truth(c
     assert node_projection["latest_ticket_id"] == "tkt_placeholder_materialization_build"
     assert graph_node.is_placeholder is False
     assert graph_node.ticket_id == "tkt_placeholder_materialization_build"
+    assert (
+        repository.get_planned_placeholder_projection(
+            workflow_id,
+            "node_placeholder_materialization_build",
+        )
+        is None
+    )
 
     duplicate_response = client.post(
         "/api/v1/commands/ticket-create",

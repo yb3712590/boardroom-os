@@ -127,6 +127,7 @@ class ControlPlaneRepository:
             self._ensure_workflow_projection_shape(connection)
             self._ensure_ticket_projection_shape(connection)
             self._ensure_node_projection_shape(connection)
+            self._ensure_planned_placeholder_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
             self._ensure_worker_bootstrap_state_shape(connection)
             self._ensure_worker_bootstrap_issue_shape(connection)
@@ -422,6 +423,42 @@ class ControlPlaneRepository:
                 ),
             )
 
+    def replace_planned_placeholder_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM planned_placeholder_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO planned_placeholder_projection (
+                    workflow_id,
+                    node_id,
+                    graph_node_id,
+                    graph_version,
+                    status,
+                    reason_code,
+                    open_incident_id,
+                    materialization_hint,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["workflow_id"],
+                    projection["node_id"],
+                    projection["graph_node_id"],
+                    projection["graph_version"],
+                    projection["status"],
+                    projection.get("reason_code"),
+                    projection.get("open_incident_id"),
+                    projection.get("materialization_hint"),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
     def replace_employee_projections(
         self,
         connection: sqlite3.Connection,
@@ -508,12 +545,18 @@ class ControlPlaneRepository:
         self._rebuild_retrieval_incident_summary_fts(connection)
 
     def refresh_projections(self, connection: sqlite3.Connection) -> None:
+        from app.core.planned_placeholder_projection import rebuild_planned_placeholder_projections
+
         events = self.list_all_events(connection)
         self.replace_workflow_projections(connection, rebuild_workflow_projections(events))
         self.replace_ticket_projections(connection, rebuild_ticket_projections(events))
         self.replace_node_projections(connection, rebuild_node_projections(events))
         self.replace_employee_projections(connection, rebuild_employee_projections(events))
         self.replace_incident_projections(connection, rebuild_incident_projections(events))
+        self.replace_planned_placeholder_projections(
+            connection,
+            rebuild_planned_placeholder_projections(self, connection=connection),
+        )
 
     def get_active_workflow(self) -> dict[str, Any] | None:
         self.initialize()
@@ -611,6 +654,65 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_node_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                """
+                SELECT * FROM node_projection
+                WHERE workflow_id = ? AND node_id = ?
+                """,
+                (workflow_id, node_id),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_node_projection_row(row)
+
+    def get_planned_placeholder_projection(
+        self,
+        workflow_id: str,
+        node_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM planned_placeholder_projection
+            WHERE workflow_id = ? AND node_id = ?
+        """
+        params = (workflow_id, node_id)
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return self._convert_planned_placeholder_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return self._convert_planned_placeholder_projection_row(row)
+
+    def list_planned_placeholder_projections(
+        self,
+        workflow_id: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM planned_placeholder_projection
+        """
+        params: tuple[Any, ...] = ()
+        if workflow_id is not None:
+            query += " WHERE workflow_id = ?"
+            params = (workflow_id,)
+        query += " ORDER BY workflow_id ASC, node_id ASC"
+        if connection is not None:
+            rows = connection.execute(query, params).fetchall()
+            return [self._convert_planned_placeholder_projection_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, params).fetchall()
+            return [self._convert_planned_placeholder_projection_row(row) for row in rows]
 
         self.initialize()
         with self.connection() as owned_connection:
@@ -5578,6 +5680,13 @@ class ControlPlaneRepository:
         converted["version"] = int(converted["version"])
         return converted
 
+    def _convert_planned_placeholder_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        if converted.get("updated_at"):
+            converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
     def _convert_employee_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         if converted.get("updated_at"):
@@ -6430,6 +6539,55 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_node_projection_latest_ticket_id ON node_projection(latest_ticket_id)"
+        )
+
+    def _ensure_planned_placeholder_projection_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS planned_placeholder_projection (
+                workflow_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                graph_node_id TEXT NOT NULL,
+                graph_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason_code TEXT,
+                open_incident_id TEXT,
+                materialization_hint TEXT,
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                PRIMARY KEY (workflow_id, node_id)
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(planned_placeholder_projection)").fetchall()
+        }
+        required_columns = {
+            "workflow_id": "TEXT",
+            "node_id": "TEXT",
+            "graph_node_id": "TEXT",
+            "graph_version": "TEXT",
+            "status": "TEXT",
+            "reason_code": "TEXT",
+            "open_incident_id": "TEXT",
+            "materialization_hint": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE planned_placeholder_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_planned_placeholder_projection_workflow_id ON planned_placeholder_projection(workflow_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_planned_placeholder_projection_status ON planned_placeholder_projection(status)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_planned_placeholder_projection_graph_node_id ON planned_placeholder_projection(graph_node_id)"
         )
 
     def _ensure_employee_projection_shape(self, connection: sqlite3.Connection) -> None:
