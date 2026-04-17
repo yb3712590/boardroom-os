@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
 from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_REF
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.db.repository import ControlPlaneRepository
 
 
@@ -23,6 +25,27 @@ class WorkflowTicketSnapshot:
     expected_artifact_scope: list[str]
     blocking_reason_code: str | None
     sort_updated_at: datetime | None
+
+
+@dataclass(frozen=True)
+class WorkflowRuntimeRelation:
+    graph_node_id: str
+    node_id: str
+    ticket_id: str
+    ticket_status: str | None
+    role_profile_ref: str | None
+    output_schema_ref: str | None
+    delivery_stage: str | None
+    lease_owner: str | None
+    sort_updated_at: datetime | None
+
+
+@dataclass(frozen=True)
+class WorkflowRuntimeOrgRelations:
+    current: WorkflowRuntimeRelation
+    upstream_provider: WorkflowRuntimeRelation | None
+    downstream_candidates: list[WorkflowRuntimeRelation]
+    collaborator_candidates: list[WorkflowRuntimeRelation]
 
 
 def resolve_phase_label(created_spec: dict[str, Any] | None) -> str:
@@ -175,3 +198,189 @@ def list_workflow_ticket_snapshots(
             )
         )
     return snapshots
+
+
+def _ticket_projection_by_workflow(
+    repository: ControlPlaneRepository,
+    workflow_id: str,
+    *,
+    connection,
+) -> dict[str, dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT * FROM ticket_projection
+        WHERE workflow_id = ?
+        ORDER BY updated_at ASC, ticket_id ASC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    return {
+        str(row["ticket_id"]).strip(): repository._convert_ticket_projection_row(row)
+        for row in rows
+        if str(row["ticket_id"]).strip()
+    }
+
+
+def _build_runtime_relation(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    graph_node_id: str,
+    ticket_id: str,
+    graph_node_by_graph_node_id: dict[str, Any],
+    ticket_projection_by_ticket_id: dict[str, dict[str, Any]],
+    connection,
+) -> WorkflowRuntimeRelation:
+    normalized_graph_node_id = str(graph_node_id or "").strip()
+    normalized_ticket_id = str(ticket_id or "").strip()
+    if not normalized_graph_node_id or not normalized_ticket_id:
+        raise ValueError("Runtime org relation requires both graph_node_id and ticket_id.")
+    graph_node = graph_node_by_graph_node_id.get(normalized_graph_node_id)
+    if graph_node is None:
+        raise ValueError(
+            f"Workflow {workflow_id} is missing graph node {normalized_graph_node_id} for runtime org context."
+        )
+    ticket_projection = ticket_projection_by_ticket_id.get(normalized_ticket_id)
+    if ticket_projection is None:
+        raise ValueError(
+            f"Workflow {workflow_id} is missing ticket_projection {normalized_ticket_id} for runtime org context."
+        )
+    return WorkflowRuntimeRelation(
+        graph_node_id=normalized_graph_node_id,
+        node_id=str(graph_node.node_id),
+        ticket_id=normalized_ticket_id,
+        ticket_status=(str(ticket_projection.get("status") or "").strip() or None),
+        role_profile_ref=(str(graph_node.role_profile_ref or "").strip() or None),
+        output_schema_ref=(str(graph_node.output_schema_ref or "").strip() or None),
+        delivery_stage=(str(graph_node.delivery_stage or "").strip().upper() or None),
+        lease_owner=(str(ticket_projection.get("lease_owner") or "").strip() or None),
+        sort_updated_at=ticket_projection.get("updated_at"),
+    )
+
+
+def resolve_runtime_org_context_relations(
+    repository: ControlPlaneRepository,
+    workflow_id: str,
+    ticket_id: str,
+    *,
+    connection,
+) -> WorkflowRuntimeOrgRelations:
+    normalized_workflow_id = str(workflow_id or "").strip()
+    normalized_ticket_id = str(ticket_id or "").strip()
+    if not normalized_workflow_id or not normalized_ticket_id:
+        raise ValueError("Runtime org context requires workflow_id and ticket_id.")
+
+    current_ticket = repository.get_current_ticket_projection(normalized_ticket_id, connection=connection)
+    if current_ticket is None:
+        raise ValueError(
+            f"Workflow {normalized_workflow_id} is missing current ticket {normalized_ticket_id} for runtime org context."
+        )
+    created_spec = apply_legacy_graph_contract_compat(
+        repository.get_latest_ticket_created_payload(connection, normalized_ticket_id) or {}
+    )
+    if not created_spec:
+        raise ValueError(
+            f"Workflow {normalized_workflow_id} is missing ticket-create spec for {normalized_ticket_id}."
+        )
+    graph_identity = resolve_ticket_graph_identity(
+        ticket_id=normalized_ticket_id,
+        created_spec=created_spec,
+        runtime_node_id=str(current_ticket.get("node_id") or ""),
+    )
+    graph_snapshot = build_ticket_graph_snapshot(
+        repository,
+        normalized_workflow_id,
+        connection=connection,
+    )
+    graph_node_by_graph_node_id = {
+        str(node.graph_node_id).strip(): node
+        for node in graph_snapshot.nodes
+        if str(node.graph_node_id or "").strip()
+    }
+    ticket_projection_by_ticket_id = _ticket_projection_by_workflow(
+        repository,
+        normalized_workflow_id,
+        connection=connection,
+    )
+    current_relation = _build_runtime_relation(
+        repository,
+        workflow_id=normalized_workflow_id,
+        graph_node_id=graph_identity.graph_node_id,
+        ticket_id=normalized_ticket_id,
+        graph_node_by_graph_node_id=graph_node_by_graph_node_id,
+        ticket_projection_by_ticket_id=ticket_projection_by_ticket_id,
+        connection=connection,
+    )
+
+    incoming_parent_edges = [
+        edge
+        for edge in graph_snapshot.edges
+        if edge.edge_type == "PARENT_OF" and edge.target_graph_node_id == graph_identity.graph_node_id
+    ]
+    if len(incoming_parent_edges) > 1:
+        raise ValueError(
+            "Runtime org context expected at most one parent edge for "
+            f"{graph_identity.graph_node_id}, got {len(incoming_parent_edges)}."
+        )
+
+    upstream_provider = None
+    parent_graph_node_id = None
+    if incoming_parent_edges:
+        parent_edge = incoming_parent_edges[0]
+        parent_graph_node_id = str(parent_edge.source_graph_node_id or "").strip() or None
+        parent_ticket_id = str(parent_edge.source_ticket_id or "").strip()
+        if parent_graph_node_id is None or not parent_ticket_id:
+            raise ValueError(
+                f"Runtime org context found incomplete parent edge for {graph_identity.graph_node_id}."
+            )
+        upstream_provider = _build_runtime_relation(
+            repository,
+            workflow_id=normalized_workflow_id,
+            graph_node_id=parent_graph_node_id,
+            ticket_id=parent_ticket_id,
+            graph_node_by_graph_node_id=graph_node_by_graph_node_id,
+            ticket_projection_by_ticket_id=ticket_projection_by_ticket_id,
+            connection=connection,
+        )
+
+    downstream_candidates = [
+        _build_runtime_relation(
+            repository,
+            workflow_id=normalized_workflow_id,
+            graph_node_id=str(edge.target_graph_node_id or ""),
+            ticket_id=str(edge.target_ticket_id or ""),
+            graph_node_by_graph_node_id=graph_node_by_graph_node_id,
+            ticket_projection_by_ticket_id=ticket_projection_by_ticket_id,
+            connection=connection,
+        )
+        for edge in graph_snapshot.edges
+        if edge.edge_type == "PARENT_OF"
+        and edge.source_graph_node_id == graph_identity.graph_node_id
+        and str(edge.target_ticket_id or "").strip()
+    ]
+
+    collaborator_candidates: list[WorkflowRuntimeRelation] = []
+    if parent_graph_node_id is not None:
+        collaborator_candidates = [
+            _build_runtime_relation(
+                repository,
+                workflow_id=normalized_workflow_id,
+                graph_node_id=str(edge.target_graph_node_id or ""),
+                ticket_id=str(edge.target_ticket_id or ""),
+                graph_node_by_graph_node_id=graph_node_by_graph_node_id,
+                ticket_projection_by_ticket_id=ticket_projection_by_ticket_id,
+                connection=connection,
+            )
+            for edge in graph_snapshot.edges
+            if edge.edge_type == "PARENT_OF"
+            and edge.source_graph_node_id == parent_graph_node_id
+            and edge.target_graph_node_id != graph_identity.graph_node_id
+            and str(edge.target_ticket_id or "").strip()
+        ]
+
+    return WorkflowRuntimeOrgRelations(
+        current=current_relation,
+        upstream_provider=upstream_provider,
+        downstream_candidates=downstream_candidates,
+        collaborator_candidates=collaborator_candidates,
+    )

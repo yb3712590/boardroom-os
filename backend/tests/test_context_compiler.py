@@ -680,11 +680,162 @@ def test_compile_execution_package_builds_dynamic_org_context_for_parent_child_a
     assert org_context.responsibility_boundary.allowed_write_set == ["artifacts/ui/homepage/*"]
 
 
+def test_build_compile_request_prefers_source_graph_node_id_for_open_review_pack_match(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-04-08T09:30:00+08:00")
+    workflow_id = "wf_compile_review_pack_graph"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Compile request should resolve open review packs by graph identity.",
+    )
+    _seed_governance_profile(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        profile_id="gp_compile_review_pack_graph",
+    )
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_compile_review_pack_graph",
+            node_id="node_compile_review_pack_graph",
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_compile_review_pack_graph",
+            node_id="node_compile_review_pack_graph",
+        ),
+    )
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        approval_payload = {
+            "review_pack": {
+                "meta": {
+                    "review_pack_id": "brp_compile_review_pack_graph",
+                    "workflow_id": workflow_id,
+                    "review_type": "VISUAL_MILESTONE",
+                    "created_at": "2026-04-08T09:35:00+08:00",
+                    "priority": "high",
+                },
+                "subject": {
+                    "title": "Compile request graph identity review",
+                    "source_graph_node_id": "node_compile_review_pack_graph",
+                    "source_node_id": "node_stale_legacy_only",
+                    "source_ticket_id": "tkt_stale_legacy_only",
+                    "blocking_scope": "NODE_ONLY",
+                },
+                "trigger": {
+                    "trigger_event_id": "evt_compile_review_pack_graph",
+                    "trigger_reason": "Open review pack should bind to graph identity first.",
+                    "why_now": "Compiler org context is validating escalation path.",
+                },
+                "recommendation": {
+                    "recommended_action": "APPROVE",
+                    "recommended_option_id": "approve",
+                    "summary": "Graph identity should drive runtime review pack matching.",
+                },
+                "options": [
+                    {
+                        "option_id": "approve",
+                        "label": "Approve",
+                        "summary": "Keep the current graph lane moving.",
+                        "artifact_refs": [],
+                        "preview_assets": [],
+                        "pros": [],
+                        "cons": [],
+                        "risks": [],
+                        "estimated_budget_impact_range": None,
+                    }
+                ],
+                "evidence_summary": [],
+                "delta_summary": None,
+                "maker_checker_summary": None,
+                "risk_summary": None,
+                "budget_impact": None,
+                "decision_form": {
+                    "allowed_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+                    "command_target_version": 1,
+                    "requires_comment_on_reject": True,
+                    "requires_constraint_patch_on_modify": True,
+                },
+                "developer_inspector_refs": None,
+            },
+            "available_actions": [],
+            "draft_defaults": {},
+            "inbox_title": "Compile request graph identity review",
+            "inbox_summary": "Open review pack should bind through source_graph_node_id.",
+            "badges": ["graph", "review"],
+            "priority": "high",
+        }
+        connection.execute(
+            """
+            INSERT INTO approval_projection (
+                approval_id,
+                review_pack_id,
+                workflow_id,
+                approval_type,
+                status,
+                requested_by,
+                resolved_by,
+                resolved_at,
+                created_at,
+                updated_at,
+                review_pack_version,
+                command_target_version,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "apr_compile_review_pack_graph",
+                "brp_compile_review_pack_graph",
+                workflow_id,
+                "VISUAL_MILESTONE",
+                "OPEN",
+                "board",
+                None,
+                None,
+                "2026-04-08T09:35:00+08:00",
+                "2026-04-08T09:35:00+08:00",
+                1,
+                1,
+                json.dumps(approval_payload, sort_keys=True),
+            ),
+        )
+
+    ticket = repository.get_current_ticket_projection("tkt_compile_review_pack_graph")
+    assert ticket is not None
+
+    compile_request = build_compile_request(repository, ticket)
+
+    assert compile_request.org_context.escalation_path.open_review_pack_id == "brp_compile_review_pack_graph"
+    assert compile_request.org_context.responsibility_boundary.board_review_possible is True
+
+
 def test_compile_execution_package_maps_new_runtime_live_role_types_in_org_context(
     client,
     set_ticket_time,
 ):
     set_ticket_time("2026-04-08T10:00:00+08:00")
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id="wf_compile",
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Compile request org context should resolve project map assets in scoped workflows.",
+    )
     client.post(
         "/api/v1/commands/ticket-create",
         json=_ticket_create_payload(

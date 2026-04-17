@@ -76,7 +76,6 @@ from app.core.governance_profiles import require_governance_profile, governance_
 from app.core.graph_identity import (
     GRAPH_LANE_EXECUTION,
     apply_legacy_graph_contract_compat,
-    resolve_graph_lane_kind,
     resolve_ticket_graph_identity,
 )
 from app.core.ids import new_prefixed_id
@@ -107,7 +106,7 @@ from app.core.process_assets import (
 )
 from app.core.skill_runtime import resolve_skill_binding
 from app.core.time import now_local
-from app.core.workflow_relationships import WorkflowTicketSnapshot, list_workflow_ticket_snapshots
+from app.core.workflow_relationships import WorkflowRuntimeRelation, resolve_runtime_org_context_relations
 from app.core.developer_inspector import (
     DeveloperInspectorStore,
     PersistedDeveloperInspectorArtifact,
@@ -507,20 +506,18 @@ def _role_type_for_profile(role_profile_ref: str | None, *, fallback: str | None
 
 
 def _build_org_relation(
-    snapshot: WorkflowTicketSnapshot,
+    relation: WorkflowRuntimeRelation,
     *,
     relation_reason: str,
     fallback_role_type: str | None = None,
 ) -> CompileRequestOrgRelation | None:
-    if snapshot.ticket_id is None:
-        return None
     return CompileRequestOrgRelation(
-        ticket_id=snapshot.ticket_id,
-        node_id=snapshot.node_id,
-        role_profile_ref=str(snapshot.role_profile_ref or "unknown"),
-        role_type=_role_type_for_profile(snapshot.role_profile_ref, fallback=fallback_role_type),
-        employee_id=snapshot.lease_owner,
-        status=snapshot.ticket_status,
+        ticket_id=relation.ticket_id,
+        node_id=relation.node_id,
+        role_profile_ref=str(relation.role_profile_ref or "unknown"),
+        role_type=_role_type_for_profile(relation.role_profile_ref, fallback=fallback_role_type),
+        employee_id=relation.lease_owner,
+        status=relation.ticket_status,
         relation_reason=relation_reason,
     )
 
@@ -559,44 +556,39 @@ def _build_org_context(
     connection: sqlite3.Connection | None = None,
 ) -> CompileRequestOrgContext:
     with repository.connection() if connection is None else nullcontext(connection) as active_connection:
-        snapshots = list_workflow_ticket_snapshots(
+        runtime_relations = resolve_runtime_org_context_relations(
             repository,
             str(ticket["workflow_id"]),
+            str(ticket["ticket_id"]),
             connection=active_connection,
         )
+        graph_identity = resolve_ticket_graph_identity(
+            ticket_id=str(ticket["ticket_id"]),
+            created_spec=created_spec,
+            runtime_node_id=str(ticket["node_id"]),
+        )
 
-    snapshot_by_ticket_id = {
-        str(snapshot.ticket_id): snapshot
-        for snapshot in snapshots
-        if snapshot.ticket_id is not None
-    }
-    current_snapshot = snapshot_by_ticket_id.get(str(ticket["ticket_id"]))
-    parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip() or None
     upstream_provider = (
         _build_org_relation(
-            snapshot_by_ticket_id[parent_ticket_id],
+            runtime_relations.upstream_provider,
             relation_reason="PARENT_TICKET",
         )
-        if parent_ticket_id and parent_ticket_id in snapshot_by_ticket_id
+        if runtime_relations.upstream_provider is not None
         else None
     )
 
-    dependent_snapshots = [
-        snapshot
-        for snapshot in snapshots
-        if snapshot.parent_ticket_id == str(ticket["ticket_id"]) and snapshot.ticket_id is not None
-    ]
-    dependent_snapshots.sort(
-        key=lambda snapshot: (
-            0 if _role_type_for_profile(snapshot.role_profile_ref) == "checker" else 1,
-            snapshot.sort_updated_at or now_local(),
-            snapshot.ticket_id or "",
+    downstream_candidates = list(runtime_relations.downstream_candidates)
+    downstream_candidates.sort(
+        key=lambda relation: (
+            0 if _role_type_for_profile(relation.role_profile_ref) == "checker" else 1,
+            relation.sort_updated_at or now_local(),
+            relation.ticket_id,
         )
     )
     downstream_reviewer = None
-    if dependent_snapshots:
+    if downstream_candidates:
         downstream_reviewer = _build_org_relation(
-            dependent_snapshots[0],
+            downstream_candidates[0],
             relation_reason="DIRECT_DEPENDENT_TICKET",
         )
     if downstream_reviewer is None:
@@ -612,20 +604,13 @@ def _build_org_context(
         str(downstream_reviewer.ticket_id) if downstream_reviewer is not None else "",
     }
     collaborators: list[CompileRequestOrgRelation] = []
-    if parent_ticket_id:
-        for snapshot in snapshots:
-            if (
-                snapshot.parent_ticket_id != parent_ticket_id
-                or snapshot.ticket_id is None
-                or snapshot.ticket_id in excluded_ticket_ids
-                or snapshot.ticket_status == TICKET_STATUS_COMPLETED
-            ):
-                continue
-            relation = _build_org_relation(snapshot, relation_reason="ACTIVE_SIBLING_TICKET")
-            if relation is not None:
-                collaborators.append(relation)
+    for relation in runtime_relations.collaborator_candidates:
+        if relation.ticket_id in excluded_ticket_ids or relation.ticket_status == TICKET_STATUS_COMPLETED:
+            continue
+        collaborator = _build_org_relation(relation, relation_reason="ACTIVE_SIBLING_TICKET")
+        if collaborator is not None:
+            collaborators.append(collaborator)
 
-    current_node_id = str(ticket["node_id"])
     current_ticket_id = str(ticket["ticket_id"])
     open_review_pack_id = None
     for approval in repository.list_open_approvals():
@@ -633,7 +618,7 @@ def _build_org_context(
             continue
         subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
         if (
-            str(subject.get("source_node_id") or "").strip() == current_node_id
+            str(subject.get("source_graph_node_id") or "").strip() == graph_identity.graph_node_id
             or str(subject.get("source_ticket_id") or "").strip() == current_ticket_id
         ):
             open_review_pack_id = str(approval["review_pack_id"])
@@ -643,10 +628,7 @@ def _build_org_context(
     for incident in repository.list_open_incidents():
         if str(incident.get("workflow_id") or "") != str(ticket["workflow_id"]):
             continue
-        if (
-            str(incident.get("node_id") or "").strip() == current_node_id
-            or str(incident.get("ticket_id") or "").strip() == current_ticket_id
-        ):
+        if str(incident.get("ticket_id") or "").strip() == current_ticket_id:
             open_incident_id = str(incident["incident_id"])
             break
 
@@ -654,8 +636,8 @@ def _build_org_context(
     current_blocking_reason = str(ticket.get("blocking_reason_code") or "").strip() or None
     responsibility_boundary = CompileRequestResponsibilityBoundary(
         delivery_stage=(
-            current_snapshot.delivery_stage
-            if current_snapshot is not None and current_snapshot.delivery_stage is not None
+            runtime_relations.current.delivery_stage
+            if runtime_relations.current.delivery_stage is not None
             else (str(created_spec.get("delivery_stage") or "").strip().upper() or None)
         ),
         output_schema_ref=str(created_spec.get("output_schema_ref") or ""),

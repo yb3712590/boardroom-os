@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+import tests.test_api as api_test_helpers
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
@@ -21,7 +22,6 @@ from app.core.role_hooks import (
     replay_required_hook_receipts,
 )
 from app.core.ticket_graph import build_ticket_graph_snapshot
-from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.constants import EVENT_TICKET_CREATED
 from tests.test_api import _incident_resolve_payload
 from tests.test_api import (
@@ -50,14 +50,17 @@ def _create_and_start_ticket(
 ) -> None:
     create_payload = _ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id)
     create_payload["output_schema_ref"] = output_schema_ref
+    lease_owner = "emp_frontend_2"
     if output_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF:
         create_payload["allowed_write_set"] = ["10-project/docs/*"]
         create_payload["delivery_stage"] = "BUILD"
     elif output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         create_payload["delivery_stage"] = "BUILD"
     elif output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
+        create_payload["role_profile_ref"] = "checker_primary"
         create_payload["allowed_write_set"] = [f"reports/check/{ticket_id}/*"]
         create_payload["delivery_stage"] = "CHECK"
+        lease_owner = "emp_checker_1"
     elif output_schema_ref == UI_MILESTONE_REVIEW_SCHEMA_REF:
         create_payload["allowed_write_set"] = [
             "artifacts/ui/homepage/*",
@@ -65,24 +68,38 @@ def _create_and_start_ticket(
         ]
         create_payload["delivery_stage"] = "REVIEW"
     elif output_schema_ref == MAKER_CHECKER_VERDICT_SCHEMA_REF:
+        create_payload["role_profile_ref"] = "checker_primary"
         create_payload["allowed_write_set"] = [f"reports/review/{ticket_id}/*"]
         create_payload["delivery_stage"] = "REVIEW"
+        lease_owner = "emp_checker_1"
     elif output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
         create_payload["allowed_write_set"] = [f"20-evidence/closeout/{ticket_id}/*"]
         create_payload["input_artifact_refs"] = ["art://runtime/tkt_build_001/source-code.tsx"]
         create_payload["delivery_stage"] = "CLOSEOUT"
+    api_test_helpers._ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref=str(create_payload.get("role_profile_ref") or ""),
+        output_schema_ref=output_schema_ref,
+    )
     create_response = client.post("/api/v1/commands/ticket-create", json=create_payload)
     assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    lease_payload = _ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id)
+    lease_payload["leased_by"] = lease_owner
     lease_response = client.post(
         "/api/v1/commands/ticket-lease",
-        json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+        json=lease_payload,
     )
     assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+    start_payload = _ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id)
+    start_payload["started_by"] = lease_owner
     start_response = client.post(
         "/api/v1/commands/ticket-start",
-        json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+        json=start_payload,
     )
     assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
 
 
 def _receipt_root(client, workflow_id: str, ticket_id: str):
@@ -96,6 +113,15 @@ def _receipt_root(client, workflow_id: str, ticket_id: str):
         / ticket_id
         / "hook-receipts"
     )
+
+
+def _assert_command_accepted(response) -> None:
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+
+def _assert_receipt_exists(path) -> None:
+    assert path.is_file(), f"expected hook receipt to exist before deletion: {path}"
 
 
 def test_required_hook_gate_reports_missing_artifact_capture_for_review_evidence_ticket(client) -> None:
@@ -121,9 +147,10 @@ def test_required_hook_gate_reports_missing_artifact_capture_for_review_evidence
             node_id=node_id,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     artifact_capture_path = _receipt_root(client, workflow_id, ticket_id) / "artifact-capture.json"
+    _assert_receipt_exists(artifact_capture_path)
     artifact_capture_path.unlink()
 
     repository = client.app.state.repository
@@ -174,9 +201,10 @@ def test_required_hook_gate_reports_missing_required_hook_for_workspace_source_d
             include_git_evidence=True,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     git_receipt_path = _receipt_root(client, workflow_id, ticket_id) / "git-closeout.json"
+    _assert_receipt_exists(git_receipt_path)
     git_receipt_path.unlink()
 
     repository = client.app.state.repository
@@ -224,9 +252,10 @@ def test_required_hook_gate_reports_missing_artifact_capture_for_governance_tick
             node_id=node_id,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     artifact_capture_path = _receipt_root(client, workflow_id, ticket_id) / "artifact-capture.json"
+    _assert_receipt_exists(artifact_capture_path)
     artifact_capture_path.unlink()
 
     repository = client.app.state.repository
@@ -272,9 +301,10 @@ def test_required_hook_gate_reports_missing_artifact_capture_for_delivery_check_
             node_id=node_id,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     artifact_capture_path = _receipt_root(client, workflow_id, ticket_id) / "artifact-capture.json"
+    _assert_receipt_exists(artifact_capture_path)
     artifact_capture_path.unlink()
 
     repository = client.app.state.repository
@@ -323,7 +353,7 @@ def test_required_hook_gate_registry_is_the_protocol_boundary(client) -> None:
             include_git_evidence=True,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     repository = client.app.state.repository
     with repository.connection() as connection:
@@ -378,11 +408,13 @@ def test_replay_required_hook_receipts_restores_missing_receipts_idempotently(cl
             include_git_evidence=True,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     receipt_root = _receipt_root(client, workflow_id, ticket_id)
     postrun_path = receipt_root / "worker-postrun.json"
     evidence_path = receipt_root / "evidence-capture.json"
+    _assert_receipt_exists(postrun_path)
+    _assert_receipt_exists(evidence_path)
     original_postrun = json.loads(postrun_path.read_text(encoding="utf-8"))
     evidence_path.unlink()
 
@@ -427,10 +459,11 @@ def test_replay_required_hook_receipts_restores_missing_review_evidence_receipt_
             node_id=node_id,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     receipt_root = _receipt_root(client, workflow_id, ticket_id)
     artifact_capture_path = receipt_root / "artifact-capture.json"
+    _assert_receipt_exists(artifact_capture_path)
     artifact_capture_path.unlink()
 
     repository = client.app.state.repository
@@ -454,7 +487,7 @@ def test_replay_required_hook_receipts_restores_missing_review_evidence_receipt_
     }
 
 
-def test_auto_advance_opens_single_required_hook_gate_incident_for_missing_receipt(client) -> None:
+def test_required_hook_gate_scan_opens_single_incident_for_missing_receipt(client) -> None:
     init_response = client.post(
         "/api/v1/commands/project-init",
         json=_project_init_payload("Missing required hook receipts should open a formal incident."),
@@ -479,22 +512,22 @@ def test_auto_advance_opens_single_required_hook_gate_incident_for_missing_recei
             include_git_evidence=True,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
-    (_receipt_root(client, workflow_id, ticket_id) / "git-closeout.json").unlink()
+    git_closeout_path = _receipt_root(client, workflow_id, ticket_id) / "git-closeout.json"
+    _assert_receipt_exists(git_closeout_path)
+    git_closeout_path.unlink()
 
     repository = client.app.state.repository
-    auto_advance_workflow_to_next_stop(
+    scan_and_open_required_hook_gate_incidents(
         repository,
         workflow_id=workflow_id,
-        idempotency_key_prefix=f"hook-gate:{workflow_id}",
-        max_steps=1,
+        idempotency_key_base=f"hook-gate:{workflow_id}",
     )
-    auto_advance_workflow_to_next_stop(
+    scan_and_open_required_hook_gate_incidents(
         repository,
         workflow_id=workflow_id,
-        idempotency_key_prefix=f"hook-gate:{workflow_id}:repeat",
-        max_steps=1,
+        idempotency_key_base=f"hook-gate:{workflow_id}:repeat",
     )
 
     relevant_incidents = [
@@ -643,9 +676,11 @@ def test_ticket_graph_snapshot_surfaces_required_hook_pending_reason(client) -> 
             include_git_evidence=True,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
-    (_receipt_root(client, workflow_id, ticket_id) / "git-closeout.json").unlink()
+    git_closeout_path = _receipt_root(client, workflow_id, ticket_id) / "git-closeout.json"
+    _assert_receipt_exists(git_closeout_path)
+    git_closeout_path.unlink()
     snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
 
     assert node_id in snapshot.index_summary.blocked_node_ids
@@ -680,16 +715,16 @@ def test_incident_resolve_can_replay_required_hooks_and_close_gate(client) -> No
             include_git_evidence=True,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     git_receipt_path = _receipt_root(client, workflow_id, ticket_id) / "git-closeout.json"
+    _assert_receipt_exists(git_receipt_path)
     git_receipt_path.unlink()
     repository = client.app.state.repository
-    auto_advance_workflow_to_next_stop(
+    scan_and_open_required_hook_gate_incidents(
         repository,
         workflow_id=workflow_id,
-        idempotency_key_prefix=f"hook-resolve:{workflow_id}",
-        max_steps=1,
+        idempotency_key_base=f"hook-resolve:{workflow_id}",
     )
     incident = next(
         item
@@ -737,16 +772,16 @@ def test_incident_resolve_can_replay_closeout_documentation_sync_hook(client) ->
             final_artifact_refs=["art://runtime/tkt_build_001/source-code.tsx"],
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     receipt_path = _receipt_root(client, workflow_id, ticket_id) / "documentation-sync.json"
+    _assert_receipt_exists(receipt_path)
     receipt_path.unlink()
     repository = client.app.state.repository
-    auto_advance_workflow_to_next_stop(
+    scan_and_open_required_hook_gate_incidents(
         repository,
         workflow_id=workflow_id,
-        idempotency_key_prefix=f"hook-closeout-resolve:{workflow_id}",
-        max_steps=1,
+        idempotency_key_base=f"hook-closeout-resolve:{workflow_id}",
     )
     incident = next(
         item
@@ -792,9 +827,10 @@ def test_incident_resolve_rejects_when_artifact_capture_replay_lacks_terminal_wr
             node_id=node_id,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     receipt_path = _receipt_root(client, workflow_id, ticket_id) / "artifact-capture.json"
+    _assert_receipt_exists(receipt_path)
     receipt_path.unlink()
     repository = client.app.state.repository
     with repository.transaction() as connection:
@@ -870,9 +906,10 @@ def test_incident_resolve_rejects_when_review_evidence_replay_lacks_terminal_wri
             node_id=node_id,
         ),
     )
-    assert submit_response.status_code == 200
+    _assert_command_accepted(submit_response)
 
     receipt_path = _receipt_root(client, workflow_id, ticket_id) / "artifact-capture.json"
+    _assert_receipt_exists(receipt_path)
     receipt_path.unlink()
     repository = client.app.state.repository
     with repository.transaction() as connection:

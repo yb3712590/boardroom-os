@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-17 23:38`
+> 最后更新：`2026-04-17 13:48`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -803,12 +803,15 @@
 - [x] `P4-S7` 已完成第三批：`scan_and_open_required_hook_gate_incidents()` 已从 shared `node_projection.latest_ticket_id` 改成 graph-first `runtime_graph_node_views`；review lane 的 required hook gate 现在会按 `graph_node_id` 判断当前票，不再被 stale shared `node_id` 污染
 - [x] `P4-S7` 已完成第三批：`graph_health_policy.py` 已删掉 runtime-liveness 阈值；新增正式 `backend/app/core/runtime_liveness_policy.py`，`build_runtime_liveness_report()` 现已只消费自己的 policy contract
 - [x] `P4-S7` 已完成第三批：`graph_health.py` 已删掉会污染边界的 runtime-specific 死代码；图健康只保留结构类规则，运行态健康只留在 `runtime_liveness.py`
+- [x] `P4-S7` 已完成第四批：`workflow_relationships.py` 已拆成展示快照和运行态关系解析两层；`resolve_runtime_org_context_relations()` 只读 `TicketGraphSnapshot + graph_identity + ticket_projection`，缺 graph truth 或 parent edge 不唯一时显式失败
+- [x] `P4-S7` 已完成第四批：`context_compiler._build_org_context()` 已切到 graph-first relation resolver；upstream / sibling / downstream reviewer 不再按 `parent_ticket_id + shared node_id` 拼关系，open review pack 也改成只按 `source_graph_node_id / source_ticket_id` 主判
+- [x] `P4-S7` 已完成第四批：`backend/tests/test_role_hooks.py` 旧 helper 已收成显式 harness；create / lease / start / submit 都断言 `ACCEPTED`，删 receipt 前先确认 receipt 真落盘，整桶 `test_role_hooks.py -q` 已恢复全绿
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
-- [ ] `P4-S7` 这轮已把 review lane、approval target、worker runtime 和 liveness 主链接到 graph-first runtime truth，但 legacy `node_projection` 仍保留在部分读面/历史 helper 兼容壳里；后续若要继续收缩这层兼容，必须单独判断剩余消费面
+- [ ] `P4-S7` 这轮已把 review lane、approval target、worker runtime、liveness 和 compiler org context 主链接到 graph-first runtime truth，但 legacy `node_projection` 仍保留在部分展示读面/历史 helper 兼容壳里；后续若要继续收缩，只能从展示面单独清点
 - [ ] review pack / advisory 现在同时带 `source_node_id + source_graph_node_id`；前者仍保留给展示和旧 helper 兼容，后续若要继续收缩 shared `node_id` 语义，需要单独清点全部读面再删
-- [ ] `workflow_relationships / context_compiler` 这类展示兼运行混合读面仍有 legacy `node_projection` 兼容壳；后续若继续收缩，需要先把“纯展示摘要”和“运行态 org context”拆干净，再删 shared `node_id` 推导
+- [ ] `workflow_relationships` 的纯展示快照仍直接读取 legacy `node_projection`；这层不再喂给 compiler，但如果后续要彻底退出 shared `node_id`，还要单独清 projection / dashboard 消费面
 
 ### 明确放弃
 - [ ] 暂无
@@ -818,7 +821,7 @@
 - [ ] `compiled_context_bundle / compile_manifest` 的版本 ref 这轮已落库并进入 persisted payload，但 dashboard / review 读面还没显式消费；后续按 `P0-S4 / P1` 再接正式读面
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "delivery_check_report or ui_milestone_review or maker_checker_verdict" -q` 本轮按计划原样补跑时命中 `286 deselected`；当前仓库没有直接按 schema 名命名的 API 用例，本轮已改用精确链路用例 `test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked` 做同口径验证
 - [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用显式 `idle_ceo_maintenance_*` 桶做非空跑验证，后续如果要恢复聚合桶，需要单独整理命名
-- [ ] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_role_hooks.py -q` 这轮补跑会命中一组旧 helper 假设：direct create/submit 后默认应已有 hook receipt，但当前仓库这组用例并不会先验证命令是否真正落到 receipt；本轮只补 graph-first scan 与 targeted 回归，整桶 helper 清理后续单独收
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_role_hooks.py -q` 的旧 helper 假设已在 `P4-S7` 第四批清理：测试现在显式补 provider 前置、断言命令 `ACCEPTED`、确认 receipt 真存在后再删，整桶已通过
 - [ ] synthetic manual `scope review -> build/check/review -> closeout` 链当前不会自动产出 dashboard `completion_summary`；这类 summary 继续由 autopilot / closeout 专项测试覆盖，不把这条手工链写成已完成 workflow 真相
 - [ ] placeholder node 当前已进入 runtime read/create path，但仍只支持 execution lane；同一 patch 里的 placeholder-to-placeholder 接线、review lane placeholder、scheduler 自动 materialization 和持久化 `node_projection` 真相仍未支持，后续若要补必须单独开切片
 - [ ] `GraphHealthReport` 第四批现已锁成“只读 `events + graph_version + ticket/node projection.version/updated_at`”；如果后续要补 dedicated history 或 workflow 级 SLA，必须单独开切片，不能在现有规则里偷偷落新真相层
@@ -2408,6 +2411,40 @@
 
 ---
 
+### Session `2026-04-17 / 40`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 在 `backend/app/core/workflow_relationships.py` 新增 graph-first `resolve_runtime_org_context_relations()`；运行态 org context 现在只读 `TicketGraphSnapshot + graph_identity + ticket_projection`，不再把 `node_projection` 当运行态真相
+- [x] 把 `backend/app/core/context_compiler.py` 的 `_build_org_context()` 改成只吃这条新入口；upstream / collaborators / downstream reviewer 不再按 `parent_ticket_id + shared node_id` 猜关系，open review pack 也改成 `source_graph_node_id -> source_ticket_id` 主判
+- [x] 删掉一批会污染新架构真相的旧兼容推导：compiler 不再按 `source_node_id` 匹配 open review pack，不再按 incident `node_id` 猜 lane，也不再从展示快照反推运行态 org context
+- [x] 把 `backend/tests/test_role_hooks.py` 和 `backend/tests/test_context_compiler.py` 的旧 helper 收正成显式 harness：补 scoped workflow / provider 前置、create/lease/start/submit 全部断言 `ACCEPTED`、删 receipt 前先确认 receipt 已落盘；原先整桶红灯现已收绿
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_role_hooks.py -q` 通过（`14 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_context_compiler.py -q` 通过（`38 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "dependency_inspector or runtime_node_projection_version or maker_checker" -q` 通过（`11 passed, 321 deselected`）
+- [x] `./backend/.venv/Scripts/python.exe -m py_compile backend/app/core/workflow_relationships.py backend/app/core/context_compiler.py backend/app/core/projections.py backend/tests/test_role_hooks.py backend/tests/test_context_compiler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只继续收缩 graph-first runtime truth 和测试 harness，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] `workflow_relationships` 展示快照仍直接读 legacy `node_projection`；运行态 org context 已切出，但展示层兼容壳还没单独清
+- [ ] review pack / advisory 的 `source_node_id` 仍只保留为展示兼容字段，相关消费面还没全量清点
+
+**下一轮起手动作：**
+`继续从 P4-S7 续跑；优先清点 projection / dashboard 这类展示层对 legacy node_projection 与 source_node_id 的剩余消费面，再判断是否继续收缩 shared node 兼容字段。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2443,7 +2480,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第三批；required hook gate scan 已切到 graph-first runtime view，graph/liveness policy 已正式拆层，`graph_health.py` 里污染 runtime 真相的死代码已删除
-- 最近完成：`backend/app/core/runtime_liveness_policy.py` 已落地；`runtime_liveness.py` 现已只认自己的 policy contract；review lane required hook gate 不再受 stale shared `node_projection.latest_ticket_id` 影响
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`workflow_relationships / context_compiler` 仍保留 legacy `node_projection` 兼容壳；`backend/tests/test_role_hooks.py -q` 还有旧 helper/receipt 假设待清
-- 下一步：`继续从 P4-S7 后续未完成项续跑；优先清点 workflow_relationships / context_compiler 的 legacy node_projection 兼容壳，再单独清 role_hooks 全桶的旧 helper 假设`
+- 当前状态：`P4-S7` 已完成第四批；compiler org context 已切到 graph-first relation resolver，`workflow_relationships` 已拆成展示快照和运行态关系两层，旧的 shared `node_id` 关系猜测已退出主判
+- 最近完成：`backend/tests/test_role_hooks.py -q` 和 `backend/tests/test_context_compiler.py -q` 已恢复全绿；review pack open-match 现已按 `source_graph_node_id -> source_ticket_id` 主判，不再按 `source_node_id` 猜 lane
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`workflow_relationships` 的纯展示快照仍直接读 legacy `node_projection`；review pack / advisory 的 `source_node_id` 兼容字段还没单独清点全部消费面
+- 下一步：`继续从 P4-S7 后续未完成项续跑；优先清点 projection / dashboard 对 legacy node_projection 与 source_node_id 的剩余消费面，再决定是否继续收缩 shared node 兼容字段`

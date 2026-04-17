@@ -64,6 +64,8 @@
 - 2026-04-16 本轮还补了显式 `GraphHealthUnavailableError`：graph patch payload 非对象、patch node list 非 `list[str]`、ready ticket 缺 `updated_at / timeout_sla_sec` 时现在会显式失败；`workflow_auto_advance / trigger_ceo_shadow_with_recovery` 继续复用 `TICKET_GRAPH_UNAVAILABLE`
 - 2026-04-16 本轮顺手删掉了 `resolve_workflow_graph_version()` 对完整事件 payload 转换的旧依赖，改成只按 graph mutation event 的 `sequence_no` 取最新 graph version，避免坏 payload 污染 graph version 真相
 - 2026-04-17 本轮已继续落 `P4-S7` 第三批：required hook gate scan 现已改成按 `graph_identity + runtime_graph_node_views` 判断当前 graph lane；review lane 不再受 stale shared `node_projection.latest_ticket_id` 污染。`graph_health_policy.py` 也已只保留结构类规则，runtime stale/queue 阈值现已拆到新文件 `backend/app/core/runtime_liveness_policy.py`
+- 2026-04-17 本轮已完成 `P4-S7` 第四批：`workflow_relationships.py` 现已拆成展示快照和 graph-first 运行态关系解析两层；`context_compiler._build_org_context()` 只再消费 `TicketGraphSnapshot + graph_identity + ticket_projection`，不再按 `parent_ticket_id + shared node_id` 猜 upstream / sibling / reviewer
+- 2026-04-17 本轮还把旧测试 harness 收正到当前真相：`backend/tests/test_role_hooks.py` 现在会显式补 provider 前置、create/lease/start/submit 全部断言 `ACCEPTED`、删 receipt 前先确认 receipt 已落盘；`backend/tests/test_context_compiler.py` 也已补 scoped workflow / governance 前置，不再靠缺省环境混过
 
 ## 当前批次
 
@@ -177,7 +179,7 @@
 - 2026-04-17 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "runtime_node or placeholder or graph_health" -q`、`./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k "runtime_node or planned_placeholder or captures_projection_versions" -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "create_ticket or dependency_inspector or ticket_start or ticket_result_submit" -q`、`./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder or incident" -q`、`python3 -m py_compile backend/app/core/context_compiler.py backend/app/core/ticket_handlers.py backend/app/core/ticket_graph.py backend/app/core/runtime_node_views.py backend/app/core/runtime.py backend/app/core/reducer.py backend/app/db/repository.py backend/app/core/planned_placeholder_projection.py backend/app/contracts/runtime.py backend/app/contracts/commands.py backend/app/contracts/projections.py backend/app/core/projections.py`
 - 2026-04-16 本轮 fresh 验证已通过：`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "graph_health" -q`、`D:/projects/boardroom-os/backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "graph_health" -q`、`python -m py_compile backend/app/core/graph_health.py backend/tests/test_ticket_graph.py backend/tests/test_api.py backend/tests/test_ceo_scheduler.py`
 - `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "ceo_shadow" -q` 当前会返回 `51 deselected`；本轮已改用精确的 `idle_ceo_maintenance_*` 桶做非空跑验证，这条聚合桶后续要单独整理
-- 下一轮如果继续推进新架构重构，继续从 `P4-S7` 续跑，优先决定 legacy `node_projection` 兼容壳是否还能继续收缩；`RuntimeLiveness/GraphHealth` 的 policy contract 是否继续拆层单独决策；`doc/new-architecture/**` 仍保持只读
+- 下一轮如果继续推进新架构重构，继续从 `P4-S7` 续跑，优先清点 projection / dashboard 这类展示层对 legacy `node_projection` 与 `source_node_id` 的剩余消费面；`RuntimeLiveness/GraphHealth` 的 policy contract 是否继续拆层单独决策；`doc/new-architecture/**` 仍保持只读
 - 这批任务优先级高于 `M6`、`C1` 和所有新角色扩张；旧 `M7` 只按“旧口径完成”，不再作为当前主线完成定义
 
 以下批次保留作已完成基线，但当前执行优先级统一让位给 `P0-COR`。
