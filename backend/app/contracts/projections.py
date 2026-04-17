@@ -428,6 +428,8 @@ class DependencyInspectorSummaryProjection(StrictModel):
 
 class DependencyInspectorNodeProjection(StrictModel):
     node_id: str
+    graph_node_id: str | None = None
+    runtime_node_id: str | None = None
     ticket_id: str | None = None
     parent_ticket_id: str | None = None
     is_placeholder: bool = False

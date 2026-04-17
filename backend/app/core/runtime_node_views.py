@@ -78,19 +78,19 @@ def build_runtime_node_views(
     with (
         repository.connection() if connection is None else nullcontext(connection)
     ) as resolved_connection:
-        node_rows = resolved_connection.execute(
+        runtime_rows = resolved_connection.execute(
             """
             SELECT *
-            FROM node_projection
+            FROM runtime_node_projection
             WHERE workflow_id = ?
-            ORDER BY node_id ASC
+            ORDER BY graph_node_id ASC
             """,
             (workflow_id,),
         ).fetchall()
-        node_projection_by_node_id = {
-            str(row["node_id"]).strip(): repository._convert_node_projection_row(row)
-            for row in node_rows
-            if str(row["node_id"]).strip()
+        runtime_projection_by_graph_node_id = {
+            str(row["graph_node_id"]).strip(): repository._convert_runtime_node_projection_row(row)
+            for row in runtime_rows
+            if str(row["graph_node_id"]).strip()
         }
         placeholder_rows = resolved_connection.execute(
             """
@@ -126,13 +126,25 @@ def build_runtime_node_views(
 
     views: dict[str, RuntimeNodeView] = {}
 
-    for node_id, node_projection in sorted(node_projection_by_node_id.items()):
-        graph_node = materialized_graph_nodes.get(node_id)
-        if graph_node is None:
+    for node_id, graph_node in sorted(materialized_graph_nodes.items()):
+        graph_node_id = str(getattr(graph_node, "graph_node_id", "") or "").strip()
+        runtime_projection = runtime_projection_by_graph_node_id.get(graph_node_id)
+        if runtime_projection is None:
             raise RuntimeNodeViewResolutionError(
-                f"runtime node {node_id} exists in node_projection but is missing from the execution graph lane."
+                "execution graph lane contains materialized nodes without runtime_node_projection: "
+                + graph_node_id
+                + "."
             )
-        latest_ticket_id = str(node_projection.get("latest_ticket_id") or "").strip() or None
+        runtime_node_id = str(runtime_projection.get("runtime_node_id") or "").strip()
+        projection_node_id = str(runtime_projection.get("node_id") or "").strip()
+        if (
+            projection_node_id != node_id
+            or runtime_node_id != str(getattr(graph_node, "runtime_node_id", "") or "").strip()
+        ):
+            raise RuntimeNodeViewResolutionError(
+                f"runtime_node_projection {graph_node_id} does not match graph/runtime node identity."
+            )
+        latest_ticket_id = str(runtime_projection.get("latest_ticket_id") or "").strip() or None
         graph_ticket_id = str(getattr(graph_node, "ticket_id", "") or "").strip() or None
         valid_ticket_ids = valid_ticket_ids_by_node_id.get(node_id, set())
         if latest_ticket_id is not None and latest_ticket_id not in valid_ticket_ids:
@@ -141,18 +153,24 @@ def build_runtime_node_views(
             )
         views[node_id] = RuntimeNodeView(
             node_id=node_id,
-            graph_node_id=str(getattr(graph_node, "graph_node_id", "") or "").strip() or None,
-            runtime_node_id=str(getattr(graph_node, "runtime_node_id", "") or "").strip() or node_id,
+            graph_node_id=graph_node_id or None,
+            runtime_node_id=runtime_node_id or node_id,
             ticket_id=graph_ticket_id,
             is_placeholder=False,
             materialization_state=MATERIALIZATION_STATE_MATERIALIZED,
         )
 
-    missing_node_projection_ids = sorted(set(materialized_graph_nodes) - set(node_projection_by_node_id))
-    if missing_node_projection_ids:
+    extra_runtime_projection_ids = sorted(
+        set(runtime_projection_by_graph_node_id)
+        - {
+            str(getattr(graph_node, "graph_node_id", "") or "").strip()
+            for graph_node in materialized_graph_nodes.values()
+        }
+    )
+    if extra_runtime_projection_ids:
         raise RuntimeNodeViewResolutionError(
-            "execution graph lane contains materialized nodes without node_projection: "
-            + ", ".join(missing_node_projection_ids)
+            "runtime_node_projection contains graph nodes missing from the execution graph lane: "
+            + ", ".join(extra_runtime_projection_ids)
             + "."
         )
 

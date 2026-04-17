@@ -2056,6 +2056,7 @@ def _ticket_start_payload(
     started_by: str = "emp_frontend_2",
     expected_ticket_version: int | None = None,
     expected_node_version: int | None = None,
+    expected_runtime_node_version: int | None = None,
 ) -> dict:
     payload = {
         "workflow_id": workflow_id,
@@ -2068,6 +2069,8 @@ def _ticket_start_payload(
         payload["expected_ticket_version"] = expected_ticket_version
     if expected_node_version is not None:
         payload["expected_node_version"] = expected_node_version
+    if expected_runtime_node_version is not None:
+        payload["expected_runtime_node_version"] = expected_runtime_node_version
     return payload
 
 
@@ -6101,6 +6104,8 @@ def test_dependency_inspector_shows_graph_only_placeholder_node_with_materializa
     )
 
     assert placeholder_node["ticket_id"] is None
+    assert placeholder_node["graph_node_id"] == "node_dependency_placeholder_build"
+    assert placeholder_node["runtime_node_id"] is None
     assert placeholder_node["is_placeholder"] is True
     assert placeholder_node["materialization_state"] == "planned"
     assert placeholder_node["dependency_ticket_ids"] == [
@@ -6117,6 +6122,53 @@ def test_dependency_inspector_shows_graph_only_placeholder_node_with_materializa
     )
     assert placeholder_projection is not None
     assert placeholder_projection["status"] == "PLANNED"
+
+
+def test_ticket_start_rejects_stale_runtime_node_projection_version(client):
+    workflow_id = "wf_ticket_start_runtime_node_version_guard"
+    ticket_id = "tkt_ticket_start_runtime_node_version_guard"
+    node_id = "node_ticket_start_runtime_node_version_guard"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket-start should reject stale runtime node projection versions.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+
+    repository = client.app.state.repository
+    ticket_projection = repository.get_current_ticket_projection(ticket_id)
+    node_projection = repository.get_current_node_projection(workflow_id, node_id)
+    runtime_node_projection = repository.get_runtime_node_projection(workflow_id, node_id)
+
+    assert ticket_projection is not None
+    assert node_projection is not None
+    assert runtime_node_projection is not None
+
+    response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            expected_ticket_version=int(ticket_projection["version"]),
+            expected_node_version=int(node_projection["version"]),
+            expected_runtime_node_version=int(runtime_node_projection["version"]) - 1,
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "runtime node version" in str(response.json()["reason"]).lower()
 
 
 def test_ticket_create_accepts_placeholder_node_and_materializes_runtime_truth(client):
@@ -8800,6 +8852,46 @@ def test_ticket_result_submit_rejects_stale_compiled_execution_package_version_r
     node_projection = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
     assert node_projection is not None
     assert node_projection["status"] == NODE_STATUS_COMPLETED
+
+
+def test_ticket_result_submit_rejects_stale_runtime_node_projection_version(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _ensure_scoped_workflow(
+        client,
+        workflow_id="wf_seed",
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket result submit should reject stale runtime node projection versions.",
+    )
+    _create_lease_and_start_ticket(client)
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_visual_001")
+    assert ticket is not None
+
+    compiled = compile_and_persist_execution_artifacts(repository, ticket)
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET version = version + 1
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("wf_seed", "node_homepage_visual"),
+        )
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            compile_request_id=compiled.compiled_execution_package.meta.compile_request_id,
+            compiled_execution_package_version_ref=compiled.compiled_execution_package.meta.version_ref,
+            idempotency_key="ticket-result-submit:wf_seed:tkt_visual_001:stale-runtime-node-version",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "runtime node version" in response.json()["reason"].lower()
 
 
 def test_ticket_result_submit_materializes_json_artifacts_and_exposes_ticket_artifacts_projection(

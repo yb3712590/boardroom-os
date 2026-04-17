@@ -204,10 +204,16 @@ def _list_runtime_startable_leased_tickets(
         lease_expires_at = ticket.get("lease_expires_at")
         if lease_owner is None or lease_expires_at is None or lease_expires_at <= now:
             continue
-        node_projection = repository.get_current_node_projection(ticket["workflow_id"], ticket["node_id"])
-        if node_projection is None:
+        runtime_node_projection = repository.get_runtime_node_projection(
+            ticket["workflow_id"],
+            ticket["node_id"],
+        )
+        if runtime_node_projection is None:
             continue
-        if node_projection["latest_ticket_id"] != ticket["ticket_id"] or node_projection["status"] != "PENDING":
+        if (
+            runtime_node_projection["latest_ticket_id"] != ticket["ticket_id"]
+            or runtime_node_projection["status"] != "PENDING"
+        ):
             continue
         runnable_tickets.append(ticket)
     return sorted(runnable_tickets, key=_runtime_sort_key)
@@ -2341,6 +2347,10 @@ def run_leased_ticket_runtime(
             str(ticket["workflow_id"]),
             str(ticket["node_id"]),
         )
+        current_runtime_node = repository.get_runtime_node_projection(
+            str(ticket["workflow_id"]),
+            str(ticket["node_id"]),
+        )
         start_ack = handle_ticket_start(
             repository,
             TicketStartCommand(
@@ -2352,6 +2362,11 @@ def run_leased_ticket_runtime(
                 expected_node_version=(
                     int(current_node["version"])
                     if current_node is not None
+                    else None
+                ),
+                expected_runtime_node_version=(
+                    int(current_runtime_node["version"])
+                    if current_runtime_node is not None
                     else None
                 ),
                 idempotency_key=_build_start_idempotency_key(ticket),

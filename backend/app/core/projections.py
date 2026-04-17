@@ -1171,6 +1171,8 @@ def build_dependency_inspector_projection(
         node_projections.append(
             DependencyInspectorNodeProjection(
                 node_id=graph_node.node_id,
+                graph_node_id=str(graph_node.graph_node_id),
+                runtime_node_id=graph_node.runtime_node_id,
                 ticket_id=ticket_id,
                 parent_ticket_id=parent_ticket_id_by_ticket_id.get(ticket_id),
                 is_placeholder=False,
@@ -1245,6 +1247,8 @@ def build_dependency_inspector_projection(
         node_projections.append(
             DependencyInspectorNodeProjection(
                 node_id=graph_node.node_id,
+                graph_node_id=str(graph_node.graph_node_id),
+                runtime_node_id=node_view.runtime_node_id,
                 ticket_id=None,
                 parent_ticket_id=parent_ticket_id_by_graph_node_id.get(str(graph_node.graph_node_id)),
                 is_placeholder=True,

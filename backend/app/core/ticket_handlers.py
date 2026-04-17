@@ -118,7 +118,11 @@ from app.core.execution_targets import (
     infer_execution_contract_payload,
     resolve_execution_target_ref_from_ticket_spec,
 )
-from app.core.graph_identity import GRAPH_LANE_EXECUTION
+from app.core.graph_identity import (
+    GRAPH_LANE_EXECUTION,
+    apply_legacy_graph_contract_compat,
+    resolve_graph_lane_kind,
+)
 from app.core.planned_placeholder_gate import PlannedPlaceholderGateBlock
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
@@ -194,6 +198,7 @@ from app.core.runtime_node_lifecycle import (
     REASON_CODE_PLANNED_PLACEHOLDER_NOT_MATERIALIZED,
     RuntimeNodeLifecycleError,
     build_runtime_node_lifecycle_reason,
+    require_materialized_runtime_node,
     resolve_runtime_node_lifecycle,
 )
 from app.core.runtime_node_views import (
@@ -5411,15 +5416,19 @@ def handle_ticket_create(
                 ticket_id=payload.ticket_id,
                 reason=str(exc),
             )
-        current_node = repository.get_current_node_projection(
-            payload.workflow_id,
-            payload.node_id,
-            connection=connection,
+        current_runtime_node = (
+            repository.get_runtime_node_projection(
+                payload.workflow_id,
+                str(node_view.graph_node_id or payload.node_id),
+                connection=connection,
+            )
+            if node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED
+            else None
         )
         if (
             node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED
-            and current_node is not None
-            and current_node["status"] != NODE_STATUS_REWORK_REQUIRED
+            and current_runtime_node is not None
+            and current_runtime_node["status"] != NODE_STATUS_REWORK_REQUIRED
         ):
             return _rejected_ack(
                 command_id=command_id,
@@ -5428,7 +5437,7 @@ def handle_ticket_create(
                 ticket_id=payload.ticket_id,
                 reason=(
                     f"Node {payload.node_id} cannot accept a new ticket while status is "
-                    f"{current_node['status']}."
+                    f"{current_runtime_node['status']}."
                 ),
             )
 
@@ -5799,12 +5808,30 @@ def handle_ticket_start(
                 ),
             )
         current_ticket = repository.get_current_ticket_projection(payload.ticket_id, connection=connection)
+        current_runtime_node = repository.get_runtime_node_projection(
+            payload.workflow_id,
+            str(node_view.graph_node_id or payload.node_id),
+            connection=connection,
+        )
         current_node = repository.get_current_node_projection(
             payload.workflow_id,
             payload.node_id,
             connection=connection,
         )
-        if current_ticket is None or current_node is None:
+        if current_ticket is None:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason="Ticket must be created before it can be started.",
+            )
+        current_ticket_spec = apply_legacy_graph_contract_compat(
+            repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
+        )
+        uses_runtime_node_truth = resolve_graph_lane_kind(current_ticket_spec) == GRAPH_LANE_EXECUTION
+        active_node_projection = current_runtime_node if uses_runtime_node_truth else current_node
+        if active_node_projection is None:
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
@@ -5820,19 +5847,25 @@ def handle_ticket_start(
                 ticket_id=payload.ticket_id,
                 reason="Ticket projection does not match the requested workflow or node.",
             )
-        if current_node["latest_ticket_id"] != payload.ticket_id:
+        if active_node_projection["latest_ticket_id"] != payload.ticket_id:
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
-                reason="Node projection no longer points at this ticket.",
+                reason=(
+                    "Runtime node projection no longer points at this ticket."
+                    if uses_runtime_node_truth
+                    else "Node projection no longer points at this ticket."
+                ),
             )
         version_guard_reason = repository.validate_projection_version_guard(
             current_ticket=current_ticket,
             current_node=current_node,
+            current_runtime_node=current_runtime_node if uses_runtime_node_truth else None,
             expected_ticket_version=payload.expected_ticket_version,
             expected_node_version=payload.expected_node_version,
+            expected_runtime_node_version=payload.expected_runtime_node_version,
         )
         if version_guard_reason is not None:
             return _rejected_ack(
@@ -5842,7 +5875,7 @@ def handle_ticket_start(
                 ticket_id=payload.ticket_id,
                 reason=version_guard_reason,
             )
-        if current_node["status"] != NODE_STATUS_PENDING:
+        if active_node_projection["status"] != NODE_STATUS_PENDING:
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
@@ -5850,7 +5883,7 @@ def handle_ticket_start(
                 ticket_id=payload.ticket_id,
                 reason=(
                     f"Ticket {payload.ticket_id} can only start while node {payload.node_id} is "
-                    f"PENDING; current node status is {current_node['status']}."
+                    f"PENDING; current node status is {active_node_projection['status']}."
                 ),
             )
         if current_ticket["status"] != TICKET_STATUS_LEASED:
@@ -6336,7 +6369,17 @@ def handle_ticket_result_submit(
         )
     current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
     current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
-    if current_ticket is None or current_node is None:
+    with repository.connection() as connection:
+        current_ticket_spec = apply_legacy_graph_contract_compat(
+            repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
+        )
+    uses_runtime_node_truth = resolve_graph_lane_kind(current_ticket_spec) == GRAPH_LANE_EXECUTION
+    current_runtime_node = repository.get_runtime_node_projection(
+        payload.workflow_id,
+        str(node_view.graph_node_id or payload.node_id),
+    )
+    active_node_projection = current_runtime_node if uses_runtime_node_truth else current_node
+    if current_ticket is None or active_node_projection is None:
         return _rejected_ack(
             command_id=new_prefixed_id("cmd"),
             idempotency_key=payload.idempotency_key,
@@ -6354,7 +6397,10 @@ def handle_ticket_result_submit(
             reason=f"Ticket {payload.ticket_id} is already cancelled.",
         )
 
-    if current_ticket["status"] == TICKET_STATUS_CANCEL_REQUESTED or current_node["status"] == NODE_STATUS_CANCEL_REQUESTED:
+    if (
+        current_ticket["status"] == TICKET_STATUS_CANCEL_REQUESTED
+        or active_node_projection["status"] == NODE_STATUS_CANCEL_REQUESTED
+    ):
         command_id = new_prefixed_id("cmd")
         received_at = now_local()
         with repository.transaction() as connection:
@@ -6389,7 +6435,7 @@ def handle_ticket_result_submit(
             causation_hint=f"ticket:{payload.ticket_id}",
         )
 
-    if current_ticket["status"] != TICKET_STATUS_EXECUTING or current_node["status"] != NODE_STATUS_EXECUTING:
+    if current_ticket["status"] != TICKET_STATUS_EXECUTING or active_node_projection["status"] != NODE_STATUS_EXECUTING:
         return _rejected_ack(
             command_id=new_prefixed_id("cmd"),
             idempotency_key=payload.idempotency_key,
@@ -6398,7 +6444,7 @@ def handle_ticket_result_submit(
             reason=(
                 f"Ticket {payload.ticket_id} can only submit a structured result while ticket/node "
                 f"status is EXECUTING/EXECUTING; current status is "
-                f"{current_ticket['status']}/{current_node['status']}."
+                f"{current_ticket['status']}/{active_node_projection['status']}."
             ),
         )
 
@@ -6873,20 +6919,6 @@ def _complete_ticket_locked(
     developer_inspector_store: DeveloperInspectorStore | None,
     persisted_artifacts: list[PersistedDeveloperInspectorArtifact],
 ) -> str:
-    current_node = repository.get_current_node_projection(
-        payload.workflow_id,
-        payload.node_id,
-        connection=connection,
-    )
-    if current_node is None:
-        raise RuntimeError("Ticket must be created and started before it can be completed.")
-    if current_node["status"] != NODE_STATUS_EXECUTING:
-        raise RuntimeError(
-            f"Node {payload.node_id} cannot accept a ticket result while status is {current_node['status']}."
-        )
-    if current_node["latest_ticket_id"] != payload.ticket_id:
-        raise RuntimeError("Node projection no longer points at this ticket.")
-
     current_ticket = repository.get_current_ticket_projection(
         payload.ticket_id,
         connection=connection,
@@ -6902,6 +6934,39 @@ def _complete_ticket_locked(
         raise RuntimeError(
             f"Ticket {payload.ticket_id} cannot be completed while status is {current_ticket['status']}."
         )
+    current_ticket_spec = apply_legacy_graph_contract_compat(
+        repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
+    )
+    uses_runtime_node_truth = resolve_graph_lane_kind(current_ticket_spec) == GRAPH_LANE_EXECUTION
+    if uses_runtime_node_truth:
+        node_view = require_materialized_runtime_node(
+            repository,
+            payload.workflow_id,
+            payload.node_id,
+            operation="ticket-complete",
+            connection=connection,
+        )
+        active_node_projection = repository.get_runtime_node_projection(
+            payload.workflow_id,
+            str(node_view.graph_node_id or payload.node_id),
+            connection=connection,
+        )
+        pointer_error = "Runtime node projection no longer points at this ticket."
+    else:
+        active_node_projection = repository.get_current_node_projection(
+            payload.workflow_id,
+            payload.node_id,
+            connection=connection,
+        )
+        pointer_error = "Node projection no longer points at this ticket."
+    if active_node_projection is None:
+        raise RuntimeError("Ticket must be created and started before it can be completed.")
+    if active_node_projection["status"] != NODE_STATUS_EXECUTING:
+        raise RuntimeError(
+            f"Node {payload.node_id} cannot accept a ticket result while status is {active_node_projection['status']}."
+        )
+    if active_node_projection["latest_ticket_id"] != payload.ticket_id:
+        raise RuntimeError(pointer_error)
 
     created_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id)
     effective_review_request = _resolve_original_review_request(payload, created_spec)

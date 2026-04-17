@@ -148,7 +148,7 @@ def _load_materialized_node_ids(
     rows = connection.execute(
         """
         SELECT node_id
-        FROM node_projection
+        FROM runtime_node_projection
         WHERE workflow_id = ?
         """,
         (workflow_id,),

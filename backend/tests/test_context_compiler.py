@@ -1957,6 +1957,7 @@ def test_compile_and_persist_execution_artifacts_rejects_planned_placeholder_bef
         output_schema_ref="source_code_delivery",
         delivery_stage="BUILD",
     )
+    created_payload["graph_contract"] = {"lane_kind": "execution"}
     with repository.transaction() as connection:
         repository.insert_event(
             connection,
@@ -2246,19 +2247,29 @@ def test_compile_and_persist_execution_artifacts_versions_compiled_execution_pac
 
 def test_build_compile_request_captures_projection_versions(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id="wf_compile",
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Compile request projection versions should come from persisted runtime truth.",
+    )
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
     ticket = repository.get_current_ticket_projection("tkt_compile_001")
     node = repository.get_current_node_projection("wf_compile", "node_compile_001")
+    runtime_node = repository.get_runtime_node_projection("wf_compile", "node_compile_001")
     assert ticket is not None
     assert node is not None
+    assert runtime_node is not None
 
     compile_request = build_compile_request(repository, ticket)
 
     assert compile_request.meta.ticket_projection_version == int(ticket["version"])
     assert compile_request.meta.node_projection_version == int(node["version"])
+    assert compile_request.meta.runtime_node_projection_version == int(runtime_node["version"])
     assert compile_request.meta.source_projection_version >= 1
 
 

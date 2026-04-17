@@ -409,6 +409,7 @@ class TicketStartCommand(StrictModel):
     started_by: str = Field(min_length=1)
     expected_ticket_version: int | None = Field(default=None, ge=1)
     expected_node_version: int | None = Field(default=None, ge=1)
+    expected_runtime_node_version: int | None = Field(default=None, ge=1)
     idempotency_key: str = Field(min_length=1)
 
 

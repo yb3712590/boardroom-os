@@ -207,9 +207,7 @@ def build_ticket_graph_snapshot(
                 connection=owned_connection,
             )
 
-    workflow = repository.get_workflow_projection(workflow_id, connection=connection)
-    if workflow is None:
-        raise ValueError(f"Workflow {workflow_id} does not exist.")
+    repository.get_workflow_projection(workflow_id, connection=connection)
 
     ticket_rows = connection.execute(
         """
@@ -219,9 +217,9 @@ def build_ticket_graph_snapshot(
         """,
         (workflow_id,),
     ).fetchall()
-    node_rows = connection.execute(
+    runtime_node_rows = connection.execute(
         """
-        SELECT * FROM node_projection
+        SELECT * FROM runtime_node_projection
         WHERE workflow_id = ?
         ORDER BY updated_at ASC, node_id ASC
         """,
@@ -242,20 +240,23 @@ def build_ticket_graph_snapshot(
         str(ticket["ticket_id"]): ticket
         for ticket in tickets
     }
-    node_projection_by_runtime_node_id = {
-        str(row["node_id"]): repository._convert_node_projection_row(row)
-        for row in node_rows
+    runtime_node_projection_by_graph_node_id = {
+        str(row["graph_node_id"]): repository._convert_runtime_node_projection_row(row)
+        for row in runtime_node_rows
     }
     open_incident_runtime_node_ids = {
         str(row["node_id"]).strip()
         for row in incident_rows
         if str(row["node_id"]).strip()
     }
-    graph_version = resolve_workflow_graph_version(
-        repository,
-        workflow_id,
-        connection=connection,
-    )
+    try:
+        graph_version = resolve_workflow_graph_version(
+            repository,
+            workflow_id,
+            connection=connection,
+        )
+    except ValueError:
+        graph_version = "gv_0"
 
     created_specs_by_ticket_id: dict[str, dict[str, Any]] = {}
     identities_by_ticket_id: dict[str, TicketGraphIdentity] = {}
@@ -275,7 +276,7 @@ def build_ticket_graph_snapshot(
         )
         identities_by_ticket_id[ticket_id] = identity
         runtime_node_projection = (
-            node_projection_by_runtime_node_id.get(identity.runtime_node_id) or {}
+            runtime_node_projection_by_graph_node_id.get(identity.graph_node_id) or {}
         )
         sort_key = (
             1
@@ -302,7 +303,7 @@ def build_ticket_graph_snapshot(
         identity = identities_by_ticket_id[ticket_id]
         created_spec = created_specs_by_ticket_id.get(ticket_id) or {}
         runtime_node_projection = (
-            node_projection_by_runtime_node_id.get(identity.runtime_node_id) or {}
+            runtime_node_projection_by_graph_node_id.get(identity.graph_node_id) or {}
         )
         is_runtime_latest_ticket = (
             str(runtime_node_projection.get("latest_ticket_id") or "").strip() == ticket_id

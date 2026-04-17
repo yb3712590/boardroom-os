@@ -1065,6 +1065,43 @@ def test_runtime_node_view_fail_closes_when_placeholder_projection_is_missing(cl
         )
 
 
+def test_runtime_node_view_fail_closes_when_runtime_projection_is_missing(client):
+    workflow_id = "wf_runtime_node_view_missing_runtime_projection"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Runtime node views should fail closed when runtime node projection is missing.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_runtime_node_view_missing_runtime_projection",
+        node_id="node_runtime_node_view_missing_runtime_projection",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM runtime_node_projection
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            (workflow_id, "node_runtime_node_view_missing_runtime_projection"),
+        )
+
+    with pytest.raises(RuntimeNodeViewResolutionError, match="runtime_node_projection"):
+        resolve_runtime_node_view(
+            repository,
+            workflow_id,
+            "node_runtime_node_view_missing_runtime_projection",
+        )
+
+
 def test_ticket_graph_snapshot_fail_closes_invalid_legacy_dependency(client):
     workflow_id = "wf_ticket_graph_invalid_dependency"
     _ensure_scoped_workflow(

@@ -21,6 +21,7 @@ class CompileRequestMeta(TenantWorkspaceScope):
     governance_profile_ref: str = Field(min_length=1)
     ticket_projection_version: int | None = Field(default=None, ge=1)
     node_projection_version: int | None = Field(default=None, ge=1)
+    runtime_node_projection_version: int | None = Field(default=None, ge=1)
     source_projection_version: int | None = Field(default=None, ge=1)
 
 
@@ -399,6 +400,7 @@ class CompiledExecutionPackageMeta(TenantWorkspaceScope):
     compiler_version: str = Field(min_length=1)
     ticket_projection_version: int | None = Field(default=None, ge=1)
     node_projection_version: int | None = Field(default=None, ge=1)
+    runtime_node_projection_version: int | None = Field(default=None, ge=1)
     source_projection_version: int | None = Field(default=None, ge=1)
 
 

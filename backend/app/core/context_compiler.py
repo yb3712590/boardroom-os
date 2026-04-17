@@ -73,6 +73,11 @@ from app.core.constants import (
     TICKET_STATUS_COMPLETED,
 )
 from app.core.governance_profiles import require_governance_profile, governance_profile_to_mode_slice
+from app.core.graph_identity import (
+    GRAPH_LANE_EXECUTION,
+    apply_legacy_graph_contract_compat,
+    resolve_graph_lane_kind,
+)
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -695,6 +700,7 @@ def _build_execution_package_meta(compile_request: CompileRequest) -> CompiledEx
         compiler_version=MINIMAL_CONTEXT_COMPILER_VERSION,
         ticket_projection_version=compile_request.meta.ticket_projection_version,
         node_projection_version=compile_request.meta.node_projection_version,
+        runtime_node_projection_version=compile_request.meta.runtime_node_projection_version,
         source_projection_version=compile_request.meta.source_projection_version,
     )
 
@@ -1788,7 +1794,10 @@ def build_compile_request(
     ticket: dict[str, Any],
     connection: sqlite3.Connection | None = None,
 ) -> CompileRequest:
-    created_spec = _require_ticket_create_spec(repository, ticket["ticket_id"], connection=connection)
+    created_spec = apply_legacy_graph_contract_compat(
+        _require_ticket_create_spec(repository, ticket["ticket_id"], connection=connection)
+    )
+    uses_runtime_node_truth = resolve_graph_lane_kind(created_spec) == GRAPH_LANE_EXECUTION
     governance_profile = require_governance_profile(
         repository,
         workflow_id=str(ticket["workflow_id"]),
@@ -1809,26 +1818,33 @@ def build_compile_request(
     attempt_no = int(created_spec.get("attempt_no") or 0)
     if attempt_no <= 0:
         raise ValueError("Ticket attempt_no is missing for runtime compilation.")
-    require_materialized_runtime_node(
-        repository,
-        str(ticket["workflow_id"]),
-        str(ticket["node_id"]),
-        operation="runtime compilation",
-        connection=connection,
-    )
     node_projection = repository.get_current_node_projection(
         str(ticket["workflow_id"]),
         str(ticket["node_id"]),
         connection=connection,
     )
-    if node_projection is None:
-        raise RuntimeNodeLifecycleError(
-            workflow_id=str(ticket["workflow_id"]),
-            node_id=str(ticket["node_id"]),
-            reason_code=REASON_CODE_RUNTIME_NODE_TRUTH_CONFLICT,
+    runtime_node_projection = None
+    if uses_runtime_node_truth:
+        node_view = require_materialized_runtime_node(
+            repository,
+            str(ticket["workflow_id"]),
+            str(ticket["node_id"]),
             operation="runtime compilation",
-            detail="node_projection is missing after lifecycle gate accepted the node as materialized.",
+            connection=connection,
         )
+        runtime_node_projection = repository.get_runtime_node_projection(
+            str(ticket["workflow_id"]),
+            str(node_view.graph_node_id or ""),
+            connection=connection,
+        )
+        if runtime_node_projection is None:
+            raise RuntimeNodeLifecycleError(
+                workflow_id=str(ticket["workflow_id"]),
+                node_id=str(ticket["node_id"]),
+                reason_code=REASON_CODE_RUNTIME_NODE_TRUTH_CONFLICT,
+                operation="runtime compilation",
+                detail="runtime_node_projection is missing after lifecycle gate accepted the node as materialized.",
+            )
     _, source_projection_version = repository.get_cursor_and_version(connection=connection)
     if source_projection_version <= 0:
         raise ValueError("Source projection version is missing for runtime compilation.")
@@ -1939,7 +1955,14 @@ def build_compile_request(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             ticket_projection_version=int(ticket["version"]),
-            node_projection_version=int(node_projection["version"]),
+            node_projection_version=(
+                int(node_projection["version"]) if node_projection is not None else None
+            ),
+            runtime_node_projection_version=(
+                int(runtime_node_projection["version"])
+                if runtime_node_projection is not None
+                else None
+            ),
             source_projection_version=source_projection_version,
         ),
         control_refs=CompileRequestControlRefs(

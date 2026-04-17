@@ -91,6 +91,7 @@ from app.core.reducer import (
     rebuild_employee_projections,
     rebuild_incident_projections,
     rebuild_node_projections,
+    rebuild_runtime_node_projections,
     rebuild_ticket_projections,
     rebuild_workflow_projections,
 )
@@ -127,6 +128,7 @@ class ControlPlaneRepository:
             self._ensure_workflow_projection_shape(connection)
             self._ensure_ticket_projection_shape(connection)
             self._ensure_node_projection_shape(connection)
+            self._ensure_runtime_node_projection_shape(connection)
             self._ensure_planned_placeholder_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
             self._ensure_worker_bootstrap_state_shape(connection)
@@ -423,6 +425,40 @@ class ControlPlaneRepository:
                 ),
             )
 
+    def replace_runtime_node_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM runtime_node_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO runtime_node_projection (
+                    workflow_id,
+                    graph_node_id,
+                    node_id,
+                    runtime_node_id,
+                    latest_ticket_id,
+                    status,
+                    blocking_reason_code,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["workflow_id"],
+                    projection["graph_node_id"],
+                    projection["node_id"],
+                    projection["runtime_node_id"],
+                    projection["latest_ticket_id"],
+                    projection["status"],
+                    projection.get("blocking_reason_code"),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
     def replace_planned_placeholder_projections(
         self,
         connection: sqlite3.Connection,
@@ -551,6 +587,7 @@ class ControlPlaneRepository:
         self.replace_workflow_projections(connection, rebuild_workflow_projections(events))
         self.replace_ticket_projections(connection, rebuild_ticket_projections(events))
         self.replace_node_projections(connection, rebuild_node_projections(events))
+        self.replace_runtime_node_projections(connection, rebuild_runtime_node_projections(events))
         self.replace_employee_projections(connection, rebuild_employee_projections(events))
         self.replace_incident_projections(connection, rebuild_incident_projections(events))
         self.replace_planned_placeholder_projections(
@@ -667,6 +704,52 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_node_projection_row(row)
+
+    def get_runtime_node_projection(
+        self,
+        workflow_id: str,
+        graph_node_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM runtime_node_projection
+            WHERE workflow_id = ? AND graph_node_id = ?
+        """
+        params = (workflow_id, graph_node_id)
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return self._convert_runtime_node_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return self._convert_runtime_node_projection_row(row)
+
+    def list_runtime_node_projections(
+        self,
+        workflow_id: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM runtime_node_projection
+        """
+        params: tuple[Any, ...] = ()
+        if workflow_id is not None:
+            query += " WHERE workflow_id = ?"
+            params = (workflow_id,)
+        query += " ORDER BY workflow_id ASC, graph_node_id ASC"
+        if connection is not None:
+            rows = connection.execute(query, params).fetchall()
+            return [self._convert_runtime_node_projection_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, params).fetchall()
+            return [self._convert_runtime_node_projection_row(row) for row in rows]
 
     def get_planned_placeholder_projection(
         self,
@@ -3788,13 +3871,16 @@ class ControlPlaneRepository:
         self,
         *,
         current_ticket: dict[str, Any],
-        current_node: dict[str, Any],
+        current_node: dict[str, Any] | None,
+        current_runtime_node: dict[str, Any] | None,
         expected_ticket_version: int | None,
         expected_node_version: int | None,
+        expected_runtime_node_version: int | None,
     ) -> str | None:
         if (
             expected_ticket_version is None
             and expected_node_version is None
+            and expected_runtime_node_version is None
         ):
             return None
         if expected_ticket_version is not None and int(current_ticket["version"]) != int(expected_ticket_version):
@@ -3802,11 +3888,26 @@ class ControlPlaneRepository:
                 "Projection target outdated. Reload ticket state before retrying "
                 f"(ticket version {current_ticket['version']} != expected {expected_ticket_version})."
             )
-        if expected_node_version is not None and int(current_node["version"]) != int(expected_node_version):
-            return (
-                "Projection target outdated. Reload ticket state before retrying "
-                f"(node version {current_node['version']} != expected {expected_node_version})."
-            )
+        if expected_node_version is not None:
+            if current_node is None:
+                return "Projection target outdated. Reload ticket state before retrying (node projection is missing)."
+            if int(current_node["version"]) != int(expected_node_version):
+                return (
+                    "Projection target outdated. Reload ticket state before retrying "
+                    f"(node version {current_node['version']} != expected {expected_node_version})."
+                )
+        if expected_runtime_node_version is not None:
+            if current_runtime_node is None:
+                return (
+                    "Projection target outdated. Reload ticket state before retrying "
+                    "(runtime node projection is missing)."
+                )
+            if int(current_runtime_node["version"]) != int(expected_runtime_node_version):
+                return (
+                    "Projection target outdated. Reload ticket state before retrying "
+                    f"(runtime node version {current_runtime_node['version']} != expected "
+                    f"{expected_runtime_node_version})."
+                )
         return None
 
     def validate_compiled_execution_package_guard(
@@ -3841,6 +3942,26 @@ class ControlPlaneRepository:
                 "Compiled execution package is outdated. Reload runtime state before retrying "
                 f"(package version {latest_package['version_ref']} != expected {compiled_execution_package_version_ref})."
             )
+        latest_payload = latest_package.get("payload") or {}
+        latest_meta = latest_payload.get("meta") or {}
+        expected_runtime_node_version = latest_meta.get("runtime_node_projection_version")
+        if expected_runtime_node_version is not None:
+            current_runtime_node = self.get_runtime_node_projection(
+                str(latest_meta.get("workflow_id") or ""),
+                str(latest_meta.get("node_id") or ""),
+                connection=connection,
+            )
+            if current_runtime_node is None:
+                return (
+                    "Compiled execution package is outdated. Reload runtime state before retrying "
+                    "(runtime node projection is missing)."
+                )
+            if int(current_runtime_node["version"]) != int(expected_runtime_node_version):
+                return (
+                    "Compiled execution package is outdated. Reload runtime state before retrying "
+                    f"(runtime node version {current_runtime_node['version']} != expected "
+                    f"{expected_runtime_node_version})."
+                )
         return None
 
     def _next_version_int(
@@ -5687,6 +5808,13 @@ class ControlPlaneRepository:
         converted["version"] = int(converted.get("version") or 0)
         return converted
 
+    def _convert_runtime_node_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        if converted.get("updated_at"):
+            converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
     def _convert_employee_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         if converted.get("updated_at"):
@@ -6539,6 +6667,56 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_node_projection_latest_ticket_id ON node_projection(latest_ticket_id)"
+        )
+
+    def _ensure_runtime_node_projection_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runtime_node_projection (
+                workflow_id TEXT NOT NULL,
+                graph_node_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                runtime_node_id TEXT NOT NULL,
+                latest_ticket_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                blocking_reason_code TEXT,
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                PRIMARY KEY (workflow_id, graph_node_id)
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(runtime_node_projection)").fetchall()
+        }
+        required_columns = {
+            "workflow_id": "TEXT",
+            "graph_node_id": "TEXT",
+            "node_id": "TEXT",
+            "runtime_node_id": "TEXT",
+            "latest_ticket_id": "TEXT",
+            "status": "TEXT",
+            "blocking_reason_code": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE runtime_node_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_node_projection_node_id ON runtime_node_projection(node_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_node_projection_runtime_node_id ON runtime_node_projection(runtime_node_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_node_projection_latest_ticket_id ON runtime_node_projection(latest_ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_node_projection_status ON runtime_node_projection(status)"
         )
 
     def _ensure_planned_placeholder_projection_shape(self, connection: sqlite3.Connection) -> None:

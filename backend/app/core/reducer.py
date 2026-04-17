@@ -64,6 +64,7 @@ from app.core.constants import (
     TICKET_STATUS_TIMED_OUT,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
 from app.core.workflow_completion import (
     infer_workflow_current_stage,
     resolve_workflow_closeout_completion,
@@ -1220,6 +1221,189 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
             key = (workflow_id, node_id)
             projections[key] = {
                 **projections.get(key, _base_node_projection(event, payload)),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_REWORK_REQUIRED,
+                "blocking_reason_code": blocking_reason,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+
+    return list(projections.values())
+
+
+def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
+    created_specs_by_ticket_id: dict[str, dict[str, Any]] = {}
+    projections: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for event in events:
+        payload = _event_payload(event)
+        if event["event_type"] != EVENT_TICKET_CREATED:
+            continue
+        ticket_id = str(payload.get("ticket_id") or "").strip()
+        if not ticket_id:
+            continue
+        created_specs_by_ticket_id[ticket_id] = apply_legacy_graph_contract_compat(dict(payload))
+
+    for event in events:
+        payload = _event_payload(event)
+        event_type = event["event_type"]
+        occurred_at = event["occurred_at"].isoformat()
+        version = event["sequence_no"]
+        workflow_id = event["workflow_id"]
+
+        if workflow_id is None:
+            continue
+
+        ticket_id = str(payload.get("ticket_id") or "").strip()
+        created_spec = created_specs_by_ticket_id.get(ticket_id)
+        if not ticket_id or created_spec is None:
+            continue
+        identity = resolve_ticket_graph_identity(
+            ticket_id=ticket_id,
+            created_spec=created_spec,
+            runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
+        )
+        if identity.graph_lane_kind != "execution":
+            continue
+        key = (workflow_id, identity.graph_node_id)
+        base_projection = {
+            "workflow_id": workflow_id,
+            "graph_node_id": identity.graph_node_id,
+            "node_id": identity.runtime_node_id,
+            "runtime_node_id": identity.runtime_node_id,
+            "latest_ticket_id": ticket_id,
+            "blocking_reason_code": None,
+        }
+
+        if event_type == EVENT_TICKET_CREATED:
+            projections[key] = {
+                **base_projection,
+                "status": NODE_STATUS_PENDING,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_LEASED:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_PENDING,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_STARTED:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_EXECUTING,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_PENDING,
+                "blocking_reason_code": payload.get("reason_code", BLOCKING_REASON_PROVIDER_REQUIRED),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_PENDING,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_CANCEL_REQUESTED:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_CANCEL_REQUESTED,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_CANCELLED:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_CANCELLED,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_TICKET_COMPLETED:
+            if payload.get("board_review_requested"):
+                continue
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_COMPLETED,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type in {EVENT_TICKET_FAILED, EVENT_TICKET_TIMED_OUT}:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_REWORK_REQUIRED,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_BOARD_REVIEW_REQUIRED:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+                "blocking_reason_code": BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_BOARD_REVIEW_APPROVED:
+            projections[key] = {
+                **projections.get(key, base_projection),
+                "latest_ticket_id": ticket_id,
+                "status": NODE_STATUS_COMPLETED,
+                "blocking_reason_code": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_BOARD_REVIEW_REJECTED:
+            blocking_reason = (
+                BLOCKING_REASON_MODIFY_CONSTRAINTS
+                if payload.get("decision_action") == "MODIFY_CONSTRAINTS"
+                else BLOCKING_REASON_BOARD_REJECTED
+            )
+            projections[key] = {
+                **projections.get(key, base_projection),
                 "latest_ticket_id": ticket_id,
                 "status": NODE_STATUS_REWORK_REQUIRED,
                 "blocking_reason_code": blocking_reason,
