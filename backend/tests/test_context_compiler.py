@@ -2273,6 +2273,59 @@ def test_build_compile_request_captures_projection_versions(client, set_ticket_t
     assert compile_request.meta.source_projection_version >= 1
 
 
+def test_review_lane_compile_request_captures_runtime_node_projection_version(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = "wf_compile_review_lane"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Review-lane compile request should come from persisted runtime truth.",
+    )
+    _seed_governance_profile(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        profile_id="gp_compile_review_lane",
+    )
+    api_test_helpers._create_lease_and_start_ticket(client, workflow_id=workflow_id)
+    maker_response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=api_test_helpers._ticket_complete_payload(workflow_id=workflow_id),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(
+        workflow_id,
+        "node_homepage_visual",
+    )["latest_ticket_id"]
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    assert checker_lease_response.status_code == 200
+    assert checker_lease_response.json()["status"] == "ACCEPTED"
+
+    checker_ticket = repository.get_current_ticket_projection(checker_ticket_id)
+    review_runtime_node = repository.get_runtime_node_projection(
+        workflow_id,
+        "node_homepage_visual::review",
+    )
+
+    assert checker_ticket is not None
+    assert review_runtime_node is not None
+
+    compile_request = build_compile_request(repository, checker_ticket)
+
+    assert compile_request.meta.runtime_node_projection_version == int(review_runtime_node["version"])
+
+
 def test_export_latest_compile_artifacts_to_developer_inspector_writes_real_persisted_payloads(
     client,
     set_ticket_time,

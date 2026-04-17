@@ -510,6 +510,30 @@ def test_ticket_graph_snapshot_assigns_graph_identity_lanes_for_shared_runtime_n
     assert review_edge.target_runtime_node_id == shared_node_id
 
 
+def test_runtime_node_projection_materializes_review_lane_rows(client):
+    workflow_id = "wf_runtime_node_projection_review_lane"
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+
+    repository = client.app.state.repository
+    subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
+    source_graph_node_id = str(subject.get("source_graph_node_id") or "").strip()
+    execution_projection = repository.get_runtime_node_projection(
+        workflow_id,
+        "node_homepage_visual",
+    )
+    review_projection = repository.get_runtime_node_projection(
+        workflow_id,
+        "node_homepage_visual::review",
+    )
+
+    assert source_graph_node_id == "node_homepage_visual::review"
+    assert execution_projection is not None
+    assert review_projection is not None
+    assert review_projection["graph_node_id"] == "node_homepage_visual::review"
+    assert review_projection["runtime_node_id"] == "node_homepage_visual"
+    assert review_projection["latest_ticket_id"] != "tkt_visual_001"
+
+
 def test_graph_health_ignores_same_lane_retry_parent_self_edge(client):
     workflow_id = "wf_graph_health_retry_self_edge"
     node_id = "node_graph_health_retry_self_edge"
@@ -2558,6 +2582,24 @@ def test_runtime_liveness_report_rejects_ready_node_missing_version_for_queue_st
         "_convert_ticket_projection_row",
         _convert_ticket_projection_row_without_version,
     )
+
+    with pytest.raises(RuntimeError, match="runtime liveness unavailable"):
+        runtime_liveness_module.build_runtime_liveness_report(repository, workflow_id)
+
+
+def test_runtime_liveness_report_rejects_review_lane_missing_runtime_projection(client):
+    workflow_id = "wf_runtime_liveness_missing_review_runtime_projection"
+    _seed_review_request(client, workflow_id=workflow_id)
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM runtime_node_projection
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            (workflow_id, "node_homepage_visual::review"),
+        )
 
     with pytest.raises(RuntimeError, match="runtime liveness unavailable"):
         runtime_liveness_module.build_runtime_liveness_report(repository, workflow_id)

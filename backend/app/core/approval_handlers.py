@@ -86,6 +86,7 @@ from app.core.board_advisory_analysis import (
     run_board_advisory_analysis,
 )
 from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
+from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
 from app.core.graph_patch_reducer import (
     GraphPatchEventRecord,
     GraphPatchReducerUnavailableError,
@@ -273,23 +274,40 @@ def _validate_blocked_projection(
 ) -> str | None:
     subject = approval["payload"].get("review_pack", {}).get("subject", {})
     workflow_id = approval["workflow_id"]
-    ticket_id = subject.get("source_ticket_id")
-    node_id = subject.get("source_node_id")
-    if ticket_id is None or node_id is None:
+    ticket_id = str(subject.get("source_ticket_id") or "").strip()
+    node_id = str(subject.get("source_node_id") or "").strip()
+    graph_node_id = str(subject.get("source_graph_node_id") or "").strip()
+    if not ticket_id:
         return None
-
     ticket_projection = repository.get_current_ticket_projection(ticket_id)
-    node_projection = repository.get_current_node_projection(workflow_id, node_id)
-    if ticket_projection is None or node_projection is None:
-        return "Ticket or node projection for this approval is missing. Reload dashboard state."
+    if ticket_projection is None:
+        return "Ticket or runtime node projection for this approval is missing. Reload dashboard state."
+    if not graph_node_id:
+        with repository.connection() as connection:
+            created_spec = apply_legacy_graph_contract_compat(
+                repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
+            )
+        try:
+            graph_node_id = resolve_ticket_graph_identity(
+                ticket_id=ticket_id,
+                created_spec=created_spec,
+                runtime_node_id=node_id or str(ticket_projection.get("node_id") or ""),
+            ).graph_node_id
+        except RuntimeError:
+            return "Approval target graph identity is missing. Reload review-room projection."
+    runtime_node_projection = repository.get_runtime_node_projection(workflow_id, graph_node_id)
+    if runtime_node_projection is None:
+        return "Ticket or runtime node projection for this approval is missing. Reload review-room projection."
     if ticket_projection["status"] != TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW:
         return "Ticket is not currently blocked for board review."
-    if node_projection["status"] != NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+    if runtime_node_projection["status"] != NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
         return "Node is not currently blocked for board review."
-    if ticket_projection["workflow_id"] != workflow_id or ticket_projection["node_id"] != node_id:
+    if ticket_projection["workflow_id"] != workflow_id or ticket_projection["node_id"] != str(
+        runtime_node_projection.get("node_id") or node_id
+    ):
         return "Ticket projection does not match the approval target."
-    if node_projection["latest_ticket_id"] != ticket_id:
-        return "Node projection no longer points at this approval ticket."
+    if runtime_node_projection["latest_ticket_id"] != ticket_id:
+        return "Runtime node projection no longer points at this approval ticket."
     return None
 
 

@@ -53,7 +53,7 @@ def _workflow_ticket_projections(
     }
 
 
-def _workflow_node_projections(
+def _workflow_runtime_node_projections(
     repository: ControlPlaneRepository,
     *,
     workflow_id: str,
@@ -62,16 +62,16 @@ def _workflow_node_projections(
     rows = connection.execute(
         """
         SELECT *
-        FROM node_projection
+        FROM runtime_node_projection
         WHERE workflow_id = ?
-        ORDER BY updated_at ASC, node_id ASC
+        ORDER BY updated_at ASC, graph_node_id ASC
         """,
         (workflow_id,),
     ).fetchall()
     return {
-        str(row["node_id"]).strip(): repository._convert_node_projection_row(row)
+        str(row["graph_node_id"]).strip(): repository._convert_runtime_node_projection_row(row)
         for row in rows
-        if str(row["node_id"]).strip()
+        if str(row["graph_node_id"]).strip()
     }
 
 
@@ -166,6 +166,65 @@ def _finding_digest(
         description=description,
         suggested_action=suggested_action,
     )
+
+
+def _require_runtime_projection_for_graph_node(
+    graph_snapshot,
+    runtime_node_by_graph_node_id: dict[str, dict[str, Any]],
+    *,
+    graph_node_id: str,
+    expected_ticket_id: str | None = None,
+) -> dict[str, Any]:
+    normalized_graph_node_id = str(graph_node_id or "").strip()
+    runtime_node = runtime_node_by_graph_node_id.get(normalized_graph_node_id)
+    if runtime_node is None:
+        _raise_runtime_liveness_unavailable(
+            f"graph lane {normalized_graph_node_id} is missing runtime_node_projection."
+        )
+    graph_node = _graph_node_by_graph_node_id(graph_snapshot).get(normalized_graph_node_id)
+    if graph_node is None:
+        _raise_runtime_liveness_unavailable(
+            f"runtime liveness cannot find graph lane {normalized_graph_node_id} in the graph snapshot."
+        )
+    runtime_node_id = str(runtime_node.get("runtime_node_id") or "").strip()
+    graph_runtime_node_id = str(graph_node.runtime_node_id or "").strip()
+    projection_node_id = str(runtime_node.get("node_id") or "").strip()
+    graph_node_id_value = str(graph_node.node_id or "").strip()
+    if runtime_node_id != graph_runtime_node_id or projection_node_id != graph_node_id_value:
+        _raise_runtime_liveness_unavailable(
+            f"runtime_node_projection {normalized_graph_node_id} does not match graph/runtime identity."
+        )
+    latest_ticket_id = str(runtime_node.get("latest_ticket_id") or "").strip()
+    graph_ticket_id = str(graph_node.ticket_id or "").strip()
+    if expected_ticket_id is not None and latest_ticket_id != expected_ticket_id:
+        _raise_runtime_liveness_unavailable(
+            f"runtime_node_projection {normalized_graph_node_id} points to {latest_ticket_id or '<missing>'} "
+            f"instead of {expected_ticket_id}."
+        )
+    if latest_ticket_id != graph_ticket_id:
+        _raise_runtime_liveness_unavailable(
+            f"runtime_node_projection {normalized_graph_node_id} latest ticket {latest_ticket_id or '<missing>'} "
+            f"does not match graph ticket {graph_ticket_id or '<missing>'}."
+        )
+    return runtime_node
+
+
+def _validate_runtime_truth_for_materialized_graph_lanes(
+    graph_snapshot,
+    runtime_node_by_graph_node_id: dict[str, dict[str, Any]],
+) -> None:
+    for graph_node in graph_snapshot.nodes:
+        if bool(getattr(graph_node, "is_placeholder", False)):
+            continue
+        graph_node_id = str(graph_node.graph_node_id or "").strip()
+        if not graph_node_id:
+            _raise_runtime_liveness_unavailable("materialized graph lane is missing graph_node_id.")
+        _require_runtime_projection_for_graph_node(
+            graph_snapshot,
+            runtime_node_by_graph_node_id,
+            graph_node_id=graph_node_id,
+            expected_ticket_id=str(graph_node.ticket_id or "").strip() or None,
+        )
 
 
 def _require_datetime(
@@ -269,6 +328,11 @@ def _queue_starvation_findings(
         workflow_id=workflow_id,
         connection=connection,
     )
+    runtime_node_by_graph_node_id = _workflow_runtime_node_projections(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
     current_time = now_local()
     findings: list[GraphHealthFindingDigest] = []
     for node_id in ready_node_ids:
@@ -282,17 +346,27 @@ def _queue_starvation_findings(
             _raise_runtime_liveness_unavailable(
                 f"ready node {node_id} points to missing ticket {ticket_id}."
             )
+        runtime_node = _require_runtime_projection_for_graph_node(
+            graph_snapshot,
+            runtime_node_by_graph_node_id,
+            graph_node_id=node_id,
+            expected_ticket_id=ticket_id,
+        )
+        if str(runtime_node.get("status") or "").strip() != "PENDING":
+            _raise_runtime_liveness_unavailable(
+                f"ready graph lane {node_id} is backed by runtime status {runtime_node.get('status')!r}."
+            )
         updated_at = _require_datetime(
-            ticket.get("updated_at"),
-            reason=f"ready ticket {ticket_id} is missing updated_at.",
+            runtime_node.get("updated_at"),
+            reason=f"ready runtime node {node_id} is missing updated_at.",
         )
         timeout_sla_sec = _require_int(
             ticket.get("timeout_sla_sec"),
             reason=f"ready ticket {ticket_id} is missing timeout_sla_sec.",
         )
         _require_int(
-            ticket.get("version"),
-            reason=f"ready ticket {ticket_id} is missing version.",
+            runtime_node.get("version"),
+            reason=f"ready runtime node {node_id} is missing version.",
         )
         starvation_threshold_sec = timeout_sla_sec * policy.queue_starvation_multiplier
         starvation_age_sec = int((current_time - updated_at).total_seconds())
@@ -431,6 +505,11 @@ def _ready_node_stale_findings(
         workflow_id=workflow_id,
         connection=connection,
     )
+    runtime_node_by_graph_node_id = _workflow_runtime_node_projections(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
     current_time = now_local()
     findings: list[GraphHealthFindingDigest] = []
     for node_id in ready_node_ids:
@@ -444,9 +523,19 @@ def _ready_node_stale_findings(
             _raise_runtime_liveness_unavailable(
                 f"ready node {node_id} points to missing ticket {ticket_id}."
             )
+        runtime_node = _require_runtime_projection_for_graph_node(
+            graph_snapshot,
+            runtime_node_by_graph_node_id,
+            graph_node_id=node_id,
+            expected_ticket_id=ticket_id,
+        )
+        if str(runtime_node.get("status") or "").strip() != "PENDING":
+            _raise_runtime_liveness_unavailable(
+                f"ready graph lane {node_id} is backed by runtime status {runtime_node.get('status')!r}."
+            )
         updated_at = _require_datetime(
-            ticket.get("updated_at"),
-            reason=f"ready ticket {ticket_id} is missing updated_at.",
+            runtime_node.get("updated_at"),
+            reason=f"ready runtime node {node_id} is missing updated_at.",
         )
         timeout_sla_sec = _require_int(
             ticket.get("timeout_sla_sec"),
@@ -497,12 +586,11 @@ def _cross_version_sla_breach_findings(
         workflow_id=workflow_id,
         connection=connection,
     )
-    node_by_node_id = _workflow_node_projections(
+    runtime_node_by_graph_node_id = _workflow_runtime_node_projections(
         repository,
         workflow_id=workflow_id,
         connection=connection,
     )
-    graph_node_by_graph_node_id = _graph_node_by_graph_node_id(graph_snapshot)
     current_time = now_local()
     findings: list[GraphHealthFindingDigest] = []
     for node_id in blocked_node_ids:
@@ -516,22 +604,19 @@ def _cross_version_sla_breach_findings(
             _raise_runtime_liveness_unavailable(
                 f"blocked node {node_id} points to missing ticket {ticket_id}."
             )
-        graph_node = graph_node_by_graph_node_id.get(node_id)
-        runtime_node_id = str(
-            graph_node.runtime_node_id if graph_node is not None else ""
-        ).strip()
-        node_projection = node_by_node_id.get(runtime_node_id)
-        if node_projection is None:
-            _raise_runtime_liveness_unavailable(
-                f"blocked node {node_id} is missing node projection."
-            )
+        runtime_node = _require_runtime_projection_for_graph_node(
+            graph_snapshot,
+            runtime_node_by_graph_node_id,
+            graph_node_id=node_id,
+            expected_ticket_id=ticket_id,
+        )
         ticket_updated_at = _require_datetime(
             ticket.get("updated_at"),
             reason=f"blocked ticket {ticket_id} is missing updated_at.",
         )
-        node_updated_at = _require_datetime(
-            node_projection.get("updated_at"),
-            reason=f"blocked node {node_id} is missing updated_at.",
+        runtime_updated_at = _require_datetime(
+            runtime_node.get("updated_at"),
+            reason=f"blocked runtime node {node_id} is missing updated_at.",
         )
         timeout_sla_sec = _require_int(
             ticket.get("timeout_sla_sec"),
@@ -542,14 +627,14 @@ def _cross_version_sla_breach_findings(
             reason=f"blocked ticket {ticket_id} is missing version.",
         )
         node_version = _require_int(
-            node_projection.get("version"),
-            reason=f"blocked node {node_id} is missing version.",
+            runtime_node.get("version"),
+            reason=f"blocked runtime node {node_id} is missing version.",
         )
         latest_projection_version = max(ticket_version, node_version)
         version_delta = current_graph_version_int - latest_projection_version
         if version_delta < policy.cross_version_sla_version_delta_threshold:
             continue
-        blocked_updated_at = max(ticket_updated_at, node_updated_at)
+        blocked_updated_at = max(ticket_updated_at, runtime_updated_at)
         blocked_age_sec = int((current_time - blocked_updated_at).total_seconds())
         blocked_threshold_sec = timeout_sla_sec * policy.cross_version_sla_multiplier
         if blocked_age_sec <= blocked_threshold_sec:
@@ -584,6 +669,15 @@ def build_runtime_liveness_report(
             repository,
             workflow_id,
             connection=resolved_connection,
+        )
+        runtime_node_by_graph_node_id = _workflow_runtime_node_projections(
+            repository,
+            workflow_id=workflow_id,
+            connection=resolved_connection,
+        )
+        _validate_runtime_truth_for_materialized_graph_lanes(
+            graph_snapshot,
+            runtime_node_by_graph_node_id,
         )
         findings = [
             *_queue_starvation_findings(

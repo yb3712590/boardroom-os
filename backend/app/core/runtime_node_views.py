@@ -41,43 +41,13 @@ class RuntimeNodeView:
     materialization_hint: str | None = None
 
 
-def _execution_graph_nodes_by_node_id(
-    graph_snapshot: TicketGraphSnapshot,
-) -> tuple[dict[str, object], dict[str, object]]:
-    materialized_by_node_id: dict[str, object] = {}
-    placeholder_by_node_id: dict[str, object] = {}
-    for graph_node in graph_snapshot.nodes:
-        node_id = str(getattr(graph_node, "node_id", "") or "").strip()
-        if not node_id:
-            continue
-        if str(getattr(graph_node, "graph_lane_kind", "") or "") != GRAPH_LANE_EXECUTION:
-            continue
-        target = placeholder_by_node_id if bool(getattr(graph_node, "is_placeholder", False)) else materialized_by_node_id
-        if node_id in target:
-            raise RuntimeNodeViewResolutionError(
-                f"runtime node view found multiple execution-lane graph nodes for node_id {node_id}."
-            )
-        target[node_id] = graph_node
-    return materialized_by_node_id, placeholder_by_node_id
-
-
-def build_runtime_node_views(
+def _load_runtime_truth_rows(
     repository: "ControlPlaneRepository",
     workflow_id: str,
     *,
-    graph_snapshot: TicketGraphSnapshot | None = None,
-    connection: "sqlite3.Connection" | None = None,
-) -> dict[str, RuntimeNodeView]:
-    if graph_snapshot is None:
-        graph_snapshot = build_ticket_graph_snapshot(
-            repository,
-            workflow_id,
-            connection=connection,
-        )
-
-    with (
-        repository.connection() if connection is None else nullcontext(connection)
-    ) as resolved_connection:
+    connection: "sqlite3.Connection" | None,
+) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
         runtime_rows = resolved_connection.execute(
             """
             SELECT *
@@ -106,17 +76,77 @@ def build_runtime_node_views(
             for row in placeholder_rows
             if str(row["node_id"]).strip()
         }
+    return runtime_projection_by_graph_node_id, placeholder_projection_by_node_id
 
-    materialized_graph_nodes, placeholder_graph_nodes = _execution_graph_nodes_by_node_id(graph_snapshot)
-    valid_ticket_ids_by_node_id: dict[str, set[str]] = {}
+
+def _partition_graph_nodes(
+    graph_snapshot: TicketGraphSnapshot,
+) -> tuple[dict[str, object], dict[str, object]]:
+    materialized_by_graph_node_id: dict[str, object] = {}
+    placeholder_by_node_id: dict[str, object] = {}
     for graph_node in graph_snapshot.nodes:
-        if bool(getattr(graph_node, "is_placeholder", False)):
-            continue
+        graph_node_id = str(getattr(graph_node, "graph_node_id", "") or "").strip()
         node_id = str(getattr(graph_node, "node_id", "") or "").strip()
-        ticket_id = str(getattr(graph_node, "ticket_id", "") or "").strip()
-        if node_id and ticket_id:
-            valid_ticket_ids_by_node_id.setdefault(node_id, set()).add(ticket_id)
-    conflicting_node_ids = sorted(set(materialized_graph_nodes) & set(placeholder_graph_nodes))
+        if bool(getattr(graph_node, "is_placeholder", False)):
+            if not node_id:
+                raise RuntimeNodeViewResolutionError(
+                    f"placeholder graph node {graph_node_id or '<missing>'} is missing node_id."
+                )
+            if graph_node_id != node_id:
+                raise RuntimeNodeViewResolutionError(
+                    f"placeholder graph node {graph_node_id or '<missing>'} must use node_id as graph identity."
+                )
+            if str(getattr(graph_node, "graph_lane_kind", "") or "") != GRAPH_LANE_EXECUTION:
+                raise RuntimeNodeViewResolutionError(
+                    f"placeholder graph node {graph_node_id} must stay on the execution lane."
+                )
+            if node_id in placeholder_by_node_id:
+                raise RuntimeNodeViewResolutionError(
+                    f"runtime node view found multiple execution placeholders for node_id {node_id}."
+                )
+            placeholder_by_node_id[node_id] = graph_node
+            continue
+        if not graph_node_id:
+            raise RuntimeNodeViewResolutionError("materialized graph node is missing graph_node_id.")
+        if graph_node_id in materialized_by_graph_node_id:
+            raise RuntimeNodeViewResolutionError(
+                f"runtime node view found multiple graph nodes for graph_node_id {graph_node_id}."
+            )
+        materialized_by_graph_node_id[graph_node_id] = graph_node
+    return materialized_by_graph_node_id, placeholder_by_node_id
+
+
+def build_runtime_graph_node_views(
+    repository: "ControlPlaneRepository",
+    workflow_id: str,
+    *,
+    graph_snapshot: TicketGraphSnapshot | None = None,
+    connection: "sqlite3.Connection" | None = None,
+) -> dict[str, RuntimeNodeView]:
+    if graph_snapshot is None:
+        graph_snapshot = build_ticket_graph_snapshot(
+            repository,
+            workflow_id,
+            connection=connection,
+        )
+
+    runtime_projection_by_graph_node_id, placeholder_projection_by_node_id = _load_runtime_truth_rows(
+        repository,
+        workflow_id,
+        connection=connection,
+    )
+    materialized_graph_nodes, placeholder_graph_nodes = _partition_graph_nodes(graph_snapshot)
+
+    conflicting_node_ids = sorted(
+        {
+            str(node_id).strip()
+            for node_id in placeholder_graph_nodes
+            if str(node_id).strip() in {
+                str(getattr(graph_node, "node_id", "") or "").strip()
+                for graph_node in materialized_graph_nodes.values()
+            }
+        }
+    )
     if conflicting_node_ids:
         raise RuntimeNodeViewResolutionError(
             "runtime node view found conflicting materialized and placeholder graph nodes for "
@@ -126,50 +156,48 @@ def build_runtime_node_views(
 
     views: dict[str, RuntimeNodeView] = {}
 
-    for node_id, graph_node in sorted(materialized_graph_nodes.items()):
-        graph_node_id = str(getattr(graph_node, "graph_node_id", "") or "").strip()
+    for graph_node_id, graph_node in sorted(materialized_graph_nodes.items()):
         runtime_projection = runtime_projection_by_graph_node_id.get(graph_node_id)
         if runtime_projection is None:
             raise RuntimeNodeViewResolutionError(
-                "execution graph lane contains materialized nodes without runtime_node_projection: "
+                "materialized graph lane contains nodes without runtime_node_projection: "
                 + graph_node_id
                 + "."
             )
-        runtime_node_id = str(runtime_projection.get("runtime_node_id") or "").strip()
+        graph_runtime_node_id = str(getattr(graph_node, "runtime_node_id", "") or "").strip()
+        graph_node_runtime_id = str(getattr(graph_node, "node_id", "") or "").strip()
         projection_node_id = str(runtime_projection.get("node_id") or "").strip()
+        projection_runtime_node_id = str(runtime_projection.get("runtime_node_id") or "").strip()
         if (
-            projection_node_id != node_id
-            or runtime_node_id != str(getattr(graph_node, "runtime_node_id", "") or "").strip()
+            not graph_node_runtime_id
+            or projection_node_id != graph_node_runtime_id
+            or projection_runtime_node_id != graph_runtime_node_id
         ):
             raise RuntimeNodeViewResolutionError(
                 f"runtime_node_projection {graph_node_id} does not match graph/runtime node identity."
             )
         latest_ticket_id = str(runtime_projection.get("latest_ticket_id") or "").strip() or None
         graph_ticket_id = str(getattr(graph_node, "ticket_id", "") or "").strip() or None
-        valid_ticket_ids = valid_ticket_ids_by_node_id.get(node_id, set())
-        if latest_ticket_id is not None and latest_ticket_id not in valid_ticket_ids:
+        if latest_ticket_id != graph_ticket_id:
             raise RuntimeNodeViewResolutionError(
-                f"runtime node {node_id} latest ticket {latest_ticket_id!r} is not present in any graph lane."
+                f"runtime graph lane {graph_node_id} latest ticket {latest_ticket_id!r} does not match "
+                f"graph ticket {graph_ticket_id!r}."
             )
-        views[node_id] = RuntimeNodeView(
-            node_id=node_id,
-            graph_node_id=graph_node_id or None,
-            runtime_node_id=runtime_node_id or node_id,
+        views[graph_node_id] = RuntimeNodeView(
+            node_id=projection_node_id,
+            graph_node_id=graph_node_id,
+            runtime_node_id=projection_runtime_node_id or projection_node_id,
             ticket_id=graph_ticket_id,
             is_placeholder=False,
             materialization_state=MATERIALIZATION_STATE_MATERIALIZED,
         )
 
     extra_runtime_projection_ids = sorted(
-        set(runtime_projection_by_graph_node_id)
-        - {
-            str(getattr(graph_node, "graph_node_id", "") or "").strip()
-            for graph_node in materialized_graph_nodes.values()
-        }
+        set(runtime_projection_by_graph_node_id) - set(materialized_graph_nodes)
     )
     if extra_runtime_projection_ids:
         raise RuntimeNodeViewResolutionError(
-            "runtime_node_projection contains graph nodes missing from the execution graph lane: "
+            "runtime_node_projection contains graph nodes missing from the graph truth: "
             + ", ".join(extra_runtime_projection_ids)
             + "."
         )
@@ -183,6 +211,7 @@ def build_runtime_node_views(
             + ", ".join(missing_placeholder_projection_ids)
             + "."
         )
+
     extra_placeholder_projection_ids = sorted(
         set(placeholder_projection_by_node_id) - set(placeholder_graph_nodes)
     )
@@ -194,10 +223,6 @@ def build_runtime_node_views(
         )
 
     for node_id, graph_node in sorted(placeholder_graph_nodes.items()):
-        if node_id in views:
-            raise RuntimeNodeViewResolutionError(
-                f"runtime node {node_id} is both materialized and a placeholder."
-            )
         placeholder_projection = placeholder_projection_by_node_id.get(node_id)
         if placeholder_projection is None:
             raise RuntimeNodeViewResolutionError(
@@ -225,6 +250,82 @@ def build_runtime_node_views(
         )
 
     return views
+
+
+def build_runtime_node_views(
+    repository: "ControlPlaneRepository",
+    workflow_id: str,
+    *,
+    graph_snapshot: TicketGraphSnapshot | None = None,
+    connection: "sqlite3.Connection" | None = None,
+) -> dict[str, RuntimeNodeView]:
+    if graph_snapshot is None:
+        graph_snapshot = build_ticket_graph_snapshot(
+            repository,
+            workflow_id,
+            connection=connection,
+        )
+    graph_views = build_runtime_graph_node_views(
+        repository,
+        workflow_id,
+        graph_snapshot=graph_snapshot,
+        connection=connection,
+    )
+    graph_node_by_graph_node_id = {
+        str(node.graph_node_id or "").strip(): node
+        for node in graph_snapshot.nodes
+        if str(node.graph_node_id or "").strip()
+    }
+    execution_views: dict[str, RuntimeNodeView] = {}
+    for graph_node_id, view in graph_views.items():
+        graph_node = graph_node_by_graph_node_id.get(graph_node_id)
+        if graph_node is None:
+            continue
+        if str(getattr(graph_node, "graph_lane_kind", "") or "") != GRAPH_LANE_EXECUTION:
+            continue
+        node_id = str(view.node_id or "").strip()
+        if not node_id:
+            continue
+        if node_id in execution_views:
+            raise RuntimeNodeViewResolutionError(
+                f"runtime node view found multiple execution-lane graph nodes for node_id {node_id}."
+            )
+        execution_views[node_id] = view
+    return execution_views
+
+
+def resolve_runtime_graph_node_view(
+    repository: "ControlPlaneRepository",
+    workflow_id: str,
+    graph_node_id: str,
+    *,
+    graph_snapshot: TicketGraphSnapshot | None = None,
+    connection: "sqlite3.Connection" | None = None,
+) -> RuntimeNodeView:
+    normalized_graph_node_id = str(graph_node_id or "").strip()
+    if not normalized_graph_node_id:
+        raise RuntimeNodeViewResolutionError("runtime graph node view requires a non-empty graph_node_id.")
+    views = build_runtime_graph_node_views(
+        repository,
+        workflow_id,
+        graph_snapshot=graph_snapshot,
+        connection=connection,
+    )
+    return views.get(
+        normalized_graph_node_id,
+        RuntimeNodeView(
+            node_id="",
+            graph_node_id=normalized_graph_node_id,
+            runtime_node_id=None,
+            ticket_id=None,
+            is_placeholder=False,
+            materialization_state=MATERIALIZATION_STATE_MISSING,
+            placeholder_status=None,
+            reason_code=None,
+            open_incident_id=None,
+            materialization_hint=None,
+        ),
+    )
 
 
 def resolve_runtime_node_view(
@@ -259,3 +360,16 @@ def resolve_runtime_node_view(
             materialization_hint=None,
         ),
     )
+
+
+__all__ = [
+    "MATERIALIZATION_STATE_MATERIALIZED",
+    "MATERIALIZATION_STATE_MISSING",
+    "MATERIALIZATION_STATE_PLANNED",
+    "RuntimeNodeView",
+    "RuntimeNodeViewResolutionError",
+    "build_runtime_graph_node_views",
+    "build_runtime_node_views",
+    "resolve_runtime_graph_node_view",
+    "resolve_runtime_node_view",
+]

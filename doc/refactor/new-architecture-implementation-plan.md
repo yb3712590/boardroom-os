@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-17 18:42`
+> 最后更新：`2026-04-17 21:08`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -794,14 +794,17 @@
 - [x] `P4-S6` 已完成第三批：`workflow_auto_advance` 现已新增 preflight blocker recover；autopilot 会先处理 open approval / open incident，再 build snapshot 和 health probe，generic board approval 的 `ceo_delegate` 自动收口、provider incident 的 `RESTORE_ONLY / RETRY` 恢复链现在不会再被旧 blocker 顺序卡死
 - [x] `P4-S6` 已完成第三批：`TicketGraph` 已删掉 same-lane retry / replacement lineage 的 self `PARENT_OF` 边；同一 execution lane 的 retry 历史不再把 `GraphHealthReport` 打成 cyclic path
 - [x] `P4-S6` 已完成第三批：测试时钟基座现已补齐到 `runtime_liveness / graph_health`；provider recovery 和 autopilot orchestration 的时间窗口回归现在按显式会话时间跑，不再夹带宿主机当前时间
-- [x] `P4-S7` 已完成第一批：新增正式 `runtime_node_projection` 真相层和 reducer；当前只覆盖 execution lane 的 materialized runtime node，固定落 `workflow_id / graph_node_id / node_id / runtime_node_id / latest_ticket_id / status / blocking_reason_code / updated_at / version`
-- [x] `P4-S7` 已完成第一批：`runtime_node_views / context_compiler / ticket-start / ticket-result-submit / runtime runner / Dependency Inspector / TicketGraph` 已切到 execution-lane runtime truth；review lane 明确继续走 legacy `node_projection` 兼容壳，不再让 review 票污染 execution runtime truth
+- [x] `P4-S7` 已完成第一批：新增正式 `runtime_node_projection` 真相层和 reducer；execution lane 的 materialized runtime node 现在按 `workflow_id / graph_node_id / node_id / runtime_node_id / latest_ticket_id / status / blocking_reason_code / updated_at / version` 幂等重建
+- [x] `P4-S7` 已完成第一批：`runtime_node_views / context_compiler / ticket-start / ticket-result-submit / runtime runner / Dependency Inspector / TicketGraph` 已切到 execution-lane runtime truth；旧的 execution-lane `node_projection` 缺失猜状态路径已移除
 - [x] `P4-S7` 已完成第一批：`CompileRequestMeta / CompiledExecutionPackageMeta` 现已补 `runtime_node_projection_version`；`ticket-start` 和 `ticket-result-submit` 现在会显式拒绝 stale runtime node projection，不再从 legacy `node_projection` 缺失或 shared `node_id` 反推执行态真相
+- [x] `P4-S7` 已完成第二批：`runtime_node_projection` 已扩到所有 materialized graph lane；maker-checker review 现在会稳定落 `graph_node_id=<runtime_node_id>::review` 的 runtime truth，不再让 review lane 借 shared `node_id` 混进 execution row
+- [x] `P4-S7` 已完成第二批：`context_compiler / ticket-start / ticket-result-submit / ticket-complete / runtime runner` 已改成先解 `graph_identity` 再读 `runtime_node_projection`；review lane 现在也会显式校验 `runtime_node_projection_version`，缺 graph-lane runtime row 时统一 fail-closed
+- [x] `P4-S7` 已完成第二批：review pack subject 已补正式 `source_graph_node_id`；`approval target` 和 `RuntimeLivenessReport` 已切到 graph-first runtime truth，旧的 `source_node_id + node_projection` 审批校验和 lane-backed liveness 猜测已退出主链
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
-- [ ] `P4-S7` 这轮只把 execution lane runtime truth 从 legacy `node_projection` 拆出；review lane、approval target 和 worker runtime 仍未继续收成 graph-first 双层真相，如果后续要推进必须单独开切片
-- [ ] legacy `node_projection` 当前仍保留兼容读面；只有当非 execution-lane 消费面全部迁走后，才允许继续收缩或删除这层兼容壳
+- [ ] `P4-S7` 这轮已把 review lane、approval target、worker runtime 和 liveness 主链接到 graph-first runtime truth，但 legacy `node_projection` 仍保留在部分读面/历史 helper 兼容壳里；后续若要继续收缩这层兼容，必须单独判断剩余消费面
+- [ ] review pack / advisory 现在同时带 `source_node_id + source_graph_node_id`；前者仍保留给展示和旧 helper 兼容，后续若要继续收缩 shared `node_id` 语义，需要单独清点全部读面再删
 - [ ] `RuntimeLivenessReport` 现已从 `GraphHealthReport` 拆出，但当前仍复用同一份 `graph_health_policy.py` 字段集合；如果后续还要继续瘦监视层边界，再决定是否把 graph policy / liveness policy 进一步拆成两个正式合同
 
 ### 明确放弃
@@ -845,13 +848,13 @@
 
 ### D-004
 **现象：**  
-`runtime truth` 这轮已经拆出 execution-lane 专用 `runtime_node_projection`，但 maker-checker review、approval target 和 worker runtime 仍继续依赖 legacy `node_projection`。
+`runtime truth` 原先只覆盖 execution lane，maker-checker review、approval target 和 worker runtime 一度继续依赖 legacy `node_projection`。
 
 **影响：**  
-execution lane 已经能按 graph-first runtime truth fail-closed，但 review lane 和部分兼容入口还没脱离 shared `node_id` 语义；如果下一轮不单独拆切片，继续把两类真相揉在一起，会重新长回隐式 fallback。
+如果 review lane、approval target 和 worker runtime 继续混用 shared `node_id`，图身份和运行时身份就会重新糊回一层，后面会逼出更多隐式 fallback。
 
 **当前处理：**  
-`P4-S7` 已明确锁边界：execution lane 走新 runtime truth，review lane 继续留在兼容壳；后续若要继续拆 review/approval/runtime 双层真相，必须单独开下一切片，不在本轮偷渡。
+`已在 2026-04-17 收口：review lane runtime truth、approval target、runtime runner 和 runtime liveness 现已统一切到 graph-first runtime_node_projection；保留下来的 legacy node_projection 只剩部分兼容读面，不再承担 review/runtime 主校验。`
 
 **是否需要改架构文档：**  
 `no`
@@ -2322,6 +2325,45 @@ execution lane 已经能按 graph-first runtime truth fail-closed，但 review l
 
 ---
 
+### Session `2026-04-17 / 38`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `backend/app/core/reducer.py` 的 `runtime_node_projection` 重建从 execution-only 扩到所有 materialized graph lane；maker-checker review 现在也会稳定落 `graph_node_id=<runtime_node_id>::review` 的 runtime truth
+- [x] 把 `backend/app/core/runtime_node_views.py` 收成 graph-lane 真相入口；materialized lane 现在统一只认 `runtime_node_projection`，execution placeholder 继续只认 `planned_placeholder_projection`
+- [x] 把 `context_compiler / ticket-start / ticket-result-submit / ticket-complete / runtime runner` 全部改成“先解 graph identity，再读 graph-lane runtime truth”；review lane 现在也会显式校验 `runtime_node_projection_version`
+- [x] 给 review pack subject 补正式 `source_graph_node_id`，并把 `approval target` 切到 `source_graph_node_id + runtime_node_projection`；旧的 `source_node_id + node_projection` 主校验已退出
+- [x] 把 `RuntimeLivenessReport` 改成先校验所有 materialized graph lane 的 runtime truth，再读 lane-scoped `runtime_node_projection.updated_at / version / latest_ticket_id`；lane-backed graph/runtime 不一致时现在会显式 `RuntimeLivenessUnavailableError`
+- [x] 删掉一批会污染新架构真相的旧兼容：review lane runtime 不再借 legacy `node_projection` 主校验，runtime runner 不再直接拿 `ticket.node_id` 查 runtime row，approval target 不再按 shared `node_id` 猜当前 graph lane
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ticket_graph.py -k "runtime_node or placeholder or graph_health" -q` 通过（`20 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_context_compiler.py -k "runtime_node or captures_projection_versions" -q` 通过（`2 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "runtime_node_projection_version or maker_checker or projection_is_not_currently_blocked" -q` 通过（`7 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_scheduler_runner.py -k "runtime_governance_gate or maker_checker or runtime_runner_executes_leased_review_lane_ticket" -q` 通过（`1 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_ceo_scheduler.py -k "runtime_liveness or QUEUE_STARVATION" -q` 通过（`1 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m py_compile backend/app/core/reducer.py backend/app/core/runtime_node_views.py backend/app/core/context_compiler.py backend/app/core/ticket_handlers.py backend/app/core/runtime.py backend/app/core/runtime_liveness.py backend/app/core/approval_handlers.py backend/tests/test_ticket_graph.py backend/tests/test_context_compiler.py backend/tests/test_api.py backend/tests/test_scheduler_runner.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只收 review lane / approval target / runtime liveness 的 graph-first runtime truth，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] legacy `node_projection` 仍保留在部分读面和历史 helper 兼容壳里，后续若要继续收缩需要单独清点消费面
+- [ ] `graph_health_policy.py` / `RuntimeLivenessReport` 仍未继续拆成 graph/liveness 双 policy contract
+
+**下一轮起手动作：**
+`继续从 P4-S7 后续未完成项续跑；优先决定 legacy node_projection 兼容壳是否还能继续收缩，再判断 graph/liveness policy contract 是否单独开下一切片。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2357,7 +2399,7 @@ execution lane 已经能按 graph-first runtime truth fail-closed，但 review l
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第一批；execution lane 现已切到正式 `runtime_node_projection`，compile/start/result-submit 会显式校验 runtime node version，review lane 明确继续留在 legacy `node_projection` 兼容壳
-- 最近完成：新增 `runtime_node_projection` 真相层、把 `runtime_node_views` 收正到 `runtime_node_projection + planned_placeholder_projection`、给 compile package 补 `runtime_node_projection_version`，并让 `Dependency Inspector` 显式展示 `graph_node_id / runtime_node_id`
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；review lane / approval target / worker runtime 仍未继续拆成 graph-first 双层真相；`graph_health_policy.py` / `RuntimeLivenessReport` 仍未继续拆层
-- 下一步：`继续从 P4-S7 后续未完成项续跑；先决定 review lane / approval target / worker runtime 是否继续拆成 graph-first 双层真相，再决定 graph/liveness policy contract 是否单独开下一切片`
+- 当前状态：`P4-S7` 已完成第二批；review lane、approval target、runtime runner 和 runtime liveness 现已统一切到 graph-first `runtime_node_projection`，lane-backed graph/runtime 不一致时会显式 fail-closed
+- 最近完成：`runtime_node_projection` 已扩到 review lane、review pack subject 已补 `source_graph_node_id`、approval target 已切到 `source_graph_node_id + runtime_node_projection`、runtime runner 和 `RuntimeLivenessReport` 不再按 shared `node_id` 猜 graph lane
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；legacy `node_projection` 仍保留在部分读面/历史 helper 兼容壳里；`graph_health_policy.py` / `RuntimeLivenessReport` 仍未继续拆层
+- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定 legacy node_projection 兼容壳是否还能继续收缩，再判断 graph/liveness policy contract 是否单独开下一切片`

@@ -1263,8 +1263,6 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
             created_spec=created_spec,
             runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
         )
-        if identity.graph_lane_kind != "execution":
-            continue
         key = (workflow_id, identity.graph_node_id)
         base_projection = {
             "workflow_id": workflow_id,

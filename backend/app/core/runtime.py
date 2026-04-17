@@ -62,6 +62,7 @@ from app.core.runtime_provider_config import (
     resolve_runtime_provider_config,
 )
 from app.core.execution_targets import resolve_execution_target_ref_from_ticket_spec
+from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
 from app.core.ticket_context_archive import write_ticket_context_markdown
 from app.core.ticket_handlers import (
     _open_provider_incident,
@@ -204,12 +205,24 @@ def _list_runtime_startable_leased_tickets(
         lease_expires_at = ticket.get("lease_expires_at")
         if lease_owner is None or lease_expires_at is None or lease_expires_at <= now:
             continue
+        with repository.connection() as connection:
+            created_spec = apply_legacy_graph_contract_compat(
+                repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+            )
+        graph_identity = resolve_ticket_graph_identity(
+            ticket_id=str(ticket["ticket_id"]),
+            created_spec=created_spec,
+            runtime_node_id=str(ticket.get("node_id") or ""),
+        )
         runtime_node_projection = repository.get_runtime_node_projection(
             ticket["workflow_id"],
-            ticket["node_id"],
+            graph_identity.graph_node_id,
         )
         if runtime_node_projection is None:
-            continue
+            raise RuntimeError(
+                f"runtime_node_projection is missing for leased ticket {ticket['ticket_id']} "
+                f"on graph lane {graph_identity.graph_node_id}."
+            )
         if (
             runtime_node_projection["latest_ticket_id"] != ticket["ticket_id"]
             or runtime_node_projection["status"] != "PENDING"
@@ -2343,13 +2356,22 @@ def run_leased_ticket_runtime(
     for ticket in _list_runtime_startable_leased_tickets(repository):
         lease_owner = str(ticket["lease_owner"])
         developer_inspector_refs = _build_runtime_developer_inspector_refs(str(ticket["ticket_id"]))
+        with repository.connection() as connection:
+            created_spec = apply_legacy_graph_contract_compat(
+                repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+            )
+        graph_identity = resolve_ticket_graph_identity(
+            ticket_id=str(ticket["ticket_id"]),
+            created_spec=created_spec,
+            runtime_node_id=str(ticket["node_id"]),
+        )
         current_node = repository.get_current_node_projection(
             str(ticket["workflow_id"]),
             str(ticket["node_id"]),
         )
         current_runtime_node = repository.get_runtime_node_projection(
             str(ticket["workflow_id"]),
-            str(ticket["node_id"]),
+            str(graph_identity.graph_node_id),
         )
         start_ack = handle_ticket_start(
             repository,

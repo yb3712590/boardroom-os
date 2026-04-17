@@ -77,6 +77,7 @@ from app.core.graph_identity import (
     GRAPH_LANE_EXECUTION,
     apply_legacy_graph_contract_compat,
     resolve_graph_lane_kind,
+    resolve_ticket_graph_identity,
 )
 from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
@@ -1797,7 +1798,11 @@ def build_compile_request(
     created_spec = apply_legacy_graph_contract_compat(
         _require_ticket_create_spec(repository, ticket["ticket_id"], connection=connection)
     )
-    uses_runtime_node_truth = resolve_graph_lane_kind(created_spec) == GRAPH_LANE_EXECUTION
+    graph_identity = resolve_ticket_graph_identity(
+        ticket_id=str(ticket["ticket_id"]),
+        created_spec=created_spec,
+        runtime_node_id=str(ticket["node_id"]),
+    )
     governance_profile = require_governance_profile(
         repository,
         workflow_id=str(ticket["workflow_id"]),
@@ -1824,7 +1829,7 @@ def build_compile_request(
         connection=connection,
     )
     runtime_node_projection = None
-    if uses_runtime_node_truth:
+    if graph_identity.graph_lane_kind == GRAPH_LANE_EXECUTION:
         node_view = require_materialized_runtime_node(
             repository,
             str(ticket["workflow_id"]),
@@ -1834,7 +1839,7 @@ def build_compile_request(
         )
         runtime_node_projection = repository.get_runtime_node_projection(
             str(ticket["workflow_id"]),
-            str(node_view.graph_node_id or ""),
+            str(node_view.graph_node_id or graph_identity.graph_node_id or ""),
             connection=connection,
         )
         if runtime_node_projection is None:
@@ -1844,6 +1849,23 @@ def build_compile_request(
                 reason_code=REASON_CODE_RUNTIME_NODE_TRUTH_CONFLICT,
                 operation="runtime compilation",
                 detail="runtime_node_projection is missing after lifecycle gate accepted the node as materialized.",
+            )
+    else:
+        runtime_node_projection = repository.get_runtime_node_projection(
+            str(ticket["workflow_id"]),
+            str(graph_identity.graph_node_id or ""),
+            connection=connection,
+        )
+        if runtime_node_projection is None:
+            raise RuntimeNodeLifecycleError(
+                workflow_id=str(ticket["workflow_id"]),
+                node_id=str(ticket["node_id"]),
+                reason_code=REASON_CODE_RUNTIME_NODE_TRUTH_CONFLICT,
+                operation="runtime compilation",
+                detail=(
+                    "runtime_node_projection is missing for the current graph lane "
+                    f"{graph_identity.graph_node_id!r}."
+                ),
             )
     _, source_projection_version = repository.get_cursor_and_version(connection=connection)
     if source_projection_version <= 0:

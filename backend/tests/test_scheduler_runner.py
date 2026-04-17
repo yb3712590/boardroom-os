@@ -1845,6 +1845,53 @@ def test_runtime_governance_document_completion_routes_to_internal_governance_ch
     )
 
 
+def test_runtime_runner_executes_leased_review_lane_ticket(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-04-07T19:05:00+08:00")
+    workflow_id = "wf_runtime_review_lane_runner"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Runtime runner should execute leased review-lane tickets through runtime_node_projection truth.",
+    )
+    api_test_helpers._create_lease_and_start_ticket(client, workflow_id=workflow_id)
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=api_test_helpers._ticket_complete_payload(workflow_id=workflow_id),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    current_node = repository.get_current_node_projection(workflow_id, "node_homepage_visual")
+    assert current_node is not None
+    checker_ticket_id = current_node["latest_ticket_id"]
+
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    assert checker_lease_response.status_code == 200
+    assert checker_lease_response.json()["status"] == "ACCEPTED"
+
+    provider_responder, _ = _build_mock_provider_responder()
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    latest_checker = repository.get_current_ticket_projection(checker_ticket_id)
+
+    assert [outcome.ticket_id for outcome in outcomes] == [checker_ticket_id]
+    assert latest_checker is not None
+    assert outcomes[0].start_ack.status.value == "ACCEPTED"
+    assert latest_checker["status"] == "EXECUTING"
+
+
 def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
     client,
     set_ticket_time,

@@ -6171,6 +6171,69 @@ def test_ticket_start_rejects_stale_runtime_node_projection_version(client):
     assert "runtime node version" in str(response.json()["reason"]).lower()
 
 
+def test_ticket_start_rejects_stale_review_lane_runtime_node_projection_version(client):
+    workflow_id = "wf_ticket_start_review_lane_runtime_node_version_guard"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Review-lane ticket-start should reject stale runtime node projection versions.",
+    )
+    _create_lease_and_start_ticket(client, workflow_id=workflow_id)
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(workflow_id=workflow_id),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    current_node = repository.get_current_node_projection(workflow_id, "node_homepage_visual")
+    assert current_node is not None
+    checker_ticket_id = current_node["latest_ticket_id"]
+
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    assert checker_lease_response.status_code == 200
+    assert checker_lease_response.json()["status"] == "ACCEPTED"
+
+    checker_ticket = repository.get_current_ticket_projection(checker_ticket_id)
+    checker_node = repository.get_current_node_projection(workflow_id, "node_homepage_visual")
+    review_runtime_node = repository.get_runtime_node_projection(
+        workflow_id,
+        "node_homepage_visual::review",
+    )
+
+    assert checker_ticket is not None
+    assert checker_node is not None
+    assert review_runtime_node is not None
+
+    response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_homepage_visual",
+            started_by="emp_checker_1",
+            expected_ticket_version=int(checker_ticket["version"]),
+            expected_node_version=int(checker_node["version"]),
+            expected_runtime_node_version=int(review_runtime_node["version"]) - 1,
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "runtime node version" in str(response.json()["reason"]).lower()
+
+
 def test_ticket_create_accepts_placeholder_node_and_materializes_runtime_truth(client):
     workflow_id = "wf_ticket_create_placeholder_materialization"
     _ensure_scoped_workflow(
@@ -18231,18 +18294,22 @@ def test_ticket_complete_is_allowed_after_rework_required(client):
 def test_board_command_is_rejected_when_projection_is_not_currently_blocked(client):
     approval = _seed_review_request(client, workflow_id="wf_guard")
     repository = client.app.state.repository
+    subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
+    source_ticket_id = str(subject.get("source_ticket_id") or "").strip()
+    source_graph_node_id = str(subject.get("source_graph_node_id") or "").strip()
+
     with repository.transaction() as connection:
         connection.execute(
             "UPDATE ticket_projection SET status = ?, blocking_reason_code = NULL WHERE ticket_id = ?",
-            (TICKET_STATUS_COMPLETED, "tkt_visual_001"),
+            (TICKET_STATUS_COMPLETED, source_ticket_id),
         )
         connection.execute(
             """
-            UPDATE node_projection
+            UPDATE runtime_node_projection
             SET status = ?, blocking_reason_code = NULL
-            WHERE workflow_id = ? AND node_id = ?
+            WHERE workflow_id = ? AND graph_node_id = ?
             """,
-            (NODE_STATUS_COMPLETED, "wf_guard", "node_homepage_visual"),
+            (NODE_STATUS_COMPLETED, "wf_guard", source_graph_node_id),
         )
 
     response = client.post(
@@ -18255,6 +18322,42 @@ def test_board_command_is_rejected_when_projection_is_not_currently_blocked(clie
             "selected_option_id": "option_a",
             "board_comment": "Proceed with option A.",
             "idempotency_key": f"board-approve:{approval['approval_id']}:projection-guard",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "blocked for board review" in response.json()["reason"].lower()
+
+
+def test_board_command_rejects_when_runtime_projection_is_not_currently_blocked(client):
+    workflow_id = "wf_guard_runtime_projection"
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
+
+    assert str(subject.get("source_graph_node_id") or "").strip() == "node_homepage_visual::review"
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET status = ?, blocking_reason_code = NULL
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            (NODE_STATUS_COMPLETED, workflow_id, "node_homepage_visual::review"),
+        )
+
+    response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": "option_a",
+            "board_comment": "Proceed with option A.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:runtime-projection-guard",
         },
     )
 
