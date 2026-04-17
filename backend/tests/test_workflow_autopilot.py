@@ -665,6 +665,9 @@ def test_autopilot_auto_advance_opens_placeholder_gate_incident_without_silent_f
     assert placeholder_projection["status"] == "BLOCKED"
     assert placeholder_projection["open_incident_id"] == incident["incident_id"]
     assert placeholder_projection["reason_code"] == "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
+    assert repository.get_current_ticket_projection("tkt_placeholder_gate_target") is None
+    runtime_node = repository.get_current_node_projection(workflow_id, "node_placeholder_gate_target")
+    assert runtime_node is None
 
 
 def test_autopilot_placeholder_gate_incident_is_idempotent_while_open(client, monkeypatch):

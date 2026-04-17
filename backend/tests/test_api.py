@@ -12503,6 +12503,8 @@ def test_p4_placeholder_gate_incident_resolve_reruns_shadow_and_closes_incident(
     assert incident_response.json()["data"]["incident"]["status"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "RERUN_CEO_SHADOW"
+    assert repository.get_current_node_projection(workflow_id, "node_placeholder_gate_resolve_target") is None
+    assert repository.get_current_ticket_projection("tkt_placeholder_gate_resolve_target") is None
 
 
 def test_p4_placeholder_gate_incident_resolve_rejects_missing_trigger_type(client):

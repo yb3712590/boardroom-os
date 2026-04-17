@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S6`
-> 最后更新：`2026-04-17 08:22`
+> 最后更新：`2026-04-17 09:08`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -790,6 +790,10 @@
 - [x] `P4-S6` 已完成第二批：`runtime_node_views` 现在只认 `node_projection + planned_placeholder_projection`；graph 有 placeholder 但缺持久化 placeholder projection、或 placeholder projection 脱离 execution graph lane 时，会显式抛 `RuntimeNodeViewResolutionError`，不再靠缺 `node_projection` 猜 planned
 - [x] `P4-S6` 已完成第二批：`Dependency Inspector / context compiler / ticket-start / ticket-result-submit / workflow_auto_advance` 已切到这层新真相；planned placeholder 命中 open incident 时会稳定变成 `BLOCKED`，真实 `ticket-create` 成功后 placeholder row 会被吸收删除
 - [x] `P4-S6` 已完成第二批：本轮同时删掉了污染新架构真相的旧兼容推导：placeholder 不再从 `node_projection` 缺失、incident detail 或读面空值反向猜状态；graph/runtime/placeholder 真相不一致时统一 fail-closed
+- [x] `P4-S6` 已完成第三批：placeholder materialization 边界现已正式钉死；`workflow_auto_advance` 开 placeholder gate incident、`incident-resolve` 走 `RERUN_CEO_SHADOW`、以及现有 scheduler/runtime 入口都不会偷偷创建 ticket 或把 planned placeholder 改写成 materialized，`ticket-create` 继续是唯一合法 materialization 入口
+- [x] `P4-S6` 已完成第三批：`workflow_auto_advance` 现已新增 preflight blocker recover；autopilot 会先处理 open approval / open incident，再 build snapshot 和 health probe，generic board approval 的 `ceo_delegate` 自动收口、provider incident 的 `RESTORE_ONLY / RETRY` 恢复链现在不会再被旧 blocker 顺序卡死
+- [x] `P4-S6` 已完成第三批：`TicketGraph` 已删掉 same-lane retry / replacement lineage 的 self `PARENT_OF` 边；同一 execution lane 的 retry 历史不再把 `GraphHealthReport` 打成 cyclic path
+- [x] `P4-S6` 已完成第三批：测试时钟基座现已补齐到 `runtime_liveness / graph_health`；provider recovery 和 autopilot orchestration 的时间窗口回归现在按显式会话时间跑，不再夹带宿主机当前时间
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
@@ -813,8 +817,8 @@
 - [ ] `graph_health_policy.py` 这轮虽然已经把策略常量抽离出内核，但 `QUEUE_STARVATION / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 仍继续读取 runtime ticket/node projection 的时间与 SLA 字段；如果下一轮还要继续瘦 graph 内核，应优先决定这批 runtime-liveness 规则是否拆到独立监视层
 - [ ] `RuntimeLivenessReport` 这轮已经从 `GraphHealthReport` 主读面拆出，但 `graph_health_policy.py` 仍同时承载 graph + liveness 两类阈值；如果下一轮继续瘦监视层，应先决定 policy contract 是否也跟着拆层，避免新 monitor 再长回 policy bucket
 - [ ] `P4-S5` 这轮只把 lifecycle gate 收硬，没有给 planned placeholder 新增 incident / recovery 动作；后续如果自动路径还要显式暴露“先建票再继续”，必须单独决定是复用现有 command reject，还是新增正式恢复动作
-- [ ] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder or incident or ceo_delegate" -q` 这轮会额外暴露 3 条旧 autopilot 回归：generic open approval 没自动 resolve、provider incident 恢复未进入 `RECOVERING`，以及 `build_ceo_shadow_snapshot()` 在单节点 provider 失败流上触发 `GraphHealthReport` cyclic path；当前最小验证已覆盖本轮新主链，但这 3 条宽桶问题需要后续单独收口
 - [ ] `planned_placeholder_projection` 当前故意只读 `graph patch events + node_projection + open placeholder incident`；还没有把 review-lane placeholder、patch edge delta 结构真相或 dedicated placeholder history 拉进持久化层，后续若要补必须单独开切片，不回退到 runtime/node 缺失猜状态
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "provider_incident_resolve or placeholder_gate_incident_resolve" -q` 这轮按计划补跑时，`test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure` 会先撞到老的 `wf_seed` 建链缺口：helper 在 workflow 真相未建好前直接 create ticket；当前改动没有去扩这条旧测试入口，本轮已改用精确用例和 scheduler/autopilot 回归验证 provider restore 主链
 
 ---
 
@@ -2230,6 +2234,43 @@
 **下一轮起手动作：**
 `继续从 P4-S6 续跑，优先决定 placeholder 持久化真相是否要继续升格到 scheduler/recovery 之外的正式 materialization 协议；autopilot 宽桶里的 3 条旧回归继续后置单独收口。`
 
+### Session `2026-04-17 / 36`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S6`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 用新增回归把 placeholder materialization 边界钉死：`workflow_auto_advance` 开 gate incident 和 `incident-resolve` 走 `RERUN_CEO_SHADOW` 时都不会偷偷建票或把 planned placeholder 改成 materialized
+- [x] 把 `workflow_auto_advance` 改成先处理 open approval / open incident，再 build snapshot；autopilot 的 `ceo_delegate` 审批和 provider incident 恢复不再先被旧 blocker 顺序卡住
+- [x] 把 `TicketGraph` 的 same-lane retry lineage self `PARENT_OF` 边删掉，收掉 provider 单节点失败流触发的 graph health cyclic path
+- [x] 补齐测试时钟基座到 `runtime_liveness / graph_health`，让 provider recovery 的时间窗回归按显式测试时间跑，不再夹带宿主机当前时间
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "autopilot_auto_advance_resolves_generic_open_approval_via_ceo_delegate or autopilot_auto_advance_resolves_provider_incident_and_retries_latest_failure or autopilot_auto_advance_restores_provider_incident_when_source_ticket_already_completed" -q` 通过
+- [x] `./backend/.venv/bin/pytest backend/tests/test_workflow_autopilot.py -k "placeholder or incident or ceo_delegate" -q` 通过
+- [x] `./backend/.venv/bin/pytest backend/tests/test_scheduler_runner.py -k "test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_workflow" -q` 通过
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "graph_health or same_lane_retry_parent_self_edge" -q` 通过
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "placeholder_gate_incident_resolve_reruns_shadow_and_closes_incident" -q` 通过
+- [x] `python3 -m py_compile backend/app/core/workflow_auto_advance.py backend/app/core/ticket_graph.py backend/tests/conftest.py backend/tests/test_workflow_autopilot.py backend/tests/test_ticket_graph.py backend/tests/test_api.py` 通过
+- [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "provider_incident_resolve or placeholder_gate_incident_resolve" -q` 未全绿；命中一条旧 `wf_seed` 测试 helper 建链缺口，已记录到“新发现但不在本轮做”
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只收口 autopilot orchestration、graph self-edge 和测试时钟基座，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；graph-first 双层身份还没拆
+- [ ] `RuntimeLivenessReport` / `graph_health_policy.py` 仍未继续拆成 graph/liveness 双 policy contract
+- [ ] `test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure` 这条旧 API helper 仍依赖 `wf_seed` 预建 workflow，后续若要恢复宽桶验证，需要单独清这条老测试入口
+
+**下一轮起手动作：**
+`继续从 P4-S6 后续未完成项续跑；保持 placeholder materialization 边界冻结，优先决定 runtime node_projection 双层真相和 graph/liveness policy contract 是否要单独开下一切片。`
+
 ---
 
 ## 11. 新会话续跑指令
@@ -2267,7 +2308,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S6`
-- 当前状态：`P4-S6` 已完成第二批；execution-lane graph-only placeholder 现已进入独立持久化 `planned_placeholder_projection` 真相，runtime/autopilot 读面不再靠缺 `node_projection` 猜 planned
-- 最近完成：新增 `planned_placeholder_projection.py` 与持久化表、把 `runtime_node_views` 切到 `node_projection + planned_placeholder_projection`、删掉 placeholder 旧兼容推导，并补齐 placeholder 持久化 / 吸收 / 缺失 fail-closed 回归
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；autopilot 宽桶还暴露 3 条旧回归（generic approval auto-resolve、provider incident 恢复、graph health cyclic path）
-- 下一步：`继续从 P4-S6 后续未完成项续跑，优先决定 placeholder 持久化真相是否继续升格到正式 materialization 协议，再单独收口 autopilot 宽桶里的 3 条旧回归`
+- 当前状态：`P4-S6` 已完成第三批；placeholder materialization 边界已正式锁死，autopilot 会先 recover open approval / open incident，再 build snapshot，provider 恢复和 generic `ceo_delegate` 不再被旧 blocker 顺序卡住
+- 最近完成：新增 placeholder 边界回归、把 `workflow_auto_advance` 改成 preflight recover、删掉 same-lane retry 的 self `PARENT_OF` 边，并补齐 `runtime_liveness / graph_health` 的测试时钟基座
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；runtime `node_projection` 仍沿用共享 runtime `node_id` 主键；`graph_health_policy.py` / `RuntimeLivenessReport` 仍未继续拆层
+- 下一步：`继续从 P4-S6 后续未完成项续跑；保持 placeholder materialization 边界冻结，优先决定 runtime node_projection 双层真相和 graph/liveness policy contract 是否要单独开下一切片`

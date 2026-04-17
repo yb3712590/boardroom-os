@@ -169,6 +169,34 @@ def _maybe_auto_resolve_open_incident(
     return ack.status.value in {"ACCEPTED", "DUPLICATE"}
 
 
+def _maybe_recover_delegate_blockers_before_snapshot(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    idempotency_key_prefix: str,
+    step_index: int,
+) -> str:
+    if workflow_has_open_approval(repository, workflow_id):
+        if _maybe_auto_resolve_open_approval(
+            repository,
+            workflow_id=workflow_id,
+            idempotency_key_prefix=idempotency_key_prefix,
+            step_index=step_index,
+        ):
+            return "recovered"
+        return "blocked"
+    if workflow_has_open_incident(repository, workflow_id):
+        if _maybe_auto_resolve_open_incident(
+            repository,
+            workflow_id=workflow_id,
+            idempotency_key_prefix=idempotency_key_prefix,
+            step_index=step_index,
+        ):
+            return "recovered"
+        return "blocked"
+    return "none"
+
+
 def _maybe_write_autopilot_chain_report(
     repository: ControlPlaneRepository,
     *,
@@ -188,6 +216,16 @@ def auto_advance_workflow_to_next_stop(
     settings = get_settings()
     effective_max_dispatches = max_dispatches or settings.scheduler_max_dispatches
     for step_index in range(max_steps):
+        preflight_blocker_state = _maybe_recover_delegate_blockers_before_snapshot(
+            repository,
+            workflow_id=workflow_id,
+            idempotency_key_prefix=idempotency_key_prefix,
+            step_index=step_index,
+        )
+        if preflight_blocker_state == "recovered":
+            continue
+        if preflight_blocker_state == "blocked":
+            return
         _maybe_write_autopilot_chain_report(repository, workflow_id=workflow_id)
         try:
             snapshot = build_ceo_shadow_snapshot(

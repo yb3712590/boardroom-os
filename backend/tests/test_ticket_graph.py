@@ -510,6 +510,62 @@ def test_ticket_graph_snapshot_assigns_graph_identity_lanes_for_shared_runtime_n
     assert review_edge.target_runtime_node_id == shared_node_id
 
 
+def test_graph_health_ignores_same_lane_retry_parent_self_edge(client):
+    workflow_id = "wf_graph_health_retry_self_edge"
+    node_id = "node_graph_health_retry_self_edge"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Retry lineage on the same execution lane should not create a graph-health cycle.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_graph_health_retry_parent",
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_graph_health_retry_child",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_graph_health_retry_child",
+                node_id=node_id,
+                role_profile_ref="frontend_engineer_primary",
+                output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                delivery_stage="BUILD",
+                parent_ticket_id="tkt_graph_health_retry_parent",
+            ),
+            "graph_contract": {
+                "lane_kind": "execution",
+            },
+        },
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    parent_edges = [
+        edge
+        for edge in snapshot.edges
+        if edge.edge_type == "PARENT_OF"
+        and edge.source_graph_node_id == node_id
+        and edge.target_graph_node_id == node_id
+    ]
+
+    assert parent_edges == []
+    report = graph_health_module.build_graph_health_report(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+    )
+    assert report.overall_health in {"HEALTHY", "WARNING", "CRITICAL"}
+
+
 def test_ticket_graph_snapshot_uses_graph_contract_review_lane_without_taxonomy_keywords(client):
     workflow_id = "wf_ticket_graph_contract_review_lane"
     node_id = "node_contract_review_lane"

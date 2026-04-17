@@ -189,10 +189,7 @@ def _should_skip_internal_parent_edge(
     child_identity: TicketGraphIdentity,
     parent_identity: TicketGraphIdentity,
 ) -> bool:
-    return (
-        child_identity.runtime_node_id == parent_identity.runtime_node_id
-        and child_identity.graph_node_id != parent_identity.graph_node_id
-    )
+    return child_identity.runtime_node_id == parent_identity.runtime_node_id
 
 
 def build_ticket_graph_snapshot(
