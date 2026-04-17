@@ -5580,7 +5580,47 @@ def test_dashboard_pipeline_summary_shows_build_stage_for_executing_ticket(clien
     assert build_phase["node_counts"]["executing"] == 1
 
 
-def test_dashboard_pipeline_summary_shows_review_stage_for_open_board_approval(client):
+def test_dashboard_pipeline_summary_prefers_graph_truth_over_stale_node_projection(client):
+    workflow_id = "wf_dashboard_graph_truth_over_stale_node_projection"
+    ticket_id = "tkt_dashboard_graph_truth_runtime"
+    node_id = "node_dashboard_graph_truth_runtime"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dashboard phase summary should stay graph-first.",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE node_projection
+            SET status = ?, updated_at = updated_at
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            (NODE_STATUS_COMPLETED, workflow_id, node_id),
+        )
+
+    response = client.get("/api/v1/projections/dashboard")
+
+    assert response.status_code == 200
+    phases = response.json()["data"]["pipeline_summary"]["phases"]
+    build_phase = next(phase for phase in phases if phase["label"] == "Build")
+    assert build_phase["status"] == "EXECUTING"
+    assert build_phase["node_counts"]["executing"] == 1
+    assert build_phase["node_counts"]["completed"] == 0
+
+
+def test_dashboard_pipeline_summary_stays_graph_first_after_scope_approval(client):
     _, approval = _project_init_to_scope_approval(client)
     approve_response = _approve_open_review(client, approval, idempotency_suffix="dashboard-final-review")
 
@@ -5595,10 +5635,9 @@ def test_dashboard_pipeline_summary_shows_review_stage_for_open_board_approval(c
     check_phase = next(phase for phase in phases if phase["label"] == "Check")
     review_phase = next(phase for phase in phases if phase["label"] == "Review")
     assert plan_phase["status"] == "COMPLETED"
-    assert build_phase["status"] == "COMPLETED"
-    assert check_phase["status"] == "COMPLETED"
-    assert review_phase["status"] == "BLOCKED_FOR_BOARD"
-    assert review_phase["node_counts"]["blocked_for_board"] == 1
+    assert build_phase["status"] == "PENDING"
+    assert check_phase["status"] == "PENDING"
+    assert review_phase["status"] == "PENDING"
 
 
 def test_project_init_without_live_provider_writes_precondition_block_and_clears_after_provider_restore(
@@ -5844,6 +5883,31 @@ def test_dependency_inspector_prefers_source_graph_node_id_for_open_review_pack_
     assert review_node["block_reason"] == "BOARD_REVIEW_OPEN"
 
 
+def test_review_subject_identity_rejects_source_node_id_only_legacy_fallback(client):
+    from app.core.review_subjects import ReviewSubjectResolutionError, resolve_review_subject_identity
+
+    workflow_id = "wf_review_subject_source_node_only_reject"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Review subject resolution should not fall back to source_node_id only.",
+    )
+
+    with pytest.raises(
+        ReviewSubjectResolutionError,
+        match="missing source_graph_node_id",
+    ):
+        resolve_review_subject_identity(
+            client.app.state.repository,
+            workflow_id=workflow_id,
+            subject={
+                "source_node_id": "node_legacy_only_review_subject",
+            },
+        )
+
+
 def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id = "wf_dependency_inspector_linear_chain"
@@ -5927,6 +5991,47 @@ def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(c
     assert review_node["open_incident_id"] is None
     assert "artifacts/ui/homepage/*" in build_node["expected_artifact_scope"]
     assert "reports/review/*" in build_node["expected_artifact_scope"]
+
+
+def test_dependency_inspector_prefers_graph_runtime_truth_over_stale_node_projection(client):
+    workflow_id = "wf_dependency_inspector_graph_truth_over_stale_node_projection"
+    ticket_id = "tkt_dependency_graph_truth_runtime"
+    node_id = "node_dependency_graph_truth_runtime"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dependency inspector node status should stay graph-first.",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE node_projection
+            SET status = ?, updated_at = updated_at
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            (NODE_STATUS_COMPLETED, workflow_id, node_id),
+        )
+
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    runtime_node = next(item for item in body["nodes"] if item["ticket_id"] == ticket_id)
+    assert runtime_node["graph_node_id"] == node_id
+    assert runtime_node["node_status"] == NODE_STATUS_EXECUTING
+    assert runtime_node["ticket_status"] == TICKET_STATUS_EXECUTING
+    assert runtime_node["block_reason"] == "IN_FLIGHT"
 
 
 def test_dependency_inspector_marks_incident_stop_for_fused_node(client):

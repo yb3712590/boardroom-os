@@ -280,9 +280,7 @@ def _build_recent_closed_meeting_reuse_candidates(
             {
                 "meeting_id": str(meeting["meeting_id"]),
                 "source_ticket_id": str(meeting["source_ticket_id"]),
-                "source_graph_node_id": str(
-                    meeting.get("source_graph_node_id") or meeting["source_node_id"]
-                ),
+                "source_graph_node_id": str(meeting.get("source_graph_node_id") or ""),
                 "source_node_id": str(meeting["source_node_id"]),
                 "topic": str(meeting["topic"]),
                 "consensus_summary": str(meeting.get("consensus_summary") or ""),

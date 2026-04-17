@@ -23,6 +23,14 @@
 
 ### 2026-04-17
 
+- `P4-S7` 这轮已把 `workflow_relationships.list_workflow_ticket_snapshots()` 收成 graph-first 展示快照；现在只读 `TicketGraphSnapshot + ticket_projection + ticket-create payload`，不再从 legacy `node_projection` 缺口反向猜 `phase / parent / node_status`
+- dashboard `pipeline_summary` 这轮已改成 graph/runtime truth 主判：phase 计数只读 `ticket_projection`，blocked / critical-path 继续复用 `TicketGraph` 索引；stale `node_projection` 不会再把 dashboard 阶段状态改脏
+- dependency inspector 这轮也已接到同一层 graph-first 展示快照；节点展示继续保留 `parent / dependency / artifact scope / blocking reason`，但主判已经不再依赖 legacy `node_projection`
+- `resolve_review_subject_identity()` 这轮已继续删旧兼容：只有 `source_node_id` 的 legacy subject 现在会直接显式失败，不再被当成 graph truth；open approval 命中只认 `source_graph_node_id`
+- CEO recent closed meeting reuse candidate 这轮也已收紧到 graph-first：已有持久化 `source_graph_node_id` 时不再回退 `source_node_id`
+- 这轮还锁定了一条展示层边界：`scope approval` 之后 dashboard 现在会按 graph/runtime truth 显示后续 `build/check/review` 票仍是 `PENDING`；如果后面产品想显示“阶段完成感”，必须单独立正式 projection，不能把 `node_projection` 推断逻辑塞回来
+- 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_api.py -k "dashboard_pipeline_summary or dependency_inspector" -q`、`./backend/.venv/bin/pytest backend/tests/test_meeting_room.py -q`、`./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "reuse_candidates" -q`、`python3 -m py_compile backend/app/core/workflow_relationships.py backend/app/core/projections.py backend/app/core/ceo_snapshot.py backend/app/core/review_subjects.py backend/tests/test_api.py`
+
 - `P4-S7` 这轮已把 meeting command 主链补成正式 graph-first 合同：`meeting-request` 生成的 ticket 现在显式写 `graph_contract={"lane_kind":"execution"}`，`MEETING_REQUESTED / MEETING_STARTED` 和 `meeting_projection` 也会同步持久化 `source_graph_node_id`
 - meeting 相关读面这轮继续收口到持久化 graph truth：`build_meeting_projection()` 和 CEO recent closed meeting reuse candidate 现在都优先消费 `source_graph_node_id`，不再靠 legacy `source_node_id` 主判
 - `resolve_review_subject_identity()` 这轮已删掉一条会污染新架构真相的旧兼容：当 subject 已带 `source_ticket_id` 但解不出 graph identity 时，不再退回 `source_node_id`，现在会直接显式失败

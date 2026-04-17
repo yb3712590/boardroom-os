@@ -123,6 +123,10 @@ from app.core.constants import (
     SCHEMA_VERSION,
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
+    TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_LEASED,
+    TICKET_STATUS_PENDING,
+    TICKET_STATUS_REWORK_REQUIRED,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
 from app.core.governance_templates import (
@@ -800,6 +804,8 @@ def _build_pipeline_summary(
     pending_approvals: int,
     blocked_node_ids_override: list[str] | None = None,
     critical_path_node_ids_override: list[str] | None = None,
+    graph_snapshot_override=None,
+    graph_unavailable: bool = False,
 ) -> PipelineSummaryProjection:
     phase_specs = [
         ("phase_intake", "Intake"),
@@ -828,13 +834,29 @@ def _build_pipeline_summary(
             blocked_node_ids=blocked_node_ids,
         )
 
+    if graph_unavailable:
+        phase_counts["phase_intake"]["completed"] = 1
+        phases = [
+            PhaseSummaryProjection(
+                phase_id=phase_id,
+                label=label,
+                status=_derive_phase_status(phase_counts[phase_id]),
+                node_counts=NodeCountsProjection(**phase_counts[phase_id]),
+            )
+            for phase_id, label in phase_specs
+        ]
+        return PipelineSummaryProjection(
+            phases=phases,
+            critical_path_node_ids=[],
+            blocked_node_ids=[],
+        )
+
     with repository.connection() as connection:
-        node_rows = connection.execute(
+        ticket_rows = connection.execute(
             """
-            SELECT node_id, status, latest_ticket_id
-            FROM node_projection
+            SELECT * FROM ticket_projection
             WHERE workflow_id = ?
-            ORDER BY updated_at ASC, node_id ASC
+            ORDER BY updated_at ASC, ticket_id ASC
             """,
             (workflow_id,),
         ).fetchall()
@@ -849,56 +871,61 @@ def _build_pipeline_summary(
         ).fetchall()
 
     open_breaker_nodes = {str(row["node_id"]) for row in incident_rows if row["node_id"] is not None}
-    if not node_rows:
+    if not ticket_rows:
         phase_counts["phase_intake"]["executing"] = 1
     else:
         phase_counts["phase_intake"]["completed"] = 1
 
     seen_node_ids: set[str] = set()
     with repository.connection() as connection:
-        for row in node_rows:
-            node_id = str(row["node_id"])
-            node_status = str(row["status"])
-            latest_ticket_id = str(row["latest_ticket_id"] or "")
+        for row in ticket_rows:
+            ticket = repository._convert_ticket_projection_row(row)
+            ticket_id = str(ticket.get("ticket_id") or "").strip()
+            node_id = str(ticket.get("node_id") or "").strip()
+            ticket_status = str(ticket.get("status") or "").strip() or TICKET_STATUS_PENDING
             created_spec = (
-                repository.get_latest_ticket_created_payload(connection, latest_ticket_id)
-                if latest_ticket_id
+                repository.get_latest_ticket_created_payload(connection, ticket_id)
+                if ticket_id
                 else None
             )
             phase_id = f"phase_{_resolve_phase_label(created_spec).lower()}"
-            seen_node_ids.add(node_id)
-            if node_status in {
-                NODE_STATUS_EXECUTING,
-                NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
-                NODE_STATUS_REWORK_REQUIRED,
-            }:
+            if node_id:
+                seen_node_ids.add(node_id)
+            if ticket_status in {
+                TICKET_STATUS_LEASED,
+                TICKET_STATUS_EXECUTING,
+                TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+                TICKET_STATUS_REWORK_REQUIRED,
+            } and node_id:
                 critical_path_node_ids.append(node_id)
-            if node_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+            if ticket_status == TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW and node_id:
                 blocked_node_ids.append(node_id)
 
-            if node_status == NODE_STATUS_PENDING:
+            if ticket_status == TICKET_STATUS_PENDING:
                 phase_counts[phase_id]["pending"] += 1
                 continue
-            if node_status == NODE_STATUS_EXECUTING:
-                if node_id in open_breaker_nodes:
+            if ticket_status in {TICKET_STATUS_LEASED, TICKET_STATUS_EXECUTING}:
+                if node_id and node_id in open_breaker_nodes:
                     phase_counts[phase_id]["fused"] += 1
                 else:
                     phase_counts[phase_id]["executing"] += 1
                 continue
-            if node_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+            if ticket_status == TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW:
                 phase_counts[phase_id]["blocked_for_board"] += 1
                 continue
-            if node_status == NODE_STATUS_REWORK_REQUIRED:
-                if node_id in open_breaker_nodes:
+            if ticket_status == TICKET_STATUS_REWORK_REQUIRED:
+                if node_id and node_id in open_breaker_nodes:
                     phase_counts[phase_id]["fused"] += 1
                 else:
                     phase_counts[phase_id]["under_review"] += 1
                 continue
-            if node_status == NODE_STATUS_COMPLETED:
+            if ticket_status == TICKET_STATUS_COMPLETED:
                 phase_counts[phase_id]["completed"] += 1
                 continue
-            if node_status == NODE_STATUS_CANCEL_REQUESTED:
+            if node_id and node_id in open_breaker_nodes:
                 phase_counts[phase_id]["fused"] += 1
+                continue
+            phase_counts[phase_id]["pending"] += 1
 
     for node_id in sorted(open_breaker_nodes - seen_node_ids):
         critical_path_node_ids.append(node_id)
@@ -947,7 +974,12 @@ def build_dependency_inspector_projection(
             """,
             (workflow_id, "OPEN"),
         ).fetchall()
-        ticket_snapshots = list_workflow_ticket_snapshots(repository, workflow_id, connection=connection)
+        ticket_snapshots = list_workflow_ticket_snapshots(
+            repository,
+            workflow_id,
+            connection=connection,
+            graph_snapshot=graph_snapshot,
+        )
         runtime_node_views = build_runtime_node_views(
             repository,
             workflow_id,
@@ -958,14 +990,13 @@ def build_dependency_inspector_projection(
     approval_by_graph_node_id: dict[str, dict[str, Any]] = {}
     for approval in approvals:
         subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
-        _, source_graph_node_id, source_node_id = resolve_review_subject_identity(
+        _, source_graph_node_id, _source_node_id = resolve_review_subject_identity(
             repository,
             workflow_id=workflow_id,
             subject=subject,
         )
-        approval_key = source_graph_node_id or source_node_id
-        if approval_key and approval_key not in approval_by_graph_node_id:
-            approval_by_graph_node_id[approval_key] = approval
+        if source_graph_node_id and source_graph_node_id not in approval_by_graph_node_id:
+            approval_by_graph_node_id[source_graph_node_id] = approval
 
     incident_by_node_id: dict[str, dict[str, Any]] = {}
     for row in incident_rows:
@@ -1566,16 +1597,19 @@ def build_dashboard_projection(
     open_circuit_breakers = repository.count_open_circuit_breakers()
     open_provider_incidents = repository.count_open_provider_incidents()
     active_tickets = repository.count_active_tickets()
+    active_ticket_graph_snapshot = None
     active_ticket_graph_index = None
     blocked_node_source = "no_active_workflow"
     if active_workflow is not None:
         try:
-            active_ticket_graph_index = build_ticket_graph_snapshot(
+            active_ticket_graph_snapshot = build_ticket_graph_snapshot(
                 repository,
                 str(active_workflow["workflow_id"]),
-            ).index_summary
+            )
+            active_ticket_graph_index = active_ticket_graph_snapshot.index_summary
             blocked_node_source = "ticket_graph"
         except Exception:
+            active_ticket_graph_snapshot = None
             active_ticket_graph_index = None
             blocked_node_source = "graph_unavailable"
     blocked_node_ids = (
@@ -1621,6 +1655,8 @@ def build_dashboard_projection(
             pending_approvals=pending_approvals,
             blocked_node_ids_override=blocked_node_ids,
             critical_path_node_ids_override=critical_path_node_ids,
+            graph_snapshot_override=active_ticket_graph_snapshot,
+            graph_unavailable=blocked_node_source == "graph_unavailable",
         )
 
     preview_events = [

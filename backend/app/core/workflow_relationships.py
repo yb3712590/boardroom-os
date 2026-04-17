@@ -108,31 +108,62 @@ def list_workflow_ticket_snapshots(
     workflow_id: str,
     *,
     connection,
+    graph_snapshot=None,
 ) -> list[WorkflowTicketSnapshot]:
-    node_rows = connection.execute(
-        """
-        SELECT * FROM node_projection
-        WHERE workflow_id = ?
-        ORDER BY updated_at ASC, node_id ASC
-        """,
-        (workflow_id,),
-    ).fetchall()
+    normalized_workflow_id = str(workflow_id or "").strip()
+    if not normalized_workflow_id:
+        raise ValueError("Workflow ticket snapshots require workflow_id.")
+    graph_snapshot = graph_snapshot or build_ticket_graph_snapshot(
+        repository,
+        normalized_workflow_id,
+        connection=connection,
+    )
+    ticket_projection_by_ticket_id = _ticket_projection_by_workflow(
+        repository,
+        normalized_workflow_id,
+        connection=connection,
+    )
+
+    graph_nodes = sorted(
+        (
+            node
+            for node in graph_snapshot.nodes
+            if node.ticket_id is not None and not bool(node.is_placeholder)
+        ),
+        key=lambda node: (
+            (
+                ticket_projection_by_ticket_id.get(str(node.ticket_id), {}).get("updated_at").timestamp()
+                if isinstance(
+                    ticket_projection_by_ticket_id.get(str(node.ticket_id), {}).get("updated_at"),
+                    datetime,
+                )
+                else float("-inf")
+            ),
+            str(node.graph_node_id),
+        ),
+    )
 
     snapshots: list[WorkflowTicketSnapshot] = []
-    for row in node_rows:
-        node = repository._convert_node_projection_row(row)
-        node_id = str(node["node_id"])
-        latest_ticket_id = str(node.get("latest_ticket_id") or "").strip()
-        current_ticket = (
-            repository.get_current_ticket_projection(latest_ticket_id, connection=connection)
-            if latest_ticket_id
-            else None
-        )
+    for graph_node in graph_nodes:
+        latest_ticket_id = str(graph_node.ticket_id or "").strip()
+        if not latest_ticket_id:
+            continue
+        current_ticket = ticket_projection_by_ticket_id.get(latest_ticket_id)
+        if current_ticket is None:
+            raise ValueError(
+                "Workflow ticket snapshot found graph node without ticket_projection: "
+                f"{normalized_workflow_id}:{graph_node.graph_node_id}:{latest_ticket_id}"
+            )
         created_spec = (
             repository.get_latest_ticket_created_payload(connection, latest_ticket_id)
             if latest_ticket_id
             else None
         )
+        if created_spec is None:
+            raise ValueError(
+                "Workflow ticket snapshot found graph node without ticket-create payload: "
+                f"{normalized_workflow_id}:{graph_node.graph_node_id}:{latest_ticket_id}"
+            )
         display_spec = resolve_display_ticket_spec(created_spec)
         maker_checker_context = created_spec.get("maker_checker_context") if created_spec is not None else None
         if (
@@ -148,39 +179,55 @@ def list_workflow_ticket_snapshots(
         logical_ticket_id = resolve_logical_ticket_id(created_spec, display_spec, latest_ticket_id)
         snapshots.append(
             WorkflowTicketSnapshot(
-                node_id=node_id,
+                node_id=str(graph_node.node_id),
                 ticket_id=logical_ticket_id or None,
                 parent_ticket_id=(
-                    str(display_spec.get("parent_ticket_id") or "").strip() or None
-                    if display_spec is not None
-                    else None
+                    str(graph_node.parent_ticket_id or "").strip()
+                    or (
+                        str(display_spec.get("parent_ticket_id") or "").strip()
+                        if display_spec is not None
+                        else ""
+                    )
+                    or None
                 ),
                 phase=resolve_phase_label(created_spec),
                 delivery_stage=(
-                    str(display_spec.get("delivery_stage") or "").strip().upper() or None
-                    if display_spec is not None
-                    else None
+                    str(graph_node.delivery_stage or "").strip().upper()
+                    or (
+                        str(display_spec.get("delivery_stage") or "").strip().upper()
+                        if display_spec is not None
+                        else ""
+                    )
+                    or None
                 ),
-                node_status=str(node["status"]),
+                node_status=(
+                    str(graph_node.node_status or "").strip()
+                    or str(current_ticket.get("status") or "").strip()
+                    or "PENDING"
+                ),
                 ticket_status=(
                     str(current_ticket.get("status") or "").strip() or None
-                    if current_ticket is not None
-                    else None
                 ),
                 role_profile_ref=(
-                    str(display_spec.get("role_profile_ref") or "").strip() or None
-                    if display_spec is not None
-                    else None
+                    str(graph_node.role_profile_ref or "").strip()
+                    or (
+                        str(display_spec.get("role_profile_ref") or "").strip()
+                        if display_spec is not None
+                        else ""
+                    )
+                    or None
                 ),
                 output_schema_ref=(
-                    str(display_spec.get("output_schema_ref") or "").strip() or None
-                    if display_spec is not None
-                    else None
+                    str(graph_node.output_schema_ref or "").strip()
+                    or (
+                        str(display_spec.get("output_schema_ref") or "").strip()
+                        if display_spec is not None
+                        else ""
+                    )
+                    or None
                 ),
                 lease_owner=(
                     str(current_ticket.get("lease_owner") or "").strip() or None
-                    if current_ticket is not None
-                    else None
                 ),
                 expected_artifact_scope=(
                     list(display_spec.get("allowed_write_set") or [])
@@ -188,12 +235,12 @@ def list_workflow_ticket_snapshots(
                     else []
                 ),
                 blocking_reason_code=(
-                    str(current_ticket.get("blocking_reason_code") or "").strip() or None
-                    if current_ticket is not None
-                    else None
+                    str(graph_node.blocking_reason_code or "").strip()
+                    or str(current_ticket.get("blocking_reason_code") or "").strip()
+                    or None
                 ),
                 sort_updated_at=(
-                    current_ticket.get("updated_at") if current_ticket is not None else node.get("updated_at")
+                    current_ticket.get("updated_at") if current_ticket is not None else None
                 ),
             )
         )

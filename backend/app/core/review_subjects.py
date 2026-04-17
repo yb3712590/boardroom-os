@@ -59,9 +59,6 @@ def resolve_review_subject_identity(
             ) from exc
         return source_ticket_id, identity.graph_node_id, source_node_id or identity.runtime_node_id
 
-    if source_node_id:
-        return None, source_node_id, source_node_id
-
     raise ReviewSubjectResolutionError(
         f"review subject for workflow {workflow_id} is missing source_graph_node_id and stable compat identifiers."
     )
