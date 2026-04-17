@@ -1240,3 +1240,140 @@ def test_autopilot_closeout_without_visual_milestone_still_writes_chain_report_a
     assert workflow is not None
     assert workflow["status"] == "COMPLETED"
     assert workflow["current_stage"] == "closeout"
+
+
+def test_autopilot_closeout_chain_report_ignores_stale_node_projection(client, monkeypatch):
+    from app.core.workflow_autopilot import _workflow_closeout_state
+    from app.core.workflow_completion import WorkflowCloseoutCompletion
+
+    workflow_id = "wf_autopilot_closeout_stale_node_projection"
+    repository = client.app.state.repository
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot closeout should ignore stale node projection truth",
+    )
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_autopilot_stale_build",
+        node_id="node_autopilot_stale_build",
+        output_schema_ref="source_code_delivery",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_autopilot_stale_build/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved delivery slice.",
+            "Must produce a structured source code delivery.",
+        ],
+        delivery_stage="BUILD",
+    )
+    build_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_stale_build",
+            node_id="node_autopilot_stale_build",
+        ),
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_autopilot_stale_closeout",
+        node_id="node_ceo_delivery_closeout",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="delivery_closeout_package",
+        delivery_stage="CLOSEOUT",
+        allowed_write_set=["20-evidence/closeout/tkt_autopilot_stale_closeout/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must capture the final delivery evidence.",
+            "Must produce a structured closeout package.",
+        ],
+        parent_ticket_id="tkt_autopilot_stale_build",
+        input_artifact_refs=["art://runtime/tkt_autopilot_stale_build/source-code.tsx"],
+    )
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_stale_closeout",
+            node_id="node_ceo_delivery_closeout",
+            leased_by="emp_frontend_2",
+        ),
+    )
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_stale_closeout",
+            node_id="node_ceo_delivery_closeout",
+            started_by="emp_frontend_2",
+        ),
+    )
+    closeout_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            **_delivery_closeout_package_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_autopilot_stale_closeout",
+                node_id="node_ceo_delivery_closeout",
+                final_artifact_refs=["art://runtime/tkt_autopilot_stale_build/source-code.tsx"],
+            ),
+            "idempotency_key": (
+                "ticket-result-submit:wf_autopilot_closeout_stale_node_projection:"
+                "tkt_autopilot_stale_closeout:closeout"
+            ),
+        },
+    )
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE node_projection
+            SET status = ?, latest_ticket_id = ?, updated_at = ?
+            WHERE workflow_id = ?
+            """,
+            (
+                "PENDING",
+                "tkt_autopilot_stale_legacy_shadow",
+                datetime.fromisoformat("2026-04-06T10:59:59+08:00"),
+                workflow_id,
+            ),
+        )
+
+    observed_node_statuses: list[str] = []
+
+    def _fake_resolve_workflow_closeout_completion(**kwargs):
+        observed_node_statuses.extend(str(item.get("status") or "") for item in kwargs["nodes"])
+        return WorkflowCloseoutCompletion(
+            closeout_ticket={"ticket_id": "tkt_autopilot_stale_closeout"},
+            closeout_terminal_event={"event_type": "TICKET_COMPLETED"},
+        )
+
+    monkeypatch.setattr(
+        "app.core.workflow_autopilot.resolve_workflow_closeout_completion",
+        _fake_resolve_workflow_closeout_completion,
+    )
+
+    with repository.connection() as connection:
+        closeout_state = _workflow_closeout_state(
+            repository,
+            workflow_id=workflow_id,
+            connection=connection,
+        )
+
+    assert build_response.status_code == 200
+    assert build_response.json()["status"] == "ACCEPTED"
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+    assert closeout_response.status_code == 200
+    assert closeout_response.json()["status"] == "ACCEPTED"
+    assert closeout_state is not None
+    assert closeout_state[0]["ticket_id"] == "tkt_autopilot_stale_closeout"
+    assert observed_node_statuses
+    assert all(status == "COMPLETED" for status in observed_node_statuses)

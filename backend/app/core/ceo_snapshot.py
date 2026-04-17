@@ -17,7 +17,6 @@ from app.core.board_advisory import (
     build_board_advisory_snapshot_entry,
     build_latest_advisory_decision,
 )
-from app.core.constants import NODE_STATUS_COMPLETED
 from app.core.ceo_meeting_policy import build_ceo_meeting_candidates
 from app.core.graph_health import build_graph_health_report
 from app.core.runtime_liveness import build_runtime_liveness_report
@@ -163,14 +162,14 @@ def _build_recent_completed_ticket_reuse_candidates(
     repository: ControlPlaneRepository,
     *,
     tickets: list[dict[str, Any]],
-    nodes: list[dict[str, Any]],
+    graph_snapshot,
     connection,
 ) -> list[dict[str, Any]]:
     completed_tickets = [ticket for ticket in tickets if ticket["status"] == "COMPLETED"]
-    nodes_by_id = {
-        str(node.get("node_id") or "").strip(): node
-        for node in nodes
-        if str(node.get("node_id") or "").strip()
+    graph_node_by_ticket_id = {
+        str(node.ticket_id): node
+        for node in graph_snapshot.nodes
+        if str(node.ticket_id or "").strip()
     }
     latest_ticket_id_by_node: dict[str, str] = {}
     latest_ticket_sort_key_by_node: dict[str, tuple[float, str]] = {}
@@ -197,9 +196,10 @@ def _build_recent_completed_ticket_reuse_candidates(
         logical_created_spec = created_spec
         logical_terminal_event = terminal_event
         if output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
-            node_id = str(ticket.get("node_id") or "").strip()
-            node_projection = nodes_by_id.get(node_id) or {}
-            if str(node_projection.get("status") or "").strip() != NODE_STATUS_COMPLETED:
+            graph_node = graph_node_by_ticket_id.get(ticket_id)
+            if graph_node is None:
+                continue
+            if str(graph_node.node_status or "").strip() != "COMPLETED":
                 continue
         if output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
             continue
@@ -448,7 +448,7 @@ def build_ceo_shadow_snapshot(
             "recent_completed_tickets": _build_recent_completed_ticket_reuse_candidates(
                 repository,
                 tickets=tickets,
-                nodes=nodes,
+                graph_snapshot=ticket_graph_snapshot,
                 connection=connection,
             ),
             "recent_closed_meetings": _build_recent_closed_meeting_reuse_candidates(

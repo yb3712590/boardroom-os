@@ -198,6 +198,7 @@ def _build_request_meeting_batch(candidate: dict, reason: str) -> CEOActionBatch
                 payload=CEORequestMeetingPayload(
                     workflow_id=str(candidate["workflow_id"]),
                     meeting_type="TECHNICAL_DECISION",
+                    source_graph_node_id=str(candidate["source_graph_node_id"]),
                     source_node_id=str(candidate["source_node_id"]),
                     source_ticket_id=str(candidate["source_ticket_id"]),
                     topic=str(candidate["topic"]),

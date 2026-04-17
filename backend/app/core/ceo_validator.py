@@ -25,10 +25,12 @@ from app.core.persona_profiles import (
     build_high_overlap_rejection_reason,
     find_same_role_high_overlap_conflict,
 )
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.config import get_settings
 from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
 from app.core.runtime_node_views import (
     MATERIALIZATION_STATE_MATERIALIZED,
+    build_runtime_graph_node_views,
 )
 from app.core.runtime_node_lifecycle import (
     resolve_runtime_node_lifecycle,
@@ -154,7 +156,7 @@ def validate_ceo_action_batch(
                     item
                     for item in replan_focus_view(snapshot).get("meeting_candidates") or []
                     if str(item.get("source_ticket_id") or "") == action.payload.source_ticket_id
-                    and str(item.get("source_node_id") or "") == action.payload.source_node_id
+                    and str(item.get("source_graph_node_id") or "") == action.payload.source_graph_node_id
                 ),
                 None,
             )
@@ -199,11 +201,23 @@ def validate_ceo_action_batch(
             if repository.get_current_ticket_projection(action.payload.source_ticket_id) is None:
                 rejected_actions.append(_action_entry(action, "Source ticket does not exist anymore."))
                 continue
-            if (
-                repository.get_current_node_projection(action.payload.workflow_id, action.payload.source_node_id)
-                is None
-            ):
-                rejected_actions.append(_action_entry(action, "Source node does not exist anymore."))
+            graph_snapshot = build_ticket_graph_snapshot(repository, action.payload.workflow_id)
+            runtime_views = build_runtime_graph_node_views(
+                repository,
+                action.payload.workflow_id,
+                graph_snapshot=graph_snapshot,
+            )
+            source_view = runtime_views.get(action.payload.source_graph_node_id)
+            if source_view is None or source_view.materialization_state != MATERIALIZATION_STATE_MATERIALIZED:
+                rejected_actions.append(_action_entry(action, "Source graph node does not exist anymore."))
+                continue
+            if str(source_view.node_id or "") != action.payload.source_node_id:
+                rejected_actions.append(_action_entry(action, "Source node does not match the current graph truth."))
+                continue
+            if str(source_view.ticket_id or "") != action.payload.source_ticket_id:
+                rejected_actions.append(
+                    _action_entry(action, "Source graph node no longer points at the requested ticket.")
+                )
                 continue
             accepted_actions.append(
                 _action_entry(action, "Meeting request matches one eligible snapshot candidate.")

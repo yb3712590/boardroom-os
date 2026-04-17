@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from app.contracts.commands import BoardApproveCommand, ElicitationAnswer
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_completion import resolve_workflow_closeout_completion
 
 STANDARD_WORKFLOW_PROFILE = "STANDARD"
@@ -126,10 +127,6 @@ def _workflow_closeout_state(
         """,
         (workflow_id,),
     ).fetchall()
-    node_rows = connection.execute(
-        "SELECT * FROM node_projection WHERE workflow_id = ?",
-        (workflow_id,),
-    ).fetchall()
     open_approval_count = int(
         connection.execute(
             "SELECT COUNT(*) AS total FROM approval_projection WHERE workflow_id = ? AND status = ?",
@@ -143,7 +140,18 @@ def _workflow_closeout_state(
         ).fetchone()["total"]
     )
     tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
-    nodes = [repository._convert_node_projection_row(row) for row in node_rows]
+    graph_snapshot = build_ticket_graph_snapshot(
+        repository,
+        workflow_id,
+        connection=connection,
+    )
+    nodes = [
+        {
+            "node_id": str(node.node_id or node.runtime_node_id or ""),
+            "status": str(node.node_status or "").strip(),
+        }
+        for node in graph_snapshot.nodes
+    ]
     created_specs_by_ticket = {
         str(ticket["ticket_id"]): repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
         for ticket in tickets

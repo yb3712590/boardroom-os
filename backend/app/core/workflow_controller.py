@@ -754,9 +754,16 @@ def build_workflow_controller_view(
         str(ticket["ticket_id"]): repository.get_latest_ticket_terminal_event(connection, str(ticket["ticket_id"]))
         for ticket in tickets
     }
+    graph_truth_nodes = [
+        {
+            "node_id": str(node.node_id or node.runtime_node_id or ""),
+            "status": str(node.node_status or "").strip(),
+        }
+        for node in ticket_graph_snapshot.nodes
+    ]
     closeout_completion = resolve_workflow_closeout_completion(
         tickets=tickets,
-        nodes=nodes,
+        nodes=graph_truth_nodes,
         has_open_approval=bool(approvals),
         has_open_incident=bool(incidents),
         created_specs_by_ticket=created_specs_by_ticket,

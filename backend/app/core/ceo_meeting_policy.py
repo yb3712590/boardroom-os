@@ -11,7 +11,11 @@ from app.core.constants import (
     TICKET_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_TIMED_OUT,
 )
+from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
 from app.core.output_schemas import GOVERNANCE_DOCUMENT_SCHEMA_REFS
+from app.core.review_subjects import resolve_review_subject_identity
+from app.core.runtime_node_views import build_runtime_graph_node_views
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.db.repository import ControlPlaneRepository
 
 
@@ -214,6 +218,31 @@ def _select_participants(
     return participants, str(owner_employee["employee_id"]), "Eligible meeting participants resolved from the current roster."
 
 
+def _workflow_graph_context(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    graph_snapshot = build_ticket_graph_snapshot(
+        repository,
+        workflow_id,
+        connection=connection,
+    )
+    runtime_views = build_runtime_graph_node_views(
+        repository,
+        workflow_id,
+        graph_snapshot=graph_snapshot,
+        connection=connection,
+    )
+    graph_node_by_ticket_id = {
+        str(node.ticket_id): node
+        for node in graph_snapshot.nodes
+        if str(node.ticket_id or "").strip()
+    }
+    return graph_node_by_ticket_id, runtime_views
+
+
 def _build_ticket_failed_candidate(
     repository: ControlPlaneRepository,
     *,
@@ -233,6 +262,7 @@ def _build_ticket_failed_candidate(
         if created_spec is None:
             return [
                 {
+                    "source_graph_node_id": None,
                     "source_node_id": None,
                     "source_ticket_id": source_ticket_id,
                     "topic": f"Resolve blocker for {source_ticket_id}",
@@ -244,8 +274,25 @@ def _build_ticket_failed_candidate(
                     "eligibility_reason": "Source ticket create spec is missing.",
                 }
             ]
-        source_node_id = str(created_spec.get("node_id") or "")
-        current_node = repository.get_current_node_projection(workflow_id, source_node_id, connection=connection)
+        created_spec = apply_legacy_graph_contract_compat(created_spec)
+        source_identity = resolve_ticket_graph_identity(
+            ticket_id=source_ticket_id,
+            created_spec=created_spec,
+            runtime_node_id=str(created_spec.get("node_id") or "").strip() or None,
+        )
+        graph_node_by_ticket_id, runtime_views = _workflow_graph_context(
+            repository,
+            workflow_id=workflow_id,
+            connection=connection,
+        )
+        source_graph_node_id = source_identity.graph_node_id
+        source_node_id = source_identity.runtime_node_id
+        current_graph_node = graph_node_by_ticket_id.get(source_ticket_id)
+        current_view = runtime_views.get(source_graph_node_id)
+        if current_graph_node is None or current_view is None:
+            raise ValueError(
+                f"Meeting candidate source ticket {source_ticket_id} is missing graph/runtime truth for {source_graph_node_id}."
+            )
 
     topic = f"Resolve cross-role blocker on {source_node_id or source_ticket_id}"
     normalized_topic = _normalize_topic(topic)
@@ -268,9 +315,9 @@ def _build_ticket_failed_candidate(
     elif str(created_spec.get("output_schema_ref") or "").strip() not in _FAILED_TICKET_MEETING_OUTPUT_SCHEMAS:
         eligible = False
         eligibility_reason = "Only decision-oriented tickets are eligible for automatic meeting recovery."
-    elif current_node is not None and str(current_node.get("latest_ticket_id") or "") != source_ticket_id:
+    elif str(current_view.ticket_id or "").strip() != source_ticket_id:
         eligible = False
-        eligibility_reason = "Source node already has a newer follow-up ticket."
+        eligibility_reason = "Source graph lane already moved to a newer ticket."
     else:
         retry_budget = int((current_ticket or {}).get("retry_budget") or 0)
         retry_count = int((current_ticket or {}).get("retry_count") or 0)
@@ -294,6 +341,7 @@ def _build_ticket_failed_candidate(
 
     return [
         {
+            "source_graph_node_id": source_graph_node_id,
             "source_node_id": source_node_id or None,
             "source_ticket_id": source_ticket_id,
             "topic": topic,
@@ -325,15 +373,26 @@ def _build_approval_candidate(
             return []
         review_pack = (approval.get("payload") or {}).get("review_pack") or {}
         subject = review_pack.get("subject") or {}
-        source_ticket_id = str(subject.get("source_ticket_id") or "").strip()
-        source_node_id = str(subject.get("source_node_id") or "").strip()
+        source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_identity(
+            repository,
+            workflow_id=workflow_id,
+            subject=subject,
+            connection=connection,
+        )
         current_ticket = repository.get_current_ticket_projection(source_ticket_id, connection=connection)
-        current_node = repository.get_current_node_projection(workflow_id, source_node_id, connection=connection)
+        graph_node_by_ticket_id, runtime_views = _workflow_graph_context(
+            repository,
+            workflow_id=workflow_id,
+            connection=connection,
+        )
+        current_graph_node = graph_node_by_ticket_id.get(source_ticket_id) if source_ticket_id else None
+        current_view = runtime_views.get(str(source_graph_node_id or "").strip()) if source_graph_node_id else None
         created_spec = (
             repository.get_latest_ticket_created_payload(connection, source_ticket_id)
             if source_ticket_id
             else None
         )
+        source_node_id = source_node_id or (str(current_view.node_id) if current_view is not None else None)
 
     topic = f"Re-align {source_node_id or approval_id} after board feedback"
     normalized_topic = _normalize_topic(topic)
@@ -356,12 +415,13 @@ def _build_approval_candidate(
     elif approval_type == "MEETING_ESCALATION":
         eligible = False
         eligibility_reason = "Meeting escalation reviews cannot recursively trigger another meeting."
-    elif not source_ticket_id or current_ticket is None or current_node is None:
+    elif not source_ticket_id or current_ticket is None or current_graph_node is None or current_view is None:
+        raise ValueError(
+            f"Approval meeting candidate {approval_id} is missing graph/runtime truth for {source_graph_node_id or '<missing>'}."
+        )
+    elif str(current_view.ticket_id or "").strip() != source_ticket_id:
         eligible = False
-        eligibility_reason = "Approval source ticket or node is missing."
-    elif str(current_node.get("latest_ticket_id") or "").strip() != source_ticket_id:
-        eligible = False
-        eligibility_reason = "Approval source node already moved to a new ticket."
+        eligibility_reason = "Approval source graph lane already moved to a new ticket."
     elif existing_meeting is not None:
         eligible = False
         eligibility_reason = "Workflow already has an open meeting for this topic."
@@ -371,6 +431,7 @@ def _build_approval_candidate(
 
     return [
         {
+            "source_graph_node_id": source_graph_node_id,
             "source_node_id": source_node_id or None,
             "source_ticket_id": source_ticket_id or None,
             "topic": topic,

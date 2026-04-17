@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-17 20:41`
+> 最后更新：`2026-04-17 22:48`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -815,10 +815,13 @@
 - [x] `P4-S7` 已完成第七批：`workflow_relationships.list_workflow_ticket_snapshots()` 现已改成 graph-first 展示快照；只读 `TicketGraphSnapshot + ticket_projection + ticket-create payload`，不再从 legacy `node_projection` 缺口反向猜 `phase / parent / node_status`
 - [x] `P4-S7` 已完成第七批：dashboard `pipeline_summary` 和 dependency inspector 节点展示已改成 graph/runtime truth 主判；phase 汇总现在只读 `ticket_projection` 运行态真相，blocked / critical-path 继续复用 `TicketGraph` 索引，不再让 stale `node_projection` 改写展示状态
 - [x] `P4-S7` 已完成第七批：`resolve_review_subject_identity()` 已删掉 `source_node_id` 单独成真相的旧兼容；dependency inspector 的 open approval 命中现在只按 `source_graph_node_id`，缺 graph truth 时显式失败；CEO recent closed meeting reuse candidate 也不再回退 `source_node_id`
+- [x] `P4-S7` 已完成第八批：`ceo_snapshot` 的 recent completed reuse candidate 现已改成 graph-first；`consensus_document` 的复用 gate 不再依赖 legacy `node_projection.status`，stale 或缺失的 compat row 不再误伤复用候选
+- [x] `P4-S7` 已完成第八批：`ceo_meeting_policy / ceo_validator / CEORequestMeetingPayload` 现已补正式 `source_graph_node_id`；meeting candidate、shadow/live `REQUEST_MEETING` 校验和 graph truth 存在性判断都已改成 `source_ticket_id + source_graph_node_id` 主判，`source_node_id` 只保留展示兼容
+- [x] `P4-S7` 已完成第八批：`workflow_autopilot._workflow_closeout_state()` 和 `workflow_controller` 的 closeout completion 判定已切到 `TicketGraphSnapshot.node_status`；workflow chain report / controller closeout gate 不再因 stale `node_projection` 误判未完成
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
-- [ ] `P4-S7` 这轮已把 dashboard / dependency inspector / workflow_relationships 的主展示面收进 graph-first truth，但 recent completed consensus gate 和少数历史 helper 仍直接读 legacy `node_projection`；后续若要继续收缩，只能单独清这些 history/read helper
+- [ ] `P4-S7` 这轮已把 consensus reuse gate、meeting candidate/validator 和 workflow chain report closeout helper 收进 graph-first truth，但 `ceo_proposer` 的部分 create-ticket/closeout existence guard、以及 controller 里少数治理推进输入仍直接读 legacy `node_projection`；后续若要继续收缩，只能单独清这批 command-side helper
 - [ ] review pack / advisory / meeting 写入载荷现在仍同时带 `source_node_id + source_graph_node_id`；读面主判已切到 graph-first，但彻底把 command / event payload 改成 graph-only 需要单独切片
 - [ ] dashboard phase 汇总这轮已收成 graph/runtime truth；如果后续产品还想显示“更高层的阶段完成感”，必须单独定义正式 stage projection，不能再把旧 `node_projection` 推断逻辑塞回 dashboard
 
@@ -838,6 +841,7 @@
 - [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
 - [ ] graph layer 这轮已完成 execution / review 双 lane identity；如果后续要继续拆 runtime `node_projection`、approval target 和 worker runtime 到 graph-first 双层真相，必须单独开切片，不能在现有 `P4-S4` 图层收口里偷渡
 - [ ] `graph_health_policy.py` 这轮虽然已经把策略常量抽离出内核，但 `QUEUE_STARVATION / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 仍继续读取 runtime ticket/node projection 的时间与 SLA 字段；如果下一轮还要继续瘦 graph 内核，应优先决定这批 runtime-liveness 规则是否拆到独立监视层
+- [ ] `CEORequestMeetingPayload` 这轮已补正式 `source_graph_node_id`；如果后续还要把 board/advisory/meeting 全链统一成 graph-only subject，必须单独清 `meeting-request` 命令、event payload 和 artifact subject 里的 `source_node_id` 双写兼容，不能在现有切片里偷渡删除字段
 - [ ] `RuntimeLivenessReport` 这轮已经从 `GraphHealthReport` 主读面拆出，但 `graph_health_policy.py` 仍同时承载 graph + liveness 两类阈值；如果下一轮继续瘦监视层，应先决定 policy contract 是否也跟着拆层，避免新 monitor 再长回 policy bucket
 - [ ] `P4-S5` 这轮只把 lifecycle gate 收硬，没有给 planned placeholder 新增 incident / recovery 动作；后续如果自动路径还要显式暴露“先建票再继续”，必须单独决定是复用现有 command reject，还是新增正式恢复动作
 - [ ] `planned_placeholder_projection` 当前故意只读 `graph patch events + node_projection + open placeholder incident`；还没有把 review-lane placeholder、patch edge delta 结构真相或 dedicated placeholder history 拉进持久化层，后续若要补必须单独开切片，不回退到 runtime/node 缺失猜状态
@@ -2570,6 +2574,41 @@
 
 ---
 
+### Session `2026-04-17 / 44`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `backend/app/core/ceo_snapshot.py` 的 recent completed reuse candidate 改成 graph-first；`consensus_document` 现在按当前 graph lane 的 completed truth 判定可复用，不再被 stale / 缺失的 legacy `node_projection` 误伤
+- [x] 把 `backend/app/core/ceo_meeting_policy.py`、`backend/app/core/ceo_validator.py`、`backend/app/contracts/ceo_actions.py` 和 `backend/app/core/ceo_proposer.py` 一起收口到 `source_graph_node_id` 主判；缺 graph truth 时显式失败，不再回退 `source_node_id` 或 shared `node_projection`
+- [x] 把 `backend/app/core/workflow_autopilot.py` 的 closeout report helper、以及 `backend/app/core/workflow_controller.py` 的 closeout completion 判定改成只吃 `TicketGraphSnapshot.node_status`；stale `node_projection` 不再把 closeout 判定打回未完成
+- [x] 顺手删掉一条会污染新架构真相的旧兼容：`REQUEST_MEETING` 的 snapshot candidate 匹配和 graph truth 存在性校验不再让 `source_node_id` 单独成真
+
+**验证结果：**
+- [x] `py -m pytest backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_reuse_candidates_ignore_stale_node_projection_for_approved_consensus backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_includes_failed_ticket_meeting_candidate backend/tests/test_ceo_scheduler.py::test_ceo_validator_rejects_request_meeting_when_source_graph_node_id_mismatches_snapshot_candidate backend/tests/test_workflow_autopilot.py::test_autopilot_closeout_chain_report_ignores_stale_node_projection -q` 先红后绿，最终通过（`4 passed`）
+- [x] `py -m pytest backend/tests/test_ceo_scheduler.py -k "reuse_candidates or consensus or meeting_candidates or request_meeting" -q` 通过（`9 passed, 71 deselected`）
+- [x] `py -m pytest backend/tests/test_api.py -k "dashboard_pipeline_summary or dependency_inspector or review_room" -q` 通过（`24 passed, 312 deselected`）
+- [x] `py -m pytest backend/tests/test_workflow_autopilot.py -k "graph or placeholder or incident" -q` 通过（`6 passed, 9 deselected`）
+- [x] `py -m py_compile backend/app/core/ceo_snapshot.py backend/app/core/workflow_autopilot.py backend/app/core/workflow_controller.py backend/app/core/ceo_meeting_policy.py backend/app/core/ceo_validator.py backend/app/core/ceo_proposer.py backend/app/contracts/ceo_actions.py backend/tests/test_ceo_scheduler.py backend/tests/test_workflow_autopilot.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [ ] `doc/TODO.md` 未更新；原因：本轮只续跑 `P4-S7` 已锁定的 history/read helper graph-first 收口，没有改变当前批次入口、阶段目标或优先级
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只继续收缩 graph-first 真相来源和 closeout/read helper，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] `ceo_proposer` 的部分 create-ticket/closeout existence guard 和 controller 的少数治理推进输入仍直接读 legacy `node_projection`
+- [ ] review pack / advisory / meeting 写入载荷仍保留 `source_node_id` 兼容字段；彻底 graph-only 化要单独开切片
+
+**下一轮起手动作：**
+`继续从 P4-S7 续跑；优先清 ceo_proposer / controller 这类 command-side helper 对 legacy node_projection 的剩余消费面，再决定 source_node_id 双写兼容是否单独继续收缩。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2605,7 +2644,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第七批；dashboard / dependency inspector / workflow_relationships 主展示面都已切到 graph-first，stale `node_projection` 不再主判展示状态
-- 最近完成：`resolve_review_subject_identity()` 已删掉 `source_node_id` 单独成真的旧兼容；dashboard phase 汇总也已从旧的阶段推断收成 graph/runtime truth
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；recent completed consensus gate 和少数历史 helper 仍直接读 legacy `node_projection`；review/advisory/meeting 写入载荷仍保留 `source_node_id` 兼容字段
-- 下一步：`继续从 P4-S7 后续未完成项续跑；优先清 history/read helper 对 legacy node_projection 的剩余消费面，再决定 source_node_id 双写兼容是否单独继续收缩`
+- 当前状态：`P4-S7` 已完成第八批；consensus reuse gate、meeting candidate/validator 和 workflow closeout report helper 都已切到 graph-first，stale `node_projection` 不再主判这些 history/read helper
+- 最近完成：`REQUEST_MEETING` 现已补正式 `source_graph_node_id`，`workflow_autopilot._workflow_closeout_state()` 和 controller closeout gate 也已改成只吃 `TicketGraphSnapshot.node_status`
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`ceo_proposer` 的部分 create-ticket/closeout existence guard 和 controller 的少数治理推进输入仍直接读 legacy `node_projection`；review/advisory/meeting 写入载荷仍保留 `source_node_id` 兼容字段
+- 下一步：`继续从 P4-S7 后续未完成项续跑；优先清 ceo_proposer / controller 这类 command-side helper 对 legacy node_projection 的剩余消费面，再决定 source_node_id 双写兼容是否单独继续收缩`

@@ -1407,6 +1407,7 @@ def test_ceo_shadow_snapshot_includes_failed_ticket_meeting_candidate(client):
         for item in snapshot["meeting_candidates"]
         if item["source_ticket_id"] == "tkt_ceo_meeting_candidate"
     )
+    assert candidate["source_graph_node_id"] == "node_ceo_meeting_candidate"
     assert candidate["eligible"] is True
     assert candidate["participant_employee_ids"] == ["emp_frontend_2", "emp_checker_1"]
     assert candidate["recorder_employee_id"] == "emp_frontend_2"
@@ -1530,6 +1531,41 @@ def test_ceo_shadow_snapshot_includes_board_approved_consensus_ticket_in_reuse_c
         item
         for item in snapshot["reuse_candidates"]["recent_completed_tickets"]
         if item["ticket_id"] == "tkt_ceo_board_approved_consensus"
+    ]
+    assert len(consensus_candidates) == 1
+    assert consensus_candidates[0]["output_schema_ref"] == "consensus_document"
+
+
+def test_ceo_shadow_snapshot_reuse_candidates_ignore_stale_node_projection_for_approved_consensus(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_approved_consensus_stale_node_projection")
+    _create_and_board_approve_consensus_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_board_approved_consensus_stale",
+        node_id="node_ceo_board_approved_consensus_stale",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM node_projection
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            (workflow_id, "node_ceo_board_approved_consensus_stale"),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:approved-consensus-stale-node",
+    )
+
+    consensus_candidates = [
+        item
+        for item in snapshot["reuse_candidates"]["recent_completed_tickets"]
+        if item["ticket_id"] == "tkt_ceo_board_approved_consensus_stale"
     ]
     assert len(consensus_candidates) == 1
     assert consensus_candidates[0]["output_schema_ref"] == "consensus_document"
@@ -4053,6 +4089,7 @@ def test_live_provider_can_request_meeting_from_snapshot_candidate(client, monke
                             "payload": {
                                 "workflow_id": workflow_id,
                                 "meeting_type": "TECHNICAL_DECISION",
+                                "source_graph_node_id": candidate["source_graph_node_id"],
                                 "source_node_id": candidate["source_node_id"],
                                 "source_ticket_id": candidate["source_ticket_id"],
                                 "topic": candidate["topic"],
@@ -4082,6 +4119,59 @@ def test_live_provider_can_request_meeting_from_snapshot_candidate(client, monke
     assert run["accepted_actions"][0]["action_type"] == "REQUEST_MEETING"
     assert run["executed_actions"][0]["action_type"] == "REQUEST_MEETING"
     assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+
+def test_ceo_validator_rejects_request_meeting_when_source_graph_node_id_mismatches_snapshot_candidate(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_meeting_validator_graph_guard")
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_validator_meeting_source",
+        node_id="node_ceo_validator_meeting_source",
+        retry_budget=0,
+    )
+
+    snapshot = next(
+        run["snapshot"]
+        for run in client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+        if run["trigger_type"] == "TICKET_FAILED"
+    )
+    candidate = next(
+        item
+        for item in snapshot["meeting_candidates"]
+        if item["source_ticket_id"] == "tkt_ceo_validator_meeting_source"
+    )
+
+    result = validate_ceo_action_batch(
+        client.app.state.repository,
+        snapshot=snapshot,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Request a bounded technical decision meeting.",
+                "actions": [
+                    {
+                        "action_type": "REQUEST_MEETING",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "meeting_type": "TECHNICAL_DECISION",
+                            "source_graph_node_id": "node_ceo_validator_meeting_source::wrong",
+                            "source_node_id": candidate["source_node_id"],
+                            "source_ticket_id": candidate["source_ticket_id"],
+                            "topic": candidate["topic"],
+                            "participant_employee_ids": candidate["participant_employee_ids"],
+                            "recorder_employee_id": candidate["recorder_employee_id"],
+                            "input_artifact_refs": candidate["input_artifact_refs"],
+                            "reason": candidate["reason"],
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert result["accepted_actions"] == []
+    assert "does not match any snapshot meeting candidate" in result["rejected_actions"][0]["reason"]
 
 
 def test_meeting_escalation_reject_does_not_trigger_recursive_ceo_meeting(client, set_ticket_time):
