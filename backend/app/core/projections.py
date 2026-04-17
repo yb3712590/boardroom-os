@@ -1993,6 +1993,7 @@ def build_meeting_projection(
         workflow_id=str(meeting["workflow_id"]),
         subject={
             "source_ticket_id": meeting["source_ticket_id"],
+            "source_graph_node_id": meeting.get("source_graph_node_id"),
             "source_node_id": meeting["source_node_id"],
         },
     )

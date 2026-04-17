@@ -1996,6 +1996,13 @@ def _evaluate_ticket_execution_precondition(
     created_spec: dict[str, Any] | None,
     lease_owner: str | None,
 ) -> dict[str, Any] | None:
+    if (
+        isinstance(created_spec, dict)
+        and isinstance(created_spec.get("meeting_context"), dict)
+        and str(created_spec.get("output_schema_ref") or "") == CONSENSUS_DOCUMENT_SCHEMA_REF
+    ):
+        return None
+
     execution_target_ref = resolve_execution_target_ref_from_ticket_spec(created_spec)
     if execution_target_ref is None:
         return None

@@ -22,6 +22,7 @@ from app.core.constants import (
     EVENT_MEETING_STARTED,
     EVENT_TICKET_CREATED,
 )
+from app.core.graph_identity import GRAPH_LANE_EXECUTION
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.core.workflow_scope import with_workflow_scope
@@ -259,6 +260,7 @@ def handle_meeting_request(
             timeout_sla_sec=1800,
             deadline_at=workflow.get("deadline_at"),
             excluded_employee_ids=[],
+            graph_contract={"lane_kind": GRAPH_LANE_EXECUTION},
             auto_review_request=_build_meeting_review_request(topic=payload.topic, ticket_id=ticket_id),
             meeting_context={
                 "meeting_id": meeting_id,
@@ -292,6 +294,7 @@ def handle_meeting_request(
                 "participant_employee_ids": list(payload.participant_employee_ids),
                 "recorder_employee_id": payload.recorder_employee_id,
                 "source_ticket_id": ticket_id,
+                "source_graph_node_id": node_id,
                 "source_node_id": node_id,
             },
             occurred_at=received_at,
@@ -318,6 +321,7 @@ def handle_meeting_request(
                 "meeting_type": payload.meeting_type.value,
                 "topic": payload.topic,
                 "source_ticket_id": ticket_id,
+                "source_graph_node_id": node_id,
                 "source_node_id": node_id,
             },
             occurred_at=received_at,
@@ -360,6 +364,7 @@ def handle_meeting_request(
             normalized_topic=normalized_topic,
             status="OPEN",
             source_ticket_id=ticket_id,
+            source_graph_node_id=node_id,
             source_node_id=node_id,
             opened_at=received_at,
             updated_at=received_at,

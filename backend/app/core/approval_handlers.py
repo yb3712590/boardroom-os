@@ -86,6 +86,7 @@ from app.core.board_advisory_analysis import (
     run_board_advisory_analysis,
 )
 from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
+from app.core.graph_identity import GRAPH_LANE_EXECUTION
 from app.core.graph_patch_reducer import (
     GraphPatchEventRecord,
     GraphPatchReducerUnavailableError,
@@ -2252,6 +2253,11 @@ def _insert_scope_followup_ticket_created_event(
         )
         if inferred_execution_contract is not None:
             resolved_ticket_payload["execution_contract"] = inferred_execution_contract
+    graph_contract = resolved_ticket_payload.get("graph_contract")
+    if not isinstance(graph_contract, dict) or not str(graph_contract.get("lane_kind") or "").strip():
+        resolved_ticket_payload["graph_contract"] = {
+            "lane_kind": GRAPH_LANE_EXECUTION,
+        }
     workspace_bootstrap = infer_ticket_workspace_bootstrap(
         {
             **resolved_ticket_payload,

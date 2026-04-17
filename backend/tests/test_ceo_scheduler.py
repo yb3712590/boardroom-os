@@ -992,6 +992,7 @@ def _seed_closed_meeting(
     workflow_id: str,
     meeting_id: str,
     source_ticket_id: str,
+    source_graph_node_id: str,
     source_node_id: str,
     topic: str = "Reuse the existing governance decision",
     consensus_summary: str = "Meeting already resolved the technical trade-off.",
@@ -1009,6 +1010,7 @@ def _seed_closed_meeting(
             status="CLOSED",
             review_status="APPROVED",
             source_ticket_id=source_ticket_id,
+            source_graph_node_id=source_graph_node_id,
             source_node_id=source_node_id,
             review_pack_id="rp_meeting_reuse_1",
             opened_at=datetime.fromisoformat("2026-04-06T10:00:00+08:00"),
@@ -1426,6 +1428,7 @@ def test_ceo_shadow_snapshot_includes_reuse_candidates(client):
         workflow_id=workflow_id,
         meeting_id="mtg_ceo_reuse_closed",
         source_ticket_id="tkt_ceo_reuse_completed",
+        source_graph_node_id="node_ceo_reuse_completed",
         source_node_id="node_ceo_reuse_completed",
     )
 
@@ -1450,6 +1453,7 @@ def test_ceo_shadow_snapshot_includes_reuse_candidates(client):
     closed_meeting = reuse_candidates["recent_closed_meetings"][0]
     assert closed_meeting["meeting_id"] == "mtg_ceo_reuse_closed"
     assert closed_meeting["source_ticket_id"] == "tkt_ceo_reuse_completed"
+    assert closed_meeting["source_graph_node_id"] == "node_ceo_reuse_completed"
     assert closed_meeting["source_node_id"] == "node_ceo_reuse_completed"
     assert closed_meeting["topic"] == "Reuse the existing governance decision"
     assert closed_meeting["consensus_summary"] == "Meeting already resolved the technical trade-off."
@@ -1545,6 +1549,7 @@ def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(cl
         workflow_id=workflow_id,
         meeting_id="mtg_ceo_live_reuse_closed",
         source_ticket_id="tkt_ceo_live_reuse_completed",
+        source_graph_node_id="node_ceo_live_reuse_completed",
         source_node_id="node_ceo_live_reuse_completed",
     )
     _set_live_provider(client)

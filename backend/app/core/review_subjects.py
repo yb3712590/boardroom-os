@@ -54,8 +54,6 @@ def resolve_review_subject_identity(
                 runtime_node_id=runtime_node_id,
             )
         except GraphIdentityResolutionError as exc:
-            if source_node_id:
-                return source_ticket_id, source_node_id, source_node_id
             raise ReviewSubjectResolutionError(
                 f"review subject for workflow {workflow_id} cannot resolve source_graph_node_id: {exc}"
             ) from exc

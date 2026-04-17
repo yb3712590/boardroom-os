@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-17 15:31`
+> 最后更新：`2026-04-17 18:22`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -809,6 +809,9 @@
 - [x] `P4-S7` 已完成第五批：新增 `backend/app/core/review_subjects.py`，把 review / meeting / advisory 读面 subject 解析收成 graph-first 主判；`source_graph_node_id` 优先，旧 `source_node_id` 只保留为受控兼容展示字段，不再驱动 dependency inspector 的 open approval 命中
 - [x] `P4-S7` 已完成第五批：`MeetingDetailProjectionData` 和前端 `MeetingDetailData` 现已显式暴露 `source_graph_node_id`，`MeetingRoomDrawer` 优先展示 graph node；meeting detail 不再把 `source_node_id` 当唯一来源真相
 - [x] `P4-S7` 已完成第五批：`approval_handlers` 的 board review projection guard 和 advisory artifact subject 解析已优先走 graph-first subject resolver；事件和 artifact 写入仍保留 `source_node_id` 兼容字段，不在本轮改写 command / event 合同
+- [x] `P4-S7` 已完成第六批：`meeting-request` 现在会显式给 meeting ticket 写入 `graph_contract={"lane_kind":"execution"}`；`MEETING_REQUESTED / MEETING_STARTED` 事件和 `meeting_projection` 也已同步持久化 `source_graph_node_id`，meeting 主链不再因缺 lane contract 在 reducer 阶段崩溃
+- [x] `P4-S7` 已完成第六批：`build_meeting_projection()`、CEO recent closed meeting reuse candidate 和 meeting 相关读面现在会优先消费持久化 `source_graph_node_id`；`resolve_review_subject_identity()` 已删掉“source_ticket_id 解不出 graph identity 就回退 source_node_id”的旧兼容推导，缺 graph truth 时统一显式失败
+- [x] `P4-S7` 已完成第六批：meeting-backed `consensus_document` 票现在会显式跳过 provider precondition gate，继续走本地 deterministic meeting runtime；`approval_handlers` 里的 board-approved scope/meeting follow-up 建票入口也已补正式 `graph_contract`，不再留旧 router 漏口
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
@@ -836,6 +839,7 @@
 - [ ] `P4-S5` 这轮只把 lifecycle gate 收硬，没有给 planned placeholder 新增 incident / recovery 动作；后续如果自动路径还要显式暴露“先建票再继续”，必须单独决定是复用现有 command reject，还是新增正式恢复动作
 - [ ] `planned_placeholder_projection` 当前故意只读 `graph patch events + node_projection + open placeholder incident`；还没有把 review-lane placeholder、patch edge delta 结构真相或 dedicated placeholder history 拉进持久化层，后续若要补必须单独开切片，不回退到 runtime/node 缺失猜状态
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "provider_incident_resolve or placeholder_gate_incident_resolve" -q` 这轮按计划补跑时，`test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure` 会先撞到老的 `wf_seed` 建链缺口：helper 在 workflow 真相未建好前直接 create ticket；当前改动没有去扩这条旧测试入口，本轮已改用精确用例和 scheduler/autopilot 回归验证 provider restore 主链
+- [ ] `backend/tests/test_meeting_room.py::test_meeting_projection_backfills_review_pack_after_checker_approval` 这轮为了只验证 meeting review-pack 回填主链，补了最小 fake live provider 配置来满足 checker 票租约前置；当前没有把“无 provider 时人工 checker API 是否仍应被 provider gate 阻断”纳入产品决策，后续若要改要单独开切片
 
 ---
 
@@ -2491,6 +2495,42 @@
 
 ---
 
+### Session `2026-04-17 / 42`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `backend/app/core/meeting_handlers.py` 的 meeting 建票入口补成正式 graph contract：meeting ticket 现在显式写 `graph_contract={"lane_kind":"execution"}`，`MEETING_REQUESTED / MEETING_STARTED` 事件和 `meeting_projection` 也会同步写 `source_graph_node_id`
+- [x] 把 meeting graph-first 读写链继续收口：`build_meeting_projection()` 和 `ceo_snapshot` 的 recent closed meeting reuse candidate 现在都优先读持久化 `source_graph_node_id`；meeting projection 的 graph id 不再依赖 legacy `source_node_id` 反推
+- [x] 删掉一条会污染新架构真相的旧兼容：`resolve_review_subject_identity()` 不再允许“有 `source_ticket_id` 但解不出 graph identity 时退回 `source_node_id`”；现在缺 graph truth 会直接显式失败
+- [x] 顺手补平一条同类旧入口：meeting-backed `consensus_document` 票现在会显式跳过 provider precondition gate，继续走本地 deterministic meeting runtime；`approval_handlers` 的 board-approved follow-up 直建票路径也已补正式 `graph_contract`
+
+**验证结果：**
+- [x] `./backend/.venv/bin/pytest backend/tests/test_meeting_room.py -q` 通过（`7 passed`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "meeting or dependency_inspector or review_room" -q` 通过（`25 passed, 308 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k "review_pack or source_graph_node_id" -q` 通过（`1 passed, 37 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "graph_contract or runtime_node" -q` 通过（`9 passed, 40 deselected`）
+- [x] `./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "reuse_candidates" -q` 通过（`5 passed, 73 deselected`）
+- [x] `python3 -m py_compile backend/app/core/meeting_handlers.py backend/app/core/review_subjects.py backend/app/core/projections.py backend/app/core/ceo_snapshot.py backend/app/core/ticket_handlers.py backend/app/core/approval_handlers.py backend/app/db/repository.py backend/app/db/schema.py backend/tests/test_meeting_room.py backend/tests/test_api.py backend/tests/test_ticket_graph.py backend/tests/test_ceo_scheduler.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [ ] `doc/TODO.md` 未更新；原因：本轮只补 `P4-S7` 已锁定的 meeting graph-first 子缺口，没有改变当前批次入口、阶段目标或优先级
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只修 meeting 主链合同和 graph-first 读写链，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] `workflow_relationships` 展示快照仍直接读 legacy `node_projection`；展示层兼容壳还没单独清
+- [ ] review pack / advisory / meeting 的写入载荷仍保留 `source_node_id` 兼容字段，彻底 graph-only 化需要单独切片
+
+**下一轮起手动作：**
+`继续从 P4-S7 续跑；优先清点 projection / dashboard / workflow_relationships 这类展示层对 legacy node_projection 的剩余消费面，再决定是否继续收缩 source_node_id 双写兼容字段。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2526,7 +2566,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第五批；review / meeting / advisory 读面 subject 解析已收成 graph-first 主判，`source_node_id` 降级为兼容展示字段
-- 最近完成：`Dependency Inspector` open approval 现已按 `source_graph_node_id / graph_node_id` 命中；`MeetingDetailProjectionData` 和前端 `MeetingDetailData` 已显式暴露 `source_graph_node_id`
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`workflow_relationships` 的纯展示快照仍直接读 legacy `node_projection`；meeting command 主链缺 `graph_contract.lane_kind` 的旧入口问题仍未收口
-- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定是否单独处理 meeting command 的 graph_contract.lane_kind 缺口，或继续清 dashboard / workflow_relationships 展示层 legacy node_projection 兼容壳`
+- 当前状态：`P4-S7` 已完成第六批；meeting command 主链已补正式 `graph_contract`，meeting 事件 / projection / reuse candidate 也已稳定写出并消费 `source_graph_node_id`
+- 最近完成：`meeting-request` 不再因缺 `graph_contract.lane_kind` 崩溃；`resolve_review_subject_identity()` 已删掉 “source_ticket_id 解不出 graph identity 就退回 source_node_id” 的旧兼容
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`workflow_relationships` 的纯展示快照仍直接读 legacy `node_projection`；review/advisory/meeting 写入载荷仍保留 `source_node_id` 兼容字段
+- 下一步：`继续从 P4-S7 后续未完成项续跑；优先清 dashboard / workflow_relationships 展示层 legacy node_projection 兼容壳，再决定 source_node_id 双写兼容是否还能继续收缩`

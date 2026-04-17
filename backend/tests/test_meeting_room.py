@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from app.core.constants import TICKET_STATUS_COMPLETED, TICKET_STATUS_FAILED, TICKET_STATUS_PENDING
+from app.core.runtime_provider_config import (
+    OPENAI_COMPAT_PROVIDER_ID,
+    RuntimeProviderConfigEntry,
+    RuntimeProviderStoredConfig,
+)
 from app.scheduler_runner import run_scheduler_once
 
 
@@ -108,6 +113,28 @@ def _create_workflow(client, goal: str = "Meeting room workflow") -> str:
     return response.json()["causation_hint"].split(":", 1)[1]
 
 
+def _set_fake_live_provider(client) -> None:
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                )
+            ],
+            role_bindings=[],
+        )
+    )
+
+
 def test_meeting_request_creates_open_meeting_projection_and_ticket(client, set_ticket_time):
     set_ticket_time("2026-04-05T10:00:00+08:00")
     workflow_id = _create_workflow(client, goal="Open a technical decision meeting")
@@ -129,6 +156,17 @@ def test_meeting_request_creates_open_meeting_projection_and_ticket(client, set_
     repository = client.app.state.repository
     meeting = meeting_projection.json()["data"]
     source_ticket = repository.get_current_ticket_projection(meeting["source_ticket_id"])
+    with repository.connection() as connection:
+        created_payload = repository.get_latest_ticket_created_payload(
+            connection,
+            meeting["source_ticket_id"],
+        )
+    meeting_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] in {"MEETING_REQUESTED", "MEETING_STARTED"}
+        and (event.get("payload") or {}).get("meeting_id") == meeting_id
+    ]
 
     assert meeting_projection.status_code == 200
     assert meeting["meeting_id"] == meeting_id
@@ -139,6 +177,14 @@ def test_meeting_request_creates_open_meeting_projection_and_ticket(client, set_
     assert len(meeting["participants"]) == 2
     assert source_ticket is not None
     assert source_ticket["status"] == TICKET_STATUS_PENDING
+    assert created_payload is not None
+    assert created_payload["graph_contract"] == {"lane_kind": "execution"}
+    assert meeting["source_graph_node_id"] == meeting["source_node_id"]
+    assert meeting_events
+    assert {
+        (event.get("payload") or {}).get("source_graph_node_id")
+        for event in meeting_events
+    } == {meeting["source_graph_node_id"]}
 
 
 def test_meeting_projection_exposes_source_graph_node_id(client):
@@ -166,7 +212,8 @@ def test_meeting_projection_exposes_source_graph_node_id(client):
             normalized_topic="keep the meeting projection graph first",
             status="OPEN",
             source_ticket_id=str(node_projection["latest_ticket_id"]),
-            source_node_id=str(node_projection["node_id"]),
+            source_graph_node_id=str(node_projection["node_id"]),
+            source_node_id="node_stale_legacy_meeting_subject",
             opened_at=node_projection["updated_at"],
             updated_at=node_projection["updated_at"],
             recorder_employee_id="emp_frontend_2",
@@ -184,7 +231,7 @@ def test_meeting_projection_exposes_source_graph_node_id(client):
 
     assert response.status_code == 200
     meeting = response.json()["data"]
-    assert meeting["source_node_id"] == str(node_projection["node_id"])
+    assert meeting["source_node_id"] == "node_stale_legacy_meeting_subject"
     assert meeting["source_graph_node_id"] == str(node_projection["node_id"])
 
 
@@ -287,6 +334,7 @@ def test_meeting_projection_backfills_review_pack_after_checker_approval(client,
         idempotency_key="scheduler-runner:meeting-room-review-link",
         max_dispatches=10,
     )
+    _set_fake_live_provider(client)
 
     repository = client.app.state.repository
     meeting = client.get(f"/api/v1/projections/meetings/{meeting_id}").json()["data"]

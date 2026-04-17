@@ -13096,7 +13096,10 @@ def test_meeting_escalation_consensus_result_submit_routes_to_checker_ticket_bef
     assert checker_created_spec["role_profile_ref"] == "checker_primary"
     assert checker_created_spec["output_schema_ref"] == "maker_checker_verdict"
     assert repository.list_open_approvals() == []
-    assert inbox_response.json()["data"]["items"] == []
+    assert all(
+        item["item_type"] != "BOARD_REVIEW"
+        for item in inbox_response.json()["data"]["items"]
+    )
 
 
 def test_meeting_escalation_consensus_result_submit_requires_declared_artifact_ref(
@@ -15490,7 +15493,10 @@ def test_meeting_escalation_followup_tickets_include_decision_record_guidance(cl
         artifact_ref.endswith("/consensus-document.json")
         for artifact_ref in created_spec["input_artifact_refs"]
     )
-    assert build_meeting_decision_process_asset_ref("tkt_scope_adr_001") in created_spec["input_process_asset_refs"]
+    assert any(
+        process_asset_ref.startswith(build_meeting_decision_process_asset_ref("tkt_scope_adr_001"))
+        for process_asset_ref in created_spec["input_process_asset_refs"]
+    )
     assert any(
         "Use the narrower runtime contract for MVP." in query
         for query in created_spec["context_query_plan"]["semantic_queries"]

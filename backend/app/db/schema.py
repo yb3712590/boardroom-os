@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS meeting_projection (
     status TEXT NOT NULL,
     review_status TEXT,
     source_ticket_id TEXT NOT NULL,
+    source_graph_node_id TEXT NOT NULL,
     source_node_id TEXT NOT NULL,
     review_pack_id TEXT,
     opened_at TEXT NOT NULL,

@@ -651,25 +651,32 @@ def test_ticket_graph_snapshot_rejects_non_legacy_ticket_without_graph_contract(
         workspace_id="ws_default",
         goal="Graph core should fail closed when a non-legacy ticket is missing graph_contract.",
     )
-    _seed_ticket_created_event(
-        client,
-        workflow_id=workflow_id,
-        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_missing_contract_non_legacy",
-        ticket_payload={
-            **_ticket_create_payload(
-                workflow_id=workflow_id,
-                ticket_id="tkt_missing_contract_non_legacy",
-                node_id=node_id,
-                role_profile_ref="frontend_engineer_primary",
-                output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
-                delivery_stage="BUILD",
-            ),
-            "graph_contract": None,
-        },
-    )
-
-    with pytest.raises(GraphIdentityResolutionError, match="graph_contract"):
-        build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="TICKET_CREATED",
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_missing_contract_non_legacy",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                **_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id="tkt_missing_contract_non_legacy",
+                    node_id=node_id,
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    delivery_stage="BUILD",
+                ),
+                "graph_contract": None,
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:30:00+08:00"),
+        )
+        with pytest.raises(GraphIdentityResolutionError, match="graph_contract"):
+            repository.refresh_projections(connection)
 
 
 def test_ticket_graph_snapshot_prefers_graph_contract_execution_lane_over_review_taxonomy(client):

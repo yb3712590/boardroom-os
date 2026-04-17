@@ -23,6 +23,14 @@
 
 ### 2026-04-17
 
+- `P4-S7` 这轮已把 meeting command 主链补成正式 graph-first 合同：`meeting-request` 生成的 ticket 现在显式写 `graph_contract={"lane_kind":"execution"}`，`MEETING_REQUESTED / MEETING_STARTED` 和 `meeting_projection` 也会同步持久化 `source_graph_node_id`
+- meeting 相关读面这轮继续收口到持久化 graph truth：`build_meeting_projection()` 和 CEO recent closed meeting reuse candidate 现在都优先消费 `source_graph_node_id`，不再靠 legacy `source_node_id` 主判
+- `resolve_review_subject_identity()` 这轮已删掉一条会污染新架构真相的旧兼容：当 subject 已带 `source_ticket_id` 但解不出 graph identity 时，不再退回 `source_node_id`，现在会直接显式失败
+- meeting-backed `consensus_document` 票这轮已显式跳过 provider precondition gate，继续走本地 deterministic meeting runtime；这不是 fallback，而是把 meeting runtime 的本地执行合同写回正式前置判断
+- `approval_handlers` 的 board-approved follow-up 直建票路径这轮也已补正式 `graph_contract`，meeting escalation / ADR follow-up 不会再在 projection rebuild 阶段因为缺 lane contract 崩溃
+- 本轮 fresh 验证已通过：`./backend/.venv/bin/pytest backend/tests/test_meeting_room.py -q`、`./backend/.venv/bin/pytest backend/tests/test_api.py -k "meeting or dependency_inspector or review_room" -q`、`./backend/.venv/bin/pytest backend/tests/test_context_compiler.py -k "review_pack or source_graph_node_id" -q`、`./backend/.venv/bin/pytest backend/tests/test_ticket_graph.py -k "graph_contract or runtime_node" -q`、`./backend/.venv/bin/pytest backend/tests/test_ceo_scheduler.py -k "reuse_candidates" -q`、`python3 -m py_compile backend/app/core/meeting_handlers.py backend/app/core/review_subjects.py backend/app/core/projections.py backend/app/core/ceo_snapshot.py backend/app/core/ticket_handlers.py backend/app/core/approval_handlers.py backend/app/db/repository.py backend/app/db/schema.py backend/tests/test_meeting_room.py backend/tests/test_api.py backend/tests/test_ticket_graph.py backend/tests/test_ceo_scheduler.py`
+- 当前还要记住一条测试边界：`backend/tests/test_meeting_room.py::test_meeting_projection_backfills_review_pack_after_checker_approval` 这轮为了只验证 review-pack 回填主链，补了最小 fake live provider 配置来满足 checker 票租约前置；“无 provider 时人工 checker API 是否仍应被 provider gate 阻断” 还不是当前已决产品结论，后续若要改必须单独决策
+
 - `P4-S6` 这轮已把 placeholder materialization 边界正式锁死：`workflow_auto_advance` 开 gate incident、`incident-resolve` 走 `RERUN_CEO_SHADOW`、以及现有 scheduler/runtime 入口都不会偷偷创建 ticket 或把 planned placeholder 改成 materialized；`ticket-create` 继续是唯一合法 materialization 入口
 - `P4-S7` 这轮已继续收 runtime compat 壳：`scan_and_open_required_hook_gate_incidents()` 现已改成按 `resolve_ticket_graph_identity() + runtime_graph_node_views` 判断当前 graph lane，review lane required hook gate 不再受 stale shared `node_projection.latest_ticket_id` 污染
 - `P4-S7` 这轮还把 policy contract 正式拆开：`graph_health_policy.py` 现在只保留结构类规则；runtime stale/queue 阈值已迁到新文件 `backend/app/core/runtime_liveness_policy.py`，`build_runtime_liveness_report()` 也已只认自己的 policy contract

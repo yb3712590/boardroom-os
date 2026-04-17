@@ -5167,6 +5167,7 @@ class ControlPlaneRepository:
         normalized_topic: str,
         status: str,
         source_ticket_id: str,
+        source_graph_node_id: str,
         source_node_id: str,
         opened_at: datetime,
         updated_at: datetime,
@@ -5191,6 +5192,7 @@ class ControlPlaneRepository:
                 status,
                 review_status,
                 source_ticket_id,
+                source_graph_node_id,
                 source_node_id,
                 review_pack_id,
                 opened_at,
@@ -5202,7 +5204,7 @@ class ControlPlaneRepository:
                 rounds_json,
                 consensus_summary,
                 no_consensus_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 meeting_id,
@@ -5213,6 +5215,7 @@ class ControlPlaneRepository:
                 status,
                 review_status,
                 source_ticket_id,
+                source_graph_node_id,
                 source_node_id,
                 review_pack_id,
                 opened_at.isoformat(),
@@ -7348,6 +7351,7 @@ class ControlPlaneRepository:
                 status TEXT NOT NULL,
                 review_status TEXT,
                 source_ticket_id TEXT NOT NULL,
+                source_graph_node_id TEXT NOT NULL,
                 source_node_id TEXT NOT NULL,
                 review_pack_id TEXT,
                 opened_at TEXT NOT NULL,
@@ -7375,6 +7379,7 @@ class ControlPlaneRepository:
             "status": "TEXT",
             "review_status": "TEXT",
             "source_ticket_id": "TEXT",
+            "source_graph_node_id": "TEXT",
             "source_node_id": "TEXT",
             "review_pack_id": "TEXT",
             "opened_at": "TEXT",
