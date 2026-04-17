@@ -66,6 +66,8 @@
 - 2026-04-17 本轮已继续落 `P4-S7` 第三批：required hook gate scan 现已改成按 `graph_identity + runtime_graph_node_views` 判断当前 graph lane；review lane 不再受 stale shared `node_projection.latest_ticket_id` 污染。`graph_health_policy.py` 也已只保留结构类规则，runtime stale/queue 阈值现已拆到新文件 `backend/app/core/runtime_liveness_policy.py`
 - 2026-04-17 本轮已完成 `P4-S7` 第四批：`workflow_relationships.py` 现已拆成展示快照和 graph-first 运行态关系解析两层；`context_compiler._build_org_context()` 只再消费 `TicketGraphSnapshot + graph_identity + ticket_projection`，不再按 `parent_ticket_id + shared node_id` 猜 upstream / sibling / reviewer
 - 2026-04-17 本轮还把旧测试 harness 收正到当前真相：`backend/tests/test_role_hooks.py` 现在会显式补 provider 前置、create/lease/start/submit 全部断言 `ACCEPTED`、删 receipt 前先确认 receipt 已落盘；`backend/tests/test_context_compiler.py` 也已补 scoped workflow / governance 前置，不再靠缺省环境混过
+- 2026-04-17 本轮已完成 `P4-S7` 第五批：新增 `backend/app/core/review_subjects.py`，把 review / meeting / advisory 读面 subject 解析收成 graph-first 主判；`Dependency Inspector` open approval 已改成优先按 `source_graph_node_id / graph_node_id` 命中，`MeetingDetailProjectionData` 与前端 `MeetingDetailData` 也已显式暴露 `source_graph_node_id`
+- 2026-04-17 本轮同时把边界锁死：event / artifact 写入仍继续保留 `source_node_id` 兼容字段，不在这轮把 meeting / advisory / board review 的 command 与 event 合同整体改成 graph-only；当前已知剩余缺口是 meeting command 主链仍有一处 `graph_contract.lane_kind` 旧入口问题，后续要单独切片收口
 
 ## 当前批次
 

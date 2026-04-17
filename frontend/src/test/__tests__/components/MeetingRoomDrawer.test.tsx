@@ -21,6 +21,7 @@ describe('MeetingRoomDrawer', () => {
           status: 'CLOSED',
           review_status: 'BOARD_REVIEW_PENDING',
           source_ticket_id: 'tkt_meeting_001',
+          source_graph_node_id: 'node_meeting_001::execution',
           source_node_id: 'node_meeting_001',
           review_pack_id: 'brp_001',
           opened_at: '2026-04-05T10:00:00+08:00',
@@ -87,6 +88,7 @@ describe('MeetingRoomDrawer', () => {
     expect(screen.getByText(/homepage contract alignment is blocking implementation/i)).toBeInTheDocument()
     expect(screen.getByText(/art:\/\/runtime\/tkt_meeting_001\/meeting-digest\.json/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /audit trail/i })).toBeInTheDocument()
+    expect(screen.getByText(/node_meeting_001::execution/i)).toBeInTheDocument()
     expect(screen.getByText(/position round closed/i)).toBeInTheDocument()
     expect(screen.getByText(/the meeting converged on one runtime contract/i)).toBeInTheDocument()
 

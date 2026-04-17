@@ -78,6 +78,10 @@ export function MeetingRoomDrawer({
                   <span>{meetingData.source_ticket_id}</span>
                 </li>
                 <li>
+                  <strong>Source graph node</strong>
+                  <span>{meetingData.source_graph_node_id}</span>
+                </li>
+                <li>
                   <strong>Source node</strong>
                   <span>{meetingData.source_node_id}</span>
                 </li>

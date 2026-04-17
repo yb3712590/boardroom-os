@@ -198,6 +198,7 @@ export type ReviewPack = {
   subject: {
     title: string
     subtitle?: string | null
+    source_graph_node_id?: string | null
     source_node_id?: string | null
     source_ticket_id?: string | null
     blocking_scope?: string | null

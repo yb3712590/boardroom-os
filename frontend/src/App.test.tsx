@@ -88,6 +88,7 @@ function reviewRoomData() {
       subject: {
         title: 'Review homepage visual milestone',
         subtitle: 'The latest maker-checker pass is ready for board review.',
+        source_graph_node_id: 'node_homepage_visual::review',
         source_node_id: 'node_homepage_visual',
         source_ticket_id: 'tkt_visual_002',
         blocking_scope: 'NODE_ONLY',
@@ -162,6 +163,7 @@ function meetingRoomData() {
     status: 'CLOSED',
     review_status: 'BOARD_REVIEW_PENDING',
     source_ticket_id: 'tkt_meeting_001',
+    source_graph_node_id: 'node_meeting_001::execution',
     source_node_id: 'node_meeting_001',
     review_pack_id: 'brp_001',
     opened_at: '2026-04-05T10:00:00+08:00',

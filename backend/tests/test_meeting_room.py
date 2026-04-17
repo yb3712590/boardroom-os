@@ -141,6 +141,53 @@ def test_meeting_request_creates_open_meeting_projection_and_ticket(client, set_
     assert source_ticket["status"] == TICKET_STATUS_PENDING
 
 
+def test_meeting_projection_exposes_source_graph_node_id(client):
+    workflow_id = _create_workflow(client, goal="Meeting projection should expose graph identity")
+    repository = client.app.state.repository
+    with repository.connection() as connection:
+        node_row = connection.execute(
+            """
+            SELECT * FROM node_projection
+            WHERE workflow_id = ?
+            ORDER BY updated_at ASC, node_id ASC
+            LIMIT 1
+            """,
+            (workflow_id,),
+        ).fetchone()
+        assert node_row is not None
+        node_projection = repository._convert_node_projection_row(node_row)
+        meeting_id = "mtg_projection_graph_identity"
+        repository.create_meeting_projection(
+            connection,
+            meeting_id=meeting_id,
+            workflow_id=workflow_id,
+            meeting_type="TECHNICAL_DECISION",
+            topic="Keep the meeting projection graph-first",
+            normalized_topic="keep the meeting projection graph first",
+            status="OPEN",
+            source_ticket_id=str(node_projection["latest_ticket_id"]),
+            source_node_id=str(node_projection["node_id"]),
+            opened_at=node_projection["updated_at"],
+            updated_at=node_projection["updated_at"],
+            recorder_employee_id="emp_frontend_2",
+            participants=[
+                {
+                    "employee_id": "emp_frontend_2",
+                    "role_type": "frontend_engineer",
+                    "meeting_responsibility": "recorder",
+                    "is_recorder": True,
+                }
+            ],
+        )
+
+    response = client.get("/api/v1/projections/meetings/mtg_projection_graph_identity")
+
+    assert response.status_code == 200
+    meeting = response.json()["data"]
+    assert meeting["source_node_id"] == str(node_projection["node_id"])
+    assert meeting["source_graph_node_id"] == str(node_projection["node_id"])
+
+
 def test_meeting_request_rejects_duplicate_open_topic(client, set_ticket_time):
     set_ticket_time("2026-04-05T10:05:00+08:00")
     workflow_id = _create_workflow(client, goal="Reject duplicate meeting topic")

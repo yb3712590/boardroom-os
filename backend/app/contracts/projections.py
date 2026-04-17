@@ -384,6 +384,7 @@ class MeetingDetailProjectionData(StrictModel):
     status: str
     review_status: str | None = None
     source_ticket_id: str
+    source_graph_node_id: str
     source_node_id: str
     review_pack_id: str | None = None
     opened_at: datetime

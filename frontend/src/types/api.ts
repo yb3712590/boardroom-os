@@ -316,6 +316,7 @@ export type MeetingDetailData = {
   status: string
   review_status: string | null
   source_ticket_id: string
+  source_graph_node_id: string
   source_node_id: string
   review_pack_id: string | null
   opened_at: string

@@ -5804,6 +5804,46 @@ def test_dependency_inspector_shows_scope_review_stop_after_project_init(client)
     assert "dependency_ticket_ids" in review_node
 
 
+def test_dependency_inspector_prefers_source_graph_node_id_for_open_review_pack_match(client):
+    workflow_id = "wf_dependency_inspector_graph_first_review_match"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Dependency inspector should use source_graph_node_id before legacy source_node_id",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    payload = dict(approval["payload"] or {})
+    review_pack = dict(payload.get("review_pack") or {})
+    subject = dict(review_pack.get("subject") or {})
+    assert str(subject.get("source_graph_node_id") or "").strip() == "node_homepage_visual::review"
+    subject["source_node_id"] = "node_stale_legacy_review_lane"
+    review_pack["subject"] = subject
+    payload["review_pack"] = review_pack
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE approval_projection
+            SET payload_json = ?, updated_at = updated_at
+            WHERE approval_id = ?
+            """,
+            (json.dumps(payload), approval["approval_id"]),
+        )
+
+    response = client.get(f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector")
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    review_node = next(item for item in body["nodes"] if item["graph_node_id"] == "node_homepage_visual::review")
+    assert body["summary"]["current_stop"]["reason"] == "BOARD_REVIEW_OPEN"
+    assert body["summary"]["current_stop"]["review_pack_id"] == approval["review_pack_id"]
+    assert review_node["open_review_pack_id"] == approval["review_pack_id"]
+    assert review_node["block_reason"] == "BOARD_REVIEW_OPEN"
+
+
 def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id = "wf_dependency_inspector_linear_chain"

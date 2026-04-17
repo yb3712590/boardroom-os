@@ -92,6 +92,9 @@ from app.config import get_settings
 from app.core.artifact_store import ArtifactStore
 from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
 from app.core.board_advisory import build_board_advisory_context
+from app.core.review_subjects import (
+    resolve_review_subject_identity,
+)
 from app.core.constants import (
     APPROVAL_STATUS_OPEN,
     CIRCUIT_BREAKER_STATE_OPEN,
@@ -952,12 +955,17 @@ def build_dependency_inspector_projection(
             connection=connection,
         )
 
-    approval_by_node_id: dict[str, dict[str, Any]] = {}
+    approval_by_graph_node_id: dict[str, dict[str, Any]] = {}
     for approval in approvals:
         subject = (((approval.get("payload") or {}).get("review_pack") or {}).get("subject") or {})
-        source_node_id = str(subject.get("source_node_id") or "").strip()
-        if source_node_id and source_node_id not in approval_by_node_id:
-            approval_by_node_id[source_node_id] = approval
+        _, source_graph_node_id, source_node_id = resolve_review_subject_identity(
+            repository,
+            workflow_id=workflow_id,
+            subject=subject,
+        )
+        approval_key = source_graph_node_id or source_node_id
+        if approval_key and approval_key not in approval_by_graph_node_id:
+            approval_by_graph_node_id[approval_key] = approval
 
     incident_by_node_id: dict[str, dict[str, Any]] = {}
     for row in incident_rows:
@@ -1166,7 +1174,9 @@ def build_dependency_inspector_projection(
         snapshot = snapshot_by_ticket_id.get(ticket_id)
         dependency_ticket_ids = sorted(incoming_dependency_ticket_ids.get(ticket_id, set()), key=_ticket_sort_key)
         dependent_ticket_ids = sorted(outgoing_dependency_ticket_ids.get(ticket_id, set()), key=_ticket_sort_key)
-        approval = approval_by_node_id.get(graph_node.node_id)
+        approval = approval_by_graph_node_id.get(str(graph_node.graph_node_id)) or approval_by_graph_node_id.get(
+            graph_node.node_id
+        )
         incident = incident_by_node_id.get(graph_node.node_id)
         node_projections.append(
             DependencyInspectorNodeProjection(
@@ -1242,7 +1252,9 @@ def build_dependency_inspector_projection(
             outgoing_ticket_ids_by_graph_node_id.get(str(graph_node.graph_node_id), set()),
             key=_ticket_sort_key,
         )
-        approval = approval_by_node_id.get(graph_node.node_id)
+        approval = approval_by_graph_node_id.get(str(graph_node.graph_node_id)) or approval_by_graph_node_id.get(
+            graph_node.node_id
+        )
         incident = incident_by_node_id.get(graph_node.node_id)
         node_projections.append(
             DependencyInspectorNodeProjection(
@@ -1976,6 +1988,14 @@ def build_meeting_projection(
         source_ticket_id=str(meeting["source_ticket_id"]),
         artifact_store=artifact_store,
     )
+    _, source_graph_node_id, source_node_id = resolve_review_subject_identity(
+        repository,
+        workflow_id=str(meeting["workflow_id"]),
+        subject={
+            "source_ticket_id": meeting["source_ticket_id"],
+            "source_node_id": meeting["source_node_id"],
+        },
+    )
     return MeetingDetailProjectionEnvelope(
         schema_version=SCHEMA_VERSION,
         generated_at=now_local(),
@@ -1991,7 +2011,8 @@ def build_meeting_projection(
                 str(meeting["review_status"]) if meeting.get("review_status") is not None else None
             ),
             source_ticket_id=str(meeting["source_ticket_id"]),
-            source_node_id=str(meeting["source_node_id"]),
+            source_graph_node_id=str(source_graph_node_id),
+            source_node_id=str(source_node_id or meeting["source_node_id"]),
             review_pack_id=(
                 str(meeting["review_pack_id"]) if meeting.get("review_pack_id") is not None else None
             ),

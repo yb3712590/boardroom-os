@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-17 13:48`
+> 最后更新：`2026-04-17 15:31`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -806,11 +806,14 @@
 - [x] `P4-S7` 已完成第四批：`workflow_relationships.py` 已拆成展示快照和运行态关系解析两层；`resolve_runtime_org_context_relations()` 只读 `TicketGraphSnapshot + graph_identity + ticket_projection`，缺 graph truth 或 parent edge 不唯一时显式失败
 - [x] `P4-S7` 已完成第四批：`context_compiler._build_org_context()` 已切到 graph-first relation resolver；upstream / sibling / downstream reviewer 不再按 `parent_ticket_id + shared node_id` 拼关系，open review pack 也改成只按 `source_graph_node_id / source_ticket_id` 主判
 - [x] `P4-S7` 已完成第四批：`backend/tests/test_role_hooks.py` 旧 helper 已收成显式 harness；create / lease / start / submit 都断言 `ACCEPTED`，删 receipt 前先确认 receipt 真落盘，整桶 `test_role_hooks.py -q` 已恢复全绿
+- [x] `P4-S7` 已完成第五批：新增 `backend/app/core/review_subjects.py`，把 review / meeting / advisory 读面 subject 解析收成 graph-first 主判；`source_graph_node_id` 优先，旧 `source_node_id` 只保留为受控兼容展示字段，不再驱动 dependency inspector 的 open approval 命中
+- [x] `P4-S7` 已完成第五批：`MeetingDetailProjectionData` 和前端 `MeetingDetailData` 现已显式暴露 `source_graph_node_id`，`MeetingRoomDrawer` 优先展示 graph node；meeting detail 不再把 `source_node_id` 当唯一来源真相
+- [x] `P4-S7` 已完成第五批：`approval_handlers` 的 board review projection guard 和 advisory artifact subject 解析已优先走 graph-first subject resolver；事件和 artifact 写入仍保留 `source_node_id` 兼容字段，不在本轮改写 command / event 合同
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
 - [ ] `P4-S7` 这轮已把 review lane、approval target、worker runtime、liveness 和 compiler org context 主链接到 graph-first runtime truth，但 legacy `node_projection` 仍保留在部分展示读面/历史 helper 兼容壳里；后续若要继续收缩，只能从展示面单独清点
-- [ ] review pack / advisory 现在同时带 `source_node_id + source_graph_node_id`；前者仍保留给展示和旧 helper 兼容，后续若要继续收缩 shared `node_id` 语义，需要单独清点全部读面再删
+- [ ] review pack / advisory / meeting 写入载荷现在仍同时带 `source_node_id + source_graph_node_id`；读面主判已切到 graph-first，但彻底把 command / event payload 改成 graph-only 需要单独切片
 - [ ] `workflow_relationships` 的纯展示快照仍直接读取 legacy `node_projection`；这层不再喂给 compiler，但如果后续要彻底退出 shared `node_id`，还要单独清 projection / dashboard 消费面
 
 ### 明确放弃
@@ -2445,6 +2448,49 @@
 
 ---
 
+### Session `2026-04-17 / 41`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增 graph-first 读面 subject resolver：`source_graph_node_id` 优先，稳定兼容入口只负责解析旧 payload，不再从 stale `node_projection` 反向猜当前 lane
+- [x] 把 `Dependency Inspector` 的 open approval 关联改成按 `graph_node_id` 命中；`source_node_id` 被改坏时仍能通过 `source_graph_node_id` 绑定正确 review lane
+- [x] 把 `Meeting Detail` 合同和前端类型补上 `source_graph_node_id`，`MeetingRoomDrawer` 也改为优先展示 graph node
+- [x] 把 `approval_handlers` 的 board review projection guard 和 advisory artifact subject 解析接到同一套 graph-first subject resolver；写入事件和 artifact 仍保留 `source_node_id` 兼容字段，不在本轮改 command/event 合同
+- [x] 同步更新本计划、`doc/TODO.md` 和 `doc/history/memory-log.md`
+
+**验证结果：**
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "test_dependency_inspector_prefers_source_graph_node_id_for_open_review_pack_match" -q` 先红后绿
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_meeting_room.py -k "test_meeting_projection_exposes_source_graph_node_id" -q` 先红后绿
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/MeetingRoomDrawer.test.tsx` 先红后绿
+- [x] `./backend/.venv/Scripts/python.exe -m py_compile backend/app/core/review_subjects.py backend/app/core/projections.py backend/app/core/approval_handlers.py backend/app/contracts/projections.py` 通过
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_api.py -k "dependency_inspector or review_room or meeting_detail or runtime_node_projection_version" -q` 通过（`21 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_meeting_room.py -k "meeting_projection_exposes_source_graph_node_id" -q` 通过（`1 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_context_compiler.py -k "review_pack or source_graph_node_id" -q` 通过（`1 passed`）
+- [x] `./backend/.venv/Scripts/python.exe -m pytest backend/tests/test_role_hooks.py -q` 通过（`14 passed`）
+- [x] `cd frontend && npm run test:run -- src/test/__tests__/components/MeetingRoomDrawer.test.tsx src/test/__tests__/components/ReviewRoomDrawer.test.tsx src/test/__tests__/pages/dashboard-page-detail-state.test.tsx` 通过（`11 passed`）
+- [x] `cd frontend && npm run build` 通过
+- [ ] `backend/tests/test_meeting_room.py::test_meeting_request_creates_open_meeting_projection_and_ticket` 仍会命中现有 `meeting-request` 缺 `graph_contract.lane_kind` 的旧入口问题；本轮没有把它纳入修复，避免越界改 meeting command 主链
+
+**文档更新：**
+- [x] 本计划已更新
+- [x] `doc/TODO.md` 已更新
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只收口 graph-first 读面主判和展示字段，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] review pack / advisory / meeting 的写入载荷仍保留 `source_node_id` 兼容字段，彻底 graph-only 化需要单独切片
+- [ ] `workflow_relationships` 展示快照仍直接读 legacy `node_projection`；运行态 org context 和本轮读面主判已经不再受它驱动
+- [ ] meeting command 主链缺 `graph_contract.lane_kind` 的旧入口问题仍未收口
+
+**下一轮起手动作：**
+`继续从 P4-S7 续跑；优先决定是否单独处理 meeting command 的 graph_contract.lane_kind 缺口，或继续清 workflow_relationships / dashboard 展示层的 legacy node_projection 兼容壳。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2480,7 +2526,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第四批；compiler org context 已切到 graph-first relation resolver，`workflow_relationships` 已拆成展示快照和运行态关系两层，旧的 shared `node_id` 关系猜测已退出主判
-- 最近完成：`backend/tests/test_role_hooks.py -q` 和 `backend/tests/test_context_compiler.py -q` 已恢复全绿；review pack open-match 现已按 `source_graph_node_id -> source_ticket_id` 主判，不再按 `source_node_id` 猜 lane
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`workflow_relationships` 的纯展示快照仍直接读 legacy `node_projection`；review pack / advisory 的 `source_node_id` 兼容字段还没单独清点全部消费面
-- 下一步：`继续从 P4-S7 后续未完成项续跑；优先清点 projection / dashboard 对 legacy node_projection 与 source_node_id 的剩余消费面，再决定是否继续收缩 shared node 兼容字段`
+- 当前状态：`P4-S7` 已完成第五批；review / meeting / advisory 读面 subject 解析已收成 graph-first 主判，`source_node_id` 降级为兼容展示字段
+- 最近完成：`Dependency Inspector` open approval 现已按 `source_graph_node_id / graph_node_id` 命中；`MeetingDetailProjectionData` 和前端 `MeetingDetailData` 已显式暴露 `source_graph_node_id`
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`workflow_relationships` 的纯展示快照仍直接读 legacy `node_projection`；meeting command 主链缺 `graph_contract.lane_kind` 的旧入口问题仍未收口
+- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定是否单独处理 meeting command 的 graph_contract.lane_kind 缺口，或继续清 dashboard / workflow_relationships 展示层 legacy node_projection 兼容壳`

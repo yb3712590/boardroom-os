@@ -86,7 +86,6 @@ from app.core.board_advisory_analysis import (
     run_board_advisory_analysis,
 )
 from app.core.execution_targets import employee_supports_execution_contract, infer_execution_contract_payload
-from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
 from app.core.graph_patch_reducer import (
     GraphPatchEventRecord,
     GraphPatchReducerUnavailableError,
@@ -117,6 +116,7 @@ from app.core.project_workspaces import (
     sync_active_worktree_index,
     sync_ticket_boardroom_views,
 )
+from app.core.review_subjects import resolve_review_subject_identity
 from app.core.process_assets import (
     build_decision_summary_process_asset_ref,
     build_graph_patch_process_asset_ref,
@@ -274,27 +274,16 @@ def _validate_blocked_projection(
 ) -> str | None:
     subject = approval["payload"].get("review_pack", {}).get("subject", {})
     workflow_id = approval["workflow_id"]
-    ticket_id = str(subject.get("source_ticket_id") or "").strip()
-    node_id = str(subject.get("source_node_id") or "").strip()
-    graph_node_id = str(subject.get("source_graph_node_id") or "").strip()
+    ticket_id, graph_node_id, node_id = resolve_review_subject_identity(
+        repository,
+        workflow_id=workflow_id,
+        subject=subject,
+    )
     if not ticket_id:
         return None
     ticket_projection = repository.get_current_ticket_projection(ticket_id)
     if ticket_projection is None:
         return "Ticket or runtime node projection for this approval is missing. Reload dashboard state."
-    if not graph_node_id:
-        with repository.connection() as connection:
-            created_spec = apply_legacy_graph_contract_compat(
-                repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
-            )
-        try:
-            graph_node_id = resolve_ticket_graph_identity(
-                ticket_id=ticket_id,
-                created_spec=created_spec,
-                runtime_node_id=node_id or str(ticket_projection.get("node_id") or ""),
-            ).graph_node_id
-        except RuntimeError:
-            return "Approval target graph identity is missing. Reload review-room projection."
     runtime_node_projection = repository.get_runtime_node_projection(workflow_id, graph_node_id)
     if runtime_node_projection is None:
         return "Ticket or runtime node projection for this approval is missing. Reload review-room projection."
@@ -745,15 +734,20 @@ def _board_advisory_artifact_subject(
     connection,
     *,
     session: dict[str, Any],
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     approval = repository.get_approval_by_id(connection, str(session["approval_id"])) or {}
     review_pack = ((approval.get("payload") or {}).get("review_pack") or {}) if isinstance(approval, dict) else {}
     subject = review_pack.get("subject") or {}
-    source_ticket_id = str(subject.get("source_ticket_id") or session["approval_id"]).strip() or str(
-        session["approval_id"]
+    source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_identity(
+        repository,
+        workflow_id=str(session.get("workflow_id") or ""),
+        subject=subject,
     )
-    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
-    return source_ticket_id, source_node_id
+    normalized_ticket_id = source_ticket_id or (
+        str(subject.get("source_ticket_id") or session["approval_id"]).strip() or str(session["approval_id"])
+    )
+    normalized_source_node_id = source_node_id or normalized_ticket_id
+    return normalized_ticket_id, str(source_graph_node_id or normalized_source_node_id), normalized_source_node_id
 
 
 def _materialize_board_advisory_full_timeline_archive(
@@ -792,7 +786,7 @@ def _materialize_board_advisory_full_timeline_archive(
         session_id=session_id,
         version_int=timeline_archive_version_int,
     )
-    source_ticket_id, source_node_id = _board_advisory_artifact_subject(
+    source_ticket_id, _source_graph_node_id, source_node_id = _board_advisory_artifact_subject(
         repository,
         connection,
         session=session,
@@ -950,10 +944,11 @@ def _record_board_advisory_decision(
     workflow_id = str(approval["workflow_id"])
     review_pack = ((approval.get("payload") or {}).get("review_pack") or {})
     subject = review_pack.get("subject") or {}
-    source_ticket_id = str(subject.get("source_ticket_id") or approval["approval_id"]).strip() or str(
-        approval["approval_id"]
+    source_ticket_id, _source_graph_node_id, source_node_id = _board_advisory_artifact_subject(
+        repository,
+        connection,
+        session=session,
     )
-    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
     current_profile = repository.get_latest_governance_profile(workflow_id, connection=connection)
     if current_profile is None:
         raise ValueError("Governance profile is required before recording a board advisory decision.")
@@ -1371,8 +1366,11 @@ def _apply_board_advisory_patch(
         "review_pack"
     ) or {}
     subject = review_pack.get("subject") or {}
-    source_ticket_id = str(subject.get("source_ticket_id") or session["approval_id"]).strip() or str(session["approval_id"])
-    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
+    source_ticket_id, _source_graph_node_id, source_node_id = _board_advisory_artifact_subject(
+        repository,
+        connection,
+        session=session,
+    )
     patch_artifact_ref = advisory_graph_patch_artifact_ref(
         workflow_id=workflow_id,
         session_id=session_id,
