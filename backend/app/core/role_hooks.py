@@ -15,6 +15,7 @@ from app.core.constants import (
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     TICKET_STATUS_COMPLETED,
 )
+from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
 from app.core.output_schemas import (
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -608,6 +609,13 @@ def scan_and_open_required_hook_gate_incidents(
 ) -> RequiredHookIncidentScanResult:
     opened_incident_ids: list[str] = []
     with repository.connection() as connection:
+        from app.core.runtime_node_views import build_runtime_graph_node_views
+
+        runtime_graph_node_views = build_runtime_graph_node_views(
+            repository,
+            workflow_id,
+            connection=connection,
+        )
         ticket_rows = connection.execute(
             """
             SELECT *
@@ -617,25 +625,19 @@ def scan_and_open_required_hook_gate_incidents(
             """,
             (workflow_id,),
         ).fetchall()
-        node_rows = {
-            str(row["node_id"]): row
-            for row in connection.execute(
-                """
-                SELECT *
-                FROM node_projection
-                WHERE workflow_id = ?
-                ORDER BY updated_at ASC, node_id ASC
-                """,
-                (workflow_id,),
-            ).fetchall()
-        }
         for row in ticket_rows:
             ticket = repository._convert_ticket_projection_row(row)
-            node_id = str(ticket.get("node_id") or "").strip()
-            node_projection = node_rows.get(node_id)
-            if node_projection is not None and str(node_projection["latest_ticket_id"] or "") != ticket["ticket_id"]:
+            created_spec = apply_legacy_graph_contract_compat(
+                repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+            )
+            graph_identity = resolve_ticket_graph_identity(
+                ticket_id=str(ticket["ticket_id"]),
+                created_spec=created_spec,
+                runtime_node_id=str(ticket.get("node_id") or ""),
+            )
+            runtime_node_view = runtime_graph_node_views.get(graph_identity.graph_node_id)
+            if runtime_node_view is None or str(runtime_node_view.ticket_id or "") != str(ticket["ticket_id"]):
                 continue
-            created_spec = repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
             gate_result = evaluate_ticket_required_hook_gate(
                 repository,
                 ticket=ticket,

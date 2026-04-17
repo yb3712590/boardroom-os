@@ -63,6 +63,7 @@
 - 2026-04-16 本轮已落 `P4-S4` 第六批：`GraphHealthReport` 现已补第三批时间线规则 `GRAPH_THRASHING / READY_NODE_STALE`；前者只读真实 `GRAPH_PATCH_APPLIED`，后者只读 ready ticket `updated_at / timeout_sla_sec`，不再靠 advisory session 时间或其他文档侧信号猜时间线
 - 2026-04-16 本轮还补了显式 `GraphHealthUnavailableError`：graph patch payload 非对象、patch node list 非 `list[str]`、ready ticket 缺 `updated_at / timeout_sla_sec` 时现在会显式失败；`workflow_auto_advance / trigger_ceo_shadow_with_recovery` 继续复用 `TICKET_GRAPH_UNAVAILABLE`
 - 2026-04-16 本轮顺手删掉了 `resolve_workflow_graph_version()` 对完整事件 payload 转换的旧依赖，改成只按 graph mutation event 的 `sequence_no` 取最新 graph version，避免坏 payload 污染 graph version 真相
+- 2026-04-17 本轮已继续落 `P4-S7` 第三批：required hook gate scan 现已改成按 `graph_identity + runtime_graph_node_views` 判断当前 graph lane；review lane 不再受 stale shared `node_projection.latest_ticket_id` 污染。`graph_health_policy.py` 也已只保留结构类规则，runtime stale/queue 阈值现已拆到新文件 `backend/app/core/runtime_liveness_policy.py`
 
 ## 当前批次
 

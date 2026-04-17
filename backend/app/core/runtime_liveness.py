@@ -13,7 +13,10 @@ from app.core.constants import (
     EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
     EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
 )
-from app.core.graph_health_policy import DEFAULT_GRAPH_HEALTH_POLICY, GraphHealthPolicy
+from app.core.runtime_liveness_policy import (
+    DEFAULT_RUNTIME_LIVENESS_POLICY,
+    RuntimeLivenessPolicy,
+)
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -27,7 +30,7 @@ def _raise_runtime_liveness_unavailable(reason: str) -> None:
     raise RuntimeLivenessUnavailableError(f"runtime liveness unavailable: {reason}")
 
 
-def _policy_severity(policy: GraphHealthPolicy, finding_type: str) -> str:
+def _policy_severity(policy: RuntimeLivenessPolicy, finding_type: str) -> str:
     return str(policy.finding_severities.get(finding_type) or "WARNING")
 
 
@@ -311,7 +314,7 @@ def _queue_starvation_findings(
     *,
     graph_snapshot,
     workflow_id: str,
-    policy: GraphHealthPolicy,
+    policy: RuntimeLivenessPolicy,
     connection,
 ) -> list[GraphHealthFindingDigest]:
     ready_node_ids = [
@@ -395,7 +398,7 @@ def _ready_blocked_thrashing_findings(
     *,
     graph_snapshot,
     workflow_id: str,
-    policy: GraphHealthPolicy,
+    policy: RuntimeLivenessPolicy,
     connection,
 ) -> list[GraphHealthFindingDigest]:
     events = _workflow_timeline_events(
@@ -489,7 +492,7 @@ def _ready_node_stale_findings(
     *,
     graph_snapshot,
     workflow_id: str,
-    policy: GraphHealthPolicy,
+    policy: RuntimeLivenessPolicy,
     connection,
 ) -> list[GraphHealthFindingDigest]:
     ready_node_ids = [
@@ -568,7 +571,7 @@ def _cross_version_sla_breach_findings(
     *,
     graph_snapshot,
     workflow_id: str,
-    policy: GraphHealthPolicy,
+    policy: RuntimeLivenessPolicy,
     connection,
 ) -> list[GraphHealthFindingDigest]:
     blocked_node_ids = [
@@ -661,7 +664,7 @@ def build_runtime_liveness_report(
     repository: ControlPlaneRepository,
     workflow_id: str,
     *,
-    policy: GraphHealthPolicy = DEFAULT_GRAPH_HEALTH_POLICY,
+    policy: RuntimeLivenessPolicy = DEFAULT_RUNTIME_LIVENESS_POLICY,
     connection=None,
 ) -> RuntimeLivenessReportDigest:
     with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:

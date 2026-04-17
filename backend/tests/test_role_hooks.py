@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -11,14 +12,17 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 from app.core.role_hooks import (
+    HookGateResult,
     HookGateStatus,
     RoleHookSpec,
     evaluate_ticket_required_hook_gate,
     open_required_hook_gate_incident,
+    scan_and_open_required_hook_gate_incidents,
     replay_required_hook_receipts,
 )
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
+from app.core.constants import EVENT_TICKET_CREATED
 from tests.test_api import _incident_resolve_payload
 from tests.test_api import (
     _delivery_check_report_result_submit_payload,
@@ -48,6 +52,8 @@ def _create_and_start_ticket(
     create_payload["output_schema_ref"] = output_schema_ref
     if output_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF:
         create_payload["allowed_write_set"] = ["10-project/docs/*"]
+        create_payload["delivery_stage"] = "BUILD"
+    elif output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         create_payload["delivery_stage"] = "BUILD"
     elif output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         create_payload["allowed_write_set"] = [f"reports/check/{ticket_id}/*"]
@@ -502,6 +508,114 @@ def test_auto_advance_opens_single_required_hook_gate_incident_for_missing_recei
     assert relevant_incidents[0]["ticket_id"] == ticket_id
     assert relevant_incidents[0]["node_id"] == node_id
     assert relevant_incidents[0]["payload"]["missing_hook_ids"] == ["git_closeout"]
+
+
+def test_required_hook_gate_scan_uses_review_lane_runtime_truth_even_when_node_projection_is_stale(
+    client,
+) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Required hook gate scan must not trust stale shared node projection state."),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    maker_ticket_id = "tkt_hook_review_scan_maker_001"
+    checker_ticket_id: str | None = None
+    node_id = "node_hook_review_scan_001"
+    _create_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=maker_ticket_id,
+        node_id=node_id,
+        output_schema_ref=UI_MILESTONE_REVIEW_SCHEMA_REF,
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=maker_ticket_id,
+            node_id=node_id,
+        ),
+    )
+    assert maker_response.status_code == 200
+
+    repository = client.app.state.repository
+    checker_ticket_id = "tkt_hook_review_scan_checker_001"
+    with repository.transaction() as connection:
+        checker_payload = _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+        )
+        checker_payload["output_schema_ref"] = MAKER_CHECKER_VERDICT_SCHEMA_REF
+        checker_payload["delivery_stage"] = "REVIEW"
+        checker_payload["graph_contract"] = {"lane_kind": "review"}
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:{checker_ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=checker_payload,
+            occurred_at=datetime.fromisoformat("2026-03-28T10:05:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+        connection.execute(
+            """
+            UPDATE node_projection
+            SET latest_ticket_id = ?, version = version + 1
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            (maker_ticket_id, workflow_id, node_id),
+        )
+
+    def _stub_evaluate_ticket_required_hook_gate(*args, ticket, created_spec, **kwargs):
+        if str(ticket.get("ticket_id") or "") == checker_ticket_id:
+            return HookGateResult(
+                gate_mode="required",
+                applicability="workspace_managed_review_evidence",
+                required_hook_ids=["artifact_capture"],
+                checked_hook_ids=["artifact_capture"],
+                missing_hook_ids=["artifact_capture"],
+                status=HookGateStatus.BLOCKED,
+                reason_code="REQUIRED_HOOK_PENDING:artifact_capture",
+                reason_detail="artifact capture is missing for the review lane ticket",
+                incident_fingerprint=f"{workflow_id}:{checker_ticket_id}:artifact_capture",
+            )
+        return HookGateResult(
+            gate_mode="required",
+            applicability="workspace_managed_review_evidence",
+            required_hook_ids=[],
+            checked_hook_ids=[],
+            missing_hook_ids=[],
+            status=HookGateStatus.PASSED,
+            reason_code="HOOK_GATE_PASSED",
+            reason_detail=None,
+            incident_fingerprint=None,
+        )
+
+    import app.core.role_hooks as role_hooks_module
+
+    original_evaluate = role_hooks_module.evaluate_ticket_required_hook_gate
+    role_hooks_module.evaluate_ticket_required_hook_gate = _stub_evaluate_ticket_required_hook_gate
+    try:
+        scan_result = scan_and_open_required_hook_gate_incidents(
+            repository,
+            workflow_id=workflow_id,
+            idempotency_key_base=f"hook-scan-review-lane:{workflow_id}",
+        )
+    finally:
+        role_hooks_module.evaluate_ticket_required_hook_gate = original_evaluate
+
+    assert scan_result.opened_incident_ids
+    incident = repository.get_incident_projection(scan_result.opened_incident_ids[0])
+    assert incident is not None
+    assert incident["incident_type"] == "REQUIRED_HOOK_GATE_BLOCKED"
+    assert incident["ticket_id"] == checker_ticket_id
+    assert incident["node_id"] == node_id
+    assert incident["payload"]["missing_hook_ids"] == ["artifact_capture"]
 
 
 def test_ticket_graph_snapshot_surfaces_required_hook_pending_reason(client) -> None:

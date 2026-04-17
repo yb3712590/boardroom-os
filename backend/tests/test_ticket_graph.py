@@ -1938,6 +1938,14 @@ def test_runtime_liveness_report_detects_ready_node_stale(client, monkeypatch):
             """,
             ("2026-04-16T09:00:00+08:00", "tkt_graph_health_stale_ready"),
         )
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET updated_at = ?
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", workflow_id, "node_graph_health_stale_ready"),
+        )
 
     snapshot = build_ceo_shadow_snapshot(
         repository,
@@ -1990,6 +1998,14 @@ def test_runtime_liveness_report_detects_queue_starvation(client, monkeypatch):
             WHERE ticket_id = ?
             """,
             ("2026-04-16T09:00:00+08:00", ticket_id),
+        )
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET updated_at = ?
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", workflow_id, node_id),
         )
 
     snapshot = build_ceo_shadow_snapshot(
@@ -2364,6 +2380,14 @@ def test_runtime_liveness_report_does_not_flag_ready_node_stale_within_sla(clien
             """,
             ("2026-04-16T09:30:01+08:00", "tkt_graph_health_fresh_ready"),
         )
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET updated_at = ?
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("2026-04-16T09:30:01+08:00", workflow_id, "node_graph_health_fresh_ready"),
+        )
 
     snapshot = build_ceo_shadow_snapshot(
         repository,
@@ -2415,11 +2439,19 @@ def test_runtime_liveness_report_uses_policy_override_for_ready_node_stale_thres
             """,
             ("2026-04-16T09:00:00+08:00", ticket_id),
         )
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET updated_at = ?
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("2026-04-16T09:00:00+08:00", workflow_id, node_id),
+        )
 
     import importlib
 
-    graph_health_policy_module = importlib.import_module("app.core.graph_health_policy")
-    policy = graph_health_policy_module.DEFAULT_GRAPH_HEALTH_POLICY.model_copy(
+    runtime_liveness_policy_module = importlib.import_module("app.core.runtime_liveness_policy")
+    policy = runtime_liveness_policy_module.DEFAULT_RUNTIME_LIVENESS_POLICY.model_copy(
         update={
             "ready_node_stale_multiplier": 7,
         }
@@ -2433,6 +2465,25 @@ def test_runtime_liveness_report_uses_policy_override_for_ready_node_stale_thres
     finding_types = [item.finding_type for item in report.findings]
 
     assert "READY_NODE_STALE" not in finding_types
+
+
+def test_graph_health_policy_contract_excludes_runtime_liveness_thresholds() -> None:
+    import importlib
+
+    graph_health_policy_module = importlib.import_module("app.core.graph_health_policy")
+    runtime_liveness_policy_module = importlib.import_module("app.core.runtime_liveness_policy")
+
+    graph_policy_fields = set(graph_health_policy_module.DEFAULT_GRAPH_HEALTH_POLICY.model_dump().keys())
+    runtime_policy_fields = set(
+        runtime_liveness_policy_module.DEFAULT_RUNTIME_LIVENESS_POLICY.model_dump().keys()
+    )
+
+    assert "queue_starvation_multiplier" not in graph_policy_fields
+    assert "ready_node_stale_multiplier" not in graph_policy_fields
+    assert "cross_version_sla_multiplier" not in graph_policy_fields
+    assert "queue_starvation_multiplier" in runtime_policy_fields
+    assert "ready_node_stale_multiplier" in runtime_policy_fields
+    assert "cross_version_sla_multiplier" in runtime_policy_fields
 
 
 def test_graph_health_report_rejects_malformed_graph_patch_timeline(client):
@@ -2485,18 +2536,18 @@ def test_runtime_liveness_report_rejects_ready_node_missing_updated_at(client, m
         lambda: datetime.fromisoformat("2026-04-16T12:00:00+08:00"),
     )
     repository = client.app.state.repository
-    original_convert = repository._convert_ticket_projection_row
+    original_convert = repository._convert_runtime_node_projection_row
 
-    def _convert_ticket_projection_row_without_updated_at(row):
+    def _convert_runtime_node_projection_row_without_updated_at(row):
         converted = original_convert(row)
-        if converted["ticket_id"] == ticket_id:
+        if converted["graph_node_id"] == node_id:
             converted["updated_at"] = None
         return converted
 
     monkeypatch.setattr(
         repository,
-        "_convert_ticket_projection_row",
-        _convert_ticket_projection_row_without_updated_at,
+        "_convert_runtime_node_projection_row",
+        _convert_runtime_node_projection_row_without_updated_at,
     )
 
     with pytest.raises(RuntimeError, match="runtime liveness unavailable"):
@@ -2569,18 +2620,18 @@ def test_runtime_liveness_report_rejects_ready_node_missing_version_for_queue_st
         lambda: datetime.fromisoformat("2026-04-16T13:00:00+08:00"),
     )
     repository = client.app.state.repository
-    original_convert = repository._convert_ticket_projection_row
+    original_convert = repository._convert_runtime_node_projection_row
 
-    def _convert_ticket_projection_row_without_version(row):
+    def _convert_runtime_node_projection_row_without_version(row):
         converted = original_convert(row)
-        if converted["ticket_id"] == ticket_id:
+        if converted["graph_node_id"] == node_id:
             converted["version"] = None
         return converted
 
     monkeypatch.setattr(
         repository,
-        "_convert_ticket_projection_row",
-        _convert_ticket_projection_row_without_version,
+        "_convert_runtime_node_projection_row",
+        _convert_runtime_node_projection_row_without_version,
     )
 
     with pytest.raises(RuntimeError, match="runtime liveness unavailable"):
