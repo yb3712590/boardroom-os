@@ -536,32 +536,12 @@ def _build_backlog_followup_batch(
         return None
 
     actions: list[dict[str, Any]] = []
-    with repository.connection() as connection:
-        node_rows = connection.execute(
-            """
-            SELECT node_id, latest_ticket_id
-            FROM node_projection
-            WHERE workflow_id = ?
-            """,
-            (workflow_id,),
-        ).fetchall()
-        existing_ticket_ids_by_node_id = {
-            str(row["node_id"]): str(row["latest_ticket_id"])
-            for row in node_rows
-            if str(row["node_id"] or "").strip() and str(row["latest_ticket_id"] or "").strip()
-        }
-        existing_node_ids = {
-            str(row["node_id"])
-            for row in connection.execute(
-                """
-                SELECT DISTINCT node_id
-                FROM ticket_projection
-                WHERE workflow_id = ?
-                """,
-                (workflow_id,),
-            ).fetchall()
-            if str(row["node_id"] or "").strip()
-        }
+    existing_ticket_ids_by_node_id = {
+        str(plan.get("node_id") or "").strip(): str(plan.get("existing_ticket_id") or "").strip()
+        for plan in followup_ticket_plans
+        if str(plan.get("node_id") or "").strip() and str(plan.get("existing_ticket_id") or "").strip()
+    }
+    existing_node_ids = set(existing_ticket_ids_by_node_id)
 
     for followup_plan in followup_ticket_plans:
         node_id = str(followup_plan.get("node_id") or "").strip()
@@ -822,8 +802,6 @@ def _build_autopilot_closeout_batch(
             workflow_id=workflow_id,
             connection=connection,
         ):
-            return None
-        if repository.get_current_node_projection(workflow_id, closeout_node_id, connection=connection) is not None:
             return None
         parent_ticket_id = _resolve_autopilot_closeout_parent_ticket_id(
             repository,

@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-17 22:48`
+> 最后更新：`2026-04-18 06:49`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -818,10 +818,13 @@
 - [x] `P4-S7` 已完成第八批：`ceo_snapshot` 的 recent completed reuse candidate 现已改成 graph-first；`consensus_document` 的复用 gate 不再依赖 legacy `node_projection.status`，stale 或缺失的 compat row 不再误伤复用候选
 - [x] `P4-S7` 已完成第八批：`ceo_meeting_policy / ceo_validator / CEORequestMeetingPayload` 现已补正式 `source_graph_node_id`；meeting candidate、shadow/live `REQUEST_MEETING` 校验和 graph truth 存在性判断都已改成 `source_ticket_id + source_graph_node_id` 主判，`source_node_id` 只保留展示兼容
 - [x] `P4-S7` 已完成第八批：`workflow_autopilot._workflow_closeout_state()` 和 `workflow_controller` 的 closeout completion 判定已切到 `TicketGraphSnapshot.node_status`；workflow chain report / controller closeout gate 不再因 stale `node_projection` 误判未完成
+- [x] `P4-S7` 已完成第九批：`workflow_controller` 的 governance progression / architect gate / backlog followup existing-ticket 判断现已优先读 `ticket_projection` 当前真相；`required_governance_ticket_plan.existing_ticket_id` 不再依赖 legacy `workflow_nodes.latest_ticket_id`
+- [x] `P4-S7` 已完成第九批：`ceo_proposer._build_backlog_followup_batch()` 现已直接复用 `capability_plan.followup_ticket_plans[].existing_ticket_id` 作为 fanout 依赖真相；上游 followup 的 legacy `node_projection` 缺失时，不再把下游依赖错判成“尚未存在”
+- [x] `P4-S7` 已完成第九批：autopilot closeout deterministic fallback 已删掉对 `node_ceo_delivery_closeout` 的 legacy `node_projection` existence guard；没有真实 closeout ticket 时，stale compat row 不再误挡 closeout batch
+- [x] `P4-S7` 已完成第九批：controller 生成的 implementation-boundary meeting candidate 现已补正式 `source_graph_node_id`，deterministic `REQUEST_MEETING` 不再因为 command-side candidate 缺 graph subject 而在 proposer 阶段崩掉
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
-- [ ] `P4-S7` 这轮已把 consensus reuse gate、meeting candidate/validator 和 workflow chain report closeout helper 收进 graph-first truth，但 `ceo_proposer` 的部分 create-ticket/closeout existence guard、以及 controller 里少数治理推进输入仍直接读 legacy `node_projection`；后续若要继续收缩，只能单独清这批 command-side helper
 - [ ] review pack / advisory / meeting 写入载荷现在仍同时带 `source_node_id + source_graph_node_id`；读面主判已切到 graph-first，但彻底把 command / event payload 改成 graph-only 需要单独切片
 - [ ] dashboard phase 汇总这轮已收成 graph/runtime truth；如果后续产品还想显示“更高层的阶段完成感”，必须单独定义正式 stage projection，不能再把旧 `node_projection` 推断逻辑塞回 dashboard
 
@@ -848,6 +851,7 @@
 - [ ] `./backend/.venv/bin/pytest backend/tests/test_api.py -k "provider_incident_resolve or placeholder_gate_incident_resolve" -q` 这轮按计划补跑时，`test_provider_incident_resolve_can_restore_and_retry_latest_provider_failure` 会先撞到老的 `wf_seed` 建链缺口：helper 在 workflow 真相未建好前直接 create ticket；当前改动没有去扩这条旧测试入口，本轮已改用精确用例和 scheduler/autopilot 回归验证 provider restore 主链
 - [ ] `backend/tests/test_meeting_room.py::test_meeting_projection_backfills_review_pack_after_checker_approval` 这轮为了只验证 meeting review-pack 回填主链，补了最小 fake live provider 配置来满足 checker 票租约前置；当前没有把“无 provider 时人工 checker API 是否仍应被 provider gate 阻断”纳入产品决策，后续若要改要单独开切片
 - [ ] dashboard phase 汇总这轮按 graph/runtime truth 收口后，`scope approval` 场景会显式看到后续 `build/check/review` 票仍处于 `PENDING`；如果后续要给 dashboard 单独展示“阶段完成感”或“业务里程碑感”，必须新建立法，不回退到 `node_projection` 或 checker verdict 的隐式推断
+- [ ] `py -m pytest backend/tests/test_ceo_scheduler.py -q` 在本轮相关用例已转绿后，仍会有 3 条 advisory analysis 历史用例卡在旧口子：`board-advisory-request-analysis` 当前会把 session 落成 `ANALYSIS_REJECTED`，导致 `latest_patch_proposal_ref=None`，后续 `board-advisory-apply-patch` 直接 422；这条链当前看起来不属于本轮 `P4-S7` command-side helper 收口，先记到后续单独切片
 
 ---
 
@@ -2609,6 +2613,40 @@
 
 ---
 
+### Session `2026-04-18 / 45`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `backend/app/core/workflow_controller.py` 的 command-side existing-ticket 判定收回 `ticket_projection` 当前真相：governance progression、architect gate 和 backlog followup 不再依赖 stale `workflow_nodes.latest_ticket_id`
+- [x] 把 `backend/app/core/ceo_proposer.py` 的 backlog followup existence guard 收到 `capability_plan.followup_ticket_plans[].existing_ticket_id`；上游 followup 的 legacy `node_projection` 被删掉时，下游依赖票仍能继续 fanout
+- [x] 删掉 `ceo_proposer` 里会误挡 closeout 的旧 compat guard：没有真实 closeout ticket 时，stale `node_ceo_delivery_closeout` row 不再阻断 deterministic closeout batch
+- [x] 顺手补齐一条同链 graph subject：controller 生成的 meeting candidate 现在会显式带 `source_graph_node_id`，`REQUEST_MEETING` 不再因为 command-side candidate 缺 graph subject 而在 proposer 阶段报错
+
+**验证结果：**
+- [x] `py -m pytest backend/tests/test_ceo_scheduler.py::test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_when_node_projection_is_stale backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_keeps_existing_governance_ticket_plan_when_node_projection_is_stale backend/tests/test_ceo_scheduler.py::test_autopilot_closeout_batch_ignores_stale_closeout_node_projection_without_closeout_ticket -q` 先红后绿，最终通过（`3 passed`）
+- [x] `py -m pytest backend/tests/test_ceo_scheduler.py::test_autopilot_completed_atomic_task_does_not_auto_create_closeout_ticket_before_full_delivery_chain backend/tests/test_ceo_scheduler.py::test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket backend/tests/test_ceo_scheduler.py::test_autopilot_closeout_batch_ignores_stale_closeout_node_projection_without_closeout_ticket backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups backend/tests/test_ceo_scheduler.py::test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_when_node_projection_is_stale backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_requires_next_governance_document_before_backlog_fanout backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_keeps_existing_governance_ticket_plan_when_node_projection_is_stale backend/tests/test_ceo_scheduler.py::test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_followup_when_doc_is_missing backend/tests/test_ceo_scheduler.py::test_ceo_shadow_run_requests_meeting_before_backlog_followup_when_required -q` 通过（`10 passed`）
+- [x] `py -m py_compile backend/app/core/workflow_controller.py backend/app/core/ceo_proposer.py backend/tests/test_ceo_scheduler.py` 通过
+- [ ] `py -m pytest backend/tests/test_ceo_scheduler.py -q` 未全绿；剩余 3 条 advisory analysis 历史用例会把 session 落成 `ANALYSIS_REJECTED`，后续 `board-advisory-apply-patch` 因 `latest_patch_proposal_ref=None` 返回 `422`
+
+**文档更新：**
+- [x] 本计划已更新
+- [ ] `doc/TODO.md` 未更新；原因：本轮只续跑 `P4-S7` 已锁定的 command-side helper graph-first 收口，没有改变当前批次入口、阶段目标或优先级
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只继续收缩 `workflow_controller / ceo_proposer` 的 graph-first 真相来源，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] review pack / advisory / meeting 写入载荷仍保留 `source_node_id + source_graph_node_id` 双写兼容字段；彻底 graph-only 化需要单独切片
+- [ ] advisory analysis 这条历史链当前会把 session 落成 `ANALYSIS_REJECTED`；是否纳入下一轮，需要先判断它是不是 `P4-S7` 的同链缺口
+
+**下一轮起手动作：**
+`继续从 P4-S7 续跑；优先决定 review/advisory/meeting 的 source_node_id 双写兼容是否继续收缩，或把 advisory analysis 的 ANALYSIS_REJECTED 历史口子单独拆成下一条切片。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2644,7 +2682,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第八批；consensus reuse gate、meeting candidate/validator 和 workflow closeout report helper 都已切到 graph-first，stale `node_projection` 不再主判这些 history/read helper
-- 最近完成：`REQUEST_MEETING` 现已补正式 `source_graph_node_id`，`workflow_autopilot._workflow_closeout_state()` 和 controller closeout gate 也已改成只吃 `TicketGraphSnapshot.node_status`
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`ceo_proposer` 的部分 create-ticket/closeout existence guard 和 controller 的少数治理推进输入仍直接读 legacy `node_projection`；review/advisory/meeting 写入载荷仍保留 `source_node_id` 兼容字段
-- 下一步：`继续从 P4-S7 后续未完成项续跑；优先清 ceo_proposer / controller 这类 command-side helper 对 legacy node_projection 的剩余消费面，再决定 source_node_id 双写兼容是否单独继续收缩`
+- 当前状态：`P4-S7` 已完成第九批；governance progression / backlog fanout / closeout deterministic fallback 这些 command-side helper 已切到 graph-first 或 ticket-projection truth，stale `node_projection` 不再主判这些入口
+- 最近完成：`workflow_controller` 的 existing-ticket 判断已收回 `ticket_projection`，`ceo_proposer` 的 backlog followup / closeout existence guard 也已退出 legacy `node_projection`
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；review/advisory/meeting 写入载荷仍保留 `source_node_id` 双写兼容；`backend/tests/test_ceo_scheduler.py -q` 里仍有 3 条 advisory analysis 历史用例会把 session 落成 `ANALYSIS_REJECTED`
+- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定 source_node_id 双写兼容是否继续收缩，或把 advisory analysis 的 ANALYSIS_REJECTED 历史口子单独拆成下一条切片`

@@ -21,6 +21,18 @@
 
 ## Recent Memory
 
+### 2026-04-18
+
+- `P4-S7` 这轮已把 `workflow_controller` 的 command-side existing-ticket 判定收回 `ticket_projection` 当前真相：governance progression、architect gate 和 backlog followup 不再依赖 stale `workflow_nodes.latest_ticket_id`
+- `required_governance_ticket_plan.existing_ticket_id` 现在会在 legacy `node_projection` 缺失时继续保留真实当前票；治理推进不再因为 compat row 丢失就把“已有下一张票”误判成“还没建”
+- `ceo_proposer._build_backlog_followup_batch()` 这轮已改成直接复用 `capability_plan.followup_ticket_plans[].existing_ticket_id`；上游 followup 的 legacy `node_projection` 被删掉时，下游依赖票仍能继续 fanout，不会再卡成“依赖票不存在”
+- autopilot closeout deterministic fallback 这轮已删掉对 `node_ceo_delivery_closeout` 的 legacy `node_projection` existence guard；没有真实 closeout ticket 时，stale compat row 不再误挡 closeout batch
+- controller 生成的 implementation-boundary meeting candidate 这轮也已补正式 `source_graph_node_id`；deterministic `REQUEST_MEETING` 不再因为 command-side candidate 缺 graph subject 在 proposer 阶段报错
+- 本轮 fresh 验证已通过：`py -m pytest backend/tests/test_ceo_scheduler.py::test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_when_node_projection_is_stale backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_keeps_existing_governance_ticket_plan_when_node_projection_is_stale backend/tests/test_ceo_scheduler.py::test_autopilot_closeout_batch_ignores_stale_closeout_node_projection_without_closeout_ticket -q`、`py -m pytest backend/tests/test_ceo_scheduler.py::test_autopilot_completed_atomic_task_does_not_auto_create_closeout_ticket_before_full_delivery_chain backend/tests/test_ceo_scheduler.py::test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket backend/tests/test_ceo_scheduler.py::test_autopilot_closeout_batch_ignores_stale_closeout_node_projection_without_closeout_ticket backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups backend/tests/test_ceo_scheduler.py::test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_when_node_projection_is_stale backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_requires_next_governance_document_before_backlog_fanout backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_keeps_existing_governance_ticket_plan_when_node_projection_is_stale backend/tests/test_ceo_scheduler.py::test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_followup_when_doc_is_missing backend/tests/test_ceo_scheduler.py::test_ceo_shadow_run_requests_meeting_before_backlog_followup_when_required -q`、`py -m py_compile backend/app/core/workflow_controller.py backend/app/core/ceo_proposer.py backend/tests/test_ceo_scheduler.py`
+- 当前还要记住一条新的验证边界：`py -m pytest backend/tests/test_ceo_scheduler.py -q` 里仍有 3 条 advisory analysis 历史用例会把 session 落成 `ANALYSIS_REJECTED`，随后 `board-advisory-apply-patch` 因 `latest_patch_proposal_ref=None` 返回 `422`；这条链当前看起来不属于本轮 command-side helper 收口，后续如果要动，要单独拆切片
+- `doc/TODO.md` 这轮没有更新；原因是当前批次、阶段目标和优先级都没变，只是在 `P4-S7` 里继续把 command-side helper 收到 graph-first truth
+- `README.md` 这轮没有更新；原因是没有改仓库入口叙事或运行方式
+
 ### 2026-04-17
 
 - `P4-S7` 这轮已把 `workflow_relationships.list_workflow_ticket_snapshots()` 收成 graph-first 展示快照；现在只读 `TicketGraphSnapshot + ticket_projection + ticket-create payload`，不再从 legacy `node_projection` 缺口反向猜 `phase / parent / node_status`

@@ -86,6 +86,48 @@ def backlog_followup_key_to_node_id(ticket_key: str) -> str:
     return f"node_backlog_followup_{normalized}" if normalized else "node_backlog_followup"
 
 
+def _current_ticket_ids_by_node_id(
+    *,
+    tickets: list[dict[str, Any]],
+    workflow_nodes: list[dict[str, Any]],
+) -> dict[str, str]:
+    latest_ticket_ids_by_node_id: dict[str, str] = {}
+    latest_sort_keys_by_node_id: dict[str, tuple[str, str]] = {}
+    for ticket in tickets:
+        node_id = str(ticket.get("node_id") or "").strip()
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        if not node_id or not ticket_id:
+            continue
+        sort_key = (str(ticket.get("updated_at") or ""), ticket_id)
+        if sort_key >= latest_sort_keys_by_node_id.get(node_id, ("", "")):
+            latest_sort_keys_by_node_id[node_id] = sort_key
+            latest_ticket_ids_by_node_id[node_id] = ticket_id
+    for node in workflow_nodes:
+        node_id = str(node.get("node_id") or "").strip()
+        ticket_id = str(node.get("latest_ticket_id") or "").strip()
+        if node_id and ticket_id and node_id not in latest_ticket_ids_by_node_id:
+            latest_ticket_ids_by_node_id[node_id] = ticket_id
+    return latest_ticket_ids_by_node_id
+
+
+def _known_node_ids(
+    *,
+    tickets: list[dict[str, Any]],
+    workflow_nodes: list[dict[str, Any]],
+) -> set[str]:
+    node_ids = {
+        str(ticket.get("node_id") or "").strip()
+        for ticket in tickets
+        if str(ticket.get("node_id") or "").strip()
+    }
+    node_ids.update(
+        str(node.get("node_id") or "").strip()
+        for node in workflow_nodes
+        if str(node.get("node_id") or "").strip()
+    )
+    return node_ids
+
+
 def _architect_governance_gate_node_id(source_node_id: str | None, source_ticket_id: str | None) -> str:
     normalized = _normalize_identifier(source_node_id or source_ticket_id or "workflow")
     return (
@@ -331,6 +373,7 @@ def _build_governance_progression_ticket_plan(
     repository: ControlPlaneRepository,
     *,
     workflow: dict[str, Any],
+    tickets: list[dict[str, Any]],
     workflow_nodes: list[dict[str, Any]],
     employees: list[dict[str, Any]],
     connection,
@@ -343,15 +386,17 @@ def _build_governance_progression_ticket_plan(
     if not workflow_id:
         return None
 
+    known_node_ids = _known_node_ids(tickets=tickets, workflow_nodes=workflow_nodes)
+    existing_ticket_ids_by_node_id = _current_ticket_ids_by_node_id(
+        tickets=tickets,
+        workflow_nodes=workflow_nodes,
+    )
     completed_ticket_ids_by_schema = _latest_completed_governance_ticket_ids_by_schema(
         repository,
         workflow_id=workflow_id,
         connection=connection,
     )
-    has_project_init_governance_node = any(
-        str(node.get("node_id") or "").strip() == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
-        for node in workflow_nodes
-    )
+    has_project_init_governance_node = PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID in known_node_ids
     if (
         not completed_ticket_ids_by_schema
         and not has_project_init_governance_node
@@ -370,11 +415,6 @@ def _build_governance_progression_ticket_plan(
         return None
 
     node_id = build_governance_followup_node_id(next_schema_ref)
-    existing_ticket_ids_by_node_id = {
-        str(node.get("node_id") or ""): str(node.get("latest_ticket_id") or "")
-        for node in workflow_nodes
-        if str(node.get("node_id") or "").strip() and str(node.get("latest_ticket_id") or "").strip()
-    }
     dependency_gate_refs = governance_dependency_gate_refs(
         completed_ticket_ids_by_schema,
         next_schema_ref,
@@ -417,6 +457,7 @@ def _build_followup_ticket_plans(
     backlog_ticket_id: str,
     backlog_created_spec: dict[str, Any],
     backlog_payload: dict[str, Any],
+    tickets: list[dict[str, Any]],
     workflow_nodes: list[dict[str, Any]],
     employees: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -464,11 +505,10 @@ def _build_followup_ticket_plans(
             if sequence_ticket_keys:
                 ordered_ticket_keys = list(dict.fromkeys(sequence_ticket_keys + ordered_ticket_keys))
 
-    existing_ticket_ids_by_node_id = {
-        str(node.get("node_id") or ""): str(node.get("latest_ticket_id") or "")
-        for node in workflow_nodes
-        if str(node.get("node_id") or "").strip() and str(node.get("latest_ticket_id") or "").strip()
-    }
+    existing_ticket_ids_by_node_id = _current_ticket_ids_by_node_id(
+        tickets=tickets,
+        workflow_nodes=workflow_nodes,
+    )
 
     followup_ticket_plans: list[dict[str, Any]] = []
     for ticket_key in ordered_ticket_keys:
@@ -588,6 +628,7 @@ def _build_required_governance_ticket_plan(
     *,
     backlog_ticket_id: str,
     backlog_created_spec: dict[str, Any],
+    tickets: list[dict[str, Any]],
     workflow_nodes: list[dict[str, Any]],
     employees: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -597,11 +638,10 @@ def _build_required_governance_ticket_plan(
         role_profile_ref="architect_primary",
         output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
     ) or {}
-    existing_ticket_ids_by_node_id = {
-        str(node.get("node_id") or ""): str(node.get("latest_ticket_id") or "")
-        for node in workflow_nodes
-        if str(node.get("node_id") or "").strip() and str(node.get("latest_ticket_id") or "").strip()
-    }
+    existing_ticket_ids_by_node_id = _current_ticket_ids_by_node_id(
+        tickets=tickets,
+        workflow_nodes=workflow_nodes,
+    )
     return {
         "node_id": node_id,
         "role_profile_ref": "architect_primary",
@@ -678,6 +718,7 @@ def _build_controller_meeting_candidate(
         eligibility_reason = "Workflow already has an open meeting for this topic."
 
     return {
+        "source_graph_node_id": source_node_id,
         "source_node_id": source_node_id,
         "source_ticket_id": source_ticket_id,
         "topic": topic,
@@ -781,6 +822,7 @@ def build_workflow_controller_view(
         else _build_governance_progression_ticket_plan(
             repository,
             workflow=workflow,
+            tickets=tickets,
             workflow_nodes=nodes,
             employees=employees,
             connection=connection,
@@ -799,6 +841,7 @@ def build_workflow_controller_view(
             backlog_ticket_id=backlog_ticket_id,
             backlog_created_spec=backlog_created_spec,
             backlog_payload=backlog_payload,
+            tickets=tickets,
             workflow_nodes=nodes,
             employees=employees,
         )
@@ -890,6 +933,7 @@ def build_workflow_controller_view(
             required_governance_ticket_plan = _build_required_governance_ticket_plan(
                 backlog_ticket_id=backlog_ticket_id,
                 backlog_created_spec=backlog_created_spec,
+                tickets=tickets,
                 workflow_nodes=nodes,
                 employees=employees,
             )

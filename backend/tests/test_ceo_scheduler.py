@@ -1217,6 +1217,74 @@ def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket
     assert created_spec["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
 
 
+def test_autopilot_closeout_batch_ignores_stale_closeout_node_projection_without_closeout_ticket(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_closeout_batch_stale_node_projection",
+        goal="Closeout fallback should ignore stale legacy node projection",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO node_projection (
+                workflow_id,
+                node_id,
+                latest_ticket_id,
+                status,
+                blocking_reason_code,
+                updated_at,
+                version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                workflow_id,
+                "node_ceo_delivery_closeout",
+                "tkt_stale_closeout_shadow",
+                "PENDING",
+                None,
+                "2026-04-17T18:00:00+08:00",
+                1,
+            ),
+        )
+
+    from app.core import ceo_proposer
+
+    monkeypatch.setattr(ceo_proposer, "_workflow_has_existing_closeout_ticket", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        ceo_proposer,
+        "_resolve_autopilot_closeout_parent_ticket_id",
+        lambda *args, **kwargs: "tkt_delivery_parent",
+    )
+    monkeypatch.setattr(ceo_proposer, "_select_default_assignee", lambda *args, **kwargs: "emp_frontend_2")
+
+    batch = ceo_proposer._build_autopilot_closeout_batch(
+        repository,
+        {
+            "workflow": {
+                "workflow_id": workflow_id,
+                "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+                "north_star_goal": "Close out the workflow cleanly.",
+            },
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0},
+            "nodes": [{"status": "COMPLETED"}],
+        },
+        "Closeout fallback should still create the final package.",
+    )
+
+    assert batch is not None
+    payload = batch.model_dump(mode="json")["actions"][0]["payload"]
+    assert payload["node_id"] == "node_ceo_delivery_closeout"
+    assert payload["parent_ticket_id"] == "tkt_delivery_parent"
+    assert payload["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
+
+
 def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(client):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO kickoff deterministic fallback")
@@ -3077,6 +3145,89 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
     ]
 
 
+def test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_when_node_projection_is_stale(
+    client,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_backlog_followup_stale_node_projection",
+        "Backlog follow-up should keep dependency truth without legacy node projection",
+    )
+    repository = client.app.state.repository
+    _create_ticket_for_test(
+        client,
+            {
+                **_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id="tkt_existing_followup_be",
+                    node_id="node_backlog_followup_br_be_01",
+                    retry_budget=0,
+                ),
+                "role_profile_ref": "backend_engineer_primary",
+                "output_schema_ref": "source_code_delivery",
+            },
+        )
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM node_projection
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            (workflow_id, "node_backlog_followup_br_be_01"),
+        )
+
+    from app.core import ceo_proposer
+
+    batch = ceo_proposer._build_backlog_followup_batch(
+        repository,
+        {
+            "workflow": {"workflow_id": workflow_id},
+            "replan_focus": {
+                "capability_plan": {
+                    "followup_ticket_plans": [
+                        {
+                            "ticket_key": "BR-BE-01",
+                            "node_id": "node_backlog_followup_br_be_01",
+                            "task_name": "借阅后端 API 交付",
+                            "summary": "借阅后端 API 交付",
+                            "scope": ["借阅服务", "REST API"],
+                            "role_profile_ref": "backend_engineer_primary",
+                            "output_schema_ref": "source_code_delivery",
+                            "assignee_employee_id": "emp_backend_plan",
+                            "dependency_ticket_keys": [],
+                            "dependency_gate_refs": [],
+                            "existing_ticket_id": "tkt_existing_followup_be",
+                            "source_ticket_id": "tkt_backlog_parent",
+                        },
+                        {
+                            "ticket_key": "BR-DB-01",
+                            "node_id": "node_backlog_followup_br_db_01",
+                            "task_name": "库存数据库建模",
+                            "summary": "库存数据库建模",
+                            "scope": ["数据库 schema", "索引优化"],
+                            "role_profile_ref": "database_engineer_primary",
+                            "output_schema_ref": "source_code_delivery",
+                            "assignee_employee_id": "emp_database_plan",
+                            "dependency_ticket_keys": ["BR-BE-01"],
+                            "dependency_gate_refs": [],
+                            "existing_ticket_id": None,
+                            "source_ticket_id": "tkt_backlog_parent",
+                        },
+                    ]
+                }
+            },
+        },
+        "Continue the approved backlog fanout.",
+    )
+
+    assert batch is not None
+    payload = batch.model_dump(mode="json")["actions"][0]["payload"]
+    assert payload["node_id"] == "node_backlog_followup_br_db_01"
+    assert payload["dispatch_intent"]["dependency_gate_refs"] == ["tkt_existing_followup_be"]
+    assert payload["parent_ticket_id"] == "tkt_backlog_parent"
+
+
 def test_ceo_shadow_snapshot_exposes_required_governance_ticket_plan_when_architect_doc_missing(
     client,
     monkeypatch,
@@ -3247,6 +3398,69 @@ def test_ceo_shadow_snapshot_builds_full_dependency_chain_for_next_governance_do
         "tkt_parent_technology_decision",
         "tkt_parent_milestone_plan",
     ]
+
+
+def test_ceo_shadow_snapshot_keeps_existing_governance_ticket_plan_when_node_projection_is_stale(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_governance_existing_ticket_stale_node_projection",
+        "Governance existing ticket should stay visible through graph truth",
+    )
+    repository = client.app.state.repository
+    _persist_workflow_directive_details(
+        repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=["Keep governance explicit."],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_governance_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_parent_architecture_doc",
+        node_id="node_parent_architecture_doc",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        summary="Architecture brief is complete.",
+    )
+    _create_ticket_for_test(
+        client,
+            {
+                **_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id="tkt_pending_technology_decision",
+                    node_id="node_ceo_technology_decision",
+                    retry_budget=0,
+                ),
+                "role_profile_ref": "frontend_engineer_primary",
+                "output_schema_ref": TECHNOLOGY_DECISION_SCHEMA_REF,
+                "allowed_write_set": ["reports/governance/tkt_pending_technology_decision/*"],
+        },
+    )
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM node_projection
+            WHERE workflow_id = ? AND node_id = ?
+            """,
+            (workflow_id, "node_ceo_technology_decision"),
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_parent_architecture_doc",
+    )
+    required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
+
+    assert snapshot["task_sensemaking"]["task_type"] == "governance_followup"
+    assert snapshot["controller_state"]["state"] == "READY_TICKET"
+    assert required_plan["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
+    assert required_plan["existing_ticket_id"] == "tkt_pending_technology_decision"
 
 
 @pytest.mark.parametrize("workflow_profile", ["CEO_AUTOPILOT_FINE_GRAINED", "STANDARD"])
