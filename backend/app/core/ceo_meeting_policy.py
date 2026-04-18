@@ -288,7 +288,7 @@ def _build_ticket_failed_candidate(
         source_node_id = source_identity.runtime_node_id
         current_graph_node = graph_node_by_ticket_id.get(source_ticket_id)
         current_view = runtime_views.get(source_graph_node_id)
-        if current_graph_node is None or current_view is None:
+        if current_view is None:
             raise ValueError(
                 f"Meeting candidate source ticket {source_ticket_id} is missing graph/runtime truth for {source_graph_node_id}."
             )
@@ -314,9 +314,6 @@ def _build_ticket_failed_candidate(
     elif str(created_spec.get("output_schema_ref") or "").strip() not in _FAILED_TICKET_MEETING_OUTPUT_SCHEMAS:
         eligible = False
         eligibility_reason = "Only decision-oriented tickets are eligible for automatic meeting recovery."
-    elif str(current_view.ticket_id or "").strip() != source_ticket_id:
-        eligible = False
-        eligibility_reason = "Source graph lane already moved to a newer ticket."
     else:
         retry_budget = int((current_ticket or {}).get("retry_budget") or 0)
         retry_count = int((current_ticket or {}).get("retry_count") or 0)
@@ -331,6 +328,9 @@ def _build_ticket_failed_candidate(
         elif retry_count < retry_budget and not incident_for_ticket:
             eligible = False
             eligibility_reason = "Serial retries are still available on this ticket."
+        elif str(current_view.ticket_id or "").strip() != source_ticket_id:
+            eligible = False
+            eligibility_reason = "Source graph lane already moved to a newer ticket."
         elif existing_meeting is not None:
             eligible = False
             eligibility_reason = "Workflow already has an open meeting for this topic."

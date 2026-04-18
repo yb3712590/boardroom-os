@@ -3174,6 +3174,25 @@ def test_runtime_load_provider_payload_reports_parse_stage_and_repairs_for_irrep
     assert "parse_error" in exc_info.value.failure_detail
 
 
+def test_runtime_load_provider_payload_classifies_truncated_json_as_malformed():
+    with pytest.raises(OpenAICompatProviderBadResponseError) as exc_info:
+        runtime_module._load_provider_payload(
+            """{
+              "summary": "Broken payload",
+              "recommended_option_id": "option_a",
+              "options": [
+                {
+                  "option_id": "option_a",
+                  "label": "Primary option",
+                  "summary": "cut off
+            """
+        )
+
+    assert exc_info.value.failure_kind == "PROVIDER_MALFORMED_JSON"
+    assert exc_info.value.failure_detail["parse_stage"] == "repair_parse"
+    assert "parse_error" in exc_info.value.failure_detail
+
+
 def test_runtime_provider_rate_limited_response_fails_ticket_without_opening_provider_incident(
     client,
     set_ticket_time,
@@ -3324,6 +3343,72 @@ def test_runtime_provider_unavailable_failure_exhausts_ten_attempts_without_open
     assert last_finish["payload"]["attempt_no"] == 10
     assert last_finish["payload"]["status"] == "FAILED"
     assert last_finish["payload"]["failure_kind"] == "UPSTREAM_UNAVAILABLE"
+
+
+def test_runtime_provider_malformed_json_retries_before_ticket_failure(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, "Provider malformed JSON retry")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_malformed_json", provider_id="prov_openai_compat")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_provider_malformed_json",
+            node_id="node_runner_provider_malformed_json",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": "tkt_runner_provider_malformed_json",
+            "node_id": "node_runner_provider_malformed_json",
+            "leased_by": "emp_frontend_malformed_json",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_malformed_json:tkt_runner_provider_malformed_json",
+        },
+    )
+
+    attempt_count = {"value": 0}
+    sleep_calls: list[float] = []
+
+    def _raise_malformed_json(config, rendered_payload):
+        attempt_count["value"] += 1
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="PROVIDER_MALFORMED_JSON",
+            message="Provider returned a truncated JSON payload.",
+            failure_detail={
+                "parse_stage": "repair_parse",
+                "parse_error": "unterminated string",
+            },
+        )
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_malformed_json)
+    monkeypatch.setattr(runtime_module, "_sleep", sleep_calls.append)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_malformed_json")
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_malformed_json")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_malformed_json"]
+    assert ticket_projection["status"] == "FAILED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_MALFORMED_JSON"
+    assert attempt_count["value"] == 10
+    assert sleep_calls == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
 
 
 def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic(

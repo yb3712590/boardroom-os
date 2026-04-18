@@ -30,12 +30,17 @@ from tests.test_api import (
     _seed_graph_patch_applied_event,
     _scope_followup_payload,
     _seed_review_request,
+    _seed_worker,
     _staged_scope_followup_tickets,
     _ticket_result_submit_payload,
     _ticket_lease_payload,
     _ticket_start_payload,
 )
-from tests.test_scheduler_runner import _build_mock_provider_responder, _ticket_create_payload
+from tests.test_scheduler_runner import (
+    _build_mock_provider_responder,
+    _ensure_runtime_provider_ready_for_ticket,
+    _ticket_create_payload,
+)
 
 
 def _autopilot_project_init_payload(*, force_requirement_elicitation: bool = False) -> dict[str, object]:
@@ -302,6 +307,118 @@ def test_autopilot_auto_advance_resolves_provider_incident_and_retries_latest_fa
     assert followup_ticket["retry_count"] == 1
     assert followup_ticket["status"] == "COMPLETED"
     assert "source_code_delivery" in observed_schema_refs
+
+
+def test_autopilot_ticket_fail_with_pending_retry_does_not_open_ceo_shadow_pipeline_incident(
+    client,
+    monkeypatch,
+):
+    workflow_id = "wf_autopilot_failed_ticket_retry_guard"
+    import app.core.ceo_proposer as ceo_proposer_module
+    from app.core.provider_openai_compat import OpenAICompatProviderResult
+
+    monkeypatch.setattr(
+        ceo_proposer_module,
+        "invoke_openai_compat_response",
+        lambda config, rendered_payload: OpenAICompatProviderResult(
+            output_text=json.dumps(ceo_proposer_module.build_no_action_batch("No action needed.").model_dump(mode="json")),
+            response_id="resp_retry_guard",
+        ),
+    )
+
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot failed ticket retry should not open a shadow incident.",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+    _seed_worker(
+        client,
+        employee_id="emp_frontend_retry_guard",
+        role_profile_refs=["frontend_engineer_primary"],
+    )
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="architecture_brief",
+    )
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_failed_ticket_retry_guard",
+            node_id="node_ceo_architecture_brief",
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="architecture_brief",
+        ),
+    )
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_autopilot_failed_ticket_retry_guard",
+            node_id="node_ceo_architecture_brief",
+            leased_by="emp_frontend_retry_guard",
+        ),
+    )
+    leased_ticket = repository.get_current_ticket_projection("tkt_autopilot_failed_ticket_retry_guard")
+    assert leased_ticket is not None
+    current_node = repository.get_current_node_projection(workflow_id, "node_ceo_architecture_brief")
+    current_runtime_node = repository.get_runtime_node_projection(workflow_id, "node_ceo_architecture_brief")
+    assert current_node is not None
+    assert current_runtime_node is not None
+
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=leased_ticket["ticket_id"],
+            node_id=leased_ticket["node_id"],
+            started_by=leased_ticket["lease_owner"],
+            expected_ticket_version=int(leased_ticket["version"]),
+            expected_node_version=int(current_node["version"]),
+            expected_runtime_node_version=int(current_runtime_node["version"]),
+        ),
+    )
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": leased_ticket["ticket_id"],
+            "node_id": leased_ticket["node_id"],
+            "failed_by": leased_ticket["lease_owner"],
+            "failure_kind": "PROVIDER_BAD_RESPONSE",
+            "failure_message": "Provider returned truncated JSON.",
+            "idempotency_key": f"ticket-fail:{workflow_id}:{leased_ticket['ticket_id']}:retry-guard",
+        },
+    )
+
+    open_incidents = [
+        item
+        for item in repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id
+    ]
+    node_projection = repository.get_current_node_projection(workflow_id, "node_ceo_architecture_brief")
+    assert node_projection is not None
+    retry_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+    assert fail_response.status_code == 200
+    assert fail_response.json()["status"] == "ACCEPTED"
+    assert retry_ticket is not None
+    assert retry_ticket["ticket_id"] != leased_ticket["ticket_id"]
+    assert retry_ticket["retry_count"] == 1
+    assert retry_ticket["status"] in {"PENDING", "LEASED", "EXECUTING"}
+    assert open_incidents == []
 
 
 def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_already_completed(

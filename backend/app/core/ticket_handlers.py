@@ -1933,7 +1933,7 @@ def _is_provider_pause_failure(failure_kind: str) -> bool:
 
 
 def _should_open_provider_incident_for_failure(failure_kind: str) -> bool:
-    return False
+    return _is_provider_pause_failure(failure_kind)
 
 
 def _is_provider_paused(

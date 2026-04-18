@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 import threading
 from datetime import datetime
 
@@ -24,6 +25,43 @@ from app.core.provider_openai_compat import (
     list_openai_compat_models,
     probe_openai_compat_connectivity,
 )
+
+
+class _FakeResponseStream:
+    def __init__(self, *, events: list[object], final_response: object | None = None) -> None:
+        self._events = events
+        self._final_response = final_response
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.closed = True
+
+    def __iter__(self):
+        return iter(self._events)
+
+    def close(self) -> None:
+        self.closed = True
+
+    def get_final_response(self):
+        return self._final_response
+
+
+class _FakeResponses:
+    def __init__(self, stream_factory) -> None:
+        self.stream_factory = stream_factory
+        self.stream_calls: list[dict[str, object]] = []
+
+    def stream(self, **kwargs):
+        self.stream_calls.append(dict(kwargs))
+        return self.stream_factory(**kwargs)
+
+
+class _FakeOpenAIClient:
+    def __init__(self, stream_factory) -> None:
+        self.responses = _FakeResponses(stream_factory)
 
 
 def _rendered_payload() -> RenderedExecutionPayload:
@@ -71,8 +109,89 @@ def _config() -> OpenAICompatProviderConfig:
         api_key="test-key",
         model="gpt-5.3-codex",
         timeout_sec=30.0,
+        schema_name="ui_milestone_review_v1",
+        schema_body={
+            "type": "object",
+            "required": ["summary"],
+            "properties": {"summary": {"type": "string"}},
+        },
+        strict=True,
         provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
     )
+
+
+def test_invoke_openai_compat_response_uses_official_sdk_stream_with_strict_json_schema() -> None:
+    client: _FakeOpenAIClient | None = None
+
+    def _stream_factory(**kwargs):
+        return _FakeResponseStream(
+            events=[
+                SimpleNamespace(type="response.output_text.delta", delta='{"summary"'),
+                SimpleNamespace(type="response.output_text.delta", delta=':"SDK stream ok"}'),
+                SimpleNamespace(
+                    type="response.completed",
+                    response=SimpleNamespace(id="resp_sdk_stream"),
+                ),
+            ],
+            final_response=SimpleNamespace(id="resp_sdk_stream", output_text='{"summary":"SDK stream ok"}'),
+        )
+
+    def _client_factory(config: OpenAICompatProviderConfig):
+        nonlocal client
+        client = _FakeOpenAIClient(_stream_factory)
+        return client
+
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        client_factory=_client_factory,
+    )
+
+    assert result.response_id == "resp_sdk_stream"
+    assert result.output_text == '{"summary":"SDK stream ok"}'
+    assert client is not None
+    request = client.responses.stream_calls[0]
+    assert request["model"] == "gpt-5.3-codex"
+    assert request["text"] == {
+        "format": {
+            "type": "json_schema",
+            "name": "ui_milestone_review_v1",
+            "schema": {
+                "type": "object",
+                "required": ["summary"],
+                "properties": {"summary": {"type": "string"}},
+            },
+            "strict": True,
+        }
+    }
+    assert request["stream"] is True
+
+
+def test_invoke_openai_compat_response_maps_sdk_stream_response_failed_event() -> None:
+    def _stream_factory(**kwargs):
+        return _FakeResponseStream(
+            events=[
+                SimpleNamespace(
+                    type="response.failed",
+                    response=SimpleNamespace(
+                        id="resp_failed",
+                        error=SimpleNamespace(type="server_error", code="upstream_error", message="boom"),
+                    ),
+                )
+            ],
+        )
+
+    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
+        invoke_openai_compat_response(
+            _config(),
+            _rendered_payload(),
+            client_factory=lambda config: _FakeOpenAIClient(_stream_factory),
+        )
+
+    assert exc_info.value.failure_kind == "UPSTREAM_UNAVAILABLE"
+    assert exc_info.value.failure_detail["provider_response_id"] == "resp_failed"
+    assert exc_info.value.failure_detail["response_error_type"] == "server_error"
+    assert exc_info.value.failure_detail["response_error_code"] == "upstream_error"
 
 
 def test_invoke_openai_compat_response_includes_reasoning_effort_when_configured() -> None:

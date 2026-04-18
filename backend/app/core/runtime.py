@@ -47,6 +47,7 @@ from app.core.output_schemas import (
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    get_output_schema_body,
     schema_id,
     validate_output_payload,
 )
@@ -157,6 +158,8 @@ PROVIDER_RETRYABLE_FAILURE_KINDS = {
     "UPSTREAM_UNAVAILABLE",
     "FIRST_TOKEN_TIMEOUT",
     "STREAM_IDLE_TIMEOUT",
+    "REQUEST_TOTAL_TIMEOUT",
+    "PROVIDER_MALFORMED_JSON",
 }
 PROVIDER_FAILOVER_FAILURE_KINDS = set(PROVIDER_RETRYABLE_FAILURE_KINDS)
 PROVIDER_AUTO_PAUSE_FAILURE_KINDS: set[str] = set()
@@ -1617,13 +1620,18 @@ def _load_provider_payload(output_text: str) -> dict[str, Any]:
         try:
             payload = json.loads(repaired_output)
         except ValueError as repaired_exc:
+            parse_error = str(repaired_exc)
             raise OpenAICompatProviderBadResponseError(
-                failure_kind="PROVIDER_BAD_RESPONSE",
+                failure_kind=(
+                    "PROVIDER_MALFORMED_JSON"
+                    if _looks_like_truncated_json(repaired_output, parse_error)
+                    else "PROVIDER_BAD_RESPONSE"
+                ),
                 message=f"Provider output was not valid JSON: {repaired_exc}",
                 failure_detail={
                     "parse_stage": "repair_parse",
                     "repair_steps": repair_steps,
-                    "parse_error": str(repaired_exc),
+                    "parse_error": parse_error,
                 },
             ) from repaired_exc
     if not isinstance(payload, dict):
@@ -1637,8 +1645,50 @@ def _load_provider_payload(output_text: str) -> dict[str, Any]:
     return payload
 
 
-def _build_openai_compat_provider_config(selection: RuntimeProviderSelection) -> OpenAICompatProviderConfig:
+def _looks_like_truncated_json(value: str, parse_error: str) -> bool:
+    normalized_error = str(parse_error or "").lower()
+    if "unterminated string" in normalized_error or "unexpected end" in normalized_error:
+        return True
+
+    stack: list[str] = []
+    in_string = False
+    escaping = False
+    for char in value:
+        if in_string:
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char in "{[":
+            stack.append(char)
+            continue
+        if char == "}" and stack and stack[-1] == "{":
+            stack.pop()
+            continue
+        if char == "]" and stack and stack[-1] == "[":
+            stack.pop()
+            continue
+
+    stripped = value.rstrip()
+    return in_string or bool(stack) or stripped.endswith(("{", "[", ",", ":"))
+
+
+def _build_openai_compat_provider_config(
+    selection: RuntimeProviderSelection,
+    execution_package: CompiledExecutionPackage | None = None,
+) -> OpenAICompatProviderConfig:
     provider = selection.provider
+    schema_ref = ""
+    schema_version = 0
+    if execution_package is not None:
+        schema_ref = str(execution_package.execution.output_schema_ref or "")
+        schema_version = int(execution_package.execution.output_schema_version or 0)
     return OpenAICompatProviderConfig(
         base_url=str(provider.base_url or ""),
         api_key=str(provider.api_key or ""),
@@ -1650,6 +1700,13 @@ def _build_openai_compat_provider_config(selection: RuntimeProviderSelection) ->
         stream_idle_timeout_sec=float(provider.stream_idle_timeout_sec or provider.timeout_sec or 0),
         request_total_timeout_sec=float(provider.request_total_timeout_sec or provider.timeout_sec or 0),
         reasoning_effort=selection.effective_reasoning_effort,
+        schema_name=schema_id(schema_ref, schema_version) if schema_ref and schema_version > 0 else None,
+        schema_body=(
+            get_output_schema_body(schema_ref, schema_version)
+            if schema_ref and schema_version > 0
+            else None
+        ),
+        strict=True,
     )
 
 
@@ -1917,7 +1974,7 @@ def _execute_openai_compat_provider(
 ) -> RuntimeExecutionResult:
     if sleep_fn is None:
         sleep_fn = _sleep
-    config = _build_openai_compat_provider_config(selection)
+    config = _build_openai_compat_provider_config(selection, execution_package)
     resolved_candidate_chain = candidate_chain or [selection.provider.provider_id]
 
     def _record_if_enabled(
@@ -1980,7 +2037,11 @@ def _execute_openai_compat_provider(
                 execution_package.rendered_execution_payload,
                 audit_observer=_audit_observer,
             )
-            result_payload = _load_provider_payload(provider_result.output_text)
+            result_payload = (
+                dict(provider_result.output_payload)
+                if isinstance(provider_result.output_payload, dict)
+                else _load_provider_payload(provider_result.output_text)
+            )
             if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
                 result_payload = _normalize_source_code_delivery_payload(execution_package, result_payload)
             validate_output_payload(
@@ -2088,7 +2149,12 @@ def _execute_openai_compat_provider(
                         "failure_kind": last_failure_kind,
                         "failure_message": last_failure_message,
                         "response_id": last_failure_detail.get("provider_response_id"),
+                        "request_id": last_failure_detail.get("request_id"),
                         "timeout_phase": last_failure_detail.get("timeout_phase"),
+                        "response_error_type": last_failure_detail.get("response_error_type"),
+                        "response_error_code": last_failure_detail.get("response_error_code"),
+                        "parse_stage": last_failure_detail.get("parse_stage"),
+                        "repair_steps": list(last_failure_detail.get("repair_steps") or []),
                     },
                 )
                 _record_if_enabled(
@@ -2105,19 +2171,24 @@ def _execute_openai_compat_provider(
                 )
                 sleep_fn(retry_delay_sec)
                 continue
-            _record_if_enabled(
-                event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
-                attempt_no=attempt_no,
-                payload={
-                    "status": "FAILED",
+                _record_if_enabled(
+                    event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
+                    attempt_no=attempt_no,
+                    payload={
+                        "status": "FAILED",
                     "current_phase": "failed",
                     "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
                     "failure_kind": last_failure_kind,
-                    "failure_message": last_failure_message,
-                    "response_id": last_failure_detail.get("provider_response_id"),
-                    "timeout_phase": last_failure_detail.get("timeout_phase"),
-                },
-            )
+                        "failure_message": last_failure_message,
+                        "response_id": last_failure_detail.get("provider_response_id"),
+                        "request_id": last_failure_detail.get("request_id"),
+                        "timeout_phase": last_failure_detail.get("timeout_phase"),
+                        "response_error_type": last_failure_detail.get("response_error_type"),
+                        "response_error_code": last_failure_detail.get("response_error_code"),
+                        "parse_stage": last_failure_detail.get("parse_stage"),
+                        "repair_steps": list(last_failure_detail.get("repair_steps") or []),
+                    },
+                )
             return RuntimeExecutionResult(
                 result_status="failed",
                 failure_kind=last_failure_kind,

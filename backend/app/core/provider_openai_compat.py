@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import httpx
 
@@ -22,6 +22,7 @@ from app.contracts.runtime import (
 
 ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 ProviderAuditObserver = Callable[[str, dict[str, object]], None]
+OpenAIClientFactory = Callable[["OpenAICompatProviderConfig"], object]
 
 
 class OpenAICompatProviderType(StrEnum):
@@ -42,12 +43,16 @@ class OpenAICompatProviderConfig:
     request_total_timeout_sec: float | None = None
     reasoning_effort: ReasoningEffort | None = None
     provider_type: OpenAICompatProviderType = OpenAICompatProviderType.RESPONSES_STREAM
+    schema_name: str | None = None
+    schema_body: dict[str, object] | None = None
+    strict: bool = True
 
 
 @dataclass(frozen=True)
 class OpenAICompatProviderResult:
     output_text: str
     response_id: str | None = None
+    output_payload: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +147,65 @@ def _build_responses_input(rendered_payload: RenderedExecutionPayload) -> list[d
     ]
 
 
+def _object_to_plain(value: object) -> object:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [_object_to_plain(item) for item in value]
+    if isinstance(value, tuple):
+        return [_object_to_plain(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _object_to_plain(item) for key, item in value.items()}
+    if hasattr(value, "model_dump"):
+        try:
+            return _object_to_plain(value.model_dump(mode="python"))
+        except TypeError:
+            return _object_to_plain(value.model_dump())
+    if hasattr(value, "__dict__"):
+        return {
+            str(key): _object_to_plain(item)
+            for key, item in vars(value).items()
+            if not str(key).startswith("_")
+        }
+    return str(value)
+
+
+def _response_payload(value: object | None) -> dict[str, object]:
+    plain = _object_to_plain(value)
+    return plain if isinstance(plain, dict) else {}
+
+
+def _value_from_object(value: object | None, key: str) -> object | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _extract_output_payload(response_payload: dict[str, object]) -> dict[str, Any] | None:
+    output_parsed = response_payload.get("output_parsed")
+    if isinstance(output_parsed, dict):
+        return dict(output_parsed)
+
+    output = response_payload.get("output")
+    if not isinstance(output, list):
+        return None
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for content_item in content:
+            if not isinstance(content_item, dict):
+                continue
+            parsed = content_item.get("parsed")
+            if isinstance(parsed, dict):
+                return dict(parsed)
+    return None
+
+
 def _extract_output_text(response_payload: dict[str, object]) -> str:
     output_text = response_payload.get("output_text")
     if isinstance(output_text, str) and output_text.strip():
@@ -186,168 +250,89 @@ def _extract_output_text(response_payload: dict[str, object]) -> str:
     )
 
 
-def _extract_streaming_responses_output(
-    response: httpx.Response,
-    *,
-    config: OpenAICompatProviderConfig,
-    audit_observer: ProviderAuditObserver | None = None,
-) -> tuple[str, str | None]:
-    response_id: str | None = None
-    output_parts: list[str] = []
-    buffer = ""
-    stream_queue: queue.Queue[tuple[str, object]] = queue.Queue()
-    first_output_at: float | None = None
-    started_at = time.monotonic()
+def _extract_response_id(value: object | None) -> str | None:
+    if value is None:
+        return None
+    direct_id = _value_from_object(value, "id")
+    if direct_id is not None:
+        return str(direct_id)
+    response = _value_from_object(value, "response")
+    response_id = _value_from_object(response, "id")
+    if response_id is not None:
+        return str(response_id)
+    return None
 
-    def _finalize_output(response_payload: dict[str, object] | None = None) -> tuple[str, str | None]:
-        combined = "".join(output_parts).strip()
-        if combined:
-            return combined, response_id
-        if isinstance(response_payload, dict):
-            return _extract_output_text(response_payload), response_id
-        raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
-            message="Streaming responses call did not return any assistant text output.",
-            failure_detail={
-                "provider_response_id": response_id,
-            },
+
+def _extract_request_id(value: object | None) -> str | None:
+    for key in ("request_id", "_request_id"):
+        request_id = _value_from_object(value, key)
+        if request_id is not None:
+            return str(request_id)
+    response = _value_from_object(value, "response")
+    for key in ("request_id", "_request_id"):
+        request_id = _value_from_object(response, key)
+        if request_id is not None:
+            return str(request_id)
+    return None
+
+
+def _extract_event_delta(event: object) -> str | None:
+    delta = _value_from_object(event, "delta")
+    if isinstance(delta, str) and delta:
+        return delta
+    text = _value_from_object(event, "text")
+    if isinstance(text, str) and text:
+        return text
+    return None
+
+
+def _extract_event_error(event: object) -> object | None:
+    error = _value_from_object(event, "error")
+    if error is not None:
+        return error
+    response = _value_from_object(event, "response")
+    return _value_from_object(response, "error")
+
+
+def _response_error_detail(*, event: object, response_id: str | None) -> dict[str, object]:
+    error = _extract_event_error(event)
+    return {
+        "provider_response_id": response_id,
+        "request_id": _extract_request_id(event),
+        "response_error_type": _value_from_object(error, "type"),
+        "response_error_code": _value_from_object(error, "code"),
+        "response_error_message": _value_from_object(error, "message"),
+    }
+
+
+def _raise_from_response_error(event: object, *, response_id: str | None) -> None:
+    detail = _response_error_detail(event=event, response_id=response_id)
+    error_type = str(detail.get("response_error_type") or "").lower()
+    error_code = str(detail.get("response_error_code") or "").lower()
+    message = str(detail.get("response_error_message") or "Provider response stream failed.")
+    if "rate" in error_type or "rate" in error_code:
+        raise OpenAICompatProviderRateLimitedError(
+            failure_kind="PROVIDER_RATE_LIMITED",
+            message=message,
+            failure_detail=detail,
         )
-
-    def _stream_reader() -> None:
-        try:
-            for chunk in response.iter_text():
-                stream_queue.put(("chunk", chunk))
-        except BaseException as exc:  # pragma: no cover - exercised through queue handoff
-            stream_queue.put(("error", exc))
-        finally:
-            stream_queue.put(("done", None))
-
-    reader = threading.Thread(target=_stream_reader, daemon=True)
-    reader.start()
-
-    while True:
-        current_phase_timeout_sec = float(
-            (
-                config.stream_idle_timeout_sec
-                if first_output_at is not None
-                else config.first_token_timeout_sec
-            )
-            or config.timeout_sec
+    if "auth" in error_type or "permission" in error_type or "api_key" in error_code:
+        raise OpenAICompatProviderAuthError(
+            failure_kind="PROVIDER_AUTH_FAILED",
+            message=message,
+            failure_detail=detail,
         )
-        wait_timeout_sec = current_phase_timeout_sec
-        if first_output_at is None:
-            elapsed_sec = time.monotonic() - started_at
-            remaining_total_sec = float(config.request_total_timeout_sec or config.timeout_sec) - elapsed_sec
-            if remaining_total_sec <= 0:
-                response.close()
-                raise OpenAICompatProviderUnavailableError(
-                    failure_kind="FIRST_TOKEN_TIMEOUT",
-                    message="Provider stream exceeded the total request timeout before the first output chunk.",
-                    failure_detail={
-                        "provider_response_id": response_id,
-                        "timeout_phase": "first_token",
-                    },
-                )
-            wait_timeout_sec = min(current_phase_timeout_sec, remaining_total_sec)
-        try:
-            event_type, payload = stream_queue.get(timeout=wait_timeout_sec)
-        except queue.Empty as exc:
-            response.close()
-            raise OpenAICompatProviderUnavailableError(
-                failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
-                message="Provider stream timed out while waiting for the next output chunk.",
-                failure_detail={
-                    "provider_response_id": response_id,
-                    "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
-                },
-            ) from exc
-
-        if event_type == "done":
-            return _finalize_output()
-        if event_type == "error":
-            error = payload
-            if isinstance(error, httpx.TimeoutException):
-                raise OpenAICompatProviderUnavailableError(
-                    failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
-                    message=f"Provider stream timed out: {error}",
-                    failure_detail={
-                        "provider_response_id": response_id,
-                        "provider_transport_error": type(error).__name__,
-                        "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
-                    },
-                ) from error
-            if isinstance(error, httpx.TransportError):
-                raise OpenAICompatProviderUnavailableError(
-                    failure_kind="UPSTREAM_UNAVAILABLE",
-                    message=f"Provider transport failed: {error}",
-                    failure_detail={
-                        "provider_response_id": response_id,
-                        "provider_transport_error": type(error).__name__,
-                    },
-                ) from error
-            raise error  # pragma: no cover - unexpected queue payload
-
-        chunk = str(payload or "")
-        if not chunk:
-            continue
-        buffer += chunk
-        while "\n" in buffer:
-            line, buffer = buffer.split("\n", 1)
-            line = line.rstrip("\r")
-            if not line or not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if not data:
-                continue
-            if data == "[DONE]":
-                return _finalize_output()
-            try:
-                event_payload = json.loads(data)
-            except ValueError as exc:
-                raise OpenAICompatProviderBadResponseError(
-                    failure_kind="PROVIDER_BAD_RESPONSE",
-                    message=f"Streaming responses call returned invalid JSON event: {exc}",
-                    failure_detail={
-                        "provider_response_id": response_id,
-                    },
-                ) from exc
-            if not isinstance(event_payload, dict):
-                continue
-            event_type = str(event_payload.get("type") or "")
-            if response_id is None and event_payload.get("response", {}).get("id") is not None:
-                response_id = str(event_payload["response"]["id"])
-            if response_id is None and event_payload.get("id") is not None:
-                response_id = str(event_payload.get("id"))
-            if event_type == "response.output_text.delta":
-                delta = event_payload.get("delta")
-                if isinstance(delta, str) and delta:
-                    output_parts.append(delta)
-                    if first_output_at is None:
-                        first_output_at = time.monotonic()
-                        if audit_observer is not None:
-                            audit_observer(
-                                "first_token_received",
-                                {
-                                    "provider_response_id": response_id,
-                                    "streaming": True,
-                                    "provider_type": config.provider_type.value,
-                                },
-                            )
-                continue
-            response_payload = event_payload.get("response")
-            if isinstance(response_payload, dict) and response_id is None and response_payload.get("id") is not None:
-                response_id = str(response_payload.get("id"))
-            if event_type == "response.completed":
-                if audit_observer is not None:
-                    audit_observer(
-                        "response_completed",
-                        {
-                            "provider_response_id": response_id,
-                            "streaming": True,
-                            "provider_type": config.provider_type.value,
-                        },
-                    )
-                return _finalize_output(response_payload if isinstance(response_payload, dict) else None)
+    if "server" in error_type or "upstream" in error_code or "timeout" in error_code:
+        raise OpenAICompatProviderUnavailableError(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            message=message,
+            failure_detail=detail,
+        )
+    raise OpenAICompatProviderBadResponseError(
+        failure_kind="PROVIDER_BAD_RESPONSE",
+        message=message,
+        failure_detail=detail,
+    )
 
 
 def _responses_request_payload(
@@ -367,69 +352,20 @@ def _responses_request_payload(
         payload["stream"] = True
     if config.reasoning_effort is not None:
         payload["reasoning"] = {"effort": config.reasoning_effort}
+    if config.schema_name and isinstance(config.schema_body, dict):
+        payload["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": config.schema_name,
+                "schema": dict(config.schema_body),
+                "strict": bool(config.strict),
+            }
+        }
     return payload
 
 
-def _map_provider_error_response(response: httpx.Response, *, streaming: bool) -> None:
-    failure_detail = {"provider_status_code": response.status_code}
-    if response.status_code == 429:
-        retry_after_sec = _parse_retry_after_sec(response.headers.get("Retry-After"))
-        if retry_after_sec is not None:
-            failure_detail["retry_after_sec"] = retry_after_sec
-        raise OpenAICompatProviderRateLimitedError(
-            failure_kind="PROVIDER_RATE_LIMITED",
-            message=(
-                "Provider rejected the streaming responses request with rate limiting."
-                if streaming
-                else "Provider rejected the request with rate limiting."
-            ),
-            failure_detail=failure_detail,
-        )
-    if response.status_code in {401, 403}:
-        raise OpenAICompatProviderAuthError(
-            failure_kind="PROVIDER_AUTH_FAILED",
-            message="Provider rejected the configured credentials.",
-            failure_detail=failure_detail,
-        )
-    if response.status_code >= 500:
-        raise OpenAICompatProviderUnavailableError(
-            failure_kind="UPSTREAM_UNAVAILABLE",
-            message="Provider returned an upstream server error.",
-            failure_detail=failure_detail,
-        )
-    if response.status_code >= 400:
-        raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
-            message="Provider returned an unsupported client error.",
-            failure_detail=failure_detail,
-        )
-
-
-def _parse_non_streaming_response(response: httpx.Response) -> OpenAICompatProviderResult:
-    try:
-        response_payload = response.json()
-    except ValueError as exc:
-        raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
-            message=f"Provider response was not valid JSON: {exc}",
-            failure_detail={},
-        ) from exc
-    if not isinstance(response_payload, dict):
-        raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
-            message="Provider response root must be a JSON object.",
-            failure_detail={},
-        )
-
-    output_text = _extract_output_text(response_payload)
-    return OpenAICompatProviderResult(
-        output_text=output_text,
-        response_id=str(response_payload.get("id")) if response_payload.get("id") is not None else None,
-    )
-
-
-def _httpx_timeout(config: OpenAICompatProviderConfig, *, streaming: bool) -> httpx.Timeout:
-    read_timeout_sec = float(config.request_total_timeout_sec or config.timeout_sec)
+def _sdk_timeout(config: OpenAICompatProviderConfig, *, streaming: bool) -> httpx.Timeout:
+    read_timeout_sec: float | None = float(config.request_total_timeout_sec or config.timeout_sec)
     if streaming:
         read_timeout_sec = None
     return httpx.Timeout(
@@ -440,11 +376,269 @@ def _httpx_timeout(config: OpenAICompatProviderConfig, *, streaming: bool) -> ht
     )
 
 
+def _build_openai_client(
+    config: OpenAICompatProviderConfig,
+    *,
+    transport: httpx.BaseTransport | None = None,
+):
+    try:
+        from openai import OpenAI
+    except ImportError as exc:  # pragma: no cover - exercised only when runtime dependency is missing
+        raise OpenAICompatProviderUnavailableError(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            message="OpenAI Python SDK is not installed.",
+            failure_detail={"provider_transport_error": "OpenAISDKMissing"},
+        ) from exc
+
+    http_client = None
+    if transport is not None:
+        http_client = httpx.Client(
+            transport=transport,
+            timeout=_sdk_timeout(
+                config,
+                streaming=config.provider_type == OpenAICompatProviderType.RESPONSES_STREAM,
+            ),
+        )
+    return OpenAI(
+        base_url=config.base_url,
+        api_key=config.api_key,
+        timeout=_sdk_timeout(config, streaming=config.provider_type == OpenAICompatProviderType.RESPONSES_STREAM),
+        http_client=http_client,
+        max_retries=0,
+    )
+
+
+def _client_for(
+    config: OpenAICompatProviderConfig,
+    *,
+    transport: httpx.BaseTransport | None,
+    client_factory: OpenAIClientFactory | None,
+):
+    if client_factory is not None:
+        return client_factory(config)
+    return _build_openai_client(config, transport=transport)
+
+
+def _call_stream_close(stream: object) -> None:
+    close = getattr(stream, "close", None)
+    if callable(close):
+        close()
+
+
+def _call_get_final_response(stream: object) -> object | None:
+    get_final_response = getattr(stream, "get_final_response", None)
+    if callable(get_final_response):
+        return get_final_response()
+    return None
+
+
+def _build_result_from_response(
+    response: object | None,
+    *,
+    output_parts: list[str],
+    response_id: str | None,
+) -> OpenAICompatProviderResult:
+    response_payload = _response_payload(response)
+    final_response_id = response_id or (
+        str(response_payload.get("id")) if response_payload.get("id") is not None else None
+    )
+    output_payload = _extract_output_payload(response_payload)
+    output_text = ""
+    if response_payload:
+        try:
+            output_text = _extract_output_text(response_payload)
+        except OpenAICompatProviderBadResponseError:
+            output_text = ""
+    if not output_text:
+        output_text = "".join(output_parts).strip()
+    if not output_text and output_payload is not None:
+        output_text = json.dumps(output_payload, ensure_ascii=False, sort_keys=True)
+    if not output_text:
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="PROVIDER_BAD_RESPONSE",
+            message="Provider response did not contain any assistant text output.",
+            failure_detail={"provider_response_id": final_response_id},
+        )
+    return OpenAICompatProviderResult(
+        output_text=output_text,
+        response_id=final_response_id,
+        output_payload=output_payload,
+    )
+
+
+def _extract_streaming_responses_output(
+    stream: object,
+    *,
+    config: OpenAICompatProviderConfig,
+    audit_observer: ProviderAuditObserver | None = None,
+) -> OpenAICompatProviderResult:
+    response_id: str | None = None
+    output_parts: list[str] = []
+    stream_queue: queue.Queue[tuple[str, object | None]] = queue.Queue()
+    first_output_at: float | None = None
+    started_at = time.monotonic()
+
+    def _stream_reader() -> None:
+        try:
+            for event in stream:
+                stream_queue.put(("event", event))
+        except BaseException as exc:  # pragma: no cover - exercised through queue handoff
+            stream_queue.put(("error", exc))
+        finally:
+            stream_queue.put(("done", None))
+
+    reader = threading.Thread(target=_stream_reader, daemon=True)
+    reader.start()
+
+    while True:
+        elapsed_sec = time.monotonic() - started_at
+        request_total_timeout_sec = float(config.request_total_timeout_sec or config.timeout_sec)
+        remaining_total_sec = request_total_timeout_sec - elapsed_sec
+        if remaining_total_sec <= 0:
+            _call_stream_close(stream)
+            raise OpenAICompatProviderUnavailableError(
+                failure_kind="REQUEST_TOTAL_TIMEOUT",
+                message="Provider stream exceeded the total request timeout.",
+                failure_detail={
+                    "provider_response_id": response_id,
+                    "timeout_phase": "request_total",
+                },
+            )
+
+        phase_timeout_sec = float(
+            (
+                config.stream_idle_timeout_sec
+                if first_output_at is not None
+                else config.first_token_timeout_sec
+            )
+            or config.timeout_sec
+        )
+        wait_timeout_sec = min(phase_timeout_sec, remaining_total_sec)
+        try:
+            event_kind, payload = stream_queue.get(timeout=wait_timeout_sec)
+        except queue.Empty as exc:
+            _call_stream_close(stream)
+            if remaining_total_sec <= phase_timeout_sec:
+                raise OpenAICompatProviderUnavailableError(
+                    failure_kind="REQUEST_TOTAL_TIMEOUT",
+                    message="Provider stream exceeded the total request timeout.",
+                    failure_detail={
+                        "provider_response_id": response_id,
+                        "timeout_phase": "request_total",
+                    },
+                ) from exc
+            raise OpenAICompatProviderUnavailableError(
+                failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                message="Provider stream timed out while waiting for the next output event.",
+                failure_detail={
+                    "provider_response_id": response_id,
+                    "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
+                },
+            ) from exc
+
+        if event_kind == "done":
+            return _build_result_from_response(
+                _call_get_final_response(stream),
+                output_parts=output_parts,
+                response_id=response_id,
+            )
+        if event_kind == "error":
+            raise _map_sdk_exception(payload if isinstance(payload, BaseException) else RuntimeError(str(payload)))
+
+        event = payload
+        event_type = str(_value_from_object(event, "type") or "")
+        response_id = response_id or _extract_response_id(event)
+        if event_type in {"response.output_text.delta", "response.output_text.done"}:
+            delta = _extract_event_delta(event)
+            if delta:
+                output_parts.append(delta)
+                if first_output_at is None:
+                    first_output_at = time.monotonic()
+                    if audit_observer is not None:
+                        audit_observer(
+                            "first_token_received",
+                            {
+                                "provider_response_id": response_id,
+                                "request_id": _extract_request_id(event),
+                                "streaming": True,
+                                "provider_type": config.provider_type.value,
+                            },
+                        )
+            continue
+        if event_type in {"response.failed", "error"}:
+            _raise_from_response_error(event, response_id=response_id)
+        if event_type == "response.completed":
+            if audit_observer is not None:
+                audit_observer(
+                    "response_completed",
+                    {
+                        "provider_response_id": response_id,
+                        "request_id": _extract_request_id(event),
+                        "streaming": True,
+                        "provider_type": config.provider_type.value,
+                    },
+                )
+            return _build_result_from_response(
+                _value_from_object(event, "response") or _call_get_final_response(stream),
+                output_parts=output_parts,
+                response_id=response_id,
+            )
+
+
+def _map_sdk_exception(exc: BaseException) -> OpenAICompatProviderError:
+    class_name = exc.__class__.__name__
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", {}) or {}
+    failure_detail: dict[str, object] = {
+        "provider_transport_error": class_name,
+        "provider_status_code": status_code,
+        "request_id": getattr(exc, "request_id", None) or getattr(exc, "_request_id", None),
+    }
+    if hasattr(exc, "code"):
+        failure_detail["response_error_code"] = getattr(exc, "code")
+    if hasattr(exc, "type"):
+        failure_detail["response_error_type"] = getattr(exc, "type")
+    retry_after_sec = _parse_retry_after_sec(headers.get("Retry-After") if hasattr(headers, "get") else None)
+    if retry_after_sec is not None:
+        failure_detail["retry_after_sec"] = retry_after_sec
+
+    if status_code == 429 or class_name == "RateLimitError":
+        return OpenAICompatProviderRateLimitedError(
+            failure_kind="PROVIDER_RATE_LIMITED",
+            message=str(exc),
+            failure_detail=failure_detail,
+        )
+    if status_code in {401, 403} or class_name in {"AuthenticationError", "PermissionDeniedError"}:
+        return OpenAICompatProviderAuthError(
+            failure_kind="PROVIDER_AUTH_FAILED",
+            message=str(exc),
+            failure_detail=failure_detail,
+        )
+    if (
+        class_name in {"APITimeoutError", "APIConnectionError", "Timeout"}
+        or (isinstance(status_code, int) and status_code >= 500)
+    ):
+        return OpenAICompatProviderUnavailableError(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            message=str(exc),
+            failure_detail=failure_detail,
+        )
+    if isinstance(exc, OpenAICompatProviderError):
+        return exc
+    return OpenAICompatProviderBadResponseError(
+        failure_kind="PROVIDER_BAD_RESPONSE",
+        message=str(exc),
+        failure_detail=failure_detail,
+    )
+
+
 def _invoke_streaming_responses(
     config: OpenAICompatProviderConfig,
     rendered_payload: RenderedExecutionPayload,
     *,
     transport: httpx.BaseTransport | None = None,
+    client_factory: OpenAIClientFactory | None = None,
     audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
     if audit_observer is not None:
@@ -457,44 +651,13 @@ def _invoke_streaming_responses(
             },
         )
     try:
-        with httpx.Client(
-            timeout=_httpx_timeout(config, streaming=True),
-            transport=transport,
-        ) as client:
-            with client.stream(
-                "POST",
-                f"{config.base_url}/responses",
-                headers={
-                    "Authorization": f"Bearer {config.api_key}",
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream",
-                },
-                json=_responses_request_payload(config, rendered_payload, stream=True),
-            ) as response:
-                _map_provider_error_response(response, streaming=True)
-                content_type = str(response.headers.get("content-type") or "").lower()
-                if "text/event-stream" not in content_type:
-                    result = _parse_non_streaming_response(response)
-                    if audit_observer is not None:
-                        audit_observer(
-                            "response_completed",
-                            {
-                                "provider_response_id": result.response_id,
-                                "streaming": False,
-                                "provider_type": config.provider_type.value,
-                            },
-                        )
-                    return result
-
-                output_text, response_id = _extract_streaming_responses_output(
-                    response,
-                    config=config,
-                    audit_observer=audit_observer,
-                )
-                return OpenAICompatProviderResult(
-                    output_text=output_text,
-                    response_id=response_id,
-                )
+        client = _client_for(config, transport=transport, client_factory=client_factory)
+        with client.responses.stream(**_responses_request_payload(config, rendered_payload, stream=True)) as stream:
+            return _extract_streaming_responses_output(
+                stream,
+                config=config,
+                audit_observer=audit_observer,
+            )
     except OpenAICompatProviderError as exc:
         if audit_observer is not None:
             audit_observer(
@@ -507,42 +670,19 @@ def _invoke_streaming_responses(
                 },
             )
         raise
-    except httpx.TimeoutException as exc:
+    except BaseException as exc:
+        mapped = _map_sdk_exception(exc)
         if audit_observer is not None:
             audit_observer(
                 "request_failed",
                 {
-                    "failure_kind": "UPSTREAM_UNAVAILABLE",
-                    "provider_transport_error": type(exc).__name__,
+                    "failure_kind": mapped.failure_kind,
+                    **dict(mapped.failure_detail),
                     "streaming": True,
                     "provider_type": config.provider_type.value,
                 },
             )
-        raise OpenAICompatProviderUnavailableError(
-            failure_kind="UPSTREAM_UNAVAILABLE",
-            message=f"Provider request timed out: {exc}",
-            failure_detail={
-                "provider_transport_error": type(exc).__name__,
-            },
-        ) from exc
-    except httpx.TransportError as exc:
-        if audit_observer is not None:
-            audit_observer(
-                "request_failed",
-                {
-                    "failure_kind": "UPSTREAM_UNAVAILABLE",
-                    "provider_transport_error": type(exc).__name__,
-                    "streaming": True,
-                    "provider_type": config.provider_type.value,
-                },
-            )
-        raise OpenAICompatProviderUnavailableError(
-            failure_kind="UPSTREAM_UNAVAILABLE",
-            message=f"Provider transport failed: {exc}",
-            failure_detail={
-                "provider_transport_error": type(exc).__name__,
-            },
-        ) from exc
+        raise mapped from exc
 
 
 def _invoke_non_streaming_responses(
@@ -550,6 +690,7 @@ def _invoke_non_streaming_responses(
     rendered_payload: RenderedExecutionPayload,
     *,
     transport: httpx.BaseTransport | None = None,
+    client_factory: OpenAIClientFactory | None = None,
     audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
     if audit_observer is not None:
@@ -562,58 +703,13 @@ def _invoke_non_streaming_responses(
             },
         )
     try:
-        with httpx.Client(
-            timeout=_httpx_timeout(config, streaming=False),
-            transport=transport,
-        ) as client:
-            response = client.post(
-                f"{config.base_url}/responses",
-                headers={
-                    "Authorization": f"Bearer {config.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=_responses_request_payload(config, rendered_payload, stream=False),
-            )
-    except httpx.TimeoutException as exc:
-        if audit_observer is not None:
-            audit_observer(
-                "request_failed",
-                {
-                    "failure_kind": "UPSTREAM_UNAVAILABLE",
-                    "provider_transport_error": type(exc).__name__,
-                    "streaming": False,
-                    "provider_type": config.provider_type.value,
-                },
-            )
-        raise OpenAICompatProviderUnavailableError(
-            failure_kind="UPSTREAM_UNAVAILABLE",
-            message=f"Provider request timed out: {exc}",
-            failure_detail={
-                "provider_transport_error": type(exc).__name__,
-            },
-        ) from exc
-    except httpx.TransportError as exc:
-        if audit_observer is not None:
-            audit_observer(
-                "request_failed",
-                {
-                    "failure_kind": "UPSTREAM_UNAVAILABLE",
-                    "provider_transport_error": type(exc).__name__,
-                    "streaming": False,
-                    "provider_type": config.provider_type.value,
-                },
-            )
-        raise OpenAICompatProviderUnavailableError(
-            failure_kind="UPSTREAM_UNAVAILABLE",
-            message=f"Provider transport failed: {exc}",
-            failure_detail={
-                "provider_transport_error": type(exc).__name__,
-            },
-        ) from exc
-
-    try:
-        _map_provider_error_response(response, streaming=False)
-        result = _parse_non_streaming_response(response)
+        client = _client_for(config, transport=transport, client_factory=client_factory)
+        response = client.responses.create(**_responses_request_payload(config, rendered_payload, stream=False))
+        result = _build_result_from_response(
+            response,
+            output_parts=[],
+            response_id=_extract_response_id(response),
+        )
     except OpenAICompatProviderError as exc:
         if audit_observer is not None:
             audit_observer(
@@ -626,6 +722,19 @@ def _invoke_non_streaming_responses(
                 },
             )
         raise
+    except BaseException as exc:
+        mapped = _map_sdk_exception(exc)
+        if audit_observer is not None:
+            audit_observer(
+                "request_failed",
+                {
+                    "failure_kind": mapped.failure_kind,
+                    **dict(mapped.failure_detail),
+                    "streaming": False,
+                    "provider_type": config.provider_type.value,
+                },
+            )
+        raise mapped from exc
     if audit_observer is not None:
         audit_observer(
             "response_completed",
@@ -643,6 +752,7 @@ def invoke_openai_compat_response(
     rendered_payload: RenderedExecutionPayload,
     *,
     transport: httpx.BaseTransport | None = None,
+    client_factory: OpenAIClientFactory | None = None,
     audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
     if config.provider_type == OpenAICompatProviderType.RESPONSES_NON_STREAM:
@@ -650,12 +760,14 @@ def invoke_openai_compat_response(
             config,
             rendered_payload,
             transport=transport,
+            client_factory=client_factory,
             audit_observer=audit_observer,
         )
     return _invoke_streaming_responses(
         config,
         rendered_payload,
         transport=transport,
+        client_factory=client_factory,
         audit_observer=audit_observer,
     )
 
@@ -664,6 +776,7 @@ def probe_openai_compat_connectivity(
     config: OpenAICompatProviderConfig,
     *,
     transport: httpx.BaseTransport | None = None,
+    client_factory: OpenAIClientFactory | None = None,
 ) -> OpenAICompatConnectivityResult:
     rendered_payload = RenderedExecutionPayload(
         meta=RenderedExecutionPayloadMeta(
@@ -701,39 +814,51 @@ def probe_openai_compat_connectivity(
             reference_message_count=0,
         ),
     )
-    try:
-        result = invoke_openai_compat_response(config, rendered_payload, transport=transport)
-        return OpenAICompatConnectivityResult(
-            ok=True,
-            provider_type=config.provider_type,
-            response_id=result.response_id,
-        )
-    except OpenAICompatProviderBadResponseError as exc:
-        if config.provider_type != OpenAICompatProviderType.RESPONSES_STREAM:
-            raise
-        if exc.failure_detail.get("provider_status_code") != 400:
-            raise
-        fallback_result = invoke_openai_compat_response(
-            OpenAICompatProviderConfig(
-                base_url=config.base_url,
-                api_key=config.api_key,
-                model=config.model,
-                timeout_sec=config.timeout_sec,
-                connect_timeout_sec=config.connect_timeout_sec,
-                write_timeout_sec=config.write_timeout_sec,
-                first_token_timeout_sec=config.first_token_timeout_sec,
-                stream_idle_timeout_sec=config.stream_idle_timeout_sec,
-                request_total_timeout_sec=config.request_total_timeout_sec,
-                reasoning_effort=config.reasoning_effort,
-                provider_type=OpenAICompatProviderType.RESPONSES_NON_STREAM,
+    result = invoke_openai_compat_response(
+        config,
+        rendered_payload,
+        transport=transport,
+        client_factory=client_factory,
+    )
+    return OpenAICompatConnectivityResult(
+        ok=True,
+        provider_type=config.provider_type,
+        response_id=result.response_id,
+    )
+
+
+def _map_provider_error_response(response: httpx.Response, *, streaming: bool) -> None:
+    failure_detail = {"provider_status_code": response.status_code}
+    if response.status_code == 429:
+        retry_after_sec = _parse_retry_after_sec(response.headers.get("Retry-After"))
+        if retry_after_sec is not None:
+            failure_detail["retry_after_sec"] = retry_after_sec
+        raise OpenAICompatProviderRateLimitedError(
+            failure_kind="PROVIDER_RATE_LIMITED",
+            message=(
+                "Provider rejected the streaming responses request with rate limiting."
+                if streaming
+                else "Provider rejected the request with rate limiting."
             ),
-            rendered_payload,
-            transport=transport,
+            failure_detail=failure_detail,
         )
-        return OpenAICompatConnectivityResult(
-            ok=True,
-            provider_type=OpenAICompatProviderType.RESPONSES_NON_STREAM,
-            response_id=fallback_result.response_id,
+    if response.status_code in {401, 403}:
+        raise OpenAICompatProviderAuthError(
+            failure_kind="PROVIDER_AUTH_FAILED",
+            message="Provider rejected the configured credentials.",
+            failure_detail=failure_detail,
+        )
+    if response.status_code >= 500:
+        raise OpenAICompatProviderUnavailableError(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            message="Provider returned an upstream server error.",
+            failure_detail=failure_detail,
+        )
+    if response.status_code >= 400:
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="PROVIDER_BAD_RESPONSE",
+            message="Provider returned an unsupported client error.",
+            failure_detail=failure_detail,
         )
 
 
@@ -743,7 +868,7 @@ def list_openai_compat_models(
     transport: httpx.BaseTransport | None = None,
 ) -> list[str]:
     try:
-        with httpx.Client(timeout=_httpx_timeout(config, streaming=False), transport=transport) as client:
+        with httpx.Client(timeout=_sdk_timeout(config, streaming=False), transport=transport) as client:
             response = client.get(
                 f"{config.base_url}/models",
                 headers={
