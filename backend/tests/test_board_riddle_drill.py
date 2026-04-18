@@ -80,12 +80,17 @@ def test_run_board_riddle_drill_generates_chinese_parallel_report_archive_and_bo
                 (),
                 {
                     "response_id": "resp_ceo_assignments",
-                    "output_text": json.dumps(
+                    "output_text": '{"bad":"shape"}'
+                    + json.dumps(
                         {
                             "summary": "已为每位录用员工生成一题中文脑筋急转弯，并附上中文标准答案。",
                             "assignments": assignments,
                         }
                     ),
+                    "selected_payload": {
+                        "summary": "已为每位录用员工生成一题中文脑筋急转弯，并附上中文标准答案。",
+                        "assignments": assignments,
+                    },
                 },
             )()
 
@@ -95,13 +100,19 @@ def test_run_board_riddle_drill_generates_chinese_parallel_report_archive_and_bo
             (),
             {
                 "response_id": f"resp_{employee_id}",
-                "output_text": json.dumps(
+                "output_text": '{"bad":"shape"}'
+                + json.dumps(
                     {
                         "employee_id": employee_id,
                         "answer": "两盏亮着。",
                         "confidence": 0.82,
                     }
                 ),
+                "selected_payload": {
+                    "employee_id": employee_id,
+                    "answer": "两盏亮着。",
+                    "confidence": 0.82,
+                },
             },
         )()
 

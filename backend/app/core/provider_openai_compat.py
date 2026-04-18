@@ -4,7 +4,7 @@ import json
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
@@ -54,6 +54,18 @@ class OpenAICompatProviderResult:
     response_id: str | None = None
     output_payload: dict[str, Any] | None = None
     output_payloads: tuple[dict[str, Any], ...] = ()
+    events: tuple[dict[str, object], ...] = ()
+    items: tuple[dict[str, object], ...] = ()
+    text_deltas: tuple[str, ...] = ()
+    final_text: str = ""
+    json_objects: tuple[dict[str, Any], ...] = ()
+    selected_payload: dict[str, Any] | None = None
+    raw_output_text: str = ""
+    finish_state: str = "COMPLETED"
+    request_id: str | None = None
+    duplicate_json_object_count: int = 0
+    selected_payload_index: int | None = None
+    events_summary: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -185,10 +197,31 @@ def _value_from_object(value: object | None, key: str) -> object | None:
 
 
 def _parse_json_object_sequence(value: str) -> tuple[dict[str, Any], ...]:
-    decoder = json.JSONDecoder()
+    items, _ = _parse_json_object_sequence_with_error(value)
+    return items
+
+
+def _strip_markdown_code_fence(value: str) -> str:
     stripped = str(value or "").strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def _strip_bom(value: str) -> str:
+    if value.startswith("\ufeff"):
+        return value[1:]
+    return value
+
+
+def _parse_json_object_sequence_with_error(value: str) -> tuple[tuple[dict[str, Any], ...], str | None]:
+    decoder = json.JSONDecoder()
+    stripped = _strip_bom(_strip_markdown_code_fence(str(value or ""))).strip()
     if not stripped:
-        return ()
+        return (), None
     items: list[dict[str, Any]] = []
     cursor = 0
     while cursor < len(stripped):
@@ -198,26 +231,35 @@ def _parse_json_object_sequence(value: str) -> tuple[dict[str, Any], ...]:
             break
         try:
             parsed, next_cursor = decoder.raw_decode(stripped, cursor)
-        except ValueError:
-            return ()
+        except ValueError as exc:
+            return (), str(exc)
         if not isinstance(parsed, dict):
-            return ()
+            return (), "Provider output JSON root must be an object."
         items.append(dict(parsed))
         cursor = next_cursor
+    return tuple(items), None
+
+
+def _extract_output_items(response_payload: dict[str, object]) -> tuple[dict[str, object], ...]:
+    output = response_payload.get("output")
+    if not isinstance(output, list):
+        return ()
+    items: list[dict[str, object]] = []
+    for item in output:
+        if isinstance(item, dict):
+            items.append(dict(item))
     return tuple(items)
 
 
-def _extract_output_payloads(response_payload: dict[str, object]) -> tuple[dict[str, Any], ...]:
+def _extract_response_parsed_payloads(response_payload: dict[str, object]) -> tuple[dict[str, Any], ...]:
     output_parsed = response_payload.get("output_parsed")
     if isinstance(output_parsed, dict):
         return (dict(output_parsed),)
 
     output = response_payload.get("output")
     if not isinstance(output, list):
-        output_text = response_payload.get("output_text")
-        if isinstance(output_text, str) and output_text.strip():
-            return _parse_json_object_sequence(output_text)
         return ()
+
     payloads: list[dict[str, Any]] = []
     for item in output:
         if not isinstance(item, dict):
@@ -231,8 +273,13 @@ def _extract_output_payloads(response_payload: dict[str, object]) -> tuple[dict[
             parsed = content_item.get("parsed")
             if isinstance(parsed, dict):
                 payloads.append(dict(parsed))
+    return tuple(payloads)
+
+
+def _extract_output_payloads(response_payload: dict[str, object]) -> tuple[dict[str, Any], ...]:
+    payloads = _extract_response_parsed_payloads(response_payload)
     if payloads:
-        return tuple(payloads)
+        return payloads
     output_text = response_payload.get("output_text")
     if isinstance(output_text, str) and output_text.strip():
         return _parse_json_object_sequence(output_text)
@@ -284,6 +331,144 @@ def _extract_output_text(response_payload: dict[str, object]) -> str:
         message="Provider response did not contain any assistant text output.",
         failure_detail={
             "provider_response_id": response_payload.get("id"),
+        },
+    )
+
+
+def _canonical_json_object(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _dedupe_json_objects(payloads: list[dict[str, Any]]) -> tuple[tuple[dict[str, Any], ...], int]:
+    unique_payloads: list[dict[str, Any]] = []
+    seen_payloads: set[str] = set()
+    duplicate_count = 0
+    for payload in payloads:
+        serialized = _canonical_json_object(payload)
+        if serialized in seen_payloads:
+            duplicate_count += 1
+            continue
+        seen_payloads.add(serialized)
+        unique_payloads.append(dict(payload))
+    return tuple(unique_payloads), duplicate_count
+
+
+def _build_json_parse_error(
+    *,
+    output_text: str,
+    response_id: str | None,
+    request_id: str | None,
+    parse_error: str,
+) -> OpenAICompatProviderBadResponseError:
+    cleaned_output = _strip_bom(_strip_markdown_code_fence(output_text))
+    failure_kind = (
+        "PROVIDER_MALFORMED_JSON"
+        if _looks_like_truncated_json(cleaned_output, parse_error)
+        else "PROVIDER_BAD_RESPONSE"
+    )
+    return OpenAICompatProviderBadResponseError(
+        failure_kind=failure_kind,
+        message=f"Provider output was not valid JSON: {parse_error}",
+        failure_detail={
+            "provider_response_id": response_id,
+            "request_id": request_id,
+            "parse_stage": "json_object_sequence",
+            "parse_error": parse_error,
+        },
+    )
+
+
+def _looks_like_truncated_json(value: str, parse_error: str) -> bool:
+    normalized_error = str(parse_error or "").lower()
+    if (
+        "unterminated string" in normalized_error
+        or "unexpected end" in normalized_error
+        or "expecting ',' delimiter" in normalized_error
+    ):
+        return True
+
+    stack: list[str] = []
+    in_string = False
+    escaping = False
+    for char in value:
+        if in_string:
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char in "{[":
+            stack.append(char)
+            continue
+        if char == "}" and stack and stack[-1] == "{":
+            stack.pop()
+            continue
+        if char == "]" and stack and stack[-1] == "[":
+            stack.pop()
+            continue
+
+    stripped = value.rstrip()
+    return in_string or bool(stack) or stripped.endswith(("{", "[", ",", ":"))
+
+
+def iter_openai_compat_result_json_objects(
+    provider_result: OpenAICompatProviderResult,
+) -> tuple[dict[str, Any], ...]:
+    candidate_payloads: list[dict[str, Any]] = []
+
+    selected_payload = getattr(provider_result, "selected_payload", None)
+    if isinstance(selected_payload, dict):
+        candidate_payloads.append(dict(selected_payload))
+
+    for item in list(getattr(provider_result, "json_objects", ()) or ()):
+        if isinstance(item, dict):
+            candidate_payloads.append(dict(item))
+
+    output_payload = getattr(provider_result, "output_payload", None)
+    if isinstance(output_payload, dict):
+        candidate_payloads.append(dict(output_payload))
+
+    for item in list(getattr(provider_result, "output_payloads", ()) or ()):
+        if isinstance(item, dict):
+            candidate_payloads.append(dict(item))
+
+    if candidate_payloads:
+        deduped_payloads, _ = _dedupe_json_objects(candidate_payloads)
+        return deduped_payloads
+
+    raw_output_text = str(
+        getattr(provider_result, "raw_output_text", "")
+        or getattr(provider_result, "final_text", "")
+        or getattr(provider_result, "output_text", "")
+    )
+    parsed_payloads, parse_error = _parse_json_object_sequence_with_error(raw_output_text)
+    if parsed_payloads:
+        return parsed_payloads
+    if parse_error is not None and raw_output_text.strip():
+        raise _build_json_parse_error(
+            output_text=raw_output_text,
+            response_id=getattr(provider_result, "response_id", None),
+            request_id=getattr(provider_result, "request_id", None),
+            parse_error=parse_error,
+        )
+    return ()
+
+
+def load_openai_compat_result_payload(provider_result: OpenAICompatProviderResult) -> dict[str, Any]:
+    payloads = iter_openai_compat_result_json_objects(provider_result)
+    if payloads:
+        return dict(payloads[0])
+    raise OpenAICompatProviderBadResponseError(
+        failure_kind="PROVIDER_BAD_RESPONSE",
+        message="Provider result did not include any JSON object payload.",
+        failure_detail={
+            "provider_response_id": getattr(provider_result, "response_id", None),
+            "request_id": getattr(provider_result, "request_id", None),
         },
     )
 
@@ -462,18 +647,29 @@ def _call_stream_close(stream: object) -> None:
         close()
 
 
+def _call_get_final_response(stream: object) -> object | None:
+    getter = getattr(stream, "get_final_response", None)
+    if callable(getter):
+        return getter()
+    return None
+
+
 def _build_result_from_response(
     response: object | None,
     *,
     output_parts: list[str],
     response_id: str | None,
+    events: tuple[dict[str, object], ...] = (),
+    text_deltas: tuple[str, ...] = (),
+    finish_state: str = "COMPLETED",
+    request_id: str | None = None,
 ) -> OpenAICompatProviderResult:
     response_payload = _response_payload(response)
     final_response_id = response_id or (
         str(response_payload.get("id")) if response_payload.get("id") is not None else None
     )
-    output_payloads = _extract_output_payloads(response_payload)
-    output_payload = dict(output_payloads[0]) if output_payloads else None
+    final_request_id = request_id or _extract_request_id(response)
+    parsed_payloads = _extract_response_parsed_payloads(response_payload)
     output_text = ""
     if response_payload:
         try:
@@ -482,19 +678,60 @@ def _build_result_from_response(
             output_text = ""
     if not output_text:
         output_text = "".join(output_parts).strip()
-    if not output_text and output_payload is not None:
-        output_text = json.dumps(output_payload, ensure_ascii=False, sort_keys=True)
+    raw_output_text = output_text
+    text_payloads: tuple[dict[str, Any], ...] = ()
+    parse_error: str | None = None
+    if raw_output_text.strip():
+        text_payloads, parse_error = _parse_json_object_sequence_with_error(raw_output_text)
+
+    combined_payloads = [dict(item) for item in parsed_payloads]
+    combined_payloads.extend(dict(item) for item in text_payloads)
+    json_objects, duplicate_json_object_count = _dedupe_json_objects(combined_payloads)
+    selected_payload = dict(json_objects[0]) if json_objects else None
+    if not output_text and selected_payload is not None:
+        output_text = json.dumps(selected_payload, ensure_ascii=False, sort_keys=True)
+        raw_output_text = output_text
+    elif parse_error is not None and not parsed_payloads:
+        raise _build_json_parse_error(
+            output_text=raw_output_text,
+            response_id=final_response_id,
+            request_id=final_request_id,
+            parse_error=parse_error,
+        )
     if not output_text:
         raise OpenAICompatProviderBadResponseError(
             failure_kind="PROVIDER_BAD_RESPONSE",
             message="Provider response did not contain any assistant text output.",
-            failure_detail={"provider_response_id": final_response_id},
+            failure_detail={
+                "provider_response_id": final_response_id,
+                "request_id": final_request_id,
+            },
         )
+    items = _extract_output_items(response_payload)
     return OpenAICompatProviderResult(
         output_text=output_text,
         response_id=final_response_id,
-        output_payload=output_payload,
-        output_payloads=output_payloads,
+        output_payload=selected_payload,
+        output_payloads=json_objects,
+        events=events,
+        items=items,
+        text_deltas=text_deltas,
+        final_text=output_text,
+        json_objects=json_objects,
+        selected_payload=selected_payload,
+        raw_output_text=raw_output_text,
+        finish_state=finish_state,
+        request_id=final_request_id,
+        duplicate_json_object_count=duplicate_json_object_count,
+        selected_payload_index=(0 if selected_payload is not None else None),
+        events_summary={
+            "event_count": len(events),
+            "item_count": len(items),
+            "text_delta_count": len(text_deltas),
+            "json_object_count": len(json_objects),
+            "duplicate_json_object_count": duplicate_json_object_count,
+            "finish_state": finish_state,
+        },
     )
 
 
@@ -505,7 +742,10 @@ def _extract_streaming_responses_output(
     audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
     response_id: str | None = None
+    request_id: str | None = None
     output_parts: list[str] = []
+    text_deltas: list[str] = []
+    events: list[dict[str, object]] = []
     stream_queue: queue.Queue[tuple[str, object | None]] = queue.Queue()
     first_output_at: float | None = None
     started_at = time.monotonic()
@@ -569,7 +809,15 @@ def _extract_streaming_responses_output(
             ) from exc
 
         if event_kind == "done":
-            return _build_result_from_response(None, output_parts=output_parts, response_id=response_id)
+            return _build_result_from_response(
+                None,
+                output_parts=output_parts,
+                response_id=response_id,
+                events=tuple(events),
+                text_deltas=tuple(text_deltas),
+                finish_state="CLOSED",
+                request_id=request_id,
+            )
         if event_kind == "error":
             error = payload if isinstance(payload, BaseException) else RuntimeError(str(payload))
             if isinstance(error, httpx.TimeoutException):
@@ -596,10 +844,20 @@ def _extract_streaming_responses_output(
         event = payload
         event_type = str(_value_from_object(event, "type") or "")
         response_id = response_id or _extract_response_id(event)
+        event_request_id = _extract_request_id(event)
+        request_id = request_id or event_request_id
+        events.append(
+            {
+                "type": event_type,
+                "provider_response_id": _extract_response_id(event),
+                "request_id": event_request_id,
+            }
+        )
         if event_type in {"response.output_text.delta", "response.output_text.done"}:
             delta = _extract_event_delta(event)
             if delta:
                 output_parts.append(delta)
+                text_deltas.append(delta)
                 if first_output_at is None:
                     first_output_at = time.monotonic()
                     if audit_observer is not None:
@@ -630,6 +888,10 @@ def _extract_streaming_responses_output(
                 _value_from_object(event, "response") or _call_get_final_response(stream),
                 output_parts=output_parts,
                 response_id=response_id,
+                events=tuple(events),
+                text_deltas=tuple(text_deltas),
+                finish_state="COMPLETED",
+                request_id=request_id,
             )
 
 

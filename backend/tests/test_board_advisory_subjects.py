@@ -109,8 +109,9 @@ def test_board_advisory_analysis_prefers_graph_subject_over_stale_source_node_id
     with patch(
         "app.core.board_advisory_analysis.invoke_openai_compat_response",
         return_value=OpenAICompatProviderResult(
-            output_text=json.dumps(proposal_payload),
+            output_text='{"bad":"shape"}' + json.dumps(proposal_payload),
             response_id="resp_advisory_graph_subject",
+            selected_payload=proposal_payload,
         ),
     ):
         response = client.post(

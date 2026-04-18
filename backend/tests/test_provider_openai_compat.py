@@ -251,10 +251,72 @@ def test_invoke_openai_compat_response_preserves_multiple_json_objects_from_stre
     )
 
     assert result.output_payload == {"summary": "first"}
+    assert result.selected_payload == {"summary": "first"}
     assert result.output_payloads == (
         {"summary": "first"},
         {"summary": "second"},
     )
+    assert result.json_objects == (
+        {"summary": "first"},
+        {"summary": "second"},
+    )
+    assert result.raw_output_text == '{"summary":"first"}{"summary":"second"}'
+    assert result.finish_state == "COMPLETED"
+
+
+def test_invoke_openai_compat_response_deduplicates_duplicate_json_objects_from_stream_text() -> None:
+    def _create_factory(**kwargs):
+        return _FakeResponseStream(
+            events=[
+                SimpleNamespace(
+                    type="response.completed",
+                    response=SimpleNamespace(
+                        id="resp_duplicate_json_sequence",
+                        output_text='{"summary":"same"}{"summary":"same"}',
+                    ),
+                ),
+            ],
+        )
+
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        client_factory=lambda config: _FakeOpenAIClient(_create_factory),
+    )
+
+    assert result.json_objects == (
+        {"summary": "same"},
+    )
+    assert result.output_payloads == (
+        {"summary": "same"},
+    )
+    assert result.duplicate_json_object_count == 1
+    assert result.selected_payload_index == 0
+
+
+def test_invoke_openai_compat_response_marks_malformed_json_sequence_as_retryable() -> None:
+    def _create_factory(**kwargs):
+        return _FakeResponseStream(
+            events=[
+                SimpleNamespace(
+                    type="response.completed",
+                    response=SimpleNamespace(
+                        id="resp_malformed_json_sequence",
+                        output_text='{"summary":"broken"',
+                    ),
+                ),
+            ],
+        )
+
+    with pytest.raises(OpenAICompatProviderBadResponseError) as exc_info:
+        invoke_openai_compat_response(
+            _config(),
+            _rendered_payload(),
+            client_factory=lambda config: _FakeOpenAIClient(_create_factory),
+        )
+
+    assert exc_info.value.failure_kind == "PROVIDER_MALFORMED_JSON"
+    assert exc_info.value.failure_detail["provider_response_id"] == "resp_malformed_json_sequence"
 
 
 def test_invoke_openai_compat_response_includes_reasoning_effort_when_configured() -> None:

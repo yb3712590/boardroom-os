@@ -34,6 +34,7 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderConfig,
     OpenAICompatProviderError,
     invoke_openai_compat_response,
+    load_openai_compat_result_payload,
 )
 from app.core.provider_claude_code import ClaudeCodeProviderConfig, ClaudeCodeProviderError, invoke_claude_code_response
 from app.core.output_schemas import (
@@ -950,10 +951,12 @@ def propose_ceo_action_batch(
                 rendered_payload,
             )
         )
-        payload = _normalize_provider_action_batch_payload(
-            json.loads(provider_result.output_text),
-            snapshot,
+        raw_payload = (
+            load_openai_compat_result_payload(provider_result)
+            if current_selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
+            else json.loads(provider_result.output_text)
         )
+        payload = _normalize_provider_action_batch_payload(raw_payload, snapshot)
         return CEOActionBatch.model_validate(payload), provider_result
 
     try:

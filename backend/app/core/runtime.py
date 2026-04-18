@@ -58,6 +58,8 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderRateLimitedError,
     OpenAICompatProviderUnavailableError,
     invoke_openai_compat_response,
+    iter_openai_compat_result_json_objects,
+    load_openai_compat_result_payload,
 )
 from app.core.provider_claude_code import ClaudeCodeProviderConfig, ClaudeCodeProviderError, invoke_claude_code_response
 from app.core.runtime_provider_config import (
@@ -1667,11 +1669,9 @@ def _resolve_provider_result_payload(
 ) -> dict[str, Any]:
     candidate_payloads = [
         dict(item)
-        for item in list(getattr(provider_result, "output_payloads", ()) or ())
+        for item in list(iter_openai_compat_result_json_objects(provider_result))
         if isinstance(item, dict)
     ]
-    if isinstance(provider_result.output_payload, dict):
-        candidate_payloads.insert(0, dict(provider_result.output_payload))
 
     seen_serialized: set[str] = set()
     for candidate in candidate_payloads:
@@ -1686,7 +1686,7 @@ def _resolve_provider_result_payload(
 
     return _normalize_provider_payload_for_execution(
         execution_package,
-        _load_provider_payload(provider_result.output_text),
+        load_openai_compat_result_payload(provider_result),
     )
 
 
@@ -2126,6 +2126,12 @@ def _execute_openai_compat_provider(
                     "current_phase": "completed",
                     "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
                     "response_id": provider_result.response_id,
+                    "provider_response_id": provider_result.response_id,
+                    "request_id": getattr(provider_result, "request_id", None),
+                    "json_object_count": len(getattr(provider_result, "json_objects", ()) or ()),
+                    "duplicate_json_object_count": getattr(provider_result, "duplicate_json_object_count", 0),
+                    "selected_payload_index": getattr(provider_result, "selected_payload_index", None),
+                    "finish_state": getattr(provider_result, "finish_state", "COMPLETED"),
                 },
             )
             return result

@@ -1717,7 +1717,8 @@ def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(cl
         assert snapshot["reuse_candidates"]["recent_completed_tickets"]
         assert snapshot["reuse_candidates"]["recent_closed_meetings"]
         return OpenAICompatProviderResult(
-            output_text=json.dumps(
+            output_text='{"bad":"shape"}'
+            + json.dumps(
                 {
                     "summary": "Reuse candidates already cover this workflow state, so no new action is needed.",
                     "actions": [
@@ -1731,6 +1732,17 @@ def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(cl
                 }
             ),
             response_id="resp_ceo_reuse_1",
+            selected_payload={
+                "summary": "Reuse candidates already cover this workflow state, so no new action is needed.",
+                "actions": [
+                    {
+                        "action_type": "NO_ACTION",
+                        "payload": {
+                            "reason": "Recent completed tickets and closed meetings already provide reusable guidance.",
+                        },
+                    }
+                ],
+            },
         )
 
     monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)

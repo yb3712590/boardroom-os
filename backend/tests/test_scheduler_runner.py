@@ -3451,8 +3451,7 @@ def test_runtime_provider_uses_first_schema_valid_payload_from_multiple_json_obj
         return OpenAICompatProviderResult(
             output_text='{"bad":"shape"}{"summary":"Recovered from second object","recommended_option_id":"option_a","options":[{"option_id":"option_a","label":"Option A","summary":"Valid option","artifact_refs":[]}]}',
             response_id="resp_multi_json",
-            output_payload={"bad": "shape"},
-            output_payloads=(
+            json_objects=(
                 {"bad": "shape"},
                 {
                     "summary": "Recovered from second object",
@@ -3467,19 +3466,40 @@ def test_runtime_provider_uses_first_schema_valid_payload_from_multiple_json_obj
                     ],
                 },
             ),
+            selected_payload={
+                "summary": "Recovered from second object",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Valid option",
+                        "artifact_refs": [],
+                    }
+                ],
+            },
+            selected_payload_index=1,
         )
 
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _return_multiple_payloads)
 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_multi_json")
+    provider_finished_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["ticket_id"] == "tkt_runner_provider_multi_json"
+        and event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"
+    ]
     with repository.connection() as connection:
         terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_multi_json")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_multi_json"]
     assert ticket_projection["status"] == "COMPLETED"
     assert terminal_event is not None
-    assert terminal_event["payload"]["payload"]["summary"] == "Recovered from second object"
+    assert provider_finished_events[-1]["payload"]["status"] == "COMPLETED"
+    assert provider_finished_events[-1]["payload"]["json_object_count"] == 2
+    assert provider_finished_events[-1]["payload"]["selected_payload_index"] == 1
 
 
 def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic(

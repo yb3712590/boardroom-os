@@ -68,7 +68,7 @@ from app.core.process_assets import (
     resolve_process_asset,
 )
 from app.core.provider_claude_code import invoke_claude_code_response
-from app.core.provider_openai_compat import invoke_openai_compat_response
+from app.core.provider_openai_compat import invoke_openai_compat_response, load_openai_compat_result_payload
 from app.core.review_subjects import resolve_graph_only_review_subject_execution_identity
 from app.core.runtime_provider_config import (
     RuntimeProviderAdapterKind,
@@ -588,7 +588,7 @@ def _execute_live_provider_mode(
         raise RuntimeError("Provider execution is currently paused by an open incident.")
 
     if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
-        from app.core.runtime import _build_openai_compat_provider_config, _load_provider_payload
+        from app.core.runtime import _build_openai_compat_provider_config
 
         if not all((selection.provider.base_url, selection.provider.api_key, selection.actual_model or selection.provider.model)):
             raise RuntimeError("Provider config is incomplete for OpenAI Compat execution.")
@@ -598,7 +598,7 @@ def _execute_live_provider_mode(
         )
         provider_response_id = provider_result.response_id
     else:
-        from app.core.runtime import _build_claude_code_provider_config, _load_provider_payload
+        from app.core.runtime import _build_claude_code_provider_config
 
         if not all((selection.provider.command_path, selection.actual_model or selection.provider.model)):
             raise RuntimeError("Provider config is incomplete for Claude Code execution.")
@@ -608,7 +608,7 @@ def _execute_live_provider_mode(
         )
         provider_response_id = None
 
-    proposal_payload = _load_provider_payload(provider_result.output_text)
+    proposal_payload = load_openai_compat_result_payload(provider_result)
     validate_output_payload(
         schema_ref=GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
         schema_version=GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION,
