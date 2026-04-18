@@ -50,7 +50,7 @@ class CEORequestMeetingPayload(StrictModel):
     workflow_id: str = Field(min_length=1)
     meeting_type: Literal[MeetingType.TECHNICAL_DECISION]
     source_graph_node_id: str = Field(min_length=1)
-    source_node_id: str = Field(min_length=1)
+    source_node_id: str | None = None
     source_ticket_id: str = Field(min_length=1)
     topic: str = Field(min_length=1)
     participant_employee_ids: list[str] = Field(min_length=2, max_length=4)

@@ -23,6 +23,14 @@
 
 ### 2026-04-18
 
+- `P4-S7` 这轮已继续把 review/advisory/meeting 写入链收成 graph-first：`CEORequestMeetingPayload.source_node_id` 现已降成可选兼容镜像，`ceo_validator` 现在只把 `source_graph_node_id` 当身份真相；缺省 `source_node_id` 时会按当前 graph/runtime truth 校验，不再把旧镜像字段写死成必填
+- `approval_handlers` 这轮已把 `board approve / reject / modify constraints` 事件写入和 review gate merge incident 收到 graph-first subject；review pack 缺 `source_node_id` 时，现在会显式从 `source_graph_node_id` 派生 execution node，不再把事件 `node_id` 写成空值
+- `build_meeting_projection()` 这轮已切到 `resolve_review_subject_execution_identity()`；meeting detail 的 `source_node_id` 现在只作为派生展示镜像，stale/空 legacy mirror 不再污染投影真相
+- `_board_advisory_artifact_subject()` 这轮已删掉 `source_node_id -> ticket_id` 的旧 fallback；graph truth 缺失时继续显式失败，不再让 ticket id 冒充 runtime node 真相
+- 本轮 fresh 验证已通过：`py -m pytest backend/tests/test_api.py -k "meeting or dependency_inspector or review_room" -q`、`py -m pytest backend/tests/test_meeting_room.py -q`、`py -m pytest backend/tests/test_ceo_scheduler.py -k "advisory or request_meeting or reuse_candidates" -q`、`py -m pytest backend/tests/test_board_advisory_subjects.py -q`、`py -m py_compile backend/app/core/review_subjects.py backend/app/core/meeting_handlers.py backend/app/core/approval_handlers.py backend/app/core/ceo_meeting_policy.py backend/app/core/board_advisory.py backend/app/contracts/ceo_actions.py backend/app/contracts/projections.py backend/app/core/ceo_executor.py backend/app/core/ceo_validator.py backend/tests/test_api.py backend/tests/test_meeting_room.py backend/tests/test_board_advisory_subjects.py backend/tests/test_ceo_scheduler.py`
+- `doc/TODO.md` 这轮没有更新；原因是当前批次、阶段目标和优先级都没变，只是在 `P4-S7` 里继续把 graph-first subject 的写入链收口
+- `README.md` 这轮没有更新；原因是没有改仓库入口叙事或运行方式
+
 - `P4-S7` 这轮已把 `workflow_controller` 的 command-side existing-ticket 判定收回 `ticket_projection` 当前真相：governance progression、architect gate 和 backlog followup 不再依赖 stale `workflow_nodes.latest_ticket_id`
 - `required_governance_ticket_plan.existing_ticket_id` 现在会在 legacy `node_projection` 缺失时继续保留真实当前票；治理推进不再因为 compat row 丢失就把“已有下一张票”误判成“还没建”
 - `ceo_proposer._build_backlog_followup_batch()` 这轮已改成直接复用 `capability_plan.followup_ticket_plans[].existing_ticket_id`；上游 followup 的 legacy `node_projection` 被删掉时，下游依赖票仍能继续 fanout，不会再卡成“依赖票不存在”

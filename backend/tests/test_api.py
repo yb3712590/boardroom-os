@@ -5908,6 +5908,59 @@ def test_review_subject_identity_rejects_source_node_id_only_legacy_fallback(cli
         )
 
 
+def test_board_reject_derives_event_node_id_from_source_graph_node_id(client):
+    workflow_id = "wf_board_reject_graph_first_subject"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Board reject should derive node_id from source_graph_node_id when legacy mirror is absent.",
+    )
+    approval = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    payload = dict(approval["payload"] or {})
+    review_pack = dict(payload.get("review_pack") or {})
+    subject = dict(review_pack.get("subject") or {})
+    assert str(subject.get("source_graph_node_id") or "").strip() == "node_homepage_visual::review"
+    subject.pop("source_node_id", None)
+    review_pack["subject"] = subject
+    payload["review_pack"] = review_pack
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE approval_projection
+            SET payload_json = ?, updated_at = updated_at
+            WHERE approval_id = ?
+            """,
+            (json.dumps(payload), approval["approval_id"]),
+        )
+
+    response = client.post(
+        "/api/v1/commands/board-reject",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "board_comment": "Reject until the execution branch is re-aligned.",
+            "rejection_reasons": ["Graph-first subject is still blocked."],
+            "idempotency_key": f"board-reject:{approval['approval_id']}:graph-first-node-id",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    latest_event = next(
+        event
+        for event in reversed(repository.list_events_for_testing())
+        if event["event_type"] == "BOARD_REVIEW_REJECTED"
+        and (event.get("payload") or {}).get("approval_id") == approval["approval_id"]
+    )
+    assert (latest_event.get("payload") or {}).get("node_id") == "node_homepage_visual"
+
+
 def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id = "wf_dependency_inspector_linear_chain"

@@ -211,7 +211,9 @@ def validate_ceo_action_batch(
             if source_view is None or source_view.materialization_state != MATERIALIZATION_STATE_MATERIALIZED:
                 rejected_actions.append(_action_entry(action, "Source graph node does not exist anymore."))
                 continue
-            if str(source_view.node_id or "") != action.payload.source_node_id:
+            requested_source_node_id = str(action.payload.source_node_id or "").strip() or None
+            current_source_node_id = str(source_view.node_id or "").strip() or None
+            if requested_source_node_id is not None and current_source_node_id != requested_source_node_id:
                 rejected_actions.append(_action_entry(action, "Source node does not match the current graph truth."))
                 continue
             if str(source_view.ticket_id or "") != action.payload.source_ticket_id:

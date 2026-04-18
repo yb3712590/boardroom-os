@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from app.config import get_settings
 from app.contracts.advisory import GovernancePatch, GraphPatchProposal, BoardAdvisoryDecision
@@ -751,8 +751,25 @@ def _board_advisory_artifact_subject(
     normalized_ticket_id = source_ticket_id or (
         str(subject.get("source_ticket_id") or session["approval_id"]).strip() or str(session["approval_id"])
     )
-    normalized_source_node_id = str(source_node_id or normalized_ticket_id).strip()
-    return normalized_ticket_id, str(source_graph_node_id), normalized_source_node_id
+    return normalized_ticket_id, str(source_graph_node_id), str(source_node_id)
+
+
+def _resolve_review_pack_execution_subject(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    workflow_id: str,
+    subject: Mapping[str, Any] | None,
+    fallback_ticket_id: str | None = None,
+) -> tuple[str | None, str, str]:
+    source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_execution_identity(
+        repository,
+        workflow_id=workflow_id,
+        subject=subject,
+        connection=connection,
+    )
+    normalized_ticket_id = str(source_ticket_id or fallback_ticket_id or "").strip() or None
+    return normalized_ticket_id, str(source_graph_node_id), str(source_node_id)
 
 
 def _materialize_board_advisory_full_timeline_archive(
@@ -2387,6 +2404,13 @@ def _handle_board_approve(
                     causation_hint=f"approval:{payload.approval_id}",
                 )
             if approval["approval_type"] == "VISUAL_MILESTONE":
+                _source_ticket_id, _source_graph_node_id, source_node_id = _resolve_review_pack_execution_subject(
+                    repository,
+                    connection,
+                    workflow_id=approval["workflow_id"],
+                    subject=subject,
+                    fallback_ticket_id=str(subject.get("source_ticket_id") or "").strip() or None,
+                )
                 (
                     review_gate_source_ticket_id,
                     review_gate_source_created_spec,
@@ -2419,7 +2443,7 @@ def _handle_board_approve(
                             occurred_at=received_at,
                             workflow_id=approval["workflow_id"],
                             ticket_id=review_gate_source_ticket_id,
-                            node_id=str(subject.get("source_node_id") or ""),
+                            node_id=source_node_id,
                             git_branch_ref=checkout_truth["git_branch_ref"],
                             merge_error=str(exc),
                             idempotency_key=f"{payload.idempotency_key}:review-gate-merge-incident",
@@ -2450,6 +2474,13 @@ def _handle_board_approve(
                         connection=connection,
                     )
 
+        source_ticket_id, _source_graph_node_id, source_node_id = _resolve_review_pack_execution_subject(
+            repository,
+            connection,
+            workflow_id=approval["workflow_id"],
+            subject=subject,
+            fallback_ticket_id=str(subject.get("source_ticket_id") or "").strip() or None,
+        )
         event_row = repository.insert_event(
             connection,
             event_type=EVENT_BOARD_REVIEW_APPROVED,
@@ -2462,8 +2493,8 @@ def _handle_board_approve(
             payload={
                 "approval_id": payload.approval_id,
                 "review_pack_id": payload.review_pack_id,
-                "node_id": subject.get("source_node_id"),
-                "ticket_id": subject.get("source_ticket_id"),
+                "node_id": source_node_id,
+                "ticket_id": source_ticket_id,
                 "selected_option_id": payload.selected_option_id,
                 "board_comment": payload.board_comment,
                 "elicitation_answers": [
@@ -2694,6 +2725,13 @@ def handle_board_reject(
             )
 
         subject = approval["payload"].get("review_pack", {}).get("subject", {})
+        source_ticket_id, _source_graph_node_id, source_node_id = _resolve_review_pack_execution_subject(
+            repository,
+            connection,
+            workflow_id=approval["workflow_id"],
+            subject=subject,
+            fallback_ticket_id=str(subject.get("source_ticket_id") or "").strip() or None,
+        )
 
         event_row = repository.insert_event(
             connection,
@@ -2707,8 +2745,8 @@ def handle_board_reject(
             payload={
                 "approval_id": payload.approval_id,
                 "review_pack_id": payload.review_pack_id,
-                "node_id": subject.get("source_node_id"),
-                "ticket_id": subject.get("source_ticket_id"),
+                "node_id": source_node_id,
+                "ticket_id": source_ticket_id,
                 "board_comment": payload.board_comment,
                 "rejection_reasons": payload.rejection_reasons,
                 "decision_action": "REJECT",
@@ -2841,6 +2879,13 @@ def handle_modify_constraints(
 
         review_pack = (approval["payload"].get("review_pack") or {})
         subject = review_pack.get("subject", {})
+        source_ticket_id, _source_graph_node_id, source_node_id = _resolve_review_pack_execution_subject(
+            repository,
+            connection,
+            workflow_id=approval["workflow_id"],
+            subject=subject,
+            fallback_ticket_id=str(subject.get("source_ticket_id") or "").strip() or None,
+        )
         governance_patch, governance_patch_error = _resolve_governance_patch_or_reject(payload)
         if governance_patch_error is not None:
             return _rejected_ack(
@@ -2917,8 +2962,8 @@ def handle_modify_constraints(
             payload={
                 "approval_id": payload.approval_id,
                 "review_pack_id": payload.review_pack_id,
-                "node_id": subject.get("source_node_id"),
-                "ticket_id": subject.get("source_ticket_id"),
+                "node_id": source_node_id,
+                "ticket_id": source_ticket_id,
                 "board_comment": payload.board_comment,
                 "constraint_patch": payload.constraint_patch.model_dump(mode="json"),
                 "governance_patch": (

@@ -4388,6 +4388,58 @@ def test_ceo_validator_rejects_request_meeting_when_source_graph_node_id_mismatc
     assert "does not match any snapshot meeting candidate" in result["rejected_actions"][0]["reason"]
 
 
+def test_ceo_validator_accepts_request_meeting_without_source_node_id_when_graph_truth_matches(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_meeting_validator_optional_source_node")
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_validator_optional_source_node",
+        node_id="node_ceo_validator_optional_source_node",
+        retry_budget=0,
+    )
+
+    snapshot = next(
+        run["snapshot"]
+        for run in client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+        if run["trigger_type"] == "TICKET_FAILED"
+    )
+    candidate = next(
+        item
+        for item in snapshot["meeting_candidates"]
+        if item["source_ticket_id"] == "tkt_ceo_validator_optional_source_node"
+    )
+
+    result = validate_ceo_action_batch(
+        client.app.state.repository,
+        snapshot=snapshot,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Request a bounded technical decision meeting.",
+                "actions": [
+                    {
+                        "action_type": "REQUEST_MEETING",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "meeting_type": "TECHNICAL_DECISION",
+                            "source_graph_node_id": candidate["source_graph_node_id"],
+                            "source_ticket_id": candidate["source_ticket_id"],
+                            "topic": candidate["topic"],
+                            "participant_employee_ids": candidate["participant_employee_ids"],
+                            "recorder_employee_id": candidate["recorder_employee_id"],
+                            "input_artifact_refs": candidate["input_artifact_refs"],
+                            "reason": candidate["reason"],
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert len(result["accepted_actions"]) == 1
+    assert result["rejected_actions"] == []
+
+
 def test_meeting_escalation_reject_does_not_trigger_recursive_ceo_meeting(client, set_ticket_time):
     set_ticket_time("2026-04-05T11:00:00+08:00")
     _set_deterministic_mode(client)

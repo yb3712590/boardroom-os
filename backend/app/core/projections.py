@@ -93,6 +93,7 @@ from app.core.artifact_store import ArtifactStore
 from app.core.artifacts import build_artifact_metadata, build_artifact_retention_defaults
 from app.core.board_advisory import build_board_advisory_context
 from app.core.review_subjects import (
+    resolve_review_subject_execution_identity,
     resolve_review_subject_identity,
 )
 from app.core.constants import (
@@ -2024,7 +2025,7 @@ def build_meeting_projection(
         source_ticket_id=str(meeting["source_ticket_id"]),
         artifact_store=artifact_store,
     )
-    _, source_graph_node_id, source_node_id = resolve_review_subject_identity(
+    _, source_graph_node_id, source_node_id = resolve_review_subject_execution_identity(
         repository,
         workflow_id=str(meeting["workflow_id"]),
         subject={
@@ -2049,7 +2050,7 @@ def build_meeting_projection(
             ),
             source_ticket_id=str(meeting["source_ticket_id"]),
             source_graph_node_id=str(source_graph_node_id),
-            source_node_id=str(source_node_id or meeting["source_node_id"]),
+            source_node_id=str(source_node_id),
             review_pack_id=(
                 str(meeting["review_pack_id"]) if meeting.get("review_pack_id") is not None else None
             ),
