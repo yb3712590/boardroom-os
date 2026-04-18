@@ -1932,6 +1932,10 @@ def _is_provider_pause_failure(failure_kind: str) -> bool:
     return failure_kind in PROVIDER_PAUSE_FAILURE_KINDS
 
 
+def _should_open_provider_incident_for_failure(failure_kind: str) -> bool:
+    return False
+
+
 def _is_provider_paused(
     repository: ControlPlaneRepository,
     connection,
@@ -6264,7 +6268,7 @@ def handle_ticket_fail(
             ticket=current_ticket,
             failure_detail=failure_payload.get("failure_detail"),
         )
-        if _is_provider_pause_failure(payload.failure_kind) and provider_id is not None:
+        if _should_open_provider_incident_for_failure(payload.failure_kind) and provider_id is not None:
             _open_provider_incident(
                 repository=repository,
                 connection=connection,

@@ -136,7 +136,7 @@ def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict
         payload.request_total_timeout_sec
         if isinstance(payload, RuntimeProviderConfigInput)
         else payload.get("request_total_timeout_sec")
-    ) or (payload.timeout_sec if isinstance(payload, RuntimeProviderConfigInput) else payload.get("timeout_sec")) or 120.0
+    ) or (payload.timeout_sec if isinstance(payload, RuntimeProviderConfigInput) else payload.get("timeout_sec")) or 300.0
     return OpenAICompatProviderConfig(
         base_url=payload.base_url if isinstance(payload, RuntimeProviderConfigInput) else payload["base_url"],
         api_key=payload.api_key if isinstance(payload, RuntimeProviderConfigInput) else payload["api_key"],
@@ -167,7 +167,7 @@ def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict
                 if isinstance(payload, RuntimeProviderConfigInput)
                 else payload.get("first_token_timeout_sec")
             )
-            or 45.0
+            or 300.0
         ),
         stream_idle_timeout_sec=float(
             (
@@ -175,7 +175,7 @@ def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict
                 if isinstance(payload, RuntimeProviderConfigInput)
                 else payload.get("stream_idle_timeout_sec")
             )
-            or 20.0
+            or 300.0
         ),
         request_total_timeout_sec=float(timeout_sec),
         reasoning_effort=(

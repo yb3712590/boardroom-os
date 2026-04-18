@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 
 import httpx
@@ -289,6 +290,61 @@ def test_invoke_openai_compat_response_returns_after_response_completed_without_
     )
 
     assert result.response_id == "resp_stream_completed_only"
+    assert result.output_text == '{"ok":true}'
+
+
+def test_invoke_openai_compat_response_keeps_active_stream_alive_after_total_timeout_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release_tail = threading.Event()
+
+    class _DelayedStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield (
+                b'event: response.output_text.delta\n'
+                b'data: {"type":"response.output_text.delta","delta":"{\\"ok\\":"}\n\n'
+            )
+            release_tail.wait(timeout=1.0)
+            yield (
+                b'event: response.output_text.delta\n'
+                b'data: {"type":"response.output_text.delta","delta":"true}"}\n\n'
+                b'event: response.completed\n'
+                b'data: {"type":"response.completed","response":{"id":"resp_stream_long_running"}}\n\n'
+            )
+
+    monotonic_values = iter([0.0, 0.0, 0.5, 2.0, 2.0])
+
+    def _fake_monotonic() -> float:
+        value = next(monotonic_values)
+        if value >= 0.5:
+            release_tail.set()
+        return value
+
+    monkeypatch.setattr("app.core.provider_openai_compat.time.monotonic", _fake_monotonic)
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_DelayedStream(),
+        )
+
+    result = invoke_openai_compat_response(
+        OpenAICompatProviderConfig(
+            base_url="https://api-vip.codex-for.me/v1",
+            api_key="test-key",
+            model="gpt-5.3-codex",
+            timeout_sec=30.0,
+            first_token_timeout_sec=300.0,
+            stream_idle_timeout_sec=300.0,
+            request_total_timeout_sec=1.0,
+            provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
+        ),
+        _rendered_payload(),
+        transport=httpx.MockTransport(_handler),
+    )
+
+    assert result.response_id == "resp_stream_long_running"
     assert result.output_text == '{"ok":true}'
 
 

@@ -24,7 +24,7 @@ from app.core.time import now_local
 DEFAULT_SCENARIO_SEED = 17
 DEFAULT_MAX_TICKS = 180
 DEFAULT_TIMEOUT_SEC = 7200
-DEFAULT_LIVE_PROVIDER_TIMEOUT_SEC = 180
+DEFAULT_LIVE_PROVIDER_TIMEOUT_SEC = 300
 MAX_STALL_TICKS = 25
 TERMINAL_TICKET_STATUSES = {"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}
 GOVERNANCE_DOCUMENT_SCHEMA_REFS = {
@@ -526,6 +526,7 @@ def _latest_provider_runtime_snapshot(repository, workflow_id: str) -> dict[str,
             "provider_attempt_log": provider_attempt_log,
             "fallback_blocked": bool(failure_detail.get("fallback_blocked")),
             "final_failure_kind": payload.get("failure_kind"),
+            "retry_backoff_schedule_sec": list(failure_detail.get("retry_backoff_schedule_sec") or []),
             "preferred_provider_id": assumptions.get("preferred_provider_id"),
             "actual_provider_id": assumptions.get("actual_provider_id"),
             "actual_model": assumptions.get("actual_model"),
@@ -536,6 +537,7 @@ def _latest_provider_runtime_snapshot(repository, workflow_id: str) -> dict[str,
         "provider_attempt_log": [],
         "fallback_blocked": False,
         "final_failure_kind": None,
+        "retry_backoff_schedule_sec": [],
         "preferred_provider_id": None,
         "actual_provider_id": None,
         "actual_model": None,
@@ -706,6 +708,17 @@ def _collect_monitor_snapshot(repository, workflow_id: str, *, recorded_at: str)
         "active_ticket_ids": _active_ticket_ids(tickets),
         "approval_count": len(approvals),
         "incident_count": len([item for item in incidents if str(item.get("status") or "").upper() == "OPEN"]),
+        "open_incidents": [
+            {
+                "incident_id": str(item.get("incident_id") or ""),
+                "incident_type": str(item.get("incident_type") or ""),
+                "status": str(item.get("status") or ""),
+                "provider_id": str(item.get("provider_id") or ""),
+                "circuit_breaker_state": str(item.get("circuit_breaker_state") or ""),
+            }
+            for item in incidents
+            if str(item.get("status") or "").upper() in {"OPEN", "RECOVERING"}
+        ],
     }
 
 
@@ -782,6 +795,31 @@ def _update_monitor_entries(
     state["previous_snapshot"] = snapshot
     state["previous_signature"] = current_signature
     return state
+
+
+def _should_count_stall(
+    *,
+    workflow: dict[str, Any],
+    active_ticket_ids: list[str],
+    open_incidents: list[dict[str, Any]],
+) -> bool:
+    if active_ticket_ids:
+        return False
+    workflow_status = str(workflow.get("status") or "").upper()
+    if workflow_status in {"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}:
+        return False
+    recoverable_incident_types = {
+        "PROVIDER_EXECUTION_PAUSED",
+        "RUNTIME_TIMEOUT_ESCALATION",
+        "REPEATED_FAILURE_ESCALATION",
+        "STAFFING_CONTAINMENT",
+    }
+    for incident in open_incidents:
+        incident_status = str(incident.get("status") or "").upper()
+        incident_type = str(incident.get("incident_type") or "").upper()
+        if incident_status in {"OPEN", "RECOVERING"} and incident_type in recoverable_incident_types:
+            return False
+    return True
 
 
 def _effective_longest_silence(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -896,6 +934,7 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
     provider_summary = dict(snapshot.get("provider_summary") or {})
     provider_candidate_chain = list(snapshot.get("provider_candidate_chain") or [])
     provider_attempt_log = list(snapshot.get("provider_attempt_log") or [])
+    retry_backoff_schedule_sec = list(snapshot.get("retry_backoff_schedule_sec") or [])
     fallback_blocked = bool(snapshot.get("fallback_blocked"))
     final_failure_kind = snapshot.get("final_failure_kind")
     lines = [
@@ -910,6 +949,7 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
         f"- Provider: `{provider_summary.get('actual_provider_id') or 'unknown'}` / `{provider_summary.get('actual_model') or 'unknown'}`",
         f"- Provider Base URL: `{provider_summary.get('provider_base_url') or 'unknown'}`",
         f"- Candidate chain: `{(' -> '.join(provider_candidate_chain) if provider_candidate_chain else 'none')}`",
+        f"- Retry schedule: `{(', '.join(str(item) for item in retry_backoff_schedule_sec) if retry_backoff_schedule_sec else 'none')}`",
         f"- Fallback blocked: `{str(fallback_blocked).lower()}`",
         f"- Final failure kind: `{final_failure_kind or 'none'}`",
         "",
@@ -1227,7 +1267,12 @@ def run_live_scenario(
                 )
                 workflow = repository.get_workflow_projection(workflow_id)
                 _, current_version = repository.get_cursor_and_version()
-                if current_version == previous_version:
+                current_snapshot = dict(monitor_state.get("previous_snapshot") or {})
+                if current_version == previous_version and _should_count_stall(
+                    workflow=(workflow or {}),
+                    active_ticket_ids=list(current_snapshot.get("active_ticket_ids") or []),
+                    open_incidents=list(current_snapshot.get("open_incidents") or []),
+                ):
                     consecutive_stalls += 1
                 else:
                     consecutive_stalls = 0

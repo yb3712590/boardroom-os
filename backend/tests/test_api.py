@@ -5332,7 +5332,7 @@ def test_runtime_provider_projection_round_trips_masked_config_and_dashboard_run
         assert projection_data["alias"] == "example"
         assert projection_data["model"] == "gpt-5.3-codex"
         assert projection_data["max_context_window"] == 1000000
-        assert projection_data["timeout_sec"] == 120.0
+        assert projection_data["timeout_sec"] == 300.0
         assert projection_data["reasoning_effort"] == "high"
         assert projection_data["default_provider_id"] == "prov_openai_compat"
         assert projection_data["api_key_configured"] is True
@@ -5498,26 +5498,56 @@ def test_dashboard_runtime_status_shows_provider_paused_when_provider_incident_i
             ticket_id="tkt_provider_paused",
             node_id="node_provider_paused",
         )
-        fail_response = client.post(
-            "/api/v1/commands/ticket-fail",
-            json=_ticket_fail_payload(
+        repository = client.app.state.repository
+        with repository.transaction() as connection:
+            repository.insert_event(
+                connection,
+                event_type="INCIDENT_OPENED",
+                actor_type="system",
+                actor_id="runtime",
                 workflow_id="wf_provider_paused",
-                ticket_id="tkt_provider_paused",
-                node_id="node_provider_paused",
-                failure_kind="PROVIDER_RATE_LIMITED",
-                failure_message="Provider quota exhausted.",
-                failure_detail={
+                idempotency_key="test-incident-opened:wf_provider_paused:provider-open",
+                causation_id=None,
+                correlation_id="wf_provider_paused",
+                payload={
+                    "incident_id": "inc_provider_paused",
+                    "ticket_id": "tkt_provider_paused",
+                    "node_id": "node_provider_paused",
                     "provider_id": "prov_openai_compat",
-                    "provider_status_code": 429,
+                    "incident_type": "PROVIDER_EXECUTION_PAUSED",
+                    "status": "OPEN",
+                    "severity": "high",
+                    "fingerprint": "provider:prov_openai_compat",
+                    "pause_reason": "PROVIDER_RATE_LIMITED",
+                    "latest_failure_kind": "PROVIDER_RATE_LIMITED",
+                    "latest_failure_message": "Provider quota exhausted.",
+                    "latest_failure_fingerprint": "PROVIDER_RATE_LIMITED",
                 },
-                idempotency_key="ticket-fail:wf_provider_paused:tkt_provider_paused:rate-limit",
-            ),
-        )
+                occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+            )
+            repository.insert_event(
+                connection,
+                event_type="CIRCUIT_BREAKER_OPENED",
+                actor_type="system",
+                actor_id="runtime",
+                workflow_id="wf_provider_paused",
+                idempotency_key="test-breaker-opened:wf_provider_paused:provider-open",
+                causation_id=None,
+                correlation_id="wf_provider_paused",
+                payload={
+                    "incident_id": "inc_provider_paused",
+                    "ticket_id": "tkt_provider_paused",
+                    "node_id": "node_provider_paused",
+                    "provider_id": "prov_openai_compat",
+                    "circuit_breaker_state": "OPEN",
+                    "fingerprint": "provider:prov_openai_compat",
+                },
+                occurred_at=datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+            )
+            repository.refresh_projections(connection)
         dashboard_response = client.get("/api/v1/projections/dashboard")
         provider_response = client.get("/api/v1/projections/runtime-provider")
 
-        assert fail_response.status_code == 200
-        assert fail_response.json()["status"] == "ACCEPTED"
         assert dashboard_response.status_code == 200
         assert provider_response.status_code == 200
         assert dashboard_response.json()["data"]["runtime_status"]["effective_mode"] == (

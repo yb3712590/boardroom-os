@@ -15,6 +15,7 @@ from tests.live._autopilot_live_harness import (
     _assert_source_delivery_payload_quality,
     _assert_unique_source_delivery_evidence_paths,
     _build_success_report,
+    _should_count_stall,
     integration_test_provider_template_path,
     load_integration_test_provider_payload,
     write_audit_summary,
@@ -466,3 +467,60 @@ def test_load_integration_test_provider_payload_prefers_env_override(
     assert payload["providers"][0]["base_url"] == "https://api.override.test/v1"
     assert payload["providers"][0]["api_key"] == "sk-override"
     assert payload["idempotency_key"] == "runtime-provider-upsert:architecture_governance_autopilot_smoke"
+
+
+def test_load_integration_test_provider_payload_preserves_long_test_timeout_and_retry_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "integration-test-provider-config.json"
+    config_path.write_text(
+        (
+            '{'
+            '"providers":[{"provider_id":"prov_openai_compat","type":"openai_responses_stream","enabled":true,'
+            '"base_url":"https://api.example.test/v1","api_key":"sk-test","alias":"integration-live",'
+            '"preferred_model":"gpt-5.4","max_context_window":null,"timeout_sec":300,'
+            '"connect_timeout_sec":10,"write_timeout_sec":20,"first_token_timeout_sec":300,'
+            '"stream_idle_timeout_sec":300,"request_total_timeout_sec":300,'
+            '"retry_backoff_schedule_sec":[1,2,4,8,16,32,60,60,60],"reasoning_effort":"high"}],'
+            '"provider_model_entries":[{"provider_id":"prov_openai_compat","model_name":"gpt-5.4"}],'
+            '"role_bindings":[{"target_ref":"ceo_shadow","provider_model_entry_refs":["prov_openai_compat::gpt-5.4"],'
+            '"max_context_window_override":null,"reasoning_effort_override":"high"}]'
+            '}'
+        ),
+        encoding="utf-8",
+    )
+
+    payload = load_integration_test_provider_payload(
+        scenario_slug="library_management_autopilot_live",
+        config_path=config_path,
+    )
+
+    provider = payload["providers"][0]
+    assert provider["timeout_sec"] == 300
+    assert provider["connect_timeout_sec"] == 10
+    assert provider["write_timeout_sec"] == 20
+    assert provider["first_token_timeout_sec"] == 300
+    assert provider["stream_idle_timeout_sec"] == 300
+    assert provider["request_total_timeout_sec"] == 300
+    assert provider["retry_backoff_schedule_sec"] == [1, 2, 4, 8, 16, 32, 60, 60, 60]
+
+
+def test_should_count_stall_ignores_active_execution_and_recoverable_provider_incident() -> None:
+    assert _should_count_stall(
+        workflow={"status": "EXECUTING"},
+        active_ticket_ids=["tkt_build_001"],
+        open_incidents=[],
+    ) is False
+    assert _should_count_stall(
+        workflow={"status": "EXECUTING"},
+        active_ticket_ids=[],
+        open_incidents=[
+            {
+                "status": "OPEN",
+                "incident_type": "PROVIDER_EXECUTION_PAUSED",
+            }
+        ],
+    ) is False
+    assert _should_count_stall(
+        workflow={"status": "EXECUTING"},
+        active_ticket_ids=[],
+        open_incidents=[],
+    ) is True

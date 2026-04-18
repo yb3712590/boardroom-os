@@ -311,7 +311,7 @@ def _build_runtime_provider_projection_data(
         timeout_sec=(
             default_provider.request_total_timeout_sec
             if default_provider is not None
-            else 120.0
+            else 300.0
         ),
         reasoning_effort=default_provider.reasoning_effort if default_provider is not None else None,
         api_key_configured=bool(default_provider.api_key) if default_provider is not None else False,

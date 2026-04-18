@@ -98,6 +98,13 @@ def test_save_runtime_provider_command_normalizes_alias_window_and_model_entry_r
     assert loaded.providers[0].alias == "example"
     assert loaded.providers[0].max_context_window == 1000000
     assert loaded.providers[0].reasoning_effort == "high"
+    assert loaded.providers[0].timeout_sec == 300.0
+    assert loaded.providers[0].connect_timeout_sec == 10.0
+    assert loaded.providers[0].write_timeout_sec == 20.0
+    assert loaded.providers[0].first_token_timeout_sec == 300.0
+    assert loaded.providers[0].stream_idle_timeout_sec == 300.0
+    assert loaded.providers[0].request_total_timeout_sec == 300.0
+    assert loaded.providers[0].retry_backoff_schedule_sec == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
     assert loaded.provider_model_entries[0].entry_ref == build_provider_model_entry_ref(
         "prov_primary",
         "gpt-5.3-codex",

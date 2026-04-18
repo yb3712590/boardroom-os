@@ -118,13 +118,15 @@ SUPPORTED_RUNTIME_ROLE_PROFILES = {
     "cto_primary",
 }
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
-PROVIDER_MAX_ATTEMPTS = 3
-PROVIDER_FAILOVER_FAILURE_KINDS = {
+PROVIDER_MAX_ATTEMPTS = 10
+PROVIDER_RETRYABLE_FAILURE_KINDS = {
     "PROVIDER_RATE_LIMITED",
     "UPSTREAM_UNAVAILABLE",
     "FIRST_TOKEN_TIMEOUT",
     "STREAM_IDLE_TIMEOUT",
 }
+PROVIDER_FAILOVER_FAILURE_KINDS = set(PROVIDER_RETRYABLE_FAILURE_KINDS)
+PROVIDER_AUTO_PAUSE_FAILURE_KINDS: set[str] = set()
 _sleep = time.sleep
 
 
@@ -1536,7 +1538,7 @@ def _build_claude_code_provider_config(selection: RuntimeProviderSelection) -> C
 
 
 def _provider_failure_is_retryable(failure_kind: str) -> bool:
-    return failure_kind in PROVIDER_PAUSE_FAILURE_KINDS
+    return failure_kind in PROVIDER_RETRYABLE_FAILURE_KINDS
 
 
 def _provider_retry_delay_sec(
@@ -1549,9 +1551,9 @@ def _provider_retry_delay_sec(
         retry_after_sec = failure_detail.get("retry_after_sec")
         if isinstance(retry_after_sec, (int, float)) and retry_after_sec >= 0:
             return float(retry_after_sec)
-    retry_schedule = list(selection.provider.retry_backoff_schedule_sec or [2.0, 8.0, 20.0])
+    retry_schedule = list(selection.provider.retry_backoff_schedule_sec or [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0])
     if not retry_schedule:
-        retry_schedule = [2.0, 8.0, 20.0]
+        retry_schedule = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
     schedule_index = min(max(attempt_no - 1, 0), len(retry_schedule) - 1)
     return float(retry_schedule[schedule_index])
 
@@ -1576,6 +1578,10 @@ def _normalize_provider_failure_detail(
         normalized.setdefault("adapter_kind", selection.provider.adapter_kind)
         normalized.setdefault("selection_reason", selection.selection_reason)
         normalized.setdefault("policy_reason", selection.policy_reason)
+        normalized.setdefault(
+            "retry_backoff_schedule_sec",
+            [float(item) for item in list(selection.provider.retry_backoff_schedule_sec or [])],
+        )
     else:
         normalized.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
     normalized["attempt_count"] = attempt_count
@@ -1968,8 +1974,10 @@ def _attempt_provider_failover(
                 failover_selection=failover_selection,
                 failure_kind=primary_failure.failure_kind or "PROVIDER_FAILURE",
             )
-        if failover_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
+        if failover_result.failure_kind in PROVIDER_AUTO_PAUSE_FAILURE_KINDS:
             _open_runtime_provider_incident(repository, ticket, failover_result)
+            continue
+        if failover_result.failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
             continue
         return None
     return None
@@ -2123,34 +2131,43 @@ def _execute_runtime_with_provider_if_configured(
     )
     if provider_result.result_status == "completed":
         return provider_result
-    if provider_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
-        _open_runtime_provider_incident(repository, ticket, provider_result)
-        if provider_result.failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
-            for failover_selection in failover_selections:
-                failover_result = _execute_provider_selection(execution_package, failover_selection)
-                provider_attempt_log.append(
-                    _build_provider_attempt_log_entry(
-                        selection=failover_selection,
-                        result=failover_result,
-                    )
-                )
-                if failover_result.result_status == "completed":
-                    return _annotate_provider_failover_success(
-                        failover_result,
-                        failed_selection=selection,
-                        failover_selection=failover_selection,
-                        failure_kind=provider_result.failure_kind or "PROVIDER_FAILURE",
-                    )
-                if failover_result.failure_kind in PROVIDER_PAUSE_FAILURE_KINDS:
-                    _open_runtime_provider_incident(repository, ticket, failover_result)
-                    continue
-                return _build_provider_required_unavailable_result(
+    if provider_result.failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
+        for failover_selection in failover_selections:
+            failover_result = _execute_provider_selection(execution_package, failover_selection)
+            provider_attempt_log.append(
+                _build_provider_attempt_log_entry(
                     selection=failover_selection,
-                    candidate_chain=candidate_chain,
-                    provider_attempt_log=provider_attempt_log,
-                    failure_message=failover_result.failure_message or "Configured provider candidates failed.",
-                    failure_kind=failover_result.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+                    result=failover_result,
                 )
+            )
+            if failover_result.result_status == "completed":
+                return _annotate_provider_failover_success(
+                    failover_result,
+                    failed_selection=selection,
+                    failover_selection=failover_selection,
+                    failure_kind=provider_result.failure_kind or "PROVIDER_FAILURE",
+                )
+            if failover_result.failure_kind in PROVIDER_AUTO_PAUSE_FAILURE_KINDS:
+                _open_runtime_provider_incident(repository, ticket, failover_result)
+                continue
+            if failover_result.failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
+                continue
+            return _build_provider_required_unavailable_result(
+                selection=failover_selection,
+                candidate_chain=candidate_chain,
+                provider_attempt_log=provider_attempt_log,
+                failure_message=failover_result.failure_message or "Configured provider candidates failed.",
+                failure_kind=failover_result.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+            )
+        return _build_provider_required_unavailable_result(
+            selection=selection,
+            candidate_chain=candidate_chain,
+            provider_attempt_log=provider_attempt_log,
+            failure_message=provider_result.failure_message or "Configured provider candidates were unavailable.",
+            failure_kind=provider_result.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+        )
+    if provider_result.failure_kind in PROVIDER_AUTO_PAUSE_FAILURE_KINDS:
+        _open_runtime_provider_incident(repository, ticket, provider_result)
         return _build_provider_required_unavailable_result(
             selection=selection,
             candidate_chain=candidate_chain,

@@ -224,18 +224,6 @@ def _extract_streaming_responses_output(
     reader.start()
 
     while True:
-        elapsed_sec = time.monotonic() - started_at
-        remaining_total_sec = float(config.request_total_timeout_sec or config.timeout_sec) - elapsed_sec
-        if remaining_total_sec <= 0:
-            response.close()
-            raise OpenAICompatProviderUnavailableError(
-                failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
-                message="Provider stream exceeded the total request timeout.",
-                failure_detail={
-                    "provider_response_id": response_id,
-                    "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
-                },
-            )
         current_phase_timeout_sec = float(
             (
                 config.stream_idle_timeout_sec
@@ -244,7 +232,21 @@ def _extract_streaming_responses_output(
             )
             or config.timeout_sec
         )
-        wait_timeout_sec = min(current_phase_timeout_sec, remaining_total_sec)
+        wait_timeout_sec = current_phase_timeout_sec
+        if first_output_at is None:
+            elapsed_sec = time.monotonic() - started_at
+            remaining_total_sec = float(config.request_total_timeout_sec or config.timeout_sec) - elapsed_sec
+            if remaining_total_sec <= 0:
+                response.close()
+                raise OpenAICompatProviderUnavailableError(
+                    failure_kind="FIRST_TOKEN_TIMEOUT",
+                    message="Provider stream exceeded the total request timeout before the first output chunk.",
+                    failure_detail={
+                        "provider_response_id": response_id,
+                        "timeout_phase": "first_token",
+                    },
+                )
+            wait_timeout_sec = min(current_phase_timeout_sec, remaining_total_sec)
         try:
             event_type, payload = stream_queue.get(timeout=wait_timeout_sec)
         except queue.Empty as exc:
