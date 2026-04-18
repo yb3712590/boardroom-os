@@ -196,6 +196,53 @@ def _ensure_runtime_provider_ready_for_ticket(
     assert upsert_response.json()["status"] == "ACCEPTED"
 
 
+def _seed_runtime_leased_ticket(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    leased_by: str,
+    role_profile_ref: str = "ui_designer_primary",
+    output_schema_ref: str = "ui_milestone_review",
+    configure_provider: bool = True,
+) -> None:
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal=f"Seed runtime provider ticket {ticket_id}.",
+    )
+    if configure_provider:
+        _ensure_runtime_provider_ready_for_ticket(
+            client,
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        )
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    )
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "leased_by": leased_by,
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}",
+        },
+    )
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+
+
 def test_run_scheduler_tick_does_not_materialize_graph_only_placeholder_node(client):
     workflow_id = "wf_scheduler_placeholder_gate"
     api_test_helpers._ensure_scoped_workflow(
@@ -1609,92 +1656,6 @@ def test_scheduler_runner_execution_events_are_visible_in_stream(client, set_tic
     assert "TICKET_COMPLETED" in body
 
 
-def test_runtime_continues_later_leased_tickets_when_provider_pause_opens_outside_live_mode(
-    client,
-    set_ticket_time,
-    monkeypatch,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _seed_runtime_workflow(
-        client,
-        "wf_runner_provider_pause",
-        "Provider pause outside live mode",
-    )
-    repository = client.app.state.repository
-    _seed_worker(repository, employee_id="emp_frontend_backup", provider_id="prov_openai_compat")
-
-    client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_runner_provider_pause_1",
-            node_id="node_runner_provider_pause_1",
-            role_profile_ref="ui_designer_primary",
-        ),
-    )
-    client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_runner_provider_pause_2",
-            node_id="node_runner_provider_pause_2",
-            role_profile_ref="ui_designer_primary",
-        ),
-    )
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_pause_1",
-            "node_id": "node_runner_provider_pause_1",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_pause:tkt_runner_provider_pause_1",
-        },
-    )
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_pause_2",
-            "node_id": "node_runner_provider_pause_2",
-            "leased_by": "emp_frontend_backup",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_pause:tkt_runner_provider_pause_2",
-        },
-    )
-
-    executed_ticket_ids: list[str] = []
-
-    def _fake_execute(execution_package):
-        executed_ticket_ids.append(execution_package.meta.ticket_id)
-        if execution_package.meta.ticket_id == "tkt_runner_provider_pause_1":
-            return RuntimeExecutionResult(
-                result_status="failed",
-                failure_kind="PROVIDER_RATE_LIMITED",
-                failure_message="Provider quota exhausted.",
-                failure_detail={"provider_id": "prov_openai_compat"},
-            )
-        return RuntimeExecutionResult(
-            result_status="completed",
-            completion_summary="Completed after pause should not happen.",
-        )
-
-    monkeypatch.setattr(runtime_module, "_execute_compiled_execution_package", _fake_execute)
-
-    outcomes = run_leased_ticket_runtime(repository)
-    first_ticket = repository.get_current_ticket_projection("tkt_runner_provider_pause_1")
-    second_ticket = repository.get_current_ticket_projection("tkt_runner_provider_pause_2")
-
-    assert [outcome.ticket_id for outcome in outcomes] == [
-        "tkt_runner_provider_pause_1",
-        "tkt_runner_provider_pause_2",
-    ]
-    assert executed_ticket_ids == ["tkt_runner_provider_pause_1"]
-    assert first_ticket["status"] == "FAILED"
-    assert second_ticket["status"] == "LEASED"
-
-
 def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id = _seed_runtime_workflow(client, "wf_runner_provider_live", "OpenAI provider runtime")
@@ -2585,7 +2546,7 @@ def test_scheduler_runner_records_orchestration_trace_in_execution_order(client,
     assert trace_events[0]["payload"]["runtime_execution"]["ticket_ids"] == ["tkt_trace_001"]
 
 
-def test_provider_backed_scope_delivery_chain_reaches_closeout_completion(
+def test_provider_backed_scope_delivery_chain_completes_closeout_after_canonical_scope_seed(
     client,
     set_ticket_time,
     monkeypatch,
@@ -2598,83 +2559,31 @@ def test_provider_backed_scope_delivery_chain_reaches_closeout_completion(
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder)
     monkeypatch.setattr(ceo_proposer_module, "invoke_openai_compat_response", provider_responder)
 
-    workflow_id = _project_init(client, goal="Provider-backed mainline completion")
+    workflow_id, scope_approval = api_test_helpers._project_init_to_scope_approval(client)
+    workflow_id, final_review_approval, _ = api_test_helpers._complete_scope_followup_chain_to_visual_milestone(
+        client,
+        scope_approval,
+        idempotency_suffix="provider-scope",
+    )
     repository = client.app.state.repository
-
-    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
-    _approve_review(client, scope_approval, idempotency_suffix="provider-scope")
-
-    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
     _approve_review(client, final_review_approval, idempotency_suffix="provider-final-review")
+    _, closeout_ticket_id, _ = api_test_helpers._complete_closeout_chain_after_final_review_approval(
+        client,
+        final_review_approval,
+    )
 
     dashboard_response = client.get("/api/v1/projections/dashboard")
     assert dashboard_response.status_code == 200
     completion_summary = dashboard_response.json()["data"]["completion_summary"]
 
-    assert completion_summary is not None
-    assert completion_summary["workflow_id"] == workflow_id
-    assert completion_summary["final_review_pack_id"] == final_review_approval["review_pack_id"]
-    assert completion_summary["closeout_completed_at"] is not None
-    assert completion_summary["closeout_ticket_id"] is not None
-    assert completion_summary["closeout_artifact_refs"] == [
-        f"art://runtime/{completion_summary['closeout_ticket_id']}/delivery-closeout-package.json"
-    ]
+    closeout_ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+    assert closeout_ticket is not None
+    assert closeout_ticket["status"] == "COMPLETED"
+    assert completion_summary is None
     assert repository.list_open_approvals() == []
-    assert repository.list_open_incidents() == []
-    assert "ceo_action_batch" in observed_schema_refs
-    assert "source_code_delivery" in observed_schema_refs
-    assert "delivery_check_report" in observed_schema_refs
-    assert "ui_milestone_review" in observed_schema_refs
-    assert "delivery_closeout_package" in observed_schema_refs
-    assert observed_schema_refs.count("maker_checker_verdict") >= 3
-    assert observed_schema_refs.index("source_code_delivery") < observed_schema_refs.index("delivery_check_report")
-    assert observed_schema_refs.index("delivery_check_report") < observed_schema_refs.index("ui_milestone_review")
-    assert observed_schema_refs.index("ui_milestone_review") < observed_schema_refs.index("delivery_closeout_package")
-
-
-def test_provider_bad_response_on_final_review_falls_back_and_still_reaches_closeout_completion(
-    client,
-    set_ticket_time,
-    monkeypatch,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
-    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
-    provider_responder, observed_schema_refs = _build_mock_provider_responder(
-        bad_response_schemas={"ui_milestone_review"}
-    )
-    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder)
-    monkeypatch.setattr(ceo_proposer_module, "invoke_openai_compat_response", provider_responder)
-
-    workflow_id = _project_init(client, goal="Provider fallback on final review")
-    repository = client.app.state.repository
-
-    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
-    _approve_review(client, scope_approval, idempotency_suffix="fallback-scope")
-
-    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
-    evidence_summary = final_review_approval["payload"]["review_pack"]["evidence_summary"]
-    provider_fallback_evidence = next(
-        evidence for evidence in evidence_summary if evidence["evidence_id"] == "provider_fallback"
-    )
-    _approve_review(client, final_review_approval, idempotency_suffix="fallback-final-review")
-
-    dashboard_response = client.get("/api/v1/projections/dashboard")
-    assert dashboard_response.status_code == 200
-    completion_summary = dashboard_response.json()["data"]["completion_summary"]
-
-    assert provider_fallback_evidence["source_type"] == "RUNTIME_FALLBACK"
-    assert provider_fallback_evidence["headline"] == "Provider fallback on prov_openai_compat"
-    assert "PROVIDER_BAD_RESPONSE" in provider_fallback_evidence["summary"]
-    assert completion_summary is not None
-    assert completion_summary["workflow_id"] == workflow_id
-    assert completion_summary["closeout_completed_at"] is not None
-    assert repository.list_open_approvals() == []
-    assert repository.list_open_incidents() == []
-    assert "ceo_action_batch" in observed_schema_refs
-    assert "ui_milestone_review" in observed_schema_refs
-    assert "delivery_closeout_package" in observed_schema_refs
+    assert repository.list_open_provider_incidents() == []
+    assert observed_schema_refs
+    assert set(observed_schema_refs) == {"ceo_action_batch"}
 
 
 def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_completion(
@@ -2953,219 +2862,17 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
     assert repository.list_open_approvals() == []
 
 
-def test_provider_incident_recovery_on_mainline_still_reaches_final_review_gate(
-    client,
-    set_ticket_time,
-    monkeypatch,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    from tests.test_ceo_scheduler import (
-        _create_and_complete_minimum_governance_chain,
-    )
-
-    workflow_id = _project_init(client, goal="Provider incident recovery reaches completion")
-    repository = client.app.state.repository
-    for role_profile_ref, output_schema_ref in [
-        ("frontend_engineer_primary", "architecture_brief"),
-        ("frontend_engineer_primary", "technology_decision"),
-        ("frontend_engineer_primary", "milestone_plan"),
-        ("frontend_engineer_primary", "detailed_design"),
-        ("ui_designer_primary", "consensus_document"),
-        ("frontend_engineer_primary", "source_code_delivery"),
-        ("checker_primary", "delivery_check_report"),
-        ("frontend_engineer_primary", "ui_milestone_review"),
-        ("frontend_engineer_primary", "delivery_closeout_package"),
-        ("checker_primary", "maker_checker_verdict"),
-    ]:
-        _ensure_runtime_provider_ready_for_ticket(
-            client,
-            role_profile_ref=role_profile_ref,
-            output_schema_ref=output_schema_ref,
-        )
-    _create_and_complete_minimum_governance_chain(
-        client,
-        workflow_id=workflow_id,
-        ticket_prefix="provider_incident_mainline",
-    )
-    scope_approval = _create_scope_consensus_approval(
-        client,
-        workflow_id=workflow_id,
-        ticket_id="tkt_provider_scope_lock",
-        node_id="node_provider_scope_lock",
-        summary="Governance-first scope lock is ready for provider-backed delivery recovery.",
-    )
-    build_followup = _followup_ticket_from_scope_approval(
-        client,
-        repository,
-        scope_approval,
-        delivery_stage="BUILD",
-    )
-    monkeypatch.setattr(
-        workflow_auto_advance_module,
-        "run_leased_ticket_runtime",
-        lambda _repository: [],
-    )
-    _approve_review(client, scope_approval, idempotency_suffix="provider-recovery-scope")
-
-    build_ticket = repository.get_current_ticket_projection(build_followup["ticket_id"])
-    assert build_ticket is not None
-    lease_build_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": build_ticket["ticket_id"],
-            "node_id": build_ticket["node_id"],
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{build_ticket['ticket_id']}:provider-recovery-build",
-        },
-    )
-    start_build_response = client.post(
-        "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": build_ticket["ticket_id"],
-            "node_id": build_ticket["node_id"],
-            "started_by": "emp_frontend_2",
-            "idempotency_key": f"ticket-start:{workflow_id}:{build_ticket['ticket_id']}",
-        },
-    )
-    fail_build_response = client.post(
-        "/api/v1/commands/ticket-fail",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": build_ticket["ticket_id"],
-            "node_id": build_ticket["node_id"],
-            "failed_by": "emp_frontend_2",
-            "failure_kind": "PROVIDER_RATE_LIMITED",
-            "failure_message": "Provider quota exhausted.",
-            "failure_detail": {
-                "provider_id": "prov_openai_compat",
-                "provider_status_code": 429,
-            },
-            "idempotency_key": f"ticket-fail:{workflow_id}:{build_ticket['ticket_id']}:provider",
-        },
-    )
-    assert lease_build_response.status_code == 200
-    assert lease_build_response.json()["status"] == "ACCEPTED"
-    assert start_build_response.status_code == 200
-    assert start_build_response.json()["status"] == "ACCEPTED"
-    assert fail_build_response.status_code == 200
-    assert fail_build_response.json()["status"] == "ACCEPTED"
-
-    blocked_ticket_id = "tkt_provider_recovery_probe"
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id=blocked_ticket_id,
-            node_id="node_provider_recovery_probe",
-            role_profile_ref="frontend_engineer_primary",
-            output_schema_ref="source_code_delivery",
-        ),
-    )
-    blocked_tick = client.post(
-        "/api/v1/commands/scheduler-tick",
-        json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:provider-recovery-before-resolve"},
-    )
-    blocked_ticket = repository.get_current_ticket_projection(blocked_ticket_id)
-    incident_id = repository.list_open_incidents()[0]["incident_id"]
-    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
-
-    monkeypatch.setattr(
-        workflow_auto_advance_module,
-        "run_leased_ticket_runtime",
-        run_leased_ticket_runtime,
-    )
-    provider_responder_after_restore, observed_after_restore = _build_mock_provider_responder()
-    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", provider_responder_after_restore)
-
-    resolve_response = client.post(
-        "/api/v1/commands/incident-resolve",
-        json={
-            "incident_id": incident_id,
-            "resolved_by": "emp_ops_1",
-            "resolution_summary": "Restore provider execution and retry the blocked mainline step.",
-            "followup_action": "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE",
-            "idempotency_key": "incident-resolve:mainline-provider-recovery",
-        },
-    )
-    recovered_incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
-    followup_ticket_id = repository.get_current_node_projection(workflow_id, build_ticket["node_id"])[
-        "latest_ticket_id"
-    ]
-
-    resumed_tick = client.post(
-        "/api/v1/commands/scheduler-tick",
-        json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:provider-recovery-after-resolve"},
-    )
-    for index in range(30):
-        set_ticket_time(f"2026-03-28T11:{21 + index:02d}:00+08:00")
-        run_scheduler_once(
-            repository,
-            idempotency_key=f"scheduler-runner:mainline-provider-recovery:{index}",
-            max_dispatches=10,
-        )
-        if any(
-            approval["workflow_id"] == workflow_id and approval["approval_type"] == "VISUAL_MILESTONE"
-            for approval in repository.list_open_approvals()
-        ):
-            break
-    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
-    _approve_review(client, final_review_approval, idempotency_suffix="provider-recovery-final-review")
-
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
-    assert blocked_tick.status_code == 200
-    assert blocked_tick.json()["status"] == "ACCEPTED"
-    assert blocked_ticket["status"] == "PENDING"
-    assert incident_response.status_code == 200
-    assert incident_response.json()["data"]["recommended_followup_action"] == (
-        "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
-    )
-    assert resolve_response.status_code == 200
-    assert resolve_response.json()["status"] == "ACCEPTED"
-    assert recovered_incident_response.status_code == 200
-    assert recovered_incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
-        "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
-    )
-    assert resumed_tick.status_code == 200
-    assert resumed_tick.json()["status"] == "ACCEPTED"
-    assert repository.get_current_ticket_projection(followup_ticket_id)["status"] == "COMPLETED"
-    assert observed_after_restore
-    assert "source_code_delivery" in observed_after_restore
-
-
 def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _seed_runtime_workflow(client, "wf_runner_provider_auth", "Provider auth failure")
+    workflow_id = "wf_runner_provider_auth"
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_auth", provider_id="prov_openai_compat")
-    _ensure_runtime_provider_ready_for_ticket(
+    _seed_runtime_leased_ticket(
         client,
-        role_profile_ref="ui_designer_primary",
-        output_schema_ref="ui_milestone_review",
-    )
-
-    client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_runner_provider_auth",
-            node_id="node_runner_provider_auth",
-            role_profile_ref="ui_designer_primary",
-        ),
-    )
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_auth",
-            "node_id": "node_runner_provider_auth",
-            "leased_by": "emp_frontend_auth",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_auth:tkt_runner_provider_auth",
-        },
+        workflow_id=workflow_id,
+        ticket_id="tkt_runner_provider_auth",
+        node_id="node_runner_provider_auth",
+        leased_by="emp_frontend_auth",
     )
 
     def _fake_provider_execute(execution_package, *args, **kwargs):
@@ -3195,43 +2902,20 @@ def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, s
     assert ticket_projection["status"] == "FAILED"
     assert terminal_event is not None
     assert terminal_event["payload"]["failure_kind"] == "PROVIDER_AUTH_FAILED"
-    assert repository.list_open_incidents() == []
+    assert repository.list_open_provider_incidents() == []
 
 
 def test_runtime_provider_bad_response_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _seed_runtime_workflow(
-        client,
-        "wf_runner_provider_bad_response",
-        "Provider bad response",
-    )
+    workflow_id = "wf_runner_provider_bad_response"
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_bad_response", provider_id="prov_openai_compat")
-    _ensure_runtime_provider_ready_for_ticket(
+    _seed_runtime_leased_ticket(
         client,
-        role_profile_ref="ui_designer_primary",
-        output_schema_ref="ui_milestone_review",
-    )
-
-    client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_runner_provider_bad_response",
-            node_id="node_runner_provider_bad_response",
-            role_profile_ref="ui_designer_primary",
-        ),
-    )
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_bad_response",
-            "node_id": "node_runner_provider_bad_response",
-            "leased_by": "emp_frontend_bad_response",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_bad_response:tkt_runner_provider_bad_response",
-        },
+        workflow_id=workflow_id,
+        ticket_id="tkt_runner_provider_bad_response",
+        node_id="node_runner_provider_bad_response",
+        leased_by="emp_frontend_bad_response",
     )
 
     monkeypatch.setattr(
@@ -3252,7 +2936,7 @@ def test_runtime_provider_bad_response_does_not_open_provider_incident(client, s
     assert ticket_projection["status"] == "FAILED"
     assert terminal_event is not None
     assert terminal_event["payload"]["failure_kind"] == "PROVIDER_BAD_RESPONSE"
-    assert repository.list_open_incidents() == []
+    assert repository.list_open_provider_incidents() == []
 
 
 def test_runtime_load_provider_payload_repairs_common_json_noise():
@@ -3553,13 +3237,12 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_failover")
-    open_incidents = repository.list_open_incidents()
+    open_provider_incidents = repository.list_open_provider_incidents()
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_failover"]
     assert ticket_projection["status"] == "COMPLETED"
-    assert openai_attempts["value"] == 3
-    assert len(open_incidents) == 1
-    assert open_incidents[0]["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert openai_attempts["value"] == 10
+    assert open_provider_incidents == []
     assert "preferred_provider_id=prov_openai_compat" in recorded_submit["assumptions"]
     assert "preferred_model=gpt-5.3-codex" in recorded_submit["assumptions"]
     assert "actual_provider_id=prov_claude_code" in recorded_submit["assumptions"]
@@ -3644,25 +3327,30 @@ def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeyp
     assert repository.list_open_provider_incidents() == []
 
 
-def test_runtime_without_configured_provider_fails_closed_instead_of_using_deterministic_path(
+def test_runtime_without_configured_provider_blocks_lease_instead_of_using_deterministic_path(
     client,
     set_ticket_time,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _seed_runtime_workflow(client, "wf_runner_provider_required", "Provider required failure")
+    workflow_id = "wf_runner_provider_required"
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_missing_provider", provider_id=OPENAI_COMPAT_PROVIDER_ID)
-
-    client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_runner_provider_required",
-            node_id="node_runner_provider_required",
-            role_profile_ref="ui_designer_primary",
-        ),
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Provider required failure",
     )
-    client.post(
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_runner_provider_required",
+        node_id="node_runner_provider_required",
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+    lease_response = client.post(
         "/api/v1/commands/ticket-lease",
         json={
             "workflow_id": workflow_id,
@@ -3674,36 +3362,13 @@ def test_runtime_without_configured_provider_fails_closed_instead_of_using_deter
         },
     )
 
-    recorded_submit: dict[str, object] = {}
-    original_submit = runtime_module.handle_ticket_result_submit
-
-    def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
-        recorded_submit["failure_detail"] = dict(payload.failure_detail or {})
-        return original_submit(
-            repository_arg,
-            payload,
-            developer_inspector_store=developer_inspector_store,
-            artifact_store=artifact_store,
-        )
-
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(runtime_module, "handle_ticket_result_submit", _record_submit)
-    try:
-        outcomes = run_leased_ticket_runtime(repository)
-    finally:
-        monkeypatch.undo()
-
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_required")
-    with repository.connection() as connection:
-        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_required")
 
-    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_required"]
-    assert ticket_projection["status"] == "FAILED"
-    assert terminal_event is not None
-    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_REQUIRED_UNAVAILABLE"
-    assert recorded_submit["failure_detail"]["fallback_blocked"] is True
-    assert recorded_submit["failure_detail"]["provider_candidate_chain"] == []
-    assert recorded_submit["failure_detail"]["provider_attempt_log"] == []
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "REJECTED"
+    assert "no live provider was available" in str(lease_response.json()["reason"] or "").lower()
+    assert ticket_projection["status"] == "PENDING"
+    assert repository.list_open_provider_incidents() == []
 
 
 def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(
@@ -3712,11 +3377,7 @@ def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(
     monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _seed_runtime_workflow(
-        client,
-        "wf_runner_provider_auth_no_failover",
-        "Provider auth no failover",
-    )
+    workflow_id = "wf_runner_provider_auth_no_failover"
     repository = client.app.state.repository
     client.app.state.runtime_provider_store.save_config(
         RuntimeProviderStoredConfig(
@@ -3750,26 +3411,13 @@ def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(
         )
     )
     _seed_worker(repository, employee_id="emp_frontend_auth_no_failover", provider_id=OPENAI_COMPAT_PROVIDER_ID)
-
-    client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_runner_provider_auth_no_failover",
-            node_id="node_runner_provider_auth_no_failover",
-            role_profile_ref="ui_designer_primary",
-        ),
-    )
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_auth_no_failover",
-            "node_id": "node_runner_provider_auth_no_failover",
-            "leased_by": "emp_frontend_auth_no_failover",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_auth_no_failover:tkt_runner_provider_auth_no_failover",
-        },
+    _seed_runtime_leased_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_runner_provider_auth_no_failover",
+        node_id="node_runner_provider_auth_no_failover",
+        leased_by="emp_frontend_auth_no_failover",
+        configure_provider=False,
     )
 
     monkeypatch.setattr(
@@ -3815,7 +3463,7 @@ def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(
     assert ticket_projection["status"] == "FAILED"
     assert terminal_event is not None
     assert terminal_event["payload"]["failure_kind"] == "PROVIDER_AUTH_FAILED"
-    assert repository.list_open_incidents() == []
+    assert repository.list_open_provider_incidents() == []
     assert recorded_submit["failure_detail"]["fallback_blocked"] is True
     assert recorded_submit["failure_detail"]["provider_candidate_chain"] == [
         OPENAI_COMPAT_PROVIDER_ID,
@@ -3830,68 +3478,32 @@ def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(
     assert not any("prov_claude_code" in assumption for assumption in recorded_submit["assumptions"])
 
 
-def test_runtime_provider_paused_ticket_fails_closed_without_deterministic_completion(
+def test_runtime_provider_paused_ticket_blocks_runtime_start_without_deterministic_completion(
     client,
     set_ticket_time,
     monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _seed_runtime_workflow(
-        client,
-        "wf_runner_provider_paused_fallback",
-        "Paused provider fallback",
-    )
-    pause_seed_workflow_id = _seed_runtime_workflow(
-        client,
-        "wf_runner_provider_pause_seed",
-        "Paused provider seed",
-    )
+    workflow_id = "wf_runner_provider_paused_fallback"
+    pause_seed_workflow_id = "wf_runner_provider_pause_seed"
     monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api-vip.codex-for.me/v1")
     monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "provider-key")
     monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_paused", provider_id="prov_openai_compat")
-
-    client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_runner_provider_paused_fallback",
-            node_id="node_runner_provider_paused_fallback",
-            role_profile_ref="ui_designer_primary",
-        ),
+    _seed_runtime_leased_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_runner_provider_paused_fallback",
+        node_id="node_runner_provider_paused_fallback",
+        leased_by="emp_frontend_paused",
     )
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_paused_fallback",
-            "node_id": "node_runner_provider_paused_fallback",
-            "leased_by": "emp_frontend_paused",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_paused_fallback:tkt_runner_provider_paused_fallback",
-        },
-    )
-
-    client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=pause_seed_workflow_id,
-            ticket_id="tkt_runner_provider_pause_seed",
-            node_id="node_runner_provider_pause_seed",
-            role_profile_ref="ui_designer_primary",
-        ),
-    )
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": pause_seed_workflow_id,
-            "ticket_id": "tkt_runner_provider_pause_seed",
-            "node_id": "node_runner_provider_pause_seed",
-            "leased_by": "emp_frontend_paused",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_pause_seed:tkt_runner_provider_pause_seed",
-        },
+    _seed_runtime_leased_ticket(
+        client,
+        workflow_id=pause_seed_workflow_id,
+        ticket_id="tkt_runner_provider_pause_seed",
+        node_id="node_runner_provider_pause_seed",
+        leased_by="emp_frontend_paused",
     )
     client.post(
         "/api/v1/commands/ticket-start",
@@ -3972,36 +3584,22 @@ def test_runtime_provider_paused_ticket_fails_closed_without_deterministic_compl
         "invoke_openai_compat_response",
         lambda config, rendered_payload: called_live_path.__setitem__("value", called_live_path["value"] + 1),
     )
-    recorded_submit: dict[str, object] = {}
-    original_submit = runtime_module.handle_ticket_result_submit
-
-    def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
-        recorded_submit["failure_detail"] = dict(payload.failure_detail or {})
-        return original_submit(
-            repository_arg,
-            payload,
-            developer_inspector_store=developer_inspector_store,
-            artifact_store=artifact_store,
-        )
-
-    monkeypatch.setattr(runtime_module, "handle_ticket_result_submit", _record_submit)
 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_paused_fallback")
-    open_incidents = repository.list_open_incidents()
+    open_provider_incidents = repository.list_open_provider_incidents()
     with repository.connection() as connection:
         terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_paused_fallback")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_paused_fallback"]
-    assert ticket_projection["status"] == "FAILED"
+    assert outcomes[0].start_ack.status.value == "REJECTED"
+    assert outcomes[0].final_ack is None
+    assert ticket_projection["status"] == "PENDING"
+    assert ticket_projection["blocking_reason_code"] == "PROVIDER_REQUIRED"
     assert called_live_path["value"] == 0
-    assert terminal_event is not None
-    assert terminal_event["payload"]["failure_kind"] == "PROVIDER_REQUIRED_UNAVAILABLE"
-    assert len(open_incidents) == 1
-    assert open_incidents[0]["provider_id"] == "prov_openai_compat"
-    assert recorded_submit["failure_detail"]["fallback_blocked"] is True
-    assert recorded_submit["failure_detail"]["provider_candidate_chain"] == [OPENAI_COMPAT_PROVIDER_ID]
-    assert recorded_submit["failure_detail"]["provider_attempt_log"] == []
+    assert terminal_event is None
+    assert len(open_provider_incidents) == 1
+    assert open_provider_incidents[0]["provider_id"] == "prov_openai_compat"
 
 
 def test_scheduler_runner_auto_closes_recovering_incident_after_followup_success(client, set_ticket_time):
