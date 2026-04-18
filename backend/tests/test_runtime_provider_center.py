@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from app.contracts.commands import RuntimeProviderUpsertCommand
@@ -11,6 +12,22 @@ from app.core.runtime_provider_config import (
     resolve_provider_selection,
     save_runtime_provider_command,
 )
+
+
+def _shard_dir(config_path: Path) -> Path:
+    return Path(f"{config_path}.d")
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _build_upsert_command() -> RuntimeProviderUpsertCommand:
@@ -51,6 +68,192 @@ def _build_upsert_command() -> RuntimeProviderUpsertCommand:
             "idempotency_key": "runtime-provider-upsert:center-test",
         }
     )
+
+
+def test_runtime_provider_store_loads_sharded_config_without_snapshot(tmp_path: Path) -> None:
+    config_path = tmp_path / "runtime-provider-config.json"
+    shard_dir = _shard_dir(config_path)
+    _write_json(
+        shard_dir / "provider.prov_secondary.json",
+        {
+            "provider_id": "prov_secondary",
+            "type": "openai_responses_non_stream",
+            "base_url": "https://api.secondary.test/v1",
+            "api_key": "sk-secondary-secret",
+            "alias": "secondary",
+            "preferred_model": "gpt-4.1",
+            "max_context_window": 270000,
+            "enabled": True,
+            "reasoning_effort": "medium",
+        },
+    )
+    _write_json(
+        shard_dir / "provider.prov_primary.json",
+        {
+            "provider_id": "prov_primary",
+            "type": "openai_responses_stream",
+            "base_url": "https://api.primary.test/v1",
+            "api_key": "sk-primary-secret",
+            "alias": "primary",
+            "preferred_model": "gpt-5.3-codex",
+            "max_context_window": 1000000,
+            "enabled": True,
+            "fallback_provider_ids": ["prov_secondary"],
+        },
+    )
+    _write_json(
+        shard_dir / "routing.json",
+        {
+            "default_provider_id": "prov_primary",
+            "provider_model_entries": [
+                {
+                    "provider_id": "prov_primary",
+                    "model_name": "gpt-5.3-codex",
+                },
+                {
+                    "provider_id": "prov_secondary",
+                    "model_name": "gpt-4.1",
+                },
+            ],
+            "role_bindings": [
+                {
+                    "target_ref": "ceo_shadow",
+                    "provider_model_entry_refs": ["prov_primary::gpt-5.3-codex"],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                }
+            ],
+        },
+    )
+    store = RuntimeProviderConfigStore(config_path)
+
+    loaded = store.load_saved_config()
+
+    assert loaded is not None
+    assert loaded.default_provider_id == "prov_primary"
+    assert [provider.provider_id for provider in loaded.providers] == ["prov_primary", "prov_secondary"]
+    assert loaded.providers[0].fallback_provider_ids == ["prov_secondary"]
+    assert [entry.entry_ref for entry in loaded.provider_model_entries] == [
+        "prov_primary::gpt-5.3-codex",
+        "prov_secondary::gpt-4.1",
+    ]
+    assert loaded.role_bindings[0].target_ref == "ceo_shadow"
+
+
+def test_runtime_provider_store_prefers_shards_over_legacy_snapshot(tmp_path: Path) -> None:
+    config_path = tmp_path / "runtime-provider-config.json"
+    _write_json(
+        config_path,
+        {
+            "default_provider_id": "prov_legacy",
+            "providers": [
+                {
+                    "provider_id": "prov_legacy",
+                    "type": "openai_responses_stream",
+                    "base_url": "https://api.legacy.test/v1",
+                    "api_key": "sk-legacy-secret",
+                    "alias": "legacy",
+                    "preferred_model": "gpt-4.1",
+                    "enabled": True,
+                }
+            ],
+            "provider_model_entries": [
+                {
+                    "provider_id": "prov_legacy",
+                    "model_name": "gpt-4.1",
+                }
+            ],
+            "role_bindings": [],
+        },
+    )
+    shard_dir = _shard_dir(config_path)
+    _write_json(
+        shard_dir / "provider.prov_sharded.json",
+        {
+            "provider_id": "prov_sharded",
+            "type": "openai_responses_stream",
+            "base_url": "https://api.sharded.test/v1",
+            "api_key": "sk-sharded-secret",
+            "alias": "sharded",
+            "preferred_model": "gpt-5.3-codex",
+            "enabled": True,
+        },
+    )
+    _write_json(
+        shard_dir / "routing.json",
+        {
+            "default_provider_id": "prov_sharded",
+            "provider_model_entries": [
+                {
+                    "provider_id": "prov_sharded",
+                    "model_name": "gpt-5.3-codex",
+                }
+            ],
+            "role_bindings": [],
+        },
+    )
+    store = RuntimeProviderConfigStore(config_path)
+
+    loaded = store.load_saved_config()
+
+    assert loaded is not None
+    assert loaded.default_provider_id == "prov_sharded"
+    assert [provider.provider_id for provider in loaded.providers] == ["prov_sharded"]
+
+
+def test_save_runtime_provider_command_writes_shards_and_compat_snapshot(tmp_path: Path) -> None:
+    config_path = tmp_path / "runtime-provider-config.json"
+    store = RuntimeProviderConfigStore(config_path)
+
+    save_runtime_provider_command(store, _build_upsert_command())
+
+    shard_dir = _shard_dir(config_path)
+    provider_payload = _read_json(shard_dir / "provider.prov_primary.json")
+    routing_payload = _read_json(shard_dir / "routing.json")
+    snapshot_payload = _read_json(config_path)
+
+    assert provider_payload["provider_id"] == "prov_primary"
+    assert provider_payload["preferred_model"] == "gpt-5.3-codex"
+    assert provider_payload["fallback_provider_ids"] == []
+    assert "providers" not in provider_payload
+    assert "provider_model_entries" not in provider_payload
+    assert "role_bindings" not in provider_payload
+    assert routing_payload["default_provider_id"] == "prov_primary"
+    assert routing_payload["provider_model_entries"] == [
+        {
+            "model_name": "gpt-5.3-codex",
+            "provider_id": "prov_primary",
+        }
+    ]
+    assert routing_payload["role_bindings"][0]["target_ref"] == "ceo_shadow"
+    assert snapshot_payload["providers"][0]["provider_id"] == "prov_primary"
+    assert snapshot_payload["provider_model_entries"][0]["entry_ref"] == "prov_primary::gpt-5.3-codex"
+
+
+def test_save_runtime_provider_command_replaces_shard_directory_and_removes_stale_provider_file(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "runtime-provider-config.json"
+    store = RuntimeProviderConfigStore(config_path)
+    save_runtime_provider_command(store, _build_upsert_command())
+    stale_provider_path = _shard_dir(config_path) / "provider.prov_deleted.json"
+    _write_json(
+        stale_provider_path,
+        {
+            "provider_id": "prov_deleted",
+            "type": "openai_responses_stream",
+            "base_url": "https://api.deleted.test/v1",
+            "api_key": "sk-deleted-secret",
+            "alias": "deleted",
+            "preferred_model": "gpt-4.1",
+            "enabled": True,
+        },
+    )
+
+    save_runtime_provider_command(store, _build_upsert_command())
+
+    assert not stale_provider_path.exists()
+    assert (_shard_dir(config_path) / "provider.prov_primary.json").exists()
 
 
 def test_runtime_provider_store_discards_legacy_fixed_registry_and_starts_empty(tmp_path: Path) -> None:

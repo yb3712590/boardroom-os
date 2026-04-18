@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from tempfile import mkdtemp
 from typing import Any
 from urllib.parse import urlparse
 
@@ -256,8 +258,11 @@ class RuntimeProviderSelection:
 class RuntimeProviderConfigStore:
     def __init__(self, path: Path):
         self.path = Path(path)
+        self.shard_dir = Path(f"{self.path}.d")
 
     def load_saved_config(self) -> RuntimeProviderStoredConfig | None:
+        if self.shard_dir.is_dir():
+            return self._load_sharded_config()
         if not self.path.exists():
             return None
         payload = json.loads(self.path.read_text(encoding="utf-8"))
@@ -265,10 +270,80 @@ class RuntimeProviderConfigStore:
 
     def save_config(self, payload: RuntimeProviderStoredConfig) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        normalized_payload = RuntimeProviderStoredConfig.model_validate(payload.model_dump(mode="json"))
+        temp_dir = Path(mkdtemp(prefix=f"{self.path.name}.", suffix=".tmp", dir=self.path.parent))
+        try:
+            self._write_sharded_config(temp_dir, normalized_payload)
+            self._replace_shard_dir(temp_dir)
+        except Exception:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
         self.path.write_text(
-            json.dumps(payload.model_dump(mode="json"), ensure_ascii=True, indent=2, sort_keys=True),
+            json.dumps(normalized_payload.model_dump(mode="json"), ensure_ascii=True, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+
+    def _load_sharded_config(self) -> RuntimeProviderStoredConfig:
+        routing_path = self.shard_dir / "routing.json"
+        routing_payload = {}
+        if routing_path.exists():
+            routing_payload = json.loads(routing_path.read_text(encoding="utf-8"))
+        providers = [
+            json.loads(provider_path.read_text(encoding="utf-8"))
+            for provider_path in self.shard_dir.glob("provider.*.json")
+            if provider_path.is_file()
+        ]
+        providers.sort(key=lambda item: str(item.get("provider_id") or "").strip())
+        payload = {
+            "default_provider_id": routing_payload.get("default_provider_id"),
+            "providers": providers,
+            "provider_model_entries": routing_payload.get("provider_model_entries", []),
+            "role_bindings": routing_payload.get("role_bindings", []),
+        }
+        return RuntimeProviderStoredConfig.model_validate(_normalize_provider_store_payload(payload))
+
+    def _write_sharded_config(self, target_dir: Path, payload: RuntimeProviderStoredConfig) -> None:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        providers = sorted(payload.providers, key=lambda item: item.provider_id)
+        for provider in providers:
+            provider_payload = provider.model_dump(
+                mode="json",
+                exclude={"adapter_kind", "label", "model"},
+            )
+            provider_path = target_dir / f"provider.{provider.provider_id}.json"
+            provider_path.write_text(
+                json.dumps(provider_payload, ensure_ascii=True, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        routing_payload = {
+            "default_provider_id": payload.default_provider_id,
+            "provider_model_entries": [
+                {
+                    "provider_id": entry.provider_id,
+                    "model_name": entry.model_name,
+                }
+                for entry in payload.provider_model_entries
+            ],
+            "role_bindings": [binding.model_dump(mode="json") for binding in payload.role_bindings],
+        }
+        (target_dir / "routing.json").write_text(
+            json.dumps(routing_payload, ensure_ascii=True, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    def _replace_shard_dir(self, source_dir: Path) -> None:
+        backup_dir = Path(f"{self.shard_dir}.bak")
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        if self.shard_dir.exists():
+            self.shard_dir.replace(backup_dir)
+        try:
+            source_dir.replace(self.shard_dir)
+        except Exception:
+            if backup_dir.exists() and not self.shard_dir.exists():
+                backup_dir.replace(self.shard_dir)
+            raise
+        shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def build_provider_model_entry_ref(provider_id: str, model_name: str) -> str:

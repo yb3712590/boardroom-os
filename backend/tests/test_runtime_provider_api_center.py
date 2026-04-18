@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 
@@ -78,6 +80,42 @@ def test_runtime_provider_projection_returns_provider_model_entries_and_role_bin
         assert data["role_bindings"][1]["target_ref"] == "role_profile:frontend_engineer_primary"
         assert data["role_bindings"][1]["max_context_window_override"] == 180000
         assert data["role_bindings"][1]["reasoning_effort_override"] == "medium"
+
+
+def test_runtime_provider_projection_reads_from_shards_when_snapshot_is_missing(
+    db_path,
+    monkeypatch,
+) -> None:
+    config_path = db_path.parent / "runtime-provider-config-shards-only.json"
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_PROVIDER_CONFIG_PATH", str(config_path))
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        save_response = client.post("/api/v1/commands/runtime-provider-upsert", json=_upsert_payload())
+        assert save_response.status_code == 200
+        assert save_response.json()["status"] == "ACCEPTED"
+
+        shard_dir = Path(f"{config_path}.d")
+        assert (shard_dir / "provider.prov_primary.json").exists()
+        assert (shard_dir / "routing.json").exists()
+        config_path.unlink()
+
+        projection_response = client.get("/api/v1/projections/runtime-provider")
+
+        assert projection_response.status_code == 200
+        data = projection_response.json()["data"]
+        assert data["default_provider_id"] == "prov_primary"
+        assert data["providers"][0]["provider_id"] == "prov_primary"
+        assert data["provider_model_entries"] == [
+            {
+                "entry_ref": "prov_primary::gpt-5.3-codex",
+                "provider_id": "prov_primary",
+                "provider_label": "example",
+                "model_name": "gpt-5.3-codex",
+                "max_context_window": 1000000,
+            }
+        ]
 
 
 def test_runtime_provider_connectivity_test_returns_resolved_provider_shape(
