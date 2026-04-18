@@ -80,7 +80,10 @@ from app.core.board_advisory import (
     build_board_advisory_session,
     review_pack_requires_board_advisory,
 )
-from app.core.review_subjects import resolve_review_subject_execution_identity
+from app.core.review_subjects import (
+    resolve_graph_only_review_subject_execution_identity,
+    resolve_review_subject_execution_identity,
+)
 from app.core.versioning import (
     build_compiled_context_bundle_version_ref,
     build_compiled_execution_package_version_ref,
@@ -5169,7 +5172,6 @@ class ControlPlaneRepository:
         status: str,
         source_ticket_id: str,
         source_graph_node_id: str,
-        source_node_id: str,
         opened_at: datetime,
         updated_at: datetime,
         recorder_employee_id: str,
@@ -5182,13 +5184,12 @@ class ControlPlaneRepository:
         consensus_summary: str | None = None,
         no_consensus_reason: str | None = None,
     ) -> None:
-        _, normalized_source_graph_node_id, normalized_source_node_id = resolve_review_subject_execution_identity(
+        _, normalized_source_graph_node_id, normalized_source_node_id = resolve_graph_only_review_subject_execution_identity(
             self,
             workflow_id=workflow_id,
             subject={
                 "source_ticket_id": source_ticket_id,
                 "source_graph_node_id": source_graph_node_id,
-                "source_node_id": source_node_id,
             },
             connection=connection,
         )
@@ -5419,7 +5420,7 @@ class ControlPlaneRepository:
             for field in ("source_graph_node_id", "source_ticket_id", "source_node_id")
         ):
             approval_event_ticket_id, _approval_event_graph_node_id, approval_event_node_id = (
-                resolve_review_subject_execution_identity(
+                resolve_graph_only_review_subject_execution_identity(
                     self,
                     workflow_id=workflow_id,
                     subject=subject,

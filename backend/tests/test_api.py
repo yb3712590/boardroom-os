@@ -5975,7 +5975,7 @@ def test_create_approval_request_derives_open_event_node_id_from_source_graph_no
     review_pack = json.loads(json.dumps((seeded.get("payload") or {}).get("review_pack") or {}))
     subject = dict(review_pack.get("subject") or {})
     assert str(subject.get("source_graph_node_id") or "").strip() == "node_homepage_visual::review"
-    subject.pop("source_node_id", None)
+    assert "source_node_id" not in subject
     review_pack["subject"] = subject
     review_pack.setdefault("meta", {})["approval_id"] = "apr_graph_only_review_open"
     review_pack["meta"]["review_pack_id"] = "brp_graph_only_review_open"

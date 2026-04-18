@@ -1011,7 +1011,6 @@ def _seed_closed_meeting(
             review_status="APPROVED",
             source_ticket_id=source_ticket_id,
             source_graph_node_id=source_graph_node_id,
-            source_node_id=source_node_id,
             review_pack_id="rp_meeting_reuse_1",
             opened_at=datetime.fromisoformat("2026-04-06T10:00:00+08:00"),
             updated_at=closed_at,
@@ -1036,6 +1035,12 @@ def _seed_closed_meeting(
             consensus_summary=consensus_summary,
             no_consensus_reason=None,
         )
+        if source_node_id != source_graph_node_id:
+            repository.update_meeting_projection(
+                connection,
+                meeting_id,
+                source_node_id=source_node_id,
+            )
 
 
 def test_ceo_shadow_run_records_fallback_without_touching_mainline_state(client):

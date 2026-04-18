@@ -471,7 +471,6 @@ def _build_review_pack(
         "subject": {
             "title": review_request.title,
             "subtitle": review_request.subtitle,
-            "source_node_id": payload.node_id,
             "source_graph_node_id": source_graph_node_id,
             "source_ticket_id": payload.ticket_id,
             "blocking_scope": review_request.blocking_scope.value,

@@ -118,6 +118,7 @@ from app.core.project_workspaces import (
     sync_ticket_boardroom_views,
 )
 from app.core.review_subjects import (
+    resolve_graph_only_review_subject_execution_identity,
     resolve_review_subject_execution_identity,
     resolve_review_subject_identity,
 )
@@ -742,7 +743,7 @@ def _board_advisory_artifact_subject(
     approval = repository.get_approval_by_id(connection, str(session["approval_id"])) or {}
     review_pack = ((approval.get("payload") or {}).get("review_pack") or {}) if isinstance(approval, dict) else {}
     subject = review_pack.get("subject") or {}
-    source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_execution_identity(
+    source_ticket_id, source_graph_node_id, source_node_id = resolve_graph_only_review_subject_execution_identity(
         repository,
         workflow_id=str(session.get("workflow_id") or ""),
         subject=subject,
@@ -762,7 +763,7 @@ def _resolve_review_pack_execution_subject(
     subject: Mapping[str, Any] | None,
     fallback_ticket_id: str | None = None,
 ) -> tuple[str | None, str, str]:
-    source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_execution_identity(
+    source_ticket_id, source_graph_node_id, source_node_id = resolve_graph_only_review_subject_execution_identity(
         repository,
         workflow_id=workflow_id,
         subject=subject,

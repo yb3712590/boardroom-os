@@ -295,7 +295,6 @@ def handle_meeting_request(
                 "recorder_employee_id": payload.recorder_employee_id,
                 "source_ticket_id": ticket_id,
                 "source_graph_node_id": node_id,
-                "source_node_id": node_id,
             },
             occurred_at=received_at,
         )
@@ -322,7 +321,6 @@ def handle_meeting_request(
                 "topic": payload.topic,
                 "source_ticket_id": ticket_id,
                 "source_graph_node_id": node_id,
-                "source_node_id": node_id,
             },
             occurred_at=received_at,
         )
@@ -365,7 +363,6 @@ def handle_meeting_request(
             status="OPEN",
             source_ticket_id=ticket_id,
             source_graph_node_id=node_id,
-            source_node_id=node_id,
             opened_at=received_at,
             updated_at=received_at,
             recorder_employee_id=payload.recorder_employee_id,

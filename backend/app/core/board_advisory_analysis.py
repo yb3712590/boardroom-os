@@ -69,7 +69,7 @@ from app.core.process_assets import (
 )
 from app.core.provider_claude_code import invoke_claude_code_response
 from app.core.provider_openai_compat import invoke_openai_compat_response
-from app.core.review_subjects import resolve_review_subject_execution_identity
+from app.core.review_subjects import resolve_graph_only_review_subject_execution_identity
 from app.core.runtime_provider_config import (
     RuntimeProviderAdapterKind,
     RuntimeProviderSelection,
@@ -169,7 +169,7 @@ def _resolve_source_subject(
     approval = repository.get_approval_by_id(connection, str(session.get("approval_id") or "")) or {}
     review_pack = ((approval.get("payload") or {}).get("review_pack") or {}) if isinstance(approval, dict) else {}
     subject = review_pack.get("subject") or {}
-    source_ticket_id, _source_graph_node_id, source_node_id = resolve_review_subject_execution_identity(
+    source_ticket_id, _source_graph_node_id, source_node_id = resolve_graph_only_review_subject_execution_identity(
         repository,
         workflow_id=str(session.get("workflow_id") or ""),
         subject=subject,

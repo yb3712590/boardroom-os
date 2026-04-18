@@ -329,6 +329,12 @@
 
 ### 2026-04-18
 
+- `P4-S7` 这轮已完成 graph-only 写侧合同收口：`ticket_handlers._build_review_pack()` 不再写 `source_node_id`，新 review pack subject 只再写 `source_graph_node_id + source_ticket_id`
+- `meeting_handlers` 这轮写出的 `MEETING_REQUESTED / MEETING_STARTED` payload 也已删掉 `source_node_id`；`create_meeting_projection()` 现在只接受 graph-first subject，并在持久化时内部派生 `source_node_id` 镜像
+- `review_subjects.py` 这轮新增 strict 写侧入口 `resolve_graph_only_review_subject_execution_identity()`；`create_approval_request()`、`approval_handlers` 和 `board_advisory_analysis` 现在都会用它，缺 `source_graph_node_id` 时统一显式失败，不再让 legacy mirror 单独成真
+- 本轮 fresh 验证已通过：`py -m pytest backend/tests/test_ceo_scheduler.py -k "request_meeting or advisory or reuse_candidates" -q`、`py -m pytest backend/tests/test_meeting_room.py -q`、`py -m pytest backend/tests/test_board_advisory_subjects.py -q`、`py -m pytest backend/tests/test_api.py -k "review_subject_identity or create_approval_request or dependency_inspector or review_room" -q`、`py -m py_compile backend/app/core/review_subjects.py backend/app/core/ticket_handlers.py backend/app/core/meeting_handlers.py backend/app/core/approval_handlers.py backend/app/core/board_advisory_analysis.py backend/app/db/repository.py backend/app/core/projections.py backend/app/core/ceo_snapshot.py`
+- `backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 这组 advisory analysis 宽口径历史红测继续后置；当前 graph-only 写侧主链已经闭环，不再把这组 harness 假设问题混回同一缺口
+
 - `P4-S7` 这轮已继续收掉 `REQUEST_MEETING` 的 legacy mirror 输入：`CEORequestMeetingPayload` 正式删掉 `source_node_id`，`ceo_proposer / ceo_executor / ceo_validator` 现在只再传 `source_graph_node_id + source_ticket_id`
 - `meeting_projection` 写入和 CEO closed meeting reuse candidate 这轮都已改成按 `source_graph_node_id` 派生 `source_node_id`；stale meeting row mirror 不再污染持久化或 snapshot 复用读面
 - `create_approval_request()` 这轮也已改成按 graph-first review subject 派生 `BOARD_REVIEW_REQUIRED` 事件的 `node_id / ticket_id`；只有 legacy `source_node_id`、没有 `source_graph_node_id / source_ticket_id` 的 review subject 现在会显式 fail-closed

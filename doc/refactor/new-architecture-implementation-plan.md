@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-18 09:10`
+> 最后更新：`2026-04-18 10:14`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -831,10 +831,13 @@
 - [x] `P4-S7` 已完成第十二批：`CEORequestMeetingPayload` 现已正式删掉 `source_node_id` 输入合同；`ceo_proposer / ceo_executor / ceo_validator` 与 meeting candidate 主链只再传 `source_graph_node_id + source_ticket_id`，不再让 legacy mirror 进入 CEO command-side 真相
 - [x] `P4-S7` 已完成第十二批：`repository.create_meeting_projection()` 与 `ceo_snapshot` 的 recent closed meeting reuse candidate 现已统一按 `source_graph_node_id` 派生 `source_node_id` 镜像；stale meeting row mirror 不再污染持久化或 snapshot 复用读面
 - [x] `P4-S7` 已完成第十二批：`repository.create_approval_request()` 现已按 graph-first review subject 派生 `BOARD_REVIEW_REQUIRED` 事件的 `node_id / ticket_id`；只有 legacy `source_node_id`、没有 `source_graph_node_id / source_ticket_id` 的 review subject 现在会显式 fail-closed
+- [x] `P4-S7` 已完成第十三批：`ticket_handlers._build_review_pack()` 写侧 subject 现已正式删掉 `source_node_id`；review pack 真相只再写 `source_graph_node_id + source_ticket_id`
+- [x] `P4-S7` 已完成第十三批：`meeting_handlers` 写出的 `MEETING_REQUESTED / MEETING_STARTED` payload 现已删掉 `source_node_id`；`repository.create_meeting_projection()` 只再接受 graph-first subject，并在持久化时内部派生 `source_node_id` 镜像
+- [x] `P4-S7` 已完成第十三批：`approval_handlers / board_advisory_analysis / repository.create_approval_request()` 的写侧 helper 现已统一走 strict graph-only subject resolver；advisory decision / patch / analysis trace / archive / proposal artifact 的 `node_id` 只会在写入前按 graph truth 单点派生
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
-- [ ] review pack / advisory / meeting 的部分持久化 / event 载荷仍保留 `source_node_id + source_graph_node_id` 双写兼容；这轮已把 `REQUEST_MEETING` 命令合同和 `BOARD_REVIEW_REQUIRED` 事件退出 legacy mirror 主判，但彻底收成 graph-only event / review-pack contract 仍需单独切片
+- [ ] `source_node_id` 当前仍会在 meeting / snapshot / projection 读面里作为派生镜像暴露；如果后续要从对外读侧合同里彻底删字段，必须单独开切片，不能把写侧 graph-only 真相再退回去
 - [ ] dashboard phase 汇总这轮已收成 graph/runtime truth；如果后续产品还想显示“更高层的阶段完成感”，必须单独定义正式 stage projection，不能再把旧 `node_projection` 推断逻辑塞回 dashboard
 
 ### 明确放弃
@@ -853,7 +856,7 @@
 - [ ] advisory analysis live gate 现已锁成“真实 board-approved architect + 正式 runtime provider 选路”；synthetic architect 即使存在 binding / default provider 也保持 `DETERMINISTIC`，后续不要再回退到 `employee.provider_id` 兼容口径
 - [ ] graph layer 这轮已完成 execution / review 双 lane identity；如果后续要继续拆 runtime `node_projection`、approval target 和 worker runtime 到 graph-first 双层真相，必须单独开切片，不能在现有 `P4-S4` 图层收口里偷渡
 - [ ] `graph_health_policy.py` 这轮虽然已经把策略常量抽离出内核，但 `QUEUE_STARVATION / READY_NODE_STALE / CROSS_VERSION_SLA_BREACH` 仍继续读取 runtime ticket/node projection 的时间与 SLA 字段；如果下一轮还要继续瘦 graph 内核，应优先决定这批 runtime-liveness 规则是否拆到独立监视层
-- [ ] `CEORequestMeetingPayload` 这轮已补正式 `source_graph_node_id`；如果后续还要把 board/advisory/meeting 全链统一成 graph-only subject，必须单独清 `meeting-request` 命令、event payload 和 artifact subject 里的 `source_node_id` 双写兼容，不能在现有切片里偷渡删除字段
+- [x] `board/advisory/meeting` 写侧 graph-only subject 收口已在 `P4-S7` 第十三批完成：`review_pack` 写侧、`meeting-request` event payload、`create_meeting_projection()`、`create_approval_request()` 以及 advisory artifact subject 现已退出 `source_node_id` 双写真相；后续若要继续动，只能单独清对外读侧镜像
 - [ ] `RuntimeLivenessReport` 这轮已经从 `GraphHealthReport` 主读面拆出，但 `graph_health_policy.py` 仍同时承载 graph + liveness 两类阈值；如果下一轮继续瘦监视层，应先决定 policy contract 是否也跟着拆层，避免新 monitor 再长回 policy bucket
 - [ ] `P4-S5` 这轮只把 lifecycle gate 收硬，没有给 planned placeholder 新增 incident / recovery 动作；后续如果自动路径还要显式暴露“先建票再继续”，必须单独决定是复用现有 command reject，还是新增正式恢复动作
 - [ ] `planned_placeholder_projection` 当前故意只读 `graph patch events + node_projection + open placeholder incident`；还没有把 review-lane placeholder、patch edge delta 结构真相或 dedicated placeholder history 拉进持久化层，后续若要补必须单独开切片，不回退到 runtime/node 缺失猜状态
@@ -2811,6 +2814,42 @@
 
 ---
 
+### Session `2026-04-18 / 49`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `backend/app/core/ticket_handlers.py::_build_review_pack()` 的写侧 subject 收成 graph-only；新 review pack 不再写 `source_node_id`
+- [x] 把 `backend/app/core/meeting_handlers.py` 的 `MEETING_REQUESTED / MEETING_STARTED` payload 收成 graph-only，并把 `backend/app/db/repository.py::create_meeting_projection()` 改成只接受 `source_ticket_id + source_graph_node_id`，持久化时内部派生 `source_node_id` 镜像
+- [x] 新增 strict 写侧 resolver：`backend/app/core/review_subjects.py::resolve_graph_only_review_subject_execution_identity()`；`create_approval_request()`、`approval_handlers` 和 `board_advisory_analysis` 现在都会用这条入口，缺 `source_graph_node_id` 时显式失败，不再让 legacy mirror 单独成真
+- [x] 顺手把 `backend/tests/test_ceo_scheduler.py` 的 closed-meeting helper 收到新边界：默认按 graph-first create meeting projection，只有测试明确需要 stale mirror 时，才通过 `update_meeting_projection()` 单独改坏镜像
+
+**验证结果：**
+- [x] `py -m pytest backend/tests/test_api.py::test_create_approval_request_derives_open_event_node_id_from_source_graph_node_id backend/tests/test_meeting_room.py::test_meeting_request_creates_open_meeting_projection_and_ticket backend/tests/test_meeting_room.py::test_meeting_projection_exposes_source_graph_node_id backend/tests/test_meeting_room.py::test_meeting_projection_derives_source_node_id_when_legacy_mirror_is_empty -q` 先红后绿，最终通过（`4 passed`）
+- [x] `py -m pytest backend/tests/test_ceo_scheduler.py -k "request_meeting or advisory or reuse_candidates" -q` 通过（`13 passed, 73 deselected`）
+- [x] `py -m pytest backend/tests/test_meeting_room.py -q` 通过（`8 passed`）
+- [x] `py -m pytest backend/tests/test_board_advisory_subjects.py -q` 通过（`1 passed`）
+- [x] `py -m pytest backend/tests/test_api.py -k "review_subject_identity or create_approval_request or dependency_inspector or review_room" -q` 通过（`22 passed, 317 deselected`）
+- [x] `py -m py_compile backend/app/core/review_subjects.py backend/app/core/ticket_handlers.py backend/app/core/meeting_handlers.py backend/app/core/approval_handlers.py backend/app/core/board_advisory_analysis.py backend/app/db/repository.py backend/app/core/projections.py backend/app/core/ceo_snapshot.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [ ] `doc/TODO.md` 未更新；原因：本轮只完成 `P4-S7` 已锁定的 graph-only 写侧合同收口，没有改变当前批次入口、阶段目标或优先级
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只继续收 review/advisory/meeting 的 graph-only 主链真相，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] `source_node_id` 当前仍会在 meeting / snapshot / projection 读面里作为派生镜像暴露；如果后续要从对外读侧合同里彻底删字段，必须单独开切片
+- [ ] advisory analysis 宽口径 `test_api` 历史测试仍停在旧 harness 假设；如果下一轮要清，应该单独按 advisory execution contract / 测试基座收口，不应混回已完成的 graph-only 写侧主链
+
+**下一轮起手动作：**
+`不要再重开同义的 P4-S7 graph-only 写侧收口；优先把 advisory analysis 宽口径历史测试和 harness 假设单独切成下一条切片，再决定读侧 source_node_id 镜像是否需要继续退出。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2846,7 +2885,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第十二批；`REQUEST_MEETING` 正式输入合同、meeting projection 持久化和 `BOARD_REVIEW_REQUIRED` open event 都已退出对 legacy `source_node_id` 的主判依赖，`source_node_id` 继续只保留派生镜像语义`
-- 最近完成：`create_meeting_projection()`、recent closed meeting reuse candidate 和 `create_approval_request()` 现在都已按 graph subject 派生 `source_node_id / node_id`；legacy-only review subject 会显式 fail-closed
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；review/advisory/meeting 的部分 event / review-pack 载荷仍保留 `source_node_id` 双写兼容；`backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 仍有 5 条 advisory 历史测试停在旧 harness 假设或测试基座缺口
-- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定是否继续收缩剩余 source_node_id 双写兼容，或把 advisory analysis 宽口径历史测试和 harness 假设单独拆成下一条切片`
+- 当前状态：`P4-S7` 已完成第十三批；review pack 写侧、meeting 两类 event、approval/advisory 写侧 helper 都已退出 `source_node_id` 双写真相，`source_node_id` 现在只在读侧保留派生镜像语义`
+- 最近完成：`resolve_graph_only_review_subject_execution_identity()` 已接管 `create_meeting_projection()`、`create_approval_request()`、`approval_handlers` 和 `board_advisory_analysis` 的写侧 subject；graph truth 缺失时现在统一显式失败
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；`backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 仍有 5 条 advisory 历史测试停在旧 harness 假设或测试基座缺口；读侧 `source_node_id` 镜像仍按兼容策略保留
+- 下一步：`不要再重开同义 graph-only 写侧收口；优先把 advisory analysis 宽口径历史测试 / harness 假设单独切成下一条切片，再决定读侧 source_node_id 镜像是否继续退出`

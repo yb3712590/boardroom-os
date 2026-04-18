@@ -106,3 +106,27 @@ def resolve_review_subject_execution_identity(
         source_node_id=source_node_id,
     )
     return source_ticket_id, execution_graph_node_id, execution_node_id
+
+
+def resolve_graph_only_review_subject_execution_identity(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    subject: Mapping[str, Any] | None,
+    connection=None,
+) -> tuple[str | None, str, str]:
+    normalized_subject = dict(subject or {})
+    source_graph_node_id = str(normalized_subject.get("source_graph_node_id") or "").strip()
+    if not source_graph_node_id:
+        raise ReviewSubjectResolutionError(
+            f"review subject for workflow {workflow_id} is missing source_graph_node_id."
+        )
+    return resolve_review_subject_execution_identity(
+        repository,
+        workflow_id=workflow_id,
+        subject={
+            "source_ticket_id": normalized_subject.get("source_ticket_id"),
+            "source_graph_node_id": source_graph_node_id,
+        },
+        connection=connection,
+    )

@@ -185,6 +185,7 @@ def test_meeting_request_creates_open_meeting_projection_and_ticket(client, set_
         (event.get("payload") or {}).get("source_graph_node_id")
         for event in meeting_events
     } == {meeting["source_graph_node_id"]}
+    assert all("source_node_id" not in (event.get("payload") or {}) for event in meeting_events)
 
 
 def test_meeting_projection_exposes_source_graph_node_id(client):
@@ -213,7 +214,6 @@ def test_meeting_projection_exposes_source_graph_node_id(client):
             status="OPEN",
             source_ticket_id=str(node_projection["latest_ticket_id"]),
             source_graph_node_id=str(node_projection["node_id"]),
-            source_node_id="node_stale_legacy_meeting_subject",
             opened_at=node_projection["updated_at"],
             updated_at=node_projection["updated_at"],
             recorder_employee_id="emp_frontend_2",
@@ -264,7 +264,6 @@ def test_meeting_projection_derives_source_node_id_when_legacy_mirror_is_empty(c
             status="OPEN",
             source_ticket_id=str(node_projection["latest_ticket_id"]),
             source_graph_node_id=str(node_projection["node_id"]),
-            source_node_id="",
             opened_at=node_projection["updated_at"],
             updated_at=node_projection["updated_at"],
             recorder_employee_id="emp_frontend_2",
