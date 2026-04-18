@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Callable, Literal
 
 import httpx
 
@@ -21,6 +21,7 @@ from app.contracts.runtime import (
 
 
 ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
+ProviderAuditObserver = Callable[[str, dict[str, object]], None]
 
 
 class OpenAICompatProviderType(StrEnum):
@@ -189,6 +190,7 @@ def _extract_streaming_responses_output(
     response: httpx.Response,
     *,
     config: OpenAICompatProviderConfig,
+    audit_observer: ProviderAuditObserver | None = None,
 ) -> tuple[str, str | None]:
     response_id: str | None = None
     output_parts: list[str] = []
@@ -322,11 +324,29 @@ def _extract_streaming_responses_output(
                     output_parts.append(delta)
                     if first_output_at is None:
                         first_output_at = time.monotonic()
+                        if audit_observer is not None:
+                            audit_observer(
+                                "first_token_received",
+                                {
+                                    "provider_response_id": response_id,
+                                    "streaming": True,
+                                    "provider_type": config.provider_type.value,
+                                },
+                            )
                 continue
             response_payload = event_payload.get("response")
             if isinstance(response_payload, dict) and response_id is None and response_payload.get("id") is not None:
                 response_id = str(response_payload.get("id"))
             if event_type == "response.completed":
+                if audit_observer is not None:
+                    audit_observer(
+                        "response_completed",
+                        {
+                            "provider_response_id": response_id,
+                            "streaming": True,
+                            "provider_type": config.provider_type.value,
+                        },
+                    )
                 return _finalize_output(response_payload if isinstance(response_payload, dict) else None)
 
 
@@ -425,7 +445,17 @@ def _invoke_streaming_responses(
     rendered_payload: RenderedExecutionPayload,
     *,
     transport: httpx.BaseTransport | None = None,
+    audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
+    if audit_observer is not None:
+        audit_observer(
+            "request_started",
+            {
+                "provider_type": config.provider_type.value,
+                "streaming": True,
+                "model": config.model,
+            },
+        )
     try:
         with httpx.Client(
             timeout=_httpx_timeout(config, streaming=True),
@@ -444,17 +474,50 @@ def _invoke_streaming_responses(
                 _map_provider_error_response(response, streaming=True)
                 content_type = str(response.headers.get("content-type") or "").lower()
                 if "text/event-stream" not in content_type:
-                    return _parse_non_streaming_response(response)
+                    result = _parse_non_streaming_response(response)
+                    if audit_observer is not None:
+                        audit_observer(
+                            "response_completed",
+                            {
+                                "provider_response_id": result.response_id,
+                                "streaming": False,
+                                "provider_type": config.provider_type.value,
+                            },
+                        )
+                    return result
 
                 output_text, response_id = _extract_streaming_responses_output(
                     response,
                     config=config,
+                    audit_observer=audit_observer,
                 )
                 return OpenAICompatProviderResult(
                     output_text=output_text,
                     response_id=response_id,
                 )
+    except OpenAICompatProviderError as exc:
+        if audit_observer is not None:
+            audit_observer(
+                "request_failed",
+                {
+                    "failure_kind": exc.failure_kind,
+                    **dict(exc.failure_detail),
+                    "streaming": True,
+                    "provider_type": config.provider_type.value,
+                },
+            )
+        raise
     except httpx.TimeoutException as exc:
+        if audit_observer is not None:
+            audit_observer(
+                "request_failed",
+                {
+                    "failure_kind": "UPSTREAM_UNAVAILABLE",
+                    "provider_transport_error": type(exc).__name__,
+                    "streaming": True,
+                    "provider_type": config.provider_type.value,
+                },
+            )
         raise OpenAICompatProviderUnavailableError(
             failure_kind="UPSTREAM_UNAVAILABLE",
             message=f"Provider request timed out: {exc}",
@@ -463,6 +526,16 @@ def _invoke_streaming_responses(
             },
         ) from exc
     except httpx.TransportError as exc:
+        if audit_observer is not None:
+            audit_observer(
+                "request_failed",
+                {
+                    "failure_kind": "UPSTREAM_UNAVAILABLE",
+                    "provider_transport_error": type(exc).__name__,
+                    "streaming": True,
+                    "provider_type": config.provider_type.value,
+                },
+            )
         raise OpenAICompatProviderUnavailableError(
             failure_kind="UPSTREAM_UNAVAILABLE",
             message=f"Provider transport failed: {exc}",
@@ -477,7 +550,17 @@ def _invoke_non_streaming_responses(
     rendered_payload: RenderedExecutionPayload,
     *,
     transport: httpx.BaseTransport | None = None,
+    audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
+    if audit_observer is not None:
+        audit_observer(
+            "request_started",
+            {
+                "provider_type": config.provider_type.value,
+                "streaming": False,
+                "model": config.model,
+            },
+        )
     try:
         with httpx.Client(
             timeout=_httpx_timeout(config, streaming=False),
@@ -492,6 +575,16 @@ def _invoke_non_streaming_responses(
                 json=_responses_request_payload(config, rendered_payload, stream=False),
             )
     except httpx.TimeoutException as exc:
+        if audit_observer is not None:
+            audit_observer(
+                "request_failed",
+                {
+                    "failure_kind": "UPSTREAM_UNAVAILABLE",
+                    "provider_transport_error": type(exc).__name__,
+                    "streaming": False,
+                    "provider_type": config.provider_type.value,
+                },
+            )
         raise OpenAICompatProviderUnavailableError(
             failure_kind="UPSTREAM_UNAVAILABLE",
             message=f"Provider request timed out: {exc}",
@@ -500,6 +593,16 @@ def _invoke_non_streaming_responses(
             },
         ) from exc
     except httpx.TransportError as exc:
+        if audit_observer is not None:
+            audit_observer(
+                "request_failed",
+                {
+                    "failure_kind": "UPSTREAM_UNAVAILABLE",
+                    "provider_transport_error": type(exc).__name__,
+                    "streaming": False,
+                    "provider_type": config.provider_type.value,
+                },
+            )
         raise OpenAICompatProviderUnavailableError(
             failure_kind="UPSTREAM_UNAVAILABLE",
             message=f"Provider transport failed: {exc}",
@@ -508,8 +611,31 @@ def _invoke_non_streaming_responses(
             },
         ) from exc
 
-    _map_provider_error_response(response, streaming=False)
-    return _parse_non_streaming_response(response)
+    try:
+        _map_provider_error_response(response, streaming=False)
+        result = _parse_non_streaming_response(response)
+    except OpenAICompatProviderError as exc:
+        if audit_observer is not None:
+            audit_observer(
+                "request_failed",
+                {
+                    "failure_kind": exc.failure_kind,
+                    **dict(exc.failure_detail),
+                    "streaming": False,
+                    "provider_type": config.provider_type.value,
+                },
+            )
+        raise
+    if audit_observer is not None:
+        audit_observer(
+            "response_completed",
+            {
+                "provider_response_id": result.response_id,
+                "streaming": False,
+                "provider_type": config.provider_type.value,
+            },
+        )
+    return result
 
 
 def invoke_openai_compat_response(
@@ -517,17 +643,20 @@ def invoke_openai_compat_response(
     rendered_payload: RenderedExecutionPayload,
     *,
     transport: httpx.BaseTransport | None = None,
+    audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
     if config.provider_type == OpenAICompatProviderType.RESPONSES_NON_STREAM:
         return _invoke_non_streaming_responses(
             config,
             rendered_payload,
             transport=transport,
+            audit_observer=audit_observer,
         )
     return _invoke_streaming_responses(
         config,
         rendered_payload,
         transport=transport,
+        audit_observer=audit_observer,
     )
 
 

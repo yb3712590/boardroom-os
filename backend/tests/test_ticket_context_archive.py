@@ -258,3 +258,40 @@ def test_ticket_context_markdown_includes_version_metadata_and_stale_status(clie
     assert "Source Projection Version" in markdown
     assert "Stale Against Latest Package" in markdown
     assert "`是`" in markdown
+
+
+def test_build_ticket_context_markdown_includes_provider_audit_section() -> None:
+    markdown = build_ticket_context_markdown(
+        {
+            "meta": {
+                "workflow_id": "wf_provider_audit",
+                "ticket_id": "tkt_provider_audit",
+                "node_id": "node_provider_audit",
+            },
+            "execution": {
+                "role_profile_ref": "frontend_engineer_primary",
+                "output_schema_ref": "ui_milestone_review",
+                "allowed_write_set": ["reports/ui/*"],
+            },
+            "org_context": {
+                "responsibility_boundary": {
+                    "output_schema_ref": "ui_milestone_review",
+                }
+            },
+            "atomic_context_bundle": {
+                "context_blocks": [],
+            },
+        },
+        provider_audit={
+            "provider_id": "prov_primary",
+            "current_attempt_no": 3,
+            "current_phase": "streaming",
+            "elapsed_sec": 91.5,
+            "provider_attempt_count": 3,
+        },
+    )
+
+    assert "## Provider Audit" in markdown
+    assert "prov_primary" in markdown
+    assert "streaming" in markdown
+    assert "91.5" in markdown

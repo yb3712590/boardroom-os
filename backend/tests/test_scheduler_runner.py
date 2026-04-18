@@ -44,6 +44,25 @@ from app.core.ticket_handlers import run_scheduler_tick
 from app.scheduler_runner import run_scheduler_loop, run_scheduler_once
 
 
+PROVIDER_AUDIT_EVENT_TYPES = {
+    "PROVIDER_ATTEMPT_STARTED",
+    "PROVIDER_FIRST_TOKEN_RECEIVED",
+    "PROVIDER_RETRY_SCHEDULED",
+    "PROVIDER_ATTEMPT_FINISHED",
+    "PROVIDER_FAILOVER_SELECTED",
+}
+
+
+def _provider_audit_events(repository, ticket_id: str) -> list[dict]:
+    with repository.connection() as connection:
+        return [
+            event
+            for event in repository.list_all_events(connection)
+            if event["event_type"] in PROVIDER_AUDIT_EVENT_TYPES
+            and event.get("ticket_id") == ticket_id
+        ]
+
+
 def _ticket_create_payload(
     *,
     workflow_id: str,
@@ -3117,6 +3136,23 @@ def test_runtime_provider_unavailable_failure_exhausts_ten_attempts_without_open
     assert attempt_count["value"] == 10
     assert sleep_calls == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
     assert open_provider_incidents == []
+    provider_events = _provider_audit_events(repository, "tkt_runner_provider_retry_exhausted")
+    assert [event["event_type"] for event in provider_events].count("PROVIDER_ATTEMPT_STARTED") == 10
+    assert [event["event_type"] for event in provider_events].count("PROVIDER_ATTEMPT_FINISHED") == 10
+    assert [event["event_type"] for event in provider_events].count("PROVIDER_RETRY_SCHEDULED") == 9
+    first_attempt = provider_events[0]["payload"]
+    assert first_attempt["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert first_attempt["actual_model"] == "gpt-5.3-codex"
+    assert first_attempt["attempt_no"] == 1
+    assert first_attempt["max_attempts"] == 10
+    assert first_attempt["retry_backoff_schedule_sec"] == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
+    assert first_attempt["request_total_timeout_sec"] == 300.0
+    first_retry = next(event for event in provider_events if event["event_type"] == "PROVIDER_RETRY_SCHEDULED")
+    assert first_retry["payload"]["retry_delay_sec"] == 1.0
+    last_finish = [event for event in provider_events if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"][-1]
+    assert last_finish["payload"]["attempt_no"] == 10
+    assert last_finish["payload"]["status"] == "FAILED"
+    assert last_finish["payload"]["failure_kind"] == "UPSTREAM_UNAVAILABLE"
 
 
 def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic(
@@ -3250,6 +3286,14 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
     assert "effective_reasoning_effort=high" in recorded_submit["assumptions"]
     assert "selection_reason=provider_failover" in recorded_submit["assumptions"]
     assert any("failover" in issue.lower() for issue in recorded_submit["issues"])
+    provider_events = _provider_audit_events(repository, "tkt_runner_provider_failover")
+    failover_events = [
+        event for event in provider_events if event["event_type"] == "PROVIDER_FAILOVER_SELECTED"
+    ]
+    assert len(failover_events) == 1
+    assert failover_events[0]["payload"]["from_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert failover_events[0]["payload"]["to_provider_id"] == CLAUDE_CODE_PROVIDER_ID
+    assert failover_events[0]["payload"]["failure_kind"] == "PROVIDER_RATE_LIMITED"
 
 
 def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeypatch):
@@ -3325,6 +3369,13 @@ def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeyp
     assert attempt_count["value"] == 10
     assert sleep_calls == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
     assert repository.list_open_provider_incidents() == []
+    provider_events = _provider_audit_events(repository, "tkt_runner_provider_retry")
+    finish_events = [
+        event for event in provider_events if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"
+    ]
+    assert finish_events[-1]["payload"]["attempt_no"] == 10
+    assert finish_events[-1]["payload"]["status"] == "COMPLETED"
+    assert finish_events[-1]["payload"]["response_id"] == "resp_retry_success"
 
 
 def test_runtime_without_configured_provider_blocks_lease_instead_of_using_deterministic_path(
@@ -3476,6 +3527,12 @@ def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(
         "PROVIDER_AUTH_FAILED"
     ]
     assert not any("prov_claude_code" in assumption for assumption in recorded_submit["assumptions"])
+    provider_events = _provider_audit_events(repository, "tkt_runner_provider_auth_no_failover")
+    assert [event["event_type"] for event in provider_events] == [
+        "PROVIDER_ATTEMPT_STARTED",
+        "PROVIDER_ATTEMPT_FINISHED",
+    ]
+    assert provider_events[-1]["payload"]["failure_kind"] == "PROVIDER_AUTH_FAILED"
 
 
 def test_runtime_provider_paused_ticket_blocks_runtime_start_without_deterministic_completion(

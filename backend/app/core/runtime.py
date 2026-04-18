@@ -4,7 +4,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote
 
 from pydantic import ValidationError
@@ -29,6 +29,11 @@ from app.core.context_compiler import (
     export_latest_compile_artifacts_to_developer_inspector,
 )
 from app.core.constants import (
+    EVENT_PROVIDER_ATTEMPT_FINISHED,
+    EVENT_PROVIDER_ATTEMPT_STARTED,
+    EVENT_PROVIDER_FAILOVER_SELECTED,
+    EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+    EVENT_PROVIDER_RETRY_SCHEDULED,
     EVENT_MEETING_CONCLUDED,
     EVENT_MEETING_ROUND_COMPLETED,
     PROVIDER_PAUSE_FAILURE_KINDS,
@@ -66,6 +71,7 @@ from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_
 from app.core.ticket_context_archive import write_ticket_context_markdown
 from app.core.ticket_handlers import (
     _open_provider_incident,
+    _refresh_ticket_context_archive,
     handle_ticket_result_submit,
     handle_ticket_start,
 )
@@ -1641,6 +1647,108 @@ def _build_provider_candidate_chain(
     return chain
 
 
+def _provider_timeout_settings(selection: RuntimeProviderSelection) -> dict[str, float | None]:
+    if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
+        config = _build_openai_compat_provider_config(selection)
+        return {
+            "connect_timeout_sec": float(config.connect_timeout_sec),
+            "write_timeout_sec": float(config.write_timeout_sec),
+            "first_token_timeout_sec": float(config.first_token_timeout_sec),
+            "stream_idle_timeout_sec": float(config.stream_idle_timeout_sec),
+            "request_total_timeout_sec": float(config.request_total_timeout_sec),
+        }
+    config = _build_claude_code_provider_config(selection)
+    return {
+        "connect_timeout_sec": None,
+        "write_timeout_sec": None,
+        "first_token_timeout_sec": None,
+        "stream_idle_timeout_sec": None,
+        "request_total_timeout_sec": float(config.timeout_sec),
+    }
+
+
+def _provider_audit_payload_base(
+    *,
+    ticket: dict[str, Any],
+    selection: RuntimeProviderSelection,
+    candidate_chain: list[str],
+    attempt_no: int,
+) -> dict[str, Any]:
+    return {
+        "workflow_id": str(ticket["workflow_id"]),
+        "ticket_id": str(ticket["ticket_id"]),
+        "node_id": str(ticket["node_id"]),
+        "provider_id": selection.provider.provider_id,
+        "actual_model": selection.actual_model or selection.provider.model,
+        "adapter_kind": selection.provider.adapter_kind,
+        "provider_candidate_chain": list(candidate_chain),
+        "attempt_no": attempt_no,
+        "max_attempts": PROVIDER_MAX_ATTEMPTS,
+        "retry_backoff_schedule_sec": [
+            float(item) for item in list(selection.provider.retry_backoff_schedule_sec or [])
+        ],
+        **_provider_timeout_settings(selection),
+    }
+
+
+def _record_provider_audit_event(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    *,
+    event_type: str,
+    selection: RuntimeProviderSelection,
+    candidate_chain: list[str],
+    attempt_no: int,
+    payload: dict[str, Any],
+) -> None:
+    occurred_at = now_local()
+    idempotency_suffix = payload.get("idempotency_suffix") or event_type.lower()
+    effective_payload = {
+        **_provider_audit_payload_base(
+            ticket=ticket,
+            selection=selection,
+            candidate_chain=candidate_chain,
+            attempt_no=attempt_no,
+        ),
+        **{key: value for key, value in payload.items() if key != "idempotency_suffix"},
+    }
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=event_type,
+            actor_type="system",
+            actor_id="runtime",
+            workflow_id=str(ticket["workflow_id"]),
+            idempotency_key=(
+                f"runtime-provider-audit:{ticket['workflow_id']}:{ticket['ticket_id']}:"
+                f"{selection.provider.provider_id}:{attempt_no}:{idempotency_suffix}"
+            ),
+            causation_id=None,
+            correlation_id=str(ticket["workflow_id"]),
+            payload=effective_payload,
+            occurred_at=occurred_at,
+        )
+    _refresh_ticket_context_archive(repository, str(ticket["ticket_id"]))
+
+
+def _invoke_openai_compat_with_optional_observer(
+    config: OpenAICompatProviderConfig,
+    rendered_payload,
+    *,
+    audit_observer: Callable[[str, dict[str, object]], None] | None,
+):
+    try:
+        return invoke_openai_compat_response(
+            config,
+            rendered_payload,
+            audit_observer=audit_observer,
+        )
+    except TypeError as exc:
+        if "audit_observer" not in str(exc):
+            raise
+        return invoke_openai_compat_response(config, rendered_payload)
+
+
 def _build_provider_required_unavailable_result(
     *,
     selection: RuntimeProviderSelection | None,
@@ -1683,11 +1791,33 @@ def _execute_openai_compat_provider(
     execution_package: CompiledExecutionPackage,
     selection: RuntimeProviderSelection,
     *,
+    repository: ControlPlaneRepository | None = None,
+    ticket: dict[str, Any] | None = None,
+    candidate_chain: list[str] | None = None,
     sleep_fn=None,
 ) -> RuntimeExecutionResult:
     if sleep_fn is None:
         sleep_fn = _sleep
     config = _build_openai_compat_provider_config(selection)
+    resolved_candidate_chain = candidate_chain or [selection.provider.provider_id]
+
+    def _record_if_enabled(
+        event_type: str,
+        attempt_no: int,
+        payload: dict[str, Any],
+    ) -> None:
+        if repository is None or ticket is None:
+            return
+        _record_provider_audit_event(
+            repository,
+            ticket,
+            event_type=event_type,
+            selection=selection,
+            candidate_chain=resolved_candidate_chain,
+            attempt_no=attempt_no,
+            payload=payload,
+        )
+
     last_failure_kind = "PROVIDER_BAD_RESPONSE"
     last_failure_message = "Provider execution failed."
     last_failure_detail: dict[str, Any] = {
@@ -1700,10 +1830,36 @@ def _execute_openai_compat_provider(
     }
 
     for attempt_no in range(1, PROVIDER_MAX_ATTEMPTS + 1):
+        attempt_started_monotonic = time.monotonic()
+        _record_if_enabled(
+            event_type=EVENT_PROVIDER_ATTEMPT_STARTED,
+            attempt_no=attempt_no,
+            payload={
+                "status": "IN_PROGRESS",
+                "current_phase": "awaiting_first_token",
+                "elapsed_sec": 0.0,
+            },
+        )
+
+        def _audit_observer(event_type: str, payload: dict[str, object]) -> None:
+            if event_type != "first_token_received":
+                return
+            _record_if_enabled(
+                event_type=EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+                attempt_no=attempt_no,
+                payload={
+                    "status": "IN_PROGRESS",
+                    "current_phase": "streaming",
+                    "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
+                    "response_id": payload.get("provider_response_id"),
+                },
+            )
+
         try:
-            provider_result = invoke_openai_compat_response(
+            provider_result = _invoke_openai_compat_with_optional_observer(
                 config,
                 execution_package.rendered_execution_payload,
+                audit_observer=_audit_observer,
             )
             result_payload = _load_provider_payload(provider_result.output_text)
             if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
@@ -1729,7 +1885,7 @@ def _execute_openai_compat_provider(
                     execution_package,
                     result_payload,
                 )
-            return RuntimeExecutionResult(
+            result = RuntimeExecutionResult(
                 result_status="completed",
                 completion_summary=(
                     f"Provider-backed runtime executed ticket {execution_package.meta.ticket_id} via "
@@ -1749,6 +1905,17 @@ def _execute_openai_compat_provider(
                 issues=[],
                 confidence=0.82,
             )
+            _record_if_enabled(
+                event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
+                attempt_no=attempt_no,
+                payload={
+                    "status": "COMPLETED",
+                    "current_phase": "completed",
+                    "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
+                    "response_id": provider_result.response_id,
+                },
+            )
+            return result
         except (
             OpenAICompatProviderRateLimitedError,
             OpenAICompatProviderUnavailableError,
@@ -1791,8 +1958,47 @@ def _execute_openai_compat_provider(
                 fallback_applied=False,
             )
             if _provider_failure_is_retryable(failure_kind) and attempt_no < PROVIDER_MAX_ATTEMPTS:
-                sleep_fn(_provider_retry_delay_sec(selection, failure_kind, last_failure_detail, attempt_no))
+                retry_delay_sec = _provider_retry_delay_sec(selection, failure_kind, last_failure_detail, attempt_no)
+                _record_if_enabled(
+                    event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
+                    attempt_no=attempt_no,
+                    payload={
+                        "status": "FAILED",
+                        "current_phase": "failed",
+                        "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
+                        "failure_kind": last_failure_kind,
+                        "failure_message": last_failure_message,
+                        "response_id": last_failure_detail.get("provider_response_id"),
+                        "timeout_phase": last_failure_detail.get("timeout_phase"),
+                    },
+                )
+                _record_if_enabled(
+                    event_type=EVENT_PROVIDER_RETRY_SCHEDULED,
+                    attempt_no=attempt_no,
+                    payload={
+                        "status": "IN_PROGRESS",
+                        "current_phase": "retry_waiting",
+                        "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
+                        "failure_kind": last_failure_kind,
+                        "retry_delay_sec": retry_delay_sec,
+                        "idempotency_suffix": f"retry-scheduled-{attempt_no}",
+                    },
+                )
+                sleep_fn(retry_delay_sec)
                 continue
+            _record_if_enabled(
+                event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
+                attempt_no=attempt_no,
+                payload={
+                    "status": "FAILED",
+                    "current_phase": "failed",
+                    "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
+                    "failure_kind": last_failure_kind,
+                    "failure_message": last_failure_message,
+                    "response_id": last_failure_detail.get("provider_response_id"),
+                    "timeout_phase": last_failure_detail.get("timeout_phase"),
+                },
+            )
             return RuntimeExecutionResult(
                 result_status="failed",
                 failure_kind=last_failure_kind,
@@ -1811,7 +2017,38 @@ def _execute_openai_compat_provider(
 def _execute_claude_code_provider(
     execution_package: CompiledExecutionPackage,
     selection: RuntimeProviderSelection,
+    *,
+    repository: ControlPlaneRepository | None = None,
+    ticket: dict[str, Any] | None = None,
+    candidate_chain: list[str] | None = None,
 ) -> RuntimeExecutionResult:
+    resolved_candidate_chain = candidate_chain or [selection.provider.provider_id]
+
+    def _record_if_enabled(
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if repository is None or ticket is None:
+            return
+        _record_provider_audit_event(
+            repository,
+            ticket,
+            event_type=event_type,
+            selection=selection,
+            candidate_chain=resolved_candidate_chain,
+            attempt_no=1,
+            payload=payload,
+        )
+
+    attempt_started_monotonic = time.monotonic()
+    _record_if_enabled(
+        event_type=EVENT_PROVIDER_ATTEMPT_STARTED,
+        payload={
+            "status": "IN_PROGRESS",
+            "current_phase": "awaiting_first_token",
+            "elapsed_sec": 0.0,
+        },
+    )
     try:
         provider_result = invoke_claude_code_response(
             _build_claude_code_provider_config(selection),
@@ -1841,7 +2078,7 @@ def _execute_claude_code_provider(
                 execution_package,
                 result_payload,
             )
-        return RuntimeExecutionResult(
+        result = RuntimeExecutionResult(
             result_status="completed",
             completion_summary=(
                 f"Provider-backed runtime executed ticket {execution_package.meta.ticket_id} via "
@@ -1861,13 +2098,23 @@ def _execute_claude_code_provider(
             issues=[],
             confidence=0.82,
         )
+        _record_if_enabled(
+            event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
+            payload={
+                "status": "COMPLETED",
+                "current_phase": "completed",
+                "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
+                "response_id": provider_result.response_id,
+            },
+        )
+        return result
     except (ClaudeCodeProviderError, ValueError) as exc:
         failure_detail = (
             dict(exc.failure_detail)
             if isinstance(exc, ClaudeCodeProviderError)
             else {}
         )
-        return RuntimeExecutionResult(
+        result = RuntimeExecutionResult(
             result_status="failed",
             failure_kind=(exc.failure_kind if isinstance(exc, ClaudeCodeProviderError) else "PROVIDER_BAD_RESPONSE"),
             failure_message=str(exc),
@@ -1878,6 +2125,19 @@ def _execute_claude_code_provider(
                 fallback_applied=False,
             ),
         )
+        _record_if_enabled(
+            event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
+            payload={
+                "status": "FAILED",
+                "current_phase": "failed",
+                "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
+                "failure_kind": result.failure_kind,
+                "failure_message": result.failure_message,
+                "response_id": None,
+                "timeout_phase": (result.failure_detail or {}).get("timeout_phase"),
+            },
+        )
+        return result
 
 
 def _build_provider_fallback_execution_result(
@@ -1906,12 +2166,27 @@ def _build_provider_fallback_execution_result(
 
 
 def _execute_provider_selection(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
     execution_package: CompiledExecutionPackage,
     selection: RuntimeProviderSelection,
+    candidate_chain: list[str],
 ) -> RuntimeExecutionResult:
     if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
-        return _execute_openai_compat_provider(execution_package, selection)
-    return _execute_claude_code_provider(execution_package, selection)
+        return _execute_openai_compat_provider(
+            execution_package,
+            selection,
+            repository=repository,
+            ticket=ticket,
+            candidate_chain=candidate_chain,
+        )
+    return _execute_claude_code_provider(
+        execution_package,
+        selection,
+        repository=repository,
+        ticket=ticket,
+        candidate_chain=candidate_chain,
+    )
 
 
 def _annotate_provider_failover_success(
@@ -1960,13 +2235,48 @@ def _attempt_provider_failover(
     if target_ref is None:
         return None
     config = resolve_runtime_provider_config()
+    candidate_chain = _build_provider_candidate_chain(
+        primary_selection,
+        resolve_provider_failover_selections(
+            config,
+            repository,
+            target_ref=target_ref,
+            primary_selection=primary_selection,
+        ),
+    )
     for failover_selection in resolve_provider_failover_selections(
         config,
         repository,
         target_ref=target_ref,
         primary_selection=primary_selection,
     ):
-        failover_result = _execute_provider_selection(execution_package, failover_selection)
+        _record_provider_audit_event(
+            repository,
+            ticket,
+            event_type=EVENT_PROVIDER_FAILOVER_SELECTED,
+            selection=failover_selection,
+            candidate_chain=candidate_chain,
+            attempt_no=1,
+            payload={
+                "from_provider_id": primary_selection.provider.provider_id,
+                "to_provider_id": failover_selection.provider.provider_id,
+                "failure_kind": primary_failure.failure_kind,
+                "status": "IN_PROGRESS",
+                "current_phase": "retry_waiting",
+                "elapsed_sec": 0.0,
+                "idempotency_suffix": (
+                    f"failover-selected:{primary_selection.provider.provider_id}:"
+                    f"{failover_selection.provider.provider_id}"
+                ),
+            },
+        )
+        failover_result = _execute_provider_selection(
+            repository,
+            ticket,
+            execution_package,
+            failover_selection,
+            candidate_chain,
+        )
         if failover_result.result_status == "completed":
             return _annotate_provider_failover_success(
                 failover_result,
@@ -2122,7 +2432,13 @@ def _execute_runtime_with_provider_if_configured(
             failure_message="Provider config is incomplete for Claude Code execution.",
         )
 
-    provider_result = _execute_provider_selection(execution_package, selection)
+    provider_result = _execute_provider_selection(
+        repository,
+        ticket,
+        execution_package,
+        selection,
+        candidate_chain,
+    )
     provider_attempt_log.append(
         _build_provider_attempt_log_entry(
             selection=selection,
@@ -2133,7 +2449,33 @@ def _execute_runtime_with_provider_if_configured(
         return provider_result
     if provider_result.failure_kind in PROVIDER_FAILOVER_FAILURE_KINDS:
         for failover_selection in failover_selections:
-            failover_result = _execute_provider_selection(execution_package, failover_selection)
+            _record_provider_audit_event(
+                repository,
+                ticket,
+                event_type=EVENT_PROVIDER_FAILOVER_SELECTED,
+                selection=failover_selection,
+                candidate_chain=candidate_chain,
+                attempt_no=1,
+                payload={
+                    "from_provider_id": selection.provider.provider_id,
+                    "to_provider_id": failover_selection.provider.provider_id,
+                    "failure_kind": provider_result.failure_kind,
+                    "status": "IN_PROGRESS",
+                    "current_phase": "retry_waiting",
+                    "elapsed_sec": 0.0,
+                    "idempotency_suffix": (
+                        f"failover-selected:{selection.provider.provider_id}:"
+                        f"{failover_selection.provider.provider_id}"
+                    ),
+                },
+            )
+            failover_result = _execute_provider_selection(
+                repository,
+                ticket,
+                execution_package,
+                failover_selection,
+                candidate_chain,
+            )
             provider_attempt_log.append(
                 _build_provider_attempt_log_entry(
                     selection=failover_selection,

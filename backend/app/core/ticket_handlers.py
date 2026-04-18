@@ -214,7 +214,7 @@ from app.core.ticket_artifacts import (
     prepare_written_artifacts,
     save_prepared_artifact_record,
 )
-from app.core.ticket_context_archive import write_ticket_context_markdown
+from app.core.ticket_context_archive import latest_provider_audit_for_ticket, write_ticket_context_markdown
 from app.core.time import now_local
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.core.workflow_scope import resolve_workflow_scope
@@ -1683,6 +1683,7 @@ def _refresh_ticket_context_archive(repository: ControlPlaneRepository, ticket_i
             **_ticket_context_terminal_state(repository, ticket_id),
             "stale_against_latest": False,
         },
+        provider_audit=latest_provider_audit_for_ticket(repository, ticket_id),
     )
 
 

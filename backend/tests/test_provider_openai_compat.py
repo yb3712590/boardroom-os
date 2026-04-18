@@ -265,6 +265,42 @@ def test_invoke_openai_compat_response_uses_streaming_responses_by_default() -> 
     assert result.output_text == '{"ok":true}'
 
 
+def test_invoke_openai_compat_response_emits_streaming_audit_callbacks() -> None:
+    observed: list[tuple[str, dict[str, object]]] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        body = (
+            'event: response.output_text.delta\n'
+            'data: {"type":"response.output_text.delta","delta":"{\\"ok\\""}\n\n'
+            'event: response.output_text.delta\n'
+            'data: {"type":"response.output_text.delta","delta":":true}"}\n\n'
+            'event: response.completed\n'
+            'data: {"type":"response.completed","response":{"id":"resp_stream_observed"}}\n\n'
+        )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=body,
+        )
+
+    invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        transport=httpx.MockTransport(_handler),
+        audit_observer=lambda event_type, payload: observed.append((event_type, dict(payload))),
+    )
+
+    assert [item[0] for item in observed] == [
+        "request_started",
+        "first_token_received",
+        "response_completed",
+    ]
+    assert observed[0][1]["streaming"] is True
+    assert observed[0][1]["provider_type"] == OpenAICompatProviderType.RESPONSES_STREAM.value
+    assert observed[1][1]["provider_response_id"] is None
+    assert observed[2][1]["provider_response_id"] == "resp_stream_observed"
+
+
 def test_invoke_openai_compat_response_returns_after_response_completed_without_done_sentinel() -> None:
     class _HangingStream(httpx.SyncByteStream):
         def __iter__(self):
@@ -368,6 +404,36 @@ def test_invoke_openai_compat_response_raises_first_token_timeout_before_any_str
         )
 
     assert exc_info.value.failure_kind == "FIRST_TOKEN_TIMEOUT"
+
+
+def test_invoke_openai_compat_response_emits_failure_audit_callback_for_first_token_timeout() -> None:
+    observed: list[tuple[str, dict[str, object]]] = []
+
+    class _SilentStream(httpx.SyncByteStream):
+        def __iter__(self):
+            raise httpx.ReadTimeout("stream never produced a first token")
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_SilentStream(),
+        )
+
+    with pytest.raises(OpenAICompatProviderUnavailableError):
+        invoke_openai_compat_response(
+            _config(),
+            _rendered_payload(),
+            transport=httpx.MockTransport(_handler),
+            audit_observer=lambda event_type, payload: observed.append((event_type, dict(payload))),
+        )
+
+    assert [item[0] for item in observed] == [
+        "request_started",
+        "request_failed",
+    ]
+    assert observed[-1][1]["failure_kind"] == "FIRST_TOKEN_TIMEOUT"
+    assert observed[-1][1]["timeout_phase"] == "first_token"
 
 
 def test_invoke_openai_compat_response_raises_stream_idle_timeout_after_first_token() -> None:

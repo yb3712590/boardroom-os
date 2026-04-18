@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -262,6 +263,124 @@ def test_write_audit_summary_renders_formal_sections(tmp_path: Path) -> None:
     assert "MVP scope is locked to library management." in body
 
 
+def test_latest_provider_runtime_snapshot_uses_in_progress_provider_audit_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_terminal_events",
+        lambda _repository, _workflow_id: {},
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_ticket_rows",
+        lambda _repository, _workflow_id: [
+            {
+                "ticket_id": "tkt_build_001",
+                "status": "EXECUTING",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_provider_audit_events",
+        lambda _repository, _workflow_id: {
+            "tkt_build_001": [
+                {
+                    "event_type": "PROVIDER_ATTEMPT_STARTED",
+                    "payload": {
+                        "provider_id": "prov_primary",
+                        "actual_model": "gpt-5.4",
+                        "attempt_no": 3,
+                        "retry_backoff_schedule_sec": [1, 2, 4],
+                    },
+                },
+                {
+                    "event_type": "PROVIDER_FIRST_TOKEN_RECEIVED",
+                    "payload": {
+                        "provider_id": "prov_primary",
+                        "actual_model": "gpt-5.4",
+                        "attempt_no": 3,
+                        "elapsed_sec": 91.5,
+                        "retry_backoff_schedule_sec": [1, 2, 4],
+                    },
+                },
+            ]
+        },
+    )
+
+    snapshot = live_harness._latest_provider_runtime_snapshot(object(), "wf_live")
+
+    assert snapshot["actual_provider_id"] == "prov_primary"
+    assert snapshot["actual_model"] == "gpt-5.4"
+    assert snapshot["provider_attempt_count"] == 3
+    assert snapshot["current_attempt_no"] == 3
+    assert snapshot["current_phase"] == "streaming"
+    assert snapshot["elapsed_sec"] == 91.5
+    assert snapshot["retry_backoff_schedule_sec"] == [1, 2, 4]
+    assert snapshot["provider_attempt_log"] == [
+        {
+            "provider_id": "prov_primary",
+            "attempt_no": 3,
+            "status": "IN_PROGRESS",
+            "failure_kind": None,
+        }
+    ]
+
+
+def test_write_audit_summary_renders_in_progress_provider_status(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    target_path = write_audit_summary(
+        paths,
+        report={
+            "success": False,
+            "scenario_slug": "library_management_autopilot_live",
+            "workflow_id": "wf_library_live",
+            "completion_mode": "stall",
+            "elapsed_sec": 901.0,
+            "started_at": "2026-04-18T13:54:10+08:00",
+            "finished_at": "2026-04-18T14:09:11+08:00",
+        },
+        snapshot={
+            "workflow": {
+                "workflow_id": "wf_library_live",
+                "status": "EXECUTING",
+                "current_stage": "plan",
+            },
+            "tickets": [
+                {
+                    "ticket_id": "tkt_build_001",
+                    "status": "EXECUTING",
+                    "node_id": "node_build_001",
+                }
+            ],
+            "provider_summary": {
+                "actual_provider_id": "prov_primary",
+                "actual_model": "gpt-5.4",
+                "provider_base_url": "https://api.example.test/v1",
+            },
+            "provider_attempt_count": 3,
+            "current_attempt_no": 3,
+            "current_phase": "streaming",
+            "elapsed_sec": 91.5,
+            "provider_attempt_log": [
+                {
+                    "provider_id": "prov_primary",
+                    "attempt_no": 3,
+                    "status": "IN_PROGRESS",
+                    "failure_kind": None,
+                }
+            ],
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "Current attempt" in body
+    assert "Current phase" in body
+    assert "streaming" in body
+    assert "91.5" in body
+
+
 def test_write_integration_monitor_report_only_keeps_changes(tmp_path: Path) -> None:
     paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
     reset_scenario_root(paths, clean=True)
@@ -317,6 +436,72 @@ def test_write_integration_monitor_report_only_keeps_changes(tmp_path: Path) -> 
     assert body.count("### ") == 3
     assert "静默 14 分钟后恢复" in body
     assert "tkt_plan_001" in body
+
+
+def test_write_integration_monitor_report_renders_provider_status_when_present(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    target_path = live_harness.write_integration_monitor_report(
+        paths,
+        entries=[
+            {
+                "recorded_at": "2026-04-18T13:59:41+08:00",
+                "workflow_status": "EXECUTING",
+                "stage": "plan",
+                "ticket_count": 1,
+                "event_count": 8,
+                "active_ticket_ids": ["tkt_build_001"],
+                "approval_count": 0,
+                "incident_count": 0,
+                "change_type": "state_change",
+                "summary": "provider 进入流式输出",
+                "provider_id": "prov_primary",
+                "current_attempt_no": 3,
+                "current_phase": "streaming",
+                "elapsed_sec": 91.5,
+            }
+        ],
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "prov_primary" in body
+    assert "attempt `3`" in body
+    assert "streaming" in body
+
+
+def test_write_failure_report_persists_run_report_for_failed_snapshot(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    writer = getattr(live_harness, "_write_failure_report", None)
+    assert callable(writer)
+
+    report = writer(
+        paths,
+        scenario_slug="library_management_autopilot_live",
+        workflow_id="wf_library_live",
+        failure_mode="stall",
+        completion_mode="stall",
+        elapsed_sec=901.0,
+        started_at="2026-04-18T13:54:10+08:00",
+        finished_at="2026-04-18T14:09:11+08:00",
+        snapshot_path=paths.failure_snapshot_root / "stall.json",
+        provider_snapshot={
+            "provider_attempt_count": 3,
+            "current_attempt_no": 3,
+            "current_phase": "streaming",
+            "elapsed_sec": 91.5,
+            "provider_attempt_log": [],
+        },
+    )
+
+    persisted = json.loads(paths.run_report_path.read_text(encoding="utf-8"))
+    assert report["success"] is False
+    assert persisted["failure_mode"] == "stall"
+    assert persisted["snapshot_path"].endswith("stall.json")
+    assert persisted["current_phase"] == "streaming"
+
 
 
 def test_assert_source_delivery_payload_quality_requires_raw_verification_output() -> None:

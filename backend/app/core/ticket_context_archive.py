@@ -8,6 +8,15 @@ from app.contracts.commands import DeveloperInspectorRefs
 from app.db.repository import ControlPlaneRepository
 
 
+PROVIDER_AUDIT_EVENT_TYPES = {
+    "PROVIDER_ATTEMPT_STARTED",
+    "PROVIDER_FIRST_TOKEN_RECEIVED",
+    "PROVIDER_RETRY_SCHEDULED",
+    "PROVIDER_ATTEMPT_FINISHED",
+    "PROVIDER_FAILOVER_SELECTED",
+}
+
+
 def _display_text(value: Any) -> str:
     text = str(value or "").strip()
     return text or "N/A"
@@ -68,6 +77,57 @@ def is_ticket_context_stale(
             compiled_execution_package_version_ref=compiled_execution_package_version_ref,
         )
     return guard_reason is not None
+
+
+def _provider_phase_from_event(event: Mapping[str, Any]) -> str | None:
+    payload = dict(event.get("payload") or {})
+    explicit_phase = str(payload.get("current_phase") or "").strip()
+    if explicit_phase:
+        return explicit_phase
+    event_type = str(event.get("event_type") or "")
+    if event_type == "PROVIDER_ATTEMPT_STARTED":
+        return "awaiting_first_token"
+    if event_type == "PROVIDER_FIRST_TOKEN_RECEIVED":
+        return "streaming"
+    if event_type == "PROVIDER_RETRY_SCHEDULED":
+        return "retry_waiting"
+    if event_type == "PROVIDER_ATTEMPT_FINISHED":
+        return "completed" if str(payload.get("status") or "").upper() == "COMPLETED" else "failed"
+    return None
+
+
+def latest_provider_audit_for_ticket(
+    repository: ControlPlaneRepository,
+    ticket_id: str,
+) -> dict[str, Any] | None:
+    with repository.connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT *
+            FROM events
+            WHERE event_type IN ({",".join("?" for _ in PROVIDER_AUDIT_EVENT_TYPES)})
+            ORDER BY sequence_no ASC
+            """,
+            tuple(sorted(PROVIDER_AUDIT_EVENT_TYPES)),
+        ).fetchall()
+    events: list[dict[str, Any]] = []
+    for row in rows:
+        event = repository._convert_event_row(row)
+        if str(event.get("ticket_id") or "") == ticket_id:
+            events.append(event)
+    if not events:
+        return None
+    latest_payload = dict(events[-1].get("payload") or {})
+    return {
+        "provider_id": latest_payload.get("provider_id"),
+        "current_attempt_no": int(latest_payload.get("attempt_no") or 0),
+        "current_phase": _provider_phase_from_event(events[-1]),
+        "elapsed_sec": latest_payload.get("elapsed_sec"),
+        "provider_attempt_count": max(
+            [int((event.get("payload") or {}).get("attempt_no") or 0) for event in events],
+            default=0,
+        ),
+    }
 
 
 def _build_context_rows(
@@ -149,6 +209,7 @@ def build_ticket_context_markdown(
     developer_inspector_refs: DeveloperInspectorRefs | None = None,
     compile_manifest: Mapping[str, Any] | None = None,
     terminal_state: Mapping[str, Any] | None = None,
+    provider_audit: Mapping[str, Any] | None = None,
 ) -> str:
     meta = dict(compiled_execution_package.get("meta") or {})
     execution = dict(compiled_execution_package.get("execution") or {})
@@ -287,6 +348,17 @@ def build_ticket_context_markdown(
             *_developer_inspector_lines(developer_inspector_refs),
         ]
     )
+    if provider_audit:
+        lines.extend(
+            [
+                "",
+                "## Provider Audit",
+                f"- Provider: `{provider_audit.get('provider_id') or 'N/A'}`",
+                f"- Attempt: `{provider_audit.get('current_attempt_no') or 'N/A'}` / `{provider_audit.get('provider_attempt_count') or 'N/A'}`",
+                f"- Phase: `{provider_audit.get('current_phase') or 'N/A'}`",
+                f"- Elapsed Sec: `{provider_audit.get('elapsed_sec') if provider_audit.get('elapsed_sec') is not None else 'N/A'}`",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -297,6 +369,7 @@ def write_ticket_context_markdown(
     developer_inspector_refs: DeveloperInspectorRefs | None = None,
     compile_manifest: Mapping[str, Any] | None = None,
     terminal_state: Mapping[str, Any] | None = None,
+    provider_audit: Mapping[str, Any] | None = None,
 ) -> Path:
     meta = dict(compiled_execution_package.get("meta") or {})
     ticket_id = str(meta.get("ticket_id") or "").strip()
@@ -311,6 +384,7 @@ def write_ticket_context_markdown(
         developer_inspector_refs=developer_inspector_refs,
         compile_manifest=compile_manifest,
         terminal_state=terminal_state,
+        provider_audit=provider_audit,
     )
     try:
         temp_path.write_text(body, encoding="utf-8")

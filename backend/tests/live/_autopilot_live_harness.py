@@ -27,6 +27,13 @@ DEFAULT_TIMEOUT_SEC = 7200
 DEFAULT_LIVE_PROVIDER_TIMEOUT_SEC = 300
 MAX_STALL_TICKS = 25
 TERMINAL_TICKET_STATUSES = {"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}
+PROVIDER_AUDIT_EVENT_TYPES = {
+    "PROVIDER_ATTEMPT_STARTED",
+    "PROVIDER_FIRST_TOKEN_RECEIVED",
+    "PROVIDER_RETRY_SCHEDULED",
+    "PROVIDER_ATTEMPT_FINISHED",
+    "PROVIDER_FAILOVER_SELECTED",
+}
 GOVERNANCE_DOCUMENT_SCHEMA_REFS = {
     "architecture_brief",
     "technology_decision",
@@ -292,6 +299,28 @@ def workflow_terminal_events(repository, workflow_id: str) -> dict[str, dict[str
         }
 
 
+def workflow_provider_audit_events(repository, workflow_id: str) -> dict[str, list[dict[str, Any]]]:
+    with repository.connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT *
+            FROM events
+            WHERE workflow_id = ?
+              AND event_type IN ({",".join("?" for _ in PROVIDER_AUDIT_EVENT_TYPES)})
+            ORDER BY sequence_no ASC
+            """,
+            (workflow_id, *sorted(PROVIDER_AUDIT_EVENT_TYPES)),
+        ).fetchall()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        event = repository._convert_event_row(row)
+        ticket_id = str(event.get("ticket_id") or "").strip()
+        if not ticket_id:
+            continue
+        grouped.setdefault(ticket_id, []).append(event)
+    return grouped
+
+
 def workflow_approvals(repository, workflow_id: str) -> list[dict[str, Any]]:
     with repository.connection() as connection:
         rows = connection.execute(
@@ -502,10 +531,133 @@ def _build_success_report(
     return report
 
 
+def _empty_provider_runtime_snapshot() -> dict[str, Any]:
+    return {
+        "provider_candidate_chain": [],
+        "provider_attempt_log": [],
+        "fallback_blocked": False,
+        "final_failure_kind": None,
+        "retry_backoff_schedule_sec": [],
+        "preferred_provider_id": None,
+        "actual_provider_id": None,
+        "actual_model": None,
+        "provider_failover_to": None,
+        "provider_attempt_count": 0,
+        "current_attempt_no": 0,
+        "current_phase": None,
+        "elapsed_sec": 0.0,
+    }
+
+
+def _phase_from_provider_audit_event(event: dict[str, Any]) -> str | None:
+    payload = dict(event.get("payload") or {})
+    explicit_phase = str(payload.get("current_phase") or "").strip()
+    if explicit_phase:
+        return explicit_phase
+    event_type = str(event.get("event_type") or "")
+    if event_type == "PROVIDER_ATTEMPT_STARTED":
+        return "awaiting_first_token"
+    if event_type == "PROVIDER_FIRST_TOKEN_RECEIVED":
+        return "streaming"
+    if event_type == "PROVIDER_RETRY_SCHEDULED":
+        return "retry_waiting"
+    if event_type == "PROVIDER_ATTEMPT_FINISHED":
+        return "completed" if str(payload.get("status") or "").upper() == "COMPLETED" else "failed"
+    return None
+
+
+def _provider_snapshot_from_audit_events(events: list[dict[str, Any]]) -> dict[str, Any]:
+    if not events:
+        return _empty_provider_runtime_snapshot()
+
+    attempt_log_by_key: dict[tuple[str, int], dict[str, Any]] = {}
+    retry_backoff_schedule_sec: list[Any] = []
+    provider_candidate_chain: list[str] = []
+    provider_failover_to: str | None = None
+    latest_payload = dict(events[-1].get("payload") or {})
+
+    for event in events:
+        payload = dict(event.get("payload") or {})
+        if payload.get("retry_backoff_schedule_sec"):
+            retry_backoff_schedule_sec = list(payload.get("retry_backoff_schedule_sec") or [])
+        if payload.get("provider_candidate_chain"):
+            provider_candidate_chain = list(payload.get("provider_candidate_chain") or [])
+        if payload.get("to_provider_id"):
+            provider_failover_to = str(payload.get("to_provider_id") or "")
+
+        provider_id = str(payload.get("provider_id") or "").strip()
+        attempt_no = int(payload.get("attempt_no") or 0)
+        if not provider_id or attempt_no <= 0:
+            continue
+        key = (provider_id, attempt_no)
+        current = attempt_log_by_key.setdefault(
+            key,
+            {
+                "provider_id": provider_id,
+                "attempt_no": attempt_no,
+                "status": "IN_PROGRESS",
+                "failure_kind": None,
+            },
+        )
+        event_type = str(event.get("event_type") or "")
+        if event_type == "PROVIDER_ATTEMPT_FINISHED":
+            current["status"] = str(payload.get("status") or "UNKNOWN")
+            current["failure_kind"] = payload.get("failure_kind")
+        elif event_type == "PROVIDER_RETRY_SCHEDULED":
+            current["status"] = "RETRY_WAITING"
+            current["failure_kind"] = payload.get("failure_kind")
+        else:
+            current["status"] = "IN_PROGRESS"
+
+    if not provider_candidate_chain:
+        latest_provider_id = str(latest_payload.get("provider_id") or "").strip()
+        provider_candidate_chain = [latest_provider_id] if latest_provider_id else []
+
+    current_attempt_no = int(latest_payload.get("attempt_no") or 0)
+    return {
+        "provider_candidate_chain": provider_candidate_chain,
+        "provider_attempt_log": list(attempt_log_by_key.values()),
+        "fallback_blocked": False,
+        "final_failure_kind": latest_payload.get("failure_kind"),
+        "retry_backoff_schedule_sec": retry_backoff_schedule_sec,
+        "preferred_provider_id": latest_payload.get("preferred_provider_id"),
+        "actual_provider_id": latest_payload.get("actual_provider_id") or latest_payload.get("provider_id"),
+        "actual_model": latest_payload.get("actual_model"),
+        "provider_failover_to": provider_failover_to,
+        "provider_attempt_count": max(
+            [int((event.get("payload") or {}).get("attempt_no") or 0) for event in events],
+            default=current_attempt_no,
+        ),
+        "current_attempt_no": current_attempt_no,
+        "current_phase": _phase_from_provider_audit_event(events[-1]),
+        "elapsed_sec": float(latest_payload.get("elapsed_sec") or 0.0),
+    }
+
+
 def _latest_provider_runtime_snapshot(repository, workflow_id: str) -> dict[str, Any]:
     terminals = workflow_terminal_events(repository, workflow_id)
+    provider_audit_by_ticket = workflow_provider_audit_events(repository, workflow_id)
     for ticket in reversed(workflow_ticket_rows(repository, workflow_id)):
-        terminal_event = terminals.get(str(ticket["ticket_id"]))
+        ticket_id = str(ticket["ticket_id"])
+        audit_snapshot = _provider_snapshot_from_audit_events(provider_audit_by_ticket.get(ticket_id, []))
+        if audit_snapshot["provider_attempt_log"]:
+            terminal_event = terminals.get(ticket_id)
+            if terminal_event:
+                payload = terminal_event.get("payload") or {}
+                failure_detail = payload.get("failure_detail") or {}
+                if failure_detail.get("provider_candidate_chain"):
+                    audit_snapshot["provider_candidate_chain"] = list(
+                        failure_detail.get("provider_candidate_chain") or []
+                    )
+                if failure_detail.get("retry_backoff_schedule_sec"):
+                    audit_snapshot["retry_backoff_schedule_sec"] = list(
+                        failure_detail.get("retry_backoff_schedule_sec") or []
+                    )
+                audit_snapshot["fallback_blocked"] = bool(failure_detail.get("fallback_blocked"))
+                audit_snapshot["final_failure_kind"] = payload.get("failure_kind")
+            return audit_snapshot
+
+        terminal_event = terminals.get(ticket_id)
         if not terminal_event:
             continue
         payload = terminal_event.get("payload") or {}
@@ -531,18 +683,12 @@ def _latest_provider_runtime_snapshot(repository, workflow_id: str) -> dict[str,
             "actual_provider_id": assumptions.get("actual_provider_id"),
             "actual_model": assumptions.get("actual_model"),
             "provider_failover_to": assumptions.get("provider_failover_to"),
+            "provider_attempt_count": int(failure_detail.get("attempt_count") or 0),
+            "current_attempt_no": int(failure_detail.get("attempt_count") or 0),
+            "current_phase": ("failed" if payload.get("failure_kind") else "completed"),
+            "elapsed_sec": 0.0,
         }
-    return {
-        "provider_candidate_chain": [],
-        "provider_attempt_log": [],
-        "fallback_blocked": False,
-        "final_failure_kind": None,
-        "retry_backoff_schedule_sec": [],
-        "preferred_provider_id": None,
-        "actual_provider_id": None,
-        "actual_model": None,
-        "provider_failover_to": None,
-    }
+    return _empty_provider_runtime_snapshot()
 
 
 def _workflow_event_count(repository, workflow_id: str) -> int:
@@ -698,6 +844,7 @@ def _collect_monitor_snapshot(repository, workflow_id: str, *, recorded_at: str)
     tickets = workflow_ticket_rows(repository, workflow_id)
     approvals = workflow_approvals(repository, workflow_id)
     incidents = _workflow_incidents(repository, workflow_id)
+    provider_snapshot = _latest_provider_runtime_snapshot(repository, workflow_id)
     return {
         "recorded_at": recorded_at,
         "workflow_id": workflow_id,
@@ -719,6 +866,10 @@ def _collect_monitor_snapshot(repository, workflow_id: str, *, recorded_at: str)
             for item in incidents
             if str(item.get("status") or "").upper() in {"OPEN", "RECOVERING"}
         ],
+        "provider_id": provider_snapshot.get("actual_provider_id"),
+        "current_attempt_no": provider_snapshot.get("current_attempt_no"),
+        "current_phase": provider_snapshot.get("current_phase"),
+        "elapsed_sec": provider_snapshot.get("elapsed_sec"),
     }
 
 
@@ -917,6 +1068,14 @@ def write_integration_monitor_report(paths: ScenarioPaths, *, entries: list[dict
         )
         if entry.get("change_type") == "silence_recovered":
             lines.append(f"- silent for: `{_format_duration(int(entry.get('silent_for_sec') or 0))}`")
+        if entry.get("provider_id") or entry.get("current_phase"):
+            lines.append(
+                "- provider: "
+                f"`{entry.get('provider_id') or 'unknown'}` "
+                f"attempt `{entry.get('current_attempt_no') or 0}` "
+                f"phase `{entry.get('current_phase') or 'unknown'}` "
+                f"elapsed `{entry.get('elapsed_sec') or 0}`"
+            )
     paths.integration_monitor_report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return paths.integration_monitor_report_path
 
@@ -937,6 +1096,10 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
     retry_backoff_schedule_sec = list(snapshot.get("retry_backoff_schedule_sec") or [])
     fallback_blocked = bool(snapshot.get("fallback_blocked"))
     final_failure_kind = snapshot.get("final_failure_kind")
+    provider_attempt_count = int(snapshot.get("provider_attempt_count") or 0)
+    current_attempt_no = int(snapshot.get("current_attempt_no") or 0)
+    current_phase = snapshot.get("current_phase")
+    provider_elapsed_sec = snapshot.get("elapsed_sec")
     lines = [
         "# Audit Summary",
         f"- Scenario: `{report.get('scenario_slug') or 'unknown'}`",
@@ -950,6 +1113,10 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
         f"- Provider Base URL: `{provider_summary.get('provider_base_url') or 'unknown'}`",
         f"- Candidate chain: `{(' -> '.join(provider_candidate_chain) if provider_candidate_chain else 'none')}`",
         f"- Retry schedule: `{(', '.join(str(item) for item in retry_backoff_schedule_sec) if retry_backoff_schedule_sec else 'none')}`",
+        f"- Provider attempts observed: `{provider_attempt_count}`",
+        f"- Current attempt: `{current_attempt_no or 'none'}`",
+        f"- Current phase: `{current_phase or 'none'}`",
+        f"- Provider elapsed sec: `{provider_elapsed_sec if provider_elapsed_sec is not None else 'none'}`",
         f"- Fallback blocked: `{str(fallback_blocked).lower()}`",
         f"- Final failure kind: `{final_failure_kind or 'none'}`",
         "",
@@ -1050,6 +1217,39 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
     return paths.audit_summary_path
 
 
+def _write_failure_report(
+    paths: ScenarioPaths,
+    *,
+    scenario_slug: str,
+    workflow_id: str,
+    failure_mode: str,
+    completion_mode: str,
+    elapsed_sec: float,
+    started_at: str | None,
+    finished_at: str,
+    snapshot_path: Path,
+    provider_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    report = {
+        "success": False,
+        "scenario_slug": scenario_slug,
+        "workflow_id": workflow_id,
+        "completion_mode": completion_mode,
+        "failure_mode": failure_mode,
+        "elapsed_sec": elapsed_sec,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "snapshot_path": str(snapshot_path),
+        "provider_attempt_count": int(provider_snapshot.get("provider_attempt_count") or 0),
+        "current_attempt_no": int(provider_snapshot.get("current_attempt_no") or 0),
+        "current_phase": provider_snapshot.get("current_phase"),
+        "elapsed_sec_provider": float(provider_snapshot.get("elapsed_sec") or 0.0),
+        "provider_attempt_log": list(provider_snapshot.get("provider_attempt_log") or []),
+    }
+    _write_json(paths.run_report_path, report)
+    return report
+
+
 def write_failure_snapshot(
     paths: ScenarioPaths,
     repository,
@@ -1077,17 +1277,21 @@ def write_failure_snapshot(
     }
     target_path = paths.failure_snapshot_root / f"{label}.json"
     _write_json(target_path, snapshot)
+    report = _write_failure_report(
+        paths,
+        scenario_slug=paths.root.name,
+        workflow_id=workflow_id,
+        failure_mode=label,
+        completion_mode=label,
+        elapsed_sec=round(time.monotonic() - float(monitor_state.get("started_monotonic") or time.monotonic()), 2),
+        started_at=monitor_state.get("started_at"),
+        finished_at=now_local().isoformat(),
+        snapshot_path=target_path,
+        provider_snapshot=snapshot,
+    )
     write_audit_summary(
         paths,
-        report={
-            "success": False,
-            "scenario_slug": paths.root.name,
-            "workflow_id": workflow_id,
-            "completion_mode": label,
-            "started_at": monitor_state.get("started_at"),
-            "finished_at": now_local().isoformat(),
-            "elapsed_sec": round(time.monotonic() - float(monitor_state.get("started_monotonic") or time.monotonic()), 2),
-        },
+        report=report,
         snapshot={**snapshot, "tickets": list(snapshot.get("tickets") or [])[-20:]},
     )
     return target_path

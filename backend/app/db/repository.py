@@ -53,6 +53,11 @@ from app.core.constants import (
     EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
+    EVENT_PROVIDER_ATTEMPT_FINISHED,
+    EVENT_PROVIDER_ATTEMPT_STARTED,
+    EVENT_PROVIDER_FAILOVER_SELECTED,
+    EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+    EVENT_PROVIDER_RETRY_SCHEDULED,
     EVENT_TICKET_CANCELLED,
     EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
@@ -6283,6 +6288,11 @@ class ControlPlaneRepository:
             EVENT_TICKET_STARTED,
             EVENT_TICKET_COMPLETED,
             EVENT_TICKET_TIMED_OUT,
+            EVENT_PROVIDER_ATTEMPT_STARTED,
+            EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+            EVENT_PROVIDER_RETRY_SCHEDULED,
+            EVENT_PROVIDER_ATTEMPT_FINISHED,
+            EVENT_PROVIDER_FAILOVER_SELECTED,
         }:
             return "ticket"
         if event_type in {
@@ -6323,6 +6333,11 @@ class ControlPlaneRepository:
             EVENT_TICKET_STARTED,
             EVENT_TICKET_CANCELLED,
             EVENT_TICKET_COMPLETED,
+            EVENT_PROVIDER_ATTEMPT_STARTED,
+            EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+            EVENT_PROVIDER_RETRY_SCHEDULED,
+            EVENT_PROVIDER_ATTEMPT_FINISHED,
+            EVENT_PROVIDER_FAILOVER_SELECTED,
             EVENT_BOARD_REVIEW_APPROVED,
             EVENT_INCIDENT_RECOVERY_STARTED,
             EVENT_INCIDENT_CLOSED,
@@ -6358,6 +6373,16 @@ class ControlPlaneRepository:
             return f"TICKET_LEASED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_STARTED:
             return f"TICKET_STARTED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_PROVIDER_ATTEMPT_STARTED:
+            return f"PROVIDER_ATTEMPT_STARTED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_PROVIDER_FIRST_TOKEN_RECEIVED:
+            return f"PROVIDER_FIRST_TOKEN_RECEIVED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_PROVIDER_RETRY_SCHEDULED:
+            return f"PROVIDER_RETRY_SCHEDULED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_PROVIDER_ATTEMPT_FINISHED:
+            return f"PROVIDER_ATTEMPT_FINISHED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_PROVIDER_FAILOVER_SELECTED:
+            return f"PROVIDER_FAILOVER_SELECTED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_CANCEL_REQUESTED:
             return f"TICKET_CANCEL_REQUESTED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_CANCELLED:
@@ -6473,6 +6498,19 @@ class ControlPlaneRepository:
                 "refresh_policy": "debounced",
                 "refresh_after_ms": 250,
                 "toast": "Ticket started.",
+            }
+        if event_type in {
+            EVENT_PROVIDER_ATTEMPT_STARTED,
+            EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+            EVENT_PROVIDER_RETRY_SCHEDULED,
+            EVENT_PROVIDER_ATTEMPT_FINISHED,
+            EVENT_PROVIDER_FAILOVER_SELECTED,
+        }:
+            return {
+                "invalidate": ["dashboard"],
+                "refresh_policy": "debounced",
+                "refresh_after_ms": 250,
+                "toast": "Provider audit updated.",
             }
         if event_type == EVENT_TICKET_CANCEL_REQUESTED:
             return {
