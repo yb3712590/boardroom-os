@@ -1,17 +1,37 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from app.core.graph_identity import (
     GraphIdentityResolutionError,
     apply_legacy_graph_contract_compat,
+    is_review_graph_node_id,
     resolve_ticket_graph_identity,
 )
-from app.db.repository import ControlPlaneRepository
+if TYPE_CHECKING:
+    from app.db.repository import ControlPlaneRepository
 
 
 class ReviewSubjectResolutionError(RuntimeError):
     pass
+
+
+def resolve_execution_graph_target(
+    *,
+    source_graph_node_id: str,
+    source_node_id: str | None,
+) -> tuple[str, str]:
+    normalized_graph_node_id = str(source_graph_node_id or "").strip()
+    if not normalized_graph_node_id:
+        raise ReviewSubjectResolutionError("review subject is missing source_graph_node_id.")
+    if is_review_graph_node_id(normalized_graph_node_id):
+        execution_graph_node_id = normalized_graph_node_id[: -len("::review")].strip()
+        if not execution_graph_node_id:
+            raise ReviewSubjectResolutionError(
+                f"review subject graph node {normalized_graph_node_id} cannot resolve its execution lane target."
+            )
+        return execution_graph_node_id, execution_graph_node_id
+    return normalized_graph_node_id, normalized_graph_node_id
 
 
 def resolve_review_subject_identity(
@@ -62,3 +82,27 @@ def resolve_review_subject_identity(
     raise ReviewSubjectResolutionError(
         f"review subject for workflow {workflow_id} is missing source_graph_node_id and stable compat identifiers."
     )
+
+
+def resolve_review_subject_execution_identity(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    subject: Mapping[str, Any] | None,
+    connection=None,
+) -> tuple[str | None, str, str]:
+    source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_identity(
+        repository,
+        workflow_id=workflow_id,
+        subject=subject,
+        connection=connection,
+    )
+    if source_graph_node_id is None:
+        raise ReviewSubjectResolutionError(
+            f"review subject for workflow {workflow_id} is missing source_graph_node_id."
+        )
+    execution_graph_node_id, execution_node_id = resolve_execution_graph_target(
+        source_graph_node_id=source_graph_node_id,
+        source_node_id=source_node_id,
+    )
+    return source_ticket_id, execution_graph_node_id, execution_node_id

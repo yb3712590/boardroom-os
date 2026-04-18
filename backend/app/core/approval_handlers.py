@@ -117,7 +117,10 @@ from app.core.project_workspaces import (
     sync_active_worktree_index,
     sync_ticket_boardroom_views,
 )
-from app.core.review_subjects import resolve_review_subject_identity
+from app.core.review_subjects import (
+    resolve_review_subject_execution_identity,
+    resolve_review_subject_identity,
+)
 from app.core.process_assets import (
     build_decision_summary_process_asset_ref,
     build_graph_patch_process_asset_ref,
@@ -739,16 +742,17 @@ def _board_advisory_artifact_subject(
     approval = repository.get_approval_by_id(connection, str(session["approval_id"])) or {}
     review_pack = ((approval.get("payload") or {}).get("review_pack") or {}) if isinstance(approval, dict) else {}
     subject = review_pack.get("subject") or {}
-    source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_identity(
+    source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_execution_identity(
         repository,
         workflow_id=str(session.get("workflow_id") or ""),
         subject=subject,
+        connection=connection,
     )
     normalized_ticket_id = source_ticket_id or (
         str(subject.get("source_ticket_id") or session["approval_id"]).strip() or str(session["approval_id"])
     )
-    normalized_source_node_id = source_node_id or normalized_ticket_id
-    return normalized_ticket_id, str(source_graph_node_id or normalized_source_node_id), normalized_source_node_id
+    normalized_source_node_id = str(source_node_id or normalized_ticket_id).strip()
+    return normalized_ticket_id, str(source_graph_node_id), normalized_source_node_id
 
 
 def _materialize_board_advisory_full_timeline_archive(
@@ -1056,12 +1060,11 @@ def _enter_board_advisory_change_flow(
     if session is None:
         raise ValueError("Board advisory change flow is only valid for advisory-backed review packs.")
     workflow_id = str(approval["workflow_id"])
-    review_pack = ((approval.get("payload") or {}).get("review_pack") or {})
-    subject = review_pack.get("subject") or {}
-    source_ticket_id = str(subject.get("source_ticket_id") or approval["approval_id"]).strip() or str(
-        approval["approval_id"]
+    source_ticket_id, _source_graph_node_id, source_node_id = _board_advisory_artifact_subject(
+        repository,
+        connection,
+        session=session,
     )
-    source_node_id = str(subject.get("source_node_id") or "").strip() or source_ticket_id
     current_profile = repository.get_latest_governance_profile(workflow_id, connection=connection)
     if current_profile is None:
         raise ValueError("Governance profile is required before entering the advisory change flow.")

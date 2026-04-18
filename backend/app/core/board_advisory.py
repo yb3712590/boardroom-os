@@ -14,6 +14,7 @@ from app.contracts.advisory import (
 )
 from app.contracts.governance import GovernanceProfile
 from app.core.ids import new_prefixed_id
+from app.core.review_subjects import ReviewSubjectResolutionError, resolve_execution_graph_target
 from app.core.versioning import build_process_asset_canonical_ref
 
 BOARD_ADVISORY_TRIGGER_CONSTRAINT_CHANGE = "CONSTRAINT_CHANGE"
@@ -63,8 +64,14 @@ def advisory_affected_nodes(review_pack: Mapping[str, Any] | None) -> list[str]:
     subject = review_pack.get("subject")
     if not isinstance(subject, Mapping):
         return []
-    source_node_id = str(subject.get("source_node_id") or "").strip()
-    return [source_node_id] if source_node_id else []
+    source_graph_node_id = str(subject.get("source_graph_node_id") or "").strip()
+    if not source_graph_node_id:
+        raise ReviewSubjectResolutionError("board advisory review subject is missing source_graph_node_id.")
+    execution_graph_node_id, _execution_node_id = resolve_execution_graph_target(
+        source_graph_node_id=source_graph_node_id,
+        source_node_id=str(subject.get("source_node_id") or "").strip() or None,
+    )
+    return [execution_graph_node_id]
 
 
 def build_board_advisory_session(

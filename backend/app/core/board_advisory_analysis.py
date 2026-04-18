@@ -69,6 +69,7 @@ from app.core.process_assets import (
 )
 from app.core.provider_claude_code import invoke_claude_code_response
 from app.core.provider_openai_compat import invoke_openai_compat_response
+from app.core.review_subjects import resolve_review_subject_execution_identity
 from app.core.runtime_provider_config import (
     RuntimeProviderAdapterKind,
     RuntimeProviderSelection,
@@ -168,13 +169,18 @@ def _resolve_source_subject(
     approval = repository.get_approval_by_id(connection, str(session.get("approval_id") or "")) or {}
     review_pack = ((approval.get("payload") or {}).get("review_pack") or {}) if isinstance(approval, dict) else {}
     subject = review_pack.get("subject") or {}
-    source_ticket_id = str(subject.get("source_ticket_id") or session.get("approval_id") or "").strip()
-    source_node_id = str(subject.get("source_node_id") or "").strip()
-    if not source_ticket_id:
-        source_ticket_id = str(session.get("approval_id") or "").strip() or str(session.get("session_id") or "")
-    if not source_node_id:
-        source_node_id = source_ticket_id
-    return source_ticket_id, source_node_id
+    source_ticket_id, _source_graph_node_id, source_node_id = resolve_review_subject_execution_identity(
+        repository,
+        workflow_id=str(session.get("workflow_id") or ""),
+        subject=subject,
+        connection=connection,
+    )
+    normalized_ticket_id = (
+        str(source_ticket_id or "").strip()
+        or str(session.get("approval_id") or "").strip()
+        or str(session.get("session_id") or "").strip()
+    )
+    return normalized_ticket_id, source_node_id
 
 
 def _workflow_failure_fingerprint_refs(
@@ -399,7 +405,7 @@ def _build_board_advisory_analysis_compile_request(
     session_id = str(session.get("session_id") or "")
     ticket_id = _analysis_subject_ticket_id(session_id)
     node_id = _analysis_subject_node_id(session_id)
-    source_ticket_id, _ = _resolve_source_subject(repository, connection, session=session)
+    source_ticket_id, source_node_id = _resolve_source_subject(repository, connection, session=session)
     process_asset_refs = dedupe_process_asset_refs(
         [
             build_decision_summary_process_asset_ref(session_id),
@@ -438,12 +444,13 @@ def _build_board_advisory_analysis_compile_request(
         )
     ticket_stub = {
         "workflow_id": workflow_id,
-        "ticket_id": ticket_id,
-        "node_id": node_id,
+        "ticket_id": source_ticket_id,
+        "node_id": source_node_id,
         "blocking_reason_code": None,
     }
     created_spec = {
         "parent_ticket_id": source_ticket_id,
+        "graph_contract": {"lane_kind": "execution"},
         "role_profile_ref": executor.role_profile_ref,
         "output_schema_ref": GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
         "output_schema_version": GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION,

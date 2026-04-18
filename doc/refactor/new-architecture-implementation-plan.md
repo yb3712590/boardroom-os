@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-18 06:49`
+> 最后更新：`2026-04-18 07:57`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -822,6 +822,9 @@
 - [x] `P4-S7` 已完成第九批：`ceo_proposer._build_backlog_followup_batch()` 现已直接复用 `capability_plan.followup_ticket_plans[].existing_ticket_id` 作为 fanout 依赖真相；上游 followup 的 legacy `node_projection` 缺失时，不再把下游依赖错判成“尚未存在”
 - [x] `P4-S7` 已完成第九批：autopilot closeout deterministic fallback 已删掉对 `node_ceo_delivery_closeout` 的 legacy `node_projection` existence guard；没有真实 closeout ticket 时，stale compat row 不再误挡 closeout batch
 - [x] `P4-S7` 已完成第九批：controller 生成的 implementation-boundary meeting candidate 现已补正式 `source_graph_node_id`，deterministic `REQUEST_MEETING` 不再因为 command-side candidate 缺 graph subject 而在 proposer 阶段崩掉
+- [x] `P4-S7` 已完成第十批：新增单点 execution-target resolver，`review_subjects` 现在会把 review lane `source_graph_node_id` 显式映射到 execution lane target；board advisory session 不再把 stale `source_node_id` 当 affected node 真相
+- [x] `P4-S7` 已完成第十批：`approval_handlers / board_advisory_analysis` 现已统一复用这条 graph-first execution target；advisory change flow、analysis trace/archive、incident 和 patch artifact 不再靠 legacy `source_node_id` 反向猜 execution branch
+- [x] `P4-S7` 已完成第十批：advisory analysis synthetic compile spec 已补正式 `graph_contract={"lane_kind":"execution"}`，`org_context` 现在按 source execution ticket 组包；缺 graph truth 时继续显式失败，不新增 fallback
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
@@ -852,6 +855,7 @@
 - [ ] `backend/tests/test_meeting_room.py::test_meeting_projection_backfills_review_pack_after_checker_approval` 这轮为了只验证 meeting review-pack 回填主链，补了最小 fake live provider 配置来满足 checker 票租约前置；当前没有把“无 provider 时人工 checker API 是否仍应被 provider gate 阻断”纳入产品决策，后续若要改要单独开切片
 - [ ] dashboard phase 汇总这轮按 graph/runtime truth 收口后，`scope approval` 场景会显式看到后续 `build/check/review` 票仍处于 `PENDING`；如果后续要给 dashboard 单独展示“阶段完成感”或“业务里程碑感”，必须新建立法，不回退到 `node_projection` 或 checker verdict 的隐式推断
 - [ ] `py -m pytest backend/tests/test_ceo_scheduler.py -q` 在本轮相关用例已转绿后，仍会有 3 条 advisory analysis 历史用例卡在旧口子：`board-advisory-request-analysis` 当前会把 session 落成 `ANALYSIS_REJECTED`，导致 `latest_patch_proposal_ref=None`，后续 `board-advisory-apply-patch` 直接 422；这条链当前看起来不属于本轮 `P4-S7` command-side helper 收口，先记到后续单独切片
+- [ ] `py -m pytest backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 这轮补跑后仍有 5 条 advisory analysis 历史测试失败：其中 4 条 success-path 用例还停在旧的 analysis harness 假设，没有按当前 live-only advisory execution contract 补 worker/provider/mocked provider；另有 1 条 `test_board_advisory_apply_patch_rejects_synthetic_review_lane_targets` 缺失 `monkeypatch` fixture 参数。这组失败不属于本轮 `P4-S7` graph-first subject 主链
 
 ---
 
@@ -883,6 +887,36 @@
 `已在 2026-04-17 收口：review lane runtime truth、approval target、runtime runner 和 runtime liveness 现已统一切到 graph-first runtime_node_projection；保留下来的 legacy node_projection 只剩部分兼容读面，不再承担 review/runtime 主校验。`
 
 **是否需要改架构文档：**  
+`no`
+
+**状态：** `closed`
+
+### D-005
+**现象：**
+`BoardAdvisorySession.affected_nodes` 和 advisory analysis subject 之前仍直接吃 review pack 里的 legacy \`source_node_id\`；当 review pack subject 已经带正式 \`source_graph_node_id=node::<review>\` 时，这条旧兼容会把 runtime node 当成 graph patch target 真相。`
+
+**影响：**
+`advisory change flow / analysis / patch artifact / incident` 会混用 review lane graph id、execution lane graph id 和 stale runtime node，既污染新架构真相，也会把 graph patch 校验误打成 `ANALYSIS_REJECTED`。`
+
+**当前处理：**
+`已在 2026-04-18 收口：review/advisory 单点 resolver 现在会把 review lane \`source_graph_node_id\` 显式映射到 execution lane target；board advisory session affected_nodes、artifact subject 和 advisory analysis 主链都已切到这条 graph-first execution target。`
+
+**是否需要改架构文档：**
+`no`
+
+**状态：** `closed`
+
+### D-006
+**现象：**
+`board_advisory_analysis` 的 synthetic compile request 之前没有正式 `graph_contract.lane_kind`，而且 `org_context` 直接拿 synthetic advisory-analysis ticket 组包。`
+
+**影响：**
+`CompiledExecutionPackage` 主链会命中新架构的显式 graph/runtime 门禁，把 advisory analysis 打成 `ANALYSIS_REJECTED`；这不是 provider fallback 问题，而是 synthetic compile contract 不完整。`
+
+**当前处理：**
+`已在 2026-04-18 先按最小口径补齐：synthetic compile spec 现在显式写 `graph_contract={"lane_kind":"execution"}`，`org_context` 改按 source execution ticket 组包，不新增 fallback。`
+
+**是否需要改架构文档：**
 `no`
 
 **状态：** `closed`
@@ -2647,6 +2681,43 @@
 
 ---
 
+### Session `2026-04-18 / 46`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 新增单点 graph-first execution target resolver：`backend/app/core/review_subjects.py` 现在会把 review lane `source_graph_node_id` 显式映射到 execution lane target，不再让 stale `source_node_id` 反向主导 advisory branch
+- [x] 把 `backend/app/core/board_advisory.py` 的 `affected_nodes` 收口到这条新 resolver；BoardAdvisorySession 不再把 legacy `source_node_id` 写成 graph patch target 真相
+- [x] 把 `backend/app/core/approval_handlers.py` 和 `backend/app/core/board_advisory_analysis.py` 接到同一套 execution target：advisory change flow、analysis trace/archive、incident 和 patch artifact 现在统一按 graph-first execution branch 落点
+- [x] 给 advisory analysis synthetic compile spec 补正式 `graph_contract={"lane_kind":"execution"}`，并把 `org_context` 改成按 source execution ticket 组包；缺 graph truth 时继续显式失败，不新增 fallback
+- [x] 新增回归 `backend/tests/test_board_advisory_subjects.py`，锁定“review pack subject 已带 `source_graph_node_id` 时，advisory analysis 要忽略 stale legacy `source_node_id`”
+
+**验证结果：**
+- [x] `py -m pytest backend/tests/test_board_advisory_subjects.py -q` 先红后绿，最终通过（`1 passed`）
+- [x] `py -m pytest backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_exposes_latest_board_advisory_decision backend/tests/test_ceo_scheduler.py::test_ceo_shadow_prompt_mentions_latest_board_advisory_decision backend/tests/test_ceo_scheduler.py::test_ceo_shadow_snapshot_exposes_full_timeline_archive_refs_for_applied_advisory_session -q` 通过（`3 passed`）
+- [x] `py -m pytest backend/tests/test_api.py::test_dependency_inspector_prefers_source_graph_node_id_for_open_review_pack_match backend/tests/test_api.py::test_review_subject_identity_rejects_source_node_id_only_legacy_fallback -q` 通过（`2 passed`）
+- [x] `py -m pytest backend/tests/test_ceo_scheduler.py -k "advisory or request_meeting or reuse_candidates" -q` 通过（`11 passed, 72 deselected`）
+- [x] `py -m py_compile backend/app/core/review_subjects.py backend/app/core/board_advisory.py backend/app/core/board_advisory_analysis.py backend/app/core/approval_handlers.py backend/tests/test_board_advisory_subjects.py` 通过
+- [ ] `py -m pytest backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 未全绿；当前仍有 5 条 advisory 历史测试停在旧 analysis harness 假设或测试本身缺 `monkeypatch` fixture，不属于本轮 `P4-S7` graph-first subject 主链
+
+**文档更新：**
+- [x] 本计划已更新
+- [ ] `doc/TODO.md` 未更新；原因：本轮只续跑 `P4-S7` 已锁定的 graph-first subject / advisory analysis compile contract 收口，没有改变当前批次入口、阶段目标或优先级
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只继续收 advisory/meeting graph-first subject 真相和 advisory analysis compile contract，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] review pack / advisory / meeting 写入载荷仍保留 `source_node_id + source_graph_node_id` 双写兼容字段；彻底 graph-only 化需要单独切片
+- [ ] advisory analysis 宽口径 `test_api` 历史测试仍停在旧 harness 假设；如果下一轮要清，应该单独按 advisory execution contract / 测试基座收口，不应再混进 `P4-S7` subject 主链
+
+**下一轮起手动作：**
+`继续从 P4-S7 续跑；优先决定是否继续收缩 review/advisory/meeting 的 source_node_id 双写兼容，或把 advisory analysis 宽口径历史测试和 harness 假设单独拆成下一条切片。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2682,7 +2753,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第九批；governance progression / backlog fanout / closeout deterministic fallback 这些 command-side helper 已切到 graph-first 或 ticket-projection truth，stale `node_projection` 不再主判这些入口
-- 最近完成：`workflow_controller` 的 existing-ticket 判断已收回 `ticket_projection`，`ceo_proposer` 的 backlog followup / closeout existence guard 也已退出 legacy `node_projection`
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；review/advisory/meeting 写入载荷仍保留 `source_node_id` 双写兼容；`backend/tests/test_ceo_scheduler.py -q` 里仍有 3 条 advisory analysis 历史用例会把 session 落成 `ANALYSIS_REJECTED`
-- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定 source_node_id 双写兼容是否继续收缩，或把 advisory analysis 的 ANALYSIS_REJECTED 历史口子单独拆成下一条切片`
+- 当前状态：`P4-S7` 已完成第十批；review/advisory execution target 现在会从 graph-first subject 单点解析，BoardAdvisorySession affected_nodes、advisory analysis trace/archive/incident 和 synthetic compile contract 已退出 legacy source_node 主判`
+- 最近完成：`review_subjects` 新增 execution target resolver；`board_advisory / approval_handlers / board_advisory_analysis` 已统一切到这条 graph-first execution branch，advisory analysis synthetic compile spec 也已补正式 `graph_contract`
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；review/advisory/meeting 写入载荷仍保留 `source_node_id` 双写兼容；`backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 仍有 5 条 advisory 历史测试停在旧 harness 假设或测试基座缺口
+- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定 source_node_id 双写兼容是否继续收缩，或把 advisory analysis 宽口径历史测试和 harness 假设单独拆成下一条切片`
