@@ -492,6 +492,39 @@ def schema_id(schema_ref: str, schema_version: int) -> str:
     return f"{schema_ref}_v{schema_version}"
 
 
+def _normalize_openai_strict_schema(schema: object) -> object:
+    if isinstance(schema, list):
+        return [_normalize_openai_strict_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    normalized = {
+        str(key): _normalize_openai_strict_schema(value)
+        for key, value in schema.items()
+    }
+
+    if normalized.get("type") == "object":
+        properties = normalized.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+        normalized["properties"] = properties
+        existing_required = normalized.get("required")
+        if not isinstance(existing_required, list):
+            existing_required = []
+        required_keys = []
+        seen_required: set[str] = set()
+        for key in [*existing_required, *properties.keys()]:
+            key_str = str(key)
+            if key_str in seen_required:
+                continue
+            seen_required.add(key_str)
+            required_keys.append(key_str)
+        normalized["required"] = required_keys
+        normalized["additionalProperties"] = False
+
+    return normalized
+
+
 def _ui_milestone_review_schema_body() -> dict[str, Any]:
     return {
         "type": "object",
@@ -1449,11 +1482,11 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
 def get_output_schema_body(schema_ref: str, schema_version: int) -> dict[str, Any]:
     registry_entry = OUTPUT_SCHEMA_REGISTRY.get((schema_ref, schema_version))
     if registry_entry is not None:
-        return registry_entry["body"]()
-    return {
+        return _normalize_openai_strict_schema(registry_entry["body"]())
+    return _normalize_openai_strict_schema({
         "type": "object",
         "unsupported_schema": schema_id(schema_ref, schema_version),
-    }
+    })
 
 
 def validate_output_payload(

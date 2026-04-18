@@ -5,6 +5,19 @@ import pytest
 from app.core.output_schemas import get_output_schema_body, validate_output_payload
 
 
+def _iter_object_schemas(schema: object, *, path: str = "$"):
+    if isinstance(schema, dict):
+        schema_type = schema.get("type")
+        if schema_type == "object":
+            yield path, schema
+        for key, value in schema.items():
+            child_path = f"{path}.{key}" if path != "$" else f"$.{key}"
+            yield from _iter_object_schemas(value, path=child_path)
+    elif isinstance(schema, list):
+        for index, item in enumerate(schema):
+            yield from _iter_object_schemas(item, path=f"{path}[{index}]")
+
+
 def _governance_document_payload(document_kind_ref: str) -> dict[str, object]:
     return {
         "title": f"{document_kind_ref} for Boardroom OS",
@@ -46,6 +59,40 @@ def test_output_schema_registry_exposes_consensus_document_schema() -> None:
     assert "topic" in schema["required"]
     assert "participants" in schema["required"]
     assert "followup_tickets" in schema["required"]
+
+
+def test_output_schema_registry_marks_structured_objects_as_closed_for_openai_strict_mode() -> None:
+    schema_refs = [
+        "ui_milestone_review",
+        "consensus_document",
+        "architecture_brief",
+        "technology_decision",
+        "milestone_plan",
+        "detailed_design",
+        "backlog_recommendation",
+        "source_code_delivery",
+        "delivery_check_report",
+        "delivery_closeout_package",
+        "maker_checker_verdict",
+    ]
+
+    for schema_ref in schema_refs:
+        schema = get_output_schema_body(schema_ref, 1)
+        object_paths = list(_iter_object_schemas(schema))
+        assert object_paths, f"{schema_ref} should expose at least one structured object schema"
+        for path, object_schema in object_paths:
+            assert object_schema.get("additionalProperties") is False, (
+                f"{schema_ref} schema object {path} must set additionalProperties to false"
+            )
+            properties = object_schema.get("properties")
+            if isinstance(properties, dict):
+                required = object_schema.get("required")
+                assert isinstance(required, list), (
+                    f"{schema_ref} schema object {path} must expose required as a list"
+                )
+                assert set(required) == set(properties.keys()), (
+                    f"{schema_ref} schema object {path} must require every declared property for OpenAI strict mode"
+                )
 
 
 def test_output_schema_registry_accepts_valid_consensus_document_payload() -> None:
