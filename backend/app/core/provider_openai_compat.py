@@ -53,6 +53,7 @@ class OpenAICompatProviderResult:
     output_text: str
     response_id: str | None = None
     output_payload: dict[str, Any] | None = None
+    output_payloads: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -183,14 +184,41 @@ def _value_from_object(value: object | None, key: str) -> object | None:
     return getattr(value, key, None)
 
 
-def _extract_output_payload(response_payload: dict[str, object]) -> dict[str, Any] | None:
+def _parse_json_object_sequence(value: str) -> tuple[dict[str, Any], ...]:
+    decoder = json.JSONDecoder()
+    stripped = str(value or "").strip()
+    if not stripped:
+        return ()
+    items: list[dict[str, Any]] = []
+    cursor = 0
+    while cursor < len(stripped):
+        while cursor < len(stripped) and stripped[cursor].isspace():
+            cursor += 1
+        if cursor >= len(stripped):
+            break
+        try:
+            parsed, next_cursor = decoder.raw_decode(stripped, cursor)
+        except ValueError:
+            return ()
+        if not isinstance(parsed, dict):
+            return ()
+        items.append(dict(parsed))
+        cursor = next_cursor
+    return tuple(items)
+
+
+def _extract_output_payloads(response_payload: dict[str, object]) -> tuple[dict[str, Any], ...]:
     output_parsed = response_payload.get("output_parsed")
     if isinstance(output_parsed, dict):
-        return dict(output_parsed)
+        return (dict(output_parsed),)
 
     output = response_payload.get("output")
     if not isinstance(output, list):
-        return None
+        output_text = response_payload.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            return _parse_json_object_sequence(output_text)
+        return ()
+    payloads: list[dict[str, Any]] = []
     for item in output:
         if not isinstance(item, dict):
             continue
@@ -202,8 +230,18 @@ def _extract_output_payload(response_payload: dict[str, object]) -> dict[str, An
                 continue
             parsed = content_item.get("parsed")
             if isinstance(parsed, dict):
-                return dict(parsed)
-    return None
+                payloads.append(dict(parsed))
+    if payloads:
+        return tuple(payloads)
+    output_text = response_payload.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return _parse_json_object_sequence(output_text)
+    return ()
+
+
+def _extract_output_payload(response_payload: dict[str, object]) -> dict[str, Any] | None:
+    payloads = _extract_output_payloads(response_payload)
+    return dict(payloads[0]) if payloads else None
 
 
 def _extract_output_text(response_payload: dict[str, object]) -> str:
@@ -344,12 +382,11 @@ def _responses_request_payload(
     payload: dict[str, object] = {
         "model": config.model,
         "input": _build_responses_input(rendered_payload),
+        "stream": stream,
     }
     instructions = _build_responses_instructions(rendered_payload)
     if instructions is not None:
         payload["instructions"] = instructions
-    if stream:
-        payload["stream"] = True
     if config.reasoning_effort is not None:
         payload["reasoning"] = {"effort": config.reasoning_effort}
     if config.schema_name and isinstance(config.schema_body, dict):
@@ -425,13 +462,6 @@ def _call_stream_close(stream: object) -> None:
         close()
 
 
-def _call_get_final_response(stream: object) -> object | None:
-    get_final_response = getattr(stream, "get_final_response", None)
-    if callable(get_final_response):
-        return get_final_response()
-    return None
-
-
 def _build_result_from_response(
     response: object | None,
     *,
@@ -442,7 +472,8 @@ def _build_result_from_response(
     final_response_id = response_id or (
         str(response_payload.get("id")) if response_payload.get("id") is not None else None
     )
-    output_payload = _extract_output_payload(response_payload)
+    output_payloads = _extract_output_payloads(response_payload)
+    output_payload = dict(output_payloads[0]) if output_payloads else None
     output_text = ""
     if response_payload:
         try:
@@ -463,6 +494,7 @@ def _build_result_from_response(
         output_text=output_text,
         response_id=final_response_id,
         output_payload=output_payload,
+        output_payloads=output_payloads,
     )
 
 
@@ -537,13 +569,29 @@ def _extract_streaming_responses_output(
             ) from exc
 
         if event_kind == "done":
-            return _build_result_from_response(
-                _call_get_final_response(stream),
-                output_parts=output_parts,
-                response_id=response_id,
-            )
+            return _build_result_from_response(None, output_parts=output_parts, response_id=response_id)
         if event_kind == "error":
-            raise _map_sdk_exception(payload if isinstance(payload, BaseException) else RuntimeError(str(payload)))
+            error = payload if isinstance(payload, BaseException) else RuntimeError(str(payload))
+            if isinstance(error, httpx.TimeoutException):
+                raise OpenAICompatProviderUnavailableError(
+                    failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                    message=str(error),
+                    failure_detail={
+                        "provider_response_id": response_id,
+                        "provider_transport_error": type(error).__name__,
+                        "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
+                    },
+                ) from error
+            if isinstance(error, httpx.TransportError):
+                raise OpenAICompatProviderUnavailableError(
+                    failure_kind="UPSTREAM_UNAVAILABLE",
+                    message=str(error),
+                    failure_detail={
+                        "provider_response_id": response_id,
+                        "provider_transport_error": type(error).__name__,
+                    },
+                ) from error
+            raise _map_sdk_exception(error)
 
         event = payload
         event_type = str(_value_from_object(event, "type") or "")
@@ -652,12 +700,21 @@ def _invoke_streaming_responses(
         )
     try:
         client = _client_for(config, transport=transport, client_factory=client_factory)
-        with client.responses.stream(**_responses_request_payload(config, rendered_payload, stream=True)) as stream:
-            return _extract_streaming_responses_output(
-                stream,
-                config=config,
-                audit_observer=audit_observer,
-            )
+        stream = client.responses.create(**_responses_request_payload(config, rendered_payload, stream=True))
+        enter = getattr(stream, "__enter__", None)
+        exit_ = getattr(stream, "__exit__", None)
+        if callable(enter) and callable(exit_):
+            with stream:
+                return _extract_streaming_responses_output(
+                    stream,
+                    config=config,
+                    audit_observer=audit_observer,
+                )
+        return _extract_streaming_responses_output(
+            stream,
+            config=config,
+            audit_observer=audit_observer,
+        )
     except OpenAICompatProviderError as exc:
         if audit_observer is not None:
             audit_observer(
@@ -814,17 +871,49 @@ def probe_openai_compat_connectivity(
             reference_message_count=0,
         ),
     )
-    result = invoke_openai_compat_response(
-        config,
-        rendered_payload,
-        transport=transport,
-        client_factory=client_factory,
-    )
-    return OpenAICompatConnectivityResult(
-        ok=True,
-        provider_type=config.provider_type,
-        response_id=result.response_id,
-    )
+    try:
+        result = invoke_openai_compat_response(
+            config,
+            rendered_payload,
+            transport=transport,
+            client_factory=client_factory,
+        )
+        return OpenAICompatConnectivityResult(
+            ok=True,
+            provider_type=config.provider_type,
+            response_id=result.response_id,
+        )
+    except OpenAICompatProviderBadResponseError as exc:
+        if config.provider_type != OpenAICompatProviderType.RESPONSES_STREAM:
+            raise
+        if exc.failure_detail.get("provider_status_code") != 400:
+            raise
+        fallback_result = invoke_openai_compat_response(
+            OpenAICompatProviderConfig(
+                base_url=config.base_url,
+                api_key=config.api_key,
+                model=config.model,
+                timeout_sec=config.timeout_sec,
+                connect_timeout_sec=config.connect_timeout_sec,
+                write_timeout_sec=config.write_timeout_sec,
+                first_token_timeout_sec=config.first_token_timeout_sec,
+                stream_idle_timeout_sec=config.stream_idle_timeout_sec,
+                request_total_timeout_sec=config.request_total_timeout_sec,
+                reasoning_effort=config.reasoning_effort,
+                provider_type=OpenAICompatProviderType.RESPONSES_NON_STREAM,
+                schema_name=config.schema_name,
+                schema_body=config.schema_body,
+                strict=config.strict,
+            ),
+            rendered_payload,
+            transport=transport,
+            client_factory=client_factory,
+        )
+        return OpenAICompatConnectivityResult(
+            ok=True,
+            provider_type=OpenAICompatProviderType.RESPONSES_NON_STREAM,
+            response_id=fallback_result.response_id,
+        )
 
 
 def _map_provider_error_response(response: httpx.Response, *, streaming: bool) -> None:

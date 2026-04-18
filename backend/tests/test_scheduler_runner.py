@@ -3411,6 +3411,77 @@ def test_runtime_provider_malformed_json_retries_before_ticket_failure(
     assert sleep_calls == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
 
 
+def test_runtime_provider_uses_first_schema_valid_payload_from_multiple_json_objects(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, "Provider multiple JSON object selection")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_multi_json", provider_id="prov_openai_compat")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_provider_multi_json",
+            node_id="node_runner_provider_multi_json",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": "tkt_runner_provider_multi_json",
+            "node_id": "node_runner_provider_multi_json",
+            "leased_by": "emp_frontend_multi_json",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_multi_json:tkt_runner_provider_multi_json",
+        },
+    )
+
+    def _return_multiple_payloads(config, rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text='{"bad":"shape"}{"summary":"Recovered from second object","recommended_option_id":"option_a","options":[{"option_id":"option_a","label":"Option A","summary":"Valid option","artifact_refs":[]}]}',
+            response_id="resp_multi_json",
+            output_payload={"bad": "shape"},
+            output_payloads=(
+                {"bad": "shape"},
+                {
+                    "summary": "Recovered from second object",
+                    "recommended_option_id": "option_a",
+                    "options": [
+                        {
+                            "option_id": "option_a",
+                            "label": "Option A",
+                            "summary": "Valid option",
+                            "artifact_refs": [],
+                        }
+                    ],
+                },
+            ),
+        )
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _return_multiple_payloads)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_multi_json")
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_multi_json")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_multi_json"]
+    assert ticket_projection["status"] == "COMPLETED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["payload"]["summary"] == "Recovered from second object"
+
+
 def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic(
     client,
     set_ticket_time,

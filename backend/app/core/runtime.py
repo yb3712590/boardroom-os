@@ -1645,6 +1645,51 @@ def _load_provider_payload(output_text: str) -> dict[str, Any]:
     return payload
 
 
+def _normalize_provider_payload_for_execution(
+    execution_package: CompiledExecutionPackage,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(payload)
+    if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+        normalized = _normalize_source_code_delivery_payload(execution_package, normalized)
+    validate_output_payload(
+        schema_ref=execution_package.execution.output_schema_ref,
+        schema_version=execution_package.execution.output_schema_version,
+        submitted_schema_version=_schema_version_for_execution_package(execution_package),
+        payload=normalized,
+    )
+    return normalized
+
+
+def _resolve_provider_result_payload(
+    execution_package: CompiledExecutionPackage,
+    provider_result: OpenAICompatProviderResult,
+) -> dict[str, Any]:
+    candidate_payloads = [
+        dict(item)
+        for item in list(getattr(provider_result, "output_payloads", ()) or ())
+        if isinstance(item, dict)
+    ]
+    if isinstance(provider_result.output_payload, dict):
+        candidate_payloads.insert(0, dict(provider_result.output_payload))
+
+    seen_serialized: set[str] = set()
+    for candidate in candidate_payloads:
+        serialized = json.dumps(candidate, ensure_ascii=False, sort_keys=True)
+        if serialized in seen_serialized:
+            continue
+        seen_serialized.add(serialized)
+        try:
+            return _normalize_provider_payload_for_execution(execution_package, candidate)
+        except ValueError:
+            continue
+
+    return _normalize_provider_payload_for_execution(
+        execution_package,
+        _load_provider_payload(provider_result.output_text),
+    )
+
+
 def _looks_like_truncated_json(value: str, parse_error: str) -> bool:
     normalized_error = str(parse_error or "").lower()
     if "unterminated string" in normalized_error or "unexpected end" in normalized_error:
@@ -2037,19 +2082,7 @@ def _execute_openai_compat_provider(
                 execution_package.rendered_execution_payload,
                 audit_observer=_audit_observer,
             )
-            result_payload = (
-                dict(provider_result.output_payload)
-                if isinstance(provider_result.output_payload, dict)
-                else _load_provider_payload(provider_result.output_text)
-            )
-            if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
-                result_payload = _normalize_source_code_delivery_payload(execution_package, result_payload)
-            validate_output_payload(
-                schema_ref=execution_package.execution.output_schema_ref,
-                schema_version=execution_package.execution.output_schema_version,
-                submitted_schema_version=_schema_version_for_execution_package(execution_package),
-                payload=result_payload,
-            )
+            result_payload = _resolve_provider_result_payload(execution_package, provider_result)
             if execution_package.execution.output_schema_ref == "maker_checker_verdict":
                 artifact_refs: list[str] = []
                 written_artifacts: list[dict[str, Any]] = []
