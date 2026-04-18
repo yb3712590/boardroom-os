@@ -228,11 +228,14 @@ def test_meeting_projection_exposes_source_graph_node_id(client):
         )
 
     response = client.get("/api/v1/projections/meetings/mtg_projection_graph_identity")
+    stored = repository.get_meeting_projection("mtg_projection_graph_identity")
 
     assert response.status_code == 200
     meeting = response.json()["data"]
+    assert stored is not None
     assert meeting["source_graph_node_id"] == str(node_projection["node_id"])
     assert meeting["source_node_id"] == str(node_projection["node_id"])
+    assert stored["source_node_id"] == str(node_projection["node_id"])
 
 
 def test_meeting_projection_derives_source_node_id_when_legacy_mirror_is_empty(client):

@@ -329,6 +329,12 @@
 
 ### 2026-04-18
 
+- `P4-S7` 这轮已继续收掉 `REQUEST_MEETING` 的 legacy mirror 输入：`CEORequestMeetingPayload` 正式删掉 `source_node_id`，`ceo_proposer / ceo_executor / ceo_validator` 现在只再传 `source_graph_node_id + source_ticket_id`
+- `meeting_projection` 写入和 CEO closed meeting reuse candidate 这轮都已改成按 `source_graph_node_id` 派生 `source_node_id`；stale meeting row mirror 不再污染持久化或 snapshot 复用读面
+- `create_approval_request()` 这轮也已改成按 graph-first review subject 派生 `BOARD_REVIEW_REQUIRED` 事件的 `node_id / ticket_id`；只有 legacy `source_node_id`、没有 `source_graph_node_id / source_ticket_id` 的 review subject 现在会显式 fail-closed
+- 本轮 fresh 验证已通过：`py -m pytest backend/tests/test_ceo_scheduler.py -k "request_meeting or advisory or reuse_candidates" -q`、`py -m pytest backend/tests/test_meeting_room.py -q`、`py -m pytest backend/tests/test_api.py -k "meeting or dependency_inspector or review_room" -q`、`py -m pytest backend/tests/test_api.py -k "create_approval_request_derives_open_event_node_id_from_source_graph_node_id or create_approval_request_rejects_source_node_id_only_legacy_subject" -q`、`py -m py_compile backend/app/contracts/ceo_actions.py backend/app/core/ceo_proposer.py backend/app/core/ceo_executor.py backend/app/core/ceo_validator.py backend/app/core/ceo_meeting_policy.py backend/app/core/ceo_snapshot.py backend/app/db/repository.py backend/tests/test_ceo_scheduler.py backend/tests/test_meeting_room.py backend/tests/test_api.py`
+- `backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 这轮仍保持后置；那 5 条 advisory 历史红测继续视为独立切片，不并回本轮 `P4-S7`
+
 - `P4-S7` 这轮已继续收口 review/advisory 的 graph-first subject：`backend/app/core/review_subjects.py` 现在新增 execution target resolver，review lane `source_graph_node_id` 会显式映射到 execution lane target，不再让 stale `source_node_id` 主导 advisory branch
 - `BoardAdvisorySession.affected_nodes`、advisory change flow、analysis trace/archive、incident 和 patch artifact 这轮都已切到同一条 execution target；board advisory 主链现在不会再把 legacy `source_node_id` 当 graph patch target 真相
 - advisory analysis synthetic compile spec 这轮已补正式 `graph_contract={"lane_kind":"execution"}`，`org_context` 也已改按 source execution ticket 组包；缺 graph truth 时继续显式失败，不新增 fallback

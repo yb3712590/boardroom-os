@@ -32,6 +32,7 @@ from app.core.process_assets import (
     build_project_map_slice_process_asset_ref,
     resolve_process_asset,
 )
+from app.core.review_subjects import resolve_review_subject_execution_identity
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_controller import build_workflow_controller_view
 from app.db.repository import ControlPlaneRepository
@@ -276,12 +277,22 @@ def _build_recent_closed_meeting_reuse_candidates(
     candidates: list[dict[str, Any]] = []
     for row in rows:
         meeting = repository._convert_meeting_projection_row(row)
+        source_ticket_id, source_graph_node_id, source_node_id = resolve_review_subject_execution_identity(
+            repository,
+            workflow_id=workflow_id,
+            subject={
+                "source_ticket_id": meeting["source_ticket_id"],
+                "source_graph_node_id": meeting.get("source_graph_node_id"),
+                "source_node_id": meeting.get("source_node_id"),
+            },
+            connection=connection,
+        )
         candidates.append(
             {
                 "meeting_id": str(meeting["meeting_id"]),
-                "source_ticket_id": str(meeting["source_ticket_id"]),
-                "source_graph_node_id": str(meeting.get("source_graph_node_id") or ""),
-                "source_node_id": str(meeting["source_node_id"]),
+                "source_ticket_id": str(source_ticket_id or ""),
+                "source_graph_node_id": str(source_graph_node_id),
+                "source_node_id": str(source_node_id),
                 "topic": str(meeting["topic"]),
                 "consensus_summary": str(meeting.get("consensus_summary") or ""),
                 "review_status": str(meeting.get("review_status") or ""),

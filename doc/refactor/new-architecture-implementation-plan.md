@@ -3,7 +3,7 @@
 > 状态：`active`
 > 当前阶段：`P4`
 > 当前切片：`P4-S7`
-> 最后更新：`2026-04-18 08:24`
+> 最后更新：`2026-04-18 09:10`
 > 负责人：`Codex / 人工协作`
 > 计划性质：`可续跑主计划`
 > 架构文档状态：`只读，不修改`
@@ -828,10 +828,13 @@
 - [x] `P4-S7` 已完成第十一批：`CEORequestMeetingPayload` 的 `source_node_id` 已降级成可选兼容镜像；`ceo_validator` 现在只把 `source_graph_node_id` 当身份真相，缺省 `source_node_id` 时会按当前 graph/runtime truth 校验，不再把旧镜像字段写死成必填
 - [x] `P4-S7` 已完成第十一批：`approval_handlers` 里的 `board approve / reject / modify constraints` 事件写入与 review gate merge incident 现已统一按 graph-first subject 推导 execution node；review pack 缺 `source_node_id` 时，不会再把 `node_id` 写成空值
 - [x] `P4-S7` 已完成第十一批：`build_meeting_projection()` 现已按 `source_graph_node_id` 派生 `source_node_id` 展示镜像；stale 或空的 legacy mirror 不再污染 meeting detail 真相
+- [x] `P4-S7` 已完成第十二批：`CEORequestMeetingPayload` 现已正式删掉 `source_node_id` 输入合同；`ceo_proposer / ceo_executor / ceo_validator` 与 meeting candidate 主链只再传 `source_graph_node_id + source_ticket_id`，不再让 legacy mirror 进入 CEO command-side 真相
+- [x] `P4-S7` 已完成第十二批：`repository.create_meeting_projection()` 与 `ceo_snapshot` 的 recent closed meeting reuse candidate 现已统一按 `source_graph_node_id` 派生 `source_node_id` 镜像；stale meeting row mirror 不再污染持久化或 snapshot 复用读面
+- [x] `P4-S7` 已完成第十二批：`repository.create_approval_request()` 现已按 graph-first review subject 派生 `BOARD_REVIEW_REQUIRED` 事件的 `node_id / ticket_id`；只有 legacy `source_node_id`、没有 `source_graph_node_id / source_ticket_id` 的 review subject 现在会显式 fail-closed
 
 ### 未完成
 - [ ] `P4-S6` 已把 placeholder 收成独立持久化 `planned_placeholder_projection` 真相，但仍没有进入持久化 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
-- [ ] review pack / advisory / meeting 写入载荷仍保留 `source_node_id + source_graph_node_id` 双写兼容；这轮已把 `source_node_id` 降级成派生镜像并移出主判，但彻底收成 graph-only command / event contract 仍需单独切片
+- [ ] review pack / advisory / meeting 的部分持久化 / event 载荷仍保留 `source_node_id + source_graph_node_id` 双写兼容；这轮已把 `REQUEST_MEETING` 命令合同和 `BOARD_REVIEW_REQUIRED` 事件退出 legacy mirror 主判，但彻底收成 graph-only event / review-pack contract 仍需单独切片
 - [ ] dashboard phase 汇总这轮已收成 graph/runtime truth；如果后续产品还想显示“更高层的阶段完成感”，必须单独定义正式 stage projection，不能再把旧 `node_projection` 推断逻辑塞回 dashboard
 
 ### 明确放弃
@@ -918,6 +921,21 @@
 
 **当前处理：**
 `已在 2026-04-18 先按最小口径补齐：synthetic compile spec 现在显式写 `graph_contract={"lane_kind":"execution"}`，`org_context` 改按 source execution ticket 组包，不新增 fallback。`
+
+**是否需要改架构文档：**
+`no`
+
+**状态：** `closed`
+
+### D-007
+**现象：**
+`CEORequestMeetingPayload`、`meeting_projection` 写入和 `BOARD_REVIEW_REQUIRED` open event 之前仍允许 legacy \`source_node_id\` 直接进入 command / 持久化边界；即使已有正式 \`source_graph_node_id\`，旧 mirror 也还能污染幂等 key、snapshot reuse candidate 和 approval open event 的 \`node_id\`。`
+
+**影响：**
+`review / meeting / advisory` 这条 graph-first 主链会继续把展示镜像误当输入真相；一旦 mirror stale，就会把 CEO command-side、closed meeting reuse 或 board review open event 拉回旧兼容口径。`
+
+**当前处理：**
+`已在 2026-04-18 收口：REQUEST_MEETING` 正式输入合同已删掉 `source_node_id`；`create_meeting_projection()` 和 recent closed meeting reuse candidate 现在会按 `source_graph_node_id` 派生镜像；`create_approval_request()` 也会按 graph-first review subject 派生 open event 的 `node_id / ticket_id`，legacy-only subject 直接 fail-closed。`
 
 **是否需要改架构文档：**
 `no`
@@ -2757,6 +2775,42 @@
 
 ---
 
+### Session `2026-04-18 / 48`
+**开始前判断：**
+- 当前阶段：`P4`
+- 当前切片：`P4-S7`
+- 是否继续上轮：`yes`
+
+**本轮做了什么：**
+- [x] 把 `backend/app/contracts/ceo_actions.py` 的 `CEORequestMeetingPayload.source_node_id` 正式删出输入合同；`ceo_proposer / ceo_executor / ceo_validator` 已改成只传 `source_graph_node_id + source_ticket_id`，meeting command-side 不再接受 legacy mirror
+- [x] 把 `backend/app/db/repository.py::create_meeting_projection()` 收成 graph-first 派生写入；meeting projection 持久化的 `source_node_id` 现在固定按 `source_graph_node_id` 解析，不再允许 stale mirror 落库成真
+- [x] 把 `backend/app/core/ceo_snapshot.py` 的 recent closed meeting reuse candidate 改成现场按 graph subject 派生 `source_node_id`；历史 stale meeting row mirror 不再污染 snapshot 复用读面
+- [x] 把 `backend/app/db/repository.py::create_approval_request()` 的 `BOARD_REVIEW_REQUIRED` open event 收成 graph-first 派生；review subject 只有 legacy `source_node_id` 时现在会显式 fail-closed，不再把空/脏 `node_id` 写进 event payload
+- [x] 新增回归 `test_ceo_request_meeting_batch_omits_source_node_id_payload`、`test_ceo_shadow_snapshot_derives_closed_meeting_source_node_id_from_graph_subject`、`test_create_approval_request_derives_open_event_node_id_from_source_graph_node_id`、`test_create_approval_request_rejects_source_node_id_only_legacy_subject`，并把 `test_meeting_projection_exposes_source_graph_node_id` 收正到校验持久化 mirror 也是 graph-first 派生
+
+**验证结果：**
+- [x] `py -m pytest backend/tests/test_ceo_scheduler.py -k "request_meeting or advisory or reuse_candidates" -q` 通过（`13 passed, 73 deselected`）
+- [x] `py -m pytest backend/tests/test_meeting_room.py -q` 通过（`8 passed`）
+- [x] `py -m pytest backend/tests/test_api.py -k "meeting or dependency_inspector or review_room" -q` 通过（`26 passed, 313 deselected`）
+- [x] `py -m pytest backend/tests/test_api.py -k "create_approval_request_derives_open_event_node_id_from_source_graph_node_id or create_approval_request_rejects_source_node_id_only_legacy_subject" -q` 通过（`2 passed, 337 deselected`）
+- [x] `py -m py_compile backend/app/contracts/ceo_actions.py backend/app/core/ceo_proposer.py backend/app/core/ceo_executor.py backend/app/core/ceo_validator.py backend/app/core/ceo_meeting_policy.py backend/app/core/ceo_snapshot.py backend/app/db/repository.py backend/tests/test_ceo_scheduler.py backend/tests/test_meeting_room.py backend/tests/test_api.py` 通过
+
+**文档更新：**
+- [x] 本计划已更新
+- [ ] `doc/TODO.md` 未更新；原因：本轮只续跑 `P4-S7` 已锁定的 graph-first subject / mirror 派生收口，没有改变当前批次入口、阶段目标或优先级
+- [x] `doc/history/memory-log.md` 已更新
+- [x] `README.md` 未更新；原因：本轮只继续收 `review / meeting / approval` 的 graph-first 真相边界，没有改变仓库入口叙事或运行方式
+
+**留下的未完成项：**
+- [ ] placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle
+- [ ] review pack / advisory / meeting 的部分 event / review-pack 载荷仍保留 `source_node_id + source_graph_node_id` 双写兼容；这轮只收掉了 `REQUEST_MEETING` 命令合同和 `BOARD_REVIEW_REQUIRED` open event 的 legacy mirror 主判
+- [ ] advisory analysis 宽口径 `test_api` 历史测试仍停在旧 harness 假设；如果下一轮要清，应该单独按 advisory execution contract / 测试基座收口，不应混回 `P4-S7` subject 主链
+
+**下一轮起手动作：**
+`继续从 P4-S7 续跑；优先决定是否继续收缩 review/advisory/meeting 的剩余 source_node_id 双写兼容，或把 advisory analysis 宽口径历史测试和 harness 假设单独拆成下一条切片。`
+
+---
+
 ## 11. 新会话续跑指令
 
 每次新会话先做这 6 步：
@@ -2792,7 +2846,7 @@
 
 - 当前阶段：`P4`
 - 当前切片：`P4-S7`
-- 当前状态：`P4-S7` 已完成第十一批；`CEORequestMeetingPayload`、meeting detail projection 和 board review 事件写入都已退出对 legacy `source_node_id` 的主判依赖，`source_node_id` 现在只剩派生镜像语义`
-- 最近完成：`approval_handlers` 的 board approve/reject/modify constraints 事件与 merge incident 已按 graph-first subject 派生 execution node；meeting projection 也已在读面层派生 `source_node_id`
-- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；review/advisory/meeting 的 command / event 合同仍保留 `source_node_id` 双写兼容；`backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 仍有 5 条 advisory 历史测试停在旧 harness 假设或测试基座缺口
-- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定 source_node_id 双写兼容是否继续收缩，或把 advisory analysis 宽口径历史测试和 harness 假设单独拆成下一条切片`
+- 当前状态：`P4-S7` 已完成第十二批；`REQUEST_MEETING` 正式输入合同、meeting projection 持久化和 `BOARD_REVIEW_REQUIRED` open event 都已退出对 legacy `source_node_id` 的主判依赖，`source_node_id` 继续只保留派生镜像语义`
+- 最近完成：`create_meeting_projection()`、recent closed meeting reuse candidate 和 `create_approval_request()` 现在都已按 graph subject 派生 `source_node_id / node_id`；legacy-only review subject 会显式 fail-closed
+- 当前阻塞：placeholder 仍未进入 `node_projection`、自动 scheduler materialization 或 graph-first placeholder lifecycle；review/advisory/meeting 的部分 event / review-pack 载荷仍保留 `source_node_id` 双写兼容；`backend/tests/test_api.py -k "board_advisory_request_analysis or board_advisory_apply_patch or advisory_context" -q` 仍有 5 条 advisory 历史测试停在旧 harness 假设或测试基座缺口
+- 下一步：`继续从 P4-S7 后续未完成项续跑；优先决定是否继续收缩剩余 source_node_id 双写兼容，或把 advisory analysis 宽口径历史测试和 harness 假设单独拆成下一条切片`

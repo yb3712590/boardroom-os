@@ -80,6 +80,7 @@ from app.core.board_advisory import (
     build_board_advisory_session,
     review_pack_requires_board_advisory,
 )
+from app.core.review_subjects import resolve_review_subject_execution_identity
 from app.core.versioning import (
     build_compiled_context_bundle_version_ref,
     build_compiled_execution_package_version_ref,
@@ -5181,6 +5182,16 @@ class ControlPlaneRepository:
         consensus_summary: str | None = None,
         no_consensus_reason: str | None = None,
     ) -> None:
+        _, normalized_source_graph_node_id, normalized_source_node_id = resolve_review_subject_execution_identity(
+            self,
+            workflow_id=workflow_id,
+            subject={
+                "source_ticket_id": source_ticket_id,
+                "source_graph_node_id": source_graph_node_id,
+                "source_node_id": source_node_id,
+            },
+            connection=connection,
+        )
         connection.execute(
             """
             INSERT INTO meeting_projection (
@@ -5215,8 +5226,8 @@ class ControlPlaneRepository:
                 status,
                 review_status,
                 source_ticket_id,
-                source_graph_node_id,
-                source_node_id,
+                normalized_source_graph_node_id,
+                normalized_source_node_id,
                 review_pack_id,
                 opened_at.isoformat(),
                 updated_at.isoformat(),
@@ -5400,6 +5411,21 @@ class ControlPlaneRepository:
             new_prefixed_id("brp"),
         )
         review_pack_version = int(review_pack_payload["meta"].setdefault("review_pack_version", 1))
+        subject = review_pack_payload.get("subject")
+        approval_event_ticket_id: str | None = None
+        approval_event_node_id: str | None = None
+        if isinstance(subject, dict) and any(
+            str(subject.get(field) or "").strip()
+            for field in ("source_graph_node_id", "source_ticket_id", "source_node_id")
+        ):
+            approval_event_ticket_id, _approval_event_graph_node_id, approval_event_node_id = (
+                resolve_review_subject_execution_identity(
+                    self,
+                    workflow_id=workflow_id,
+                    subject=subject,
+                    connection=connection,
+                )
+            )
 
         event_row = self.insert_event(
             connection,
@@ -5415,8 +5441,8 @@ class ControlPlaneRepository:
                 "review_pack_id": review_pack_id,
                 "review_type": approval_type,
                 "title": inbox_title,
-                "node_id": review_pack_payload.get("subject", {}).get("source_node_id"),
-                "ticket_id": review_pack_payload.get("subject", {}).get("source_ticket_id"),
+                "node_id": approval_event_node_id,
+                "ticket_id": approval_event_ticket_id,
             },
             occurred_at=occurred_at,
         )

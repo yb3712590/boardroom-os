@@ -214,7 +214,7 @@ def execute_ceo_action_batch(
                     max_rounds=4,
                     idempotency_key=(
                         f"ceo-meeting-request:{action.payload.workflow_id}:"
-                        f"{str(action.payload.source_graph_node_id or '').strip() or str(action.payload.source_node_id or '').strip() or action.payload.source_ticket_id}:{action.payload.source_ticket_id}"
+                        f"{str(action.payload.source_graph_node_id or '').strip() or action.payload.source_ticket_id}:{action.payload.source_ticket_id}"
                     ),
                 ),
             )

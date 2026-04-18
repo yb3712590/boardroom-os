@@ -263,7 +263,6 @@ def _build_ticket_failed_candidate(
             return [
                 {
                     "source_graph_node_id": None,
-                    "source_node_id": None,
                     "source_ticket_id": source_ticket_id,
                     "topic": f"Resolve blocker for {source_ticket_id}",
                     "reason": "Source ticket create spec is missing.",
@@ -342,7 +341,6 @@ def _build_ticket_failed_candidate(
     return [
         {
             "source_graph_node_id": source_graph_node_id,
-            "source_node_id": source_node_id or None,
             "source_ticket_id": source_ticket_id,
             "topic": topic,
             "reason": (
@@ -432,7 +430,6 @@ def _build_approval_candidate(
     return [
         {
             "source_graph_node_id": source_graph_node_id,
-            "source_node_id": source_node_id or None,
             "source_ticket_id": source_ticket_id or None,
             "topic": topic,
             "reason": "Board feedback requires a bounded cross-role technical decision before continuing.",

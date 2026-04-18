@@ -1530,6 +1530,49 @@ def test_ceo_shadow_snapshot_includes_reuse_candidates(client):
     assert closed_meeting["closed_at"] is not None
 
 
+def test_ceo_shadow_snapshot_derives_closed_meeting_source_node_id_from_graph_subject(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_reuse_closed_meeting_graph_mirror")
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_reuse_graph_mirror",
+        node_id="node_ceo_reuse_graph_mirror",
+        summary="Completed implementation slice ready for graph-first meeting reuse.",
+    )
+    _seed_closed_meeting(
+        client,
+        workflow_id=workflow_id,
+        meeting_id="mtg_ceo_reuse_graph_mirror",
+        source_ticket_id="tkt_ceo_reuse_graph_mirror",
+        source_graph_node_id="node_ceo_reuse_graph_mirror",
+        source_node_id="node_stale_legacy_reuse_mirror",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.update_meeting_projection(
+            connection,
+            "mtg_ceo_reuse_graph_mirror",
+            source_node_id="node_stale_legacy_reuse_mirror",
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:reuse-graph-mirror",
+    )
+
+    closed_meeting = next(
+        item
+        for item in snapshot["reuse_candidates"]["recent_closed_meetings"]
+        if item["meeting_id"] == "mtg_ceo_reuse_graph_mirror"
+    )
+
+    assert closed_meeting["source_graph_node_id"] == "node_ceo_reuse_graph_mirror"
+    assert closed_meeting["source_node_id"] == "node_ceo_reuse_graph_mirror"
+
+
 def test_ceo_shadow_snapshot_excludes_unreviewed_governance_ticket_from_reuse_candidates(client):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_ceo_unreviewed_governance")
@@ -4304,7 +4347,6 @@ def test_live_provider_can_request_meeting_from_snapshot_candidate(client, monke
                                 "workflow_id": workflow_id,
                                 "meeting_type": "TECHNICAL_DECISION",
                                 "source_graph_node_id": candidate["source_graph_node_id"],
-                                "source_node_id": candidate["source_node_id"],
                                 "source_ticket_id": candidate["source_ticket_id"],
                                 "topic": candidate["topic"],
                                 "participant_employee_ids": candidate["participant_employee_ids"],
@@ -4370,7 +4412,6 @@ def test_ceo_validator_rejects_request_meeting_when_source_graph_node_id_mismatc
                             "workflow_id": workflow_id,
                             "meeting_type": "TECHNICAL_DECISION",
                             "source_graph_node_id": "node_ceo_validator_meeting_source::wrong",
-                            "source_node_id": candidate["source_node_id"],
                             "source_ticket_id": candidate["source_ticket_id"],
                             "topic": candidate["topic"],
                             "participant_employee_ids": candidate["participant_employee_ids"],
@@ -4438,6 +4479,45 @@ def test_ceo_validator_accepts_request_meeting_without_source_node_id_when_graph
 
     assert len(result["accepted_actions"]) == 1
     assert result["rejected_actions"] == []
+
+
+def test_ceo_request_meeting_batch_omits_source_node_id_payload(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_ceo_meeting_payload_graph_only")
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_ceo_meeting_payload_graph_only",
+        node_id="node_ceo_meeting_payload_graph_only",
+        retry_budget=0,
+    )
+
+    snapshot = next(
+        run["snapshot"]
+        for run in client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+        if run["trigger_type"] == "TICKET_FAILED"
+    )
+    candidate = next(
+        item
+        for item in snapshot["meeting_candidates"]
+        if item["source_ticket_id"] == "tkt_ceo_meeting_payload_graph_only"
+    )
+
+    from app.core.ceo_proposer import _build_request_meeting_batch
+
+    batch = _build_request_meeting_batch(
+        {
+            **candidate,
+            "workflow_id": workflow_id,
+        },
+        reason="Open one bounded technical decision meeting because the snapshot exposes a single eligible candidate.",
+    )
+
+    payload = batch.actions[0].payload.model_dump(mode="json")
+
+    assert payload["source_graph_node_id"] == candidate["source_graph_node_id"]
+    assert payload["source_ticket_id"] == candidate["source_ticket_id"]
+    assert "source_node_id" not in payload
 
 
 def test_meeting_escalation_reject_does_not_trigger_recursive_ceo_meeting(client, set_ticket_time):

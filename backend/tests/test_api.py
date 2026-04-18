@@ -5961,6 +5961,96 @@ def test_board_reject_derives_event_node_id_from_source_graph_node_id(client):
     assert (latest_event.get("payload") or {}).get("node_id") == "node_homepage_visual"
 
 
+def test_create_approval_request_derives_open_event_node_id_from_source_graph_node_id(client):
+    workflow_id = "wf_approval_open_event_graph_subject"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Approval open event should derive node_id from source_graph_node_id when legacy mirror is absent.",
+    )
+    seeded = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    review_pack = json.loads(json.dumps((seeded.get("payload") or {}).get("review_pack") or {}))
+    subject = dict(review_pack.get("subject") or {})
+    assert str(subject.get("source_graph_node_id") or "").strip() == "node_homepage_visual::review"
+    subject.pop("source_node_id", None)
+    review_pack["subject"] = subject
+    review_pack.setdefault("meta", {})["approval_id"] = "apr_graph_only_review_open"
+    review_pack["meta"]["review_pack_id"] = "brp_graph_only_review_open"
+    review_pack["meta"]["review_pack_version"] = 1
+
+    with repository.transaction() as connection:
+        approval = repository.create_approval_request(
+            connection,
+            workflow_id=workflow_id,
+            approval_type=str(seeded["approval_type"]),
+            requested_by=str(seeded["requested_by"]),
+            review_pack=review_pack,
+            available_actions=list((seeded.get("payload") or {}).get("available_actions") or []),
+            draft_defaults=dict((seeded.get("payload") or {}).get("draft_defaults") or {}),
+            inbox_title=str((seeded.get("payload") or {}).get("inbox_title") or ""),
+            inbox_summary=str((seeded.get("payload") or {}).get("inbox_summary") or ""),
+            badges=list((seeded.get("payload") or {}).get("badges") or []),
+            priority=str((seeded.get("payload") or {}).get("priority") or "normal"),
+            occurred_at=seeded["created_at"],
+            idempotency_key=f"approval-open-graph-subject:{workflow_id}",
+        )
+        event = connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE workflow_id = ? AND event_type = ? AND idempotency_key = ?
+            """,
+            (workflow_id, "BOARD_REVIEW_REQUIRED", f"approval-open-graph-subject:{workflow_id}"),
+        ).fetchone()
+
+    assert approval["approval_id"] == "apr_graph_only_review_open"
+    assert event is not None
+    payload = json.loads(event["payload_json"])
+    assert payload["node_id"] == "node_homepage_visual"
+    assert payload["ticket_id"] == subject["source_ticket_id"]
+
+
+def test_create_approval_request_rejects_source_node_id_only_legacy_subject(client):
+    workflow_id = "wf_approval_open_event_legacy_subject_reject"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Approval creation should fail closed when only source_node_id is provided.",
+    )
+    seeded = _seed_review_request(client, workflow_id=workflow_id)
+    repository = client.app.state.repository
+    review_pack = json.loads(json.dumps((seeded.get("payload") or {}).get("review_pack") or {}))
+    review_pack["subject"] = {
+        "source_node_id": "node_legacy_only_review_subject",
+    }
+    review_pack.setdefault("meta", {})["approval_id"] = "apr_legacy_only_review_open"
+    review_pack["meta"]["review_pack_id"] = "brp_legacy_only_review_open"
+    review_pack["meta"]["review_pack_version"] = 1
+
+    with pytest.raises(Exception, match="source_graph_node_id|stable compat identifiers"):
+        with repository.transaction() as connection:
+            repository.create_approval_request(
+                connection,
+                workflow_id=workflow_id,
+                approval_type=str(seeded["approval_type"]),
+                requested_by=str(seeded["requested_by"]),
+                review_pack=review_pack,
+                available_actions=list((seeded.get("payload") or {}).get("available_actions") or []),
+                draft_defaults=dict((seeded.get("payload") or {}).get("draft_defaults") or {}),
+                inbox_title=str((seeded.get("payload") or {}).get("inbox_title") or ""),
+                inbox_summary=str((seeded.get("payload") or {}).get("inbox_summary") or ""),
+                badges=list((seeded.get("payload") or {}).get("badges") or []),
+                priority=str((seeded.get("payload") or {}).get("priority") or "normal"),
+                occurred_at=seeded["created_at"],
+                idempotency_key=f"approval-open-legacy-only:{workflow_id}",
+            )
+
+
 def test_dependency_inspector_shows_staged_followup_chain_after_scope_approval(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id = "wf_dependency_inspector_linear_chain"
