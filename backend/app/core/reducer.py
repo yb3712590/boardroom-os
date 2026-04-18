@@ -64,7 +64,7 @@ from app.core.constants import (
     TICKET_STATUS_TIMED_OUT,
 )
 from app.core.persona_profiles import normalize_persona_profiles
-from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
+from app.core.graph_identity import GraphIdentityResolutionError, resolve_ticket_graph_identity
 from app.core.workflow_completion import (
     infer_workflow_current_stage,
     resolve_workflow_closeout_completion,
@@ -1242,7 +1242,7 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
         ticket_id = str(payload.get("ticket_id") or "").strip()
         if not ticket_id:
             continue
-        created_specs_by_ticket_id[ticket_id] = apply_legacy_graph_contract_compat(dict(payload))
+        created_specs_by_ticket_id[ticket_id] = dict(payload)
 
     for event in events:
         payload = _event_payload(event)
@@ -1258,11 +1258,14 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
         created_spec = created_specs_by_ticket_id.get(ticket_id)
         if not ticket_id or created_spec is None:
             continue
-        identity = resolve_ticket_graph_identity(
-            ticket_id=ticket_id,
-            created_spec=created_spec,
-            runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
-        )
+        try:
+            identity = resolve_ticket_graph_identity(
+                ticket_id=ticket_id,
+                created_spec=created_spec,
+                runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
+            )
+        except GraphIdentityResolutionError:
+            continue
         key = (workflow_id, identity.graph_node_id)
         base_projection = {
             "workflow_id": workflow_id,

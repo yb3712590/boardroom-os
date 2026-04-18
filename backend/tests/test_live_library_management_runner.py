@@ -470,6 +470,49 @@ def test_write_integration_monitor_report_renders_provider_status_when_present(t
     assert "streaming" in body
 
 
+def test_write_integration_monitor_report_renders_runtime_execution_summary(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    target_path = live_harness.write_integration_monitor_report(
+        paths,
+        entries=[
+            {
+                "recorded_at": "2026-04-18T13:59:41+08:00",
+                "workflow_status": "EXECUTING",
+                "stage": "plan",
+                "ticket_count": 1,
+                "event_count": 8,
+                "active_ticket_ids": ["tkt_build_001"],
+                "approval_count": 0,
+                "incident_count": 0,
+                "change_type": "state_change",
+                "summary": "活跃 ticket 变化",
+            }
+        ],
+        runtime_execution_summary={
+            "outcomes": [],
+            "skipped": [
+                {
+                    "workflow_id": "wf_library_live",
+                    "ticket_id": "tkt_build_001",
+                    "node_id": "node_build_001",
+                    "graph_node_id": "node_build_001",
+                    "ticket_status": "LEASED",
+                    "runtime_node_status": None,
+                    "reason_code": "GRAPH_CONTRACT_MISSING",
+                    "reason": "Ticket tkt_build_001 is missing graph_contract.lane_kind.",
+                }
+            ],
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "Runtime Execution" in body
+    assert "GRAPH_CONTRACT_MISSING" in body
+    assert "tkt_build_001" in body
+
+
 def test_write_failure_report_persists_run_report_for_failed_snapshot(tmp_path: Path) -> None:
     paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
     reset_scenario_root(paths, clean=True)
@@ -493,6 +536,21 @@ def test_write_failure_report_persists_run_report_for_failed_snapshot(tmp_path: 
             "current_phase": "streaming",
             "elapsed_sec": 91.5,
             "provider_attempt_log": [],
+            "runtime_execution_summary": {
+                "outcomes": [],
+                "skipped": [
+                    {
+                        "workflow_id": "wf_library_live",
+                        "ticket_id": "tkt_build_001",
+                        "node_id": "node_build_001",
+                        "graph_node_id": "node_build_001",
+                        "ticket_status": "LEASED",
+                        "runtime_node_status": None,
+                        "reason_code": "GRAPH_CONTRACT_MISSING",
+                        "reason": "Ticket tkt_build_001 is missing graph_contract.lane_kind.",
+                    }
+                ],
+            },
         },
     )
 
@@ -501,7 +559,192 @@ def test_write_failure_report_persists_run_report_for_failed_snapshot(tmp_path: 
     assert persisted["failure_mode"] == "stall"
     assert persisted["snapshot_path"].endswith("stall.json")
     assert persisted["current_phase"] == "streaming"
+    assert persisted["runtime_execution_summary"] == {
+        "outcomes": [],
+        "skipped": [
+            {
+                "workflow_id": "wf_library_live",
+                "ticket_id": "tkt_build_001",
+                "node_id": "node_build_001",
+                "graph_node_id": "node_build_001",
+                "ticket_status": "LEASED",
+                "runtime_node_status": None,
+                "reason_code": "GRAPH_CONTRACT_MISSING",
+                "reason": "Ticket tkt_build_001 is missing graph_contract.lane_kind.",
+            }
+        ],
+    }
 
+
+
+def test_build_audit_snapshot_uses_current_workflow_runtime_execution_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_ticket_rows",
+        lambda _repository, _workflow_id: [
+            {
+                "ticket_id": "tkt_build_001",
+                "status": "LEASED",
+                "node_id": "node_build_001",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_approvals",
+        lambda _repository, _workflow_id: [],
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "_workflow_incidents",
+        lambda _repository, _workflow_id: [],
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "_latest_provider_runtime_snapshot",
+        lambda _repository, _workflow_id: live_harness._empty_provider_runtime_snapshot(),
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "_governance_documents",
+        lambda _repository, _workflow_id: [],
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "_artifact_summary",
+        lambda _repository, _workflow_id: {
+            "has_project_code": False,
+            "has_test_evidence": False,
+            "has_git_evidence": False,
+        },
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "recent_orchestration_trace",
+        lambda _repository, limit=5: [
+            {
+                "runtime_execution": {
+                    "outcomes": [],
+                    "skipped": [
+                        {
+                            "workflow_id": "wf_other",
+                            "ticket_id": "tkt_other",
+                            "node_id": "node_other",
+                            "graph_node_id": "node_other",
+                            "ticket_status": "LEASED",
+                            "runtime_node_status": None,
+                            "reason_code": "GRAPH_CONTRACT_MISSING",
+                            "reason": "Should not leak from a different workflow.",
+                        }
+                    ],
+                }
+            },
+            {
+                "runtime_execution": {
+                    "outcomes": [],
+                    "skipped": [
+                        {
+                            "workflow_id": "wf_target",
+                            "ticket_id": "tkt_build_001",
+                            "node_id": "node_build_001",
+                            "graph_node_id": "node_build_001",
+                            "ticket_status": "LEASED",
+                            "runtime_node_status": None,
+                            "reason_code": "GRAPH_CONTRACT_MISSING",
+                            "reason": "Ticket tkt_build_001 is missing graph_contract.lane_kind.",
+                        }
+                    ],
+                }
+            },
+        ],
+    )
+
+    class _Repository:
+        def get_workflow_projection(self, workflow_id: str) -> dict:
+            return {
+                "workflow_id": workflow_id,
+                "status": "EXECUTING",
+                "current_stage": "plan",
+            }
+
+    snapshot = live_harness._build_audit_snapshot(
+        _Repository(),
+        "wf_target",
+        monitor_state={"entries": []},
+        provider_id=None,
+        model_name=None,
+        provider_base_url=None,
+    )
+
+    assert snapshot["runtime_execution_summary"] == {
+        "outcomes": [],
+        "skipped": [
+            {
+                "workflow_id": "wf_target",
+                "ticket_id": "tkt_build_001",
+                "node_id": "node_build_001",
+                "graph_node_id": "node_build_001",
+                "ticket_status": "LEASED",
+                "runtime_node_status": None,
+                "reason_code": "GRAPH_CONTRACT_MISSING",
+                "reason": "Ticket tkt_build_001 is missing graph_contract.lane_kind.",
+            }
+        ],
+    }
+
+
+def test_write_audit_summary_renders_runtime_execution_summary(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    target_path = write_audit_summary(
+        paths,
+        report={
+            "success": False,
+            "scenario_slug": "library_management_autopilot_live",
+            "workflow_id": "wf_library_live",
+            "completion_mode": "stall",
+            "elapsed_sec": 901.0,
+            "started_at": "2026-04-18T13:54:10+08:00",
+            "finished_at": "2026-04-18T14:09:11+08:00",
+        },
+        snapshot={
+            "workflow": {
+                "workflow_id": "wf_library_live",
+                "status": "EXECUTING",
+                "current_stage": "plan",
+            },
+            "tickets": [
+                {
+                    "ticket_id": "tkt_build_001",
+                    "status": "LEASED",
+                    "node_id": "node_build_001",
+                }
+            ],
+            "runtime_execution_summary": {
+                "outcomes": [],
+                "skipped": [
+                    {
+                        "workflow_id": "wf_library_live",
+                        "ticket_id": "tkt_build_001",
+                        "node_id": "node_build_001",
+                        "graph_node_id": "node_build_001",
+                        "ticket_status": "LEASED",
+                        "runtime_node_status": None,
+                        "reason_code": "GRAPH_CONTRACT_MISSING",
+                        "reason": "Ticket tkt_build_001 is missing graph_contract.lane_kind.",
+                    }
+                ],
+            },
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "Runtime Execution" in body
+    assert "GRAPH_CONTRACT_MISSING" in body
+    assert "tkt_build_001" in body
 
 
 def test_assert_source_delivery_payload_quality_requires_raw_verification_output() -> None:

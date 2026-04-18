@@ -430,6 +430,33 @@ def recent_orchestration_trace(repository, *, limit: int = 5) -> list[dict[str, 
     return [json.loads(row["payload_json"]) for row in rows]
 
 
+def _runtime_execution_summary_from_trace(
+    traces: list[dict[str, Any]],
+    workflow_id: str,
+) -> dict[str, Any]:
+    outcomes: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for trace in traces:
+        runtime_execution = dict(trace.get("runtime_execution") or {})
+        for item in list(runtime_execution.get("outcomes") or []):
+            if str(item.get("workflow_id") or "") == workflow_id:
+                outcomes.append(dict(item))
+        for item in list(runtime_execution.get("skipped") or []):
+            if str(item.get("workflow_id") or "") == workflow_id:
+                skipped.append(dict(item))
+    return {
+        "outcomes": outcomes,
+        "skipped": skipped,
+    }
+
+
+def _latest_runtime_execution_summary(repository, workflow_id: str) -> dict[str, Any]:
+    return _runtime_execution_summary_from_trace(
+        recent_orchestration_trace(repository),
+        workflow_id,
+    )
+
+
 def build_runtime_ticket_audit(repository, workflow_id: str) -> list[dict[str, Any]]:
     audits: list[dict[str, Any]] = []
     created_specs = workflow_created_specs(repository, workflow_id)
@@ -845,6 +872,7 @@ def _collect_monitor_snapshot(repository, workflow_id: str, *, recorded_at: str)
     approvals = workflow_approvals(repository, workflow_id)
     incidents = _workflow_incidents(repository, workflow_id)
     provider_snapshot = _latest_provider_runtime_snapshot(repository, workflow_id)
+    runtime_execution_summary = _latest_runtime_execution_summary(repository, workflow_id)
     return {
         "recorded_at": recorded_at,
         "workflow_id": workflow_id,
@@ -870,6 +898,7 @@ def _collect_monitor_snapshot(repository, workflow_id: str, *, recorded_at: str)
         "current_attempt_no": provider_snapshot.get("current_attempt_no"),
         "current_phase": provider_snapshot.get("current_phase"),
         "elapsed_sec": provider_snapshot.get("elapsed_sec"),
+        "runtime_execution_summary": runtime_execution_summary,
     }
 
 
@@ -914,7 +943,11 @@ def _update_monitor_entries(
         )
         state["last_change_monotonic"] = now_monotonic
         state["last_change_recorded_at"] = recorded_at
-        write_integration_monitor_report(paths, entries=entries)
+        write_integration_monitor_report(
+            paths,
+            entries=entries,
+            runtime_execution_summary=snapshot.get("runtime_execution_summary"),
+        )
     elif current_signature != previous_signature:
         silence_sec = int(max(0, now_monotonic - float(state.get("last_change_monotonic") or now_monotonic)))
         if silence_sec >= 60:
@@ -941,7 +974,11 @@ def _update_monitor_entries(
         )
         state["last_change_monotonic"] = now_monotonic
         state["last_change_recorded_at"] = recorded_at
-        write_integration_monitor_report(paths, entries=entries)
+        write_integration_monitor_report(
+            paths,
+            entries=entries,
+            runtime_execution_summary=snapshot.get("runtime_execution_summary"),
+        )
 
     state["previous_snapshot"] = snapshot
     state["previous_signature"] = current_signature
@@ -1020,6 +1057,7 @@ def _build_audit_snapshot(
     approvals = workflow_approvals(repository, workflow_id)
     incidents = _workflow_incidents(repository, workflow_id)
     provider_snapshot = _latest_provider_runtime_snapshot(repository, workflow_id)
+    runtime_execution_summary = _latest_runtime_execution_summary(repository, workflow_id)
     return {
         "workflow": workflow,
         "tickets": tickets[-20:],
@@ -1045,11 +1083,52 @@ def _build_audit_snapshot(
             model_name=model_name,
             provider_base_url=provider_base_url,
         ),
+        "runtime_execution_summary": runtime_execution_summary,
         **provider_snapshot,
     }
 
 
-def write_integration_monitor_report(paths: ScenarioPaths, *, entries: list[dict[str, Any]]) -> Path:
+def _append_runtime_execution_summary(lines: list[str], runtime_execution_summary: dict[str, Any] | None) -> None:
+    summary = dict(runtime_execution_summary or {})
+    outcomes = list(summary.get("outcomes") or [])
+    skipped = list(summary.get("skipped") or [])
+    if not outcomes and not skipped:
+        return
+    lines.extend(
+        [
+            "",
+            "## Runtime Execution",
+        ]
+    )
+    if outcomes:
+        for item in outcomes:
+            lines.append(
+                "- outcome: "
+                f"`{item.get('ticket_id') or 'unknown-ticket'}` "
+                f"`{item.get('action') or 'unknown'}` "
+                f"start `{item.get('start_ack_status') or 'none'}` "
+                f"final `{item.get('final_ack_status') or 'none'}`"
+            )
+    else:
+        lines.append("- outcome: `none`")
+    if skipped:
+        for item in skipped:
+            lines.append(
+                "- skipped: "
+                f"`{item.get('ticket_id') or 'unknown-ticket'}` "
+                f"`{item.get('reason_code') or 'UNKNOWN'}` "
+                f"{item.get('reason') or ''}".rstrip()
+            )
+    else:
+        lines.append("- skipped: `none`")
+
+
+def write_integration_monitor_report(
+    paths: ScenarioPaths,
+    *,
+    entries: list[dict[str, Any]],
+    runtime_execution_summary: dict[str, Any] | None = None,
+) -> Path:
     lines = [
         "# Integration Monitor Report",
     ]
@@ -1076,6 +1155,7 @@ def write_integration_monitor_report(paths: ScenarioPaths, *, entries: list[dict
                 f"phase `{entry.get('current_phase') or 'unknown'}` "
                 f"elapsed `{entry.get('elapsed_sec') or 0}`"
             )
+    _append_runtime_execution_summary(lines, runtime_execution_summary)
     paths.integration_monitor_report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return paths.integration_monitor_report_path
 
@@ -1100,6 +1180,7 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
     current_attempt_no = int(snapshot.get("current_attempt_no") or 0)
     current_phase = snapshot.get("current_phase")
     provider_elapsed_sec = snapshot.get("elapsed_sec")
+    runtime_execution_summary = dict(snapshot.get("runtime_execution_summary") or {})
     lines = [
         "# Audit Summary",
         f"- Scenario: `{report.get('scenario_slug') or 'unknown'}`",
@@ -1185,6 +1266,7 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
             )
     else:
         lines.append("- `none`")
+    _append_runtime_execution_summary(lines, runtime_execution_summary)
     lines.extend(
         [
             "",
@@ -1245,6 +1327,7 @@ def _write_failure_report(
         "current_phase": provider_snapshot.get("current_phase"),
         "elapsed_sec_provider": float(provider_snapshot.get("elapsed_sec") or 0.0),
         "provider_attempt_log": list(provider_snapshot.get("provider_attempt_log") or []),
+        "runtime_execution_summary": dict(provider_snapshot.get("runtime_execution_summary") or {}),
     }
     _write_json(paths.run_report_path, report)
     return report
@@ -1293,6 +1376,11 @@ def write_failure_snapshot(
         paths,
         report=report,
         snapshot={**snapshot, "tickets": list(snapshot.get("tickets") or [])[-20:]},
+    )
+    write_integration_monitor_report(
+        paths,
+        entries=list(monitor_state.get("entries") or []),
+        runtime_execution_summary=snapshot.get("runtime_execution_summary"),
     )
     return target_path
 
@@ -1504,6 +1592,10 @@ def run_live_scenario(
                     report["scenario_slug"] = scenario.slug
                     report["started_at"] = monitor_state.get("started_at")
                     report["finished_at"] = now_local().isoformat()
+                    report["runtime_execution_summary"] = _latest_runtime_execution_summary(
+                        repository,
+                        workflow_id,
+                    )
                     _write_json(paths.run_report_path, report)
                     write_audit_summary(
                         paths,
@@ -1537,6 +1629,10 @@ def run_live_scenario(
                         report["scenario_slug"] = scenario.slug
                         report["started_at"] = monitor_state.get("started_at")
                         report["finished_at"] = now_local().isoformat()
+                        report["runtime_execution_summary"] = _latest_runtime_execution_summary(
+                            repository,
+                            workflow_id,
+                        )
                         _write_json(paths.run_report_path, report)
                         write_audit_summary(
                             paths,

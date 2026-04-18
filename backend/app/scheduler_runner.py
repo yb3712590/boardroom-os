@@ -34,29 +34,69 @@ def _enum_value(value):
 def _serialize_runtime_outcomes(runtime_outcomes) -> dict:
     ticket_ids: list[str] = []
     outcomes: list[dict] = []
+    skipped: list[dict] = []
     for outcome in runtime_outcomes or []:
         if isinstance(outcome, dict):
+            workflow_id = outcome.get("workflow_id")
             ticket_id = str(outcome.get("ticket_id") or "")
+            node_id = outcome.get("node_id")
+            graph_node_id = outcome.get("graph_node_id")
             lease_owner = outcome.get("lease_owner")
+            action = outcome.get("action")
+            ticket_status = outcome.get("ticket_status")
+            start_ack = outcome.get("start_ack")
+            start_ack_status = outcome.get("start_ack_status")
             final_ack = outcome.get("final_ack")
             final_ack_status = outcome.get("final_ack_status")
+            reason_code = outcome.get("reason_code")
+            reason = outcome.get("reason")
+            runtime_node_status = outcome.get("runtime_node_status")
         else:
+            workflow_id = getattr(outcome, "workflow_id", None)
             ticket_id = str(getattr(outcome, "ticket_id", "") or "")
+            node_id = getattr(outcome, "node_id", None)
+            graph_node_id = getattr(outcome, "graph_node_id", None)
             lease_owner = getattr(outcome, "lease_owner", None)
+            action = getattr(outcome, "action", None)
+            ticket_status = getattr(outcome, "ticket_status", None)
+            start_ack = getattr(outcome, "start_ack", None)
+            start_ack_status = getattr(start_ack, "status", None)
             final_ack = getattr(outcome, "final_ack", None)
             final_ack_status = getattr(final_ack, "status", None)
-        if ticket_id:
+            reason_code = getattr(outcome, "reason_code", None)
+            reason = getattr(outcome, "reason", None)
+            runtime_node_status = getattr(outcome, "runtime_node_status", None)
+        if ticket_id and action != "skip":
             ticket_ids.append(ticket_id)
-        outcomes.append(
-            {
-                "ticket_id": ticket_id,
-                "lease_owner": lease_owner,
-                "final_ack_status": _enum_value(final_ack_status),
-            }
-        )
+        serialized = {
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "graph_node_id": graph_node_id,
+            "lease_owner": lease_owner,
+            "action": action,
+            "start_ack_status": _enum_value(start_ack_status),
+            "final_ack_status": _enum_value(final_ack_status),
+        }
+        if action == "skip" or reason_code is not None:
+            skipped.append(
+                {
+                    "workflow_id": workflow_id,
+                    "ticket_id": ticket_id,
+                    "node_id": node_id,
+                    "graph_node_id": graph_node_id,
+                    "ticket_status": ticket_status,
+                    "runtime_node_status": runtime_node_status,
+                    "reason_code": reason_code,
+                    "reason": reason,
+                }
+            )
+        if action != "skip":
+            outcomes.append(serialized)
     return {
         "ticket_ids": ticket_ids,
         "outcomes": outcomes,
+        "skipped": skipped,
         "count": len(outcomes),
     }
 

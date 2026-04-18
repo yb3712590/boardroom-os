@@ -120,7 +120,6 @@ from app.core.execution_targets import (
 )
 from app.core.graph_identity import (
     GRAPH_LANE_EXECUTION,
-    apply_legacy_graph_contract_compat,
     resolve_ticket_graph_identity,
 )
 from app.core.planned_placeholder_gate import PlannedPlaceholderGateBlock
@@ -5839,9 +5838,7 @@ def handle_ticket_start(
                 ticket_id=payload.ticket_id,
                 reason="Ticket must be created before it can be started.",
             )
-        current_ticket_spec = apply_legacy_graph_contract_compat(
-            repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
-        )
+        current_ticket_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
         graph_identity = resolve_ticket_graph_identity(
             ticket_id=payload.ticket_id,
             created_spec=current_ticket_spec,
@@ -6392,9 +6389,7 @@ def handle_ticket_result_submit(
     current_ticket = repository.get_current_ticket_projection(payload.ticket_id)
     current_node = repository.get_current_node_projection(payload.workflow_id, payload.node_id)
     with repository.connection() as connection:
-        current_ticket_spec = apply_legacy_graph_contract_compat(
-            repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
-        )
+        current_ticket_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
     graph_identity = resolve_ticket_graph_identity(
         ticket_id=payload.ticket_id,
         created_spec=current_ticket_spec,
@@ -6960,9 +6955,7 @@ def _complete_ticket_locked(
         raise RuntimeError(
             f"Ticket {payload.ticket_id} cannot be completed while status is {current_ticket['status']}."
         )
-    current_ticket_spec = apply_legacy_graph_contract_compat(
-        repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
-    )
+    current_ticket_spec = repository.get_latest_ticket_created_payload(connection, payload.ticket_id) or {}
     graph_identity = resolve_ticket_graph_identity(
         ticket_id=payload.ticket_id,
         created_spec=current_ticket_spec,
@@ -7243,9 +7236,7 @@ def _complete_ticket_locked(
                     payload=payload.model_copy(update={"review_request": review_request_for_approval}),
                     source_graph_node_id=resolve_ticket_graph_identity(
                         ticket_id=payload.ticket_id,
-                        created_spec=apply_legacy_graph_contract_compat(
-                            created_spec or {"node_id": payload.node_id}
-                        ),
+                        created_spec=created_spec or {"node_id": payload.node_id},
                         runtime_node_id=payload.node_id,
                     ).graph_node_id,
                     trigger_event_id=event_row["event_id"],

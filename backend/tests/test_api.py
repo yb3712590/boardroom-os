@@ -9275,6 +9275,163 @@ def test_ticket_result_submit_rejects_stale_runtime_node_projection_version(clie
     assert "runtime node version" in response.json()["reason"].lower()
 
 
+def test_ticket_result_submit_accepts_review_lane_package_when_execution_lane_version_drifts(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-04-18T15:10:00+08:00")
+    workflow_id = "wf_review_lane_result_submit_execution_drift"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Review-lane result submit should ignore execution-lane runtime node drift.",
+    )
+    _create_lease_and_start_ticket(client, workflow_id=workflow_id)
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(workflow_id=workflow_id),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    current_node = repository.get_current_node_projection(workflow_id, "node_homepage_visual")
+    assert current_node is not None
+    checker_ticket_id = current_node["latest_ticket_id"]
+
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    assert checker_lease_response.status_code == 200
+    assert checker_lease_response.json()["status"] == "ACCEPTED"
+
+    checker_start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_homepage_visual",
+            started_by="emp_checker_1",
+        ),
+    )
+    assert checker_start_response.status_code == 200
+    assert checker_start_response.json()["status"] == "ACCEPTED"
+
+    checker_ticket = repository.get_current_ticket_projection(checker_ticket_id)
+    assert checker_ticket is not None
+    compiled = compile_and_persist_execution_artifacts(repository, checker_ticket)
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET version = version + 1
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            (workflow_id, "node_homepage_visual"),
+        )
+
+    submit_payload = _maker_checker_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id=checker_ticket_id,
+        node_id="node_homepage_visual",
+        idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:review-lane-fresh",
+    )
+    submit_payload["compile_request_id"] = compiled.compiled_execution_package.meta.compile_request_id
+    submit_payload["compiled_execution_package_version_ref"] = compiled.compiled_execution_package.meta.version_ref
+    response = client.post("/api/v1/commands/ticket-result-submit", json=submit_payload)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+
+def test_ticket_result_submit_rejects_stale_review_lane_runtime_node_projection_version(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-04-18T15:20:00+08:00")
+    workflow_id = "wf_review_lane_result_submit_review_drift"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Review-lane result submit should reject stale review-lane runtime node drift.",
+    )
+    _create_lease_and_start_ticket(client, workflow_id=workflow_id)
+
+    maker_response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(workflow_id=workflow_id),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    current_node = repository.get_current_node_projection(workflow_id, "node_homepage_visual")
+    assert current_node is not None
+    checker_ticket_id = current_node["latest_ticket_id"]
+
+    checker_lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    assert checker_lease_response.status_code == 200
+    assert checker_lease_response.json()["status"] == "ACCEPTED"
+
+    checker_start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id="node_homepage_visual",
+            started_by="emp_checker_1",
+        ),
+    )
+    assert checker_start_response.status_code == 200
+    assert checker_start_response.json()["status"] == "ACCEPTED"
+
+    checker_ticket = repository.get_current_ticket_projection(checker_ticket_id)
+    assert checker_ticket is not None
+    compiled = compile_and_persist_execution_artifacts(repository, checker_ticket)
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET version = version + 1
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            (workflow_id, "node_homepage_visual::review"),
+        )
+
+    submit_payload = _maker_checker_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id=checker_ticket_id,
+        node_id="node_homepage_visual",
+        idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:review-lane-stale",
+    )
+    submit_payload["compile_request_id"] = compiled.compiled_execution_package.meta.compile_request_id
+    submit_payload["compiled_execution_package_version_ref"] = compiled.compiled_execution_package.meta.version_ref
+    response = client.post("/api/v1/commands/ticket-result-submit", json=submit_payload)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "runtime node version" in str(response.json()["reason"]).lower()
+
+
 def test_ticket_result_submit_materializes_json_artifacts_and_exposes_ticket_artifacts_projection(
     client,
     set_ticket_time,

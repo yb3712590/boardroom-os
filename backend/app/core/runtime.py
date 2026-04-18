@@ -67,7 +67,7 @@ from app.core.runtime_provider_config import (
     resolve_runtime_provider_config,
 )
 from app.core.execution_targets import resolve_execution_target_ref_from_ticket_spec
-from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
+from app.core.graph_identity import GraphIdentityResolutionError, resolve_ticket_graph_identity
 from app.core.ticket_context_archive import write_ticket_context_markdown
 from app.core.ticket_handlers import (
     _open_provider_incident,
@@ -98,10 +98,37 @@ class RuntimeExecutionResult:
 
 @dataclass(frozen=True)
 class RuntimeExecutionOutcome:
+    workflow_id: str
     ticket_id: str
+    node_id: str
+    graph_node_id: str | None
     lease_owner: str
-    start_ack: CommandAckEnvelope
+    action: str
+    start_ack: CommandAckEnvelope | None
     final_ack: CommandAckEnvelope | None
+    ticket_status: str | None = None
+    reason_code: str | None = None
+    reason: str | None = None
+    runtime_node_status: str | None = None
+
+
+@dataclass(frozen=True)
+class _RuntimeExecutionCandidate:
+    ticket: dict[str, Any]
+    created_spec: dict[str, Any]
+    graph_node_id: str
+    action: str
+
+
+_RUNTIME_ACTION_START = "start"
+_RUNTIME_ACTION_RESUME = "resume"
+_RUNTIME_ACTION_SKIP = "skip"
+_RUNTIME_SKIP_REASON_GRAPH_CONTRACT_MISSING = "GRAPH_CONTRACT_MISSING"
+_RUNTIME_SKIP_REASON_LEASE_EXPIRED_OR_MISSING = "LEASE_EXPIRED_OR_MISSING"
+_RUNTIME_SKIP_REASON_RUNTIME_NODE_MISSING = "RUNTIME_NODE_MISSING"
+_RUNTIME_SKIP_REASON_RUNTIME_NODE_POINTER_MISMATCH = "RUNTIME_NODE_POINTER_MISMATCH"
+_RUNTIME_SKIP_REASON_RUNTIME_NODE_STATUS_MISMATCH = "RUNTIME_NODE_STATUS_MISMATCH"
+_RUNTIME_SKIP_REASON_START_REJECTED = "START_REJECTED"
 
 
 SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
@@ -202,42 +229,134 @@ def _is_provider_paused_for_ticket(
     return repository.has_open_circuit_breaker_for_provider(str(provider_id))
 
 
-def _list_runtime_startable_leased_tickets(
+def _build_runtime_skip_outcome(
+    ticket: dict[str, Any],
+    *,
+    reason_code: str,
+    reason: str,
+    graph_node_id: str | None = None,
+    runtime_node_status: str | None = None,
+) -> RuntimeExecutionOutcome:
+    return RuntimeExecutionOutcome(
+        workflow_id=str(ticket["workflow_id"]),
+        ticket_id=str(ticket["ticket_id"]),
+        node_id=str(ticket["node_id"]),
+        graph_node_id=graph_node_id,
+        lease_owner=str(ticket.get("lease_owner") or ""),
+        action=_RUNTIME_ACTION_SKIP,
+        start_ack=None,
+        final_ack=None,
+        ticket_status=str(ticket.get("status") or ""),
+        reason_code=reason_code,
+        reason=reason,
+        runtime_node_status=runtime_node_status,
+    )
+
+
+def _classify_runtime_ticket(
     repository: ControlPlaneRepository,
-) -> list[dict[str, Any]]:
+    ticket: dict[str, Any],
+) -> _RuntimeExecutionCandidate | RuntimeExecutionOutcome:
     now = now_local()
-    leased_tickets = repository.list_ticket_projections_by_statuses_readonly(["LEASED"])
-    runnable_tickets = []
-    for ticket in leased_tickets:
-        lease_owner = ticket.get("lease_owner")
-        lease_expires_at = ticket.get("lease_expires_at")
-        if lease_owner is None or lease_expires_at is None or lease_expires_at <= now:
-            continue
-        with repository.connection() as connection:
-            created_spec = apply_legacy_graph_contract_compat(
-                repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
-            )
+    lease_owner = ticket.get("lease_owner")
+    lease_expires_at = ticket.get("lease_expires_at")
+    if lease_owner is None or lease_expires_at is None or lease_expires_at <= now:
+        return _build_runtime_skip_outcome(
+            ticket,
+            reason_code=_RUNTIME_SKIP_REASON_LEASE_EXPIRED_OR_MISSING,
+            reason=f"Ticket {ticket['ticket_id']} lease is missing or expired.",
+        )
+    with repository.connection() as connection:
+        created_spec = repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+    try:
         graph_identity = resolve_ticket_graph_identity(
             ticket_id=str(ticket["ticket_id"]),
             created_spec=created_spec,
             runtime_node_id=str(ticket.get("node_id") or ""),
         )
-        runtime_node_projection = repository.get_runtime_node_projection(
-            ticket["workflow_id"],
-            graph_identity.graph_node_id,
+    except GraphIdentityResolutionError as exc:
+        return _build_runtime_skip_outcome(
+            ticket,
+            reason_code=_RUNTIME_SKIP_REASON_GRAPH_CONTRACT_MISSING,
+            reason=(
+                f"Ticket {ticket['ticket_id']} is missing graph_contract.lane_kind."
+                if "graph_contract.lane_kind" in str(exc)
+                else str(exc)
+            ),
         )
-        if runtime_node_projection is None:
-            raise RuntimeError(
-                f"runtime_node_projection is missing for leased ticket {ticket['ticket_id']} "
+
+    runtime_node_projection = repository.get_runtime_node_projection(
+        str(ticket["workflow_id"]),
+        str(graph_identity.graph_node_id),
+    )
+    if runtime_node_projection is None:
+        return _build_runtime_skip_outcome(
+            ticket,
+            reason_code=_RUNTIME_SKIP_REASON_RUNTIME_NODE_MISSING,
+            reason=(
+                f"Runtime node projection is missing for ticket {ticket['ticket_id']} "
                 f"on graph lane {graph_identity.graph_node_id}."
-            )
-        if (
-            runtime_node_projection["latest_ticket_id"] != ticket["ticket_id"]
-            or runtime_node_projection["status"] != "PENDING"
-        ):
+            ),
+            graph_node_id=str(graph_identity.graph_node_id),
+        )
+    if str(runtime_node_projection.get("latest_ticket_id") or "") != str(ticket["ticket_id"]):
+        return _build_runtime_skip_outcome(
+            ticket,
+            reason_code=_RUNTIME_SKIP_REASON_RUNTIME_NODE_POINTER_MISMATCH,
+            reason=(
+                f"Runtime node projection {graph_identity.graph_node_id} no longer points at "
+                f"ticket {ticket['ticket_id']}."
+            ),
+            graph_node_id=str(graph_identity.graph_node_id),
+            runtime_node_status=str(runtime_node_projection.get("status") or ""),
+        )
+
+    ticket_status = str(ticket.get("status") or "")
+    expected_runtime_node_status = {
+        "LEASED": "PENDING",
+        "EXECUTING": "EXECUTING",
+    }.get(ticket_status)
+    if (
+        expected_runtime_node_status is None
+        or str(runtime_node_projection.get("status") or "") != expected_runtime_node_status
+    ):
+        return _build_runtime_skip_outcome(
+            ticket,
+            reason_code=_RUNTIME_SKIP_REASON_RUNTIME_NODE_STATUS_MISMATCH,
+            reason=(
+                f"Runtime node projection {graph_identity.graph_node_id} must be "
+                f"{expected_runtime_node_status or 'N/A'} for ticket {ticket['ticket_id']}; current status is "
+                f"{runtime_node_projection.get('status') or 'UNKNOWN'}."
+            ),
+            graph_node_id=str(graph_identity.graph_node_id),
+            runtime_node_status=str(runtime_node_projection.get("status") or ""),
+        )
+
+    return _RuntimeExecutionCandidate(
+        ticket=ticket,
+        created_spec=created_spec,
+        graph_node_id=str(graph_identity.graph_node_id),
+        action=(
+            _RUNTIME_ACTION_START
+            if ticket_status == "LEASED"
+            else _RUNTIME_ACTION_RESUME
+        ),
+    )
+
+
+def _list_runtime_execution_candidates(
+    repository: ControlPlaneRepository,
+) -> tuple[list[_RuntimeExecutionCandidate], list[RuntimeExecutionOutcome]]:
+    tickets = repository.list_ticket_projections_by_statuses_readonly(["LEASED", "EXECUTING"])
+    runnable: list[_RuntimeExecutionCandidate] = []
+    skipped: list[RuntimeExecutionOutcome] = []
+    for ticket in sorted(tickets, key=_runtime_sort_key):
+        classified = _classify_runtime_ticket(repository, ticket)
+        if isinstance(classified, RuntimeExecutionOutcome):
+            skipped.append(classified)
             continue
-        runnable_tickets.append(ticket)
-    return sorted(runnable_tickets, key=_runtime_sort_key)
+        runnable.append(classified)
+    return runnable, skipped
 
 
 def _build_compiled_execution_artifacts(
@@ -2712,58 +2831,62 @@ def run_leased_ticket_runtime(
     settings = get_settings()
     developer_inspector_store = DeveloperInspectorStore(settings.developer_inspector_root)
 
-    for ticket in _list_runtime_startable_leased_tickets(repository):
+    runtime_candidates, skipped_outcomes = _list_runtime_execution_candidates(repository)
+    outcomes.extend(skipped_outcomes)
+
+    for candidate in runtime_candidates:
+        ticket = candidate.ticket
         lease_owner = str(ticket["lease_owner"])
         developer_inspector_refs = _build_runtime_developer_inspector_refs(str(ticket["ticket_id"]))
-        with repository.connection() as connection:
-            created_spec = apply_legacy_graph_contract_compat(
-                repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+        start_ack: CommandAckEnvelope | None = None
+        if candidate.action == _RUNTIME_ACTION_START:
+            current_node = repository.get_current_node_projection(
+                str(ticket["workflow_id"]),
+                str(ticket["node_id"]),
             )
-        graph_identity = resolve_ticket_graph_identity(
-            ticket_id=str(ticket["ticket_id"]),
-            created_spec=created_spec,
-            runtime_node_id=str(ticket["node_id"]),
-        )
-        current_node = repository.get_current_node_projection(
-            str(ticket["workflow_id"]),
-            str(ticket["node_id"]),
-        )
-        current_runtime_node = repository.get_runtime_node_projection(
-            str(ticket["workflow_id"]),
-            str(graph_identity.graph_node_id),
-        )
-        start_ack = handle_ticket_start(
-            repository,
-            TicketStartCommand(
-                workflow_id=ticket["workflow_id"],
-                ticket_id=ticket["ticket_id"],
-                node_id=ticket["node_id"],
-                started_by=lease_owner,
-                expected_ticket_version=int(ticket["version"]),
-                expected_node_version=(
-                    int(current_node["version"])
-                    if current_node is not None
-                    else None
-                ),
-                expected_runtime_node_version=(
-                    int(current_runtime_node["version"])
-                    if current_runtime_node is not None
-                    else None
-                ),
-                idempotency_key=_build_start_idempotency_key(ticket),
-            ),
-        )
-
-        if start_ack.status != CommandAckStatus.ACCEPTED:
-            outcomes.append(
-                RuntimeExecutionOutcome(
+            current_runtime_node = repository.get_runtime_node_projection(
+                str(ticket["workflow_id"]),
+                str(candidate.graph_node_id),
+            )
+            start_ack = handle_ticket_start(
+                repository,
+                TicketStartCommand(
+                    workflow_id=ticket["workflow_id"],
                     ticket_id=ticket["ticket_id"],
-                    lease_owner=lease_owner,
-                    start_ack=start_ack,
-                    final_ack=None,
-                )
+                    node_id=ticket["node_id"],
+                    started_by=lease_owner,
+                    expected_ticket_version=int(ticket["version"]),
+                    expected_node_version=(
+                        int(current_node["version"])
+                        if current_node is not None
+                        else None
+                    ),
+                    expected_runtime_node_version=(
+                        int(current_runtime_node["version"])
+                        if current_runtime_node is not None
+                        else None
+                    ),
+                    idempotency_key=_build_start_idempotency_key(ticket),
+                ),
             )
-            continue
+
+            if start_ack.status != CommandAckStatus.ACCEPTED:
+                outcomes.append(
+                    RuntimeExecutionOutcome(
+                        workflow_id=str(ticket["workflow_id"]),
+                        ticket_id=str(ticket["ticket_id"]),
+                        node_id=str(ticket["node_id"]),
+                        graph_node_id=candidate.graph_node_id,
+                        lease_owner=lease_owner,
+                        action=candidate.action,
+                        start_ack=start_ack,
+                        final_ack=None,
+                        ticket_status=str(ticket.get("status") or ""),
+                        reason_code=_RUNTIME_SKIP_REASON_START_REJECTED,
+                        reason=start_ack.reason,
+                    )
+                )
+                continue
 
         try:
             compiled_artifacts = _build_compiled_execution_artifacts(repository, ticket)
@@ -2781,13 +2904,11 @@ def run_leased_ticket_runtime(
                     developer_inspector_refs=developer_inspector_refs,
                     compile_manifest=compiled_artifacts.compile_manifest.model_dump(mode="json"),
                 )
-            with repository.connection() as connection:
-                created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             execution_result = _execute_runtime_with_provider_if_configured(
                 repository,
                 ticket,
                 execution_package,
-                created_spec,
+                candidate.created_spec,
             )
         except (ValidationError, ValueError) as exc:
             final_ack = handle_ticket_result_submit(
@@ -2811,10 +2932,15 @@ def run_leased_ticket_runtime(
             )
             outcomes.append(
                 RuntimeExecutionOutcome(
-                    ticket_id=ticket["ticket_id"],
+                    workflow_id=str(ticket["workflow_id"]),
+                    ticket_id=str(ticket["ticket_id"]),
+                    node_id=str(ticket["node_id"]),
+                    graph_node_id=candidate.graph_node_id,
                     lease_owner=lease_owner,
+                    action=candidate.action,
                     start_ack=start_ack,
                     final_ack=final_ack,
+                    ticket_status=str(ticket.get("status") or ""),
                 )
             )
             continue
@@ -2826,17 +2952,22 @@ def run_leased_ticket_runtime(
                 submitted_by=lease_owner,
                 execution_package=execution_package,
                 execution_result=execution_result,
-                created_spec=created_spec,
+                created_spec=candidate.created_spec,
             ),
             developer_inspector_store,
         )
 
         outcomes.append(
             RuntimeExecutionOutcome(
-                ticket_id=ticket["ticket_id"],
+                workflow_id=str(ticket["workflow_id"]),
+                ticket_id=str(ticket["ticket_id"]),
+                node_id=str(ticket["node_id"]),
+                graph_node_id=candidate.graph_node_id,
                 lease_owner=lease_owner,
+                action=candidate.action,
                 start_ack=start_ack,
                 final_ack=final_ack,
+                ticket_status=str(ticket.get("status") or ""),
             )
         )
 

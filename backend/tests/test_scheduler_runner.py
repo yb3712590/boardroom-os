@@ -105,6 +105,9 @@ def _ticket_create_payload(
         "priority": "high",
         "timeout_sla_sec": 1800,
         "deadline_at": "2026-03-28T18:00:00+08:00",
+        "graph_contract": {
+            "lane_kind": "execution",
+        },
         "excluded_employee_ids": excluded_employee_ids or [],
         "escalation_policy": {
             "on_timeout": "retry",
@@ -1881,7 +1884,83 @@ def test_runtime_runner_executes_leased_review_lane_ticket(client, set_ticket_ti
     assert [outcome.ticket_id for outcome in outcomes] == [checker_ticket_id]
     assert latest_checker is not None
     assert outcomes[0].start_ack.status.value == "ACCEPTED"
-    assert latest_checker["status"] == "EXECUTING"
+    assert outcomes[0].final_ack is not None
+    assert outcomes[0].final_ack.status.value == "ACCEPTED"
+    assert latest_checker["status"] != "EXECUTING"
+
+
+def test_runtime_runner_resumes_executing_ticket_without_restarting(client, set_ticket_time, monkeypatch):
+    set_ticket_time("2026-04-18T15:00:00+08:00")
+    workflow_id = "wf_runtime_resume_executing"
+    ticket_id = "tkt_runtime_resume_executing"
+    node_id = "node_runtime_resume_executing"
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_resume", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+    _seed_runtime_leased_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        leased_by="emp_frontend_resume",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+    )
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_frontend_resume",
+            "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
+        },
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+
+    def _fail_if_restarted(*args, **kwargs):
+        raise AssertionError("EXECUTING tickets must resume without issuing ticket-start again.")
+
+    def _fake_provider_execute(execution_package, *args, **kwargs):
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary="Provider resumed and completed the executing ticket.",
+            artifact_refs=[f"art://runtime/{ticket_id}/architecture_brief.json"],
+            result_payload={
+                "title": "Resumed architecture brief",
+                "summary": "Runtime resumed this executing ticket.",
+                "document_kind_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                "linked_document_refs": [],
+                "linked_artifact_refs": [f"art://runtime/{ticket_id}/architecture_brief.json"],
+                "source_process_asset_refs": [],
+                "decisions": ["Resume from EXECUTING without restarting."],
+                "constraints": ["Keep recovery idempotent."],
+                "sections": [
+                    {
+                        "section_id": "resume",
+                        "label": "Resume",
+                        "summary": "The ticket resumed cleanly.",
+                        "content_markdown": "The runtime recovered from the existing EXECUTING state.",
+                    }
+                ],
+                "followup_recommendations": [],
+            },
+            confidence=0.8,
+        )
+
+    monkeypatch.setattr(runtime_module, "handle_ticket_start", _fail_if_restarted)
+    monkeypatch.setattr(runtime_module, "_execute_openai_compat_provider", _fake_provider_execute)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection(ticket_id)
+
+    assert [outcome.ticket_id for outcome in outcomes] == [ticket_id]
+    assert outcomes[0].action == "resume"
+    assert outcomes[0].start_ack is None
+    assert outcomes[0].final_ack is not None
+    assert outcomes[0].final_ack.status.value == "ACCEPTED"
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == "COMPLETED"
 
 
 def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
@@ -2530,8 +2609,13 @@ def test_scheduler_runner_records_orchestration_trace_in_execution_order(client,
         call_order.append("runtime_execution")
         return [
             {
+                "workflow_id": "wf_trace_001",
                 "ticket_id": "tkt_trace_001",
+                "node_id": "node_trace_001",
+                "graph_node_id": "node_trace_001",
                 "lease_owner": "emp_frontend_2",
+                "action": "start",
+                "start_ack_status": "ACCEPTED",
                 "final_ack_status": "accepted",
             }
         ]
@@ -2563,6 +2647,93 @@ def test_scheduler_runner_records_orchestration_trace_in_execution_order(client,
     ]
     assert trace_events[0]["payload"]["ceo_maintenance"]["run_ids"] == ["ceo_trace_001"]
     assert trace_events[0]["payload"]["runtime_execution"]["ticket_ids"] == ["tkt_trace_001"]
+    assert trace_events[0]["payload"]["runtime_execution"]["outcomes"] == [
+        {
+            "workflow_id": "wf_trace_001",
+            "ticket_id": "tkt_trace_001",
+            "node_id": "node_trace_001",
+            "graph_node_id": "node_trace_001",
+            "lease_owner": "emp_frontend_2",
+            "action": "start",
+            "start_ack_status": "ACCEPTED",
+            "final_ack_status": "accepted",
+        }
+    ]
+    assert trace_events[0]["payload"]["runtime_execution"]["skipped"] == []
+
+
+def test_scheduler_runner_records_runtime_skip_reason_for_missing_graph_contract(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-04-18T15:30:00+08:00")
+    workflow_id = "wf_runtime_skip_missing_graph_contract"
+    ticket_id = "tkt_runtime_skip_missing_graph_contract"
+    node_id = "node_runtime_skip_missing_graph_contract"
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_skip", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+    _seed_runtime_leased_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        leased_by="emp_frontend_skip",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+    )
+
+    with repository.transaction() as connection:
+        row = connection.execute(
+            """
+            SELECT sequence_no, payload_json
+            FROM events
+            WHERE event_type = 'TICKET_CREATED'
+              AND json_extract(payload_json, '$.ticket_id') = ?
+            ORDER BY sequence_no DESC
+            LIMIT 1
+            """,
+            (ticket_id,),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(row["payload_json"])
+        payload.pop("graph_contract", None)
+        connection.execute(
+            "UPDATE events SET payload_json = ? WHERE sequence_no = ?",
+            (json.dumps(payload, sort_keys=True), int(row["sequence_no"])),
+        )
+
+    monkeypatch.setattr("app.scheduler_runner.run_due_ceo_maintenance", lambda *args, **kwargs: [])
+    monkeypatch.setattr("app.scheduler_runner.maybe_run_artifact_cleanup", lambda *args, **kwargs: None)
+
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-runtime-skip-missing-graph-contract",
+        max_dispatches=10,
+    )
+
+    trace_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_SCHEDULER_ORCHESTRATION_RECORDED
+    ]
+
+    assert trace_events
+    runtime_execution = trace_events[-1]["payload"]["runtime_execution"]
+    assert runtime_execution["ticket_ids"] == []
+    assert runtime_execution["outcomes"] == []
+    assert runtime_execution["skipped"] == [
+        {
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "graph_node_id": None,
+            "ticket_status": "LEASED",
+            "runtime_node_status": None,
+            "reason_code": "GRAPH_CONTRACT_MISSING",
+            "reason": f"Ticket {ticket_id} is missing graph_contract.lane_kind.",
+        }
+    ]
 
 
 def test_provider_backed_scope_delivery_chain_completes_closeout_after_canonical_scope_seed(

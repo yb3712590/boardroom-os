@@ -75,7 +75,6 @@ from app.core.constants import (
 from app.core.governance_profiles import require_governance_profile, governance_profile_to_mode_slice
 from app.core.graph_identity import (
     GRAPH_LANE_EXECUTION,
-    apply_legacy_graph_contract_compat,
     resolve_ticket_graph_identity,
 )
 from app.core.ids import new_prefixed_id
@@ -1777,9 +1776,7 @@ def build_compile_request(
     ticket: dict[str, Any],
     connection: sqlite3.Connection | None = None,
 ) -> CompileRequest:
-    created_spec = apply_legacy_graph_contract_compat(
-        _require_ticket_create_spec(repository, ticket["ticket_id"], connection=connection)
-    )
+    created_spec = _require_ticket_create_spec(repository, ticket["ticket_id"], connection=connection)
     graph_identity = resolve_ticket_graph_identity(
         ticket_id=str(ticket["ticket_id"]),
         created_spec=created_spec,

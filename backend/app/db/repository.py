@@ -85,6 +85,7 @@ from app.core.board_advisory import (
     build_board_advisory_session,
     review_pack_requires_board_advisory,
 )
+from app.core.graph_identity import GraphIdentityResolutionError, resolve_ticket_graph_identity
 from app.core.review_subjects import (
     resolve_graph_only_review_subject_execution_identity,
     resolve_review_subject_execution_identity,
@@ -3955,9 +3956,24 @@ class ControlPlaneRepository:
         latest_meta = latest_payload.get("meta") or {}
         expected_runtime_node_version = latest_meta.get("runtime_node_projection_version")
         if expected_runtime_node_version is not None:
+            latest_created_spec = self.get_latest_ticket_created_payload(
+                connection,
+                ticket_id,
+            ) or {}
+            try:
+                graph_identity = resolve_ticket_graph_identity(
+                    ticket_id=ticket_id,
+                    created_spec=latest_created_spec,
+                    runtime_node_id=str(latest_meta.get("node_id") or ""),
+                )
+            except GraphIdentityResolutionError as exc:
+                return (
+                    "Compiled execution package is outdated. Reload runtime state before retrying "
+                    f"({exc})."
+                )
             current_runtime_node = self.get_runtime_node_projection(
                 str(latest_meta.get("workflow_id") or ""),
-                str(latest_meta.get("node_id") or ""),
+                str(graph_identity.graph_node_id),
                 connection=connection,
             )
             if current_runtime_node is None:
