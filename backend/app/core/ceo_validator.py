@@ -58,6 +58,20 @@ def validate_ceo_action_batch(
 
     for action in action_batch.actions:
         if action.action_type == CEOActionType.NO_ACTION:
+            if snapshot is not None:
+                controller_state = controller_state_view(snapshot)
+                expected_action = str(controller_state.get("recommended_action") or "").strip()
+                if expected_action and expected_action != "NO_ACTION":
+                    rejected_actions.append(
+                        _action_entry(
+                            action,
+                            (
+                                "NO_ACTION is not allowed because controller_state.recommended_action is "
+                                f"{expected_action}."
+                            ),
+                        )
+                    )
+                    continue
             accepted_actions.append(_action_entry(action, "Shadow no-op is always allowed."))
             continue
 

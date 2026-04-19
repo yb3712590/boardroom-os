@@ -148,6 +148,8 @@ from app.core.output_schemas import (
     TECHNOLOGY_DECISION_SCHEMA_VERSION,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
+    build_backlog_recommendation_artifact_path,
+    build_backlog_recommendation_artifact_ref,
     validate_output_payload,
 )
 from app.core.process_assets import (
@@ -1495,6 +1497,39 @@ def _validate_governance_document_hooks(
             "Governance document tickets must keep payload.document_kind_ref aligned with "
             f"{output_schema_ref}; got {document_kind_ref or '<missing>'}."
         )
+
+    return None
+
+
+def _validate_backlog_recommendation_hooks(
+    *,
+    created_spec: dict[str, Any],
+    payload: TicketResultSubmitCommand,
+) -> str | None:
+    output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    if output_schema_ref != BACKLOG_RECOMMENDATION_SCHEMA_REF:
+        return None
+
+    expected_artifact_ref = build_backlog_recommendation_artifact_ref(payload.ticket_id)
+    expected_path = build_backlog_recommendation_artifact_path(payload.ticket_id)
+    canonical_artifact = next(
+        (
+            item
+            for item in payload.written_artifacts
+            if str(item.artifact_ref or "").strip() == expected_artifact_ref
+        ),
+        None,
+    )
+    if canonical_artifact is None:
+        return "Backlog recommendation tickets must write the canonical backlog JSON artifact."
+    if str(canonical_artifact.kind or "").upper() != "JSON":
+        return "Canonical backlog recommendation artifact must be JSON."
+    if str(canonical_artifact.path or "").strip() != expected_path:
+        return "Canonical backlog recommendation artifact path does not match the required governance path."
+    if expected_artifact_ref not in set(str(item).strip() for item in payload.artifact_refs):
+        return "Backlog recommendation artifact_refs must include the canonical backlog JSON artifact."
+    if canonical_artifact.content_json != payload.payload:
+        return "Canonical backlog recommendation artifact content_json must exactly match payload."
 
     return None
 
@@ -6578,6 +6613,11 @@ def handle_ticket_result_submit(
         )
     if hook_validation_error is None:
         hook_validation_error = _validate_governance_document_hooks(
+            created_spec=created_spec,
+            payload=payload,
+        )
+    if hook_validation_error is None:
+        hook_validation_error = _validate_backlog_recommendation_hooks(
             created_spec=created_spec,
             payload=payload,
         )

@@ -23,7 +23,7 @@ from app.core.execution_targets import (
     infer_execution_contract_payload,
 )
 from app.core.governance_profiles import build_default_governance_profile
-from app.core.output_schemas import SOURCE_CODE_DELIVERY_SCHEMA_REF
+from app.core.output_schemas import BACKLOG_RECOMMENDATION_SCHEMA_REF, SOURCE_CODE_DELIVERY_SCHEMA_REF
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.provider_openai_compat import OpenAICompatProviderResult
@@ -1270,6 +1270,70 @@ def _ticket_result_submit_payload(
             include_review_request=True,
         )["review_request"]
     return result_payload
+
+
+def _backlog_recommendation_payload(
+    *,
+    artifact_ref: str,
+    include_implementation_handoff: bool = True,
+    recommended_sequence: list[str] | None = None,
+) -> dict:
+    payload = {
+        "document_kind_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+        "title": "图书馆管理系统 backlog recommendation",
+        "summary": "把治理文档转成可执行 backlog。",
+        "linked_document_refs": ["doc://governance/upstream/current"],
+        "linked_artifact_refs": [artifact_ref],
+        "source_process_asset_refs": [],
+        "decisions": ["继续保持单一 MVP 范围，并把实现任务拆细。"],
+        "constraints": ["必须继续显式拆票，不能直接跳过任务分解。"],
+        "sections": [
+            {
+                "section_id": "recommended_ticket_split",
+                "label": "推荐工单拆分",
+                "summary": "把 backlog recommendation 变成实现工单。",
+                "content_markdown": "先做底座，再做登录，再做仪表盘。",
+            }
+        ],
+        "followup_recommendations": [
+            {
+                "recommendation_id": "rec_impl_followup",
+                "summary": "创建实现工单并保留审计链路。",
+                "target_role": "frontend_engineer",
+            }
+        ],
+    }
+    if include_implementation_handoff:
+        payload["implementation_handoff"] = {
+            "tickets": [
+                {
+                    "ticket_id": "BR-T01",
+                    "name": "登录能力交付",
+                    "summary": "交付登录页与认证模块。",
+                    "scope": ["P-01 登录页", "M1 认证模块"],
+                    "target_role": "frontend_engineer",
+                },
+                {
+                    "ticket_id": "BR-T02",
+                    "name": "主布局与通用组件底座",
+                    "summary": "交付后台主布局与通用组件底座。",
+                    "scope": ["后台主布局", "M2 布局模块", "M7 通用组件"],
+                    "target_role": "frontend_engineer",
+                },
+            ],
+            "dependency_graph": [
+                {
+                    "ticket_id": "BR-T01",
+                    "depends_on": [],
+                },
+                {
+                    "ticket_id": "BR-T02",
+                    "depends_on": ["BR-T01"],
+                },
+            ],
+            "recommended_sequence": recommended_sequence or ["BR-T01", "BR-T02"],
+        }
+    return payload
 
 
 def _meeting_escalation_review_request(
@@ -10331,6 +10395,104 @@ def test_ticket_result_submit_schema_error_converts_to_controlled_failure(client
     assert failed_events[-1]["payload"]["failure_detail"]["field_path"] == "options"
     assert failed_events[-1]["payload"]["failure_detail"]["expected"] == "non-empty array"
     assert failed_events[-1]["payload"]["failure_detail"]["actual"] == "missing"
+
+
+def test_ticket_result_submit_backlog_recommendation_requires_implementation_handoff(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    ticket_id = "tkt_backlog_schema_guard_missing_handoff"
+    node_id = "node_backlog_schema_guard_missing_handoff"
+    artifact_ref = f"art://runtime/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json"
+    _create_lease_and_start_ticket(
+        client,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
+        allowed_write_set=[f"reports/governance/{ticket_id}/*"],
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            ticket_id=ticket_id,
+            node_id=node_id,
+            schema_version=f"{BACKLOG_RECOMMENDATION_SCHEMA_REF}_v1",
+            payload=_backlog_recommendation_payload(
+                artifact_ref=artifact_ref,
+                include_implementation_handoff=False,
+            ),
+            artifact_refs=[artifact_ref],
+            written_artifacts=[
+                {
+                    "path": f"reports/governance/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": _backlog_recommendation_payload(
+                        artifact_ref=artifact_ref,
+                        include_implementation_handoff=False,
+                    ),
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_backlog_schema_guard_missing_handoff:schema-error",
+        ),
+    )
+
+    repository = client.app.state.repository
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "SCHEMA_ERROR"
+    assert failed_events[-1]["payload"]["failure_detail"]["field_path"] == "implementation_handoff"
+
+
+def test_ticket_result_submit_backlog_recommendation_requires_complete_recommended_sequence(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    ticket_id = "tkt_backlog_schema_guard_bad_sequence"
+    node_id = "node_backlog_schema_guard_bad_sequence"
+    artifact_ref = f"art://runtime/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json"
+    payload = _backlog_recommendation_payload(
+        artifact_ref=artifact_ref,
+        recommended_sequence=["BR-T01"],
+    )
+    _create_lease_and_start_ticket(
+        client,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
+        allowed_write_set=[f"reports/governance/{ticket_id}/*"],
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_ticket_result_submit_payload(
+            ticket_id=ticket_id,
+            node_id=node_id,
+            schema_version=f"{BACKLOG_RECOMMENDATION_SCHEMA_REF}_v1",
+            payload=payload,
+            artifact_refs=[artifact_ref],
+            written_artifacts=[
+                {
+                    "path": f"reports/governance/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": payload,
+                }
+            ],
+            idempotency_key="ticket-result-submit:wf_seed:tkt_backlog_schema_guard_bad_sequence:schema-error",
+        ),
+    )
+
+    repository = client.app.state.repository
+    failed_events = [
+        event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_FAILED
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert failed_events[-1]["payload"]["failure_kind"] == "SCHEMA_ERROR"
+    assert failed_events[-1]["payload"]["failure_detail"]["field_path"] == "implementation_handoff.recommended_sequence"
 
 
 def test_ticket_result_submit_write_set_violation_converts_to_controlled_failure(client, set_ticket_time):

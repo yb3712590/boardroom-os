@@ -11,12 +11,18 @@ from app.core.execution_targets import infer_execution_contract_payload, employe
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
     DETAILED_DESIGN_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     MILESTONE_PLAN_SCHEMA_REF,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
+    OutputSchemaValidationError,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
+    build_backlog_recommendation_artifact_path,
+    build_backlog_recommendation_artifact_ref,
+    schema_id,
+    validate_output_payload,
 )
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.core.workflow_progression import (
@@ -72,6 +78,10 @@ _MEETING_REQUIRED_HINTS = (
     "meeting escalation",
     "meeting gate",
 )
+
+
+class BacklogRecommendationContractError(ValueError):
+    pass
 
 
 def _normalize_identifier(value: str) -> str:
@@ -158,32 +168,65 @@ def _normalize_topic(value: str) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
-def _read_ticket_json_artifact(
+def _read_backlog_recommendation_payload(
     repository: ControlPlaneRepository,
     *,
     ticket_id: str,
     connection,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     artifact_store = repository.artifact_store
     if artifact_store is None:
-        return None
+        raise BacklogRecommendationContractError(
+            "Canonical backlog_recommendation artifact is unavailable because no artifact store is configured."
+        )
+    expected_artifact_ref = build_backlog_recommendation_artifact_ref(ticket_id)
+    expected_logical_path = build_backlog_recommendation_artifact_path(ticket_id)
     artifact = next(
         (
             item
             for item in repository.list_ticket_artifacts(ticket_id, connection=connection)
-            if str(item.get("storage_relpath") or "").strip()
-            and str(item.get("artifact_ref") or "").strip().endswith(".json")
+            if str(item.get("artifact_ref") or "").strip() == expected_artifact_ref
         ),
         None,
     )
     if artifact is None:
-        return None
-    try:
-        return json.loads(
-            artifact_store.read_bytes(str(artifact["storage_relpath"])).decode("utf-8")
+        raise BacklogRecommendationContractError(
+            f"Canonical backlog_recommendation artifact is missing for ticket {ticket_id}."
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
+    if str(artifact.get("logical_path") or "").strip() != expected_logical_path:
+        raise BacklogRecommendationContractError(
+            f"Canonical backlog_recommendation artifact path mismatch for ticket {ticket_id}."
+        )
+    try:
+        payload = json.loads(
+            artifact_store.read_bytes(
+                str(artifact.get("storage_relpath") or "").strip() or None,
+                storage_object_key=str(artifact.get("storage_object_key") or "").strip() or None,
+            ).decode("utf-8")
+        )
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise BacklogRecommendationContractError(
+            f"Canonical backlog_recommendation artifact for ticket {ticket_id} is unreadable."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise BacklogRecommendationContractError(
+            f"Canonical backlog_recommendation artifact for ticket {ticket_id} must decode to a JSON object."
+        )
+    try:
+        validate_output_payload(
+            schema_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
+            schema_version=BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
+            submitted_schema_version=schema_id(
+                BACKLOG_RECOMMENDATION_SCHEMA_REF,
+                BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
+            ),
+            payload=payload,
+        )
+    except (OutputSchemaValidationError, ValueError) as exc:
+        raise BacklogRecommendationContractError(
+            f"Canonical backlog_recommendation artifact for ticket {ticket_id} violates the implementation_handoff contract: {exc}"
+        ) from exc
+    return payload
 
 
 def _load_workflow_hard_constraints(connection, workflow_id: str) -> list[str]:
@@ -270,7 +313,11 @@ def _latest_completed_backlog_ticket(
     if trigger_ticket_id:
         created_spec = repository.get_latest_ticket_created_payload(connection, trigger_ticket_id) or {}
         if str(created_spec.get("output_schema_ref") or "").strip() == BACKLOG_RECOMMENDATION_SCHEMA_REF:
-            payload = _read_ticket_json_artifact(repository, ticket_id=trigger_ticket_id, connection=connection)
+            payload = _read_backlog_recommendation_payload(
+                repository,
+                ticket_id=trigger_ticket_id,
+                connection=connection,
+            )
             return trigger_ticket_id, created_spec, payload
 
     rows = connection.execute(
@@ -287,10 +334,12 @@ def _latest_completed_backlog_ticket(
         created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
         output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
         if output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF:
-            payload = _read_ticket_json_artifact(repository, ticket_id=ticket_id, connection=connection)
-            if isinstance(payload, dict):
-                return ticket_id, created_spec, payload
-            continue
+            payload = _read_backlog_recommendation_payload(
+                repository,
+                ticket_id=ticket_id,
+                connection=connection,
+            )
+            return ticket_id, created_spec, payload
         if output_schema_ref != MAKER_CHECKER_VERDICT_SCHEMA_REF:
             continue
         maker_checker_context = created_spec.get("maker_checker_context") or {}
@@ -313,9 +362,12 @@ def _latest_completed_backlog_ticket(
         ).strip()
         if review_status not in _APPROVED_REVIEW_STATUSES:
             continue
-        payload = _read_ticket_json_artifact(repository, ticket_id=maker_ticket_id, connection=connection)
-        if isinstance(payload, dict):
-            return maker_ticket_id, maker_ticket_spec, payload
+        payload = _read_backlog_recommendation_payload(
+            repository,
+            ticket_id=maker_ticket_id,
+            connection=connection,
+        )
+        return maker_ticket_id, maker_ticket_spec, payload
     return None, {}, None
 
 
@@ -461,49 +513,39 @@ def _build_followup_ticket_plans(
     workflow_nodes: list[dict[str, Any]],
     employees: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    recommended_tickets: dict[str, dict[str, Any]] = {}
-    dependency_map: dict[str, list[str]] = {}
-    ordered_ticket_keys: list[str] = []
+    implementation_handoff = backlog_payload.get("implementation_handoff")
+    if not isinstance(implementation_handoff, dict):
+        raise BacklogRecommendationContractError(
+            f"Backlog ticket {backlog_ticket_id} is missing a valid implementation_handoff object."
+        )
 
-    for section in list(backlog_payload.get("sections") or []):
-        if not isinstance(section, dict):
-            continue
-        content_json = section.get("content_json")
-        if not isinstance(content_json, dict):
-            continue
-        raw_tickets = content_json.get("tickets")
-        if isinstance(raw_tickets, list):
-            for raw_ticket in raw_tickets:
-                if not isinstance(raw_ticket, dict):
-                    continue
-                ticket_key = str(raw_ticket.get("ticket_id") or "").strip()
-                if not ticket_key:
-                    continue
-                recommended_tickets[ticket_key] = raw_ticket
-                if ticket_key not in ordered_ticket_keys:
-                    ordered_ticket_keys.append(ticket_key)
-        raw_dependency_graph = content_json.get("dependency_graph")
-        if isinstance(raw_dependency_graph, list):
-            for raw_dependency in raw_dependency_graph:
-                if not isinstance(raw_dependency, dict):
-                    continue
-                ticket_key = str(raw_dependency.get("ticket_id") or "").strip()
-                if not ticket_key:
-                    continue
-                dependency_map[ticket_key] = [
-                    str(item).strip()
-                    for item in list(raw_dependency.get("depends_on") or [])
-                    if str(item).strip()
-                ]
-        raw_sequence = content_json.get("recommended_sequence")
-        if isinstance(raw_sequence, list):
-            sequence_ticket_keys: list[str] = []
-            for item in raw_sequence:
-                prefix = str(item or "").strip().split(" ", 1)[0]
-                if prefix:
-                    sequence_ticket_keys.append(prefix)
-            if sequence_ticket_keys:
-                ordered_ticket_keys = list(dict.fromkeys(sequence_ticket_keys + ordered_ticket_keys))
+    raw_tickets = implementation_handoff.get("tickets")
+    raw_dependency_graph = implementation_handoff.get("dependency_graph")
+    raw_sequence = implementation_handoff.get("recommended_sequence")
+    if not isinstance(raw_tickets, list) or not isinstance(raw_dependency_graph, list) or not isinstance(raw_sequence, list):
+        raise BacklogRecommendationContractError(
+            f"Backlog ticket {backlog_ticket_id} has an incomplete implementation_handoff payload."
+        )
+
+    recommended_tickets = {
+        str(raw_ticket.get("ticket_id") or "").strip(): raw_ticket
+        for raw_ticket in raw_tickets
+        if isinstance(raw_ticket, dict) and str(raw_ticket.get("ticket_id") or "").strip()
+    }
+    dependency_map = {
+        str(raw_dependency.get("ticket_id") or "").strip(): [
+            str(item).strip()
+            for item in list(raw_dependency.get("depends_on") or [])
+            if str(item).strip()
+        ]
+        for raw_dependency in raw_dependency_graph
+        if isinstance(raw_dependency, dict) and str(raw_dependency.get("ticket_id") or "").strip()
+    }
+    ordered_ticket_keys = [
+        str(item).strip()
+        for item in raw_sequence
+        if isinstance(item, str) and item.strip()
+    ]
 
     existing_ticket_ids_by_node_id = _current_ticket_ids_by_node_id(
         tickets=tickets,

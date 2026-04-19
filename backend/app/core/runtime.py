@@ -1058,7 +1058,7 @@ def _build_runtime_success_payload(
         return refs
 
     def _default_backlog_ticket_specs() -> list[dict[str, Any]]:
-        return [
+        ticket_specs = [
             {"ticket_id": "BR-T01", "name": "认证与 RBAC 基础", "priority": "P0", "scope": ["认证入口", "权限模型", "会话守卫"]},
             {"ticket_id": "BR-T02", "name": "前端壳层与设计系统底座", "priority": "P0", "scope": ["主布局", "导航骨架", "基础组件"]},
             {"ticket_id": "BR-T03", "name": "服务与 API 基础骨架", "priority": "P0", "scope": ["服务骨架", "接口约定", "错误规范"]},
@@ -1090,6 +1090,28 @@ def _build_runtime_success_payload(
             {"ticket_id": "BR-T29", "name": "运行监控与运维手册", "priority": "P1", "scope": ["监控指标", "告警规则", "运行手册"]},
             {"ticket_id": "BR-T30", "name": "验收演示与交付证据整理", "priority": "P1", "scope": ["验收脚本", "演示路径", "交付证据"]},
         ]
+
+        def _default_target_role(ticket_spec: dict[str, Any]) -> str:
+            haystack = " ".join(
+                [
+                    str(ticket_spec.get("name") or ""),
+                    *(str(item) for item in list(ticket_spec.get("scope") or [])),
+                ]
+            ).lower()
+            if any(token in haystack for token in ("deploy", "monitor", "ops", "platform", "发布", "监控", "运维")):
+                return "platform_sre"
+            if any(token in haystack for token in ("database", "schema", "migration", "sql", "数据库", "索引")):
+                return "database_engineer"
+            if any(token in haystack for token in ("测试", "test", "qa", "审计", "验收")):
+                return "checker"
+            if any(token in haystack for token in ("backend", "api", "service", "后端", "认证", "rbac")):
+                return "backend_engineer"
+            return "frontend_engineer"
+
+        for ticket_spec in ticket_specs:
+            ticket_spec["summary"] = f"交付{ticket_spec['name']}。"
+            ticket_spec["target_role"] = _default_target_role(ticket_spec)
+        return ticket_specs
 
     def _default_backlog_dependency_graph() -> list[dict[str, Any]]:
         return [
@@ -1125,29 +1147,26 @@ def _build_runtime_success_payload(
             {"ticket_id": "BR-T30", "depends_on": ["BR-T23", "BR-T26", "BR-T28", "BR-T29"], "reason": "最终验收证据需要演示数据、回归结果和发布运维资料。"},
         ]
 
+    def _default_backlog_implementation_handoff(ticket_specs: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "tickets": ticket_specs,
+            "dependency_graph": _default_backlog_dependency_graph(),
+            "recommended_sequence": [str(item["ticket_id"]) for item in ticket_specs],
+        }
+
     def _default_backlog_recommendation_sections() -> list[dict[str, Any]]:
-        ticket_specs = _default_backlog_ticket_specs()
         return [
             {
                 "section_id": "recommended_ticket_split",
                 "label": "推荐工单拆分",
                 "summary": "把治理链收敛为可执行的原子实施任务。",
                 "content_markdown": "先补基础底座，再按业务模块推进，最后收口测试、发布、运维和验收证据。",
-                "content_json": {
-                    "tickets": ticket_specs,
-                },
             },
             {
                 "section_id": "dependency_and_sequence_plan",
                 "label": "依赖关系与实施顺序",
                 "summary": "基础能力先行，业务能力并行，质量与发布最后收口。",
                 "content_markdown": "认证、前端壳层、服务、数据、观测是底座；其上展开认证、目录、借阅、预约、罚金、库存、报表、测试、发布和 closeout 前证据整理。",
-                "content_json": {
-                    "dependency_graph": _default_backlog_dependency_graph(),
-                    "recommended_sequence": [
-                        f"{item['ticket_id']} {item['name']}" for item in ticket_specs
-                    ],
-                },
             },
         ]
 
@@ -1209,6 +1228,7 @@ def _build_runtime_success_payload(
         ticket_id = execution_package.meta.ticket_id
         output_schema_ref = execution_package.execution.output_schema_ref
         source_process_asset_refs = _process_asset_source_refs()
+        ticket_specs = _default_backlog_ticket_specs() if output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF else None
         return {
             "document_kind_ref": output_schema_ref,
             "title": f"{output_schema_ref} for ticket {ticket_id}",
@@ -1244,12 +1264,19 @@ def _build_runtime_success_payload(
                     "recommendation_id": "rec_document_first_followup",
                     "summary": (
                         "Compile this governance document into the next implementation-facing ticket split."
-                        if output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF
-                        else "Compile this governance document into the next implementation-facing ticket."
+                if output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF
+                else "Compile this governance document into the next implementation-facing ticket."
                     ),
                     "target_role": execution_package.compiled_role.employee_role_type,
                 }
             ],
+            **(
+                {
+                    "implementation_handoff": _default_backlog_implementation_handoff(ticket_specs or []),
+                }
+                if output_schema_ref == BACKLOG_RECOMMENDATION_SCHEMA_REF
+                else {}
+            ),
         }
     if execution_package.execution.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
         return {

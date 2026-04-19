@@ -46,6 +46,24 @@ GOVERNANCE_DOCUMENT_SCHEMA_REFS = (
     DETAILED_DESIGN_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
 )
+_BACKLOG_RECOMMENDATION_TARGET_ROLES = (
+    "frontend_engineer",
+    "frontend_engineer_primary",
+    "backend_engineer",
+    "backend_engineer_primary",
+    "database_engineer",
+    "database_engineer_primary",
+    "platform_sre",
+    "platform_sre_primary",
+    "checker",
+    "checker_primary",
+    "architect",
+    "architect_primary",
+    "governance_architect",
+    "cto",
+    "cto_primary",
+    "governance_cto",
+)
 
 OutputSchemaValidator = Callable[[dict[str, Any]], None]
 _MISSING = object()
@@ -54,6 +72,14 @@ _SOURCE_CODE_PLACEHOLDER_CONTENT_PATTERNS = (
     "runtimeSourceDelivery = true",
     "generated for ",
 )
+
+
+def build_backlog_recommendation_artifact_ref(ticket_id: str) -> str:
+    return f"art://runtime/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json"
+
+
+def build_backlog_recommendation_artifact_path(ticket_id: str) -> str:
+    return f"reports/governance/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json"
 
 
 class OutputSchemaValidationError(ValueError):
@@ -734,6 +760,59 @@ def _governance_document_schema_body(document_kind_ref: str) -> dict[str, Any]:
     }
 
 
+def _backlog_recommendation_schema_body() -> dict[str, Any]:
+    body = _governance_document_schema_body(BACKLOG_RECOMMENDATION_SCHEMA_REF)
+    body["required"] = [*body["required"], "implementation_handoff"]
+    body["properties"]["implementation_handoff"] = {
+        "type": "object",
+        "required": ["tickets", "dependency_graph", "recommended_sequence"],
+        "properties": {
+            "tickets": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": ["ticket_id", "name", "summary", "scope", "target_role"],
+                    "properties": {
+                        "ticket_id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "scope": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {"type": "string"},
+                        },
+                        "target_role": {
+                            "type": "string",
+                            "enum": sorted(_BACKLOG_RECOMMENDATION_TARGET_ROLES),
+                        },
+                    },
+                },
+            },
+            "dependency_graph": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["ticket_id", "depends_on"],
+                    "properties": {
+                        "ticket_id": {"type": "string"},
+                        "depends_on": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "recommended_sequence": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"},
+            },
+        },
+    }
+    return body
+
+
 def _validate_governance_document_payload(
     payload: dict[str, Any],
     *,
@@ -831,13 +910,192 @@ def _validate_governance_document_payload(
             if not isinstance(value, str) or not value.strip():
                 _raise_schema_validation_error(
                     field_path=f"followup_recommendations[{index}].{key}",
+                expected="non-empty string",
+                actual_value=value,
+                message=(
+                    "Governance document followup recommendations require "
+                    f"{key}."
+                ),
+            )
+
+
+def _validate_backlog_recommendation_payload(payload: dict[str, Any]) -> None:
+    payload = _require_object(payload)
+    _validate_governance_document_payload(
+        payload,
+        expected_document_kind_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    )
+
+    implementation_handoff = payload.get("implementation_handoff", _MISSING)
+    if implementation_handoff is _MISSING:
+        _raise_schema_validation_error(
+            field_path="implementation_handoff",
+            expected="object",
+            actual_value=implementation_handoff,
+            message="Backlog recommendation payload.implementation_handoff must be an object.",
+        )
+    implementation_handoff = _require_object(
+        implementation_handoff,
+        field_path="implementation_handoff",
+        label="Backlog recommendation payload.implementation_handoff",
+    )
+
+    tickets = _require_array(
+        implementation_handoff,
+        "tickets",
+        label="Backlog recommendation payload.implementation_handoff.tickets",
+        non_empty=True,
+    )
+    ticket_ids: list[str] = []
+    ticket_id_set: set[str] = set()
+    for index, ticket in enumerate(tickets):
+        field_prefix = f"implementation_handoff.tickets[{index}]"
+        if not isinstance(ticket, dict):
+            _raise_schema_validation_error(
+                field_path=field_prefix,
+                expected="object",
+                actual_value=ticket,
+                message="Backlog recommendation implementation_handoff.tickets items must be objects.",
+            )
+
+        for key in ("ticket_id", "name", "summary", "target_role"):
+            value = ticket.get(key, _MISSING)
+            if not isinstance(value, str) or not value.strip():
+                _raise_schema_validation_error(
+                    field_path=f"{field_prefix}.{key}",
                     expected="non-empty string",
                     actual_value=value,
-                    message=(
-                        "Governance document followup recommendations require "
-                        f"{key}."
-                    ),
+                    message=f"Backlog recommendation {field_prefix}.{key} must be a non-empty string.",
                 )
+        ticket_id = str(ticket["ticket_id"]).strip()
+        if ticket_id in ticket_id_set:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.ticket_id",
+                expected="unique ticket_id",
+                actual_value=ticket_id,
+                message="Backlog recommendation implementation_handoff.tickets ticket_id values must be unique.",
+            )
+        ticket_id_set.add(ticket_id)
+        ticket_ids.append(ticket_id)
+
+        scope = ticket.get("scope", _MISSING)
+        if not isinstance(scope, list) or not scope:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.scope",
+                expected="non-empty array",
+                actual_value=scope,
+                message=f"Backlog recommendation {field_prefix}.scope must be a non-empty array.",
+            )
+        for scope_index, scope_item in enumerate(scope):
+            if not isinstance(scope_item, str) or not scope_item.strip():
+                _raise_schema_validation_error(
+                    field_path=f"{field_prefix}.scope[{scope_index}]",
+                    expected="non-empty string",
+                    actual_value=scope_item,
+                    message=f"Backlog recommendation {field_prefix}.scope items must be non-empty strings.",
+                )
+
+        target_role = str(ticket["target_role"]).strip()
+        if target_role not in _BACKLOG_RECOMMENDATION_TARGET_ROLES:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.target_role",
+                expected=f"one of {', '.join(sorted(_BACKLOG_RECOMMENDATION_TARGET_ROLES))}",
+                actual_value=target_role,
+                message="Backlog recommendation implementation_handoff.tickets target_role must be a supported role.",
+            )
+
+    dependency_graph = _require_array(
+        implementation_handoff,
+        "dependency_graph",
+        label="Backlog recommendation payload.implementation_handoff.dependency_graph",
+    )
+    seen_dependency_ticket_ids: set[str] = set()
+    for index, dependency in enumerate(dependency_graph):
+        field_prefix = f"implementation_handoff.dependency_graph[{index}]"
+        if not isinstance(dependency, dict):
+            _raise_schema_validation_error(
+                field_path=field_prefix,
+                expected="object",
+                actual_value=dependency,
+                message="Backlog recommendation implementation_handoff.dependency_graph items must be objects.",
+            )
+        ticket_id = dependency.get("ticket_id", _MISSING)
+        if not isinstance(ticket_id, str) or not ticket_id.strip():
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.ticket_id",
+                expected="non-empty string",
+                actual_value=ticket_id,
+                message="Backlog recommendation dependency_graph.ticket_id must be a non-empty string.",
+            )
+        normalized_ticket_id = str(ticket_id).strip()
+        if normalized_ticket_id not in ticket_id_set:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.ticket_id",
+                expected="ticket_id declared in implementation_handoff.tickets",
+                actual_value=normalized_ticket_id,
+                message="Backlog recommendation dependency_graph.ticket_id must reference a declared ticket.",
+            )
+        if normalized_ticket_id in seen_dependency_ticket_ids:
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.ticket_id",
+                expected="unique ticket_id",
+                actual_value=normalized_ticket_id,
+                message="Backlog recommendation dependency_graph entries must not duplicate ticket_id.",
+            )
+        seen_dependency_ticket_ids.add(normalized_ticket_id)
+
+        depends_on = dependency.get("depends_on", _MISSING)
+        if not isinstance(depends_on, list):
+            _raise_schema_validation_error(
+                field_path=f"{field_prefix}.depends_on",
+                expected="array",
+                actual_value=depends_on,
+                message="Backlog recommendation dependency_graph.depends_on must be an array.",
+            )
+        for dependency_index, dependency_ticket_id in enumerate(depends_on):
+            if not isinstance(dependency_ticket_id, str) or not dependency_ticket_id.strip():
+                _raise_schema_validation_error(
+                    field_path=f"{field_prefix}.depends_on[{dependency_index}]",
+                    expected="non-empty string",
+                    actual_value=dependency_ticket_id,
+                    message="Backlog recommendation dependency ids must be non-empty strings.",
+                )
+            if str(dependency_ticket_id).strip() not in ticket_id_set:
+                _raise_schema_validation_error(
+                    field_path=f"{field_prefix}.depends_on[{dependency_index}]",
+                    expected="ticket_id declared in implementation_handoff.tickets",
+                    actual_value=dependency_ticket_id,
+                    message="Backlog recommendation dependency ids must reference declared tickets.",
+                )
+
+    recommended_sequence = _require_string_array(
+        implementation_handoff,
+        "recommended_sequence",
+        label="Backlog recommendation payload.implementation_handoff.recommended_sequence",
+        non_empty=True,
+    )
+    normalized_sequence = [str(item).strip() for item in recommended_sequence]
+    if len(set(normalized_sequence)) != len(normalized_sequence):
+        _raise_schema_validation_error(
+            field_path="implementation_handoff.recommended_sequence",
+            expected="array of unique ticket_id values",
+            actual_value=recommended_sequence,
+            message="Backlog recommendation implementation_handoff.recommended_sequence must not contain duplicates.",
+        )
+    if any(ticket_id not in ticket_id_set for ticket_id in normalized_sequence):
+        _raise_schema_validation_error(
+            field_path="implementation_handoff.recommended_sequence",
+            expected="array containing only declared ticket_id values",
+            actual_value=recommended_sequence,
+            message="Backlog recommendation implementation_handoff.recommended_sequence must contain only declared ticket_id values.",
+        )
+    if set(normalized_sequence) != ticket_id_set:
+        _raise_schema_validation_error(
+            field_path="implementation_handoff.recommended_sequence",
+            expected="array covering every declared ticket_id exactly once",
+            actual_value=recommended_sequence,
+            message="Backlog recommendation implementation_handoff.recommended_sequence must cover every declared ticket_id exactly once.",
+        )
 
 
 def _source_code_delivery_schema_body() -> dict[str, Any]:
@@ -1446,11 +1704,8 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
         ),
     },
     (BACKLOG_RECOMMENDATION_SCHEMA_REF, BACKLOG_RECOMMENDATION_SCHEMA_VERSION): {
-        "body": lambda: _governance_document_schema_body(BACKLOG_RECOMMENDATION_SCHEMA_REF),
-        "validator": lambda payload: _validate_governance_document_payload(
-            payload,
-            expected_document_kind_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
-        ),
+        "body": _backlog_recommendation_schema_body,
+        "validator": _validate_backlog_recommendation_payload,
     },
     (SOURCE_CODE_DELIVERY_SCHEMA_REF, SOURCE_CODE_DELIVERY_SCHEMA_VERSION): {
         "body": _source_code_delivery_schema_body,

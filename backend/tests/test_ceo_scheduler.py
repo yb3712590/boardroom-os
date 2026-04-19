@@ -798,6 +798,7 @@ def _create_and_complete_backlog_recommendation_ticket(
     tickets: list[dict] | None = None,
     dependency_graph: list[dict] | None = None,
     recommended_sequence: list[str] | None = None,
+    extra_written_artifacts: list[dict] | None = None,
 ) -> None:
     _create_ticket_for_test(
         client,
@@ -815,6 +816,92 @@ def _create_and_complete_backlog_recommendation_ticket(
     )
 
     artifact_ref = f"art://runtime/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json"
+    normalized_tickets = []
+    for raw_ticket in (
+        tickets
+        or [
+            {
+                "ticket_id": "BR-T01",
+                "name": "登录能力交付",
+                "priority": "P0",
+                "scope": ["P-01 登录页", "M1 认证模块"],
+            },
+            {
+                "ticket_id": "BR-T02",
+                "name": "主布局与通用组件底座",
+                "priority": "P0",
+                "scope": ["后台主布局", "M2 布局模块", "M7 通用组件"],
+            },
+            {
+                "ticket_id": "BR-T03",
+                "name": "首页仪表盘交付",
+                "priority": "P1",
+                "scope": ["P-02 首页仪表盘", "M6 仪表盘模块"],
+            },
+        ]
+    ):
+        ticket_shape = dict(raw_ticket)
+        ticket_id_value = str(ticket_shape.get("ticket_id") or "").strip()
+        ticket_name = str(ticket_shape.get("name") or ticket_id_value).strip() or ticket_id_value
+        ticket_shape["ticket_id"] = ticket_id_value
+        ticket_shape["name"] = ticket_name
+        ticket_shape["summary"] = (
+            str(ticket_shape.get("summary") or f"交付{ticket_name}。").strip() or ticket_name
+        )
+        ticket_shape["scope"] = [
+            str(item).strip()
+            for item in list(ticket_shape.get("scope") or [])
+            if str(item).strip()
+        ]
+        ticket_shape["target_role"] = (
+            str(ticket_shape.get("target_role") or "frontend_engineer").strip()
+            or "frontend_engineer"
+        )
+        normalized_tickets.append(ticket_shape)
+
+    normalized_dependency_graph = [
+        {
+            **dict(raw_dependency),
+            "ticket_id": str(raw_dependency.get("ticket_id") or "").strip(),
+            "depends_on": [
+                str(item).strip()
+                for item in list(raw_dependency.get("depends_on") or [])
+                if str(item).strip()
+            ],
+        }
+        for raw_dependency in (
+            dependency_graph
+            or [
+                {
+                    "ticket_id": "BR-T01",
+                    "depends_on": [],
+                    "reason": "登录能力可以独立先行。",
+                },
+                {
+                    "ticket_id": "BR-T02",
+                    "depends_on": [],
+                    "reason": "布局底座建议最早交付。",
+                },
+                {
+                    "ticket_id": "BR-T03",
+                    "depends_on": ["BR-T02"],
+                    "reason": "仪表盘需要布局承载。",
+                },
+            ]
+        )
+    ]
+    normalized_recommended_sequence = [
+        str(item).strip().split(" ", 1)[0]
+        for item in (
+            recommended_sequence
+            or [
+                "BR-T02 主布局与通用组件底座",
+                "BR-T01 登录能力交付",
+                "BR-T03 首页仪表盘交付",
+            ]
+        )
+        if str(item).strip()
+    ]
     backlog_payload = {
         "document_kind_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
         "title": "图书馆管理系统 backlog recommendation",
@@ -830,63 +917,19 @@ def _create_and_complete_backlog_recommendation_ticket(
                 "label": "推荐工单拆分",
                 "summary": "把 backlog recommendation 变成实现工单。",
                 "content_markdown": "先做底座，再做登录，再做仪表盘。",
-                "content_json": {
-                    "tickets": tickets
-                    or [
-                        {
-                            "ticket_id": "BR-T01",
-                            "name": "登录能力交付",
-                            "priority": "P0",
-                            "scope": ["P-01 登录页", "M1 认证模块"],
-                        },
-                        {
-                            "ticket_id": "BR-T02",
-                            "name": "主布局与通用组件底座",
-                            "priority": "P0",
-                            "scope": ["后台主布局", "M2 布局模块", "M7 通用组件"],
-                        },
-                        {
-                            "ticket_id": "BR-T03",
-                            "name": "首页仪表盘交付",
-                            "priority": "P1",
-                            "scope": ["P-02 首页仪表盘", "M6 仪表盘模块"],
-                        },
-                    ]
-                },
             },
             {
                 "section_id": "dependency_and_sequence_plan",
                 "label": "依赖关系与实施顺序",
                 "summary": "先底座，再登录，再仪表盘。",
                 "content_markdown": "BR-T02 和 BR-T01 先行，BR-T03 依赖 BR-T02。",
-                "content_json": {
-                    "dependency_graph": dependency_graph
-                    or [
-                        {
-                            "ticket_id": "BR-T01",
-                            "depends_on": [],
-                            "reason": "登录能力可以独立先行。",
-                        },
-                        {
-                            "ticket_id": "BR-T02",
-                            "depends_on": [],
-                            "reason": "布局底座建议最早交付。",
-                        },
-                        {
-                            "ticket_id": "BR-T03",
-                            "depends_on": ["BR-T02"],
-                            "reason": "仪表盘需要布局承载。",
-                        },
-                    ],
-                    "recommended_sequence": recommended_sequence
-                    or [
-                        "BR-T02 主布局与通用组件底座",
-                        "BR-T01 登录能力交付",
-                        "BR-T03 首页仪表盘交付",
-                    ],
-                },
             },
         ],
+        "implementation_handoff": {
+            "tickets": normalized_tickets,
+            "dependency_graph": normalized_dependency_graph,
+            "recommended_sequence": normalized_recommended_sequence,
+        },
         "followup_recommendations": [
             {
                 "recommendation_id": "rec_impl_followup",
@@ -924,12 +967,16 @@ def _create_and_complete_backlog_recommendation_ticket(
                 "payload": backlog_payload,
                 "artifact_refs": [artifact_ref],
                 "written_artifacts": [
+                    *(
+                        extra_written_artifacts
+                        or []
+                    ),
                     {
                         "path": f"reports/governance/{ticket_id}/{BACKLOG_RECOMMENDATION_SCHEMA_REF}.json",
                         "artifact_ref": artifact_ref,
                         "kind": "JSON",
                         "content_json": backlog_payload,
-                    }
+                    },
                 ],
                 "assumptions": ["backlog recommendation 可以直接转成实现工单。"],
                 "issues": [],
@@ -3466,6 +3513,227 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
         "backend_engineer_primary",
         "database_engineer_primary",
     ]
+
+
+def test_ceo_shadow_snapshot_ignores_noncanonical_backlog_json_artifact(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_backlog_canonical_artifact", "Canonical backlog artifact only")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_canonical",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="canonical_artifact",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_canonical_parent",
+        node_id="node_ceo_backlog_canonical",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+        extra_written_artifacts=[
+            {
+                "path": "reports/governance/tkt_backlog_canonical_parent/000-decoy.json",
+                "artifact_ref": "art://runtime/tkt_backlog_canonical_parent/000-decoy.json",
+                "kind": "JSON",
+                "content_json": {"note": "decoy json should not become backlog truth"},
+            }
+        ],
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_canonical_parent",
+    )
+
+    assert snapshot["controller_state"]["state"] == "READY_FOR_FANOUT"
+    assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert [item["ticket_key"] for item in snapshot["capability_plan"]["followup_ticket_plans"]] == [
+        "BR-BE-01"
+    ]
+
+
+def test_trigger_ceo_shadow_with_recovery_opens_incident_when_canonical_backlog_json_is_invalid(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_backlog_invalid_json", "Invalid backlog artifact should fail closed")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_invalid_json",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="invalid_backlog_json",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_invalid_json",
+        node_id="node_ceo_backlog_invalid_json",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    repository = client.app.state.repository
+    backlog_artifact = next(
+        item
+        for item in repository.list_ticket_artifacts("tkt_backlog_invalid_json")
+        if item["artifact_ref"] == "art://runtime/tkt_backlog_invalid_json/backlog_recommendation.json"
+    )
+    artifact_path = client.app.state.artifact_store.root / backlog_artifact["storage_relpath"]
+    artifact_path.write_text("{not-json}", encoding="utf-8")
+
+    run = trigger_ceo_shadow_with_recovery(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_invalid_json",
+        idempotency_key_base="test-ceo-shadow-invalid-backlog-json",
+    )
+
+    incidents = [
+        item
+        for item in repository.list_open_incidents()
+        if item["workflow_id"] == workflow_id
+    ]
+
+    assert run is None
+    assert len(incidents) == 1
+    assert incidents[0]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+    assert incidents[0]["payload"]["source_stage"] == "snapshot"
+    assert "backlog" in str(incidents[0]["payload"]["error_message"] or "").lower()
+
+
+def test_ceo_shadow_run_rejects_live_no_action_when_controller_requires_backlog_fanout(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_live_backlog_no_action_rejected", "Reject live NO_ACTION during fanout")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_no_action",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _set_live_provider(client)
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="live_no_action_rejected",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_live_no_action",
+        node_id="node_ceo_backlog_live_no_action",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Do nothing even though implementation fanout is ready.",
+                    "actions": [
+                        {
+                            "action_type": "NO_ACTION",
+                            "payload": {
+                                "reason": "The workflow can wait.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_backlog_no_action_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    repository = client.app.state.repository
+    run = run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_live_no_action",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["snapshot"]["controller_state"]["state"] == "READY_FOR_FANOUT"
+    assert run["snapshot"]["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert run["deterministic_fallback_used"] is False
+    assert run["accepted_actions"] == []
+    assert run["executed_actions"] == []
+    assert run["rejected_actions"][0]["action_type"] == "NO_ACTION"
+    assert "controller_state.recommended_action is CREATE_TICKET" in run["rejected_actions"][0]["reason"]
 
 
 def test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_when_node_projection_is_stale(
