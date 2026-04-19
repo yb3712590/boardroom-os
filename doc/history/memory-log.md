@@ -21,6 +21,14 @@
 
 ## Recent Memory
 
+### 2026-04-19
+
+- `ceo_proposer.py` 这轮已把 live provider ingress 收成 alias-only adapter：现在只保留 `type -> action_type`，旧 `NO_ACTION.reason`、旧 `HIRE_EMPLOYEE.role_profile_ref / justification / selection_guidance / reason`，以及缺 `payload` 的 flat action 都会在 proposal 阶段显式失败，不再靠 snapshot 补语义
+- deterministic CEO fallback 这轮也已继续收紧：当 controller 明确要求 `CREATE_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING` 时，若 `required_governance_ticket_plan / recommended_hire / followup_ticket_plans / meeting_candidates` 自身结构残缺，现在会直接抛 proposal contract error，并继续复用现有 `CEO_SHADOW_PIPELINE_FAILED -> RERUN_CEO_SHADOW` 恢复链，不再静默落成 `NO_ACTION`
+- `project-init` 的 kickoff deterministic route 这轮保留为显式特例：`_should_fallback_to_project_init_kickoff()` 仍可在 controller `NO_ACTION` 时创建首张治理票，但如果 kickoff assignee 解不出来，现也会直接显式失败，不再伪装成 idle
+- `ceo_proposer.py` 这轮还删掉了一批已经失效的旧 compat helper；当前 CEO 主链只再接受完整 `ceo_action_batch_v1`，不再反向推导 `execution_contract / dispatch_intent / dependency_gate_refs / parent_ticket_id`
+- 本轮 fresh 验证已通过：`py -m py_compile backend/app/core/ceo_proposer.py backend/tests/test_ceo_scheduler.py`、`py -m pytest backend/tests/test_ceo_scheduler.py -k "records_fallback_without_touching_mainline_state or pipeline_failed_raises_without_hidden_fallback or opens_ceo_shadow_pipeline_failed_incident or project_init_records_board_directive_shadow_and_stable_scope_ticket or hires_architect_before_backlog_followup_when_required or creates_architect_governance_ticket_before_backlog_followup_when_doc_is_missing or requests_meeting_before_backlog_followup_when_required or flat_create_ticket_action_shape or live_action_type_alias_field or explicit_governance_dependency_chain_and_process_assets or legacy_no_action_reason_shape or legacy_hire_employee_payload_shapes or deterministic_project_init_kickoff_has_no_resolved_assignee or deterministic_required_governance_plan_is_incomplete or deterministic_hire_plan_is_incomplete or deterministic_backlog_followup_plan_is_incomplete or deterministic_meeting_request_has_no_eligible_candidate" -q`、`py -m pytest backend/tests/test_workflow_autopilot.py -k "ceo_shadow_pipeline_incident" -q`、`py -m pytest backend/tests/test_api.py -k "ceo_shadow_incident_detail or ceo_shadow_incident_resolve_should_rerun_and_close or placeholder_gate_incident_resolve_reruns_shadow_and_closes_incident" -q`
+
 ### 2026-04-18
 
 - `integration-test-002` 这轮已继续收 A/B/C：in-process runtime 现在会同时处理 `LEASED` 和 `EXECUTING`，后者会直接按 compile -> execute -> result-submit 做 idempotent resume，不再重复 `ticket-start`

@@ -2785,7 +2785,7 @@ def test_ceo_shadow_run_normalizes_live_governance_followup_with_kind_field_and_
     assert created_spec["dispatch_intent"]["dependency_gate_refs"] == ["tkt_parent_architecture_doc"]
 
 
-def test_ceo_shadow_run_normalizes_flat_create_ticket_action_shape_from_live_provider(client, monkeypatch):
+def test_ceo_shadow_run_rejects_flat_create_ticket_action_shape_from_live_provider(client, monkeypatch):
     workflow_id = _seed_workflow(client, "wf_live_flat_action", "CEO live flat action normalization")
     _set_live_provider(client)
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
@@ -2858,31 +2858,22 @@ def test_ceo_shadow_run_normalizes_flat_create_ticket_action_shape_from_live_pro
     )
 
     repository = client.app.state.repository
-    run = run_ceo_shadow_for_trigger(
-        repository,
-        workflow_id=workflow_id,
-        trigger_type="TICKET_COMPLETED",
-        trigger_ref="tkt_parent_milestone_plan",
-        runtime_provider_store=client.app.state.runtime_provider_store,
-    )
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="TICKET_COMPLETED",
+            trigger_ref="tkt_parent_milestone_plan",
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
 
-    assert run["provider_response_id"] == "resp_ceo_flat_action_1"
-    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
-    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    runs = repository.list_ceo_shadow_runs(workflow_id)
 
-    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
-    with repository.connection() as connection:
-        created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
-
-    assert created_spec["output_schema_ref"] == DETAILED_DESIGN_SCHEMA_REF
-    assert created_spec["node_id"] == "node_ceo_detailed_design"
-    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
-    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
-    assert created_spec["dispatch_intent"]["dependency_gate_refs"] == [
-        "tkt_parent_architecture_doc",
-        "tkt_parent_technology_decision",
-        "tkt_parent_milestone_plan",
-    ]
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["provider_response_id"] is None
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
 
 
 def test_ceo_shadow_run_normalizes_live_action_type_alias_field(client, monkeypatch):
@@ -2904,7 +2895,17 @@ def test_ceo_shadow_run_normalizes_live_action_type_alias_field(client, monkeypa
                                 "node_id": "node_ceo_architecture_brief",
                                 "role_profile_ref": "frontend_engineer_primary",
                                 "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="frontend_engineer_primary",
+                                    output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Keep the first governance document on the current live frontend owner.",
+                                    "dependency_gate_refs": [],
+                                },
                                 "summary": "Write the architecture brief with the normalized action type alias.",
+                                "parent_ticket_id": None,
                             },
                         }
                     ],
@@ -2928,7 +2929,10 @@ def test_ceo_shadow_run_normalizes_live_action_type_alias_field(client, monkeypa
     assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
 
 
-def test_ceo_shadow_run_idle_governance_followup_infers_dependency_chain_and_process_assets(client, monkeypatch):
+def test_ceo_shadow_run_alias_field_preserves_explicit_governance_dependency_chain_and_process_assets(
+    client,
+    monkeypatch,
+):
     workflow_id = _seed_workflow(client, "wf_idle_gov_chain", "CEO idle governance chain inference")
     _set_deterministic_mode(client)
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
@@ -2982,7 +2986,22 @@ def test_ceo_shadow_run_idle_governance_followup_infers_dependency_chain_and_pro
                                 "node_id": "node_ceo_backlog_recommendation",
                                 "role_profile_ref": "frontend_engineer_primary",
                                 "output_schema_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="frontend_engineer_primary",
+                                    output_schema_ref=BACKLOG_RECOMMENDATION_SCHEMA_REF,
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Advance to the next governance document with the explicit dependency chain.",
+                                    "dependency_gate_refs": [
+                                        "tkt_parent_architecture_doc",
+                                        "tkt_parent_technology_decision",
+                                        "tkt_parent_milestone_plan",
+                                        "tkt_parent_detailed_design",
+                                    ],
+                                },
                                 "summary": "Create backlog recommendation from the completed governance chain.",
+                                "parent_ticket_id": "tkt_parent_detailed_design",
                             },
                         }
                     ],
@@ -3020,6 +3039,147 @@ def test_ceo_shadow_run_idle_governance_followup_infers_dependency_chain_and_pro
     assert "pa://governance-document/tkt_parent_technology_decision@1" in created_spec["input_process_asset_refs"]
     assert "pa://governance-document/tkt_parent_milestone_plan@1" in created_spec["input_process_asset_refs"]
     assert "pa://governance-document/tkt_parent_detailed_design@1" in created_spec["input_process_asset_refs"]
+
+
+def test_ceo_shadow_run_rejects_legacy_no_action_reason_shape(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_live_legacy_no_action", "Reject legacy NO_ACTION shape")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Legacy NO_ACTION should be rejected.",
+                    "actions": [
+                        {
+                            "action_type": "NO_ACTION",
+                            "reason": "Recent work already covers the need.",
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_legacy_no_action_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:legacy-no-action",
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
+
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
+
+
+@pytest.mark.parametrize(
+    ("legacy_payload", "response_id"),
+    [
+        (
+            {
+                "workflow_id": "wf_live_legacy_hire",
+                "role_type": "checker",
+                "role_profile_ref": "checker_primary",
+                "request_summary": "Hire a checker from legacy role_profile_ref.",
+            },
+            "resp_ceo_legacy_hire_role_profile_ref",
+        ),
+        (
+            {
+                "workflow_id": "wf_live_legacy_hire",
+                "role_type": "checker",
+                "role_profile_refs": ["checker_primary"],
+                "request_summary": "Hire a checker from legacy justification.",
+                "justification": "Old provider wording should not be accepted.",
+            },
+            "resp_ceo_legacy_hire_justification",
+        ),
+        (
+            {
+                "workflow_id": "wf_live_legacy_hire",
+                "role_type": "checker",
+                "role_profile_refs": ["checker_primary"],
+                "request_summary": "Hire a checker from legacy selection guidance.",
+                "selection_guidance": "Use the most experienced checker.",
+            },
+            "resp_ceo_legacy_hire_selection_guidance",
+        ),
+        (
+            {
+                "workflow_id": "wf_live_legacy_hire",
+                "role_type": "checker",
+                "role_profile_refs": ["checker_primary"],
+                "request_summary": "Hire a checker from legacy reason.",
+                "reason": "Old provider wording should not be accepted.",
+            },
+            "resp_ceo_legacy_hire_reason",
+        ),
+    ],
+    ids=[
+        "role_profile_ref_only",
+        "legacy_justification",
+        "legacy_selection_guidance",
+        "legacy_reason",
+    ],
+)
+def test_ceo_shadow_run_rejects_legacy_hire_employee_payload_shapes(
+    client,
+    monkeypatch,
+    legacy_payload,
+    response_id,
+):
+    workflow_id = _seed_workflow(client, "wf_live_legacy_hire", "Reject legacy HIRE_EMPLOYEE shapes")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        payload = dict(legacy_payload)
+        payload["workflow_id"] = workflow_id
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Legacy HIRE_EMPLOYEE should be rejected.",
+                    "actions": [
+                        {
+                            "action_type": "HIRE_EMPLOYEE",
+                            "payload": payload,
+                        }
+                    ],
+                }
+            ),
+            response_id=response_id,
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref=response_id,
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
+
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
 
 
 def test_ceo_shadow_run_raises_when_live_provider_leaves_backlog_followup_fields_blank(
@@ -3123,6 +3283,269 @@ def test_ceo_shadow_run_raises_when_live_provider_leaves_backlog_followup_fields
     assert exc_info.value.source_stage == "proposal"
     assert runs[0]["deterministic_fallback_used"] is False
     assert runs[0]["fallback_reason"] is not None
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
+
+
+def test_ceo_shadow_run_raises_when_deterministic_project_init_kickoff_has_no_resolved_assignee(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_det_project_init_assignee_gap", "Kickoff assignee gap")
+
+    from app.core import ceo_proposer
+
+    monkeypatch.setattr(ceo_proposer, "_select_default_assignee", lambda *args, **kwargs: None)
+
+    def _fake_snapshot(*_args, **_kwargs):
+        return {
+            "workflow": {"workflow_id": workflow_id, "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED"},
+            "trigger": {"trigger_type": EVENT_BOARD_DIRECTIVE_RECEIVED, "trigger_ref": f"project-init:{workflow_id}"},
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0, "total": 0},
+            "nodes": [],
+            "employees": [],
+            "replan_focus": {
+                "controller_state": {
+                    "state": "GOVERNANCE_REQUIRED",
+                    "recommended_action": "CREATE_TICKET",
+                    "blocking_reason": "Kickoff governance ticket must be created first.",
+                },
+                "capability_plan": {},
+                "meeting_candidates": [],
+            },
+        }
+
+    monkeypatch.setattr("app.core.ceo_scheduler.build_ceo_shadow_snapshot", _fake_snapshot)
+
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
+            trigger_ref=f"project-init:{workflow_id}",
+        )
+
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
+
+
+def test_ceo_shadow_run_raises_when_deterministic_required_governance_plan_is_incomplete(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_det_required_governance_gap", "Governance plan gap")
+
+    def _fake_snapshot(*_args, **_kwargs):
+        return {
+            "workflow": {"workflow_id": workflow_id, "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED"},
+            "trigger": {"trigger_type": "MANUAL_TEST", "trigger_ref": "manual:required-governance-gap"},
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0, "total": 1},
+            "nodes": [],
+            "employees": [],
+            "replan_focus": {
+                "controller_state": {
+                    "state": "GOVERNANCE_REQUIRED",
+                    "recommended_action": "CREATE_TICKET",
+                    "blocking_reason": "Governance ticket must be created first.",
+                },
+                "capability_plan": {
+                    "required_governance_ticket_plan": {
+                        "node_id": "node_ceo_architecture_brief",
+                        "role_profile_ref": "frontend_engineer_primary",
+                        "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                        "assignee_employee_id": "",
+                        "summary": "Create the architecture brief first.",
+                        "selection_reason": "Follow governance progression.",
+                    }
+                },
+                "meeting_candidates": [],
+            },
+        }
+
+    monkeypatch.setattr("app.core.ceo_scheduler.build_ceo_shadow_snapshot", _fake_snapshot)
+
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:required-governance-gap",
+        )
+
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
+
+
+def test_ceo_shadow_run_raises_when_deterministic_hire_plan_is_incomplete(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_det_hire_gap", "Hire plan gap")
+
+    def _fake_snapshot(*_args, **_kwargs):
+        return {
+            "workflow": {"workflow_id": workflow_id, "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED"},
+            "trigger": {"trigger_type": "MANUAL_TEST", "trigger_ref": "manual:hire-gap"},
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0, "total": 1},
+            "nodes": [],
+            "employees": [],
+            "replan_focus": {
+                "controller_state": {
+                    "state": "STAFFING_REQUIRED",
+                    "recommended_action": "HIRE_EMPLOYEE",
+                    "blocking_reason": "Capability gap requires a new hire.",
+                },
+                "capability_plan": {
+                    "recommended_hire": {
+                        "role_type": "backend_engineer",
+                        "role_profile_refs": [],
+                        "request_summary": "Hire a backend engineer before fanout continues.",
+                    }
+                },
+                "meeting_candidates": [],
+            },
+        }
+
+    monkeypatch.setattr("app.core.ceo_scheduler.build_ceo_shadow_snapshot", _fake_snapshot)
+
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:hire-gap",
+        )
+
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
+
+
+def test_ceo_shadow_run_raises_when_deterministic_backlog_followup_plan_is_incomplete(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_det_followup_gap", "Backlog followup gap")
+
+    def _fake_snapshot(*_args, **_kwargs):
+        return {
+            "workflow": {"workflow_id": workflow_id, "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED"},
+            "trigger": {"trigger_type": "TICKET_COMPLETED", "trigger_ref": "tkt_backlog_gap"},
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0, "total": 3},
+            "nodes": [],
+            "employees": [],
+            "replan_focus": {
+                "controller_state": {
+                    "state": "READY_FOR_FANOUT",
+                    "recommended_action": "CREATE_TICKET",
+                    "blocking_reason": None,
+                },
+                "capability_plan": {
+                    "followup_ticket_plans": [
+                        {
+                            "ticket_key": "BR-BE-01",
+                            "node_id": "node_backlog_followup_br_be_01",
+                            "task_name": "借阅后端 API 交付",
+                            "summary": "借阅后端 API 交付",
+                            "scope": ["借阅服务", "REST API"],
+                            "role_profile_ref": "backend_engineer_primary",
+                            "output_schema_ref": "source_code_delivery",
+                            "assignee_employee_id": "",
+                            "dependency_ticket_keys": [],
+                            "dependency_gate_refs": [],
+                            "existing_ticket_id": None,
+                            "source_ticket_id": "tkt_backlog_gap",
+                        }
+                    ]
+                },
+                "meeting_candidates": [],
+            },
+        }
+
+    monkeypatch.setattr("app.core.ceo_scheduler.build_ceo_shadow_snapshot", _fake_snapshot)
+
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="TICKET_COMPLETED",
+            trigger_ref="tkt_backlog_gap",
+        )
+
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
+
+
+def test_ceo_shadow_run_raises_when_deterministic_meeting_request_has_no_eligible_candidate(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_det_meeting_gap", "Meeting candidate gap")
+
+    def _fake_snapshot(*_args, **_kwargs):
+        return {
+            "workflow": {"workflow_id": workflow_id, "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED"},
+            "trigger": {"trigger_type": "MANUAL_TEST", "trigger_ref": "manual:meeting-gap"},
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0, "total": 1},
+            "nodes": [],
+            "employees": [],
+            "replan_focus": {
+                "controller_state": {
+                    "state": "MEETING_REQUIRED",
+                    "recommended_action": "REQUEST_MEETING",
+                    "blocking_reason": "Meeting gate must be satisfied first.",
+                },
+                "capability_plan": {},
+                "meeting_candidates": [],
+            },
+        }
+
+    monkeypatch.setattr("app.core.ceo_scheduler.build_ceo_shadow_snapshot", _fake_snapshot)
+
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:meeting-gap",
+        )
+
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["deterministic_fallback_used"] is False
     assert runs[0]["accepted_actions"] == []
     assert runs[0]["executed_actions"] == []
 
