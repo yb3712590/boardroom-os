@@ -772,6 +772,9 @@ def build_ceo_create_ticket_command(
         timeout_sla_sec=1800,
         deadline_at=workflow.get("deadline_at"),
         delivery_stage=preset.delivery_stage,
+        graph_contract={
+            "lane_kind": "execution",
+        },
         execution_contract=(
             payload.execution_contract
             if payload.execution_contract is not None

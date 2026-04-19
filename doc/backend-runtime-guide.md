@@ -11,14 +11,14 @@
 - durable truth 在事件日志和确定性投影里
 - React 只读投影、提交治理命令，不持有工作流真相
 - runtime 默认走本地 deterministic；当前 registry 首版可选走 `OpenAI Compat` 或 `Claude Code CLI`
-- maker-checker、incident、review room、closeout 都已经在主链里真实生效
+- maker-checker、incident、review room、closeout 都已经进入主链；但 `runtime ticket / legacy compat` 硬切还在收尾，手工 scope review 历史测试链和部分 scheduler recovery 还没完全收口
 
 ## 2. 当前主线与冻结边界
 
 当前主线已经真实落地的能力：
 
 - 命令入口、投影视图和 SSE 事件流
-- `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` 完整闭环
+- `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` 这条 canonical 主线已经基本成型；但当前只确认到“scope review 不再依赖 legacy `followup_tickets` contract”，closeout / recovery 的历史测试桶还没全部跑通
 - `project-init` 先物化 `board-brief`，再由 CEO 发起首个 kickoff scope 共识票
 - `project-init` 现在还会创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE`
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消、人工恢复

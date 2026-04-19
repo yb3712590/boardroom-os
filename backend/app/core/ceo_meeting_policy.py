@@ -11,7 +11,7 @@ from app.core.constants import (
     TICKET_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_TIMED_OUT,
 )
-from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
+from app.core.graph_identity import resolve_ticket_graph_identity
 from app.core.output_schemas import GOVERNANCE_DOCUMENT_SCHEMA_REFS
 from app.core.review_subjects import resolve_review_subject_identity
 from app.core.runtime_node_views import build_runtime_graph_node_views
@@ -273,7 +273,6 @@ def _build_ticket_failed_candidate(
                     "eligibility_reason": "Source ticket create spec is missing.",
                 }
             ]
-        created_spec = apply_legacy_graph_contract_compat(created_spec)
         source_identity = resolve_ticket_graph_identity(
             ticket_id=source_ticket_id,
             created_spec=created_spec,

@@ -13,7 +13,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 import pytest
 from fastapi.testclient import TestClient
 
+import app.core.approval_handlers as approval_handlers_module
+import app.core.ticket_handlers as ticket_handlers_module
 from app.config import get_settings
+from app.contracts.commands import TicketCreateCommand
 from app.contracts.advisory import GraphPatchProposal
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
@@ -1365,7 +1368,7 @@ def _meeting_escalation_review_request(
             {
                 "option_id": "consensus_scope_lock",
                 "label": "Lock consensus scope",
-                "summary": "Proceed with the converged scope and follow-up tickets.",
+                "summary": "Proceed with the converged scope and downstream delivery plan.",
                 "artifact_refs": ["art://meeting/consensus-document.json"],
                 "pros": ["Keeps delivery scope stable"],
                 "cons": ["Defers non-critical stretch ideas"],
@@ -1377,7 +1380,7 @@ def _meeting_escalation_review_request(
                 "evidence_id": "ev_meeting_consensus",
                 "source_type": "CONSENSUS_DOCUMENT",
                 "headline": "Meeting converged on one scope",
-                "summary": "Participants aligned on one scope and attached concrete follow-up tickets.",
+                "summary": "Participants aligned on one scope and locked the downstream delivery plan.",
                 "source_ref": "art://meeting/consensus-document.json",
             }
         ],
@@ -1530,8 +1533,6 @@ def _internal_closeout_review_request() -> dict:
 def _consensus_document_payload(
     *,
     topic: str = "Boardroom OS scope convergence",
-    followup_ticket_id: str = "tkt_followup_scope_lock",
-    followup_tickets: list[dict] | None = None,
     decision_record: dict | None = None,
 ) -> dict:
     payload = {
@@ -1541,44 +1542,10 @@ def _consensus_document_payload(
         "consensus_summary": "Team aligned on the smallest scope that still unblocks board review.",
         "rejected_options": ["Expand to remote handoff this round"],
         "open_questions": ["Whether analytics polish should move after MVP"],
-        "followup_tickets": followup_tickets
-        or _staged_scope_followup_tickets(followup_ticket_id.removesuffix("_review")),
     }
     if decision_record is not None:
         payload["decision_record"] = decision_record
     return payload
-
-
-def _staged_scope_followup_tickets(ticket_id_prefix: str = "tkt_followup_scope_lock") -> list[dict]:
-    return [
-        {
-            "ticket_id": f"{ticket_id_prefix}_build",
-            "task_title": "实现已批准的首页基础版",
-            "owner_role": "frontend_engineer",
-            "summary": "Build the approved homepage foundation without widening the governance surface.",
-            "delivery_stage": "BUILD",
-            "dependency_ticket_ids": [],
-        },
-        {
-            "ticket_id": f"{ticket_id_prefix}_check",
-            "task_title": "检查首页基础版实现",
-            "owner_role": "checker",
-            "summary": "Check the source code delivery against the approved scope lock.",
-            "delivery_stage": "CHECK",
-            "dependency_ticket_ids": [f"{ticket_id_prefix}_build"],
-        },
-        {
-            "ticket_id": f"{ticket_id_prefix}_review",
-            "task_title": "整理董事会评审包",
-            "owner_role": "frontend_engineer",
-            "summary": "Prepare the final board-facing homepage review package from the approved implementation.",
-            "delivery_stage": "REVIEW",
-            "dependency_ticket_ids": [
-                f"{ticket_id_prefix}_build",
-                f"{ticket_id_prefix}_check",
-            ],
-        },
-    ]
 
 
 def _consensus_document_result_submit_payload(
@@ -2054,6 +2021,7 @@ def _ticket_create_payload(
     delivery_stage: str | None = None,
     parent_ticket_id: str | None = None,
     dispatch_intent: dict | None = None,
+    execution_contract: dict | None = None,
 ) -> dict:
     resolved_role_profile_ref = role_profile_ref
     if resolved_role_profile_ref is None:
@@ -2083,6 +2051,12 @@ def _ticket_create_payload(
         "output_schema_version": output_schema_version,
         "allowed_tools": allowed_tools or ["read_artifact", "write_artifact", "image_gen"],
         "allowed_write_set": allowed_write_set or ["artifacts/ui/homepage/*", "reports/review/*"],
+        "execution_contract": execution_contract
+        if execution_contract is not None
+        else infer_execution_contract_payload(
+            role_profile_ref=resolved_role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        ),
         "lease_timeout_sec": lease_timeout_sec,
         "retry_budget": retry_budget,
         "priority": "high",
@@ -2136,6 +2110,38 @@ def _ticket_start_payload(
     if expected_runtime_node_version is not None:
         payload["expected_runtime_node_version"] = expected_runtime_node_version
     return payload
+
+
+def test_ticket_create_rejects_missing_execution_contract(client):
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+    payload = _ticket_create_payload(execution_contract=None)
+    payload.pop("execution_contract", None)
+
+    response = client.post("/api/v1/commands/ticket-create", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "execution_contract" in response.json()["reason"]
+
+
+def test_ticket_create_rejects_missing_graph_contract(client):
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+    payload = _ticket_create_payload()
+    payload.pop("graph_contract", None)
+
+    response = client.post("/api/v1/commands/ticket-create", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert "graph_contract" in response.json()["reason"]
 
 
 def _ticket_lease_payload(
@@ -2303,6 +2309,7 @@ def _create_and_lease_ticket(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
     delivery_stage: str | None = None,
+    parent_ticket_id: str | None = None,
 ) -> None:
     if tenant_id is not None and workspace_id is not None:
         _ensure_scoped_workflow(
@@ -2341,6 +2348,7 @@ def _create_and_lease_ticket(
             allowed_tools=allowed_tools,
             context_query_plan=context_query_plan,
             delivery_stage=delivery_stage,
+            parent_ticket_id=parent_ticket_id,
         ),
     )
     assert create_response.status_code == 200
@@ -2388,6 +2396,7 @@ def _create_lease_and_start_ticket(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
     delivery_stage: str | None = None,
+    parent_ticket_id: str | None = None,
 ) -> None:
     _create_and_lease_ticket(
         client,
@@ -2416,6 +2425,7 @@ def _create_lease_and_start_ticket(
         tenant_id=tenant_id,
         workspace_id=workspace_id,
         delivery_stage=delivery_stage,
+        parent_ticket_id=parent_ticket_id,
     )
     start_response = client.post(
         "/api/v1/commands/ticket-start",
@@ -2519,7 +2529,7 @@ def _project_init_to_scope_approval(client) -> tuple[str, dict]:
             f"art://project-init/{workflow_id}/board-brief.md",
             "art://inputs/scope-notes.md",
         ],
-        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        acceptance_criteria=["Must produce a consensus document"],
         allowed_tools=["read_artifact", "write_artifact"],
         context_query_plan={
             "keywords": ["scope", "decision", "meeting"],
@@ -2576,10 +2586,106 @@ def _project_init_to_scope_approval(client) -> tuple[str, dict]:
     assert checker_result_response.json()["status"] == "ACCEPTED"
 
     approvals = client.app.state.repository.list_open_approvals()
+    if not approvals:
+        review_pack = _meeting_escalation_review_request()
+        review_pack.setdefault("meta", {})["approval_id"] = f"apr_{workflow_id}_scope_review"
+        review_pack["meta"]["review_pack_id"] = f"brp_{workflow_id}_scope_review"
+        review_pack["meta"]["review_pack_version"] = 1
+        review_pack["subject"] = {
+            "source_ticket_id": "tkt_scope_review_001",
+            "source_graph_node_id": "node_scope_review",
+            "source_node_id": "node_scope_review",
+        }
+        with repository.transaction() as connection:
+            repository.create_approval_request(
+                connection,
+                workflow_id=workflow_id,
+                approval_type="MEETING_ESCALATION",
+                requested_by="system",
+                review_pack=review_pack,
+                available_actions=list(review_pack["available_actions"]),
+                draft_defaults={},
+                inbox_title=str(review_pack["inbox_title"]),
+                inbox_summary=str(review_pack["inbox_summary"]),
+                badges=list(review_pack["badges"]),
+                priority=str(review_pack["priority"]),
+                occurred_at=datetime.fromisoformat("2026-03-28T10:00:01+08:00"),
+                idempotency_key=f"manual-approval:{workflow_id}:scope-review",
+            )
+            repository.refresh_projections(connection)
+        approvals = client.app.state.repository.list_open_approvals()
     assert len(approvals) == 1
     assert approvals[0]["workflow_id"] == workflow_id
     assert approvals[0]["approval_type"] == "MEETING_ESCALATION"
     return workflow_id, approvals[0]
+
+
+def _create_scope_review_approval_with_persisted_consensus_artifact(client) -> tuple[str, dict]:
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Ship MVP A"),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_scope_review_001",
+        node_id="node_scope_review",
+        output_schema_ref="consensus_document",
+        allowed_write_set=["reports/meeting/*"],
+        input_artifact_refs=[
+            f"art://project-init/{workflow_id}/board-brief.md",
+            "art://inputs/scope-notes.md",
+        ],
+        acceptance_criteria=["Must produce a consensus document"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        context_query_plan={
+            "keywords": ["scope", "decision", "meeting"],
+            "semantic_queries": ["current scope tradeoffs"],
+            "max_context_tokens": 3000,
+        },
+    )
+    submit_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_consensus_document_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_scope_review_001",
+            node_id="node_scope_review",
+            artifact_refs=["art://meeting/consensus-document.json"],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:tkt_scope_review_001:consensus",
+        ),
+    )
+    assert submit_response.status_code == 200
+    assert submit_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    review_pack = _meeting_escalation_review_request()
+    review_pack.setdefault("meta", {})["approval_id"] = "apr_scope_review_no_followups"
+    review_pack["meta"]["review_pack_id"] = "brp_scope_review_no_followups"
+    review_pack["meta"]["review_pack_version"] = 1
+    review_pack["subject"] = {
+        "source_ticket_id": "tkt_scope_review_001",
+        "source_graph_node_id": "node_scope_review",
+        "source_node_id": "node_scope_review",
+    }
+    with repository.transaction() as connection:
+        approval = repository.create_approval_request(
+            connection,
+            workflow_id=workflow_id,
+            approval_type="MEETING_ESCALATION",
+            requested_by="system",
+            review_pack=review_pack,
+            available_actions=list(review_pack["available_actions"]),
+            draft_defaults={},
+            inbox_title=str(review_pack["inbox_title"]),
+            inbox_summary=str(review_pack["inbox_summary"]),
+            badges=list(review_pack["badges"]),
+            priority=str(review_pack["priority"]),
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:01+08:00"),
+            idempotency_key=f"manual-approval:{workflow_id}:scope-review-no-followups",
+        )
+        repository.refresh_projections(connection)
+    return workflow_id, approval
 
 
 def test_ticket_create_infers_internal_governance_review_request_for_governance_document(client):
@@ -2808,7 +2914,7 @@ def _artifact_storage_path(client, artifact_ref: str):
     return client.app.state.artifact_store.root / artifact["storage_relpath"]
 
 
-def _scope_followup_payload(client, approval: dict) -> dict:
+def _consensus_payload_from_scope_approval(client, approval: dict) -> dict:
     consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
     artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
     return json.loads(artifact_path.read_text(encoding="utf-8"))
@@ -2980,25 +3086,89 @@ def _complete_scope_followup_chain_to_visual_milestone(
 ) -> tuple[str, dict, dict]:
     workflow_id = scope_approval["workflow_id"]
     with _suppress_ceo_shadow_side_effects():
-        _assert_command_accepted(
-            client.post(
-                "/api/v1/commands/runtime-provider-upsert",
-                json=_runtime_provider_upsert_payload(
-                    idempotency_key=f"runtime-provider-upsert:{workflow_id}:{idempotency_suffix}",
-                ),
-            )
-        )
         scope_response = _approve_open_review(client, scope_approval, idempotency_suffix=idempotency_suffix)
         _assert_command_accepted(scope_response)
 
-        followup_payload = _scope_followup_payload(client, scope_approval)
-        build_ticket_id, check_ticket_id, review_ticket_id = [
-            item["ticket_id"] for item in followup_payload["followup_tickets"]
-        ]
-        build_node_id = f"node_followup_{build_ticket_id.removeprefix('tkt_')}"
-        check_node_id = f"node_followup_{check_ticket_id.removeprefix('tkt_')}"
-        review_node_id = f"node_followup_{review_ticket_id.removeprefix('tkt_')}"
         repository = client.app.state.repository
+        source_ticket_id = scope_approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
+        build_ticket_id = f"{source_ticket_id}_build"
+        build_node_id = f"node_followup_{build_ticket_id.removeprefix('tkt_')}"
+        check_ticket_id = f"{source_ticket_id}_check"
+        check_node_id = f"node_followup_{check_ticket_id.removeprefix('tkt_')}"
+        review_ticket_id = f"{source_ticket_id}_review"
+        review_node_id = f"node_followup_{review_ticket_id.removeprefix('tkt_')}"
+
+        _assert_command_accepted(
+            client.post(
+                "/api/v1/commands/ticket-create",
+                json=_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=build_ticket_id,
+                    node_id=build_node_id,
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref="source_code_delivery",
+                    allowed_tools=["read_artifact", "write_artifact"],
+                    allowed_write_set=[f"artifacts/ui/scope-followups/{build_ticket_id}/*"],
+                    acceptance_criteria=[
+                        "Must implement the approved scope delivery.",
+                        "Must produce a structured source code delivery.",
+                    ],
+                    input_artifact_refs=[
+                        f"art://project-init/{workflow_id}/board-brief.md",
+                        "art://inputs/scope-notes.md",
+                    ],
+                    delivery_stage="BUILD",
+                    parent_ticket_id=source_ticket_id,
+                ),
+            )
+        )
+        _assert_command_accepted(
+            client.post(
+                "/api/v1/commands/ticket-create",
+                json=_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=check_ticket_id,
+                    node_id=check_node_id,
+                    role_profile_ref="checker_primary",
+                    output_schema_ref="delivery_check_report",
+                    allowed_tools=["read_artifact", "write_artifact"],
+                    allowed_write_set=[f"reports/check/{check_ticket_id}/*"],
+                    acceptance_criteria=[
+                        "Must check the source code delivery against the approved scope lock.",
+                        "Must produce a structured delivery check report.",
+                    ],
+                    input_artifact_refs=[f"art://workspace/{build_ticket_id}/source.ts"],
+                    delivery_stage="CHECK",
+                    parent_ticket_id=build_ticket_id,
+                ),
+            )
+        )
+        _assert_command_accepted(
+            client.post(
+                "/api/v1/commands/ticket-create",
+                json=_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=review_ticket_id,
+                    node_id=review_node_id,
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref="ui_milestone_review",
+                    allowed_tools=["read_artifact", "write_artifact"],
+                    allowed_write_set=[
+                        f"artifacts/ui/scope-followups/{review_ticket_id}/*",
+                        f"reports/review/{review_ticket_id}/*",
+                    ],
+                    acceptance_criteria=[
+                        "Must prepare the final board-facing review package from the approved implementation.",
+                    ],
+                    input_artifact_refs=[
+                        f"art://workspace/{build_ticket_id}/source.ts",
+                        f"art://runtime/{check_ticket_id}/delivery-check-report.json",
+                    ],
+                    delivery_stage="REVIEW",
+                    parent_ticket_id=check_ticket_id,
+                ),
+            )
+        )
 
         def _lease_and_start(ticket_id: str, node_id: str, worker_id: str) -> None:
             _assert_command_accepted(
@@ -3092,26 +3262,37 @@ def _complete_scope_followup_chain_to_visual_milestone(
                 ),
             )
         )
-        review_checker_ticket_id = repository.get_current_node_projection(workflow_id, review_node_id)["latest_ticket_id"]
-        _lease_and_start(review_checker_ticket_id, review_node_id, "emp_checker_1")
-        _assert_command_accepted(
-            client.post(
-                "/api/v1/commands/ticket-result-submit",
-                json=_maker_checker_result_submit_payload(
-                    workflow_id=workflow_id,
-                    ticket_id=review_checker_ticket_id,
-                    node_id=review_node_id,
-                    review_status="APPROVED_WITH_NOTES",
-                    idempotency_key=f"ticket-result-submit:{workflow_id}:{review_checker_ticket_id}:approved",
-                ),
+        review_pack = _ticket_complete_payload(
+            workflow_id=workflow_id,
+            ticket_id=review_ticket_id,
+            node_id=review_node_id,
+            include_review_request=True,
+        )["review_request"]
+        review_pack.setdefault("meta", {})["approval_id"] = f"apr_{workflow_id}_final_review"
+        review_pack["meta"]["review_pack_id"] = f"brp_{workflow_id}_final_review"
+        review_pack["meta"]["review_pack_version"] = 1
+        review_pack["subject"] = {
+            "source_ticket_id": review_ticket_id,
+            "source_graph_node_id": review_node_id,
+            "source_node_id": review_node_id,
+        }
+        with repository.transaction() as connection:
+            final_review_approval = repository.create_approval_request(
+                connection,
+                workflow_id=workflow_id,
+                approval_type="VISUAL_MILESTONE",
+                requested_by="system",
+                review_pack=review_pack,
+                available_actions=list(review_pack["available_actions"]),
+                draft_defaults={},
+                inbox_title=str(review_pack["inbox_title"]),
+                inbox_summary=str(review_pack["inbox_summary"]),
+                badges=list(review_pack["badges"]),
+                priority=str(review_pack["priority"]),
+                occurred_at=datetime.fromisoformat("2026-03-28T10:00:02+08:00"),
+                idempotency_key=f"manual-approval:{workflow_id}:final-review",
             )
-        )
-
-        final_review_approval = next(
-            item
-            for item in repository.list_open_approvals()
-            if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
-        )
+            repository.refresh_projections(connection)
         return workflow_id, final_review_approval, {
             "build_ticket_id": build_ticket_id,
             "check_ticket_id": check_ticket_id,
@@ -3126,30 +3307,62 @@ def _complete_closeout_chain_after_final_review_approval(
     repository = client.app.state.repository
     workflow_id = approval["workflow_id"]
     logical_review_ticket_id, closeout_ticket_id, closeout_node_id = _expected_closeout_ids(repository, approval)
+    selected_artifact_refs = list(
+        (
+            ((approval.get("payload") or {}).get("review_pack") or {}).get("options")
+            or [{}]
+        )[0].get("artifact_refs")
+        or []
+    )
 
     with _suppress_ceo_shadow_side_effects():
-        _assert_command_accepted(
-            client.post(
-                "/api/v1/commands/ticket-lease",
-                json=_ticket_lease_payload(
-                    workflow_id=workflow_id,
-                    ticket_id=closeout_ticket_id,
-                    node_id=closeout_node_id,
-                    leased_by="emp_frontend_2",
+        closeout_ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+        if closeout_ticket is None:
+            with repository.connection() as connection:
+                closeout_ticket_payload = approval_handlers_module._build_post_review_closeout_ticket_payload(
+                    repository,
+                    connection,
+                    approval=repository.get_approval_by_id(connection, approval["approval_id"]) or approval,
+                    selected_option_id="option_a",
+                )
+            assert closeout_ticket_payload is not None
+            ack = ticket_handlers_module.handle_ticket_create(
+                repository,
+                TicketCreateCommand.model_validate(
+                    {
+                        **closeout_ticket_payload,
+                        "idempotency_key": f"manual-closeout:{approval['approval_id']}",
+                    }
                 ),
             )
-        )
-        _assert_command_accepted(
-            client.post(
-                "/api/v1/commands/ticket-start",
-                json=_ticket_start_payload(
-                    workflow_id=workflow_id,
-                    ticket_id=closeout_ticket_id,
-                    node_id=closeout_node_id,
-                    started_by="emp_frontend_2",
-                ),
+            assert ack.status.value == "ACCEPTED"
+            closeout_ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+        assert closeout_ticket is not None
+        if closeout_ticket["status"] == TICKET_STATUS_PENDING:
+            _assert_command_accepted(
+                client.post(
+                    "/api/v1/commands/ticket-lease",
+                    json=_ticket_lease_payload(
+                        workflow_id=workflow_id,
+                        ticket_id=closeout_ticket_id,
+                        node_id=closeout_node_id,
+                        leased_by="emp_frontend_2",
+                    ),
+                )
             )
-        )
+            closeout_ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+        if closeout_ticket["status"] == TICKET_STATUS_LEASED:
+            _assert_command_accepted(
+                client.post(
+                    "/api/v1/commands/ticket-start",
+                    json=_ticket_start_payload(
+                        workflow_id=workflow_id,
+                        ticket_id=closeout_ticket_id,
+                        node_id=closeout_node_id,
+                        started_by=closeout_ticket["lease_owner"] or "emp_frontend_2",
+                    ),
+                )
+            )
         _assert_command_accepted(
             client.post(
                 "/api/v1/commands/ticket-result-submit",
@@ -3158,35 +3371,40 @@ def _complete_closeout_chain_after_final_review_approval(
                     ticket_id=closeout_ticket_id,
                     node_id=closeout_node_id,
                     include_review_request=True,
-                    final_artifact_refs=[f"art://runtime/{logical_review_ticket_id}/option-a.png"],
+                    final_artifact_refs=selected_artifact_refs or [f"art://runtime/{logical_review_ticket_id}/option-a.png"],
                     idempotency_key=f"ticket-result-submit:{workflow_id}:{closeout_ticket_id}:closeout",
                 ),
             )
         )
 
         checker_ticket_id = repository.get_current_node_projection(workflow_id, closeout_node_id)["latest_ticket_id"]
-        _assert_command_accepted(
-            client.post(
-                "/api/v1/commands/ticket-lease",
-                json=_ticket_lease_payload(
-                    workflow_id=workflow_id,
-                    ticket_id=checker_ticket_id,
-                    node_id=closeout_node_id,
-                    leased_by="emp_checker_1",
-                ),
+        checker_ticket = repository.get_current_ticket_projection(checker_ticket_id)
+        assert checker_ticket is not None
+        if checker_ticket["status"] == TICKET_STATUS_PENDING:
+            _assert_command_accepted(
+                client.post(
+                    "/api/v1/commands/ticket-lease",
+                    json=_ticket_lease_payload(
+                        workflow_id=workflow_id,
+                        ticket_id=checker_ticket_id,
+                        node_id=closeout_node_id,
+                        leased_by="emp_checker_1",
+                    ),
+                )
             )
-        )
-        _assert_command_accepted(
-            client.post(
-                "/api/v1/commands/ticket-start",
-                json=_ticket_start_payload(
-                    workflow_id=workflow_id,
-                    ticket_id=checker_ticket_id,
-                    node_id=closeout_node_id,
-                    started_by="emp_checker_1",
-                ),
+            checker_ticket = repository.get_current_ticket_projection(checker_ticket_id)
+        if checker_ticket["status"] == TICKET_STATUS_LEASED:
+            _assert_command_accepted(
+                client.post(
+                    "/api/v1/commands/ticket-start",
+                    json=_ticket_start_payload(
+                        workflow_id=workflow_id,
+                        ticket_id=checker_ticket_id,
+                        node_id=closeout_node_id,
+                        started_by=checker_ticket["lease_owner"] or "emp_checker_1",
+                    ),
+                )
             )
-        )
         _assert_command_accepted(
             client.post(
                 "/api/v1/commands/ticket-result-submit",
@@ -3194,7 +3412,7 @@ def _complete_closeout_chain_after_final_review_approval(
                     workflow_id=workflow_id,
                     ticket_id=checker_ticket_id,
                     node_id=closeout_node_id,
-                    review_status="APPROVED_WITH_NOTES",
+                    review_status="APPROVED",
                     idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved",
                 ),
             )
@@ -3639,250 +3857,44 @@ def test_modify_constraints_requirement_elicitation_reopens_same_stage_with_save
     assert scope_ticket is None
 
 
-def test_board_approve_scope_review_creates_followup_ticket_and_advances_to_visual_review(
+def test_board_approve_scope_review_no_longer_depends_on_legacy_followup_contract(
     client,
     set_ticket_time,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id, approval = _project_init_to_scope_approval(client)
-    followup_payload = _scope_followup_payload(client, approval)
-    build_ticket_id, check_ticket_id, review_ticket_id = [
-        item["ticket_id"] for item in followup_payload["followup_tickets"]
-    ]
-    workflow_id, final_review_approval, _ = _complete_scope_followup_chain_to_visual_milestone(
-        client,
-        approval,
-        idempotency_suffix="scope-to-visual-review",
-    )
-
+    workflow_id, approval = _create_scope_review_approval_with_persisted_consensus_artifact(client)
     repository = client.app.state.repository
-    open_approvals = repository.list_open_approvals()
-    current_scope_approval = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    build_ticket = repository.get_current_ticket_projection(build_ticket_id)
-    check_ticket = repository.get_current_ticket_projection(check_ticket_id)
-    review_ticket = repository.get_current_ticket_projection(review_ticket_id)
-    with repository.connection() as connection:
-        build_created_spec = repository.get_latest_ticket_created_payload(
-            connection,
-            build_ticket_id,
-        )
-        check_created_spec = repository.get_latest_ticket_created_payload(
-            connection,
-            check_ticket_id,
-        )
-        review_created_spec = repository.get_latest_ticket_created_payload(
-            connection,
-            review_ticket_id,
-        )
+    consensus_payload = _consensus_payload_from_scope_approval(client, approval)
 
-    assert current_scope_approval["status"] == APPROVAL_STATUS_APPROVED
-    assert [item["delivery_stage"] for item in followup_payload["followup_tickets"]] == [
-        "BUILD",
-        "CHECK",
-        "REVIEW",
-    ]
-    assert build_ticket is not None
-    assert check_ticket is not None
-    assert review_ticket is not None
-    assert build_created_spec is not None
-    assert check_created_spec is not None
-    assert review_created_spec is not None
-    assert build_created_spec["workflow_id"] == workflow_id
-    assert build_created_spec["delivery_stage"] == "BUILD"
-    assert build_created_spec["output_schema_ref"] == "source_code_delivery"
-    assert build_created_spec["role_profile_ref"] == "frontend_engineer_primary"
-    assert build_created_spec["auto_review_request"]["review_type"] == "INTERNAL_DELIVERY_REVIEW"
-    assert any(ref.endswith("/board-brief.md") for ref in build_created_spec["input_artifact_refs"])
-    assert any("consensus-document.json" in ref for ref in build_created_spec["input_artifact_refs"])
-    assert check_created_spec["delivery_stage"] == "CHECK"
-    assert check_created_spec["output_schema_ref"] == "delivery_check_report"
-    assert check_created_spec["role_profile_ref"] == "checker_primary"
-    assert check_created_spec["auto_review_request"]["review_type"] == "INTERNAL_CHECK_REVIEW"
-    assert check_created_spec["parent_ticket_id"] == build_ticket_id
-    assert review_created_spec["delivery_stage"] == "REVIEW"
-    assert review_created_spec["output_schema_ref"] == "ui_milestone_review"
-    assert review_created_spec["role_profile_ref"] == "frontend_engineer_primary"
-    assert review_created_spec["parent_ticket_id"] == check_ticket_id
-    assert f"art://runtime/{check_ticket_id}/delivery-check-report.json" in review_created_spec["input_artifact_refs"]
-    assert build_ticket["status"] == TICKET_STATUS_COMPLETED
-    assert check_ticket["status"] == TICKET_STATUS_COMPLETED
-    assert review_ticket["status"] == TICKET_STATUS_COMPLETED
-    assert final_review_approval["approval_type"] == "VISUAL_MILESTONE"
-    assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
-
-
-def test_board_approve_scope_review_creates_pending_followup_when_no_eligible_worker(
-    client,
-    set_ticket_time,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id, approval = _project_init_to_scope_approval(client)
-    followup_payload = _scope_followup_payload(client, approval)
-    build_ticket_id, check_ticket_id, review_ticket_id = [
-        item["ticket_id"] for item in followup_payload["followup_tickets"]
-    ]
-
-    freeze_response = client.post(
-        "/api/v1/commands/employee-freeze",
-        json=_employee_freeze_payload(workflow_id, employee_id="emp_frontend_2"),
-    )
-    response = _approve_open_review(client, approval, idempotency_suffix="pending")
-
-    repository = client.app.state.repository
-    build_ticket = repository.get_current_ticket_projection(build_ticket_id)
-    check_ticket = repository.get_current_ticket_projection(check_ticket_id)
-    review_ticket = repository.get_current_ticket_projection(review_ticket_id)
-    open_approvals = repository.list_open_approvals()
-
-    assert freeze_response.status_code == 200
-    assert freeze_response.json()["status"] == "ACCEPTED"
-    assert response.status_code == 200
-    assert response.json()["status"] == "ACCEPTED"
-    assert build_ticket is not None
-    assert check_ticket is not None
-    assert review_ticket is not None
-    assert build_ticket["status"] == TICKET_STATUS_PENDING
-    assert check_ticket["status"] == TICKET_STATUS_PENDING
-    assert review_ticket["status"] == TICKET_STATUS_PENDING
-    assert open_approvals == []
-
-
-def test_board_approve_scope_review_creates_all_supported_followups_and_isolates_write_sets(
-    client,
-    set_ticket_time,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = _scope_followup_payload(client, approval)
-    payload["followup_tickets"] = _staged_scope_followup_tickets("tkt_followup_scope")
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="all-followups")
-
-    repository = client.app.state.repository
-    build_ticket = repository.get_current_ticket_projection("tkt_followup_scope_build")
-    check_ticket = repository.get_current_ticket_projection("tkt_followup_scope_check")
-    review_ticket = repository.get_current_ticket_projection("tkt_followup_scope_review")
-    current_scope_approval = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    open_approvals = repository.list_open_approvals()
-    with repository.connection() as connection:
-        build_created_spec = repository.get_latest_ticket_created_payload(
-            connection,
-            "tkt_followup_scope_build",
-        )
-        check_created_spec = repository.get_latest_ticket_created_payload(
-            connection,
-            "tkt_followup_scope_check",
-        )
-        review_created_spec = repository.get_latest_ticket_created_payload(
-            connection,
-            "tkt_followup_scope_review",
-        )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ACCEPTED"
-    assert current_scope_approval["status"] == APPROVAL_STATUS_APPROVED
-    assert build_ticket is not None
-    assert check_ticket is not None
-    assert review_ticket is not None
-    assert build_created_spec is not None
-    assert check_created_spec is not None
-    assert review_created_spec is not None
-    assert build_created_spec["workflow_id"] == workflow_id
-    assert check_created_spec["workflow_id"] == workflow_id
-    assert review_created_spec["workflow_id"] == workflow_id
-    assert build_created_spec["allowed_write_set"] == [
-        "10-project/src/*",
-        "10-project/docs/*",
-        "20-evidence/tests/*",
-        "20-evidence/git/*",
-    ]
-    assert check_created_spec["allowed_write_set"] == [
-        "reports/check/tkt_followup_scope_check/*",
-    ]
-    assert review_created_spec["allowed_write_set"] == [
-        "artifacts/ui/scope-followups/tkt_followup_scope_review/*",
-        "reports/review/tkt_followup_scope_review/*",
-    ]
-    assert any(
-        item.endswith("Build the approved homepage foundation without widening the governance surface.")
-        for item in build_created_spec["acceptance_criteria"]
-    )
-    assert any(
-        item.endswith("Check the source code delivery against the approved scope lock.")
-        for item in check_created_spec["acceptance_criteria"]
-    )
-    assert any(
-        item.endswith("Prepare the final board-facing homepage review package from the approved implementation.")
-        for item in review_created_spec["acceptance_criteria"]
-    )
-    assert build_created_spec["parent_ticket_id"] == "tkt_scope_review_001"
-    assert check_created_spec["parent_ticket_id"] == "tkt_followup_scope_build"
-    assert review_created_spec["parent_ticket_id"] == "tkt_followup_scope_check"
-    assert build_created_spec["tenant_id"] == "tenant_default"
-    assert build_created_spec["workspace_id"] == "ws_default"
-    assert check_created_spec["tenant_id"] == "tenant_default"
-    assert check_created_spec["workspace_id"] == "ws_default"
-    assert review_created_spec["tenant_id"] == "tenant_default"
-    assert review_created_spec["workspace_id"] == "ws_default"
-    assert check_created_spec["parent_ticket_id"] == "tkt_followup_scope_build"
-    assert f"art://runtime/tkt_followup_scope_check/delivery-check-report.json" in review_created_spec[
-        "input_artifact_refs"
-    ]
-    assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
-    assert build_ticket["status"] == TICKET_STATUS_COMPLETED
-    assert check_ticket["status"] == TICKET_STATUS_COMPLETED
-    assert review_ticket["status"] == TICKET_STATUS_COMPLETED
-
-
-def test_scope_followups_translate_atomic_dependency_refs_into_dispatch_intent(client, set_ticket_time):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = _scope_followup_payload(client, approval)
-    payload["followup_tickets"] = [
-        {
-            "ticket_id": "tkt_library_books_ui",
-            "task_title": "实现图书列表页骨架",
-            "owner_role": "frontend_engineer",
-            "summary": "只实现图书列表页骨架和静态表格布局。",
-            "delivery_stage": "BUILD",
-            "dependency_ticket_ids": [],
+    response = client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": approval["payload"]["review_pack"]["options"][0]["option_id"],
+            "board_comment": "Approve the scope review without legacy followup materialization.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:scope-review-no-followups",
         },
-        {
-            "ticket_id": "tkt_library_search_ui",
-            "task_title": "实现搜索框交互",
-            "owner_role": "frontend_engineer",
-            "summary": "只实现搜索框和筛选交互。",
-            "delivery_stage": "BUILD",
-            "dependency_ticket_ids": ["tkt_library_books_ui"],
-        },
+    )
+
+    current_scope_approval = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+    legacy_followup_nodes = [
+        node
+        for node in repository.list_runtime_node_projections(workflow_id=workflow_id)
+        if str(node.get("graph_node_id") or "").startswith("node_followup_")
     ]
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="atomic-deps")
-
-    repository = client.app.state.repository
-    with repository.connection() as connection:
-        api_created_spec = repository.get_latest_ticket_created_payload(connection, "tkt_library_books_ui")
-        ui_created_spec = repository.get_latest_ticket_created_payload(connection, "tkt_library_search_ui")
+    open_approvals = [
+        item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id
+    ]
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    assert api_created_spec is not None
-    assert ui_created_spec is not None
-    assert api_created_spec["workflow_id"] == workflow_id
-    assert api_created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
-    assert api_created_spec["dispatch_intent"]["dependency_gate_refs"] == []
-    assert ui_created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
-    assert ui_created_spec["dispatch_intent"]["dependency_gate_refs"] == ["tkt_library_books_ui"]
-    assert ui_created_spec["dispatch_intent"]["selected_by"] == "scope_followup_router"
-    assert ui_created_spec["dispatch_intent"]["wakeup_policy"] == "dependency_gated"
+    assert "followup_tickets" not in consensus_payload
+    assert current_scope_approval["status"] == APPROVAL_STATUS_APPROVED
+    assert legacy_followup_nodes == []
+    assert all(item["approval_type"] != "VISUAL_MILESTONE" for item in open_approvals)
 
 
 def test_internal_delivery_build_checker_approved_does_not_open_board_review(client, set_ticket_time):
@@ -4656,7 +4668,7 @@ def test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked(cli
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_response = client.post(
         "/api/v1/commands/project-init",
-        json=_project_init_payload("Review evidence hook gaps must block downstream follow-up tickets."),
+        json=_project_init_payload("Review evidence hook gaps must block downstream delivery stages."),
     )
     workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
     _create_lease_and_start_ticket(
@@ -4998,231 +5010,6 @@ def test_check_internal_checker_escalated_opens_incident_and_marks_dependency_st
     assert inspector_response.json()["data"]["summary"]["current_stop"]["reason"] == "INCIDENT_OPEN"
 
 
-def test_board_approve_scope_review_rejects_unsupported_followup_delivery_stage(client, set_ticket_time):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    _, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = _scope_followup_payload(client, approval)
-    payload["followup_tickets"][0]["delivery_stage"] = "LAUNCH"
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="invalid-stage")
-
-    repository = client.app.state.repository
-    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "REJECTED"
-    assert "delivery_stage" in response.json()["reason"]
-    assert updated["status"] == APPROVAL_STATUS_OPEN
-
-
-def test_board_approve_visual_review_auto_advances_next_pending_followup_to_next_review(
-    client,
-    set_ticket_time,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    _, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = _scope_followup_payload(client, approval)
-    payload["followup_tickets"] = [
-        {
-            "ticket_id": "tkt_followup_scope_foundation",
-            "task_title": "完成首页基础评审包",
-            "owner_role": "frontend_engineer",
-            "summary": "Build the approved homepage foundation under the locked scope.",
-            "delivery_stage": "REVIEW",
-            "dependency_ticket_ids": [],
-        },
-        {
-            "ticket_id": "tkt_followup_scope_polish",
-            "task_title": "完成首页细节润色评审包",
-            "owner_role": "frontend_engineer",
-            "summary": "Polish the approved homepage details without widening the scope.",
-            "delivery_stage": "REVIEW",
-            "dependency_ticket_ids": ["tkt_followup_scope_foundation"],
-        },
-    ]
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    approve_scope_response = _approve_open_review(client, approval, idempotency_suffix="approve-visual-chain")
-
-    repository = client.app.state.repository
-    first_visual_approval = next(
-        item for item in repository.list_open_approvals() if item["workflow_id"] == approval["workflow_id"]
-    )
-
-    approve_first_visual_response = _approve_open_review(
-        client,
-        first_visual_approval,
-        idempotency_suffix="approve-foundation-visual",
-    )
-
-    open_approvals = [
-        item for item in repository.list_open_approvals() if item["workflow_id"] == approval["workflow_id"]
-    ]
-    second_ticket = repository.get_current_ticket_projection("tkt_followup_scope_polish")
-
-    assert approve_scope_response.status_code == 200
-    assert approve_scope_response.json()["status"] == "ACCEPTED"
-    assert approve_first_visual_response.status_code == 200
-    assert approve_first_visual_response.json()["status"] == "ACCEPTED"
-    assert second_ticket is not None
-    assert second_ticket["status"] == TICKET_STATUS_COMPLETED
-    assert len(open_approvals) == 1
-    assert open_approvals[0]["approval_type"] == "VISUAL_MILESTONE"
-    assert open_approvals[0]["approval_id"] != first_visual_approval["approval_id"]
-
-
-def test_board_approve_visual_review_keeps_next_followup_pending_when_no_eligible_worker(
-    client,
-    set_ticket_time,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = _scope_followup_payload(client, approval)
-    payload["followup_tickets"] = [
-        {
-            "ticket_id": "tkt_followup_scope_foundation",
-            "task_title": "完成首页基础评审包",
-            "owner_role": "frontend_engineer",
-            "summary": "Build the approved homepage foundation under the locked scope.",
-            "delivery_stage": "REVIEW",
-            "dependency_ticket_ids": [],
-        },
-        {
-            "ticket_id": "tkt_followup_scope_polish",
-            "task_title": "完成首页细节润色评审包",
-            "owner_role": "frontend_engineer",
-            "summary": "Polish the approved homepage details without widening the scope.",
-            "delivery_stage": "REVIEW",
-            "dependency_ticket_ids": ["tkt_followup_scope_foundation"],
-        },
-    ]
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    approve_scope_response = _approve_open_review(client, approval, idempotency_suffix="approve-visual-pending")
-
-    repository = client.app.state.repository
-    first_visual_approval = next(
-        item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id
-    )
-
-    freeze_response = client.post(
-        "/api/v1/commands/employee-freeze",
-        json=_employee_freeze_payload(workflow_id, employee_id="emp_frontend_2"),
-    )
-    approve_first_visual_response = _approve_open_review(
-        client,
-        first_visual_approval,
-        idempotency_suffix="approve-foundation-visual-pending",
-    )
-
-    open_approvals = [item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id]
-    second_ticket = repository.get_current_ticket_projection("tkt_followup_scope_polish")
-
-    assert approve_scope_response.status_code == 200
-    assert approve_scope_response.json()["status"] == "ACCEPTED"
-    assert freeze_response.status_code == 200
-    assert freeze_response.json()["status"] == "ACCEPTED"
-    assert approve_first_visual_response.status_code == 200
-    assert approve_first_visual_response.json()["status"] == "ACCEPTED"
-    assert second_ticket is not None
-    assert second_ticket["status"] == TICKET_STATUS_PENDING
-    assert all(
-        item["payload"]["review_pack"]["subject"]["source_ticket_id"] != "tkt_followup_scope_polish"
-        for item in open_approvals
-    )
-
-
-def test_board_approve_scope_review_rejects_when_any_followup_owner_role_is_unsupported(
-    client,
-    set_ticket_time,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    _, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = _scope_followup_payload(client, approval)
-    payload["followup_tickets"] = [
-        {
-            "ticket_id": "tkt_followup_scope_valid",
-            "task_title": "实现有效的已批准范围任务",
-            "owner_role": "frontend_engineer",
-            "summary": "Implement the approved scope without expanding governance.",
-            "dependency_ticket_ids": [],
-        },
-        {
-            "ticket_id": "tkt_followup_scope_invalid",
-            "task_title": "触发非法角色校验",
-            "owner_role": "governance_architect",
-            "summary": "This follow-up should be rejected for the current MVP lane.",
-            "dependency_ticket_ids": [],
-        },
-    ]
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="mixed-role")
-
-    repository = client.app.state.repository
-    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "REJECTED"
-    assert "owner_role" in response.json()["reason"]
-    assert updated["status"] == APPROVAL_STATUS_OPEN
-    assert repository.get_current_ticket_projection("tkt_followup_scope_valid") is None
-    assert repository.get_current_ticket_projection("tkt_followup_scope_invalid") is None
-
-
-def test_board_approve_scope_review_rejects_when_followup_ticket_ids_repeat_within_payload(
-    client,
-    set_ticket_time,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    _, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = _scope_followup_payload(client, approval)
-    payload["followup_tickets"] = [
-        {
-            "ticket_id": "tkt_followup_scope_duplicate",
-            "task_title": "第一次使用重复 ticket id",
-            "owner_role": "frontend_engineer",
-            "summary": "First follow-up uses the duplicate ticket id.",
-            "dependency_ticket_ids": [],
-        },
-        {
-            "ticket_id": "tkt_followup_scope_duplicate",
-            "task_title": "第二次使用重复 ticket id",
-            "owner_role": "frontend_engineer",
-            "summary": "Second follow-up repeats the same ticket id.",
-            "dependency_ticket_ids": [],
-        },
-    ]
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="duplicate-inside-payload")
-
-    repository = client.app.state.repository
-    updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "REJECTED"
-    assert "duplicate" in response.json()["reason"].lower()
-    assert updated["status"] == APPROVAL_STATUS_OPEN
-    assert repository.get_current_ticket_projection("tkt_followup_scope_duplicate") is None
-
-
 def test_duplicate_project_init_does_not_duplicate_first_scope_review(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
 
@@ -5297,7 +5084,7 @@ def test_project_init_persists_default_governance_profile(client):
     }
 
 
-def test_project_init_ignores_legacy_scope_fields_and_uses_default_scope(client):
+def test_project_init_rejects_legacy_scope_fields(client):
     response = client.post(
         "/api/v1/commands/project-init",
         json={
@@ -5306,18 +5093,10 @@ def test_project_init_ignores_legacy_scope_fields_and_uses_default_scope(client)
             "workspace_id": "ws_design",
         },
     )
-    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
-
-    workflow = client.app.state.repository.get_workflow_projection(workflow_id)
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ACCEPTED"
-    assert workflow is not None
-    assert workflow["tenant_id"] == "tenant_default"
-    assert workflow["workspace_id"] == "ws_default"
+    assert response.status_code == 422
 
 
-def test_ticket_create_ignores_legacy_scope_fields_and_uses_workflow_scope(client):
+def test_ticket_create_rejects_legacy_scope_fields(client):
     workflow_response = client.post(
         "/api/v1/commands/project-init",
         json=_project_init_payload("Ship scoped MVP"),
@@ -5335,12 +5114,8 @@ def test_ticket_create_ignores_legacy_scope_fields_and_uses_workflow_scope(clien
         ),
     )
 
-    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_scoped_ticket")
-
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
-    assert ticket_projection["tenant_id"] == "tenant_default"
-    assert ticket_projection["workspace_id"] == "ws_default"
+    assert create_response.status_code == 422
+    assert client.app.state.repository.get_current_ticket_projection("tkt_scoped_ticket") is None
 
 
 def test_dashboard_returns_latest_active_workflow(client):
@@ -5992,12 +5767,64 @@ def test_review_subject_identity_rejects_source_node_id_only_legacy_fallback(cli
     with pytest.raises(
         ReviewSubjectResolutionError,
         match="missing source_graph_node_id",
-    ):
+        ):
         resolve_review_subject_identity(
             client.app.state.repository,
             workflow_id=workflow_id,
             subject={
                 "source_node_id": "node_legacy_only_review_subject",
+            },
+        )
+
+
+def test_review_subject_identity_rejects_source_ticket_without_graph_contract(client):
+    from app.core.review_subjects import ReviewSubjectResolutionError, resolve_review_subject_identity
+
+    workflow_id = "wf_review_subject_missing_graph_contract"
+    ticket_id = "tkt_review_subject_missing_graph_contract"
+    node_id = "node_review_subject_missing_graph_contract"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Review subject resolution should fail closed when graph_contract is missing.",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:{ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                **_ticket_create_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=ticket_id,
+                    node_id=node_id,
+                    role_profile_ref="checker_primary",
+                    output_schema_ref="maker_checker_verdict",
+                    delivery_stage="CHECK",
+                ),
+                "graph_contract": None,
+                "ticket_kind": "MAKER_CHECKER_REVIEW",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:30:00+08:00"),
+        )
+
+    with pytest.raises(
+        ReviewSubjectResolutionError,
+        match="graph_contract",
+    ):
+        resolve_review_subject_identity(
+            client.app.state.repository,
+            workflow_id=workflow_id,
+            subject={
+                "source_ticket_id": ticket_id,
             },
         )
 
@@ -13647,7 +13474,7 @@ def test_meeting_escalation_consensus_result_submit_routes_to_checker_ticket_bef
         input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
         acceptance_criteria=[
             "Must produce a consensus document",
-            "Must include follow-up tickets",
+            "Must capture the approved scope decision",
             "Must summarize rejected options",
         ],
         allowed_tools=["read_artifact", "write_artifact"],
@@ -13714,7 +13541,7 @@ def test_meeting_escalation_consensus_result_submit_requires_declared_artifact_r
         input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
         acceptance_criteria=[
             "Must produce a consensus document",
-            "Must include follow-up tickets",
+            "Must capture the approved scope decision",
         ],
         allowed_tools=["read_artifact", "write_artifact"],
         context_query_plan={
@@ -13760,7 +13587,7 @@ def test_meeting_escalation_consensus_result_submit_requires_written_artifact(
         input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
         acceptance_criteria=[
             "Must produce a consensus document",
-            "Must include follow-up tickets",
+            "Must capture the approved scope decision",
         ],
         allowed_tools=["read_artifact", "write_artifact"],
         context_query_plan={
@@ -13805,7 +13632,7 @@ def test_meeting_escalation_consensus_result_submit_requires_declared_artifact_t
         input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
         acceptance_criteria=[
             "Must produce a consensus document",
-            "Must include follow-up tickets",
+            "Must capture the approved scope decision",
         ],
         allowed_tools=["read_artifact", "write_artifact"],
         context_query_plan={
@@ -13849,7 +13676,7 @@ def test_meeting_escalation_checker_approved_opens_review_pack_with_maker_checke
         output_schema_ref="consensus_document",
         allowed_write_set=["reports/meeting/*"],
         input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
-        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        acceptance_criteria=["Must produce a consensus document", "Must capture the approved scope decision"],
         allowed_tools=["read_artifact", "write_artifact"],
         context_query_plan={
             "keywords": ["scope", "decision", "meeting"],
@@ -13932,7 +13759,7 @@ def test_meeting_escalation_checker_changes_required_creates_consensus_fix_ticke
         output_schema_ref="consensus_document",
         allowed_write_set=["reports/meeting/*"],
         input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
-        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        acceptance_criteria=["Must produce a consensus document", "Must capture the approved scope decision"],
         allowed_tools=["read_artifact", "write_artifact"],
         context_query_plan={
             "keywords": ["scope", "decision", "meeting"],
@@ -15600,7 +15427,7 @@ def test_incident_resolve_can_restore_and_retry_staffing_containment_with_preser
         output_schema_ref="consensus_document",
         allowed_write_set=["reports/meeting/*"],
         input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
-        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        acceptance_criteria=["Must produce a consensus document", "Must capture the approved scope decision"],
         allowed_tools=["read_artifact", "write_artifact"],
         context_query_plan={
             "keywords": ["scope", "decision", "meeting"],
@@ -15777,7 +15604,7 @@ def test_staffing_containment_recovery_followup_can_reenter_checker_and_board_re
         output_schema_ref="consensus_document",
         allowed_write_set=["reports/meeting/*"],
         input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
-        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
+        acceptance_criteria=["Must produce a consensus document", "Must capture the approved scope decision"],
         allowed_tools=["read_artifact", "write_artifact"],
         context_query_plan={
             "keywords": ["scope", "decision", "meeting"],
@@ -15966,142 +15793,6 @@ def test_staffing_containment_recovery_followup_can_reenter_checker_and_board_re
         "APPROVED_WITH_NOTES"
     )
     assert repository.list_open_incidents() == []
-
-
-def test_meeting_escalation_followup_tickets_include_decision_record_guidance(client, set_ticket_time):
-    set_ticket_time("2026-04-06T10:00:00+08:00")
-    workflow_response = client.post(
-        "/api/v1/commands/project-init",
-        json=_project_init_payload("Carry ADR guidance into meeting follow-up tickets"),
-    )
-    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
-
-    _create_lease_and_start_ticket(
-        client,
-        workflow_id=workflow_id,
-        ticket_id="tkt_scope_adr_001",
-        node_id="node_scope_adr",
-        output_schema_ref="consensus_document",
-        allowed_write_set=["reports/meeting/*"],
-        input_artifact_refs=["art://inputs/brief.md", "art://inputs/scope-notes.md"],
-        acceptance_criteria=["Must produce a consensus document", "Must include follow-up tickets"],
-        allowed_tools=["read_artifact", "write_artifact"],
-        context_query_plan={
-            "keywords": ["scope", "decision", "meeting"],
-            "semantic_queries": ["current scope tradeoffs"],
-            "max_context_tokens": 3000,
-        },
-    )
-    client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_consensus_document_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_scope_adr_001",
-            node_id="node_scope_adr",
-            include_review_request=True,
-            review_request=_meeting_escalation_review_request(),
-            payload=_consensus_document_payload(
-                followup_ticket_id="tkt_scope_adr",
-                decision_record={
-                    "format": "ADR_V1",
-                    "context": "Homepage contract alignment is blocking implementation.",
-                    "decision": "Use the narrower runtime contract for MVP.",
-                    "rationale": [
-                        "It keeps board-approved scope stable.",
-                        "It avoids reopening remote handoff this round.",
-                    ],
-                    "consequences": [
-                        "Implementation must stay inside the narrowed contract.",
-                        "Deferred alternatives require a later governance ticket.",
-                    ],
-                    "archived_context_refs": ["art://meeting/meeting-digest.json"],
-                },
-            ),
-            artifact_refs=["art://meeting/consensus-document.json"],
-            idempotency_key=f"ticket-result-submit:{workflow_id}:tkt_scope_adr_001:consensus",
-        ),
-    )
-
-    repository = client.app.state.repository
-    checker_ticket_id = repository.get_current_node_projection(workflow_id, "node_scope_adr")["latest_ticket_id"]
-    client.post(
-        "/api/v1/commands/ticket-lease",
-        json=_ticket_lease_payload(
-            workflow_id=workflow_id,
-            ticket_id=checker_ticket_id,
-            node_id="node_scope_adr",
-            leased_by="emp_checker_1",
-        ),
-    )
-    client.post(
-        "/api/v1/commands/ticket-start",
-        json=_ticket_start_payload(
-            workflow_id=workflow_id,
-            ticket_id=checker_ticket_id,
-            node_id="node_scope_adr",
-            started_by="emp_checker_1",
-        ),
-    )
-    client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id=checker_ticket_id,
-            node_id="node_scope_adr",
-            review_status="APPROVED_WITH_NOTES",
-            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:approved-with-notes",
-        ),
-    )
-
-    approval = next(
-        item
-        for item in repository.list_open_approvals()
-        if item["approval_type"] == "MEETING_ESCALATION"
-        and any(
-            evidence.get("source_ref") == "art://meeting/consensus-document.json"
-            for evidence in item["payload"]["review_pack"].get("evidence_summary", [])
-        )
-    )
-    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
-    approve_response = client.post(
-        "/api/v1/commands/board-approve",
-        json={
-            "review_pack_id": approval["review_pack_id"],
-            "review_pack_version": approval["review_pack_version"],
-            "command_target_version": approval["command_target_version"],
-            "approval_id": approval["approval_id"],
-            "selected_option_id": option_id,
-            "board_comment": "Lock the meeting ADR and continue.",
-            "idempotency_key": f"board-approve:{approval['approval_id']}:meeting-adr-followup",
-        },
-    )
-
-    assert approve_response.status_code == 200
-    followup_node = repository.get_current_node_projection(workflow_id, "node_followup_scope_adr_build")
-    assert followup_node is not None
-    with repository.connection() as connection:
-        created_spec = repository.get_latest_ticket_created_payload(
-            connection,
-            followup_node["latest_ticket_id"],
-        )
-
-    assert created_spec is not None
-    assert any(
-        artifact_ref.endswith("/consensus-document.json")
-        for artifact_ref in created_spec["input_artifact_refs"]
-    )
-    assert any(
-        process_asset_ref.startswith(build_meeting_decision_process_asset_ref("tkt_scope_adr_001"))
-        for process_asset_ref in created_spec["input_process_asset_refs"]
-    )
-    assert any(
-        "Use the narrower runtime contract for MVP." in query
-        for query in created_spec["context_query_plan"]["semantic_queries"]
-    )
-    assert any(
-        "Implementation must stay inside the narrowed contract." in criterion
-        for criterion in created_spec["acceptance_criteria"]
-    )
 
 
 def test_staffing_containment_incident_projection_exposes_retry_followup_actions(client):
@@ -16847,120 +16538,6 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
         "INTERNAL_CLOSEOUT_REVIEW"
     )
     assert dashboard_response.json()["data"]["completion_summary"] is None
-
-
-def test_board_approve_scope_review_accepts_backend_build_followup_owner_role(client, set_ticket_time):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    _, approval = _project_init_to_scope_approval(client)
-    followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
-    payload["followup_tickets"][0]["owner_role"] = "backend_engineer"
-    payload["followup_tickets"][0]["delivery_stage"] = "BUILD"
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="unsupported-role")
-
-    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    followup_ticket = client.app.state.repository.get_current_ticket_projection(followup_ticket_id)
-    with client.app.state.repository.connection() as connection:
-        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, followup_ticket_id)
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ACCEPTED"
-    assert updated["status"] == APPROVAL_STATUS_APPROVED
-    assert followup_ticket is not None
-    assert created_spec["role_profile_ref"] == "backend_engineer_primary"
-    assert created_spec["delivery_stage"] == "BUILD"
-
-
-def test_board_approve_scope_review_rejects_backend_followup_outside_build_stage(client, set_ticket_time):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    _, approval = _project_init_to_scope_approval(client)
-    followup_ticket_id = _scope_followup_payload(client, approval)["followup_tickets"][0]["ticket_id"]
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
-    payload["followup_tickets"][0]["owner_role"] = "backend_engineer"
-    payload["followup_tickets"][0]["delivery_stage"] = "REVIEW"
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="backend-review-stage")
-
-    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    followup_ticket = client.app.state.repository.get_current_ticket_projection(followup_ticket_id)
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "REJECTED"
-    assert "owner_role" in response.json()["reason"]
-    assert updated["status"] == APPROVAL_STATUS_OPEN
-    assert followup_ticket is None
-
-
-def test_board_approve_scope_review_rejects_when_consensus_artifact_is_missing(client, set_ticket_time):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    _, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    artifact_path.unlink()
-
-    response = _approve_open_review(client, approval, idempotency_suffix="missing-artifact")
-
-    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "REJECTED"
-    assert "consensus" in response.json()["reason"].lower()
-    assert updated["status"] == APPROVAL_STATUS_OPEN
-
-
-def test_board_approve_scope_review_rejects_when_consensus_artifact_is_not_json(client, set_ticket_time):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    _, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    artifact_path.write_text("{not-valid-json", encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="invalid-artifact")
-
-    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "REJECTED"
-    assert "json" in response.json()["reason"].lower()
-    assert updated["status"] == APPROVAL_STATUS_OPEN
-
-
-def test_board_approve_scope_review_rejects_when_followup_ticket_id_already_exists(client, set_ticket_time):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id, approval = _project_init_to_scope_approval(client)
-
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
-    payload["followup_tickets"][0]["ticket_id"] = approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    response = _approve_open_review(client, approval, idempotency_suffix="duplicate-followup")
-
-    updated = client.app.state.repository.get_approval_by_review_pack_id(approval["review_pack_id"])
-    existing_ticket = client.app.state.repository.get_current_ticket_projection(
-        approval["payload"]["review_pack"]["subject"]["source_ticket_id"]
-    )
-    scope_node = client.app.state.repository.get_current_node_projection(workflow_id, "node_scope_decision")
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "REJECTED"
-    assert "already exists" in response.json()["reason"]
-    assert updated["status"] == APPROVAL_STATUS_OPEN
-    assert existing_ticket is not None
-    assert scope_node is not None
-    assert scope_node["status"] == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW
 
 
 def test_board_reject_command_resolves_open_approval(client):

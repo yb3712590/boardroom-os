@@ -575,6 +575,88 @@ def _approve_review(client, approval: dict, *, idempotency_suffix: str) -> None:
     assert response.json()["status"] == "ACCEPTED"
 
 
+def _seed_delivery_chain_for_recovery(
+    client,
+    *,
+    workflow_id: str,
+    build_ticket_id: str,
+    check_ticket_id: str,
+    review_ticket_id: str,
+) -> dict[str, str]:
+    build_node_id = f"node_followup_{build_ticket_id.removeprefix('tkt_')}"
+    check_node_id = f"node_followup_{check_ticket_id.removeprefix('tkt_')}"
+    review_node_id = f"node_followup_{review_ticket_id.removeprefix('tkt_')}"
+
+    api_test_helpers._create_and_lease_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=build_ticket_id,
+        node_id=build_node_id,
+        output_schema_ref="source_code_delivery",
+        allowed_write_set=[f"artifacts/ui/scope-followups/{build_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved scope delivery.",
+            "Must produce a structured source code delivery.",
+        ],
+        delivery_stage="BUILD",
+    )
+    create_check = client.post(
+        "/api/v1/commands/ticket-create",
+        json=api_test_helpers._ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=check_ticket_id,
+            node_id=check_node_id,
+            role_profile_ref="checker_primary",
+            output_schema_ref="delivery_check_report",
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=[f"reports/check/{check_ticket_id}/*"],
+            acceptance_criteria=[
+                "Must check the source code delivery against the approved scope lock.",
+                "Must produce a structured delivery check report.",
+            ],
+            input_artifact_refs=[f"art://workspace/{build_ticket_id}/source.ts"],
+            delivery_stage="CHECK",
+            parent_ticket_id=build_ticket_id,
+        ),
+    )
+    assert create_check.status_code == 200
+    assert create_check.json()["status"] == "ACCEPTED"
+
+    create_review = client.post(
+        "/api/v1/commands/ticket-create",
+        json=api_test_helpers._ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=review_ticket_id,
+            node_id=review_node_id,
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="ui_milestone_review",
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=[
+                f"artifacts/ui/scope-followups/{review_ticket_id}/*",
+                f"reports/review/{review_ticket_id}/*",
+            ],
+            acceptance_criteria=[
+                "Must prepare the final board-facing review package from the approved implementation.",
+            ],
+            input_artifact_refs=[
+                f"art://workspace/{build_ticket_id}/source.ts",
+                f"art://runtime/{check_ticket_id}/delivery-check-report.json",
+            ],
+            delivery_stage="REVIEW",
+            parent_ticket_id=check_ticket_id,
+        ),
+    )
+    assert create_review.status_code == 200
+    assert create_review.json()["status"] == "ACCEPTED"
+
+    return {
+        "build_node_id": build_node_id,
+        "check_node_id": check_node_id,
+        "review_node_id": review_node_id,
+    }
+
+
 def _assert_workflow_reaches_closeout_completion(client, *, workflow_id: str, final_review_approval: dict) -> None:
     dashboard_response = client.get("/api/v1/projections/dashboard")
     assert dashboard_response.status_code == 200
@@ -671,19 +753,6 @@ def test_build_runtime_closeout_review_request_adds_documentation_sync_evidence(
     assert "doc/TODO.md" in documentation_evidence.summary
 
 
-def _followup_ticket_from_scope_approval(client, repository, approval: dict, *, delivery_stage: str) -> dict:
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact = repository.get_artifact_by_ref(consensus_artifact_ref)
-    assert artifact is not None
-    assert artifact["storage_relpath"] is not None
-
-    artifact_path = client.app.state.artifact_store.root / artifact["storage_relpath"]
-    consensus_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
-    return next(
-        item for item in consensus_payload["followup_tickets"] if item["delivery_stage"] == delivery_stage
-    )
-
-
 def _create_scope_consensus_approval(
     client,
     *,
@@ -706,7 +775,6 @@ def _create_scope_consensus_approval(
             "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/scope-notes.md"],
             "acceptance_criteria": [
                 "Must produce a consensus document.",
-                "Must include follow-up tickets.",
             ],
             "allowed_tools": ["read_artifact", "write_artifact"],
             "context_query_plan": {
@@ -755,29 +823,6 @@ def _create_scope_consensus_approval(
         "consensus_summary": summary,
         "rejected_options": ["Do not widen the MVP scope in this round."],
         "open_questions": ["Whether non-blocking polish should move after board approval."],
-        "followup_tickets": [
-            {
-                "ticket_id": "tkt_scope_provider_build",
-                "task_title": "Build the provider-backed homepage foundation",
-                "owner_role": "frontend_engineer",
-                "summary": "Build the approved homepage foundation without widening scope.",
-                "delivery_stage": "BUILD",
-            },
-            {
-                "ticket_id": "tkt_scope_provider_check",
-                "task_title": "Check the provider-backed homepage foundation",
-                "owner_role": "checker",
-                "summary": "Check the source code delivery against the locked scope.",
-                "delivery_stage": "CHECK",
-            },
-            {
-                "ticket_id": "tkt_scope_provider_review",
-                "task_title": "Prepare the provider-backed review package",
-                "owner_role": "frontend_engineer",
-                "summary": "Prepare the final board-facing review package.",
-                "delivery_stage": "REVIEW",
-            },
-        ],
     }
     review_request = {
         "review_type": "MEETING_ESCALATION",
@@ -1023,29 +1068,6 @@ def _mock_provider_payload_for_schema(schema_ref: str) -> dict:
             "consensus_summary": "Lock scope to the narrow homepage MVP path and continue delivery.",
             "rejected_options": ["Expand beyond the current MVP boundary in this round."],
             "open_questions": ["Whether non-blocking polish should move after board approval."],
-            "followup_tickets": [
-                {
-                    "ticket_id": "tkt_scope_provider_build",
-                    "task_title": "Build the provider-backed homepage foundation",
-                    "owner_role": "frontend_engineer",
-                    "summary": "Build the approved homepage foundation without widening scope.",
-                    "delivery_stage": "BUILD",
-                },
-                {
-                    "ticket_id": "tkt_scope_provider_check",
-                    "task_title": "Check the provider-backed homepage foundation",
-                    "owner_role": "checker",
-                    "summary": "Check the source code delivery against the locked scope.",
-                    "delivery_stage": "CHECK",
-                },
-                {
-                    "ticket_id": "tkt_scope_provider_review",
-                    "task_title": "Prepare the provider-backed review package",
-                    "owner_role": "frontend_engineer",
-                    "summary": "Prepare the final board-facing review package.",
-                    "delivery_stage": "REVIEW",
-                },
-            ],
         }
     if schema_ref == "source_code_delivery":
         return {
@@ -2166,7 +2188,6 @@ def test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime
             input_artifact_refs=["art://inputs/brief.md", "art://inputs/meeting-notes.md"],
             acceptance_criteria=[
                 "Must produce a consensus document",
-                "Must include follow-up tickets",
             ],
             allowed_write_set=["reports/meeting/*"],
             allowed_tools=["read_artifact", "write_artifact"],
@@ -2196,66 +2217,6 @@ def test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime
     assert artifact_response.status_code == 200
     assert len(artifact_response.json()["data"]["artifacts"]) == 1
     assert artifact_response.json()["data"]["artifacts"][0]["path"] == "reports/meeting/consensus-document.json"
-
-
-def test_scheduler_runner_auto_advances_default_scope_delivery_chain_to_final_review_stop(
-    client,
-    set_ticket_time,
-):
-    set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _project_init(client, goal="Scope follow-up fanout")
-    repository = client.app.state.repository
-    approval = repository.list_open_approvals()[0]
-    consensus_artifact_ref = approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact = repository.get_artifact_by_ref(consensus_artifact_ref)
-
-    assert artifact is not None
-    assert artifact["storage_relpath"] is not None
-
-    artifact_path = client.app.state.artifact_store.root / artifact["storage_relpath"]
-    consensus_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
-    followup_ticket_ids = [item["ticket_id"] for item in consensus_payload["followup_tickets"]]
-
-    approve_response = client.post(
-        "/api/v1/commands/board-approve",
-        json={
-            "review_pack_id": approval["review_pack_id"],
-            "review_pack_version": approval["review_pack_version"],
-            "command_target_version": approval["command_target_version"],
-            "approval_id": approval["approval_id"],
-            "selected_option_id": approval["payload"]["review_pack"]["options"][0]["option_id"],
-            "board_comment": "Approve the locked scope and continue.",
-            "idempotency_key": f"board-approve:{approval['approval_id']}:multi-followup",
-        },
-    )
-
-    followup_tickets = [
-        repository.get_current_ticket_projection(ticket_id) for ticket_id in followup_ticket_ids
-    ]
-    open_approvals = repository.list_open_approvals()
-    build_checker_creates = [
-        event
-        for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_CREATED"
-        and (event["payload"].get("ticket_kind") == "MAKER_CHECKER_REVIEW")
-        and (event["payload"].get("delivery_stage") == "BUILD")
-    ]
-
-    assert [item["delivery_stage"] for item in consensus_payload["followup_tickets"]] == [
-        "BUILD",
-        "CHECK",
-        "REVIEW",
-    ]
-    assert len(consensus_payload["followup_tickets"]) == 3
-    assert len(set(followup_ticket_ids)) == 3
-    assert approve_response.status_code == 200
-    assert approve_response.json()["status"] == "ACCEPTED"
-    assert all(ticket is not None for ticket in followup_tickets)
-    assert all(ticket["status"] == "COMPLETED" for ticket in followup_tickets if ticket is not None)
-    assert len(build_checker_creates) == 1
-    assert any(item["approval_type"] == "VISUAL_MILESTONE" for item in open_approvals)
-
-
 def test_deterministic_scope_delivery_chain_reaches_closeout_completion(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id = _project_init(client, goal="Deterministic mainline completion")
@@ -2782,23 +2743,22 @@ def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_complet
     monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _project_init(client, goal="Timeout recovery reaches completion")
-    repository = client.app.state.repository
-    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
-    build_followup = _followup_ticket_from_scope_approval(
+    workflow_id = "wf_timeout_recovery_chain"
+    build_ticket_id = "tkt_timeout_recovery_chain_build"
+    _seed_delivery_chain_for_recovery(
         client,
-        repository,
-        scope_approval,
-        delivery_stage="BUILD",
+        workflow_id=workflow_id,
+        build_ticket_id=build_ticket_id,
+        check_ticket_id="tkt_timeout_recovery_chain_check",
+        review_ticket_id="tkt_timeout_recovery_chain_review",
     )
-    build_ticket_id = build_followup["ticket_id"]
+    repository = client.app.state.repository
 
     monkeypatch.setattr(
         workflow_auto_advance_module,
         "run_leased_ticket_runtime",
         lambda _repository: [],
     )
-    _approve_review(client, scope_approval, idempotency_suffix="timeout-build-scope")
 
     build_ticket = repository.get_current_ticket_projection(build_ticket_id)
     assert build_ticket is not None
@@ -2915,16 +2875,16 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
     monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    workflow_id = _project_init(client, goal="Repeated failure recovery reaches completion")
-    repository = client.app.state.repository
-    scope_approval = _approval_by_type(repository, workflow_id, "MEETING_ESCALATION")
-    build_followup = _followup_ticket_from_scope_approval(
+    workflow_id = "wf_repeated_failure_recovery_chain"
+    build_ticket_id = "tkt_repeated_failure_recovery_chain_build"
+    _seed_delivery_chain_for_recovery(
         client,
-        repository,
-        scope_approval,
-        delivery_stage="BUILD",
+        workflow_id=workflow_id,
+        build_ticket_id=build_ticket_id,
+        check_ticket_id="tkt_repeated_failure_recovery_chain_check",
+        review_ticket_id="tkt_repeated_failure_recovery_chain_review",
     )
-    build_ticket_id = build_followup["ticket_id"]
+    repository = client.app.state.repository
     repeated_failure = {"step": "render", "exit_code": 1, "component": "hero"}
 
     monkeypatch.setattr(
@@ -2932,7 +2892,6 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
         "run_leased_ticket_runtime",
         lambda _repository: [],
     )
-    _approve_review(client, scope_approval, idempotency_suffix="repeat-failure-build-scope")
 
     first_ticket = repository.get_current_ticket_projection(build_ticket_id)
     client.post(

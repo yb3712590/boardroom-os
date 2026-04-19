@@ -15,7 +15,7 @@ from app.core.ceo_execution_presets import (
     build_project_init_scope_ticket_id,
 )
 from app.core.governance_profiles import build_default_governance_profile
-from app.core.ceo_prompts import build_ceo_shadow_system_prompt
+from app.core.ceo_prompts import CEO_SHADOW_PROMPT_VERSION, build_ceo_shadow_system_prompt
 from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.execution_targets import infer_execution_contract_payload
 from app.core.output_schemas import (
@@ -2763,8 +2763,8 @@ def test_ceo_shadow_run_rejects_flat_create_ticket_action_shape_from_live_provid
     assert runs[0]["executed_actions"] == []
 
 
-def test_ceo_shadow_run_normalizes_live_action_type_alias_field(client, monkeypatch):
-    workflow_id = _seed_workflow(client, "wf_live_type_alias", "CEO live action type alias normalization")
+def test_ceo_shadow_run_rejects_live_action_type_alias_field(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_live_type_alias", "CEO live action type alias rejection")
     _set_live_provider(client)
 
     from app.core import ceo_proposer
@@ -2773,7 +2773,7 @@ def test_ceo_shadow_run_normalizes_live_action_type_alias_field(client, monkeypa
         return OpenAICompatProviderResult(
             output_text=json.dumps(
                 {
-                    "summary": "Create the next governance ticket using a loose type field.",
+                    "summary": "Legacy action_type alias should be rejected.",
                     "actions": [
                         {
                             "type": "CREATE_TICKET",
@@ -2791,7 +2791,7 @@ def test_ceo_shadow_run_normalizes_live_action_type_alias_field(client, monkeypa
                                     "selection_reason": "Keep the first governance document on the current live frontend owner.",
                                     "dependency_gate_refs": [],
                                 },
-                                "summary": "Write the architecture brief with the normalized action type alias.",
+                                "summary": "Write the architecture brief with the legacy action type alias.",
                                 "parent_ticket_id": None,
                             },
                         }
@@ -2803,20 +2803,24 @@ def test_ceo_shadow_run_normalizes_live_action_type_alias_field(client, monkeypa
 
     monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
 
-    run = run_ceo_shadow_for_trigger(
-        client.app.state.repository,
-        workflow_id=workflow_id,
-        trigger_type="MANUAL_TEST",
-        trigger_ref="manual:type-alias",
-        runtime_provider_store=client.app.state.runtime_provider_store,
-    )
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type="MANUAL_TEST",
+            trigger_ref="manual:type-alias",
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
 
-    assert run["provider_response_id"] == "resp_ceo_type_alias_1"
-    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
-    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["provider_response_id"] is None
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
 
 
-def test_ceo_shadow_run_alias_field_preserves_explicit_governance_dependency_chain_and_process_assets(
+def test_ceo_shadow_run_rejects_governance_dependency_chain_when_action_type_uses_alias_field(
     client,
     monkeypatch,
 ):
@@ -2864,7 +2868,7 @@ def test_ceo_shadow_run_alias_field_preserves_explicit_governance_dependency_cha
         return OpenAICompatProviderResult(
             output_text=json.dumps(
                 {
-                    "summary": "Advance to backlog recommendation using the existing governance chain.",
+                    "summary": "Legacy action_type alias should be rejected even when the payload is otherwise valid.",
                     "actions": [
                         {
                             "type": "CREATE_TICKET",
@@ -2899,33 +2903,21 @@ def test_ceo_shadow_run_alias_field_preserves_explicit_governance_dependency_cha
 
     monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
 
-    run = run_ceo_shadow_for_trigger(
-        client.app.state.repository,
-        workflow_id=workflow_id,
-        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
-        trigger_ref="scheduler-runner:test-idle-gov-chain",
-        runtime_provider_store=client.app.state.runtime_provider_store,
-    )
+    repository = client.app.state.repository
+    with pytest.raises(CeoShadowPipelineError) as exc_info:
+        run_ceo_shadow_for_trigger(
+            repository,
+            workflow_id=workflow_id,
+            trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+            trigger_ref="scheduler-runner:test-idle-gov-chain",
+            runtime_provider_store=client.app.state.runtime_provider_store,
+        )
 
-    assert run["provider_response_id"] == "resp_ceo_idle_gov_chain_1"
-    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
-    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
-
-    with client.app.state.repository.connection() as connection:
-        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
-
-    assert created_spec["output_schema_ref"] == BACKLOG_RECOMMENDATION_SCHEMA_REF
-    assert created_spec["dispatch_intent"]["dependency_gate_refs"] == [
-        "tkt_parent_architecture_doc",
-        "tkt_parent_technology_decision",
-        "tkt_parent_milestone_plan",
-        "tkt_parent_detailed_design",
-    ]
-    assert created_spec["parent_ticket_id"] == "tkt_parent_detailed_design"
-    assert "pa://governance-document/tkt_parent_architecture_doc@1" in created_spec["input_process_asset_refs"]
-    assert "pa://governance-document/tkt_parent_technology_decision@1" in created_spec["input_process_asset_refs"]
-    assert "pa://governance-document/tkt_parent_milestone_plan@1" in created_spec["input_process_asset_refs"]
-    assert "pa://governance-document/tkt_parent_detailed_design@1" in created_spec["input_process_asset_refs"]
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+    assert exc_info.value.source_stage == "proposal"
+    assert runs[0]["provider_response_id"] == "resp_ceo_idle_gov_chain_1"
+    assert runs[0]["accepted_actions"] == []
+    assert runs[0]["executed_actions"] == []
 
 
 def test_ceo_shadow_run_rejects_legacy_no_action_reason_shape(client, monkeypatch):
@@ -2968,6 +2960,44 @@ def test_ceo_shadow_run_rejects_legacy_no_action_reason_shape(client, monkeypatc
     assert runs[0]["deterministic_fallback_used"] is False
     assert runs[0]["accepted_actions"] == []
     assert runs[0]["executed_actions"] == []
+
+
+def test_ceo_shadow_run_records_current_prompt_version(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_live_prompt_version", "Record current CEO prompt version")
+    _set_live_provider(client)
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Recent work already covers the need.",
+                    "actions": [
+                        {
+                            "action_type": "NO_ACTION",
+                            "payload": {
+                                "reason": "Recent completed work already covers the next step.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_prompt_version_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:prompt-version",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["prompt_version"] == CEO_SHADOW_PROMPT_VERSION
+    assert run["prompt_version"] == "ceo_shadow_v3"
 
 
 @pytest.mark.parametrize(

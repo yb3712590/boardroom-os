@@ -2,8 +2,6 @@
 
 from fastapi import APIRouter, Request
 from pydantic import Field
-
-from app.contracts.common import StrictModel
 from app.contracts.commands import (
     ArtifactCleanupCommand,
     ArtifactDeleteCommand,
@@ -84,31 +82,9 @@ from app.core.ticket_handlers import (
 )
 from app.db.repository import ControlPlaneRepository
 
+from app.contracts.common import StrictModel
+
 router = APIRouter(prefix="/api/v1/commands", tags=["commands"])
-
-
-class ProjectInitRequest(ProjectInitCommand):
-    tenant_id: str | None = Field(default=None, min_length=1)
-    workspace_id: str | None = Field(default=None, min_length=1)
-
-    def to_command(self) -> ProjectInitCommand:
-        return ProjectInitCommand.model_validate(
-            self.model_dump(mode="json", exclude={"tenant_id", "workspace_id"})
-        )
-
-
-class TicketCreateRequest(TicketCreateCommand):
-    tenant_id: str | None = Field(default=None, min_length=1)
-    workspace_id: str | None = Field(default=None, min_length=1)
-
-    def to_command(self) -> TicketCreateCommand:
-        return TicketCreateCommand.model_validate(
-            self.model_dump(mode="json", exclude={"tenant_id", "workspace_id"})
-        )
-
-
-ProjectInitRequest.model_rebuild()
-TicketCreateRequest.model_rebuild()
 
 
 class RuntimeProviderModelsRefreshRequest(StrictModel):
@@ -116,9 +92,9 @@ class RuntimeProviderModelsRefreshRequest(StrictModel):
 
 
 @router.post("/project-init", response_model=CommandAckEnvelope)
-def project_init(request: Request, payload: ProjectInitRequest) -> CommandAckEnvelope:
+def project_init(request: Request, payload: ProjectInitCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
-    return handle_project_init(repository, payload.to_command())
+    return handle_project_init(repository, payload)
 
 
 @router.post("/runtime-provider-upsert", response_model=CommandAckEnvelope)
@@ -270,9 +246,9 @@ def meeting_request(request: Request, payload: MeetingRequestCommand) -> Command
 
 
 @router.post("/ticket-create", response_model=CommandAckEnvelope)
-def ticket_create(request: Request, payload: TicketCreateRequest) -> CommandAckEnvelope:
+def ticket_create(request: Request, payload: TicketCreateCommand) -> CommandAckEnvelope:
     repository: ControlPlaneRepository = request.app.state.repository
-    return handle_ticket_create(repository, payload.to_command())
+    return handle_ticket_create(repository, payload)
 
 
 @router.post("/ticket-lease", response_model=CommandAckEnvelope)

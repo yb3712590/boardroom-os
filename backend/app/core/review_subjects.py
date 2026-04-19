@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from app.core.graph_identity import (
     GraphIdentityResolutionError,
-    apply_legacy_graph_contract_compat,
     is_review_graph_node_id,
     resolve_ticket_graph_identity,
 )
@@ -58,7 +57,6 @@ def resolve_review_subject_identity(
 
     if source_ticket_id:
         created_spec = repository.get_latest_ticket_created_payload(connection, source_ticket_id) or {}
-        created_spec = apply_legacy_graph_contract_compat(created_spec)
         runtime_node_id = source_node_id
         if not runtime_node_id:
             ticket_projection = repository.get_current_ticket_projection(source_ticket_id, connection=connection)

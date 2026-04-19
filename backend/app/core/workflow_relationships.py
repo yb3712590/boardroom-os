@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
+from app.core.graph_identity import resolve_ticket_graph_identity
 from app.core.output_schemas import CONSENSUS_DOCUMENT_SCHEMA_REF, MAKER_CHECKER_VERDICT_SCHEMA_REF
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.db.repository import ControlPlaneRepository
@@ -322,9 +322,7 @@ def resolve_runtime_org_context_relations(
         raise ValueError(
             f"Workflow {normalized_workflow_id} is missing current ticket {normalized_ticket_id} for runtime org context."
         )
-    created_spec = apply_legacy_graph_contract_compat(
-        repository.get_latest_ticket_created_payload(connection, normalized_ticket_id) or {}
-    )
+    created_spec = repository.get_latest_ticket_created_payload(connection, normalized_ticket_id) or {}
     if not created_spec:
         raise ValueError(
             f"Workflow {normalized_workflow_id} is missing ticket-create spec for {normalized_ticket_id}."

@@ -1,6 +1,6 @@
 # Active Task Backlog
 
-> 最后更新：2026-04-13
+> 最后更新：2026-04-20
 > 说明：这里只保留当前仍未关闭、仍会影响当前主线实现的任务。已完成的详细任务卡片和完成补记统一看 `done.md`。
 
 ## 当前主线：`P0-COR`
@@ -13,6 +13,15 @@
 | `P0-COR-004` | 源码交付 contract 与 write set 重构 | 进行中 | 已落第七段：`delivery_closeout_package` 也已并回 `structured_document_delivery` 主线，closeout 票默认写到 `20-evidence/closeout/<ticket>/`，并继续复用 declared artifact / written artifact 对齐 contract；这轮又补了 Windows Git 子进程兼容，本机 workspace-managed 回归已恢复；但更广义的非代码 deliverable kind 还没正式进入主线 |
 | `P0-COR-005` | checker / closeout 硬门禁 | 进行中 | 已落第七段：closeout 票现在会继承 canonical docs、doc update 要求和上游 delivery evidence，`payload.final_artifact_refs` 也已进入硬校验；`FOLLOW_UP_REQUIRED` 继续只作为 checker 可见风险；本机 closeout/workspace hook 回归已恢复，但 full live 退出标准还没重跑确认 |
 | `P0-COR-006` | live 场景回归与退出标准重建 | 进行中 | 已把 live runner 抽成共享 harness，并补出 `requirement_elicitation / architecture_governance / library_management` 三条 full 入口；这轮新增 `architecture_governance_autopilot_smoke` checkpoint smoke，但当前机器实跑仍被 provider timeout 卡住，其他 full 长测也尚未重跑 |
+
+### 2026-04-20 runtime ticket / legacy compat 硬切收尾
+
+- `consensus_document` 已不再接受 legacy `followup_tickets`，`board-approve` 的 scope review 主链也已不再依赖这个 contract。
+- `backend/tests/test_api.py` 里直接读 consensus artifact `followup_tickets` 的 legacy helper 已拆掉，`backend/tests/test_scheduler_runner.py` 里的同类 helper 也已删除。
+- 这轮还没收完。当前剩余 blocker 不在 schema 主实现，而在历史测试链补桥：
+- `test_api.py` 里复用的手工 `scope review -> final review -> closeout` helper 还没完全贴合新主线，closeout 相关断言还没全绿。
+- `test_scheduler_runner.py` 里两条 incident recovery 测试虽然已经不再读 legacy payload，但当前还没自然推进到 `VISUAL_MILESTONE` 停点。
+- 这批任务仍归在 `P0-COR-004 / P0-COR-005 / P0-COR-006`，还不能从 active backlog 里移走。
 
 ### 2026-04-13 审计第一批执行切片
 

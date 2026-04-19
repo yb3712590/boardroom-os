@@ -397,7 +397,9 @@ def test_ticket_graph_snapshot_builds_parent_dependency_and_review_edges(client)
                     "wakeup_policy": "default",
                 },
             ),
-            "graph_contract": None,
+            "graph_contract": {
+                "lane_kind": "review",
+            },
             "ticket_kind": "MAKER_CHECKER_REVIEW",
             "maker_checker_context": {
                 "maker_ticket_id": "tkt_build_frontend",
@@ -471,7 +473,9 @@ def test_ticket_graph_snapshot_assigns_graph_identity_lanes_for_shared_runtime_n
                     "wakeup_policy": "default",
                 },
             ),
-            "graph_contract": None,
+            "graph_contract": {
+                "lane_kind": "review",
+            },
             "ticket_kind": "MAKER_CHECKER_REVIEW",
             "maker_checker_context": {
                 "maker_ticket_id": "tkt_shared_runtime_maker",
@@ -757,7 +761,9 @@ def test_ticket_graph_snapshot_collapses_rework_back_to_execution_lane(client):
                     "wakeup_policy": "default",
                 },
             ),
-            "graph_contract": None,
+            "graph_contract": {
+                "lane_kind": "review",
+            },
             "ticket_kind": "MAKER_CHECKER_REVIEW",
             "maker_checker_context": {
                 "maker_ticket_id": "tkt_shared_runtime_rework_maker",
@@ -790,7 +796,9 @@ def test_ticket_graph_snapshot_collapses_rework_back_to_execution_lane(client):
                 delivery_stage="BUILD",
                 parent_ticket_id="tkt_shared_runtime_rework_checker",
             ),
-            "graph_contract": None,
+            "graph_contract": {
+                "lane_kind": "execution",
+            },
             "ticket_kind": "MAKER_REWORK_FIX",
             "maker_checker_context": {
                 "maker_ticket_id": "tkt_shared_runtime_rework_maker",

@@ -1,6 +1,6 @@
 # Boardroom OS API Reference
 
-> 最后更新：2026-04-08  
+> 最后更新：2026-04-20  
 > 这份文档按当前代码真实暴露的路由写，不按设计草案写。接口分组来自 `backend/app/api/*.py`，并由 `backend/tests/test_api_surface.py` 固定。
 
 ## 1. 怎么看这份文档
@@ -8,13 +8,13 @@
 如果你要判断接口是不是当前主线，先看这三个标签：
 
 - `当前主线`：现在推荐直接使用，属于本地 MVP 的真实控制面
-- `冻结兼容面`：代码仍在、接口仍可用，但默认不继续扩张
+- `已下线`：旧兼容面已经从当前应用入口移除，不再暴露路由
 - `默认是否建议使用`：站在今天的主线角度，是否建议作为第一选择
 
 完整字段约束以 `backend/app/contracts/` 为准。这里主要回答三件事：
 
 - 接口在哪一组
-- 它现在属于主线还是冻结兼容面
+- 它现在属于主线还是已下线兼容面
 - 关键用途和关键输入是什么
 
 ## 2. 共通约定
@@ -33,12 +33,6 @@
 - 命令 ID / 事件游标
 - 当前命令写入后的最小确认信息
 
-worker-runtime 是单独一套受限接口：
-
-- `assignments` 走 `X-Boardroom-Worker-Bootstrap` 或 `X-Boardroom-Worker-Session`
-- execution package、artifact、command 路径走 signed URL + `access_token`
-- 当前 execution package 会在 `compiled_role.persona_summary` 之外，再携带结构化 `org_context / organization_context`，用于暴露最小组织关系和职责边界
-
 ## 3. 路由分组总览
 
 | 分组 | 代码入口 | 当前边界 | 默认是否建议使用 |
@@ -48,10 +42,6 @@ worker-runtime 是单独一套受限接口：
 | `artifacts` | `backend/app/api/artifacts.py` | 当前主线 | 是 |
 | `artifact-uploads` | `backend/app/api/artifact_uploads.py` | 当前主线中的受限大文件链路 | 是 |
 | `events` | `backend/app/api/events.py` | 当前主线 | 是 |
-| `worker-runtime` | `backend/app/api/worker_runtime.py` | 冻结兼容面 | 否 |
-| `worker-admin` | `backend/app/api/worker_admin.py` | 冻结兼容面 | 否 |
-| `worker-admin projections` | `backend/app/api/worker_admin_projections.py` | 冻结兼容面 | 否 |
-| `worker-runtime projections` | `backend/app/api/worker_runtime_projections.py` | 冻结兼容面 | 否 |
 
 ## 4. Commands
 
@@ -85,7 +75,7 @@ worker-runtime 是单独一套受限接口：
 
 补充说明：
 
-- `project-init` 和 `ticket-create` 当前仍接受弃用兼容输入 `tenant_id / workspace_id`，但它们已不再驱动主线行为
+- `project-init` 和 `ticket-create` 不再接受弃用兼容输入 `tenant_id / workspace_id`
 - `project-init` 当前新增可选 `force_requirement_elicitation`；开启后会先进入一次 `REQUIREMENT_ELICITATION` 板审，而不是直接 kickoff scope review
 - `project-init` 当前还会在 `BOARDROOM_OS_PROJECT_WORKSPACE_ROOT/<workflow_id>/` 下创建受管项目工作区；`project_methodology_profile` 第一版支持 `AGILE / HYBRID / COMPLIANCE`
 - `runtime-provider-upsert` 当前已从单一表单切到 registry 快照；`providers[]` 首版只开放 `prov_openai_compat` 与 `prov_claude_code`，并额外支持 `capability_tags[]`、`fallback_provider_ids[]`、`cost_tier` 与 `participation_policy`；`role_bindings[]` 当前只建议写现有真实角色
@@ -95,7 +85,9 @@ worker-runtime 是单独一套受限接口：
 - `ticket-result-submit` 对 workspace-managed `source_code_delivery` 票，当前会硬要求 `payload.documentation_updates`、`verification_evidence_refs` 和 `git_commit_record`；旧 artifact-path 代码票继续兼容
 - `ticket-result-submit` 对 `deliverable_kind=structured_document_delivery` 的票，当前会硬要求至少一条 `artifact_ref`、至少一条 `written_artifact`，以及至少一条 declared `artifact_ref` 和本次写盘对齐
 - `ticket-result-submit` 对五类治理文档票，除了上面的统一 gate，还会继续硬校验 `payload.document_kind_ref == output_schema_ref`
+- `ticket-result-submit` 对 `consensus_document` 票，当前不再接受 legacy `payload.followup_tickets`；runtime 默认生成的 consensus payload 也不再产出这个字段
 - `ticket-result-submit` 现在不再直接消费 `upload_session_id`；中大文件必须先走 `ticket-artifact-import-upload`
+- `board-approve` 在 scope review 主链里，当前不再依赖也不再物化 legacy consensus `followup_tickets` contract；不要再把它当成 build/check/review 链的来源
 
 ## 5. Projections
 
@@ -147,68 +139,15 @@ worker-runtime 是单独一套受限接口：
 
 - 这条流只用于前端刷新提示，不是浏览器第二真相源
 
-## 9. Worker Runtime
+## 9. 已下线兼容面
 
-这组接口都在 `/api/v1/worker-runtime/*`，属于冻结兼容面。
+- `/api/v1/worker-runtime/*` 已从当前应用入口移除
+- `/api/v1/worker-admin/*` 已从当前应用入口移除
+- `worker-admin` / `worker-runtime` projections 已从当前应用入口移除
 
-| 接口 | 边界标签 | 默认是否建议使用 | 用途 | 关键输入 |
-|------|----------|------------------|------|----------|
-| `GET /api/v1/worker-runtime/assignments` | 冻结兼容面 | 否 | 读取 worker 当前 assignments，并换取 session | `X-Boardroom-Worker-Bootstrap` 或 `X-Boardroom-Worker-Session` |
-| `GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package` | 冻结兼容面 | 否 | 读取 execution package | `ticket_id`、`access_token` |
-| `GET /api/v1/worker-runtime/artifacts/by-ref` | 冻结兼容面 | 否 | 读取 worker 侧 artifact 元数据 | `artifact_ref`、`ticket_id`、`access_token` |
-| `GET /api/v1/worker-runtime/artifacts/content` | 冻结兼容面 | 否 | 读取 worker 侧 artifact 内容 | `artifact_ref`、`ticket_id`、`disposition`、`access_token` |
-| `GET /api/v1/worker-runtime/artifacts/preview` | 冻结兼容面 | 否 | 读取 worker 侧 preview | `artifact_ref`、`ticket_id`、`access_token` |
-| `POST /api/v1/worker-runtime/commands/ticket-start` | 冻结兼容面 | 否 | worker 侧开始 ticket | worker payload + `access_token` |
-| `POST /api/v1/worker-runtime/commands/ticket-heartbeat` | 冻结兼容面 | 否 | worker 侧 heartbeat | worker payload + `access_token` |
-| `POST /api/v1/worker-runtime/commands/ticket-result-submit` | 冻结兼容面 | 否 | worker 侧结构化结果写回 | worker payload + `access_token` |
-| `POST /api/v1/worker-runtime/commands/ticket-artifact-import-upload` | 冻结兼容面 | 否 | worker 侧导入 upload session | worker payload + `access_token` |
-
-## 10. Worker Admin
-
-这组接口都在 `/api/v1/worker-admin/*`，属于冻结兼容面。
-
-| 接口 | 边界标签 | 默认是否建议使用 | 用途 | 关键输入 |
-|------|----------|------------------|------|----------|
-| `GET /api/v1/worker-admin/bindings` | 冻结兼容面 | 否 | 读取 binding 列表 | `worker_id`、`tenant_id`、`workspace_id`、操作人令牌 |
-| `GET /api/v1/worker-admin/operator-tokens` | 冻结兼容面 | 否 | 读取当前有效操作人令牌 | `tenant_id`、`workspace_id`、`active_only` |
-| `GET /api/v1/worker-admin/bootstrap-issues` | 冻结兼容面 | 否 | 查看 bootstrap issue | `worker_id`、scope 过滤 |
-| `GET /api/v1/worker-admin/sessions` | 冻结兼容面 | 否 | 查看 worker session | `worker_id`、scope 过滤 |
-| `GET /api/v1/worker-admin/delivery-grants` | 冻结兼容面 | 否 | 查看 delivery grant | `worker_id`、scope 过滤 |
-| `GET /api/v1/worker-admin/auth-rejections` | 冻结兼容面 | 否 | 查看 worker-admin 拒绝记录 | scope、路由、原因过滤 |
-| `GET /api/v1/worker-admin/scope-summary` | 冻结兼容面 | 否 | 看某个 scope 的汇总 | `tenant_id`、`workspace_id` |
-| `POST /api/v1/worker-admin/create-binding` | 冻结兼容面 | 否 | 创建 persisted binding | `worker_id`、`tenant_id`、`workspace_id` |
-| `POST /api/v1/worker-admin/issue-bootstrap` | 冻结兼容面 | 否 | 签发 bootstrap | `worker_id`、scope、`ttl_sec` |
-| `POST /api/v1/worker-admin/revoke-bootstrap` | 冻结兼容面 | 否 | 撤销 bootstrap issue | `worker_id`、scope |
-| `POST /api/v1/worker-admin/revoke-session` | 冻结兼容面 | 否 | 撤销 session | `session_id` 或 `worker_id + scope` |
-| `POST /api/v1/worker-admin/revoke-delivery-grant` | 冻结兼容面 | 否 | 撤销一个 delivery grant | `grant_id` |
-| `POST /api/v1/worker-admin/revoke-operator-token` | 冻结兼容面 | 否 | 撤销操作人令牌 | `token_id` |
-| `POST /api/v1/worker-admin/cleanup-bindings` | 冻结兼容面 | 否 | 清理无活跃态的 binding | `worker_id`、可选 `dry_run` |
-| `POST /api/v1/worker-admin/contain-scope` | 冻结兼容面 | 否 | scope 级止血 | `tenant_id`、`workspace_id`、`dry_run` 或 `expected_active_*` |
-
-补充说明：
-
-- `worker-admin` 相关入口必须带 `X-Boardroom-Operator-Token`
-- 如果配置了 `BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS`，还必须带 `X-Boardroom-Trusted-Proxy-Id`
-
-## 11. Worker Admin Projections
-
-这组接口在 `/api/v1/projections/*` 下，但语义属于 `worker-admin` 冻结兼容面。
-
-| 接口 | 边界标签 | 默认是否建议使用 | 用途 | 关键查询参数 |
-|------|----------|------------------|------|--------------|
-| `GET /api/v1/projections/worker-admin-audit` | 冻结兼容面 | 否 | 查看 `worker-admin` 操作审计 | scope、`worker_id`、`operator_id`、`action_type`、`dry_run` |
-| `GET /api/v1/projections/worker-admin-auth-rejections` | 冻结兼容面 | 否 | 查看 `worker-admin` 拒绝投影 | scope、`operator_id`、`token_id`、`route_path` |
-
-## 12. Worker Runtime Projections
-
-这组接口在 `/api/v1/projections/*` 下，但语义属于 `worker-runtime` 冻结兼容面。
-
-| 接口 | 边界标签 | 默认是否建议使用 | 用途 | 关键查询参数 |
-|------|----------|------------------|------|--------------|
-| `GET /api/v1/projections/worker-runtime` | 冻结兼容面 | 否 | 对齐查看 binding、session、delivery grant 和最近拒绝日志 | `worker_id`、`tenant_id`、`workspace_id`、`active_only`、`rejection_limit`、`grant_limit` |
-
-## 13. 已知边界
+## 10. 已知边界
 
 - 这份文档按今天的代码现实写，不保证和旧设计稿完全一致
-- `worker-admin / worker-runtime / 多租户 / 对象存储` 仍在代码里，但默认不作为当前主线继续建设
+- `worker-admin / worker-runtime` 不再属于当前 API 暴露面
+- 多租户 shape 和对象存储相关遗留代码仍在仓库里，但不属于当前主线接口承诺
 - 如果接口定义、设计文档和代码冲突，以代码和 [mainline-truth.md](mainline-truth.md) 为准

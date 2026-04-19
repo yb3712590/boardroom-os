@@ -28,10 +28,8 @@ from tests.test_api import (
     _project_init_to_scope_approval,
     _seed_created_ticket,
     _seed_graph_patch_applied_event,
-    _scope_followup_payload,
     _seed_review_request,
     _seed_worker,
-    _staged_scope_followup_tickets,
     _ticket_result_submit_payload,
     _ticket_lease_payload,
     _ticket_start_payload,
@@ -1231,12 +1229,6 @@ def test_late_profile_flip_does_not_retrofit_standard_scope_chain_into_autopilot
             (json.dumps(payload, sort_keys=True), row["event_id"]),
         )
         repository.refresh_projections(connection)
-
-    consensus_artifact_ref = scope_approval["payload"]["review_pack"]["evidence_summary"][0]["source_ref"]
-    artifact_path = _artifact_storage_path(client, consensus_artifact_ref)
-    payload = _scope_followup_payload(client, scope_approval)
-    payload["followup_tickets"] = _staged_scope_followup_tickets("tkt_autopilot_report")
-    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
 
     _approve_open_review(client, scope_approval, idempotency_suffix="autopilot-report-scope")
 

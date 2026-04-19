@@ -776,17 +776,6 @@ def _build_meeting_round_notes(round_type: str, topic: str, participant_ids: lis
     return [f"{employee_id} confirmed the final technical decision summary." for employee_id in participant_ids]
 
 
-def _default_build_followup_owner_role(source_owner_role: str) -> str:
-    if source_owner_role in {
-        "frontend_engineer",
-        "backend_engineer",
-        "database_engineer",
-        "platform_sre",
-    }:
-        return source_owner_role
-    return "frontend_engineer"
-
-
 def _build_meeting_consensus_payload(
     execution_package: CompiledExecutionPackage,
     meeting_context: dict[str, Any],
@@ -796,8 +785,6 @@ def _build_meeting_consensus_payload(
     participant_ids = list(meeting_context.get("participant_employee_ids") or [])
     ticket_id = execution_package.meta.ticket_id
     topic = str(meeting_context.get("topic") or f"Consensus for ticket {ticket_id}")
-    owner_role = execution_package.compiled_role.employee_role_type
-    build_owner_role = _default_build_followup_owner_role(owner_role)
     return {
         "topic": topic,
         "participants": participant_ids,
@@ -825,29 +812,6 @@ def _build_meeting_consensus_payload(
         },
         "rejected_options": ["Carry multiple conflicting technical paths into the same delivery round."],
         "open_questions": ["Whether the deferred alternative should return as a later governance ticket."],
-        "followup_tickets": [
-            {
-                "ticket_id": f"{ticket_id}_followup_build",
-                "task_title": "Implement the converged build slice",
-                "owner_role": build_owner_role,
-                "summary": "Implement the converged technical direction without widening the MVP boundary.",
-                "delivery_stage": DeliveryStage.BUILD.value,
-            },
-            {
-                "ticket_id": f"{ticket_id}_followup_check",
-                "task_title": "Check the converged build slice",
-                "owner_role": "checker",
-                "summary": "Check the implementation against the converged technical decision before board review.",
-                "delivery_stage": DeliveryStage.CHECK.value,
-            },
-            {
-                "ticket_id": f"{ticket_id}_followup_review",
-                "task_title": "Prepare the converged review package",
-                "owner_role": "frontend_engineer",
-                "summary": "Prepare the final board-facing review package from the converged technical decision.",
-                "delivery_stage": DeliveryStage.REVIEW.value,
-            },
-        ],
     }
 
 
@@ -1171,8 +1135,6 @@ def _build_runtime_success_payload(
         ]
 
     if execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
-        owner_role = execution_package.compiled_role.employee_role_type
-        build_owner_role = _default_build_followup_owner_role(owner_role)
         ticket_id = execution_package.meta.ticket_id
         return {
             "topic": f"Consensus for ticket {ticket_id}",
@@ -1185,29 +1147,6 @@ def _build_runtime_success_payload(
             "consensus_summary": "Runtime converged on the narrowest scope that keeps delivery moving.",
             "rejected_options": ["Expand beyond the current MVP boundary in this round."],
             "open_questions": ["Whether non-critical polish should move after board approval."],
-            "followup_tickets": [
-                {
-                    "ticket_id": f"{ticket_id}_followup_build",
-                    "task_title": "Build the approved homepage foundation",
-                    "owner_role": build_owner_role,
-                    "summary": "Build the approved homepage foundation without widening scope.",
-                    "delivery_stage": DeliveryStage.BUILD.value,
-                },
-                {
-                    "ticket_id": f"{ticket_id}_followup_check",
-                    "task_title": "Check the approved source code delivery",
-                    "owner_role": "checker",
-                    "summary": "Check the source code delivery against the locked scope before board review.",
-                    "delivery_stage": DeliveryStage.CHECK.value,
-                },
-                {
-                    "ticket_id": f"{ticket_id}_followup_review",
-                    "task_title": "Prepare the approved board review package",
-                    "owner_role": "frontend_engineer",
-                    "summary": "Prepare the final board-facing homepage review package from the approved implementation.",
-                    "delivery_stage": DeliveryStage.REVIEW.value,
-                },
-            ],
         }
     if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         source_files = _default_source_code_delivery_source_files(

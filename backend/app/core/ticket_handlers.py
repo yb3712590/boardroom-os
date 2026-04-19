@@ -1176,18 +1176,12 @@ def _insert_followup_ticket_created_event(
 
 def _ensure_ticket_execution_contract_payload(ticket_payload: dict[str, Any]) -> dict[str, Any]:
     resolved_payload = dict(ticket_payload)
-    if resolved_payload.get("execution_contract") is None:
-        inferred_execution_contract = infer_execution_contract_payload(
-            role_profile_ref=resolved_payload.get("role_profile_ref"),
-            output_schema_ref=resolved_payload.get("output_schema_ref"),
-        )
-        if inferred_execution_contract is not None:
-            resolved_payload["execution_contract"] = inferred_execution_contract
+    execution_contract = resolved_payload.get("execution_contract")
+    if not isinstance(execution_contract, dict):
+        raise ValueError("Ticket payload requires execution_contract.")
     graph_contract = resolved_payload.get("graph_contract")
     if not isinstance(graph_contract, dict) or not str(graph_contract.get("lane_kind") or "").strip():
-        resolved_payload["graph_contract"] = {
-            "lane_kind": GRAPH_LANE_EXECUTION,
-        }
+        raise ValueError("Ticket payload requires graph_contract.lane_kind.")
     if (
         resolved_payload.get("auto_review_request") is None
         and str(resolved_payload.get("output_schema_ref") or "") in GOVERNANCE_DOCUMENT_SCHEMA_REFS
@@ -5490,7 +5484,16 @@ def handle_ticket_create(
 
         workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
         tenant_id, workspace_id = resolve_workflow_scope(workflow)
-        event_payload = _ensure_ticket_execution_contract_payload(payload.model_dump(mode="json"))
+        try:
+            event_payload = _ensure_ticket_execution_contract_payload(payload.model_dump(mode="json"))
+        except ValueError as exc:
+            return _rejected_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                reason=str(exc),
+            )
         assignee_employee_id = _resolve_dispatch_assignee_employee_id(event_payload)
         if assignee_employee_id is not None:
             assignee = repository.get_employee_projection(assignee_employee_id, connection=connection)

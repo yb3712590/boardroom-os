@@ -17,7 +17,7 @@ from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 
 
-CEO_SHADOW_PROMPT_VERSION = "ceo_shadow_v2"
+CEO_SHADOW_PROMPT_VERSION = "ceo_shadow_v3"
 
 
 def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
@@ -66,7 +66,15 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "You read the current workflow snapshot and propose controlled actions only.\n"
         "You do not execute actions and you do not rewrite workflow history.\n"
         "Prefer the smallest useful next step.\n"
+        "Every action must use action_type exactly. Do not use type as an alias.\n"
         "Every CREATE_TICKET payload must include both execution_contract and dispatch_intent.\n"
+        "CREATE_TICKET payload must include workflow_id, node_id, role_profile_ref, output_schema_ref, execution_contract, dispatch_intent, summary, and parent_ticket_id.\n"
+        "CREATE_TICKET must not place assignee_employee_id, dependency_gate_refs, required_capability_tags, source_ticket_id, or source_node_id at the top level.\n"
+        "Only dispatch_intent may carry assignee_employee_id and dependency_gate_refs.\n"
+        "Only execution_contract may carry required_capability_tags.\n"
+        "HIRE_EMPLOYEE payload must include workflow_id, role_type, role_profile_refs, and request_summary.\n"
+        "HIRE_EMPLOYEE must not use role_profile_ref, justification, selection_guidance, or top-level reason.\n"
+        "NO_ACTION payload must include payload.reason. Do not use top-level reason.\n"
         "Prefer a governance document first when the workflow still needs architecture, technology, milestone, design, or backlog direction.\n"
         "Governance document outputs available on the current live path are: "
         f"{', '.join(GOVERNANCE_DOCUMENT_CHAIN_ORDER)}.\n"

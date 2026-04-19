@@ -23,7 +23,6 @@ from app.core.constants import (
     NODE_STATUS_SUPERSEDED,
 )
 from app.core.graph_identity import (
-    apply_legacy_graph_contract_compat,
     GRAPH_LANE_EXECUTION,
     TicketGraphIdentity,
     resolve_graph_lane_kind,
@@ -265,9 +264,7 @@ def build_ticket_graph_snapshot(
 
     for ticket in tickets:
         ticket_id = str(ticket["ticket_id"])
-        created_spec = apply_legacy_graph_contract_compat(
-            repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
-        )
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
         created_specs_by_ticket_id[ticket_id] = created_spec
         identity = resolve_ticket_graph_identity(
             ticket_id=ticket_id,

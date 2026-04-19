@@ -276,30 +276,13 @@ def _select_default_assignee(
 
 
 def _resolve_target_role_profile(raw_ticket: dict[str, Any]) -> str:
-    explicit_role = str(
-        raw_ticket.get("target_role")
-        or raw_ticket.get("owner_role")
-        or raw_ticket.get("role_profile_ref")
-        or ""
-    ).strip().lower()
-    if explicit_role:
-        mapped = _ROLE_PROFILE_BY_TARGET_ROLE.get(explicit_role)
-        if mapped is not None:
-            return mapped
-
-    haystack = " ".join(
-        [
-            str(raw_ticket.get("name") or ""),
-            *(str(item) for item in list(raw_ticket.get("scope") or [])),
-        ]
-    ).lower()
-    if any(token in haystack for token in ("deploy", "monitor", "ops", "platform", "发布", "监控", "运维")):
-        return "platform_sre_primary"
-    if any(token in haystack for token in ("database", "schema", "migration", "sql", "数据库", "索引")):
-        return "database_engineer_primary"
-    if any(token in haystack for token in ("backend", "api", "service", "后端", "认证", "rbac")):
-        return "backend_engineer_primary"
-    return "frontend_engineer_primary"
+    explicit_role = str(raw_ticket.get("target_role") or "").strip().lower()
+    mapped = _ROLE_PROFILE_BY_TARGET_ROLE.get(explicit_role)
+    if mapped is None:
+        raise BacklogRecommendationContractError(
+            "Backlog implementation_handoff tickets must declare a supported target_role."
+        )
+    return mapped
 
 
 def _latest_completed_backlog_ticket(

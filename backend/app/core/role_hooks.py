@@ -15,7 +15,7 @@ from app.core.constants import (
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     TICKET_STATUS_COMPLETED,
 )
-from app.core.graph_identity import apply_legacy_graph_contract_compat, resolve_ticket_graph_identity
+from app.core.graph_identity import resolve_ticket_graph_identity
 from app.core.output_schemas import (
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
@@ -627,9 +627,7 @@ def scan_and_open_required_hook_gate_incidents(
         ).fetchall()
         for row in ticket_rows:
             ticket = repository._convert_ticket_projection_row(row)
-            created_spec = apply_legacy_graph_contract_compat(
-                repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
-            )
+            created_spec = repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
             graph_identity = resolve_ticket_graph_identity(
                 ticket_id=str(ticket["ticket_id"]),
                 created_spec=created_spec,

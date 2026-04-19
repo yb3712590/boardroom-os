@@ -22,7 +22,6 @@ from app.core.output_schemas import (
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 
 AUTOPILOT_GOVERNANCE_CHAIN = "AUTOPILOT_GOVERNANCE_CHAIN"
-STANDARD_LEGACY_SCOPE_CHAIN = "STANDARD_LEGACY_SCOPE_CHAIN"
 
 _GOVERNANCE_ROLE_PRIORITY_BY_SCHEMA: dict[str, tuple[str, ...]] = {
     ARCHITECTURE_BRIEF_SCHEMA_REF: (
@@ -72,12 +71,6 @@ def build_project_init_kickoff_spec(workflow: dict[str, Any] | None) -> dict[str
         "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
         "summary": build_autopilot_architecture_brief_summary(north_star_goal),
     }
-
-
-def workflow_progression_supports_legacy_scope_followups(workflow: dict[str, Any] | None) -> bool:
-    return not workflow_uses_ceo_board_delegate(workflow)
-
-
 def resolve_next_governance_schema(completed_ticket_ids_by_schema: dict[str, str]) -> str | None:
     for output_schema_ref in GOVERNANCE_DOCUMENT_CHAIN_ORDER:
         if not completed_ticket_ids_by_schema.get(output_schema_ref):

@@ -20,10 +20,6 @@ def test_collect_api_surface_groups_matches_current_route_families():
         "artifacts",
         "artifact-uploads",
         "events",
-        "worker-runtime",
-        "worker-admin",
-        "worker-admin-projections",
-        "worker-runtime-projections",
     }
     assert set(groups["commands"]) == {
         "POST /api/v1/commands/artifact-cleanup",
@@ -83,43 +79,6 @@ def test_collect_api_surface_groups_matches_current_route_families():
     assert set(groups["events"]) == {
         "GET /api/v1/events/stream",
     }
-    assert set(groups["worker-runtime"]) == {
-        "GET /api/v1/worker-runtime/assignments",
-        "GET /api/v1/worker-runtime/artifacts/by-ref",
-        "GET /api/v1/worker-runtime/artifacts/content",
-        "GET /api/v1/worker-runtime/artifacts/preview",
-        "GET /api/v1/worker-runtime/tickets/{ticket_id}/execution-package",
-        "POST /api/v1/worker-runtime/commands/ticket-artifact-import-upload",
-        "POST /api/v1/worker-runtime/commands/ticket-heartbeat",
-        "POST /api/v1/worker-runtime/commands/ticket-result-submit",
-        "POST /api/v1/worker-runtime/commands/ticket-start",
-    }
-    assert set(groups["worker-admin"]) == {
-        "GET /api/v1/worker-admin/auth-rejections",
-        "GET /api/v1/worker-admin/bindings",
-        "GET /api/v1/worker-admin/bootstrap-issues",
-        "GET /api/v1/worker-admin/delivery-grants",
-        "GET /api/v1/worker-admin/operator-tokens",
-        "GET /api/v1/worker-admin/scope-summary",
-        "GET /api/v1/worker-admin/sessions",
-        "POST /api/v1/worker-admin/cleanup-bindings",
-        "POST /api/v1/worker-admin/contain-scope",
-        "POST /api/v1/worker-admin/create-binding",
-        "POST /api/v1/worker-admin/issue-bootstrap",
-        "POST /api/v1/worker-admin/revoke-bootstrap",
-        "POST /api/v1/worker-admin/revoke-delivery-grant",
-        "POST /api/v1/worker-admin/revoke-operator-token",
-        "POST /api/v1/worker-admin/revoke-session",
-    }
-    assert set(groups["worker-admin-projections"]) == {
-        "GET /api/v1/projections/worker-admin-audit",
-        "GET /api/v1/projections/worker-admin-auth-rejections",
-    }
-    assert set(groups["worker-runtime-projections"]) == {
-        "GET /api/v1/projections/worker-runtime",
-    }
-
-
 def test_router_registry_declares_stable_mainline_and_frozen_group_order():
     assert ALL_ROUTE_GROUPS == (
         "commands",
@@ -127,17 +86,9 @@ def test_router_registry_declares_stable_mainline_and_frozen_group_order():
         "artifacts",
         "artifact-uploads",
         "events",
-        "worker-runtime",
-        "worker-admin",
-        "worker-admin-projections",
-        "worker-runtime-projections",
     )
     assert FROZEN_ROUTE_GROUPS == (
         "artifact-uploads",
-        "worker-runtime",
-        "worker-admin",
-        "worker-admin-projections",
-        "worker-runtime-projections",
     )
     assert MAINLINE_ROUTE_GROUPS == (
         "commands",

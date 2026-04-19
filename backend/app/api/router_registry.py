@@ -10,10 +10,6 @@ from app.api.artifact_uploads import router as artifact_uploads_router
 from app.api.commands import router as commands_router
 from app.api.events import router as events_router
 from app.api.projections import router as projections_router
-from app.api.worker_admin import router as worker_admin_router
-from app.api.worker_admin_projections import router as worker_admin_projections_router
-from app.api.worker_runtime import router as worker_runtime_router
-from app.api.worker_runtime_projections import router as worker_runtime_projections_router
 
 
 @dataclass(frozen=True)
@@ -29,22 +25,6 @@ ROUTER_REGISTRY: tuple[RegisteredRouter, ...] = (
     RegisteredRouter(group_name="artifacts", is_frozen=False, router=artifacts_router),
     RegisteredRouter(group_name="artifact-uploads", is_frozen=True, router=artifact_uploads_router),
     RegisteredRouter(group_name="events", is_frozen=False, router=events_router),
-    RegisteredRouter(group_name="worker-runtime", is_frozen=True, router=worker_runtime_router),
-    RegisteredRouter(
-        group_name="worker-admin",
-        is_frozen=True,
-        router=worker_admin_router,
-    ),
-    RegisteredRouter(
-        group_name="worker-admin-projections",
-        is_frozen=True,
-        router=worker_admin_projections_router,
-    ),
-    RegisteredRouter(
-        group_name="worker-runtime-projections",
-        is_frozen=True,
-        router=worker_runtime_projections_router,
-    ),
 )
 
 MAINLINE_ROUTER_REGISTRY: tuple[RegisteredRouter, ...] = tuple(

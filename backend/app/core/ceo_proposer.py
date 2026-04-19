@@ -279,28 +279,23 @@ def _normalize_provider_action_batch_payload(raw_payload: dict[str, Any]) -> dic
                 details={"action_index": index, "action_type": type(action).__name__},
             )
         action_type_field = action.get("action_type")
-        alias_action_type_field = action.get("type")
-        action_type = str(action_type_field or alias_action_type_field or "").strip()
-        if (
-            action_type_field is not None
-            and alias_action_type_field is not None
-            and str(action_type_field).strip() != str(alias_action_type_field).strip()
-        ):
+        legacy_alias_action_type_field = action.get("type")
+        action_type = str(action_type_field or "").strip()
+        if legacy_alias_action_type_field is not None:
             _raise_proposal_contract_error(
                 source_component="provider_action_batch",
-                reason_code="action_type_mismatch",
-                message="action_type and type disagree.",
+                reason_code="action_type_legacy_alias",
+                message="Each provider action must use action_type. The legacy type alias is not allowed.",
                 details={
                     "action_index": index,
-                    "action_type": str(action_type_field),
-                    "type": str(alias_action_type_field),
+                    "type": str(legacy_alias_action_type_field),
                 },
             )
         if not action_type:
             _raise_proposal_contract_error(
                 source_component="provider_action_batch",
                 reason_code="action_type_missing",
-                message="Each provider action must include action_type or type.",
+                message="Each provider action must include action_type.",
                 details={"action_index": index},
             )
         if "payload" not in action:

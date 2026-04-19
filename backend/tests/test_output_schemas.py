@@ -58,7 +58,8 @@ def test_output_schema_registry_exposes_consensus_document_schema() -> None:
     assert schema["type"] == "object"
     assert "topic" in schema["required"]
     assert "participants" in schema["required"]
-    assert "followup_tickets" in schema["required"]
+    assert "followup_tickets" not in schema["required"]
+    assert "followup_tickets" not in schema["properties"]
 
 
 def test_output_schema_registry_marks_structured_objects_as_closed_for_openai_strict_mode() -> None:
@@ -121,18 +122,8 @@ def test_output_schema_registry_accepts_valid_consensus_document_payload() -> No
                 ],
                 "archived_context_refs": ["art://runtime/tkt_meeting_001/meeting-digest.json"],
             },
-            "followup_tickets": [
-                {
-                    "ticket_id": "tkt_followup_001",
-                    "task_title": "实现首页基础版",
-                    "owner_role": "frontend_engineer",
-                    "summary": "Implement approved homepage direction",
-                    "delivery_stage": "BUILD",
-                    "dependency_ticket_ids": [],
-                }
-            ],
         },
-        )
+    )
 
 
 def test_output_schema_registry_accepts_valid_source_code_delivery_with_documentation_updates() -> None:
@@ -194,7 +185,6 @@ def test_output_schema_registry_rejects_invalid_consensus_document_payload() -> 
             payload={
                 "topic": "Resolve homepage interaction conflict",
                 "participants": [],
-                "followup_tickets": [],
             },
         )
 
@@ -216,21 +206,12 @@ def test_output_schema_registry_rejects_invalid_consensus_document_decision_reco
                     "consequences": ["Implementation follows the locked contract."],
                     "archived_context_refs": ["art://runtime/tkt_meeting_001/meeting-digest.json"],
                 },
-                "followup_tickets": [
-                    {
-                        "ticket_id": "tkt_followup_001",
-                        "task_title": "实现首页基础版",
-                        "owner_role": "frontend_engineer",
-                        "summary": "Implement approved homepage direction",
-                        "delivery_stage": "BUILD",
-                    }
-                ],
             },
         )
 
 
-def test_output_schema_registry_rejects_invalid_consensus_document_delivery_stage() -> None:
-    with pytest.raises(ValueError, match="delivery_stage"):
+def test_output_schema_registry_rejects_legacy_consensus_followup_tickets_field() -> None:
+    with pytest.raises(ValueError, match="followup_tickets"):
         validate_output_payload(
             schema_ref="consensus_document",
             schema_version=1,
@@ -242,31 +223,7 @@ def test_output_schema_registry_rejects_invalid_consensus_document_delivery_stag
                     {
                         "ticket_id": "tkt_followup_001",
                         "task_title": "实现首页基础版",
-                        "owner_role": "frontend_engineer",
                         "summary": "Implement approved homepage direction",
-                        "delivery_stage": "LAUNCH",
-                    }
-                ],
-            },
-        )
-
-
-def test_output_schema_registry_rejects_consensus_document_followup_without_task_title() -> None:
-    with pytest.raises(ValueError, match="task_title"):
-        validate_output_payload(
-            schema_ref="consensus_document",
-            schema_version=1,
-            submitted_schema_version="consensus_document_v1",
-            payload={
-                "topic": "Resolve homepage interaction conflict",
-                "participants": ["emp_frontend_2", "emp_checker_1"],
-                "followup_tickets": [
-                    {
-                        "ticket_id": "tkt_followup_001",
-                        "owner_role": "frontend_engineer",
-                        "summary": "Implement approved homepage direction",
-                        "delivery_stage": "BUILD",
-                        "dependency_ticket_ids": [],
                     }
                 ],
             },
