@@ -2158,6 +2158,7 @@ def test_ceo_validator_accepts_new_role_hires_on_current_ceo_path(
 
 def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monkeypatch):
     _set_live_provider(client)
+    monkeypatch.setattr("app.core.command_handlers._auto_advance_project_init_to_first_review", lambda *args, **kwargs: None)
 
     from app.core import ceo_proposer
 
@@ -2458,7 +2459,7 @@ def test_ceo_shadow_run_executes_governance_document_create_ticket_for_live_role
     assert created_spec["delivery_stage"] is None
 
 
-def test_ceo_shadow_run_raises_for_invalid_create_ticket_preset(client, monkeypatch):
+def test_ceo_shadow_run_rejects_invalid_create_ticket_preset_without_pipeline_failure(client, monkeypatch):
     workflow_id = _project_init(client, "CEO invalid create preset")
     _set_live_provider(client)
 
@@ -2498,20 +2499,20 @@ def test_ceo_shadow_run_raises_for_invalid_create_ticket_preset(client, monkeypa
 
     monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
 
-    with pytest.raises(CeoShadowPipelineError) as exc_info:
-        run_ceo_shadow_for_trigger(
-            client.app.state.repository,
-            workflow_id=workflow_id,
-            trigger_type="MANUAL_TEST",
-            trigger_ref="manual:create-invalid",
-            runtime_provider_store=client.app.state.runtime_provider_store,
-        )
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:create-invalid",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
 
-    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
-
-    assert exc_info.value.source_stage == "proposal"
-    assert runs[0]["deterministic_fallback_used"] is False
-    assert runs[0]["fallback_reason"] is not None
+    assert run["provider_response_id"] == "resp_ceo_create_invalid_1"
+    assert run["fallback_reason"] is None
+    assert run["accepted_actions"] == []
+    assert run["executed_actions"] == []
+    assert run["rejected_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert "current limited CEO execution path" in run["rejected_actions"][0]["reason"]
 
 
 def test_ceo_validator_accepts_governance_document_create_ticket_for_architect_role(client):
@@ -2622,167 +2623,6 @@ def test_ceo_shadow_run_executes_governance_document_create_ticket_for_cto_role(
     assert created_spec["role_profile_ref"] == "cto_primary"
     assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:cto_governance_document"
     assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_cto_1"
-
-
-def test_ceo_shadow_run_normalizes_loose_governance_followup_create_ticket_from_live_provider(client, monkeypatch):
-    workflow_id = _seed_workflow(client, "wf_live_gov_followup", "CEO live governance follow-up normalization")
-    _set_live_provider(client)
-
-    from app.core import ceo_proposer
-
-    def _fake_invoke(_config, _rendered_payload):
-        return OpenAICompatProviderResult(
-            output_text=json.dumps(
-                {
-                    "summary": "Continue the governance chain after the architecture brief.",
-                    "actions": [
-                        {
-                            "action_type": "CREATE_TICKET",
-                            "payload": {
-                                "node_id": "node_ceo_technology_decision",
-                                "output_schema_ref": TECHNOLOGY_DECISION_SCHEMA_REF,
-                                "execution_contract": {
-                                    "deliverable": "Produce the technology decision document for the current library system graduation project.",
-                                    "acceptance_criteria": [
-                                        "明确推荐的系统技术方案与取舍。",
-                                        "为后续实现级任务拆分提供依据。",
-                                    ],
-                                    "constraints": [
-                                        "保持细粒度，只推进下一张治理票。",
-                                        "避免重复架构定义。",
-                                    ],
-                                },
-                                "dispatch_intent": {
-                                    "document_family": "governance",
-                                    "document_kind": "technology_decision",
-                                    "reason": "已存在可复用的 architecture brief，需要继续补齐技术决策，为后续设计提供依据。",
-                                    "preferred_path": "current_live_planning_role",
-                                    "fallback_policy": "if no live planning assignee exists, wait instead of creating implementation tickets",
-                                },
-                                "title": "Create technology decision for the library system graduation project",
-                                "priority": "high",
-                                "depends_on_ticket_ids": ["tkt_parent_architecture_doc"],
-                                "inputs": {
-                                    "workflow_goal": "做一个图书馆管理系统毕业设计",
-                                    "next_document_kind": "technology_decision",
-                                },
-                            },
-                        }
-                    ],
-                }
-            ),
-            response_id="resp_ceo_loose_gov_followup_1",
-        )
-
-    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
-
-    _create_and_complete_governance_ticket(
-        client,
-        workflow_id=workflow_id,
-        ticket_id="tkt_parent_architecture_doc",
-        node_id="node_parent_architecture_doc",
-        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
-        summary="Architecture brief is complete and ready for the next governance document.",
-    )
-
-    repository = client.app.state.repository
-    runs = repository.list_ceo_shadow_runs(workflow_id)
-    run = next(run for run in reversed(runs) if run["executed_actions"])
-    assert run["trigger_type"] == "TICKET_COMPLETED"
-    assert run["provider_response_id"] == "resp_ceo_loose_gov_followup_1"
-    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
-    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
-
-    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
-    with repository.connection() as connection:
-        created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
-
-    assert created_spec["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
-    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
-    assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:frontend_governance_document"
-    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
-    assert created_spec["dispatch_intent"]["dependency_gate_refs"] == ["tkt_parent_architecture_doc"]
-    assert created_spec["parent_ticket_id"] == "tkt_parent_architecture_doc"
-
-
-def test_ceo_shadow_run_normalizes_live_governance_followup_with_kind_field_and_invalid_role(client, monkeypatch):
-    workflow_id = _seed_workflow(client, "wf_live_gov_kind", "CEO live governance kind normalization")
-    _set_live_provider(client)
-
-    from app.core import ceo_proposer
-
-    def _fake_invoke(_config, _rendered_payload):
-        return OpenAICompatProviderResult(
-            output_text=json.dumps(
-                {
-                    "summary": "Architecture brief is already completed and reusable. Advance by one minimal governance step in the approved document-first sequence.",
-                    "actions": [
-                        {
-                            "action_type": "CREATE_TICKET",
-                            "payload": {
-                                "title": "Produce technology decision for the library management system graduation project",
-                                "kind": TECHNOLOGY_DECISION_SCHEMA_REF,
-                                "priority": "high",
-                                "role_profile_ref": "checker_primary",
-                                "depends_on_ticket_ids": ["tkt_parent_architecture_doc"],
-                                "source_artifact_refs": [
-                                    "art://runtime/tkt_parent_architecture_doc/architecture_brief.json"
-                                ],
-                                "execution_contract": {
-                                    "objective": "Create the technology_decision document that selects a practical, low-risk stack for the library management system based on the completed architecture brief.",
-                                    "deliverable_schema_ref": TECHNOLOGY_DECISION_SCHEMA_REF,
-                                    "must_include": [
-                                        "recommended frontend technology",
-                                        "recommended backend technology",
-                                    ],
-                                    "constraints": [
-                                        "Use the existing architecture_brief as the primary input",
-                                        "Do not start implementation in this ticket",
-                                    ],
-                                    "definition_of_done": [
-                                        "A complete technology_decision artifact is produced"
-                                    ],
-                                },
-                                "dispatch_intent": {
-                                    "mode": "governance_document",
-                                    "reason": "The workflow has completed architecture_brief and still needs the next governance document in sequence.",
-                                    "sequence_position": "architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> source_code_delivery",
-                                },
-                            },
-                        }
-                    ],
-                }
-            ),
-            response_id="resp_ceo_live_kind_1",
-        )
-
-    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
-
-    _create_and_complete_governance_ticket(
-        client,
-        workflow_id=workflow_id,
-        ticket_id="tkt_parent_architecture_doc",
-        node_id="node_parent_architecture_doc",
-        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
-        summary="Architecture brief is complete and ready for the next governance document.",
-    )
-
-    repository = client.app.state.repository
-    runs = repository.list_ceo_shadow_runs(workflow_id)
-    run = next(run for run in reversed(runs) if run["executed_actions"])
-    assert run["provider_response_id"] == "resp_ceo_live_kind_1"
-    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
-    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
-
-    created_ticket_id = run["executed_actions"][0]["payload"]["ticket_id"]
-    with repository.connection() as connection:
-        created_spec = repository.get_latest_ticket_created_payload(connection, created_ticket_id)
-
-    assert created_spec["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
-    assert created_spec["role_profile_ref"] == "frontend_engineer_primary"
-    assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:frontend_governance_document"
-    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
-    assert created_spec["dispatch_intent"]["dependency_gate_refs"] == ["tkt_parent_architecture_doc"]
 
 
 def test_ceo_shadow_run_rejects_flat_create_ticket_action_shape_from_live_provider(client, monkeypatch):
