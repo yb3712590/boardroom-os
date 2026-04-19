@@ -23,6 +23,7 @@ from tests.live._autopilot_live_harness import (
 )
 from tests.live.library_management_autopilot_live import (
     SCENARIO as LIBRARY_SCENARIO,
+    _assert_library_outcome,
     _write_json,
     build_scenario_paths,
     reset_scenario_root,
@@ -72,6 +73,92 @@ def test_architecture_scenario_keeps_architect_and_meeting_gate_constraints() ->
     assert any("architect_primary" in item for item in ARCHITECTURE_SCENARIO.constraints)
     assert any("技术决策会议" in item or "meeting gate" in item for item in ARCHITECTURE_SCENARIO.constraints)
     assert LIBRARY_SCENARIO.slug == "library_management_autopilot_live"
+
+
+def test_library_scenario_scope_no_longer_uses_ticket_count_as_size_limit() -> None:
+    constraints = "\n".join(LIBRARY_SCENARIO.constraints)
+
+    assert "不得少于 30" not in constraints
+    assert "ticket 总数" not in constraints
+    assert "不再以 raw ticket 数量作为项目规模限制" in constraints
+    for capability in [
+        "reader_search",
+        "reader_reservation",
+        "reader_loan_history",
+        "reader_profile",
+        "admin_procurement",
+        "admin_cataloging",
+        "admin_inventory",
+        "admin_user_management",
+        "admin_system_config",
+    ]:
+        assert capability in constraints
+
+
+def test_library_outcome_accepts_compact_completed_scope_without_ticket_count_floor() -> None:
+    scope_corpus = " ".join(
+        [
+            "reader_search reader_reservation reader_loan_history reader_profile",
+            "admin_procurement admin_cataloging admin_inventory",
+            "admin_user_management admin_system_config",
+        ]
+    )
+    common = {
+        "tickets": [{"ticket_id": "tkt_1"} for _ in range(9)],
+        "employees": [{"role_type": "governance_architect"}],
+        "audits": [
+            {
+                "ticket_id": "tkt_arch",
+                "role_profile_ref": "architect_primary",
+                "assumptions": {
+                    "actual_model": "gpt-5.4",
+                    "effective_reasoning_effort": "xhigh",
+                },
+            },
+            {
+                "ticket_id": "tkt_impl",
+                "role_profile_ref": "frontend_engineer_primary",
+                "assumptions": {
+                    "actual_model": "gpt-5.4",
+                    "effective_reasoning_effort": "high",
+                },
+            },
+        ],
+        "architect_ticket_ids": ["tkt_arch"],
+        "created_specs": {
+            "tkt_arch": {
+                "output_schema_ref": "architecture_brief",
+                "summary": scope_corpus,
+            },
+            "tkt_impl": {
+                "output_schema_ref": "source_code_delivery",
+                "summary": scope_corpus,
+            },
+        },
+        "terminals": {
+            "tkt_impl": {
+                "payload": {
+                    "summary": scope_corpus,
+                    "source_files": [{"path": "src/library.tsx", "content": scope_corpus}],
+                }
+            }
+        },
+        "source_delivery_ticket_ids": ["tkt_impl"],
+    }
+
+    result = _assert_library_outcome(None, object(), "wf_library", common)
+
+    assert result["scope_capabilities"] == [
+        "reader_search",
+        "reader_reservation",
+        "reader_loan_history",
+        "reader_profile",
+        "admin_procurement",
+        "admin_cataloging",
+        "admin_inventory",
+        "admin_user_management",
+        "admin_system_config",
+    ]
 
 
 def test_build_success_report_marks_checkpoint_mode() -> None:
