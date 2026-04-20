@@ -2011,10 +2011,11 @@ def _handle_board_approve(
             )
         )
 
-    if (
+    should_auto_advance = (
         approval["approval_type"] != "REQUIREMENT_ELICITATION"
-        and repository.get_workflow_projection(approval["workflow_id"]) is not None
-    ):
+        and approval["approval_type"] != "VISUAL_MILESTONE"
+    )
+    if should_auto_advance and repository.get_workflow_projection(approval["workflow_id"]) is not None:
         auto_advance_workflow_to_next_stop(
             repository,
             workflow_id=approval["workflow_id"],

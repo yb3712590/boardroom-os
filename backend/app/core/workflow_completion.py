@@ -34,6 +34,21 @@ class WorkflowCloseoutCompletion:
     closeout_terminal_event: dict[str, Any]
 
 
+def _ticket_lineage_ticket_ids(
+    ticket_id: str,
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+) -> list[str]:
+    lineage_ticket_ids: list[str] = []
+    current_ticket_id = str(ticket_id or "").strip()
+    seen_ticket_ids: set[str] = set()
+    while current_ticket_id and current_ticket_id not in seen_ticket_ids:
+        seen_ticket_ids.add(current_ticket_id)
+        lineage_ticket_ids.append(current_ticket_id)
+        created_spec = created_specs_by_ticket.get(current_ticket_id) or {}
+        current_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
+    return lineage_ticket_ids
+
+
 def _is_redundant_active_closeout_ticket(
     ticket: dict[str, Any],
     *,
@@ -54,6 +69,59 @@ def _is_redundant_active_closeout_ticket(
     if not isinstance(updated_at, datetime):
         return False
     return updated_at <= closeout_completed_at
+
+
+def _is_redundant_active_delivery_ticket(
+    ticket: dict[str, Any],
+    *,
+    tickets: list[dict[str, Any]],
+    closeout_completed_at: datetime,
+    closeout_lineage_ticket_ids: set[str],
+    created_spec: dict[str, Any] | None,
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+) -> bool:
+    if str(ticket.get("status") or "") not in ACTIVE_TICKET_STATUSES:
+        return False
+    updated_at = ticket.get("updated_at")
+    if not isinstance(updated_at, datetime) or updated_at > closeout_completed_at:
+        return False
+    node_id = str(ticket.get("node_id") or "").strip()
+    if not node_id:
+        return False
+    delivery_stage = delivery_mainline_stage_for_ticket(created_spec, created_specs_by_ticket)
+    if delivery_stage not in DELIVERY_MAINLINE_STAGES:
+        return False
+    ticket_id = str(ticket.get("ticket_id") or "")
+    lineage_ticket_ids = _ticket_lineage_ticket_ids(ticket_id, created_specs_by_ticket)
+    if any(
+        ancestor_ticket_id in closeout_lineage_ticket_ids
+        and str((created_specs_by_ticket.get(ancestor_ticket_id) or {}).get("node_id") or "").strip() == node_id
+        and delivery_mainline_stage_for_ticket(
+            created_specs_by_ticket.get(ancestor_ticket_id),
+            created_specs_by_ticket,
+        )
+        == delivery_stage
+        for ancestor_ticket_id in lineage_ticket_ids[1:]
+    ):
+        return True
+    for completed_ticket in tickets:
+        completed_ticket_id = str(completed_ticket.get("ticket_id") or "")
+        if completed_ticket_id == ticket_id:
+            continue
+        if str(completed_ticket.get("status") or "") != "COMPLETED":
+            continue
+        if str(completed_ticket.get("node_id") or "").strip() != node_id:
+            continue
+        completed_updated_at = completed_ticket.get("updated_at")
+        if not isinstance(completed_updated_at, datetime) or completed_updated_at > closeout_completed_at:
+            continue
+        completed_stage = delivery_mainline_stage_for_ticket(
+            created_specs_by_ticket.get(completed_ticket_id),
+            created_specs_by_ticket,
+        )
+        if completed_stage == delivery_stage:
+            return True
+    return False
 
 
 def _normalized_delivery_stage(created_spec: dict[str, Any] | None) -> str:
@@ -157,7 +225,7 @@ def resolve_workflow_closeout_completion(
     created_specs_by_ticket: dict[str, dict[str, Any]],
     ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
 ) -> WorkflowCloseoutCompletion | None:
-    if not nodes or any(str(node.get("status") or "") != "COMPLETED" for node in nodes):
+    if not nodes:
         return None
     if has_open_approval or has_open_incident:
         return None
@@ -187,12 +255,23 @@ def resolve_workflow_closeout_completion(
         closeout_candidates,
         key=lambda item: (item[0], item[1]),
     )
+    closeout_lineage_ticket_ids = set(
+        _ticket_lineage_ticket_ids(str(closeout_ticket.get("ticket_id") or ""), created_specs_by_ticket)
+    )
     if any(
         not _is_redundant_active_closeout_ticket(
             ticket,
             closeout_ticket=closeout_ticket,
             closeout_completed_at=closeout_completed_at,
             created_spec=created_specs_by_ticket.get(str(ticket.get("ticket_id") or "")),
+        )
+        and not _is_redundant_active_delivery_ticket(
+            ticket,
+            tickets=tickets,
+            closeout_completed_at=closeout_completed_at,
+            closeout_lineage_ticket_ids=closeout_lineage_ticket_ids,
+            created_spec=created_specs_by_ticket.get(str(ticket.get("ticket_id") or "")),
+            created_specs_by_ticket=created_specs_by_ticket,
         )
         for ticket in tickets
         if str(ticket.get("status") or "") in ACTIVE_TICKET_STATUSES

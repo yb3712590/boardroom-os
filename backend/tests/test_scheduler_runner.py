@@ -667,10 +667,15 @@ def _seed_delivery_chain_for_recovery(
 
 
 def _assert_workflow_reaches_closeout_completion(client, *, workflow_id: str, final_review_approval: dict) -> None:
+    repository = client.app.state.repository
     dashboard_response = client.get("/api/v1/projections/dashboard")
     assert dashboard_response.status_code == 200
     completion_summary = dashboard_response.json()["data"]["completion_summary"]
+    workflow = repository.get_workflow_projection(workflow_id)
 
+    assert workflow is not None
+    assert workflow["status"] == "COMPLETED"
+    assert workflow["current_stage"] == "closeout"
     assert completion_summary is not None
     assert completion_summary["workflow_id"] == workflow_id
     assert completion_summary["final_review_pack_id"] == final_review_approval["review_pack_id"]
@@ -679,6 +684,11 @@ def _assert_workflow_reaches_closeout_completion(client, *, workflow_id: str, fi
     assert completion_summary["closeout_artifact_refs"] == [
         f"art://runtime/{completion_summary['closeout_ticket_id']}/delivery-closeout-package.json"
     ]
+    assert not any(
+        incident["workflow_id"] == workflow_id
+        and incident["incident_type"] == "GRAPH_HEALTH_CRITICAL"
+        for incident in repository.list_open_incidents()
+    )
 
 
 def _complete_recovered_delivery_chain_to_final_review_approval(
@@ -3030,6 +3040,11 @@ def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_complet
     assert followup_ticket["ticket_id"] not in {build_ticket_id, second_ticket_id}
     assert followup_ticket["retry_count"] == 2
     assert repository.get_current_ticket_projection(closeout_ticket_id)["status"] == "COMPLETED"
+    _assert_workflow_reaches_closeout_completion(
+        client,
+        workflow_id=workflow_id,
+        final_review_approval=final_review_approval,
+    )
     assert not any(
         incident["workflow_id"] == workflow_id
         and incident["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
@@ -3177,6 +3192,11 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
     assert followup_ticket["ticket_id"] not in {build_ticket_id, second_ticket_id}
     assert followup_ticket["retry_count"] == 2
     assert repository.get_current_ticket_projection(closeout_ticket_id)["status"] == "COMPLETED"
+    _assert_workflow_reaches_closeout_completion(
+        client,
+        workflow_id=workflow_id,
+        final_review_approval=final_review_approval,
+    )
     assert not any(
         incident["workflow_id"] == workflow_id
         and incident["incident_type"] == "REPEATED_FAILURE_ESCALATION"

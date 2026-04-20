@@ -4164,6 +4164,66 @@ def run_scheduler_tick(
             key=_dispatch_sort_key,
         )
         dispatched = 0
+        final_review_approved_at_by_workflow: dict[str, datetime | None] = {}
+        completed_delivery_stage_nodes_by_workflow: dict[str, set[tuple[str, str]]] = {}
+
+        def _latest_final_review_approved_at(workflow_id: str) -> datetime | None:
+            if workflow_id not in final_review_approved_at_by_workflow:
+                row = connection.execute(
+                    """
+                    SELECT resolved_at
+                    FROM approval_projection
+                    WHERE workflow_id = ? AND status = ? AND approval_type = ?
+                    ORDER BY resolved_at DESC, updated_at DESC, approval_id DESC
+                    LIMIT 1
+                    """,
+                    (workflow_id, "APPROVED", "VISUAL_MILESTONE"),
+                ).fetchone()
+                final_review_approved_at_by_workflow[workflow_id] = (
+                    row["resolved_at"] if row is not None else None
+                )
+            return final_review_approved_at_by_workflow[workflow_id]
+
+        def _completed_delivery_stage_nodes(workflow_id: str) -> set[tuple[str, str]]:
+            if workflow_id not in completed_delivery_stage_nodes_by_workflow:
+                rows = connection.execute(
+                    """
+                    SELECT ticket_id, node_id
+                    FROM ticket_projection
+                    WHERE workflow_id = ? AND status = ?
+                    ORDER BY updated_at DESC, ticket_id DESC
+                    """,
+                    (workflow_id, TICKET_STATUS_COMPLETED),
+                ).fetchall()
+                completed_nodes: set[tuple[str, str]] = set()
+                for row in rows:
+                    ticket_id = str(row["ticket_id"] or "").strip()
+                    node_id = str(row["node_id"] or "").strip()
+                    if not ticket_id or not node_id:
+                        continue
+                    completed_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
+                    delivery_stage = str(completed_spec.get("delivery_stage") or "").strip().upper()
+                    if delivery_stage in {"BUILD", "CHECK", "REVIEW"}:
+                        completed_nodes.add((node_id, delivery_stage))
+                completed_delivery_stage_nodes_by_workflow[workflow_id] = completed_nodes
+            return completed_delivery_stage_nodes_by_workflow[workflow_id]
+
+        def _is_shadowed_by_final_review(
+            ticket_projection: dict[str, Any],
+            created_spec: dict[str, Any],
+        ) -> bool:
+            delivery_stage = str(created_spec.get("delivery_stage") or "").strip().upper()
+            if delivery_stage not in {"BUILD", "CHECK", "REVIEW"}:
+                return False
+            workflow_id = str(ticket_projection.get("workflow_id") or "").strip()
+            approved_at = _latest_final_review_approved_at(workflow_id)
+            updated_at = ticket_projection.get("updated_at")
+            if approved_at is None or not isinstance(updated_at, datetime) or updated_at > approved_at:
+                return False
+            node_id = str(ticket_projection.get("node_id") or created_spec.get("node_id") or "").strip()
+            if not node_id:
+                return False
+            return (node_id, delivery_stage) in _completed_delivery_stage_nodes(workflow_id)
 
         for ticket in dispatchable_tickets:
             if dispatched >= max_dispatches:
@@ -4190,6 +4250,8 @@ def run_scheduler_tick(
 
             created_spec = repository.get_latest_ticket_created_payload(connection, ticket["ticket_id"])
             if created_spec is None:
+                continue
+            if _is_shadowed_by_final_review(ticket, created_spec):
                 continue
             parent_ready, parent_failure_payload = _evaluate_delivery_stage_parent_dependency(
                 repository,

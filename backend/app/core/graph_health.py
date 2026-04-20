@@ -348,7 +348,7 @@ def _orphan_subgraph_findings(
 
     reverse_adjacency: dict[str, set[str]] = {}
     for edge in graph_snapshot.edges:
-        if edge.edge_type not in _PATH_EDGE_TYPES:
+        if edge.edge_type not in {*_PATH_EDGE_TYPES, "REVIEWS"}:
             continue
         reverse_adjacency.setdefault(edge.target_graph_node_id, set()).add(edge.source_graph_node_id)
 

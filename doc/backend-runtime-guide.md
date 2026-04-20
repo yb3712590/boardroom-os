@@ -11,15 +11,15 @@
 - durable truth 在事件日志和确定性投影里
 - React 只读投影、提交治理命令，不持有工作流真相
 - runtime 默认走本地 deterministic；当前 registry 首版可选走 `OpenAI Compat` 或 `Claude Code CLI`
-- maker-checker、incident、review room、closeout 都已经进入主链；但 `runtime ticket / legacy compat` 硬切还在收尾，手工 scope review 历史测试链和部分 scheduler recovery 还没完全收口
+- maker-checker、incident、review room、closeout 都已经进入主链；`runtime ticket / legacy compat` 硬切的当前收尾也已落完，手工 scope review 历史测试链和 scheduler recovery 历史桶都已贴住现行真相
 
 ## 2. 当前主线与冻结边界
 
 当前主线已经真实落地的能力：
 
 - 命令入口、投影视图和 SSE 事件流
-- `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` 这条 canonical 主线这轮已补齐到 closeout：scope review 不再依赖 legacy `followup_tickets` contract，closeout / provider-backed / timeout / repeated-failure recovery 的当前历史测试桶也已跑通
-- 当前剩余风险集中在 workflow completion truth，而不是主链断裂：minimal recovery seed 下，timeout / repeated-failure 两条历史桶现在确认的是“closeout 票完成”，workflow 级 dashboard completion 仍可能被额外 `GRAPH_HEALTH_CRITICAL` incident 挂住
+- `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` 这条 canonical 主线这轮已补齐到 workflow completion truth：scope review 不再依赖 legacy `followup_tickets` contract，closeout / provider-backed / timeout / repeated-failure recovery 的当前历史测试桶都已跑通，而且 minimal recovery seed 下的 workflow projection、dashboard completion summary 与 graph health incident 也已经对齐
+- recovery 收口的当前真相：timeout / repeated-failure 两条历史桶现在会稳定走到 closeout 票完成、workflow `COMPLETED`、dashboard `completion_summary` 非空，且不会再因为 stale internal retry / review lane 误开 `GRAPH_HEALTH_CRITICAL`
 - `project-init` 先物化 `board-brief`，再由 CEO 发起首个 kickoff scope 共识票
 - `project-init` 现在还会创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE`
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消、人工恢复

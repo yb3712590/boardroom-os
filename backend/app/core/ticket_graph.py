@@ -191,6 +191,53 @@ def _should_skip_internal_parent_edge(
     return child_identity.runtime_node_id == parent_identity.runtime_node_id
 
 
+def _resolve_parent_lane_anchor(
+    *,
+    ticket_id: str,
+    child_identity: TicketGraphIdentity,
+    created_specs_by_ticket_id: dict[str, dict[str, Any]],
+    identities_by_ticket_id: dict[str, TicketGraphIdentity],
+    latest_ticket_id_by_graph_node_id: dict[str, str],
+) -> dict[str, Any] | None:
+    current_ticket_id = ticket_id
+    seen_ticket_ids: set[str] = set()
+    while current_ticket_id and current_ticket_id not in seen_ticket_ids:
+        seen_ticket_ids.add(current_ticket_id)
+        created_spec = created_specs_by_ticket_id.get(current_ticket_id) or {}
+        parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
+        if not parent_ticket_id:
+            return None
+        parent_identity = identities_by_ticket_id.get(parent_ticket_id)
+        if parent_identity is None:
+            return {
+                "issue_code": "graph.parent.missing_ticket",
+                "detail": f"Ticket {ticket_id} points to missing parent ticket {parent_ticket_id}.",
+                "related_ticket_id": parent_ticket_id,
+            }
+        if _should_skip_internal_parent_edge(
+            child_identity=child_identity,
+            parent_identity=parent_identity,
+        ):
+            current_ticket_id = parent_ticket_id
+            continue
+        parent_current_ticket_id = latest_ticket_id_by_graph_node_id.get(parent_identity.graph_node_id)
+        if not parent_current_ticket_id:
+            return {
+                "issue_code": "graph.parent.missing_current_lane_ticket",
+                "detail": (
+                    f"Ticket {ticket_id} points to parent lane {parent_identity.graph_node_id}, "
+                    "but the current graph lane has no active ticket."
+                ),
+                "related_ticket_id": parent_ticket_id,
+            }
+        return {
+            "parent_ticket_id": parent_current_ticket_id,
+            "parent_identity": parent_identity,
+            "related_ticket_id": parent_ticket_id,
+        }
+    return None
+
+
 def build_ticket_graph_snapshot(
     repository: "ControlPlaneRepository",
     workflow_id: str,
@@ -382,49 +429,39 @@ def build_ticket_graph_snapshot(
         ticket_id = latest_ticket_id_by_graph_node_id[graph_node_id]
         created_spec = created_specs_by_ticket_id.get(ticket_id) or {}
         identity = identities_by_ticket_id[ticket_id]
-        parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
-        if parent_ticket_id:
-            parent_identity = identities_by_ticket_id.get(parent_ticket_id)
-            if parent_identity is None:
+        parent_lane_anchor = _resolve_parent_lane_anchor(
+            ticket_id=ticket_id,
+            child_identity=identity,
+            created_specs_by_ticket_id=created_specs_by_ticket_id,
+            identities_by_ticket_id=identities_by_ticket_id,
+            latest_ticket_id_by_graph_node_id=latest_ticket_id_by_graph_node_id,
+        )
+        if parent_lane_anchor is not None:
+            parent_issue_code = str(parent_lane_anchor.get("issue_code") or "").strip()
+            if parent_issue_code:
                 record_issue(
-                    issue_code="graph.parent.missing_ticket",
-                    detail=f"Ticket {ticket_id} points to missing parent ticket {parent_ticket_id}.",
+                    issue_code=parent_issue_code,
+                    detail=str(parent_lane_anchor.get("detail") or ""),
                     ticket_id=ticket_id,
                     node_id=identity.runtime_node_id,
                     graph_node_id=identity.graph_node_id,
-                    related_ticket_id=parent_ticket_id,
+                    related_ticket_id=str(parent_lane_anchor.get("related_ticket_id") or "") or None,
                 )
-            elif not _should_skip_internal_parent_edge(
-                child_identity=identity,
-                parent_identity=parent_identity,
-            ):
-                parent_current_ticket_id = latest_ticket_id_by_graph_node_id.get(parent_identity.graph_node_id)
-                if not parent_current_ticket_id:
-                    record_issue(
-                        issue_code="graph.parent.missing_current_lane_ticket",
-                        detail=(
-                            f"Ticket {ticket_id} points to parent lane {parent_identity.graph_node_id}, "
-                            "but the current graph lane has no active ticket."
-                        ),
-                        ticket_id=ticket_id,
-                        node_id=identity.runtime_node_id,
-                        graph_node_id=identity.graph_node_id,
-                        related_ticket_id=parent_ticket_id,
-                    )
-                else:
-                    _append_edge(
-                        edges,
-                        seen_edges,
-                        edge_type="PARENT_OF",
-                        graph_version=graph_version,
-                        workflow_id=workflow_id,
-                        source_ticket_id=parent_current_ticket_id,
-                        target_ticket_id=ticket_id,
-                        source_graph_node_id=parent_identity.graph_node_id,
-                        target_graph_node_id=identity.graph_node_id,
-                        source_runtime_node_id=parent_identity.runtime_node_id,
-                        target_runtime_node_id=identity.runtime_node_id,
-                    )
+            else:
+                parent_identity = parent_lane_anchor["parent_identity"]
+                _append_edge(
+                    edges,
+                    seen_edges,
+                    edge_type="PARENT_OF",
+                    graph_version=graph_version,
+                    workflow_id=workflow_id,
+                    source_ticket_id=str(parent_lane_anchor["parent_ticket_id"]),
+                    target_ticket_id=ticket_id,
+                    source_graph_node_id=parent_identity.graph_node_id,
+                    target_graph_node_id=identity.graph_node_id,
+                    source_runtime_node_id=parent_identity.runtime_node_id,
+                    target_runtime_node_id=identity.runtime_node_id,
+                )
 
         for dependency_ticket_id in _resolve_dependency_gate_refs(created_spec):
             dependency_identity = identities_by_ticket_id.get(dependency_ticket_id)
