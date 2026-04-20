@@ -18,7 +18,8 @@
 当前主线已经真实落地的能力：
 
 - 命令入口、投影视图和 SSE 事件流
-- `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` 这条 canonical 主线已经基本成型；但当前只确认到“scope review 不再依赖 legacy `followup_tickets` contract”，closeout / recovery 的历史测试桶还没全部跑通
+- `project-init -> scope review -> BUILD -> CHECK -> final REVIEW -> closeout` 这条 canonical 主线这轮已补齐到 closeout：scope review 不再依赖 legacy `followup_tickets` contract，closeout / provider-backed / timeout / repeated-failure recovery 的当前历史测试桶也已跑通
+- 当前剩余风险集中在 workflow completion truth，而不是主链断裂：minimal recovery seed 下，timeout / repeated-failure 两条历史桶现在确认的是“closeout 票完成”，workflow 级 dashboard completion 仍可能被额外 `GRAPH_HEALTH_CRITICAL` incident 挂住
 - `project-init` 先物化 `board-brief`，再由 CEO 发起首个 kickoff scope 共识票
 - `project-init` 现在还会创建受管项目工作区，固定三分区 `00-boardroom / 10-project / 20-evidence`；第一版支持 `AGILE / HYBRID / COMPLIANCE`
 - ticket 创建、lease、start、heartbeat、结构化结果提交、取消、人工恢复

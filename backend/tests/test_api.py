@@ -1084,17 +1084,26 @@ def _ticket_complete_payload(
     ticket_id: str = "tkt_visual_001",
     node_id: str = "node_homepage_visual",
     include_review_request: bool = True,
+    artifact_refs: list[str] | None = None,
     compiled_context_bundle_ref: str = "ctx://homepage/visual-v1",
     compile_manifest_ref: str = "manifest://homepage/visual-v1",
     rendered_execution_payload_ref: str | None = None,
 ) -> dict:
+    resolved_artifact_refs = artifact_refs or [
+        "art://homepage/option-a.png",
+        "art://homepage/option-b.png",
+    ]
+    option_a_ref = resolved_artifact_refs[0]
+    option_b_ref = (
+        resolved_artifact_refs[1] if len(resolved_artifact_refs) > 1 else resolved_artifact_refs[0]
+    )
     payload = {
         "workflow_id": workflow_id,
         "ticket_id": ticket_id,
         "node_id": node_id,
         "completed_by": "emp_frontend_2",
         "completion_summary": "Visual milestone is blocked for board review.",
-        "artifact_refs": ["art://homepage/option-a.png", "art://homepage/option-b.png"],
+        "artifact_refs": resolved_artifact_refs,
         "idempotency_key": f"ticket-complete:{workflow_id}:{ticket_id}",
     }
     if include_review_request:
@@ -1114,7 +1123,7 @@ def _ticket_complete_payload(
                     "option_id": "option_a",
                     "label": "Option A",
                     "summary": "High-contrast review candidate.",
-                    "artifact_refs": ["art://homepage/option-a.png"],
+                    "artifact_refs": [option_a_ref],
                     "pros": ["Strong first-screen hierarchy"],
                     "cons": ["Slightly more aggressive contrast"],
                     "risks": ["Needs careful brand calibration"],
@@ -1123,7 +1132,7 @@ def _ticket_complete_payload(
                     "option_id": "option_b",
                     "label": "Option B",
                     "summary": "Lower contrast fallback.",
-                    "artifact_refs": ["art://homepage/option-b.png"],
+                    "artifact_refs": [option_b_ref],
                     "pros": ["Safer visual tone"],
                     "cons": ["Weaker first impression"],
                     "risks": ["May undersignal product confidence"],
@@ -1271,6 +1280,7 @@ def _ticket_result_submit_payload(
             ticket_id=ticket_id,
             node_id=node_id,
             include_review_request=True,
+            artifact_refs=resolved_artifact_refs,
         )["review_request"]
     return result_payload
 
@@ -1906,9 +1916,14 @@ def _delivery_closeout_package_result_submit_payload(
     idempotency_key: str | None = None,
 ) -> dict:
     closeout_ref = (artifact_refs or [f"art://runtime/{ticket_id}/delivery-closeout-package.json"])[0]
+    resolved_final_artifact_refs = [
+        str(item).strip() for item in list(final_artifact_refs or []) if str(item).strip()
+    ]
+    if not resolved_final_artifact_refs:
+        raise ValueError("Closeout test helper requires explicit final_artifact_refs from the current chain.")
     payload = {
         "summary": f"Delivery closeout package prepared for {ticket_id}.",
-        "final_artifact_refs": list(final_artifact_refs or ["art://runtime/tkt_review_final/option-a.json"]),
+        "final_artifact_refs": resolved_final_artifact_refs,
         "handoff_notes": [
             "Board-approved final option is captured in this closeout package.",
             "Final evidence remains linked back to the board review pack.",
@@ -2943,12 +2958,20 @@ def _ui_milestone_review_result_submit_payload(
 ) -> dict:
     option_a_ref = f"art://runtime/{ticket_id}/option-a.png"
     option_b_ref = f"art://runtime/{ticket_id}/option-b.png"
+    review_request = _ticket_complete_payload(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        include_review_request=True,
+        artifact_refs=[option_a_ref, option_b_ref],
+    )["review_request"]
     return _ticket_result_submit_payload(
         workflow_id=workflow_id,
         ticket_id=ticket_id,
         node_id=node_id,
         include_review_request=True,
         artifact_refs=[option_a_ref, option_b_ref],
+        review_request=review_request,
         written_artifacts=[
             {
                 "path": f"artifacts/ui/scope-followups/{ticket_id}/option-a.png",
@@ -2965,7 +2988,7 @@ def _ui_milestone_review_result_submit_payload(
     )
 
 
-def _workspace_scope_followup_source_code_delivery_result_submit_payload(
+def _workspace_scope_delivery_source_code_result_submit_payload(
     *,
     workflow_id: str,
     ticket_id: str,
@@ -2983,7 +3006,7 @@ def _workspace_scope_followup_source_code_delivery_result_submit_payload(
             {
                 "artifact_ref": source_file_ref,
                 "path": f"10-project/src/{ticket_id}.ts",
-                "content": "export const scopeFollowupBuild = true;\n",
+                "content": "export const scopeDeliveryBuild = true;\n",
             }
         ],
         "verification_runs": [
@@ -3032,7 +3055,7 @@ def _workspace_scope_followup_source_code_delivery_result_submit_payload(
                 "path": f"10-project/src/{ticket_id}.ts",
                 "artifact_ref": source_file_ref,
                 "kind": "TEXT",
-                "content_text": "export const scopeFollowupBuild = true;\n",
+                "content_text": "export const scopeDeliveryBuild = true;\n",
             },
             {
                 "path": f"10-project/docs/tracking/{ticket_id}-active.md",
@@ -3078,7 +3101,7 @@ def _workspace_scope_followup_source_code_delivery_result_submit_payload(
     }
 
 
-def _complete_scope_followup_chain_to_visual_milestone(
+def _complete_scope_delivery_chain_to_visual_milestone(
     client,
     scope_approval: dict,
     *,
@@ -3198,7 +3221,7 @@ def _complete_scope_followup_chain_to_visual_milestone(
         _assert_command_accepted(
             client.post(
                 "/api/v1/commands/ticket-result-submit",
-                json=_workspace_scope_followup_source_code_delivery_result_submit_payload(
+                json=_workspace_scope_delivery_source_code_result_submit_payload(
                     workflow_id=workflow_id,
                     ticket_id=build_ticket_id,
                     node_id=build_node_id,
@@ -3251,48 +3274,52 @@ def _complete_scope_followup_chain_to_visual_milestone(
         )
 
         _lease_and_start(review_ticket_id, review_node_id, "emp_frontend_2")
-        _assert_command_accepted(
-            client.post(
-                "/api/v1/commands/ticket-result-submit",
-                json=_ui_milestone_review_result_submit_payload(
-                    workflow_id=workflow_id,
-                    ticket_id=review_ticket_id,
-                    node_id=review_node_id,
-                    idempotency_key=f"ticket-result-submit:{workflow_id}:{review_ticket_id}:review",
-                ),
-            )
-        )
-        review_pack = _ticket_complete_payload(
+        review_result_payload = _ui_milestone_review_result_submit_payload(
             workflow_id=workflow_id,
             ticket_id=review_ticket_id,
             node_id=review_node_id,
-            include_review_request=True,
-        )["review_request"]
-        review_pack.setdefault("meta", {})["approval_id"] = f"apr_{workflow_id}_final_review"
-        review_pack["meta"]["review_pack_id"] = f"brp_{workflow_id}_final_review"
-        review_pack["meta"]["review_pack_version"] = 1
-        review_pack["subject"] = {
-            "source_ticket_id": review_ticket_id,
-            "source_graph_node_id": review_node_id,
-            "source_node_id": review_node_id,
-        }
-        with repository.transaction() as connection:
-            final_review_approval = repository.create_approval_request(
-                connection,
-                workflow_id=workflow_id,
-                approval_type="VISUAL_MILESTONE",
-                requested_by="system",
-                review_pack=review_pack,
-                available_actions=list(review_pack["available_actions"]),
-                draft_defaults={},
-                inbox_title=str(review_pack["inbox_title"]),
-                inbox_summary=str(review_pack["inbox_summary"]),
-                badges=list(review_pack["badges"]),
-                priority=str(review_pack["priority"]),
-                occurred_at=datetime.fromisoformat("2026-03-28T10:00:02+08:00"),
-                idempotency_key=f"manual-approval:{workflow_id}:final-review",
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{review_ticket_id}:review",
+        )
+        _assert_command_accepted(
+            client.post(
+                "/api/v1/commands/ticket-result-submit",
+                json=review_result_payload,
             )
-            repository.refresh_projections(connection)
+        )
+        approvals = [
+            item
+            for item in repository.list_open_approvals()
+            if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
+        ]
+        if approvals:
+            final_review_approval = approvals[0]
+        else:
+            review_pack = dict(review_result_payload["review_request"])
+            review_pack.setdefault("meta", {})["approval_id"] = f"apr_{workflow_id}_final_review"
+            review_pack["meta"]["review_pack_id"] = f"brp_{workflow_id}_final_review"
+            review_pack["meta"]["review_pack_version"] = 1
+            review_pack["subject"] = {
+                "source_ticket_id": review_ticket_id,
+                "source_graph_node_id": review_node_id,
+                "source_node_id": review_node_id,
+            }
+            with repository.transaction() as connection:
+                final_review_approval = repository.create_approval_request(
+                    connection,
+                    workflow_id=workflow_id,
+                    approval_type="VISUAL_MILESTONE",
+                    requested_by="system",
+                    review_pack=review_pack,
+                    available_actions=list(review_pack["available_actions"]),
+                    draft_defaults={},
+                    inbox_title=str(review_pack["inbox_title"]),
+                    inbox_summary=str(review_pack["inbox_summary"]),
+                    badges=list(review_pack["badges"]),
+                    priority=str(review_pack["priority"]),
+                    occurred_at=datetime.fromisoformat("2026-03-28T10:00:02+08:00"),
+                    idempotency_key=f"manual-approval:{workflow_id}:final-review",
+                )
+                repository.refresh_projections(connection)
         return workflow_id, final_review_approval, {
             "build_ticket_id": build_ticket_id,
             "check_ticket_id": check_ticket_id,
@@ -3307,15 +3334,35 @@ def _complete_closeout_chain_after_final_review_approval(
     repository = client.app.state.repository
     workflow_id = approval["workflow_id"]
     logical_review_ticket_id, closeout_ticket_id, closeout_node_id = _expected_closeout_ids(repository, approval)
-    selected_artifact_refs = list(
-        (
-            ((approval.get("payload") or {}).get("review_pack") or {}).get("options")
-            or [{}]
-        )[0].get("artifact_refs")
-        or []
-    )
 
     with _suppress_ceo_shadow_side_effects():
+        with repository.connection() as connection:
+            persisted_approval = repository.get_approval_by_id(connection, approval["approval_id"]) or approval
+            review_pack = (persisted_approval.get("payload") or {}).get("review_pack") or {}
+            resolution = (persisted_approval.get("payload") or {}).get("resolution") or {}
+            selected_option_id = str(resolution.get("selected_option_id") or "").strip()
+            selected_option = next(
+                (
+                    option
+                    for option in list(review_pack.get("options") or [])
+                    if str(option.get("option_id") or "").strip() == selected_option_id
+                ),
+                None,
+            )
+            selected_artifact_refs = [
+                str(item).strip()
+                for item in list(((selected_option or {}).get("artifact_refs") or []))
+                if str(item).strip()
+            ]
+            if not selected_artifact_refs:
+                review_terminal_event = repository.get_latest_ticket_terminal_event(connection, logical_review_ticket_id)
+                review_terminal_payload = review_terminal_event.get("payload") if review_terminal_event is not None else {}
+                if isinstance(review_terminal_payload, dict):
+                    selected_artifact_refs = [
+                        str(item).strip()
+                        for item in list(review_terminal_payload.get("artifact_refs") or [])
+                        if str(item).strip()
+                    ]
         closeout_ticket = repository.get_current_ticket_projection(closeout_ticket_id)
         if closeout_ticket is None:
             with repository.connection() as connection:
@@ -3371,7 +3418,7 @@ def _complete_closeout_chain_after_final_review_approval(
                     ticket_id=closeout_ticket_id,
                     node_id=closeout_node_id,
                     include_review_request=True,
-                    final_artifact_refs=selected_artifact_refs or [f"art://runtime/{logical_review_ticket_id}/option-a.png"],
+                    final_artifact_refs=selected_artifact_refs,
                     idempotency_key=f"ticket-result-submit:{workflow_id}:{closeout_ticket_id}:closeout",
                 ),
             )
@@ -5286,12 +5333,11 @@ def test_board_approved_closeout_ticket_uses_configured_default_max_context_toke
 
     with TestClient(create_app()) as client:
         workflow_id, scope_approval = _project_init_to_scope_approval(client)
-        scope_response = _approve_open_review(client, scope_approval, idempotency_suffix="context-budget-scope")
         repository = client.app.state.repository
-        approval = next(
-            item
-            for item in repository.list_open_approvals()
-            if item["workflow_id"] == workflow_id and item["approval_type"] == "VISUAL_MILESTONE"
+        _, approval, _ = _complete_scope_delivery_chain_to_visual_milestone(
+            client,
+            scope_approval,
+            idempotency_suffix="context-budget-chain",
         )
         final_response = client.post(
             "/api/v1/commands/board-approve",
@@ -5309,8 +5355,6 @@ def test_board_approved_closeout_ticket_uses_configured_default_max_context_toke
         with repository.connection() as connection:
             closeout_created_spec = repository.get_latest_ticket_created_payload(connection, closeout_ticket_id)
 
-        assert scope_response.status_code == 200
-        assert scope_response.json()["status"] == "ACCEPTED"
         assert final_response.status_code == 200
         assert final_response.json()["status"] == "ACCEPTED"
         assert closeout_created_spec is not None
@@ -15910,7 +15954,7 @@ def _expected_closeout_ids(repository, approval: dict) -> tuple[str, str, str]:
 
 def test_final_review_approval_creates_closeout_ticket_and_completion_summary_uses_closeout_fields(client):
     workflow_id, scope_approval = _project_init_to_scope_approval(client)
-    workflow_id, approval, _ = _complete_scope_followup_chain_to_visual_milestone(
+    workflow_id, approval, _ = _complete_scope_delivery_chain_to_visual_milestone(
         client,
         scope_approval,
         idempotency_suffix="completion-scope",
@@ -15997,7 +16041,7 @@ def test_final_review_approval_creates_closeout_ticket_and_completion_summary_us
 
 def test_closeout_internal_checker_approved_returns_completion_summary(client):
     workflow_id, scope_approval = _project_init_to_scope_approval(client)
-    workflow_id, approval, _ = _complete_scope_followup_chain_to_visual_milestone(
+    workflow_id, approval, _ = _complete_scope_delivery_chain_to_visual_milestone(
         client,
         scope_approval,
         idempotency_suffix="closeout-pass-scope",
@@ -16062,7 +16106,7 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
 
 def test_final_review_approval_rejects_when_review_gate_merge_conflicts(client):
     workflow_id, scope_approval = _project_init_to_scope_approval(client)
-    workflow_id, approval, ids = _complete_scope_followup_chain_to_visual_milestone(
+    workflow_id, approval, ids = _complete_scope_delivery_chain_to_visual_milestone(
         client,
         scope_approval,
         idempotency_suffix="merge-conflict-scope",
@@ -16075,7 +16119,7 @@ def test_final_review_approval_rejects_when_review_gate_merge_conflicts(client):
     assert Path(_git_output(project_repo_root, "rev-parse", "--show-toplevel")) == project_repo_root
     source_path = project_repo_root / "src" / f"{build_ticket_id}.ts"
     source_path.parent.mkdir(parents=True, exist_ok=True)
-    source_path.write_text("// conflicting mainline change\nexport const scopeFollowupBuild = false;\n", encoding="utf-8")
+    source_path.write_text("// conflicting mainline change\nexport const scopeDeliveryBuild = false;\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=project_repo_root, check=True)
     subprocess.run(
         ["git", "commit", "-m", "test: introduce conflicting mainline change"],
@@ -16119,7 +16163,7 @@ def test_final_review_approval_rejects_when_review_gate_merge_conflicts(client):
 
 def test_completion_summary_handles_missing_closeout_documentation_updates(client):
     workflow_id, scope_approval = _project_init_to_scope_approval(client)
-    workflow_id, approval, _ = _complete_scope_followup_chain_to_visual_milestone(
+    workflow_id, approval, _ = _complete_scope_delivery_chain_to_visual_milestone(
         client,
         scope_approval,
         idempotency_suffix="closeout-no-docs-scope",
@@ -16183,14 +16227,15 @@ def test_dashboard_completion_summary_supports_autopilot_closeout_without_visual
             "Must produce a structured source code delivery.",
         ],
     )
-    build_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_source_code_delivery_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_autopilot_dashboard_build",
-            node_id="node_autopilot_dashboard_build",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        build_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_autopilot_dashboard_build",
+                node_id="node_autopilot_dashboard_build",
+            ),
+        )
     _seed_created_ticket(
         client,
         workflow_id=workflow_id,
@@ -16229,15 +16274,16 @@ def test_dashboard_completion_summary_supports_autopilot_closeout_without_visual
             started_by="emp_frontend_2",
         ),
     )
-    closeout_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_delivery_closeout_package_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_autopilot_dashboard_closeout",
-            node_id="node_ceo_delivery_closeout",
-            final_artifact_refs=["art://runtime/tkt_autopilot_dashboard_build/source-code.tsx"],
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        closeout_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_delivery_closeout_package_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_autopilot_dashboard_closeout",
+                node_id="node_ceo_delivery_closeout",
+                final_artifact_refs=["art://runtime/tkt_autopilot_dashboard_build/source-code.tsx"],
+            ),
+        )
     auto_advance_workflow_to_next_stop(
         repository,
         workflow_id=workflow_id,
@@ -16322,6 +16368,7 @@ def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_
             ticket_id=closeout_ticket_id,
             node_id=closeout_node_id,
             include_review_request=True,
+            final_artifact_refs=["art://runtime/tkt_review_final/option-a.json"],
             documentation_updates=[
                 {
                     "doc_ref": "README.md",
@@ -16388,7 +16435,7 @@ def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_
 
 def test_completion_summary_returns_null_source_delivery_summary_when_closeout_lacks_source_delivery_asset(client):
     workflow_id, scope_approval = _project_init_to_scope_approval(client)
-    workflow_id, approval, _ = _complete_scope_followup_chain_to_visual_milestone(
+    workflow_id, approval, _ = _complete_scope_delivery_chain_to_visual_milestone(
         client,
         scope_approval,
         idempotency_suffix="closeout-null-source-scope",
@@ -16467,6 +16514,10 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
             ticket_id=closeout_ticket_id,
             node_id=closeout_node_id,
             include_review_request=True,
+            final_artifact_refs=[
+                "art://runtime/tkt_review_final/option-a.json",
+                "art://runtime/tkt_review_final/option-b.json",
+            ],
             documentation_updates=[
                 {
                     "doc_ref": "README.md",

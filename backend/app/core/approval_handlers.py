@@ -1710,7 +1710,7 @@ def _build_post_review_closeout_ticket_payload(
         parent_ticket_id=logical_source_ticket_id,
         attempt_no=1,
         role_profile_ref=str(logical_created_spec.get("role_profile_ref") or "ui_designer_primary"),
-        constraints_ref="approved_scope_followup_closeout",
+        constraints_ref="approved_scope_delivery_closeout",
         graph_contract={"lane_kind": "execution"},
         execution_contract=infer_execution_contract_payload(
             role_profile_ref=str(logical_created_spec.get("role_profile_ref") or "ui_designer_primary"),

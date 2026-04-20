@@ -30,6 +30,7 @@ from tests.test_api import (
     _seed_graph_patch_applied_event,
     _seed_review_request,
     _seed_worker,
+    _suppress_ceo_shadow_side_effects,
     _ticket_result_submit_payload,
     _ticket_lease_payload,
     _ticket_start_payload,
@@ -1266,14 +1267,15 @@ def test_autopilot_closeout_without_visual_milestone_still_writes_chain_report_a
         ],
         delivery_stage="BUILD",
     )
-    build_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_source_code_delivery_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_autopilot_no_review_build",
-            node_id="node_autopilot_no_review_build",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        build_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_autopilot_no_review_build",
+                node_id="node_autopilot_no_review_build",
+            ),
+        )
     _seed_created_ticket(
         client,
         workflow_id=workflow_id,
@@ -1309,21 +1311,22 @@ def test_autopilot_closeout_without_visual_milestone_still_writes_chain_report_a
             started_by="emp_frontend_2",
         ),
     )
-    closeout_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json={
-            **_delivery_closeout_package_result_submit_payload(
-                workflow_id=workflow_id,
-                ticket_id="tkt_autopilot_no_review_closeout",
-                node_id="node_ceo_delivery_closeout",
-                final_artifact_refs=["art://runtime/tkt_autopilot_no_review_build/source-code.tsx"],
-            ),
-            "idempotency_key": (
-                "ticket-result-submit:wf_autopilot_closeout_without_review:"
-                "tkt_autopilot_no_review_closeout:closeout"
-            ),
-        },
-    )
+    with _suppress_ceo_shadow_side_effects():
+        closeout_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json={
+                **_delivery_closeout_package_result_submit_payload(
+                    workflow_id=workflow_id,
+                    ticket_id="tkt_autopilot_no_review_closeout",
+                    node_id="node_ceo_delivery_closeout",
+                    final_artifact_refs=["art://runtime/tkt_autopilot_no_review_build/source-code.tsx"],
+                ),
+                "idempotency_key": (
+                    "ticket-result-submit:wf_autopilot_closeout_without_review:"
+                    "tkt_autopilot_no_review_closeout:closeout"
+                ),
+            },
+        )
 
     auto_advance_workflow_to_next_stop(
         repository,

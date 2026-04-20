@@ -936,6 +936,10 @@ def _build_maker_checker_ticket_payload(
         ],
         "output_schema_ref": MAKER_CHECKER_VERDICT_SCHEMA_REF,
         "output_schema_version": MAKER_CHECKER_VERDICT_SCHEMA_VERSION,
+        "execution_contract": infer_execution_contract_payload(
+            role_profile_ref="checker_primary",
+            output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+        ),
         "allowed_tools": ["read_artifact"],
         "allowed_write_set": [],
         "lease_timeout_sec": int(created_spec.get("lease_timeout_sec") or DEFAULT_LEASE_TIMEOUT_SEC),
@@ -1034,6 +1038,13 @@ def _build_fix_ticket_payload(
         "output_schema_ref": str(maker_ticket_spec.get("output_schema_ref") or UI_MILESTONE_REVIEW_SCHEMA_REF),
         "output_schema_version": int(
             maker_ticket_spec.get("output_schema_version") or UI_MILESTONE_REVIEW_SCHEMA_VERSION
+        ),
+        "execution_contract": dict(maker_ticket_spec.get("execution_contract") or {})
+        or infer_execution_contract_payload(
+            role_profile_ref=str(maker_ticket_spec.get("role_profile_ref") or "ui_designer_primary"),
+            output_schema_ref=str(
+                maker_ticket_spec.get("output_schema_ref") or UI_MILESTONE_REVIEW_SCHEMA_REF
+            ),
         ),
         "allowed_tools": list(maker_ticket_spec.get("allowed_tools") or []),
         "allowed_write_set": list(maker_ticket_spec.get("allowed_write_set") or []),

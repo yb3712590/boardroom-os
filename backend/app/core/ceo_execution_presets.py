@@ -60,7 +60,7 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         output_schema_version=SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
-        constraints_ref="approved_scope_followup_build",
+        constraints_ref="approved_scope_delivery_build",
         priority="high",
         delivery_stage=DeliveryStage.BUILD,
     ),
@@ -68,7 +68,7 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
         role_profile_ref="backend_engineer_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         output_schema_version=SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
-        constraints_ref="approved_scope_followup_build",
+        constraints_ref="approved_scope_delivery_build",
         priority="high",
         delivery_stage=DeliveryStage.BUILD,
     ),
@@ -76,7 +76,7 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
         role_profile_ref="database_engineer_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         output_schema_version=SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
-        constraints_ref="approved_scope_followup_build",
+        constraints_ref="approved_scope_delivery_build",
         priority="high",
         delivery_stage=DeliveryStage.BUILD,
     ),
@@ -84,7 +84,7 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
         role_profile_ref="platform_sre_primary",
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         output_schema_version=SOURCE_CODE_DELIVERY_SCHEMA_VERSION,
-        constraints_ref="approved_scope_followup_build",
+        constraints_ref="approved_scope_delivery_build",
         priority="high",
         delivery_stage=DeliveryStage.BUILD,
     ),
@@ -92,7 +92,7 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
         role_profile_ref="checker_primary",
         output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
         output_schema_version=DELIVERY_CHECK_REPORT_SCHEMA_VERSION,
-        constraints_ref="approved_scope_followup_check",
+        constraints_ref="approved_scope_delivery_check",
         priority="high",
         delivery_stage=DeliveryStage.CHECK,
     ),
@@ -100,7 +100,7 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref=UI_MILESTONE_REVIEW_SCHEMA_REF,
         output_schema_version=UI_MILESTONE_REVIEW_SCHEMA_VERSION,
-        constraints_ref="approved_scope_followup_review",
+        constraints_ref="approved_scope_delivery_review",
         priority="medium",
         delivery_stage=DeliveryStage.REVIEW,
     ),
@@ -108,7 +108,7 @@ _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
         output_schema_version=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_VERSION,
-        constraints_ref="approved_scope_followup_closeout",
+        constraints_ref="approved_scope_delivery_closeout",
         priority="high",
         delivery_stage=DeliveryStage.CLOSEOUT,
     ),
@@ -225,7 +225,7 @@ def _build_project_init_auto_review_request(ticket_id: str) -> dict[str, Any]:
             {
                 "option_id": "consensus_scope_lock",
                 "label": "Lock consensus scope",
-                "summary": "Proceed with the converged scope and follow-up tickets.",
+                "summary": "Proceed with the converged scope and approved delivery chain.",
                 "artifact_refs": [],
                 "pros": ["Keeps delivery scope stable"],
                 "cons": ["Defers non-critical stretch ideas"],
@@ -359,7 +359,7 @@ def _build_internal_delivery_review_request(summary: str) -> dict[str, Any]:
         "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
         "draft_selected_option_id": "internal_delivery_ok",
         "comment_template": "",
-        "badges": ["internal_delivery", "scope_followup", "build_gate"],
+        "badges": ["internal_delivery", "scope_delivery", "build_gate"],
     }
 
 
@@ -439,7 +439,7 @@ def _build_internal_check_review_request(summary: str) -> dict[str, Any]:
         "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
         "draft_selected_option_id": "internal_check_ok",
         "comment_template": "",
-        "badges": ["internal_check", "scope_followup", "check_gate"],
+        "badges": ["internal_check", "scope_delivery", "check_gate"],
     }
 
 
@@ -486,7 +486,7 @@ def _build_visual_review_request(summary: str) -> dict[str, Any]:
         "comment_template": "",
         "inbox_title": "Review approved scope implementation",
         "inbox_summary": "A visual implementation pass is ready under the approved scope.",
-        "badges": ["visual", "board_gate", "scope_followup"],
+        "badges": ["visual", "board_gate", "scope_delivery"],
     }
 
 
@@ -758,7 +758,7 @@ def build_ceo_create_ticket_command(
         acceptance_criteria=(
             [
                 "Must produce a consensus document",
-                "Must include follow-up tickets",
+                "Must capture the approved scope summary",
             ]
             if is_project_init_scope
             else _acceptance_criteria_for_preset(payload.summary, preset)

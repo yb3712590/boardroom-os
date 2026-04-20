@@ -389,12 +389,19 @@ def _ticket_create_payload(
         "acceptance_criteria": ["Must produce a structured result."],
         "output_schema_ref": output_schema_ref,
         "output_schema_version": 1,
+        "execution_contract": infer_execution_contract_payload(
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        ),
         "allowed_tools": ["read_artifact", "write_artifact"],
         "allowed_write_set": ["artifacts/ui/homepage/*"],
         "retry_budget": retry_budget,
         "priority": "high",
         "timeout_sla_sec": 1800,
         "deadline_at": None,
+        "graph_contract": {
+            "lane_kind": "execution",
+        },
         "excluded_employee_ids": [],
         "escalation_policy": {
             "on_timeout": "retry",
@@ -647,7 +654,6 @@ def _create_and_board_approve_consensus_ticket(
             "input_artifact_refs": ["art://inputs/brief.md", "art://inputs/scope-notes.md"],
             "acceptance_criteria": [
                 "Must produce a consensus document.",
-                "Must include follow-up tickets.",
             ],
             "allowed_tools": ["read_artifact", "write_artifact"],
             "context_query_plan": {
@@ -666,15 +672,6 @@ def _create_and_board_approve_consensus_ticket(
         "consensus_summary": summary,
         "rejected_options": ["Do not widen the MVP scope in this round."],
         "open_questions": ["Whether polish should move after board approval."],
-        "followup_tickets": [
-            {
-                "ticket_id": f"{ticket_id}_followup_review",
-                "task_title": "Prepare the board review package",
-                "owner_role": "frontend_engineer",
-                "summary": "Prepare the board-facing review package without widening scope.",
-                "delivery_stage": "REVIEW",
-            }
-        ],
     }
     review_request = {
         "review_type": "MEETING_ESCALATION",

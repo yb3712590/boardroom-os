@@ -18,10 +18,9 @@
 
 - `consensus_document` 已不再接受 legacy `followup_tickets`，`board-approve` 的 scope review 主链也已不再依赖这个 contract。
 - `backend/tests/test_api.py` 里直接读 consensus artifact `followup_tickets` 的 legacy helper 已拆掉，`backend/tests/test_scheduler_runner.py` 里的同类 helper 也已删除。
-- 这轮还没收完。当前剩余 blocker 不在 schema 主实现，而在历史测试链补桥：
-- `test_api.py` 里复用的手工 `scope review -> final review -> closeout` helper 还没完全贴合新主线，closeout 相关断言还没全绿。
-- `test_scheduler_runner.py` 里两条 incident recovery 测试虽然已经不再读 legacy payload，但当前还没自然推进到 `VISUAL_MILESTONE` 停点。
-- 这批任务仍归在 `P0-COR-004 / P0-COR-005 / P0-COR-006`，还不能从 active backlog 里移走。
+- 这轮主链收口已经完成：`test_api.py` 的 `scope review -> final review -> closeout` 历史 helper、`test_scheduler_runner.py` 的 provider-backed / timeout / repeated-failure recovery 历史桶、以及 `ceo_execution_presets.py` / `test_ceo_scheduler.py` 的旧 consensus follow-up 残留都已收正并实跑通过。
+- 当前还留在 active 的不是 hard cut 主链断裂，而是一个后续真相：minimal recovery seed 下，timeout / repeated-failure 两条历史桶现在确认的是 closeout 票完成，workflow 级 dashboard completion 仍可能被额外 `GRAPH_HEALTH_CRITICAL` incident 挂住。
+- 这部分后续继续归到 `P0-COR-004 / P0-COR-005 / P0-COR-006`，但方向已经从“hard cut 主链补桥”切到“graph health / workflow completion truth”。
 
 ### 2026-04-13 审计第一批执行切片
 

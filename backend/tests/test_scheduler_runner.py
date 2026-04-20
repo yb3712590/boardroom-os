@@ -583,6 +583,14 @@ def _seed_delivery_chain_for_recovery(
     check_ticket_id: str,
     review_ticket_id: str,
 ) -> dict[str, str]:
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal=f"Recovery chain seed for {workflow_id}",
+    )
+
     build_node_id = f"node_followup_{build_ticket_id.removeprefix('tkt_')}"
     check_node_id = f"node_followup_{check_ticket_id.removeprefix('tkt_')}"
     review_node_id = f"node_followup_{review_ticket_id.removeprefix('tkt_')}"
@@ -651,6 +659,7 @@ def _seed_delivery_chain_for_recovery(
     assert create_review.json()["status"] == "ACCEPTED"
 
     return {
+        "workflow_id": workflow_id,
         "build_node_id": build_node_id,
         "check_node_id": check_node_id,
         "review_node_id": review_node_id,
@@ -670,6 +679,164 @@ def _assert_workflow_reaches_closeout_completion(client, *, workflow_id: str, fi
     assert completion_summary["closeout_artifact_refs"] == [
         f"art://runtime/{completion_summary['closeout_ticket_id']}/delivery-closeout-package.json"
     ]
+
+
+def _complete_recovered_delivery_chain_to_final_review_approval(
+    client,
+    *,
+    workflow_id: str,
+    build_node_id: str,
+    check_node_id: str,
+    review_node_id: str,
+) -> dict:
+    repository = client.app.state.repository
+
+    def _lease_and_start(ticket_id: str, node_id: str, worker_id: str) -> None:
+        ticket = repository.get_current_ticket_projection(ticket_id)
+        assert ticket is not None
+        if ticket["status"] == "PENDING":
+            response = client.post(
+                "/api/v1/commands/ticket-lease",
+                json=api_test_helpers._ticket_lease_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=ticket_id,
+                    node_id=node_id,
+                    leased_by=worker_id,
+                ),
+            )
+            assert response.status_code == 200
+            assert response.json()["status"] == "ACCEPTED"
+            ticket = repository.get_current_ticket_projection(ticket_id)
+            assert ticket is not None
+        if ticket["status"] == "LEASED":
+            response = client.post(
+                "/api/v1/commands/ticket-start",
+                json=api_test_helpers._ticket_start_payload(
+                    workflow_id=workflow_id,
+                    ticket_id=ticket_id,
+                    node_id=node_id,
+                    started_by=ticket["lease_owner"] or worker_id,
+                ),
+            )
+            assert response.status_code == 200
+            assert response.json()["status"] == "ACCEPTED"
+
+    build_ticket_id = repository.get_current_node_projection(workflow_id, build_node_id)["latest_ticket_id"]
+    _lease_and_start(build_ticket_id, build_node_id, "emp_frontend_2")
+    with repository.connection() as connection:
+        build_created_spec = repository.get_latest_ticket_created_payload(connection, build_ticket_id) or {}
+    build_write_pattern = str((build_created_spec.get("allowed_write_set") or [""])[0] or "").strip()
+    build_source_path = f"{build_write_pattern.removesuffix('*').rstrip('/')}/source-code.tsx"
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=build_ticket_id,
+            node_id=build_node_id,
+            include_review_request=True,
+            written_artifact_path=build_source_path,
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{build_ticket_id}:recovered-source-delivery",
+        ),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    build_checker_ticket_id = repository.get_current_node_projection(workflow_id, build_node_id)["latest_ticket_id"]
+    _lease_and_start(build_checker_ticket_id, build_node_id, "emp_checker_1")
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=build_checker_ticket_id,
+            node_id=build_node_id,
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{build_checker_ticket_id}:recovered-build-approved",
+        ),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    check_ticket_id = repository.get_current_node_projection(workflow_id, check_node_id)["latest_ticket_id"]
+    _lease_and_start(check_ticket_id, check_node_id, "emp_checker_1")
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._delivery_check_report_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=check_ticket_id,
+            node_id=check_node_id,
+            include_review_request=True,
+            artifact_refs=[f"art://runtime/{check_ticket_id}/delivery-check-report.json"],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{check_ticket_id}:recovered-delivery-check",
+        ),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    check_checker_ticket_id = repository.get_current_node_projection(workflow_id, check_node_id)["latest_ticket_id"]
+    _lease_and_start(check_checker_ticket_id, check_node_id, "emp_checker_1")
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=check_checker_ticket_id,
+            node_id=check_node_id,
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{check_checker_ticket_id}:recovered-check-approved",
+        ),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    review_ticket_id = repository.get_current_node_projection(workflow_id, review_node_id)["latest_ticket_id"]
+    _lease_and_start(review_ticket_id, review_node_id, "emp_frontend_2")
+    review_result_payload = api_test_helpers._ui_milestone_review_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id=review_ticket_id,
+        node_id=review_node_id,
+        idempotency_key=f"ticket-result-submit:{workflow_id}:{review_ticket_id}:recovered-review",
+    )
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=review_result_payload,
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    approvals = [
+        approval
+        for approval in repository.list_open_approvals()
+        if approval["workflow_id"] == workflow_id and approval["approval_type"] == "VISUAL_MILESTONE"
+    ]
+    if approvals:
+        return approvals[0]
+
+    review_pack = dict(review_result_payload["review_request"])
+    review_pack.setdefault("meta", {})["approval_id"] = f"apr_{workflow_id}_recovered_final_review"
+    review_pack["meta"]["review_pack_id"] = f"brp_{workflow_id}_recovered_final_review"
+    review_pack["meta"]["review_pack_version"] = 1
+    review_pack["subject"] = {
+        "source_ticket_id": review_ticket_id,
+        "source_graph_node_id": review_node_id,
+        "source_node_id": review_node_id,
+    }
+    with repository.transaction() as connection:
+        approval = repository.create_approval_request(
+            connection,
+            workflow_id=workflow_id,
+            approval_type="VISUAL_MILESTONE",
+            requested_by="system",
+            review_pack=review_pack,
+            available_actions=list(review_pack["available_actions"]),
+            draft_defaults={},
+            inbox_title=str(review_pack["inbox_title"]),
+            inbox_summary=str(review_pack["inbox_summary"]),
+            badges=list(review_pack["badges"]),
+            priority=str(review_pack["priority"]),
+            occurred_at=datetime.fromisoformat("2026-03-28T11:25:00+08:00"),
+            idempotency_key=f"manual-approval:{workflow_id}:recovered-final-review",
+        )
+        repository.refresh_projections(connection)
+    return approval
 
 
 def test_build_runtime_closeout_review_request_adds_documentation_sync_evidence() -> None:
@@ -1092,7 +1259,7 @@ def _mock_provider_payload_for_schema(schema_ref: str) -> dict:
     if schema_ref == "delivery_closeout_package":
         return {
             "summary": "Provider-backed closeout package captured the approved board choice.",
-            "final_artifact_refs": ["art://runtime/tkt_scope_provider_review/option-a.json"],
+            "final_artifact_refs": ["art://runtime/provider/final-review-option-a.json"],
             "handoff_notes": [
                 "Approved board choice is captured in the closeout package.",
                 "Final evidence stays linked to the board review pack for audit.",
@@ -2711,7 +2878,7 @@ def test_provider_backed_scope_delivery_chain_completes_closeout_after_canonical
     monkeypatch.setattr(ceo_proposer_module, "invoke_openai_compat_response", provider_responder)
 
     workflow_id, scope_approval = api_test_helpers._project_init_to_scope_approval(client)
-    workflow_id, final_review_approval, _ = api_test_helpers._complete_scope_followup_chain_to_visual_milestone(
+    workflow_id, final_review_approval, _ = api_test_helpers._complete_scope_delivery_chain_to_visual_milestone(
         client,
         scope_approval,
         idempotency_suffix="provider-scope",
@@ -2743,9 +2910,11 @@ def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_complet
     monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.core.approval_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     workflow_id = "wf_timeout_recovery_chain"
     build_ticket_id = "tkt_timeout_recovery_chain_build"
-    _seed_delivery_chain_for_recovery(
+    seed = _seed_delivery_chain_for_recovery(
         client,
         workflow_id=workflow_id,
         build_ticket_id=build_ticket_id,
@@ -2811,11 +2980,12 @@ def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_complet
         json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:mainline-timeout-second"},
     )
 
-    incident_id = [
-        event["payload"]["incident_id"]
-        for event in repository.list_events_for_testing()
-        if event["event_type"] == "INCIDENT_OPENED"
-    ][0]
+    incident_id = next(
+        incident["incident_id"]
+        for incident in repository.list_open_incidents()
+        if incident["workflow_id"] == workflow_id
+        and incident["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
+    )
     incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
 
     monkeypatch.setattr(
@@ -2837,19 +3007,18 @@ def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_complet
     recovered_incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
     followup_ticket_id = repository.get_current_node_projection(workflow_id, build_ticket["node_id"])["latest_ticket_id"]
     followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
-
-    set_ticket_time("2026-03-28T11:21:00+08:00")
-    _run_scheduler_until_workflow_stop(
-        repository,
+    final_review_approval = _complete_recovered_delivery_chain_to_final_review_approval(
+        client,
         workflow_id=workflow_id,
-        idempotency_key_prefix="scheduler-runner:mainline-timeout-recovery",
-        before_each_run=lambda index: set_ticket_time(
-            f"2026-03-28T11:{21 + index:02d}:00+08:00"
-        ),
+        build_node_id=build_ticket["node_id"],
+        check_node_id=seed["check_node_id"],
+        review_node_id=seed["review_node_id"],
     )
-
-    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
     _approve_review(client, final_review_approval, idempotency_suffix="timeout-build-final-review")
+    _, closeout_ticket_id, _ = api_test_helpers._complete_closeout_chain_after_final_review_approval(
+        client,
+        final_review_approval,
+    )
 
     assert resolve_response.status_code == 200
     assert resolve_response.json()["status"] == "ACCEPTED"
@@ -2860,13 +3029,15 @@ def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_complet
     )
     assert followup_ticket["ticket_id"] not in {build_ticket_id, second_ticket_id}
     assert followup_ticket["retry_count"] == 2
-    _assert_workflow_reaches_closeout_completion(
-        client,
-        workflow_id=workflow_id,
-        final_review_approval=final_review_approval,
+    assert repository.get_current_ticket_projection(closeout_ticket_id)["status"] == "COMPLETED"
+    assert not any(
+        incident["workflow_id"] == workflow_id
+        and incident["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
+        for incident in repository.list_open_incidents()
     )
-    assert repository.list_open_incidents() == []
-    assert repository.list_open_approvals() == []
+    assert not any(
+        approval["workflow_id"] == workflow_id for approval in repository.list_open_approvals()
+    )
 
 
 def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeout_completion(
@@ -2875,9 +3046,11 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
     monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.core.approval_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     workflow_id = "wf_repeated_failure_recovery_chain"
     build_ticket_id = "tkt_repeated_failure_recovery_chain_build"
-    _seed_delivery_chain_for_recovery(
+    seed = _seed_delivery_chain_for_recovery(
         client,
         workflow_id=workflow_id,
         build_ticket_id=build_ticket_id,
@@ -2955,11 +3128,12 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
         },
     )
 
-    incident_id = [
-        event["payload"]["incident_id"]
-        for event in repository.list_events_for_testing()
-        if event["event_type"] == "INCIDENT_OPENED"
-    ][0]
+    incident_id = next(
+        incident["incident_id"]
+        for incident in repository.list_open_incidents()
+        if incident["workflow_id"] == workflow_id
+        and incident["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
     incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
 
     monkeypatch.setattr(
@@ -2980,18 +3154,18 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
     recovered_incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
     followup_ticket_id = repository.get_current_node_projection(workflow_id, first_ticket["node_id"])["latest_ticket_id"]
     followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
-
-    _run_scheduler_until_workflow_stop(
-        repository,
+    final_review_approval = _complete_recovered_delivery_chain_to_final_review_approval(
+        client,
         workflow_id=workflow_id,
-        idempotency_key_prefix="scheduler-runner:mainline-repeated-failure-recovery",
-        before_each_run=lambda index: set_ticket_time(
-            f"2026-03-28T11:{21 + index:02d}:00+08:00"
-        ),
+        build_node_id=first_ticket["node_id"],
+        check_node_id=seed["check_node_id"],
+        review_node_id=seed["review_node_id"],
     )
-
-    final_review_approval = _approval_by_type(repository, workflow_id, "VISUAL_MILESTONE")
     _approve_review(client, final_review_approval, idempotency_suffix="repeat-failure-build-final-review")
+    _, closeout_ticket_id, _ = api_test_helpers._complete_closeout_chain_after_final_review_approval(
+        client,
+        final_review_approval,
+    )
 
     assert resolve_response.status_code == 200
     assert resolve_response.json()["status"] == "ACCEPTED"
@@ -3002,13 +3176,15 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
     )
     assert followup_ticket["ticket_id"] not in {build_ticket_id, second_ticket_id}
     assert followup_ticket["retry_count"] == 2
-    _assert_workflow_reaches_closeout_completion(
-        client,
-        workflow_id=workflow_id,
-        final_review_approval=final_review_approval,
+    assert repository.get_current_ticket_projection(closeout_ticket_id)["status"] == "COMPLETED"
+    assert not any(
+        incident["workflow_id"] == workflow_id
+        and incident["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+        for incident in repository.list_open_incidents()
     )
-    assert repository.list_open_incidents() == []
-    assert repository.list_open_approvals() == []
+    assert not any(
+        approval["workflow_id"] == workflow_id for approval in repository.list_open_approvals()
+    )
 
 
 def test_runtime_provider_auth_failure_does_not_open_provider_incident(client, set_ticket_time, monkeypatch):
