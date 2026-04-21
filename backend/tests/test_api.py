@@ -12133,8 +12133,8 @@ def test_scheduler_tick_fails_ticket_when_dependency_gate_has_failed(client, set
 
     monkeypatch.setattr(
         ticket_handlers,
-        "run_ceo_shadow_for_trigger",
-        lambda repository, *, workflow_id, trigger_type, trigger_ref, runtime_provider_store=None: ceo_triggers.append(
+        "_trigger_ceo_shadow_safely",
+        lambda repository, *, workflow_id, trigger_type, trigger_ref: ceo_triggers.append(
             (trigger_type, trigger_ref)
         ),
     )
@@ -12169,6 +12169,398 @@ def test_scheduler_tick_fails_ticket_when_dependency_gate_has_failed(client, set
     assert ticket_projection["status"] == TICKET_STATUS_FAILED
     assert ticket_projection["last_failure_kind"] == "DEPENDENCY_GATE_UNHEALTHY"
     assert ("TICKET_FAILED", "tkt_dependency_blocked") in ceo_triggers
+
+
+def test_scheduler_tick_keeps_ticket_pending_when_dependency_gate_has_open_restore_incident(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_seed",
+        ticket_id="tkt_dependency_failed_upstream_open_incident",
+        node_id="node_dependency_failed_upstream_open_incident",
+        role_profile_ref="frontend_engineer_primary",
+    )
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_failed_upstream_open_incident",
+            node_id="node_dependency_failed_upstream_open_incident",
+            failure_kind="RUNTIME_ERROR",
+            failure_message="Upstream delivery failed and now waits for restore.",
+            idempotency_key="ticket-fail:wf_seed:tkt_dependency_failed_upstream_open_incident",
+        ),
+    )
+    assert fail_response.status_code == 200
+    assert fail_response.json()["status"] == "ACCEPTED"
+
+    ceo_triggers: list[tuple[str, str | None]] = []
+    import app.core.ticket_handlers as ticket_handlers
+
+    monkeypatch.setattr(
+        ticket_handlers,
+        "_trigger_ceo_shadow_safely",
+        lambda repository, *, workflow_id, trigger_type, trigger_ref: ceo_triggers.append(
+            (trigger_type, trigger_ref)
+        ),
+    )
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_blocked_by_open_restore",
+            node_id="node_dependency_blocked_by_open_restore",
+            role_profile_ref="frontend_engineer_primary",
+            dispatch_intent={
+                "assignee_employee_id": "emp_frontend_2",
+                "selection_reason": "Wait for the upstream restore path before dispatching.",
+                "dependency_gate_refs": ["tkt_dependency_failed_upstream_open_incident"],
+            },
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id="wf_seed",
+            idempotency_key="test-incident-opened:wf_seed:dependency-gate-open-restore",
+            causation_id=None,
+            correlation_id="wf_seed",
+            payload={
+                "incident_id": "inc_dependency_gate_open_restore",
+                "node_id": "node_dependency_failed_upstream_open_incident",
+                "ticket_id": "tkt_dependency_failed_upstream_open_incident",
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "wf_seed:TICKET_FAILED:tkt_dependency_failed_upstream_open_incident:proposal:JSONDecodeError",
+                "trigger_type": EVENT_TICKET_FAILED,
+                "trigger_ref": "tkt_dependency_failed_upstream_open_incident",
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Restore path is available for the failed upstream ticket.",
+                "failure_fingerprint": "wf_seed:TICKET_FAILED:tkt_dependency_failed_upstream_open_incident:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:30+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:dependency-gate-open-restore"),
+    )
+    ticket_projection = repository.get_current_ticket_projection("tkt_dependency_blocked_by_open_restore")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_PENDING
+    assert ticket_projection["lease_owner"] is None
+    assert ticket_projection["last_failure_kind"] is None
+    assert ("TICKET_FAILED", "tkt_dependency_blocked_by_open_restore") not in ceo_triggers
+
+
+def test_scheduler_tick_keeps_ticket_pending_while_dependency_recovery_followup_is_incomplete(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_seed",
+        ticket_id="tkt_dependency_failed_upstream_recovering",
+        node_id="node_dependency_failed_upstream_recovering",
+        role_profile_ref="frontend_engineer_primary",
+    )
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_failed_upstream_recovering",
+            node_id="node_dependency_failed_upstream_recovering",
+            failure_kind="RUNTIME_ERROR",
+            failure_message="Upstream delivery failed and recovery is in flight.",
+            idempotency_key="ticket-fail:wf_seed:tkt_dependency_failed_upstream_recovering",
+        ),
+    )
+    assert fail_response.status_code == 200
+    assert fail_response.json()["status"] == "ACCEPTED"
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_blocked_by_recovering_followup",
+            node_id="node_dependency_blocked_by_recovering_followup",
+            role_profile_ref="frontend_engineer_primary",
+            dispatch_intent={
+                "assignee_employee_id": "emp_frontend_2",
+                "selection_reason": "Wait for the active recovery follow-up to finish first.",
+                "dependency_gate_refs": ["tkt_dependency_failed_upstream_recovering"],
+            },
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id="wf_seed",
+            idempotency_key="test-ticket-created:wf_seed:tkt_dependency_recovery_followup_pending",
+            causation_id=None,
+            correlation_id="wf_seed",
+            payload=_ticket_create_payload(
+                workflow_id="wf_seed",
+                ticket_id="tkt_dependency_recovery_followup_pending",
+                node_id="node_dependency_failed_upstream_recovering",
+                role_profile_ref="frontend_engineer_primary",
+                parent_ticket_id="tkt_dependency_failed_upstream_recovering",
+                retry_budget=0,
+                tenant_id="tenant_default",
+                workspace_id="ws_default",
+            ),
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:20+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id="wf_seed",
+            idempotency_key="test-incident-opened:wf_seed:dependency-gate-recovering-pending",
+            causation_id=None,
+            correlation_id="wf_seed",
+            payload={
+                "incident_id": "inc_dependency_gate_recovering_pending",
+                "node_id": "node_dependency_failed_upstream_recovering",
+                "ticket_id": "tkt_dependency_failed_upstream_recovering",
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "wf_seed:TICKET_FAILED:tkt_dependency_failed_upstream_recovering:proposal:JSONDecodeError",
+                "trigger_type": EVENT_TICKET_FAILED,
+                "trigger_ref": "tkt_dependency_failed_upstream_recovering",
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Restore path is available for the failed upstream ticket.",
+                "failure_fingerprint": "wf_seed:TICKET_FAILED:tkt_dependency_failed_upstream_recovering:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:30+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_RECOVERY_STARTED,
+            actor_type="operator",
+            actor_id="emp_ops_1",
+            workflow_id="wf_seed",
+            idempotency_key="test-incident-recovering:wf_seed:dependency-gate-recovering-pending",
+            causation_id=None,
+            correlation_id="wf_seed",
+            payload={
+                "incident_id": "inc_dependency_gate_recovering_pending",
+                "node_id": "node_dependency_failed_upstream_recovering",
+                "ticket_id": "tkt_dependency_failed_upstream_recovering",
+                "followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+                "followup_ticket_id": "tkt_dependency_recovery_followup_pending",
+                "status": "RECOVERING",
+                "resolved_by": "emp_ops_1",
+                "resolution_summary": "Retry follow-up is still pending.",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:45+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:dependency-gate-recovering-pending"),
+    )
+    ticket_projection = repository.get_current_ticket_projection("tkt_dependency_blocked_by_recovering_followup")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_PENDING
+    assert ticket_projection["lease_owner"] is None
+    assert ticket_projection["last_failure_kind"] is None
+
+
+def test_scheduler_tick_releases_dependency_gate_after_recovery_followup_completes(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_seed",
+        ticket_id="tkt_dependency_failed_upstream_recovered",
+        node_id="node_dependency_failed_upstream_recovered",
+        role_profile_ref="frontend_engineer_primary",
+    )
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_failed_upstream_recovered",
+            node_id="node_dependency_failed_upstream_recovered",
+            failure_kind="RUNTIME_ERROR",
+            failure_message="Upstream delivery failed before restore completed.",
+            idempotency_key="ticket-fail:wf_seed:tkt_dependency_failed_upstream_recovered",
+        ),
+    )
+    assert fail_response.status_code == 200
+    assert fail_response.json()["status"] == "ACCEPTED"
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_released_after_recovery",
+            node_id="node_dependency_released_after_recovery",
+            role_profile_ref="frontend_engineer_primary",
+            dispatch_intent={
+                "assignee_employee_id": "emp_frontend_2",
+                "selection_reason": "Dispatch once the upstream restore chain is fully complete.",
+                "dependency_gate_refs": ["tkt_dependency_failed_upstream_recovered"],
+            },
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id="wf_seed",
+            idempotency_key="test-ticket-created:wf_seed:tkt_dependency_recovery_followup_done",
+            causation_id=None,
+            correlation_id="wf_seed",
+            payload=_ticket_create_payload(
+                workflow_id="wf_seed",
+                ticket_id="tkt_dependency_recovery_followup_done",
+                node_id="node_dependency_failed_upstream_recovered",
+                role_profile_ref="frontend_engineer_primary",
+                parent_ticket_id="tkt_dependency_failed_upstream_recovered",
+                retry_budget=0,
+                tenant_id="tenant_default",
+                workspace_id="ws_default",
+            ),
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:20+08:00"),
+        )
+        repository.refresh_projections(connection)
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_recovery_followup_done",
+            node_id="node_dependency_failed_upstream_recovered",
+            leased_by="emp_frontend_2",
+        ),
+    )
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_recovery_followup_done",
+            node_id="node_dependency_failed_upstream_recovered",
+            started_by="emp_frontend_2",
+        ),
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+    complete_response = client.post(
+        "/api/v1/commands/ticket-complete",
+        json=_ticket_complete_payload(
+            workflow_id="wf_seed",
+            ticket_id="tkt_dependency_recovery_followup_done",
+            node_id="node_dependency_failed_upstream_recovered",
+        ),
+    )
+    assert complete_response.status_code == 200
+    assert complete_response.json()["status"] == "ACCEPTED"
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id="wf_seed",
+            idempotency_key="test-incident-opened:wf_seed:dependency-gate-recovered",
+            causation_id=None,
+            correlation_id="wf_seed",
+            payload={
+                "incident_id": "inc_dependency_gate_recovered",
+                "node_id": "node_dependency_failed_upstream_recovered",
+                "ticket_id": "tkt_dependency_failed_upstream_recovered",
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "wf_seed:TICKET_FAILED:tkt_dependency_failed_upstream_recovered:proposal:JSONDecodeError",
+                "trigger_type": EVENT_TICKET_FAILED,
+                "trigger_ref": "tkt_dependency_failed_upstream_recovered",
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Restore path is available for the failed upstream ticket.",
+                "failure_fingerprint": "wf_seed:TICKET_FAILED:tkt_dependency_failed_upstream_recovered:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:30+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_RECOVERY_STARTED,
+            actor_type="operator",
+            actor_id="emp_ops_1",
+            workflow_id="wf_seed",
+            idempotency_key="test-incident-recovering:wf_seed:dependency-gate-recovered",
+            causation_id=None,
+            correlation_id="wf_seed",
+            payload={
+                "incident_id": "inc_dependency_gate_recovered",
+                "node_id": "node_dependency_failed_upstream_recovered",
+                "ticket_id": "tkt_dependency_failed_upstream_recovered",
+                "followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+                "followup_ticket_id": "tkt_dependency_recovery_followup_done",
+                "status": "RECOVERING",
+                "resolved_by": "emp_ops_1",
+                "resolution_summary": "Retry follow-up already finished successfully.",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:45+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:dependency-gate-recovered"),
+    )
+    ticket_projection = repository.get_current_ticket_projection("tkt_dependency_released_after_recovery")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket_projection["status"] == TICKET_STATUS_LEASED
+    assert ticket_projection["lease_owner"] == "emp_frontend_2"
 
 
 def test_scheduler_tick_fails_delivery_stage_child_when_parent_is_missing(client, set_ticket_time, monkeypatch):

@@ -684,6 +684,40 @@ class ControlPlaneRepository:
                 return None
             return self._convert_ticket_projection_row(row)
 
+    def get_latest_incident_for_ticket(
+        self,
+        ticket_id: str,
+        *,
+        statuses: list[str] | tuple[str, ...] | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_statuses = [str(status).strip() for status in list(statuses or []) if str(status).strip()]
+        query = """
+            SELECT * FROM incident_projection
+            WHERE ticket_id = ?
+        """
+        params: list[Any] = [ticket_id]
+        if normalized_statuses:
+            placeholders = ", ".join("?" for _ in normalized_statuses)
+            query += f" AND status IN ({placeholders})"
+            params.extend(normalized_statuses)
+        query += """
+            ORDER BY updated_at DESC, opened_at DESC, incident_id DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, tuple(params)).fetchone()
+            if row is None:
+                return None
+            return self._convert_incident_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, tuple(params)).fetchone()
+            if row is None:
+                return None
+            return self._convert_incident_projection_row(row)
+
     def get_current_node_projection(
         self,
         workflow_id: str,

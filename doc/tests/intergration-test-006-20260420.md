@@ -430,7 +430,7 @@
 
 当前真正还没解决的，不再是“单一 provider 502”。
 
-留下的问题主要有四类：
+留下的问题主要有三类：
 
 1. 上游根票恢复语义不对
 
@@ -444,12 +444,7 @@
 - 后面 CEO shadow 即使判断“应该 retry”
 - 执行也会被拒掉
 
-3. 下游 follow-up 会被依赖门连锁拖死
-
-- 依赖的是失败根票
-- 所以下游大量票直接 `DEPENDENCY_GATE_UNHEALTHY`
-
-4. fallback 在“已有 existing_ticket_id + 依赖链已坏”时没有恢复出口
+3. fallback 在“已有 existing_ticket_id + 依赖链已坏”时没有恢复出口
 
 - `_build_backlog_followup_batch()` 会发现没有任何新 action 可构
 - 然后抛：
@@ -459,7 +454,11 @@
 
 - `006` 前置会话 A 已完成
 - 自动主线里的 staffing blocker 不再表现为 `CORE_HIRE_APPROVAL` 挂起
-- 后续会话 1 到 5 可以按“恢复语义 / retry budget / dependency gate / fallback”继续拆开处理
+- `006` 会话 3 已完成
+  - dependency gate 现在会把“上游失败但已有 `OPEN/RECOVERING` restore 链”的下游 pending 票保持在阻塞态
+  - 不再直接把这一串 pending 下游票打成 `DEPENDENCY_GATE_UNHEALTHY`
+  - 历史上已经终态失败的下游票，本轮不自动恢复
+- 后续会话 4 到 5 继续按“fallback / 专项回归与最小回放”拆开处理
 
 ---
 

@@ -95,6 +95,7 @@ from app.core.constants import (
     TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     TICKET_STATUS_COMPLETED,
     TICKET_STATUS_FAILED,
+    TICKET_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_TIMED_OUT,
     TIMEOUT_FAMILY_RUNTIME,
     BLOCKING_REASON_PROVIDER_REQUIRED,
@@ -2482,6 +2483,15 @@ def _evaluate_dispatch_dependency_gates(
             )
         dependency_status = str(dependency_ticket.get("status") or "")
         if dependency_status in DEPENDENCY_TERMINAL_FAILURE_STATUSES:
+            recovery_state = _dependency_gate_recovery_state(
+                repository,
+                connection,
+                dependency_ticket_id=dependency_ticket_id,
+            )
+            if recovery_state == "blocked":
+                return False, None
+            if recovery_state == "satisfied":
+                continue
             return False, _build_failure_payload(
                 failure_kind=DEPENDENCY_GATE_UNHEALTHY_FAILURE_KIND,
                 failure_message="Dependency gate ticket is no longer healthy.",
@@ -2503,6 +2513,70 @@ def _evaluate_dispatch_dependency_gates(
         if dependency_gate_result.status == HookGateStatus.BLOCKED:
             return False, None
     return True, None
+
+
+DEPENDENCY_GATE_RECOVERY_BLOCKING_STATUSES = {
+    TICKET_STATUS_PENDING,
+    TICKET_STATUS_LEASED,
+    TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    TICKET_STATUS_REWORK_REQUIRED,
+}
+
+DEPENDENCY_GATE_RESTORE_AND_RETRY_ACTIONS = {
+    IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value,
+    IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value,
+    IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE.value,
+    IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT.value,
+}
+
+
+def _dependency_gate_recovery_state(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    dependency_ticket_id: str,
+) -> str | None:
+    incident = repository.get_latest_incident_for_ticket(
+        dependency_ticket_id,
+        statuses=[INCIDENT_STATUS_OPEN, INCIDENT_STATUS_RECOVERING],
+        connection=connection,
+    )
+    if incident is None:
+        return None
+
+    restore_action = str((incident.get("payload") or {}).get("followup_action") or "").strip() or None
+    if incident["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
+        source_ticket_context = resolve_ceo_shadow_source_ticket_context(
+            repository,
+            incident,
+            connection=connection,
+        )
+        restore_action = source_ticket_context["recommended_restore_action"] or restore_action
+
+    if restore_action not in DEPENDENCY_GATE_RESTORE_AND_RETRY_ACTIONS:
+        return None
+
+    incident_status = str(incident.get("status") or "").strip()
+    if incident_status == INCIDENT_STATUS_OPEN:
+        return "blocked"
+    if incident_status != INCIDENT_STATUS_RECOVERING:
+        return None
+
+    followup_ticket_id = str((incident.get("payload") or {}).get("followup_ticket_id") or "").strip()
+    if not followup_ticket_id:
+        return "blocked"
+
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id, connection=connection)
+    if followup_ticket is None:
+        return None
+
+    followup_status = str(followup_ticket.get("status") or "").strip()
+    if followup_status == TICKET_STATUS_COMPLETED:
+        return "satisfied"
+    if followup_status in DEPENDENCY_GATE_RECOVERY_BLOCKING_STATUSES:
+        return "blocked"
+    return None
 
 
 def _expected_primary_artifact_ref(created_spec: dict[str, Any], ticket_id: str) -> str | None:

@@ -23,16 +23,16 @@
   - streaming timeout 语义补回
   - `CEO_SHADOW_PIPELINE_FAILED` 的 source-ticket 恢复语义
   - incident-driven restore 接到 retry budget override
-- 后续如果继续 006，新的实施会话应当**直接从会话 3 开始**。
+- 后续如果继续 006，新的实施会话应当**直接从会话 4 开始**。
 - 如果后面有人要回看“1 和 2 到底收了什么”，以本页已勾选清单为准，不要再按旧拆分理解。
 
-006 当前剩余问题，代码主线还剩两类：
+006 当前剩余问题，代码主线还剩一类，外加一轮专项回归：
 
-1. follow-up 依赖门会连锁拖死下游  
-   根票一挂，`BR-002 / 020 / 021 / 022 / 023` 一串直接 `DEPENDENCY_GATE_UNHEALTHY`。
-
-2. backlog follow-up fallback 没有恢复出口  
+1. backlog follow-up fallback 没有恢复出口  
    遇到“已有 `existing_ticket_id` + 依赖链已坏”时，只会掉进 `no_actions_built`。
+
+2. 006 专项回归和最小回放还没补  
+   会话 5 还没做，当前还缺一组正式收口证据。
 
 已经完成并正式收进代码的两块：
 
@@ -42,17 +42,18 @@
 2. incident-driven restore 接到 retry budget override  
    `CEO_SHADOW_PIPELINE_FAILED` 现在可以复用 `RESTORE_AND_RETRY_*` 产出 follow-up ticket。
 
+3. dependency gate 从连坐失败改成阻塞等待恢复  
+   上游失败票只要已经挂上 `OPEN/RECOVERING` 的 restore/retry 恢复链，下游 pending 票就先保持阻塞，不再直接 `DEPENDENCY_GATE_UNHEALTHY`。
+
 后续继续按问题闭环往下收：
 
-1. 先收依赖门
-2. 再补 fallback 恢复出口
-3. 最后补 006 专项回归和一次最小回放
+1. 先补 fallback 恢复出口
+2. 最后补 006 专项回归和一次最小回放
 
-后续会话建议固定成这三个：
+后续会话建议固定成这两个：
 
-1. 会话 3：dependency gate 从连坐失败改成阻塞等待恢复
-2. 会话 4：backlog follow-up fallback 补恢复出口
-3. 会话 5：006 专项回归 + 一次最小 live 回放
+1. 会话 4：backlog follow-up fallback 补恢复出口
+2. 会话 5：006 专项回归 + 一次最小 live 回放
 
 ---
 
@@ -241,6 +242,8 @@
 
 ## 会话 3：把 dependency gate 从“连坐失败”改成“阻塞等待恢复”
 
+状态：已完成。
+
 ### 这一轮只解决什么
 
 只解决这一句：
@@ -287,11 +290,24 @@
 
 ### 这一轮做完后要勾掉的清单
 
-- [ ] 依赖票失败但处于恢复链时，下游 ticket 保持阻塞，不进 `DEPENDENCY_GATE_UNHEALTHY`
-- [ ] scheduler 不再把这类下游票直接打成 `FAILED`
-- [ ] 这类下游票不会额外触发新的 CEO shadow 噪音 incident
-- [ ] 依赖票恢复后，下游还能继续被正常调度
-- [ ] 已因 `DEPENDENCY_GATE_UNHEALTHY` 终态失败的历史票，后续恢复策略有明确口径
+- [x] 依赖票失败但处于恢复链时，下游 ticket 保持阻塞，不进 `DEPENDENCY_GATE_UNHEALTHY`
+- [x] scheduler 不再把这类下游票直接打成 `FAILED`
+- [x] 这类下游票不会额外触发新的 CEO shadow 噪音 incident
+- [x] 依赖票恢复后，下游还能继续被正常调度
+- [x] 已因 `DEPENDENCY_GATE_UNHEALTHY` 终态失败的历史票，后续恢复策略有明确口径
+
+### 本轮实际收口口径
+
+- 当前仍是 `PENDING` 的下游票：
+  - 如果上游失败票已有 `OPEN` incident，且推荐动作是 `RESTORE_AND_RETRY_*`
+  - 或 incident 已进 `RECOVERING`
+  - 就先阻塞等待，不再直接终态失败
+- `RECOVERING` incident 的 `followup_ticket_id` 一旦完成：
+  - 下游 dependency gate 视为满足
+  - 下游票下一次调度可继续 lease / 执行
+- 历史上已经终态 `FAILED` 的 `DEPENDENCY_GATE_UNHEALTHY` 下游票：
+  - 本轮**不自动恢复**
+  - 只把后续 pending 链路语义修正
 
 ### 本轮验收口径
 
