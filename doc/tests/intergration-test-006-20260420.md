@@ -428,27 +428,30 @@
 
 ## 4. 本轮仍然留下的问题
 
-当前真正还没解决的，不再是“单一 provider 502”。
+当前真正没收口的，已经不是这 3 条代码主线问题。
 
-留下的问题主要有三类：
+`006` 后续会话 1 到 4 已经把下面这些点收进代码并补了定向回归：
 
-1. 上游根票恢复语义不对
+1. `CEO_SHADOW_PIPELINE_FAILED` 的 source-ticket 恢复语义
+2. exhausted budget 下的 incident-driven restore
+3. dependency gate 的阻塞等待恢复语义
+4. backlog existing ticket 的 retry / restore 出口
 
-- `CEO_SHADOW_PIPELINE_FAILED`
-- 现在更偏 rerun proposer
-- 不是 incident-driven restore/retry
+会话 5 又补跑了专项回归和最小 smoke。
 
-2. 上游根票失败后，retry budget 很快耗尽
+当前留下的尾巴，已经收成一条 live provider 运行问题：
 
-- 一旦根票失败预算打空
-- 后面 CEO shadow 即使判断“应该 retry”
-- 执行也会被拒掉
+1. `library_management_autopilot_smoke` 没命中 `library_check_stage_gate`
+2. workflow `wf_3e729fcbbe1d` 停在 `EXECUTING / plan`
+3. 首张治理票先 `TIMED_OUT`
+4. 后续重试票 `tkt_c74908f2cc0b` 落成 `FAILED / PROVIDER_BAD_RESPONSE`
+5. 现场打开了一条 `CEO_SHADOW_PIPELINE_FAILED`
 
-3. fallback 在“已有 existing_ticket_id + 依赖链已坏”时没有恢复出口
+这条尾巴的口径要记死：
 
-- `_build_backlog_followup_batch()` 会发现没有任何新 action 可构
-- 然后抛：
-  - `no_actions_built`
+- 本轮没有再看到 `no_actions_built`
+- 本轮没有看到批量 `DEPENDENCY_GATE_UNHEALTHY`
+- 当前阻塞更像 live provider 首张治理票坏响应，不是 006 主线语义回退
 
 补记：
 
@@ -458,7 +461,8 @@
   - dependency gate 现在会把“上游失败但已有 `OPEN/RECOVERING` restore 链”的下游 pending 票保持在阻塞态
   - 不再直接把这一串 pending 下游票打成 `DEPENDENCY_GATE_UNHEALTHY`
   - 历史上已经终态失败的下游票，本轮不自动恢复
-- 后续会话 4 到 5 继续按“fallback / 专项回归与最小回放”拆开处理
+- 会话 4 的代码与定向回归已经落地
+- 会话 5 的专项回归已通过，smoke 已给出真实现场摘要
 
 ---
 

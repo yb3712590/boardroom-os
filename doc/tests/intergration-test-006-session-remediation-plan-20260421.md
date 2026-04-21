@@ -26,13 +26,15 @@
 - 后续如果继续 006，新的实施会话应当**直接从会话 4 开始**。
 - 如果后面有人要回看“1 和 2 到底收了什么”，以本页已勾选清单为准，不要再按旧拆分理解。
 
-006 当前剩余问题，代码主线还剩一类，外加一轮专项回归：
+006 到当前这轮，代码主线问题已经收完。
 
-1. backlog follow-up fallback 没有恢复出口  
-   遇到“已有 `existing_ticket_id` + 依赖链已坏”时，只会掉进 `no_actions_built`。
+现在剩下的不是新的代码主线修补，而是一条 live/smoke 运行阻塞：
 
-2. 006 专项回归和最小回放还没补  
-   会话 5 还没做，当前还缺一组正式收口证据。
+1. 006 四类主问题都已经有定向回归和落地代码  
+   不再单独开会话 4 去补代码。
+
+2. 会话 5 已补专项回归和最小 smoke 尝试  
+   但 smoke 现场没有命中 `library_check_stage_gate`，当前阻塞是首张治理票的 live provider 坏响应，不是 `006` 旧链路回退。
 
 已经完成并正式收进代码的两块：
 
@@ -45,15 +47,11 @@
 3. dependency gate 从连坐失败改成阻塞等待恢复  
    上游失败票只要已经挂上 `OPEN/RECOVERING` 的 restore/retry 恢复链，下游 pending 票就先保持阻塞，不再直接 `DEPENDENCY_GATE_UNHEALTHY`。
 
-后续继续按问题闭环往下收：
+后续如果还要继续 006，不再按“会话 4 / 会话 5 待实现”理解。
 
-1. 先补 fallback 恢复出口
-2. 最后补 006 专项回归和一次最小回放
+现在的尾巴只有一条：
 
-后续会话建议固定成这两个：
-
-1. 会话 4：backlog follow-up fallback 补恢复出口
-2. 会话 5：006 专项回归 + 一次最小 live 回放
+1. 单独确认 live provider 首张治理票 `PROVIDER_BAD_RESPONSE` 的运行层问题
 
 ---
 
@@ -319,6 +317,8 @@
 
 ## 会话 4：给 backlog follow-up fallback 补恢复出口
 
+状态：已完成；并已在会话 5 里重新核对代码和定向回归。
+
 ### 这一轮只解决什么
 
 只解决这一句：
@@ -399,6 +399,8 @@
 
 ## 会话 5：收 006 专项回归，再做一次最小回放
 
+状态：已完成专项回归与最小 smoke 尝试；smoke 未命中 checkpoint，当前尾巴已收成 live provider 运行阻塞。
+
 ### 这一轮只解决什么
 
 这一轮不再改设计。
@@ -478,12 +480,24 @@
   - `5 passed, 33 deselected`
 - 已尝试：
   - `cd backend && ./.venv/bin/python -m tests.live.library_management_autopilot_smoke --max-ticks 180 --timeout-sec 7200`
+- 本轮 smoke provider 口径：
+  - 直接使用 `backend/data/integration-test-provider-config.json`
+  - 未额外创建临时 provider config
 - 当前真实现场：
   - scenario 目录已落到 `backend/data/scenarios/library_management_autopilot_smoke/`
-  - workflow `wf_3e729fcbbe1d` 仍停在 `EXECUTING / plan`
-  - 仅首张 `tkt_wf_3e729fcbbe1d_ceo_architecture_brief` 处于 `EXECUTING`
+  - workflow `wf_3e729fcbbe1d` 停在 `EXECUTING / plan`
+  - 首张治理票 `tkt_wf_3e729fcbbe1d_ceo_architecture_brief` 先 `TIMED_OUT`
+  - 后续重试票 `tkt_c74908f2cc0b` 最终落成 `FAILED / PROVIDER_BAD_RESPONSE`
+  - incident 打开为：
+    - `inc_f7b9b4f2ef89`
+    - `CEO_SHADOW_PIPELINE_FAILED`
+    - `OPEN`
+  - 现场已落出 `integration-monitor-report.md`
   - 本轮没有拿到 `run_report.json` / `audit-summary.md`
-  - 当前阻塞更像 live provider 首票执行停滞，不是 006 主线语义回退
+  - 本轮未观察到：
+    - `no_actions_built`
+    - 批量 `DEPENDENCY_GATE_UNHEALTHY`
+  - 当前阻塞更像 live provider 首张治理票坏响应，不是 006 已收口的 4 条主线语义回退
 
 ---
 
