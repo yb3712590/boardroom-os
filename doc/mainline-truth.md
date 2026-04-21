@@ -76,6 +76,7 @@
 - CEO shadow snapshot 现在会额外暴露 `task_sensemaking / capability_plan / controller_state`；`ceo_scheduler` comparison、deterministic fallback 和 `workflow_auto_advance` 的 idle gate 已开始共用这套 controller truth。当前 `STANDARD` 与 `CEO_AUTOPILOT_FINE_GRAINED` 都会在治理链未走完时共用 `required_governance_ticket_plan`，但旧 scope-consensus 兼容链仍保留给非 autopilot 的手工共识票
 - 上述 capability plan 当前会先读取 backlog recommendation 里的结构化 ticket split；如果票项显式带 `target_role / owner_role`，controller 会把 `backend / database / platform` 映射到对应 `source_code_delivery` build 票，不再默认全部落到前端。active roster 覆盖不到时，controller 会先暴露 `staffing_gaps`，不会静默改派给现有 frontend
 - 当 autopilot workflow 的硬约束显式提到 `architect_primary` 时，实现 fanout 现在有两段 architect gate：没有 active architect 时，controller 会先建议 `HIRE_EMPLOYEE`
+- autopilot 主线里的 `HIRE_EMPLOYEE` 现在不会再创建 `CORE_HIRE_APPROVAL`；CEO 自动招聘会直接注册 active employee 进入 roster。手工 `employee-hire-request` 仍保留 `CORE_HIRE_APPROVAL` 审批链
 - architect 已在岗但还没有过 governance gate 的 `architect_primary` 文档时，`workflow_controller` 现在会在 `capability_plan.required_governance_ticket_plan` 暴露一条稳定的 architect `architecture_brief` 补票计划；deterministic fallback 和 CEO `CREATE_TICKET` 校验都会先对齐这条计划，再允许实现 fanout
 - 上述 architect gate 的满足口径现在已放宽到任意已过 internal governance gate 的 `architect_primary` 文档：`architecture_brief / technology_decision / detailed_design` 任一成立都算放行；自动补票默认仍只补 `architecture_brief`
 - 当 autopilot workflow 的硬约束显式要求技术决策会议时，controller 现在会为 backlog fanout 追加专用 meeting candidate；只有关闭且已批准的 meeting evidence 出现后，controller 才会放行实现票。缺 meeting evidence 时，deterministic/live path 会先 `REQUEST_MEETING` 或保持阻断

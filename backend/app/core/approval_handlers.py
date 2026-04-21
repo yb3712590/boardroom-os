@@ -102,6 +102,7 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 from app.core.persona_profiles import normalize_persona_profiles
+from app.core.employee_handlers import record_employee_hired_event
 from app.core.project_workspaces import (
     finalize_workspace_ticket_git_status,
     is_workspace_managed_source_code_ticket,
@@ -297,27 +298,21 @@ def _apply_employee_change_approval(
             personality_profile=employee_change.get("personality_profile"),
             aesthetic_profile=employee_change.get("aesthetic_profile"),
         )
-        repository.insert_event(
+        record_employee_hired_event(
+            repository,
             connection,
-            event_type=EVENT_EMPLOYEE_HIRED,
+            workflow_id=approval["workflow_id"],
+            employee_id=str(employee_change["employee_id"]),
+            role_type=str(employee_change["role_type"]),
+            role_profile_refs=list(employee_change.get("role_profile_refs") or []),
+            normalized_profiles=normalized_profiles,
+            provider_id=(str(employee_change.get("provider_id")) if employee_change.get("provider_id") else None),
             actor_type="board",
             actor_id="board",
-            workflow_id=approval["workflow_id"],
+            occurred_at=occurred_at,
             idempotency_key=f"{idempotency_key}:employee-hired",
             causation_id=command_id,
             correlation_id=approval["workflow_id"],
-            payload={
-                "employee_id": employee_change["employee_id"],
-                "role_type": employee_change["role_type"],
-                "skill_profile": normalized_profiles["skill_profile"],
-                "personality_profile": normalized_profiles["personality_profile"],
-                "aesthetic_profile": normalized_profiles["aesthetic_profile"],
-                "state": EMPLOYEE_STATE_ACTIVE,
-                "board_approved": True,
-                "provider_id": employee_change.get("provider_id"),
-                "role_profile_refs": list(employee_change.get("role_profile_refs") or []),
-            },
-            occurred_at=occurred_at,
         )
         return str(employee_change["employee_id"])
 

@@ -138,7 +138,7 @@ def execute_ceo_action_batch(
             continue
 
         if action.action_type == CEOActionType.HIRE_EMPLOYEE:
-            from app.core.employee_handlers import handle_employee_hire_request
+            from app.core.employee_handlers import handle_ceo_direct_employee_hire
 
             template, staffing_reason = resolve_limited_ceo_staffing_combo(
                 action.payload.role_type,
@@ -172,7 +172,7 @@ def execute_ceo_action_batch(
                     "aesthetic_profile": dict(template.get("aesthetic_profile") or {}),
                 }
             )
-            ack = handle_employee_hire_request(
+            ack = handle_ceo_direct_employee_hire(
                 repository,
                 EmployeeHireRequestCommand(
                     workflow_id=action.payload.workflow_id,

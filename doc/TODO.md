@@ -18,6 +18,7 @@
 - backend：`./backend/.venv/bin/pytest tests/ -q` -> `555 passed`
 - frontend：`npm run build` -> passed，`npm run test:run` -> `84 passed`
 - CEO 当前真实执行集：`CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING`；`ESCALATE_TO_BOARD` 仍是 `DEFERRED_SHADOW_ONLY`
+- `HIRE_EMPLOYEE` 当前已分成双轨：自动主线里的 CEO 动作会直接注册 active employee；手工 `employee-hire-request` 仍继续走 `CORE_HIRE_APPROVAL`
 - 2026-04-10 live 集成测试新增确认：当时主线虽然能跑到 closeout，但 BUILD 还在交占位式文档产物，不是真实源码交付；这也是 `P0-COR` 被提升为最高优先级的直接原因
 - 2026-04-11 第二段纠偏已落地：`BUILD` 主结果已经硬切到 `source_code_delivery`，workspace-managed staged follow-up build 也已改成 `10-project / 20-evidence` write set；runtime 会落源码写入、测试证据、git 留痕和 `SOURCE_CODE_DELIVERY` 过程资产
 - 2026-04-11 第三段纠偏已落地：`10-project/` 现在会初始化成真实 git repo；workspace-managed 代码票在 `ticket-start` 时会分配真实 worktree，在 `ticket-result-submit` 时会真实写盘并生成服务端 git commit 记录；final review approve 会先做真实 merge，成功后才继续 closeout
@@ -228,7 +229,7 @@
 状态：`已完成（2026-04-08，3 项已全部收口；与主线关系：按最小闭环把五类新增角色从 staffing / CEO partial path 收正到 formal runtime live path；后续 `P0-COR-002/003` 又把 capability-approved backlog follow-up 的 direct CEO create-ticket 补进当前主线）`
 
 - `P2-RLS-001` 已完成（2026-04-08）：`backend / database / platform / architect / cto` 五类模板现在已进入 Board/workforce staffing 主链；Board 可发起 hire / replace 审批，审批通过后这些角色会真实进入 workforce lane，并带上 `source_template_id / source_fragment_refs` 与一致的 `FREEZE / RESTORE / REPLACE` 动作；这轮同时把 board/workforce staffing 与 CEO limited hire 拆开，确保新增角色仍不会提前进入 CEO preset
-- `P2-RLS-002` 已完成（2026-04-08）：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口，并通过最小 `execution_contract + legacy role_profile:*` 兼容路径执行；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`
+- `P2-RLS-002` 已完成（2026-04-08，2026-04-21 补主线语义）：CEO `HIRE_EMPLOYEE` 现在已放宽到 `backend / database / platform / architect / cto` 五类新增角色；自动主线里的 CEO 招聘现已直接注册 active employee，不再经过 `CORE_HIRE_APPROVAL`。手工 `employee-hire-request` 仍保留审批链；`architect_primary / cto_primary` 已进入 CEO 治理文档建票入口，并通过最小 `execution_contract + legacy role_profile:*` 兼容路径执行；`backend / database / platform` 已进入 meeting participant 匹配与 `BUILD` follow-up owner_role；`CHECK` 仍只给 `checker`，`REVIEW` 仍只给 `frontend_engineer`
 - `P2-RLS-003` 已完成（2026-04-08）：`backend / database / platform` 现在已进入正式代码交付 runtime live 路径，并新增 `backend_build / database_build / platform_build` 三类 execution target；`architect_primary / cto_primary` 现在也已进入正式治理文档 runtime 支持矩阵与 provider target label。`role_templates_catalog` 五类新增模板现已标成 `LIVE_ON_MAINLINE`，`runtime-provider.future_binding_slots` 当前为空，Provider 设置抽屉改为直接编辑这五类角色的当前绑定；当前边界已更新为：`backend / database / platform` 可进入 capability-approved backlog follow-up 的 direct CEO create-ticket，但一般代码票仍不开放，`architect / cto` 仍不进入 staged BUILD/CHECK/REVIEW follow-up owner_role
 
 ### `P2-PRV`：Provider 策略收口

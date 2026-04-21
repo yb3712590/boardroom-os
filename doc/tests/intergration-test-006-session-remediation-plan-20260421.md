@@ -537,12 +537,18 @@
 
 ### 这一轮做完后要勾掉的清单
 
-- [ ] 自动主线里的 `HIRE_EMPLOYEE` 不再创建 `CORE_HIRE_APPROVAL`
-- [ ] CEO 能直接生成完整员工定义并注册入 roster
-- [ ] 现有 persona normalization 和高重合保护仍然保留
-- [ ] 自动招聘完成后，controller 能把这名员工立即视为可用员工
-- [ ] 手工 `employee-hire-request` 能力先不删
-- [ ] 文档里明确写清“自动招聘”和“手工审批招聘”的边界
+- [x] 自动主线里的 `HIRE_EMPLOYEE` 不再创建 `CORE_HIRE_APPROVAL`
+- [x] CEO 能直接生成完整员工定义并注册入 roster
+- [x] 现有 persona normalization 和高重合保护仍然保留
+- [x] 自动招聘完成后，controller 能把这名员工立即视为可用员工
+- [x] 手工 `employee-hire-request` 能力先不删
+- [x] 文档里明确写清“自动招聘”和“手工审批招聘”的边界
+
+实际落地：
+
+- `ceo_executor` 的自动 `HIRE_EMPLOYEE` 已改成直写 `EMPLOYEE_HIRED`，`causation_hint` 固定落到 `employee:<employee_id>`
+- 手工 `employee-hire-request` 仍继续创建 `CORE_HIRE_APPROVAL`
+- `CORE_HIRE_APPROVAL -> EMPLOYEE_HIRED` 和自动直聘现在复用同一套 employee event payload 构造
 
 ### 本轮验收口径
 

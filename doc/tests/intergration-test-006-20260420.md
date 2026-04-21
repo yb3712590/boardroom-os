@@ -89,6 +89,10 @@
 状态：
 
 - 当时问题已解决
+- 后续 `006` 前置会话 A 已继续收口：
+  - 自动主线 `HIRE_EMPLOYEE` 不再经过 `CORE_HIRE_APPROVAL`
+  - CEO 自动招聘现在直接把 active employee 写进 roster
+  - 手工 `employee-hire-request` 仍保留审批链
 
 ### 问题 B：OpenAI Python SDK 未安装
 
@@ -443,6 +447,12 @@
 - `_build_backlog_followup_batch()` 会发现没有任何新 action 可构
 - 然后抛：
   - `no_actions_built`
+
+补记：
+
+- `006` 前置会话 A 已完成
+- 自动主线里的 staffing blocker 不再表现为 `CORE_HIRE_APPROVAL` 挂起
+- 后续会话 1 到 5 可以按“恢复语义 / retry budget / dependency gate / fallback”继续拆开处理
 
 ---
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from app.contracts.commands import (
@@ -13,6 +14,7 @@ from app.contracts.commands import (
 from app.core.constants import (
     EMPLOYEE_STATE_ACTIVE,
     EMPLOYEE_STATE_FROZEN,
+    EVENT_EMPLOYEE_HIRED,
     EVENT_EMPLOYEE_FROZEN,
     EVENT_EMPLOYEE_RESTORED,
 )
@@ -26,7 +28,10 @@ from app.core.staffing_containment import (
     contain_employee_active_tickets,
     restore_employee_requeued_tickets,
 )
-from app.core.staffing_catalog import resolve_board_workforce_staffing_combo
+from app.core.staffing_catalog import (
+    resolve_board_workforce_staffing_combo,
+    resolve_limited_ceo_staffing_combo,
+)
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
@@ -125,6 +130,194 @@ def _build_employee_change_review_pack(
     }
 
 
+def build_employee_hired_event_payload(
+    *,
+    employee_id: str,
+    role_type: str,
+    role_profile_refs: list[str],
+    normalized_profiles: dict[str, dict[str, Any]],
+    provider_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "employee_id": employee_id,
+        "role_type": role_type,
+        "skill_profile": normalized_profiles["skill_profile"],
+        "personality_profile": normalized_profiles["personality_profile"],
+        "aesthetic_profile": normalized_profiles["aesthetic_profile"],
+        "state": EMPLOYEE_STATE_ACTIVE,
+        "board_approved": True,
+        "provider_id": provider_id,
+        "role_profile_refs": list(role_profile_refs),
+    }
+
+
+def record_employee_hired_event(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    workflow_id: str,
+    employee_id: str,
+    role_type: str,
+    role_profile_refs: list[str],
+    normalized_profiles: dict[str, dict[str, Any]],
+    provider_id: str | None,
+    actor_type: str,
+    actor_id: str,
+    occurred_at,
+    idempotency_key: str,
+    causation_id: str | None,
+    correlation_id: str | None,
+) -> None:
+    repository.insert_event(
+        connection,
+        event_type=EVENT_EMPLOYEE_HIRED,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        workflow_id=workflow_id,
+        idempotency_key=idempotency_key,
+        causation_id=causation_id,
+        correlation_id=correlation_id,
+        payload=build_employee_hired_event_payload(
+            employee_id=employee_id,
+            role_type=role_type,
+            role_profile_refs=role_profile_refs,
+            normalized_profiles=normalized_profiles,
+            provider_id=provider_id,
+        ),
+        occurred_at=occurred_at,
+    )
+
+
+def _employee_causation_hint(employee_id: str) -> str:
+    return f"employee:{employee_id}"
+
+
+def _resolve_employee_hire_request(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    payload: EmployeeHireRequestCommand,
+    command_id: str,
+    received_at,
+    staffing_combo_resolver: Callable[[str, list[str] | tuple[str, ...]], tuple[dict[str, Any] | None, str | None]],
+) -> tuple[dict[str, Any] | None, CommandAckEnvelope | None]:
+    workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
+    if workflow is None:
+        return None, _rejected_ack(
+            command_id=command_id,
+            idempotency_key=payload.idempotency_key,
+            received_at=received_at,
+            reason=f"Workflow {payload.workflow_id} was not found.",
+        )
+
+    _, staffing_reason = staffing_combo_resolver(payload.role_type, payload.role_profile_refs)
+    if staffing_reason is not None:
+        return None, _rejected_ack(
+            command_id=command_id,
+            idempotency_key=payload.idempotency_key,
+            received_at=received_at,
+            reason=staffing_reason,
+        )
+
+    existing_employee = repository.get_employee_projection(payload.employee_id, connection=connection)
+    if existing_employee is not None:
+        return None, _rejected_ack(
+            command_id=command_id,
+            idempotency_key=payload.idempotency_key,
+            received_at=received_at,
+            reason=f"Employee {payload.employee_id} already exists in roster state.",
+            causation_hint=_employee_causation_hint(payload.employee_id),
+        )
+
+    normalized_profiles = normalize_persona_profiles(
+        payload.role_type,
+        skill_profile=payload.skill_profile,
+        personality_profile=payload.personality_profile,
+        aesthetic_profile=payload.aesthetic_profile,
+    )
+    conflict = find_same_role_high_overlap_conflict(
+        role_type=payload.role_type,
+        skill_profile=normalized_profiles["skill_profile"],
+        personality_profile=normalized_profiles["personality_profile"],
+        aesthetic_profile=normalized_profiles["aesthetic_profile"],
+        employees=repository.list_employee_projections(
+            connection=connection,
+            states=[EMPLOYEE_STATE_ACTIVE],
+            board_approved_only=True,
+        ),
+    )
+    if conflict is not None:
+        return None, _rejected_ack(
+            command_id=command_id,
+            idempotency_key=payload.idempotency_key,
+            received_at=received_at,
+            reason=build_high_overlap_rejection_reason(
+                role_type=payload.role_type,
+                conflict=conflict,
+            ),
+        )
+
+    return {"normalized_profiles": normalized_profiles}, None
+
+
+def handle_ceo_direct_employee_hire(
+    repository: ControlPlaneRepository,
+    payload: EmployeeHireRequestCommand,
+) -> CommandAckEnvelope:
+    repository.initialize()
+
+    command_id = new_prefixed_id("cmd")
+    received_at = now_local()
+    with repository.transaction() as connection:
+        existing_event = repository.get_event_by_idempotency_key(connection, payload.idempotency_key)
+        if existing_event is not None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                causation_hint=_employee_causation_hint(payload.employee_id),
+            )
+
+        resolved_request, rejected_ack = _resolve_employee_hire_request(
+            repository,
+            connection,
+            payload=payload,
+            command_id=command_id,
+            received_at=received_at,
+            staffing_combo_resolver=resolve_limited_ceo_staffing_combo,
+        )
+        if rejected_ack is not None:
+            return rejected_ack
+        assert resolved_request is not None
+
+        record_employee_hired_event(
+            repository,
+            connection,
+            workflow_id=payload.workflow_id,
+            employee_id=payload.employee_id,
+            role_type=payload.role_type,
+            role_profile_refs=list(payload.role_profile_refs),
+            normalized_profiles=resolved_request["normalized_profiles"],
+            provider_id=payload.provider_id,
+            actor_type="ceo",
+            actor_id="ceo",
+            occurred_at=received_at,
+            idempotency_key=payload.idempotency_key,
+            causation_id=command_id,
+            correlation_id=payload.workflow_id,
+        )
+        repository.refresh_projections(connection)
+
+    return CommandAckEnvelope(
+        command_id=command_id,
+        idempotency_key=payload.idempotency_key,
+        status=CommandAckStatus.ACCEPTED,
+        received_at=received_at,
+        reason=None,
+        causation_hint=_employee_causation_hint(payload.employee_id),
+    )
+
+
 def handle_employee_hire_request(
     repository: ControlPlaneRepository,
     payload: EmployeeHireRequestCommand,
@@ -143,61 +336,17 @@ def handle_employee_hire_request(
                 causation_hint=f"approval:{existing_event['event_id']}",
             )
 
-        workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
-        if workflow is None:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                reason=f"Workflow {payload.workflow_id} was not found.",
-            )
-
-        _, staffing_reason = resolve_board_workforce_staffing_combo(payload.role_type, payload.role_profile_refs)
-        if staffing_reason is not None:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                reason=staffing_reason,
-            )
-
-        existing_employee = repository.get_employee_projection(payload.employee_id, connection=connection)
-        if existing_employee is not None:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                reason=f"Employee {payload.employee_id} already exists in roster state.",
-                causation_hint=f"employee:{payload.employee_id}",
-            )
-
-        normalized_profiles = normalize_persona_profiles(
-            payload.role_type,
-            skill_profile=payload.skill_profile,
-            personality_profile=payload.personality_profile,
-            aesthetic_profile=payload.aesthetic_profile,
+        resolved_request, rejected_ack = _resolve_employee_hire_request(
+            repository,
+            connection,
+            payload=payload,
+            command_id=command_id,
+            received_at=received_at,
+            staffing_combo_resolver=resolve_board_workforce_staffing_combo,
         )
-        conflict = find_same_role_high_overlap_conflict(
-            role_type=payload.role_type,
-            skill_profile=normalized_profiles["skill_profile"],
-            personality_profile=normalized_profiles["personality_profile"],
-            aesthetic_profile=normalized_profiles["aesthetic_profile"],
-            employees=repository.list_employee_projections(
-                connection=connection,
-                states=[EMPLOYEE_STATE_ACTIVE],
-                board_approved_only=True,
-            ),
-        )
-        if conflict is not None:
-            return _rejected_ack(
-                command_id=command_id,
-                idempotency_key=payload.idempotency_key,
-                received_at=received_at,
-                reason=build_high_overlap_rejection_reason(
-                    role_type=payload.role_type,
-                    conflict=conflict,
-                ),
-            )
+        if rejected_ack is not None:
+            return rejected_ack
+        assert resolved_request is not None
 
         approval = repository.create_approval_request(
             connection,
@@ -214,9 +363,9 @@ def handle_employee_hire_request(
                     "employee_id": payload.employee_id,
                     "role_type": payload.role_type,
                     "role_profile_refs": list(payload.role_profile_refs),
-                    "skill_profile": normalized_profiles["skill_profile"],
-                    "personality_profile": normalized_profiles["personality_profile"],
-                    "aesthetic_profile": normalized_profiles["aesthetic_profile"],
+                    "skill_profile": resolved_request["normalized_profiles"]["skill_profile"],
+                    "personality_profile": resolved_request["normalized_profiles"]["personality_profile"],
+                    "aesthetic_profile": resolved_request["normalized_profiles"]["aesthetic_profile"],
                     "provider_id": payload.provider_id,
                 },
                 trigger_reason="Core staffing changes require explicit board approval.",

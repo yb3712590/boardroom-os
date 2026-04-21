@@ -2313,13 +2313,18 @@ def test_ceo_shadow_run_uses_live_provider_and_executes_hire_request(client, mon
     assert run["rejected_actions"][0]["action_type"] == "RETRY_TICKET"
     assert run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
     assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    assert run["executed_actions"][0]["causation_hint"] == "employee:emp_checker_shadow"
     assert run["execution_summary"]["executed_action_count"] == 1
     assert run["deterministic_fallback_used"] is False
-    assert any(
+    assert not any(
         approval["approval_type"] == "CORE_HIRE_APPROVAL"
         for approval in client.app.state.repository.list_open_approvals()
         if approval["workflow_id"] == workflow_id
     )
+    hired_employee = client.app.state.repository.get_employee_projection("emp_checker_shadow")
+    assert hired_employee is not None
+    assert hired_employee["state"] == "ACTIVE"
+    assert hired_employee["board_approved"] is True
 
 
 def test_ceo_shadow_run_executes_retry_ticket(client, monkeypatch):
@@ -4285,7 +4290,30 @@ def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(cl
     assert run["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
     assert run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
     assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    assert run["executed_actions"][0]["causation_hint"] == "employee:emp_architect_governance"
     assert run["executed_actions"][0]["payload"]["role_profile_refs"] == ["architect_primary"]
+    assert not any(
+        approval["approval_type"] == "CORE_HIRE_APPROVAL"
+        for approval in client.app.state.repository.list_open_approvals()
+        if approval["workflow_id"] == workflow_id
+    )
+    hired_employee = client.app.state.repository.get_employee_projection("emp_architect_governance")
+    assert hired_employee is not None
+    assert hired_employee["state"] == "ACTIVE"
+    assert hired_employee["board_approved"] is True
+
+    followup_run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:post-hire",
+    )
+
+    assert followup_run["snapshot"]["controller_state"]["state"] == "ARCHITECT_REQUIRED"
+    assert followup_run["snapshot"]["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert followup_run["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert followup_run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert followup_run["executed_actions"][0]["execution_status"] == "EXECUTED"
 
 
 def test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_followup_when_doc_is_missing(
