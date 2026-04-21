@@ -431,6 +431,8 @@ def _ready_blocked_thrashing_findings(
         elif event_type == EVENT_BOARD_REVIEW_REQUIRED:
             node_id = _normalize_node_id(payload.get("node_id"))
             if not node_id:
+                if str(payload.get("review_type") or "").strip() == "CORE_HIRE_APPROVAL":
+                    continue
                 _raise_runtime_liveness_unavailable(f"{event_id} is missing node_id.")
             transitions.append((node_id, "BLOCKED"))
         elif event_type == EVENT_INCIDENT_OPENED:

@@ -20,6 +20,8 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.main import create_app
 from app.scheduler_runner import run_scheduler_once
 from app.core.time import now_local
+from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
+from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 
 DEFAULT_SCENARIO_SEED = 17
 DEFAULT_MAX_TICKS = 180
@@ -176,6 +178,7 @@ def load_integration_test_provider_payload(
         if not isinstance(value, list) or not value:
             raise RuntimeError(f"Integration test provider config must define non-empty `{key}`.")
     normalized = json.loads(json.dumps(payload))
+    normalized.pop("default_provider_id", None)
     normalized["idempotency_key"] = str(
         normalized.get("idempotency_key") or f"runtime-provider-upsert:{scenario_slug}"
     )
@@ -1010,6 +1013,25 @@ def _should_count_stall(
     return True
 
 
+def _should_increment_stall(
+    *,
+    previous_signature: tuple[Any, ...] | None,
+    current_signature: tuple[Any, ...] | None,
+    workflow: dict[str, Any],
+    active_ticket_ids: list[str],
+    open_incidents: list[dict[str, Any]],
+) -> bool:
+    if previous_signature is None or current_signature is None:
+        return False
+    if current_signature != previous_signature:
+        return False
+    return _should_count_stall(
+        workflow=workflow,
+        active_ticket_ids=active_ticket_ids,
+        open_incidents=open_incidents,
+    )
+
+
 def _effective_longest_silence(state: dict[str, Any]) -> dict[str, Any] | None:
     longest = state.get("longest_silence")
     last_change_monotonic = state.get("last_change_monotonic")
@@ -1496,6 +1518,53 @@ def collect_progress_snapshot(paths: ScenarioPaths, repository, workflow_id: str
     }
 
 
+def _maybe_recover_live_delegate_blockers(
+    repository,
+    *,
+    workflow_id: str,
+    idempotency_key_prefix: str,
+    tick_index: int,
+) -> bool:
+    workflow = repository.get_workflow_projection(workflow_id)
+    if not workflow_uses_ceo_board_delegate(workflow):
+        return False
+
+    open_approvals = [item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id]
+    open_incidents = [item for item in repository.list_open_incidents() if item["workflow_id"] == workflow_id]
+    if not open_approvals and not open_incidents:
+        return False
+
+    before = (len(open_approvals), len(open_incidents))
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix=f"{idempotency_key_prefix}:{tick_index}",
+        max_steps=4,
+        max_dispatches=20,
+    )
+    after = (
+        sum(1 for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id),
+        sum(1 for item in repository.list_open_incidents() if item["workflow_id"] == workflow_id),
+    )
+    return after != before
+
+
+def _latest_resumable_workflow_id(repository) -> str | None:
+    with repository.connection() as connection:
+        row = connection.execute(
+            """
+            SELECT workflow_id
+            FROM workflow_projection
+            WHERE status = 'EXECUTING'
+            ORDER BY updated_at DESC, workflow_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["workflow_id"])
+
+
 def run_live_scenario(
     scenario: LiveScenarioDefinition,
     *,
@@ -1531,16 +1600,16 @@ def run_live_scenario(
             if runtime_response.status_code != 200 or runtime_response.json()["status"] != "ACCEPTED":
                 raise RuntimeError(f"runtime-provider-upsert failed: {runtime_response.text}")
 
-            project_response = client.post(
-                "/api/v1/commands/project-init",
-                json=build_project_init_payload(scenario),
-            )
-            if project_response.status_code != 200 or project_response.json()["status"] != "ACCEPTED":
-                raise RuntimeError(f"project-init failed: {project_response.text}")
-
-            workflow_id = project_response.json()["causation_hint"].split(":", 1)[1]
             repository = client.app.state.repository
-            _, previous_version = repository.get_cursor_and_version()
+            workflow_id = None if clean else _latest_resumable_workflow_id(repository)
+            if workflow_id is None:
+                project_response = client.post(
+                    "/api/v1/commands/project-init",
+                    json=build_project_init_payload(scenario),
+                )
+                if project_response.status_code != 200 or project_response.json()["status"] != "ACCEPTED":
+                    raise RuntimeError(f"project-init failed: {project_response.text}")
+                workflow_id = project_response.json()["causation_hint"].split(":", 1)[1]
             consecutive_stalls = 0
             monitor_state: dict[str, Any] = {
                 "entries": [],
@@ -1557,10 +1626,25 @@ def run_live_scenario(
                     max_dispatches=20,
                     tick_index=tick_index,
                 )
+                _maybe_recover_live_delegate_blockers(
+                    repository,
+                    workflow_id=workflow_id,
+                    idempotency_key_prefix=f"live-scenario-recover:{scenario.slug}:{workflow_id}",
+                    tick_index=tick_index,
+                )
                 workflow = repository.get_workflow_projection(workflow_id)
-                _, current_version = repository.get_cursor_and_version()
+                previous_signature = monitor_state.get("previous_signature")
+                monitor_state = _update_monitor_entries(
+                    paths,
+                    repository,
+                    workflow_id,
+                    state=monitor_state,
+                )
                 current_snapshot = dict(monitor_state.get("previous_snapshot") or {})
-                if current_version == previous_version and _should_count_stall(
+                current_signature = monitor_state.get("previous_signature")
+                if _should_increment_stall(
+                    previous_signature=previous_signature,
+                    current_signature=current_signature,
                     workflow=(workflow or {}),
                     active_ticket_ids=list(current_snapshot.get("active_ticket_ids") or []),
                     open_incidents=list(current_snapshot.get("open_incidents") or []),
@@ -1568,13 +1652,6 @@ def run_live_scenario(
                     consecutive_stalls += 1
                 else:
                     consecutive_stalls = 0
-                previous_version = current_version
-                monitor_state = _update_monitor_entries(
-                    paths,
-                    repository,
-                    workflow_id,
-                    state=monitor_state,
-                )
 
                 if workflow is not None and workflow["status"] == "COMPLETED":
                     common = collect_common_outcome(paths, repository, workflow_id)
@@ -1703,7 +1780,7 @@ def run_cli(
 
     report = run_live_scenario(
         scenario,
-        clean=True,
+        clean=args.clean,
         max_ticks=args.max_ticks,
         timeout_sec=args.timeout_sec,
         seed=args.seed,

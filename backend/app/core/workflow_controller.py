@@ -12,6 +12,7 @@ from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DETAILED_DESIGN_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     MILESTONE_PLAN_SCHEMA_REF,
@@ -285,6 +286,14 @@ def _resolve_target_role_profile(raw_ticket: dict[str, Any]) -> str:
     return mapped
 
 
+def _resolve_followup_output_schema_ref(role_profile_ref: str) -> str:
+    if role_profile_ref == "architect_primary":
+        return ARCHITECTURE_BRIEF_SCHEMA_REF
+    if role_profile_ref == "checker_primary":
+        return DELIVERY_CHECK_REPORT_SCHEMA_REF
+    return SOURCE_CODE_DELIVERY_SCHEMA_REF
+
+
 def _latest_completed_backlog_ticket(
     repository: ControlPlaneRepository,
     *,
@@ -547,7 +556,7 @@ def _build_followup_ticket_plans(
             for item in list(raw_ticket.get("scope") or [])
             if str(item).strip()
         ]
-        output_schema_ref = SOURCE_CODE_DELIVERY_SCHEMA_REF
+        output_schema_ref = _resolve_followup_output_schema_ref(role_profile_ref)
         execution_contract = infer_execution_contract_payload(
             role_profile_ref=role_profile_ref,
             output_schema_ref=output_schema_ref,
@@ -1071,4 +1080,3 @@ def build_workflow_controller_view(
         "meeting_candidates": combined_meeting_candidates,
         "ticket_graph_summary": graph_index_summary,
     }
-

@@ -243,6 +243,9 @@ def _validate_blocked_projection(
     repository: ControlPlaneRepository,
     approval: dict[str, Any],
 ) -> str | None:
+    if approval["approval_type"] == "CORE_HIRE_APPROVAL":
+        return None
+
     subject = approval["payload"].get("review_pack", {}).get("subject", {})
     workflow_id = approval["workflow_id"]
     ticket_id, graph_node_id, node_id = resolve_review_subject_identity(
@@ -1889,13 +1892,17 @@ def _handle_board_approve(
                         connection=connection,
                     )
 
-        source_ticket_id, _source_graph_node_id, source_node_id = _resolve_review_pack_execution_subject(
-            repository,
-            connection,
-            workflow_id=approval["workflow_id"],
-            subject=subject,
-            fallback_ticket_id=str(subject.get("source_ticket_id") or "").strip() or None,
-        )
+        if approval["approval_type"] == "CORE_HIRE_APPROVAL":
+            source_ticket_id = None
+            source_node_id = None
+        else:
+            source_ticket_id, _source_graph_node_id, source_node_id = _resolve_review_pack_execution_subject(
+                repository,
+                connection,
+                workflow_id=approval["workflow_id"],
+                subject=subject,
+                fallback_ticket_id=str(subject.get("source_ticket_id") or "").strip() or None,
+            )
         event_row = repository.insert_event(
             connection,
             event_type=EVENT_BOARD_REVIEW_APPROVED,

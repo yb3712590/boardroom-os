@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 import tests.live._autopilot_live_harness as live_harness
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from app.core.runtime_liveness import build_runtime_liveness_report
 
 from tests.live.architecture_governance_autopilot_live import SCENARIO as ARCHITECTURE_SCENARIO
 from tests.live.architecture_governance_autopilot_smoke import (
@@ -29,6 +33,7 @@ from tests.live.library_management_autopilot_live import (
     reset_scenario_root,
 )
 from tests.live.requirement_elicitation_autopilot_live import SCENARIO as REQUIREMENT_SCENARIO
+from tests.test_api import _employee_hire_request_payload, _ensure_scoped_workflow, _persist_workflow_profile
 
 
 def test_reset_scenario_root_recreates_expected_layout(tmp_path: Path):
@@ -930,6 +935,29 @@ def test_integration_test_provider_template_path_uses_backend_data() -> None:
     assert path.parent.name == "data"
 
 
+def test_default_integration_test_provider_template_exists_and_uses_single_live_provider() -> None:
+    payload = load_integration_test_provider_payload(
+        scenario_slug="library_management_autopilot_live",
+        config_path=integration_test_provider_template_path(),
+    )
+
+    provider_ids = [str(item.get("provider_id") or "") for item in payload["providers"]]
+    assert len(provider_ids) == 1
+    assert provider_ids == ["prov_openai_compat_truerealbill"]
+    assert payload["provider_model_entries"] == [
+        {
+            "provider_id": "prov_openai_compat_truerealbill",
+            "model_name": "gpt-5.4",
+        }
+    ]
+    assert {
+        tuple(binding["provider_model_entry_refs"])
+        for binding in payload["role_bindings"]
+    } == {
+        ("prov_openai_compat_truerealbill::gpt-5.4",)
+    }
+
+
 def test_load_integration_test_provider_payload_reads_template_and_sets_idempotency_key(tmp_path: Path) -> None:
     config_path = tmp_path / "integration-test-provider-config.json"
     config_path.write_text(
@@ -955,6 +983,33 @@ def test_load_integration_test_provider_payload_reads_template_and_sets_idempote
     assert payload["provider_model_entries"][0]["model_name"] == "gpt-5.4"
     assert payload["role_bindings"][0]["target_ref"] == "ceo_shadow"
     assert payload["idempotency_key"] == "runtime-provider-upsert:library_management_autopilot_live"
+
+
+def test_load_integration_test_provider_payload_strips_default_provider_id(tmp_path: Path) -> None:
+    config_path = tmp_path / "integration-test-provider-config.json"
+    config_path.write_text(
+        (
+            '{'
+            '"default_provider_id":"prov_openai_compat_truerealbill",'
+            '"providers":[{"provider_id":"prov_openai_compat_truerealbill","type":"openai_responses_stream","enabled":true,'
+            '"base_url":"http://codex.truerealbill.com:11234/v1","api_key":"sk-test","alias":"integration-live",'
+            '"preferred_model":"gpt-5.4","max_context_window":null,"reasoning_effort":"high"}],'
+            '"provider_model_entries":[{"provider_id":"prov_openai_compat_truerealbill","model_name":"gpt-5.4"}],'
+            '"role_bindings":[{"target_ref":"ceo_shadow",'
+            '"provider_model_entry_refs":["prov_openai_compat_truerealbill::gpt-5.4"],'
+            '"max_context_window_override":null,"reasoning_effort_override":"high"}]'
+            '}'
+        ),
+        encoding="utf-8",
+    )
+
+    payload = load_integration_test_provider_payload(
+        scenario_slug="library_management_autopilot_live",
+        config_path=config_path,
+    )
+
+    assert "default_provider_id" not in payload
+    assert payload["providers"][0]["provider_id"] == "prov_openai_compat_truerealbill"
 
 
 def test_load_integration_test_provider_payload_prefers_env_override(
@@ -1016,6 +1071,232 @@ def test_load_integration_test_provider_payload_preserves_long_test_timeout_and_
     assert provider["stream_idle_timeout_sec"] == 300
     assert provider["request_total_timeout_sec"] == 300
     assert provider["retry_backoff_schedule_sec"] == [1, 2, 4, 8, 16, 32, 60, 60, 60]
+
+
+def test_maybe_recover_live_delegate_blockers_approves_core_hire_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BOARDROOM_OS_DB_PATH", str(tmp_path / "boardroom_os.db"))
+
+    with TestClient(create_app()) as client:
+        workflow_id = "wf_live_resume"
+        _ensure_scoped_workflow(
+            client,
+            workflow_id=workflow_id,
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            goal="Resume approval-blocked live workflow",
+        )
+        _persist_workflow_profile(
+            client.app.state.repository,
+            workflow_id,
+            "CEO_AUTOPILOT_FINE_GRAINED",
+        )
+        hire_response = client.post(
+            "/api/v1/commands/employee-hire-request",
+            json=_employee_hire_request_payload(
+                workflow_id,
+                employee_id="emp_architect_governance",
+                role_type="governance_architect",
+                role_profile_refs=["architect_primary"],
+                skill_profile={
+                    "primary_domain": "architecture",
+                    "system_scope": "design_review",
+                    "validation_bias": "finish_first",
+                },
+                personality_profile={
+                    "risk_posture": "guarded",
+                    "challenge_style": "adversarial",
+                    "execution_pace": "measured",
+                    "detail_rigor": "sweeping",
+                    "communication_style": "forensic",
+                },
+                aesthetic_profile={
+                    "surface_preference": "polished",
+                    "information_density": "dense",
+                    "motion_tolerance": "restrained",
+                },
+                request_summary="Hire a board-approved architect_primary now so the workflow can continue.",
+            ),
+        )
+
+        assert hire_response.status_code == 200
+        assert hire_response.json()["status"] == "ACCEPTED"
+
+        repository = client.app.state.repository
+        approval = next(item for item in repository.list_open_approvals() if item["workflow_id"] == workflow_id)
+
+        recovered = live_harness._maybe_recover_live_delegate_blockers(
+            repository,
+            workflow_id=workflow_id,
+            idempotency_key_prefix="test-live-harness",
+            tick_index=1,
+        )
+
+        updated = repository.get_approval_by_review_pack_id(approval["review_pack_id"])
+        employee = repository.get_employee_projection("emp_architect_governance")
+
+        assert recovered is True
+        assert updated is not None
+        assert updated["status"] == "APPROVED"
+        assert updated["resolved_by"] == "ceo_delegate"
+        assert employee is not None
+        assert employee["board_approved"] is True
+
+
+def test_run_cli_respects_clean_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    recorded: dict[str, object] = {}
+
+    def _fake_run_live_scenario(
+        scenario,
+        *,
+        clean: bool = True,
+        max_ticks: int = 180,
+        timeout_sec: int = 7200,
+        seed: int = 17,
+        scenario_root: Path | None = None,
+    ) -> dict[str, object]:
+        recorded.update(
+            {
+                "scenario_slug": scenario.slug,
+                "clean": clean,
+                "max_ticks": max_ticks,
+                "timeout_sec": timeout_sec,
+                "seed": seed,
+                "scenario_root": scenario_root,
+            }
+        )
+        return {"success": True}
+
+    monkeypatch.setattr(live_harness, "run_live_scenario", _fake_run_live_scenario)
+
+    exit_code = live_harness.run_cli(
+        LIBRARY_SCENARIO,
+        [
+            "--max-ticks",
+            "12",
+            "--timeout-sec",
+            "34",
+            "--seed",
+            "56",
+            "--scenario-root",
+            str(tmp_path),
+        ],
+    )
+
+    assert exit_code == 0
+    assert recorded["scenario_slug"] == LIBRARY_SCENARIO.slug
+    assert recorded["clean"] is False
+    assert recorded["max_ticks"] == 12
+    assert recorded["timeout_sec"] == 34
+    assert recorded["seed"] == 56
+    assert recorded["scenario_root"] == tmp_path
+
+
+def test_latest_resumable_workflow_id_prefers_newest_executing_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BOARDROOM_OS_DB_PATH", str(tmp_path / "boardroom_os.db"))
+
+    with TestClient(create_app()) as client:
+        _ensure_scoped_workflow(
+            client,
+            workflow_id="wf_completed",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            goal="Completed workflow",
+        )
+        _ensure_scoped_workflow(
+            client,
+            workflow_id="wf_resumable",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            goal="Resumable workflow",
+        )
+
+        repository = client.app.state.repository
+        with repository.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE workflow_projection
+                SET status = 'COMPLETED', current_stage = 'closeout', updated_at = '2026-04-20T22:00:00+08:00'
+                WHERE workflow_id = 'wf_completed'
+                """
+            )
+            connection.execute(
+                """
+                UPDATE workflow_projection
+                SET status = 'EXECUTING', current_stage = 'project_init', updated_at = '2026-04-20T22:11:58+08:00'
+                WHERE workflow_id = 'wf_resumable'
+                """
+            )
+
+        assert live_harness._latest_resumable_workflow_id(repository) == "wf_resumable"
+
+
+def test_runtime_liveness_ignores_workflow_level_core_hire_board_review_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BOARDROOM_OS_DB_PATH", str(tmp_path / "boardroom_os.db"))
+
+    with TestClient(create_app()) as client:
+        workflow_id = "wf_core_hire_runtime_liveness"
+        _ensure_scoped_workflow(
+            client,
+            workflow_id=workflow_id,
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            goal="Workflow-level core hire approval should not break runtime liveness.",
+        )
+
+        repository = client.app.state.repository
+        with repository.transaction() as connection:
+            repository.insert_event(
+                connection,
+                event_type="BOARD_REVIEW_REQUIRED",
+                actor_type="staffing-router",
+                actor_id="staffing-router",
+                workflow_id=workflow_id,
+                idempotency_key=f"test-core-hire-board-review-required:{workflow_id}",
+                causation_id=None,
+                correlation_id=workflow_id,
+                payload={
+                    "approval_id": "apr_core_hire_runtime_liveness",
+                    "review_pack_id": "brp_core_hire_runtime_liveness",
+                    "review_type": "CORE_HIRE_APPROVAL",
+                    "ticket_id": None,
+                    "node_id": None,
+                    "title": "Approve hire: emp_architect_governance",
+                },
+                occurred_at=datetime.fromisoformat("2026-04-20T22:11:58+08:00"),
+            )
+
+        report = build_runtime_liveness_report(repository, workflow_id)
+
+        assert isinstance(report.findings, list)
+
+
+def test_should_increment_stall_when_monitor_signature_is_unchanged_despite_background_writes() -> None:
+    assert live_harness._should_increment_stall(
+        previous_signature=("EXECUTING", "project_init", (), 0, 0, 14, 178),
+        current_signature=("EXECUTING", "project_init", (), 0, 0, 14, 178),
+        workflow={"status": "EXECUTING"},
+        active_ticket_ids=[],
+        open_incidents=[],
+    ) is True
+
+
+def test_should_not_increment_stall_when_monitor_signature_changes() -> None:
+    assert live_harness._should_increment_stall(
+        previous_signature=("EXECUTING", "project_init", (), 0, 0, 14, 178),
+        current_signature=("EXECUTING", "plan", (), 0, 0, 15, 179),
+        workflow={"status": "EXECUTING"},
+        active_ticket_ids=[],
+        open_incidents=[],
+    ) is False
 
 
 def test_should_count_stall_ignores_active_execution_and_recoverable_provider_incident() -> None:
