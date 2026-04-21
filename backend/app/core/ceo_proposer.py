@@ -80,6 +80,19 @@ class CEOProposalResult:
 
 
 PROVIDER_FAILOVER_FAILURE_KINDS = {"PROVIDER_RATE_LIMITED", "UPSTREAM_UNAVAILABLE"}
+MAINLINE_DETERMINISTIC_TRIGGER_TYPES = {
+    EVENT_BOARD_DIRECTIVE_RECEIVED,
+    "APPROVAL_RESOLVED",
+    "TICKET_COMPLETED",
+    "TICKET_FAILED",
+    "TICKET_TIMED_OUT",
+    "SCHEDULER_IDLE_MAINTENANCE",
+}
+MAINLINE_MUTATING_DETERMINISTIC_ACTIONS = {
+    CEOActionType.CREATE_TICKET.value,
+    CEOActionType.HIRE_EMPLOYEE.value,
+    CEOActionType.REQUEST_MEETING.value,
+}
 
 
 class CEOProposalContractError(ValueError):
@@ -121,6 +134,52 @@ def build_no_action_batch(reason: str) -> CEOActionBatch:
                 payload=CEONoActionPayload(reason=reason),
             )
         ],
+    )
+
+
+def _is_mainline_deterministic_trigger(snapshot: dict[str, Any]) -> bool:
+    trigger = snapshot.get("trigger") or {}
+    return str(trigger.get("trigger_type") or "").strip() in MAINLINE_DETERMINISTIC_TRIGGER_TYPES
+
+
+def _mainline_deterministic_mutating_actions(action_batch: CEOActionBatch) -> list[str]:
+    action_types: list[str] = []
+    for action in action_batch.actions:
+        action_type = str(
+            action.action_type.value if hasattr(action.action_type, "value") else action.action_type
+        ).strip()
+        if action_type in MAINLINE_MUTATING_DETERMINISTIC_ACTIONS:
+            action_types.append(action_type)
+    return action_types
+
+
+def _maybe_raise_mainline_deterministic_fallback_blocked(
+    *,
+    snapshot: dict[str, Any],
+    action_batch: CEOActionBatch,
+    fallback_reason: str,
+    effective_mode: str,
+) -> None:
+    if not _is_mainline_deterministic_trigger(snapshot):
+        return
+    blocked_action_types = _mainline_deterministic_mutating_actions(action_batch)
+    if not blocked_action_types:
+        return
+    trigger = snapshot.get("trigger") or {}
+    _raise_proposal_contract_error(
+        source_component="mainline_deterministic_fallback",
+        reason_code="mutating_fallback_blocked",
+        message=(
+            "Automatic CEO mainline trigger cannot use deterministic fallback for mutating actions: "
+            f"{', '.join(blocked_action_types)}."
+        ),
+        details={
+            "trigger_type": str(trigger.get("trigger_type") or "").strip(),
+            "trigger_ref": str(trigger.get("trigger_ref") or "").strip() or None,
+            "effective_mode": effective_mode,
+            "fallback_reason": fallback_reason,
+            "blocked_action_types": blocked_action_types,
+        },
     )
 
 
@@ -844,8 +903,15 @@ def propose_ceo_action_batch(
     provider_health_summary = runtime_provider_health_summary(config, repository)
     selection = resolve_provider_selection(config, target_ref=ROLE_BINDING_CEO_SHADOW, employee_provider_id=None)
     if selection is None:
+        action_batch = build_deterministic_fallback_batch(repository, snapshot, effective_reason)
+        _maybe_raise_mainline_deterministic_fallback_blocked(
+            snapshot=snapshot,
+            action_batch=action_batch,
+            fallback_reason=effective_reason,
+            effective_mode=effective_mode,
+        )
         return CEOProposalResult(
-            action_batch=build_deterministic_fallback_batch(repository, snapshot, effective_reason),
+            action_batch=action_batch,
             effective_mode=effective_mode,
             provider_health_summary=provider_health_summary,
             model=(find_provider_entry(config, config.default_provider_id).model if find_provider_entry(config, config.default_provider_id) is not None else None),
@@ -853,8 +919,15 @@ def propose_ceo_action_batch(
         )
     provider_mode, provider_reason = provider_effective_mode(selection.provider, repository)
     if not provider_mode.endswith("_LIVE"):
+        action_batch = build_deterministic_fallback_batch(repository, snapshot, provider_reason)
+        _maybe_raise_mainline_deterministic_fallback_blocked(
+            snapshot=snapshot,
+            action_batch=action_batch,
+            fallback_reason=provider_reason,
+            effective_mode=provider_mode,
+        )
         return CEOProposalResult(
-            action_batch=build_deterministic_fallback_batch(repository, snapshot, provider_reason),
+            action_batch=action_batch,
             effective_mode=provider_mode,
             provider_health_summary=provider_health_summary,
             model=selection.actual_model or selection.provider.model,

@@ -8,6 +8,7 @@ from app.contracts.ceo import (
     GraphHealthReportDigest,
     ProjectionSnapshot,
     ProjectMapSliceDigest,
+    RecentFailureDigest,
     RecentAssetDigest,
     ReplanFocus,
     RuntimeLivenessReportDigest,
@@ -56,6 +57,7 @@ _TERMINAL_TICKET_STATUSES = {
 }
 _RECENT_COMPLETED_TICKET_LIMIT = 5
 _RECENT_CLOSED_MEETING_LIMIT = 3
+_RECENT_FAILURE_LIMIT = 5
 _APPROVED_INTERNAL_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
 _MEMORY_BUDGET_RATIOS = {
     "m0_constitution": 10,
@@ -402,6 +404,47 @@ def _build_failure_fingerprints(
     return digests
 
 
+def _build_recent_failures(
+    repository: ControlPlaneRepository,
+    *,
+    tickets: list[dict[str, Any]],
+    connection,
+) -> list[dict[str, Any]]:
+    digests: list[dict[str, Any]] = []
+    for ticket in tickets:
+        if len(digests) >= _RECENT_FAILURE_LIMIT:
+            break
+        status = str(ticket.get("status") or "").strip()
+        if status not in {"FAILED", "TIMED_OUT"}:
+            continue
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        node_id = str(ticket.get("node_id") or "").strip()
+        if not ticket_id or not node_id:
+            continue
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+        payload = dict((terminal_event or {}).get("payload") or {})
+        failure_kind = str(payload.get("failure_kind") or status).strip()
+        failure_message = str(payload.get("failure_message") or "").strip() or (
+            f"Ticket entered {status} without a recorded failure_message."
+        )
+        updated_at = _serialize_timestamp(ticket.get("updated_at"))
+        if updated_at is None and terminal_event is not None:
+            updated_at = _serialize_timestamp(terminal_event.get("occurred_at"))
+        digests.append(
+            RecentFailureDigest(
+                ticket_id=ticket_id,
+                node_id=node_id,
+                status=status,
+                failure_kind=failure_kind,
+                failure_message=failure_message,
+                retry_count=int(ticket.get("retry_count") or 0),
+                retry_budget=int(ticket.get("retry_budget") or 0),
+                updated_at=updated_at,
+            ).model_dump(mode="json")
+        )
+    return digests
+
+
 def build_ceo_shadow_snapshot(
     repository: ControlPlaneRepository,
     *,
@@ -488,6 +531,11 @@ def build_ceo_shadow_snapshot(
         failure_fingerprints = _build_failure_fingerprints(
             repository,
             workflow_id=workflow_id,
+            connection=connection,
+        )
+        recent_failures = _build_recent_failures(
+            repository,
+            tickets=tickets,
             connection=connection,
         )
         graph_health_report = GraphHealthReportDigest.model_validate(
@@ -581,6 +629,7 @@ def build_ceo_shadow_snapshot(
         or None,
         focus_node_ids=list((latest_advisory_session or {}).get("focus_node_ids") or []),
         failure_fingerprints=failure_fingerprints,
+        recent_failures=recent_failures,
     )
 
     return {

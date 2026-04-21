@@ -36,6 +36,17 @@ class FailureFingerprintDigest(StrictModel):
     related_process_asset_refs: list[str] = Field(default_factory=list)
 
 
+class RecentFailureDigest(StrictModel):
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    failure_kind: str = Field(min_length=1)
+    failure_message: str = Field(min_length=1)
+    retry_count: int = 0
+    retry_budget: int = 0
+    updated_at: str | None = None
+
+
 class GraphHealthFindingDigest(StrictModel):
     finding_type: str = Field(min_length=1)
     severity: str = Field(min_length=1)
@@ -123,3 +134,4 @@ class ReplanFocus(StrictModel):
     patched_graph_version: str | None = None
     focus_node_ids: list[str] = Field(default_factory=list)
     failure_fingerprints: list[FailureFingerprintDigest] = Field(default_factory=list)
+    recent_failures: list[RecentFailureDigest] = Field(default_factory=list)

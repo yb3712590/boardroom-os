@@ -32,6 +32,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
     latest_advisory_decision = (snapshot.get("replan_focus") or {}).get("latest_advisory_decision")
     project_map_slices = projection_snapshot.get("project_map_slices") or []
     failure_fingerprints = replan_focus.get("failure_fingerprints") or []
+    recent_failures = replan_focus.get("recent_failures") or []
     graph_health_report = projection_snapshot.get("graph_health_report") or {}
     runtime_liveness_report = projection_snapshot.get("runtime_liveness_report") or {}
     kickoff_instruction = ""
@@ -88,6 +89,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "Then read snapshot.replan_focus.task_sensemaking, snapshot.replan_focus.capability_plan, and snapshot.replan_focus.controller_state before proposing actions.\n"
         "Then inspect snapshot.projection_snapshot.board_advisory_sessions and snapshot.replan_focus.latest_advisory_decision.\n"
         "Then inspect snapshot.projection_snapshot.project_map_slices, snapshot.replan_focus.failure_fingerprints, "
+        "snapshot.replan_focus.recent_failures, "
         "snapshot.projection_snapshot.graph_health_report, and snapshot.projection_snapshot.runtime_liveness_report.\n"
         "If snapshot.replan_focus.latest_advisory_decision exists, treat it as the current execution baseline before proposing any new action.\n"
         "If snapshot.projection_snapshot.graph_health_report.overall_health is CRITICAL or "
@@ -98,6 +100,8 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         "Before proposing any action, inspect snapshot.projection_snapshot.reuse_candidates.\n"
         "If recent completed tickets or closed meetings already cover the current need, prefer NO_ACTION.\n"
         "If existing work only needs recovery or follow-through, prefer RETRY_TICKET or continued waiting over creating parallel tickets.\n"
+        "If snapshot.replan_focus.recent_failures shows a clear retryable path, prefer RETRY_TICKET before proposing a new mutating branch.\n"
+        "If recent_failures shows the current branch has low recovery value, return NO_ACTION with a direct reason instead of inventing a hidden deterministic fallback.\n"
         "Meeting requests are a bounded exception path, not the default collaboration mode.\n"
         "You may only propose REQUEST_MEETING when snapshot.replan_focus.meeting_candidates contains an eligible candidate and snapshot.projection_snapshot.reuse_candidates does not already resolve the decision.\n"
         "Do not invent participants, meeting types, or source refs outside snapshot.replan_focus.meeting_candidates.\n"
@@ -112,6 +116,7 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         f"Current latest_advisory_decision summary: {latest_advisory_decision}.\n"
         f"Current project_map_slices summary: {project_map_slices}.\n"
         f"Current failure_fingerprints summary: {failure_fingerprints}.\n"
+        f"Current recent_failures summary: {recent_failures}.\n"
         f"Current graph_health_report summary: {graph_health_report}.\n"
         f"Current runtime_liveness_report summary: {runtime_liveness_report}.\n"
         "Return strict JSON matching ceo_action_batch_v1 with a short summary and actions array.\n"

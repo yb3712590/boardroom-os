@@ -630,15 +630,29 @@
 
 ### 这一轮做完后要勾掉的清单
 
-- [ ] 006 主线相关的隐式 deterministic fallback 不再偷偷推进业务主线
-- [ ] 失败会显式落成 `FAILED` 或明确 incident
+- [x] 006 主线相关的隐式 deterministic fallback 不再偷偷推进业务主线
+- [x] 失败会显式落成 `FAILED` 或明确 incident
 - [ ] scheduler 会在合适时机重新调起 CEO，而不是直接 silent fallback
-- [ ] CEO snapshot / prompt 能看到最近几轮失败原因摘要
+- [x] CEO snapshot / prompt 能看到最近几轮失败原因摘要
 - [ ] CEO 至少能在三类动作间做明确选择：
   - 原地恢复重试
   - 带失败原因增强重试
   - 退出当前图并重规划
-- [ ] 文档里明确哪些 fallback 还保留为“读面降级”，哪些已经不允许再推进主线
+- [x] 文档里明确哪些 fallback 还保留为“读面降级”，哪些已经不允许再推进主线
+
+实际落地：
+
+- `ceo_proposer` 现在会拦住自动主线触发下的 mutating deterministic fallback；命中 `CREATE_TICKET / HIRE_EMPLOYEE / REQUEST_MEETING` 时，不再继续偷偷推进主线，而是直接在 proposal 阶段抛显式错误
+- 当前收口范围只限自动主线触发：
+  - `BOARD_DIRECTIVE_RECEIVED`
+  - `APPROVAL_RESOLVED`
+  - `TICKET_COMPLETED`
+  - `TICKET_FAILED`
+  - `TICKET_TIMED_OUT`
+  - `SCHEDULER_IDLE_MAINTENANCE`
+- 手工 / 测试触发的显式 deterministic mode 先保留；纯 `NO_ACTION` fallback 也先保留
+- `ceo_snapshot` / `ceo_prompt` 已新增 `recent_failures`，当前会把最近失败票的 `ticket_id / node_id / status / failure_kind / failure_message / retry_count / retry_budget / updated_at` 暴露给 CEO shadow
+- “回到上游锚点并重开健康分支”的正式 replan / graph redesign 动作，这一轮没有实现，继续留给后续会话单列处理
 
 ### 本轮验收口径
 
