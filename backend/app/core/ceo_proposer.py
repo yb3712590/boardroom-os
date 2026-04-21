@@ -11,16 +11,19 @@ from app.contracts.ceo_actions import (
     CEOCreateTicketPayload,
     CEORequestMeetingAction,
     CEORequestMeetingPayload,
+    CEORetryTicketAction,
+    CEORetryTicketPayload,
     CEONoAction,
     CEONoActionPayload,
 )
+from app.contracts.commands import IncidentFollowupAction
 from app.core.ceo_prompts import build_ceo_shadow_rendered_payload
 from app.core.ceo_snapshot_contracts import (
     capability_plan_view,
     controller_state_view,
     replan_focus_view,
 )
-from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED
+from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_TICKET_FAILED, EVENT_TICKET_TIMED_OUT
 from app.core.execution_targets import (
     employee_supports_execution_contract,
     infer_execution_contract_payload,
@@ -391,6 +394,129 @@ def _normalize_provider_action_batch_payload(raw_payload: dict[str, Any]) -> dic
 def _backlog_followup_key_to_node_id(ticket_key: str) -> str:
     return controller_backlog_followup_key_to_node_id(ticket_key)
 
+
+def _backlog_retry_budget(current_ticket: dict[str, Any], created_spec: dict[str, Any]) -> int:
+    return int(created_spec.get("retry_budget") or current_ticket.get("retry_budget") or 0)
+
+
+def _backlog_retry_count(current_ticket: dict[str, Any], created_spec: dict[str, Any]) -> int:
+    return int(current_ticket.get("retry_count") or created_spec.get("retry_count") or 0)
+
+
+def _recommended_backlog_followup_action(
+    *,
+    ticket_status: str,
+    terminal_event_type: str | None,
+) -> str | None:
+    normalized_terminal_event_type = str(terminal_event_type or "").strip()
+    if normalized_terminal_event_type == EVENT_TICKET_TIMED_OUT or ticket_status == "TIMED_OUT":
+        return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value
+    if normalized_terminal_event_type == EVENT_TICKET_FAILED or ticket_status == "FAILED":
+        return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value
+    return None
+
+
+def _can_retry_existing_backlog_followup_ticket(
+    *,
+    current_ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+    latest_terminal_event: dict[str, Any],
+) -> bool:
+    retry_budget = _backlog_retry_budget(current_ticket, created_spec)
+    retry_count = _backlog_retry_count(current_ticket, created_spec)
+    if retry_count >= retry_budget:
+        return False
+
+    terminal_event_type = str(latest_terminal_event.get("event_type") or "").strip()
+    escalation_policy = created_spec.get("escalation_policy") or {}
+    if terminal_event_type == EVENT_TICKET_TIMED_OUT:
+        return escalation_policy.get("on_timeout") == "retry"
+    if terminal_event_type == EVENT_TICKET_FAILED:
+        failure_kind = str(
+            latest_terminal_event.get("payload", {}).get("failure_kind")
+            or current_ticket.get("last_failure_kind")
+            or ""
+        ).strip()
+        if failure_kind == "SCHEMA_ERROR":
+            return escalation_policy.get("on_schema_error") == "retry"
+        return True
+    return False
+
+
+def _build_existing_backlog_followup_retry_action(
+    repository: ControlPlaneRepository,
+    *,
+    connection,
+    workflow_id: str,
+    node_id: str,
+    ticket_key: str,
+    existing_ticket_id: str,
+) -> dict[str, Any] | None:
+    current_ticket = repository.get_current_ticket_projection(existing_ticket_id, connection=connection)
+    if current_ticket is None:
+        return None
+    if (
+        str(current_ticket.get("workflow_id") or "").strip() != workflow_id
+        or str(current_ticket.get("node_id") or "").strip() != node_id
+    ):
+        return None
+
+    source_ticket_status = str(current_ticket.get("status") or "").strip()
+    if source_ticket_status not in {"FAILED", "TIMED_OUT"}:
+        return None
+
+    created_spec = repository.get_latest_ticket_created_payload(connection, existing_ticket_id)
+    latest_terminal_event = repository.get_latest_ticket_terminal_event(connection, existing_ticket_id)
+    terminal_event_type = str((latest_terminal_event or {}).get("event_type") or "").strip() or None
+    recommended_followup_action = _recommended_backlog_followup_action(
+        ticket_status=source_ticket_status,
+        terminal_event_type=terminal_event_type,
+    )
+    failure_kind = str(
+        ((latest_terminal_event or {}).get("payload") or {}).get("failure_kind")
+        or current_ticket.get("last_failure_kind")
+        or ""
+    ).strip() or None
+
+    if (
+        created_spec is not None
+        and latest_terminal_event is not None
+        and _can_retry_existing_backlog_followup_ticket(
+            current_ticket=current_ticket,
+            created_spec=created_spec,
+            latest_terminal_event=latest_terminal_event,
+        )
+    ):
+        return CEORetryTicketAction(
+            action_type=CEOActionType.RETRY_TICKET,
+            payload=CEORetryTicketPayload(
+                workflow_id=workflow_id,
+                ticket_id=existing_ticket_id,
+                node_id=node_id,
+                reason=(
+                    "Continue approved backlog follow-up by retrying the existing ticket instead of creating a parallel ticket."
+                ),
+            ),
+        ).model_dump(mode="json")
+
+    if recommended_followup_action is not None:
+        _raise_proposal_contract_error(
+            source_component="deterministic_fallback.backlog_followup",
+            reason_code="restore_needed",
+            message="Existing backlog follow-up ticket needs restore/retry recovery instead of a new fallback ticket.",
+            details={
+                "source_ticket_id": existing_ticket_id,
+                "node_id": node_id,
+                "ticket_key": ticket_key,
+                "source_ticket_status": source_ticket_status,
+                "failure_kind": failure_kind,
+                "recommended_followup_action": recommended_followup_action,
+            },
+        )
+
+    return None
+
+
 def _build_backlog_followup_batch(
     repository: ControlPlaneRepository,
     snapshot: dict,
@@ -410,6 +536,7 @@ def _build_backlog_followup_batch(
         return None
 
     actions: list[dict[str, Any]] = []
+    retry_actions: list[dict[str, Any]] = []
     existing_ticket_ids_by_node_id = {
         str(plan.get("node_id") or "").strip(): str(plan.get("existing_ticket_id") or "").strip()
         for plan in followup_ticket_plans
@@ -422,112 +549,135 @@ def _build_backlog_followup_batch(
         if isinstance(plan, dict) and str(plan.get("ticket_key") or "").strip()
     }
 
-    for index, followup_plan in enumerate(followup_ticket_plans):
-        if not isinstance(followup_plan, dict):
-            _raise_proposal_contract_error(
-                source_component="deterministic_fallback.backlog_followup",
-                reason_code="plan_not_object",
-                message="Each followup ticket plan must be a JSON object.",
-                details={"plan_index": index},
-            )
-        node_id = str(followup_plan.get("node_id") or "").strip()
-        ticket_key = str(followup_plan.get("ticket_key") or "").strip()
-        role_profile_ref = str(followup_plan.get("role_profile_ref") or "").strip()
-        output_schema_ref = str(followup_plan.get("output_schema_ref") or "").strip()
-        assignee_employee_id = str(followup_plan.get("assignee_employee_id") or "").strip()
-        backlog_ticket_id = str(followup_plan.get("source_ticket_id") or "").strip()
-        missing_fields = [
-            field_name
-            for field_name, field_value in (
-                ("ticket_key", ticket_key),
-                ("node_id", node_id),
-                ("role_profile_ref", role_profile_ref),
-                ("output_schema_ref", output_schema_ref),
-                ("assignee_employee_id", assignee_employee_id),
-                ("source_ticket_id", backlog_ticket_id),
-            )
-            if not field_value
-        ]
-        if missing_fields:
-            _raise_proposal_contract_error(
-                source_component="deterministic_fallback.backlog_followup",
-                reason_code="plan_missing_fields",
-                message="Backlog follow-up plan is missing required fields.",
-                details={"plan_index": index, "missing_fields": missing_fields},
-            )
-        if node_id in existing_ticket_ids_by_node_id or node_id in existing_node_ids:
-            continue
-
-        dependency_gate_refs = _normalize_dependency_gate_refs(followup_plan.get("dependency_gate_refs"))
-        ready_to_create = True
-        for dependency_key in list(followup_plan.get("dependency_ticket_keys") or []):
-            normalized_dependency_key = str(dependency_key).strip()
-            if not normalized_dependency_key:
+    with repository.connection() as connection:
+        for index, followup_plan in enumerate(followup_ticket_plans):
+            if not isinstance(followup_plan, dict):
                 _raise_proposal_contract_error(
                     source_component="deterministic_fallback.backlog_followup",
-                    reason_code="dependency_key_empty",
-                    message="Backlog follow-up dependency keys must be non-empty strings.",
-                    details={"plan_index": index, "ticket_key": ticket_key},
+                    reason_code="plan_not_object",
+                    message="Each followup ticket plan must be a JSON object.",
+                    details={"plan_index": index},
                 )
-            dependency_node_id = _backlog_followup_key_to_node_id(normalized_dependency_key)
-            dependency_ticket_id = existing_ticket_ids_by_node_id.get(dependency_node_id)
-            if not dependency_ticket_id:
-                if normalized_dependency_key not in planned_ticket_keys:
+            node_id = str(followup_plan.get("node_id") or "").strip()
+            ticket_key = str(followup_plan.get("ticket_key") or "").strip()
+            role_profile_ref = str(followup_plan.get("role_profile_ref") or "").strip()
+            output_schema_ref = str(followup_plan.get("output_schema_ref") or "").strip()
+            assignee_employee_id = str(followup_plan.get("assignee_employee_id") or "").strip()
+            backlog_ticket_id = str(followup_plan.get("source_ticket_id") or "").strip()
+            missing_fields = [
+                field_name
+                for field_name, field_value in (
+                    ("ticket_key", ticket_key),
+                    ("node_id", node_id),
+                    ("role_profile_ref", role_profile_ref),
+                    ("output_schema_ref", output_schema_ref),
+                    ("assignee_employee_id", assignee_employee_id),
+                    ("source_ticket_id", backlog_ticket_id),
+                )
+                if not field_value
+            ]
+            if missing_fields:
+                _raise_proposal_contract_error(
+                    source_component="deterministic_fallback.backlog_followup",
+                    reason_code="plan_missing_fields",
+                    message="Backlog follow-up plan is missing required fields.",
+                    details={"plan_index": index, "missing_fields": missing_fields},
+                )
+
+            existing_ticket_id = existing_ticket_ids_by_node_id.get(node_id)
+            if existing_ticket_id:
+                retry_action = _build_existing_backlog_followup_retry_action(
+                    repository,
+                    connection=connection,
+                    workflow_id=workflow_id,
+                    node_id=node_id,
+                    ticket_key=ticket_key,
+                    existing_ticket_id=existing_ticket_id,
+                )
+                if retry_action is not None:
+                    retry_actions.append(retry_action)
+                continue
+            if node_id in existing_node_ids:
+                continue
+
+            dependency_gate_refs = _normalize_dependency_gate_refs(followup_plan.get("dependency_gate_refs"))
+            ready_to_create = True
+            for dependency_key in list(followup_plan.get("dependency_ticket_keys") or []):
+                normalized_dependency_key = str(dependency_key).strip()
+                if not normalized_dependency_key:
                     _raise_proposal_contract_error(
                         source_component="deterministic_fallback.backlog_followup",
-                        reason_code="dependency_unresolved",
-                        message="Backlog follow-up dependency does not match any known ticket plan or existing ticket.",
-                        details={
-                            "plan_index": index,
-                            "ticket_key": ticket_key,
-                            "dependency_ticket_key": normalized_dependency_key,
-                        },
+                        reason_code="dependency_key_empty",
+                        message="Backlog follow-up dependency keys must be non-empty strings.",
+                        details={"plan_index": index, "ticket_key": ticket_key},
                     )
-                ready_to_create = False
-                break
-            if dependency_ticket_id not in dependency_gate_refs:
-                dependency_gate_refs.append(dependency_ticket_id)
-        if not ready_to_create:
-            continue
+                dependency_node_id = _backlog_followup_key_to_node_id(normalized_dependency_key)
+                dependency_ticket_id = existing_ticket_ids_by_node_id.get(dependency_node_id)
+                if not dependency_ticket_id:
+                    if normalized_dependency_key not in planned_ticket_keys:
+                        _raise_proposal_contract_error(
+                            source_component="deterministic_fallback.backlog_followup",
+                            reason_code="dependency_unresolved",
+                            message="Backlog follow-up dependency does not match any known ticket plan or existing ticket.",
+                            details={
+                                "plan_index": index,
+                                "ticket_key": ticket_key,
+                                "dependency_ticket_key": normalized_dependency_key,
+                            },
+                        )
+                    ready_to_create = False
+                    break
+                if dependency_ticket_id not in dependency_gate_refs:
+                    dependency_gate_refs.append(dependency_ticket_id)
+            if not ready_to_create:
+                continue
 
-        execution_contract = infer_execution_contract_payload(
-            role_profile_ref=role_profile_ref,
-            output_schema_ref=output_schema_ref,
-        )
-        if execution_contract is None:
-            _raise_proposal_contract_error(
-                source_component="deterministic_fallback.backlog_followup",
-                reason_code="execution_contract_unavailable",
-                message="Backlog follow-up plan cannot resolve a valid execution contract.",
-                details={"plan_index": index, "ticket_key": ticket_key},
+            execution_contract = infer_execution_contract_payload(
+                role_profile_ref=role_profile_ref,
+                output_schema_ref=output_schema_ref,
+            )
+            if execution_contract is None:
+                _raise_proposal_contract_error(
+                    source_component="deterministic_fallback.backlog_followup",
+                    reason_code="execution_contract_unavailable",
+                    message="Backlog follow-up plan cannot resolve a valid execution contract.",
+                    details={"plan_index": index, "ticket_key": ticket_key},
+                )
+
+            task_name = str(followup_plan.get("task_name") or followup_plan.get("summary") or ticket_key).strip() or ticket_key
+            task_scope = [
+                str(item).strip()
+                for item in list(followup_plan.get("scope") or [])
+                if str(item).strip()
+            ]
+            scope_suffix = f"；范围：{'、'.join(task_scope)}" if task_scope else ""
+            actions.append(
+                {
+                    "action_type": CEOActionType.CREATE_TICKET,
+                    "payload": {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                        "role_profile_ref": role_profile_ref,
+                        "output_schema_ref": output_schema_ref,
+                        "execution_contract": execution_contract,
+                        "dispatch_intent": {
+                            "assignee_employee_id": assignee_employee_id,
+                            "selection_reason": (
+                                "Follow the current capability plan and translate the approved backlog recommendation into an auditable implementation ticket."
+                            ),
+                            "dependency_gate_refs": dependency_gate_refs,
+                        },
+                        "summary": f"{ticket_key} {task_name}{scope_suffix}",
+                        "parent_ticket_id": backlog_ticket_id,
+                    },
+                }
             )
 
-        task_name = str(followup_plan.get("task_name") or followup_plan.get("summary") or ticket_key).strip() or ticket_key
-        task_scope = [
-            str(item).strip()
-            for item in list(followup_plan.get("scope") or [])
-            if str(item).strip()
-        ]
-        scope_suffix = f"；范围：{'、'.join(task_scope)}" if task_scope else ""
-        actions.append(
+    if retry_actions:
+        return CEOActionBatch.model_validate(
             {
-                "action_type": CEOActionType.CREATE_TICKET,
-                "payload": {
-                    "workflow_id": workflow_id,
-                    "node_id": node_id,
-                    "role_profile_ref": role_profile_ref,
-                    "output_schema_ref": output_schema_ref,
-                    "execution_contract": execution_contract,
-                    "dispatch_intent": {
-                        "assignee_employee_id": assignee_employee_id,
-                        "selection_reason": (
-                            "Follow the current capability plan and translate the approved backlog recommendation into an auditable implementation ticket."
-                        ),
-                        "dependency_gate_refs": dependency_gate_refs,
-                    },
-                    "summary": f"{ticket_key} {task_name}{scope_suffix}",
-                    "parent_ticket_id": backlog_ticket_id,
-                },
+                "summary": reason,
+                "actions": retry_actions,
             }
         )
 

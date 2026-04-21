@@ -4053,6 +4053,131 @@ def test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_wh
     assert payload["parent_ticket_id"] == "tkt_backlog_parent"
 
 
+def test_backlog_followup_batch_builds_retry_ticket_for_retryable_existing_ticket(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_backlog_followup_retry_existing",
+        "Backlog follow-up should retry an existing ticket when recovery is direct.",
+    )
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_existing_followup_retryable",
+        node_id="node_backlog_followup_br_be_retryable",
+        retry_budget=2,
+        failure_kind="UPSTREAM_UNAVAILABLE",
+        role_profile_ref="backend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        leased_by="emp_frontend_2",
+    )
+
+    from app.core import ceo_proposer
+
+    batch = ceo_proposer._build_backlog_followup_batch(
+        client.app.state.repository,
+        {
+            "workflow": {"workflow_id": workflow_id},
+            "replan_focus": {
+                "capability_plan": {
+                    "followup_ticket_plans": [
+                        {
+                            "ticket_key": "BR-BE-RETRY",
+                            "node_id": "node_backlog_followup_br_be_retryable",
+                            "task_name": "借阅后端 API 交付",
+                            "summary": "借阅后端 API 交付",
+                            "scope": ["借阅服务", "REST API"],
+                            "role_profile_ref": "backend_engineer_primary",
+                            "output_schema_ref": "source_code_delivery",
+                            "assignee_employee_id": "emp_backend_plan",
+                            "dependency_ticket_keys": [],
+                            "dependency_gate_refs": [],
+                            "existing_ticket_id": "tkt_existing_followup_retryable",
+                            "source_ticket_id": "tkt_backlog_parent_retryable",
+                        }
+                    ]
+                }
+            },
+        },
+        "Continue the approved backlog fanout.",
+    )
+
+    assert batch is not None
+    payload = batch.model_dump(mode="json")["actions"][0]["payload"]
+    assert batch.model_dump(mode="json")["actions"][0]["action_type"] == "RETRY_TICKET"
+    assert payload == {
+        "workflow_id": workflow_id,
+        "ticket_id": "tkt_existing_followup_retryable",
+        "node_id": "node_backlog_followup_br_be_retryable",
+        "reason": "Continue approved backlog follow-up by retrying the existing ticket instead of creating a parallel ticket.",
+    }
+
+
+def test_backlog_followup_batch_raises_structured_restore_needed_for_existing_ticket_without_direct_retry(
+    client,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_backlog_followup_restore_needed",
+        "Backlog follow-up should surface restore-needed details when direct retry is blocked.",
+    )
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_existing_followup_restore_needed",
+        node_id="node_backlog_followup_br_be_restore_needed",
+        retry_budget=0,
+        failure_kind="TEST_FAILURE",
+        role_profile_ref="backend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        leased_by="emp_frontend_2",
+    )
+
+    from app.core import ceo_proposer
+
+    with pytest.raises(ceo_proposer.CEOProposalContractError) as exc_info:
+        ceo_proposer._build_backlog_followup_batch(
+            client.app.state.repository,
+            {
+                "workflow": {"workflow_id": workflow_id},
+                "replan_focus": {
+                    "capability_plan": {
+                        "followup_ticket_plans": [
+                            {
+                                "ticket_key": "BR-BE-RESTORE",
+                                "node_id": "node_backlog_followup_br_be_restore_needed",
+                                "task_name": "借阅后端 API 交付",
+                                "summary": "借阅后端 API 交付",
+                                "scope": ["借阅服务", "REST API"],
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "assignee_employee_id": "emp_backend_plan",
+                                "dependency_ticket_keys": [],
+                                "dependency_gate_refs": [],
+                                "existing_ticket_id": "tkt_existing_followup_restore_needed",
+                                "source_ticket_id": "tkt_backlog_parent_restore_needed",
+                            }
+                        ]
+                    }
+                },
+            },
+            "Continue the approved backlog fanout.",
+        )
+
+    error = exc_info.value
+    assert error.source_component == "deterministic_fallback.backlog_followup"
+    assert error.reason_code == "restore_needed"
+    assert error.details == {
+        "source_ticket_id": "tkt_existing_followup_restore_needed",
+        "node_id": "node_backlog_followup_br_be_restore_needed",
+        "ticket_key": "BR-BE-RESTORE",
+        "source_ticket_status": "FAILED",
+        "failure_kind": "TEST_FAILURE",
+        "recommended_followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+    }
+
+
 def test_ceo_shadow_snapshot_exposes_required_governance_ticket_plan_when_architect_doc_missing(
     client,
     monkeypatch,

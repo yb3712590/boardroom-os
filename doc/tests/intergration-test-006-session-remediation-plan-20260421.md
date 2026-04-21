@@ -366,11 +366,11 @@
 
 ### 这一轮做完后要勾掉的清单
 
-- [ ] follow-up plan 全部已有 `existing_ticket_id` 时，不再直接掉 `no_actions_built`
-- [ ] 可直接恢复的 existing ticket 能生成合法 `RETRY_TICKET`
-- [ ] 不能直接恢复时，会抛结构化 restore-needed 错误
-- [ ] 这类错误里能直接看见源票、节点、失败类型、推荐恢复动作
-- [ ] fallback 不再伪造新的 `CREATE_TICKET` 去污染现场
+- [x] follow-up plan 全部已有 `existing_ticket_id` 时，不再直接掉 `no_actions_built`
+- [x] 可直接恢复的 existing ticket 能生成合法 `RETRY_TICKET`
+- [x] 不能直接恢复时，会抛结构化 restore-needed 错误
+- [x] 这类错误里能直接看见源票、节点、失败类型、推荐恢复动作
+- [x] fallback 不再伪造新的 `CREATE_TICKET` 去污染现场
 
 ### 本轮验收口径
 
@@ -378,6 +378,22 @@
 
 - existing root ticket 可 retry -> 生成 `RETRY_TICKET`
 - existing root ticket 不可直接 retry -> 抛结构化 restore-needed 错误，不是 `no_actions_built`
+
+### 本轮实际收口口径
+
+- `_build_backlog_followup_batch()` 现在会先检查 `existing_ticket_id` 对应旧票的当前状态、created spec、latest terminal event
+- 旧票处于 `FAILED/TIMED_OUT` 且仍有 retry budget 时：
+  - deterministic fallback 直接产出 `RETRY_TICKET`
+- 旧票处于 `FAILED/TIMED_OUT` 但已经不能直接 retry 时：
+  - deterministic fallback 抛 `restore_needed`
+  - `details` 里固定暴露：
+    - `source_ticket_id`
+    - `node_id`
+    - `ticket_key`
+    - `source_ticket_status`
+    - `failure_kind`
+    - `recommended_followup_action`
+- 现有 stale node projection 的 existing-ticket 依赖读取口径保持不变
 
 ---
 
