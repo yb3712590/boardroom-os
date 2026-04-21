@@ -23,6 +23,7 @@ from app.core.planned_placeholder_gate import detect_planned_placeholder_gate_bl
 from app.core.runtime_liveness import RuntimeLivenessUnavailableError
 from app.core.runtime import run_leased_ticket_runtime
 from app.core.role_hooks import scan_and_open_required_hook_gate_incidents
+from app.core.incident_followups import resolve_ceo_shadow_source_ticket_context
 from app.core.ticket_handlers import (
     open_graph_health_critical_incident,
     open_planned_placeholder_gate_blocked_incident,
@@ -114,6 +115,9 @@ def _recommended_incident_followup_action(
     if incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE:
         return IncidentFollowupAction.RESTORE_ONLY
     if incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
+        source_ticket_context = resolve_ceo_shadow_source_ticket_context(repository, incident)
+        if source_ticket_context["recommended_restore_action"] is not None:
+            return IncidentFollowupAction(source_ticket_context["recommended_restore_action"])
         return IncidentFollowupAction.RERUN_CEO_SHADOW
     if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
         return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT

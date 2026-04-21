@@ -563,14 +563,17 @@ def test_invoke_openai_compat_response_returns_after_response_completed_without_
     assert result.output_text == '{"ok":true}'
 
 
-def test_invoke_openai_compat_response_enforces_total_timeout_after_first_token(
+def test_invoke_openai_compat_response_does_not_enforce_total_timeout_after_first_token_for_streaming(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class _NeverCompletesStream(_FakeResponseStream):
+    class _LongRunningStream(_FakeResponseStream):
         def __iter__(self):
             yield SimpleNamespace(type="response.output_text.delta", delta='{"ok":')
-            while True:
-                time.sleep(0.01)
+            yield SimpleNamespace(type="response.output_text.delta", delta="true}")
+            yield SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(id="resp_stream_long_running"),
+            )
 
     monotonic_values = iter([0.0, 0.0, 0.5, 2.0])
 
@@ -581,26 +584,25 @@ def test_invoke_openai_compat_response_enforces_total_timeout_after_first_token(
     monkeypatch.setattr("app.core.provider_openai_compat.time.monotonic", _fake_monotonic)
 
     def _create_factory(**kwargs):
-        return _NeverCompletesStream(events=[])
+        return _LongRunningStream(events=[])
 
-    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
-        invoke_openai_compat_response(
-            OpenAICompatProviderConfig(
-                base_url="https://api-vip.codex-for.me/v1",
-                api_key="test-key",
-                model="gpt-5.3-codex",
-                timeout_sec=30.0,
-                first_token_timeout_sec=300.0,
-                stream_idle_timeout_sec=300.0,
-                request_total_timeout_sec=1.0,
-                provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
-            ),
-            _rendered_payload(),
-            client_factory=lambda config: _FakeOpenAIClient(_create_factory),
-        )
+    result = invoke_openai_compat_response(
+        OpenAICompatProviderConfig(
+            base_url="https://api-vip.codex-for.me/v1",
+            api_key="test-key",
+            model="gpt-5.3-codex",
+            timeout_sec=30.0,
+            first_token_timeout_sec=300.0,
+            stream_idle_timeout_sec=300.0,
+            request_total_timeout_sec=1.0,
+            provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
+        ),
+        _rendered_payload(),
+        client_factory=lambda config: _FakeOpenAIClient(_create_factory),
+    )
 
-    assert exc_info.value.failure_kind == "REQUEST_TOTAL_TIMEOUT"
-    assert exc_info.value.failure_detail["timeout_phase"] == "request_total"
+    assert result.response_id == "resp_stream_long_running"
+    assert result.output_text == '{"ok":true}'
 
 
 def test_invoke_openai_compat_response_raises_first_token_timeout_before_any_stream_output() -> None:

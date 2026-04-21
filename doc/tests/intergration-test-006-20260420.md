@@ -321,8 +321,15 @@
 状态：
 
 - 这是 live 过程中做过的修补
-- 本次收口按你的要求，**代码层面已丢弃**
-- 这里只保留问题和当时尝试记录
+- 本次修补已把这条语义正式补回代码
+- 当前 streaming timeout 口径是：
+  - `FIRST_TOKEN_TIMEOUT` 只看首 token 前等待
+  - `STREAM_IDLE_TIMEOUT` 只看最后一次输出后的静默等待
+  - 不再把 `request_total_timeout_sec=300` 当成流式墙钟总时长
+- 定向验证已覆盖：
+  - 长流持续输出不误触发总时长 timeout
+  - 首 token timeout
+  - stream idle timeout
 
 ### 问题 J：`RETRY_TICKET` 协议硬切不完整
 
@@ -473,4 +480,3 @@
 
 - 这份日志保留了问题和当时做过什么
 - 但不主张把这些 live 补丁继续留在当前工作树里
-

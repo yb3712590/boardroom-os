@@ -130,6 +130,7 @@ from app.core.constants import (
     TICKET_STATUS_REWORK_REQUIRED,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
+from app.core.incident_followups import resolve_ceo_shadow_source_ticket_context
 from app.core.governance_templates import (
     list_role_template_catalog_entries,
     list_role_template_document_kinds,
@@ -2436,6 +2437,9 @@ def build_incident_detail_projection(
     incident_type = str(incident["incident_type"])
     available_followup_actions = [IncidentFollowupAction.RESTORE_ONLY.value]
     recommended_followup_action: str | None = IncidentFollowupAction.RESTORE_ONLY.value
+    source_ticket_id: str | None = None
+    source_ticket_status: str | None = None
+    recommended_restore_action: str | None = None
     if incident_type == INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
         available_followup_actions = [
             IncidentFollowupAction.REBUILD_TICKET_GRAPH.value,
@@ -2455,11 +2459,22 @@ def build_incident_detail_projection(
         available_followup_actions = [IncidentFollowupAction.RESTORE_ONLY.value]
         recommended_followup_action = IncidentFollowupAction.RESTORE_ONLY.value
     elif incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
-        available_followup_actions = [
-            IncidentFollowupAction.RERUN_CEO_SHADOW.value,
-            IncidentFollowupAction.RESTORE_ONLY.value,
-        ]
-        recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
+        source_ticket_context = resolve_ceo_shadow_source_ticket_context(repository, incident)
+        source_ticket_id = source_ticket_context["source_ticket_id"]
+        source_ticket_status = source_ticket_context["source_ticket_status"]
+        recommended_restore_action = source_ticket_context["recommended_restore_action"]
+        if recommended_restore_action is not None:
+            available_followup_actions = [
+                recommended_restore_action,
+                IncidentFollowupAction.RESTORE_ONLY.value,
+            ]
+            recommended_followup_action = recommended_restore_action
+        else:
+            available_followup_actions = [
+                IncidentFollowupAction.RERUN_CEO_SHADOW.value,
+                IncidentFollowupAction.RESTORE_ONLY.value,
+            ]
+            recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
     elif incident_type == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED:
         available_followup_actions = [
             IncidentFollowupAction.RERUN_CEO_SHADOW.value,
@@ -2526,6 +2541,9 @@ def build_incident_detail_projection(
             ),
             available_followup_actions=available_followup_actions,
             recommended_followup_action=recommended_followup_action,
+            source_ticket_id=source_ticket_id,
+            source_ticket_status=source_ticket_status,
+            recommended_restore_action=recommended_restore_action,
         ),
     )
 

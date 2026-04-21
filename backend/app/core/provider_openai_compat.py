@@ -748,8 +748,6 @@ def _extract_streaming_responses_output(
     events: list[dict[str, object]] = []
     stream_queue: queue.Queue[tuple[str, object | None]] = queue.Queue()
     first_output_at: float | None = None
-    started_at = time.monotonic()
-
     def _stream_reader() -> None:
         try:
             for event in stream:
@@ -763,20 +761,6 @@ def _extract_streaming_responses_output(
     reader.start()
 
     while True:
-        elapsed_sec = time.monotonic() - started_at
-        request_total_timeout_sec = float(config.request_total_timeout_sec or config.timeout_sec)
-        remaining_total_sec = request_total_timeout_sec - elapsed_sec
-        if remaining_total_sec <= 0:
-            _call_stream_close(stream)
-            raise OpenAICompatProviderUnavailableError(
-                failure_kind="REQUEST_TOTAL_TIMEOUT",
-                message="Provider stream exceeded the total request timeout.",
-                failure_detail={
-                    "provider_response_id": response_id,
-                    "timeout_phase": "request_total",
-                },
-            )
-
         phase_timeout_sec = float(
             (
                 config.stream_idle_timeout_sec
@@ -785,20 +769,10 @@ def _extract_streaming_responses_output(
             )
             or config.timeout_sec
         )
-        wait_timeout_sec = min(phase_timeout_sec, remaining_total_sec)
         try:
-            event_kind, payload = stream_queue.get(timeout=wait_timeout_sec)
+            event_kind, payload = stream_queue.get(timeout=phase_timeout_sec)
         except queue.Empty as exc:
             _call_stream_close(stream)
-            if remaining_total_sec <= phase_timeout_sec:
-                raise OpenAICompatProviderUnavailableError(
-                    failure_kind="REQUEST_TOTAL_TIMEOUT",
-                    message="Provider stream exceeded the total request timeout.",
-                    failure_detail={
-                        "provider_response_id": response_id,
-                        "timeout_phase": "request_total",
-                    },
-                ) from exc
             raise OpenAICompatProviderUnavailableError(
                 failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
                 message="Provider stream timed out while waiting for the next output event.",

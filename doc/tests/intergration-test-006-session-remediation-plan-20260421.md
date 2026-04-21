@@ -16,30 +16,43 @@
 
 ## 先看全局结论
 
-006 当前剩余问题，真实上只剩四类：
+### 先看这个防遗漏说明
 
-1. `CEO_SHADOW_PIPELINE_FAILED` 的恢复语义不对  
-   现在更像 `RERUN_CEO_SHADOW`，不是 incident-driven restore / retry。
+- 原 `会话 1` 和 `会话 2` 已经在同一轮里合并收口，不要再重复开新会话去单独修它们。
+- 这两个会话合并后，已经正式落进代码的范围包括：
+  - streaming timeout 语义补回
+  - `CEO_SHADOW_PIPELINE_FAILED` 的 source-ticket 恢复语义
+  - incident-driven restore 接到 retry budget override
+- 后续如果继续 006，新的实施会话应当**直接从会话 3 开始**。
+- 如果后面有人要回看“1 和 2 到底收了什么”，以本页已勾选清单为准，不要再按旧拆分理解。
 
-2. 根票失败后，retry budget 很快打空  
-   后面即使判断“应该恢复”，执行层也会拒掉。
+006 当前剩余问题，代码主线还剩两类：
 
-3. follow-up 依赖门会连锁拖死下游  
+1. follow-up 依赖门会连锁拖死下游  
    根票一挂，`BR-002 / 020 / 021 / 022 / 023` 一串直接 `DEPENDENCY_GATE_UNHEALTHY`。
 
-4. backlog follow-up fallback 没有恢复出口  
+2. backlog follow-up fallback 没有恢复出口  
    遇到“已有 `existing_ticket_id` + 依赖链已坏”时，只会掉进 `no_actions_built`。
 
-所以后续不要按“模块”切会话。
-要按“问题闭环”切会话。
+已经完成并正式收进代码的两块：
 
-推荐固定顺序：
+1. `CEO_SHADOW_PIPELINE_FAILED` 的 source-ticket 恢复语义  
+   现在能区分 source-ticket incident 和 proposer / contract / snapshot incident。
 
-1. 先修恢复语义
-2. 再修 retry budget
-3. 再收依赖门
-4. 再补 fallback 恢复出口
-5. 最后补 006 专项回归和一次最小回放
+2. incident-driven restore 接到 retry budget override  
+   `CEO_SHADOW_PIPELINE_FAILED` 现在可以复用 `RESTORE_AND_RETRY_*` 产出 follow-up ticket。
+
+后续继续按问题闭环往下收：
+
+1. 先收依赖门
+2. 再补 fallback 恢复出口
+3. 最后补 006 专项回归和一次最小回放
+
+后续会话建议固定成这三个：
+
+1. 会话 3：dependency gate 从连坐失败改成阻塞等待恢复
+2. 会话 4：backlog follow-up fallback 补恢复出口
+3. 会话 5：006 专项回归 + 一次最小 live 回放
 
 ---
 
@@ -98,7 +111,6 @@
 006 里提过的这些 live patch，当前**不作为默认修复方向**：
 
 - `source_code_delivery` 请求形态修补
-- streaming timeout 语义修补
 - `RETRY_TICKET.node_id` 反填兼容补丁
 
 原因很直接：
@@ -111,6 +123,8 @@
 ---
 
 ## 会话 1：先把 CEO shadow 恢复语义改对
+
+状态：已完成，并已和会话 2 合并收口。
 
 ### 这一轮只解决什么
 
@@ -151,11 +165,11 @@
 
 ### 这一轮做完后要勾掉的清单
 
-- [ ] `GET /api/v1/projections/incidents/:id` 能区分“有源票”还是“无源票”
-- [ ] `CEO_SHADOW_PIPELINE_FAILED` 由 `TICKET_FAILED` 触发时，推荐动作不再是 `RERUN_CEO_SHADOW`
-- [ ] `CEO_SHADOW_PIPELINE_FAILED` 由 `TICKET_TIMED_OUT` 触发时，推荐动作不再是 `RERUN_CEO_SHADOW`
-- [ ] 纯 proposer / contract 错误仍然可以继续推荐 `RERUN_CEO_SHADOW`
-- [ ] incident detail 至少能稳定看见：
+- [x] `GET /api/v1/projections/incidents/:id` 能区分“有源票”还是“无源票”
+- [x] `CEO_SHADOW_PIPELINE_FAILED` 由 `TICKET_FAILED` 触发时，推荐动作不再是 `RERUN_CEO_SHADOW`
+- [x] `CEO_SHADOW_PIPELINE_FAILED` 由 `TICKET_TIMED_OUT` 触发时，推荐动作不再是 `RERUN_CEO_SHADOW`
+- [x] 纯 proposer / contract 错误仍然可以继续推荐 `RERUN_CEO_SHADOW`
+- [x] incident detail 至少能稳定看见：
   - `source_ticket_id`
   - `source_ticket_status`
   - `recommended_restore_action`
@@ -170,6 +184,8 @@
 ---
 
 ## 会话 2：把 restore 接到 retry budget 语义上
+
+状态：已完成，并已和会话 1 合并收口。
 
 ### 这一轮只解决什么
 
@@ -209,11 +225,11 @@
 
 ### 这一轮做完后要勾掉的清单
 
-- [ ] `CEO_SHADOW_PIPELINE_FAILED` 的 resolve 可以复用现有 `RESTORE_AND_RETRY_*`
-- [ ] 源票 budget 已耗尽时，incident resolve 仍能接受一次恢复
-- [ ] 恢复后会真正产出新的 follow-up ticket
-- [ ] incident 状态能进入 `RECOVERING`
-- [ ] 同一 failure fingerprint 已有 `OPEN/RECOVERING` incident 时，不再继续用 rerun 叠无效重试
+- [x] `CEO_SHADOW_PIPELINE_FAILED` 的 resolve 可以复用现有 `RESTORE_AND_RETRY_*`
+- [x] 源票 budget 已耗尽时，incident resolve 仍能接受一次恢复
+- [x] 恢复后会真正产出新的 follow-up ticket
+- [x] incident 状态能进入 `RECOVERING`
+- [x] 同一 failure fingerprint 已有 `OPEN/RECOVERING` incident 时，不再继续用 rerun 叠无效重试
 
 ### 本轮验收口径
 

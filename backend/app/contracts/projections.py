@@ -643,6 +643,9 @@ class IncidentDetailProjectionData(StrictModel):
     incident: IncidentProjectionItem
     available_followup_actions: list[str]
     recommended_followup_action: str | None = None
+    source_ticket_id: str | None = None
+    source_ticket_status: str | None = None
+    recommended_restore_action: str | None = None
 
 
 class IncidentDetailProjectionEnvelope(ProjectionEnvelopeBase):

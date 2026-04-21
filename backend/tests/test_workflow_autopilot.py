@@ -12,6 +12,7 @@ from app.core.constants import (
     EVENT_INCIDENT_OPENED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_TIMED_OUT,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
 )
@@ -29,6 +30,7 @@ from tests.test_api import (
     _seed_created_ticket,
     _seed_graph_patch_applied_event,
     _seed_review_request,
+    _scheduler_tick_payload,
     _seed_worker,
     _suppress_ceo_shadow_side_effects,
     _ticket_result_submit_payload,
@@ -1025,6 +1027,135 @@ def test_autopilot_auto_advance_reruns_ceo_shadow_pipeline_incident(client, monk
     assert recovered_incident is not None
     assert recovered_incident["status"] == "CLOSED"
     assert recovered_incident["circuit_breaker_state"] == "CLOSED"
+
+
+def test_autopilot_auto_advance_restores_source_ticket_ceo_shadow_incident_without_rerunning_shadow(
+    client,
+    monkeypatch,
+    set_ticket_time,
+):
+    workflow_id = "wf_autopilot_ceo_shadow_ticket_incident"
+    source_ticket_id = "tkt_autopilot_ceo_shadow_ticket_incident"
+    source_node_id = "node_autopilot_ceo_shadow_ticket_incident"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot should restore source-ticket CEO shadow incidents instead of rerunning proposer.",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        retry_budget=1,
+    )
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(
+            idempotency_key=f"scheduler-tick:{workflow_id}:autopilot-source-timeout",
+        ),
+    )
+
+    incident_id = "inc_autopilot_ceo_shadow_ticket_incident"
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_TIMED_OUT,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-ticket-timeout:{workflow_id}:{source_ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": source_ticket_id,
+                "node_id": source_node_id,
+                "failure_kind": "TIMEOUT_SLA_EXCEEDED",
+                "failure_message": "Ticket exceeded timeout SLA.",
+                "failure_detail": {"timeout_sla_sec": 1800},
+                "failure_fingerprint": f"{workflow_id}:{source_node_id}:TIMEOUT_SLA_EXCEEDED",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:31:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "ticket_id": source_ticket_id,
+                "node_id": source_node_id,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{source_ticket_id}:proposal:JSONDecodeError",
+                "trigger_type": "TICKET_TIMED_OUT",
+                "trigger_ref": source_ticket_id,
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Invalid provider payload.",
+                "failure_fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{source_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:32:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": source_ticket_id,
+                "node_id": source_node_id,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{source_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:32:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    import app.core.ticket_handlers as ticket_handlers_module
+
+    resolved_actions: list[str] = []
+    rerun_calls: list[tuple[str, str, str | None]] = []
+
+    def _fake_handle_incident_resolve(repository, payload):
+        resolved_actions.append(payload.followup_action.value)
+        return type("Ack", (), {"status": type("Status", (), {"value": "ACCEPTED"})()})()
+
+    def _fake_rerun(repository, *, workflow_id, trigger_type, trigger_ref, runtime_provider_store=None):
+        rerun_calls.append((workflow_id, trigger_type, trigger_ref))
+        return {}
+
+    monkeypatch.setattr(ticket_handlers_module, "handle_incident_resolve", _fake_handle_incident_resolve)
+    monkeypatch.setattr(ticket_handlers_module, "run_ceo_shadow_for_trigger", _fake_rerun)
+
+    auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="test-autopilot:ceo-shadow-ticket-incident",
+        max_steps=1,
+        max_dispatches=1,
+    )
+
+    assert resolved_actions == ["RESTORE_AND_RETRY_LATEST_TIMEOUT"]
+    assert rerun_calls == []
 
 
 def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(client, set_ticket_time):

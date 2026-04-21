@@ -118,6 +118,7 @@ from app.core.execution_targets import (
     infer_execution_contract_payload,
     resolve_execution_target_ref_from_ticket_spec,
 )
+from app.core.incident_followups import resolve_ceo_shadow_source_ticket_context
 from app.core.graph_identity import (
     GRAPH_LANE_EXECUTION,
     resolve_ticket_graph_identity,
@@ -3382,8 +3383,8 @@ def open_ticket_graph_unavailable_incident(
             correlation_id=workflow_id,
             payload={
                 "incident_id": incident_id,
-                "ticket_id": None,
-                "node_id": None,
+                "ticket_id": source_ticket_id,
+                "node_id": source_node_id,
                 "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
                 "fingerprint": fingerprint,
             },
@@ -3770,10 +3771,17 @@ def open_ceo_shadow_pipeline_failed_incident(
             return str(existing_row["incident_id"])
 
         incident_id = new_prefixed_id("inc")
+        source_ticket_id: str | None = None
+        source_node_id: str | None = None
+        if error.trigger_type in {EVENT_TICKET_FAILED, EVENT_TICKET_TIMED_OUT}:
+            source_ticket_id = str(error.trigger_ref or "").strip() or None
+            if source_ticket_id is not None:
+                source_ticket = repository.get_current_ticket_projection(source_ticket_id, connection=connection)
+                source_node_id = str((source_ticket or {}).get("node_id") or "").strip() or None
         incident_payload = {
             "incident_id": incident_id,
-            "ticket_id": None,
-            "node_id": None,
+            "ticket_id": source_ticket_id,
+            "node_id": source_node_id,
             "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
             "status": INCIDENT_STATUS_OPEN,
             "severity": "high",
@@ -4734,7 +4742,29 @@ def handle_incident_resolve(
         rerun_context: dict[str, Any] | None = None
         advisory_rerun_context: dict[str, Any] | None = None
         if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
-            if incident["incident_type"] != INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
+            source_ticket_context = resolve_ceo_shadow_source_ticket_context(
+                repository,
+                incident,
+                connection=connection,
+            )
+            if incident["incident_type"] not in {
+                INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION,
+                INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+            }:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=(
+                        f"Incident {payload.incident_id} does not support timeout retry recovery."
+                    ),
+                )
+            if (
+                incident["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+                and source_ticket_context["recommended_restore_action"]
+                != IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value
+            ):
                 return _incident_rejected_ack(
                     command_id=command_id,
                     idempotency_key=payload.idempotency_key,
@@ -4759,7 +4789,29 @@ def handle_incident_resolve(
                     reason=str(exc),
                 )
         elif payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE:
-            if incident["incident_type"] != INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
+            source_ticket_context = resolve_ceo_shadow_source_ticket_context(
+                repository,
+                incident,
+                connection=connection,
+            )
+            if incident["incident_type"] not in {
+                INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
+                INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+            }:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=(
+                        f"Incident {payload.incident_id} does not support ordinary failure retry recovery."
+                    ),
+                )
+            if (
+                incident["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+                and source_ticket_context["recommended_restore_action"]
+                != IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value
+            ):
                 return _incident_rejected_ack(
                     command_id=command_id,
                     idempotency_key=payload.idempotency_key,

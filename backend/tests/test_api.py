@@ -10871,11 +10871,12 @@ def test_incident_projection_dashboard_inbox_and_endpoint_reflect_open_timeout_i
         json=_scheduler_tick_payload(idempotency_key="scheduler-tick:incident-second"),
     )
 
-    incident_id = [
+    incident_id = next(
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-    ][0]
+        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
     dashboard_response = client.get("/api/v1/projections/dashboard")
     inbox_response = client.get("/api/v1/projections/inbox")
     incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
@@ -10934,11 +10935,12 @@ def test_incident_resolve_closes_breaker_and_removes_open_incident_from_dashboar
         json=_scheduler_tick_payload(idempotency_key="scheduler-tick:resolve-second"),
     )
 
-    incident_id = [
+    incident_id = next(
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-    ][0]
+        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
     resolve_response = client.post(
@@ -10996,11 +10998,12 @@ def test_incident_resolve_can_restore_and_retry_latest_timeout_in_one_command(cl
         json=_scheduler_tick_payload(idempotency_key="scheduler-tick:resolve-retry-second"),
     )
 
-    incident_id = [
+    incident_id = next(
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-    ][0]
+        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
     retry_scheduled_before = repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED)
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
@@ -11068,11 +11071,12 @@ def test_incident_resolve_moves_incident_into_recovering_before_auto_close(clien
         json=_scheduler_tick_payload(idempotency_key="scheduler-tick:recovering-second"),
     )
 
-    incident_id = [
+    incident_id = next(
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-    ][0]
+        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
     resolve_response = client.post(
@@ -11123,11 +11127,12 @@ def test_incident_resolve_reopens_scheduler_dispatch_for_same_node(client, set_t
         json=_scheduler_tick_payload(idempotency_key="scheduler-tick:breaker-reopen-second"),
     )
 
-    incident_id = [
+    incident_id = next(
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-    ][0]
+        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
     client.post(
@@ -11190,11 +11195,12 @@ def test_incident_resolve_rejects_missing_or_closed_incidents(client, set_ticket
         json=_scheduler_tick_payload(idempotency_key="scheduler-tick:reject-second"),
     )
 
-    incident_id = [
+    incident_id = next(
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-    ][0]
+        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
     first_response = client.post(
@@ -11780,11 +11786,12 @@ def test_incident_resolve_can_restore_and_retry_latest_failure_in_one_command(cl
         ),
     )
 
-    incident_id = [
+    incident_id = next(
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-    ][0]
+        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
 
     set_ticket_time("2026-03-28T10:08:00+08:00")
     resolve_response = client.post(
@@ -11858,11 +11865,12 @@ def test_incident_resolve_restore_and_retry_latest_failure_can_override_exhauste
         ),
     )
 
-    incident_id = [
+    incident_id = next(
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-    ][0]
+        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+    )
 
     set_ticket_time("2026-03-28T10:08:00+08:00")
     resolve_response = client.post(
@@ -12428,6 +12436,200 @@ def test_p2_ceo_shadow_incident_detail_exposes_rerun_action(client):
         "RESTORE_ONLY",
     ]
     assert incident_response.json()["data"]["recommended_followup_action"] == "RERUN_CEO_SHADOW"
+    assert incident_response.json()["data"]["source_ticket_id"] is None
+    assert incident_response.json()["data"]["source_ticket_status"] is None
+    assert incident_response.json()["data"]["recommended_restore_action"] is None
+
+
+def test_p2_ceo_shadow_incident_detail_exposes_restore_failure_action_for_source_ticket(client):
+    workflow_id = "wf_ceo_shadow_incident_detail_failure"
+    incident_id = "inc_ceo_shadow_detail_failure"
+    source_ticket_id = "tkt_ceo_shadow_detail_failure"
+    source_node_id = "node_ceo_shadow_detail_failure"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="CEO shadow incident detail should expose failure restore recovery for source tickets.",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        retry_budget=1,
+        repeat_failure_threshold=4,
+    )
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id=source_ticket_id,
+            node_id=source_node_id,
+            failure_message="Seed source ticket failure for CEO shadow incident detail.",
+            idempotency_key=f"ticket-fail:{workflow_id}:{source_ticket_id}:detail",
+        ),
+    )
+    assert fail_response.status_code == 200
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": source_node_id,
+                "ticket_id": source_ticket_id,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:TICKET_FAILED:{source_ticket_id}:proposal:JSONDecodeError",
+                "trigger_type": EVENT_TICKET_FAILED,
+                "trigger_ref": source_ticket_id,
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Invalid provider payload.",
+                "failure_fingerprint": f"{workflow_id}:TICKET_FAILED:{source_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:12:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": source_ticket_id,
+                "node_id": source_node_id,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:TICKET_FAILED:{source_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:12:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["incident"]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RESTORE_AND_RETRY_LATEST_FAILURE",
+        "RESTORE_ONLY",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_FAILURE"
+    )
+    assert incident_response.json()["data"]["source_ticket_id"] == source_ticket_id
+    assert incident_response.json()["data"]["source_ticket_status"] == "FAILED"
+    assert incident_response.json()["data"]["recommended_restore_action"] == (
+        "RESTORE_AND_RETRY_LATEST_FAILURE"
+    )
+
+
+def test_p2_ceo_shadow_incident_detail_exposes_restore_timeout_action_for_source_ticket(client, set_ticket_time):
+    workflow_id = "wf_ceo_shadow_incident_detail_timeout"
+    incident_id = "inc_ceo_shadow_detail_timeout"
+    source_ticket_id = "tkt_ceo_shadow_detail_timeout"
+    source_node_id = "node_ceo_shadow_detail_timeout"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="CEO shadow incident detail should expose timeout restore recovery for source tickets.",
+    )
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        retry_budget=0,
+        on_timeout="escalate_ceo",
+    )
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    tick_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key=f"scheduler-tick:{workflow_id}:detail-timeout"),
+    )
+    assert tick_response.status_code == 200
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": source_node_id,
+                "ticket_id": source_ticket_id,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{source_ticket_id}:proposal:JSONDecodeError",
+                "trigger_type": EVENT_TICKET_TIMED_OUT,
+                "trigger_ref": source_ticket_id,
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Invalid provider payload.",
+                "failure_fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{source_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:32:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": source_ticket_id,
+                "node_id": source_node_id,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{source_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:32:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+
+    assert incident_response.status_code == 200
+    assert incident_response.json()["data"]["available_followup_actions"] == [
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT",
+        "RESTORE_ONLY",
+    ]
+    assert incident_response.json()["data"]["recommended_followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+    )
+    assert incident_response.json()["data"]["source_ticket_id"] == source_ticket_id
+    assert incident_response.json()["data"]["source_ticket_status"] == "TIMED_OUT"
+    assert incident_response.json()["data"]["recommended_restore_action"] == (
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+    )
 
 
 def test_p4_placeholder_gate_incident_detail_exposes_rerun_action(client):
@@ -13053,6 +13255,266 @@ def test_p2_ceo_shadow_incident_resolve_reruns_shadow_and_closes_incident(client
     assert incident_response.json()["data"]["incident"]["status"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == "RERUN_CEO_SHADOW"
+
+
+def test_p2_ceo_shadow_incident_resolve_restores_and_retries_latest_failure_for_source_ticket(
+    client,
+):
+    workflow_id = "wf_ceo_shadow_incident_resolve_failure"
+    incident_id = "inc_ceo_shadow_resolve_failure"
+    source_ticket_id = "tkt_ceo_shadow_resolve_failure"
+    source_node_id = "node_ceo_shadow_resolve_failure"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="CEO shadow source-ticket failure incident should restore and retry.",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        retry_budget=1,
+        repeat_failure_threshold=4,
+    )
+    first_fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id=source_ticket_id,
+            node_id=source_node_id,
+            failure_message="Seed source ticket failure for CEO shadow recovery.",
+            idempotency_key=f"ticket-fail:{workflow_id}:{source_ticket_id}:resolve-first",
+        ),
+    )
+    assert first_fail_response.status_code == 200
+    repository = client.app.state.repository
+    retry_ticket_id = repository.get_current_node_projection(workflow_id, source_node_id)["latest_ticket_id"]
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=retry_ticket_id,
+            node_id=source_node_id,
+            leased_by="emp_frontend_2",
+        ),
+    )
+    assert lease_response.status_code == 200
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=retry_ticket_id,
+            node_id=source_node_id,
+            started_by="emp_frontend_2",
+        ),
+    )
+    assert start_response.status_code == 200
+    second_fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id=retry_ticket_id,
+            node_id=source_node_id,
+            failure_message="Seed exhausted source ticket failure for CEO shadow recovery.",
+            idempotency_key=f"ticket-fail:{workflow_id}:{retry_ticket_id}:resolve-second",
+        ),
+    )
+    assert second_fail_response.status_code == 200
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": source_node_id,
+                "ticket_id": retry_ticket_id,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:TICKET_FAILED:{retry_ticket_id}:proposal:JSONDecodeError",
+                "trigger_type": EVENT_TICKET_FAILED,
+                "trigger_ref": retry_ticket_id,
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Invalid provider payload.",
+                "failure_fingerprint": f"{workflow_id}:TICKET_FAILED:{retry_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:42:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": retry_ticket_id,
+                "node_id": source_node_id,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:TICKET_FAILED:{retry_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:42:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="RESTORE_AND_RETRY_LATEST_FAILURE",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    followup_ticket_id = repository.get_current_node_projection(workflow_id, source_node_id)["latest_ticket_id"]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert followup_ticket_id not in {source_ticket_id, retry_ticket_id}
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_ticket["retry_count"] == 2
+    assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
+    assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_FAILURE"
+    )
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == followup_ticket_id
+
+
+def test_p2_ceo_shadow_incident_resolve_restores_and_retries_latest_timeout_for_source_ticket(
+    client,
+    set_ticket_time,
+):
+    workflow_id = "wf_ceo_shadow_incident_resolve_timeout"
+    incident_id = "inc_ceo_shadow_resolve_timeout"
+    source_ticket_id = "tkt_ceo_shadow_resolve_timeout"
+    source_node_id = "node_ceo_shadow_resolve_timeout"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="CEO shadow source-ticket timeout incident should restore and retry.",
+    )
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        retry_budget=1,
+    )
+    set_ticket_time("2026-03-28T10:31:00+08:00")
+    tick_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key=f"scheduler-tick:{workflow_id}:resolve-timeout-first"),
+    )
+    assert tick_response.status_code == 200
+    repository = client.app.state.repository
+    retry_ticket_id = repository.get_current_node_projection(workflow_id, source_node_id)["latest_ticket_id"]
+    set_ticket_time("2026-03-28T10:32:00+08:00")
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=retry_ticket_id,
+            node_id=source_node_id,
+            started_by="emp_frontend_2",
+        ),
+    )
+    set_ticket_time("2026-03-28T11:18:00+08:00")
+    second_tick_response = client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key=f"scheduler-tick:{workflow_id}:resolve-timeout-second"),
+    )
+    assert second_tick_response.status_code == 200
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": source_node_id,
+                "ticket_id": retry_ticket_id,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{retry_ticket_id}:proposal:JSONDecodeError",
+                "trigger_type": EVENT_TICKET_TIMED_OUT,
+                "trigger_ref": retry_ticket_id,
+                "source_stage": "proposal",
+                "error_class": "JSONDecodeError",
+                "error_message": "Invalid provider payload.",
+                "failure_fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{retry_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T11:19:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": retry_ticket_id,
+                "node_id": source_node_id,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:TICKET_TIMED_OUT:{retry_ticket_id}:proposal:JSONDecodeError",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T11:19:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            idempotency_key=f"incident-resolve:{incident_id}:timeout",
+            followup_action="RESTORE_AND_RETRY_LATEST_TIMEOUT",
+        ),
+    )
+    incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
+    followup_ticket_id = repository.get_current_node_projection(workflow_id, source_node_id)["latest_ticket_id"]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert followup_ticket_id not in {source_ticket_id, retry_ticket_id}
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_ticket["retry_count"] == 2
+    assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
+    assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
+        "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+    )
+    assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == followup_ticket_id
 
 
 def test_p4_placeholder_gate_incident_resolve_reruns_shadow_and_closes_incident(client, monkeypatch):
