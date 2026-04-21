@@ -440,8 +440,8 @@
 
 ### 这一轮做完后要勾掉的清单
 
-- [ ] 006 四类问题都有专项回归
-- [ ] 回归命名能一眼看出对应 006 哪条问题
+- [x] 006 四类问题都有专项回归
+- [x] 回归命名能一眼看出对应 006 哪条问题
 - [ ] 最小回放能验证根票恢复后主线继续推进
 - [ ] 不再先掉进 rerun proposer loop
 - [ ] 不再出现“根票一挂，下游整串直接 unhealthy”
@@ -452,6 +452,38 @@
 
 1. 定向自动化回归通过
 2. 一次最小回放的现场摘要
+
+### 本轮实际收口口径
+
+- 新增 `backend/tests/test_it006_regressions.py`
+  - 用 `it006_*` 命名把 4 类问题收成 6 条可单跑专项回归
+- 新增 `backend/tests/live/library_management_autopilot_smoke.py`
+  - 独立于 full live
+  - `checkpoint_label=library_check_stage_gate`
+  - checkpoint 只认：
+    - workflow 进入 `check`
+    - 没有 `DEPENDENCY_GATE_UNHEALTHY`
+    - 没有 `no_actions_built`
+    - 没有悬挂的 `CEO_SHADOW_PIPELINE_FAILED`
+- `backend/tests/test_live_library_management_runner.py`
+  - 已补 smoke 场景 slug / path / checkpoint 断言
+
+### 本轮验证结果
+
+- 已通过：
+  - `./backend/.venv/bin/pytest backend/tests/test_it006_regressions.py -q`
+  - `6 passed`
+- 已通过：
+  - `./backend/.venv/bin/pytest backend/tests/test_live_library_management_runner.py -k "library and smoke" -q`
+  - `5 passed, 33 deselected`
+- 已尝试：
+  - `cd backend && ./.venv/bin/python -m tests.live.library_management_autopilot_smoke --max-ticks 180 --timeout-sec 7200`
+- 当前真实现场：
+  - scenario 目录已落到 `backend/data/scenarios/library_management_autopilot_smoke/`
+  - workflow `wf_3e729fcbbe1d` 仍停在 `EXECUTING / plan`
+  - 仅首张 `tkt_wf_3e729fcbbe1d_ceo_architecture_brief` 处于 `EXECUTING`
+  - 本轮没有拿到 `run_report.json` / `audit-summary.md`
+  - 当前阻塞更像 live provider 首票执行停滞，不是 006 主线语义回退
 
 ---
 

@@ -16,6 +16,11 @@ from tests.live.architecture_governance_autopilot_smoke import (
     SCENARIO as ARCHITECTURE_SMOKE_SCENARIO,
     _assert_architecture_governance_smoke_checkpoint,
 )
+from tests.live.library_management_autopilot_smoke import (
+    SCENARIO as LIBRARY_SMOKE_SCENARIO,
+    _assert_library_check_stage_checkpoint,
+    build_scenario_paths as build_library_smoke_paths,
+)
 from tests.live._autopilot_live_harness import (
     _assert_source_delivery_payload_quality,
     _assert_unique_source_delivery_evidence_paths,
@@ -927,6 +932,84 @@ def test_architecture_smoke_scenario_stops_before_source_code_fanout() -> None:
     assert assertions["approved_architect_governance_ticket_ids"] == ["tkt_architect_approved_001"]
     assert assertions["approved_meeting_escalation_count"] == 1
     assert assertions["governance_architect_employee_ids"] == ["emp_architect_1"]
+
+
+def test_library_smoke_scenario_uses_it006_checkpoint_label() -> None:
+    assert LIBRARY_SMOKE_SCENARIO.checkpoint_label == "library_check_stage_gate"
+    assert LIBRARY_SMOKE_SCENARIO.slug == "library_management_autopilot_smoke"
+
+
+def test_library_smoke_scenario_uses_dedicated_paths(tmp_path: Path) -> None:
+    paths = build_library_smoke_paths(tmp_path / "library_management_autopilot_smoke")
+
+    assert paths.root.name == "library_management_autopilot_smoke"
+    assert paths.run_report_path.name == "run_report.json"
+    assert paths.audit_summary_path.name == "audit-summary.md"
+
+
+def test_library_smoke_checkpoint_requires_check_stage_without_006_failure_fingerprint() -> None:
+    assertions = _assert_library_check_stage_checkpoint(
+        None,
+        None,
+        "wf_library_smoke",
+        {
+            "workflow": {
+                "workflow_id": "wf_library_smoke",
+                "status": "EXECUTING",
+                "current_stage": "check",
+            },
+            "tickets": [],
+            "created_specs": {},
+            "terminals": {},
+            "approvals": [],
+            "audits": [],
+            "architect_ticket_ids": [],
+            "employees": [],
+            "base_report": {
+                "workflow_id": "wf_library_smoke",
+                "workflow_status": "EXECUTING",
+                "workflow_stage": "check",
+            },
+        },
+    )
+
+    assert assertions is not None
+    assert assertions["workflow_stage"] == "check"
+    assert assertions["checkpoint_reason"] == "entered_check_without_it006_failure_signals"
+
+
+def test_library_smoke_checkpoint_rejects_dependency_gate_unhealthy_signal() -> None:
+    assertions = _assert_library_check_stage_checkpoint(
+        None,
+        None,
+        "wf_library_smoke",
+        {
+            "workflow": {
+                "workflow_id": "wf_library_smoke",
+                "status": "EXECUTING",
+                "current_stage": "check",
+            },
+            "tickets": [
+                {
+                    "ticket_id": "tkt_006_failed",
+                    "last_failure_kind": "DEPENDENCY_GATE_UNHEALTHY",
+                }
+            ],
+            "created_specs": {},
+            "terminals": {},
+            "approvals": [],
+            "audits": [],
+            "architect_ticket_ids": [],
+            "employees": [],
+            "base_report": {
+                "workflow_id": "wf_library_smoke",
+                "workflow_status": "EXECUTING",
+                "workflow_stage": "check",
+            },
+        },
+    )
+
+    assert assertions is None
 
 
 def test_integration_test_provider_template_path_uses_backend_data() -> None:
