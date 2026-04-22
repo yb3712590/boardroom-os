@@ -21,6 +21,16 @@
 
 ## Recent Memory
 
+### 2026-04-22
+
+- `CEO shadow -> CREATE_TICKET` 这轮已正式硬切到新版协议：`workflow_controller` 现在只产 canonical `ticket_payload`，`required_governance_ticket_plan` 收成 `existing_ticket_id + ticket_payload`，`followup_ticket_plans[]` 收成 `ticket_key + existing_ticket_id + blocked_by_plan_keys + ticket_payload`
+- `ceo_proposer.py` 这轮已不再兼容旧版 `CREATE_TICKET` 结构：live provider 输出缺 `dispatch_intent.selection_reason`、回流旧 `execution_contract`、继续用 top-level `assignee_employee_id / dependency_gate_refs`、或使用 legacy `type` alias 时，现在都会在 proposal 阶段直接显式失败，不再做最小补齐
+- `ceo_validator.py` 与 deterministic fallback 这轮也一起切到 canonical payload：`required_governance_ticket_plan`、`followup_ticket_plans[]` 的消费都改成只读 `ticket_payload`，不再从旧顶层计划字段反向拼票
+- OpenAI compat CEO shadow 调用这轮已显式带 `ceo_action_batch` strict schema；`output_schemas.py` 里的 `ceo_action_batch` 也已改成直接复用 `CEOActionBatch.model_json_schema()`，不再只校验顶层 `summary/actions/payload`
+- `ceo_scheduler.py` 这轮顺手补了两条运行时真相：proposal 阶段如果 provider 已经回包但 payload 非法，run audit 现在会保留 `provider_response_id`；idle maintenance 则会忽略首轮 `BOARD_DIRECTIVE_RECEIVED` 打开的 `CEO_SHADOW_PIPELINE_FAILED`，允许 project-init 后按周期继续重试
+- 本轮 fresh 验证已通过：`pytest backend/tests/test_ceo_scheduler.py -q`（`108 passed`）、`pytest backend/tests/test_execution_targets.py -q`（`1 passed`）
+- 本轮补充 spot check 还暴露一条非 CEO shadow 主线回归：`pytest backend/tests/test_api.py -k "ticket_create_rejects_missing_execution_contract or scheduler_tick_dispatches_to_explicit_assignee_from_dispatch_intent or ticket_create_is_rejected_when_dispatch_intent_dependency_gate_is_invalid" -q` 中 `test_scheduler_tick_dispatches_to_explicit_assignee_from_dispatch_intent` 仍失败；现象是 `scheduler-tick` 后 ticket 还停在 `PENDING`，这条没有在本轮继续扩散修
+
 ### 2026-04-19
 
 - `ceo_proposer.py` 这轮已把 live provider ingress 收成 alias-only adapter：现在只保留 `type -> action_type`，旧 `NO_ACTION.reason`、旧 `HIRE_EMPLOYEE.role_profile_ref / justification / selection_guidance / reason`，以及缺 `payload` 的 flat action 都会在 proposal 阶段显式失败，不再靠 snapshot 补语义

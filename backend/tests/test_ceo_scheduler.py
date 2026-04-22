@@ -1241,6 +1241,7 @@ def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket
         snapshot = rendered_payload.messages[2].content_payload
         required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
         assert required_plan is not None
+        ticket_payload = required_plan["ticket_payload"]
         return OpenAICompatProviderResult(
             output_text=json.dumps(
                 {
@@ -1248,23 +1249,7 @@ def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket
                     "actions": [
                         {
                             "action_type": "CREATE_TICKET",
-                            "payload": {
-                                "workflow_id": workflow_id,
-                                "node_id": required_plan["node_id"],
-                                "role_profile_ref": required_plan["role_profile_ref"],
-                                "output_schema_ref": required_plan["output_schema_ref"],
-                                "execution_contract": infer_execution_contract_payload(
-                                    role_profile_ref=required_plan["role_profile_ref"],
-                                    output_schema_ref=required_plan["output_schema_ref"],
-                                ),
-                                "dispatch_intent": {
-                                    "assignee_employee_id": required_plan["assignee_employee_id"],
-                                    "selection_reason": required_plan["selection_reason"],
-                                    "dependency_gate_refs": list(required_plan.get("dependency_gate_refs") or []),
-                                },
-                                "summary": required_plan["summary"],
-                                "parent_ticket_id": required_plan["parent_ticket_id"],
-                            },
+                            "payload": ticket_payload,
                         }
                     ],
                 }
@@ -2799,7 +2784,7 @@ def test_ceo_shadow_run_rejects_flat_create_ticket_action_shape_from_live_provid
     runs = repository.list_ceo_shadow_runs(workflow_id)
 
     assert exc_info.value.source_stage == "proposal"
-    assert runs[0]["provider_response_id"] is None
+    assert runs[0]["provider_response_id"] == "resp_ceo_flat_action_1"
     assert runs[0]["deterministic_fallback_used"] is False
     assert runs[0]["accepted_actions"] == []
     assert runs[0]["executed_actions"] == []
@@ -2857,7 +2842,7 @@ def test_ceo_shadow_run_rejects_live_action_type_alias_field(client, monkeypatch
 
     runs = repository.list_ceo_shadow_runs(workflow_id)
     assert exc_info.value.source_stage == "proposal"
-    assert runs[0]["provider_response_id"] is None
+    assert runs[0]["provider_response_id"] == "resp_ceo_type_alias_1"
     assert runs[0]["accepted_actions"] == []
     assert runs[0]["executed_actions"] == []
 
@@ -3426,17 +3411,25 @@ def test_ceo_shadow_run_raises_when_deterministic_backlog_followup_plan_is_incom
                     "followup_ticket_plans": [
                         {
                             "ticket_key": "BR-BE-01",
-                            "node_id": "node_backlog_followup_br_be_01",
-                            "task_name": "借阅后端 API 交付",
-                            "summary": "借阅后端 API 交付",
-                            "scope": ["借阅服务", "REST API"],
-                            "role_profile_ref": "backend_engineer_primary",
-                            "output_schema_ref": "source_code_delivery",
-                            "assignee_employee_id": "",
-                            "dependency_ticket_keys": [],
-                            "dependency_gate_refs": [],
                             "existing_ticket_id": None,
-                            "source_ticket_id": "tkt_backlog_gap",
+                            "blocked_by_plan_keys": [],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_br_be_01",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="backend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-BE-01 借阅后端 API 交付；范围：借阅服务、REST API",
+                                "parent_ticket_id": "tkt_backlog_gap",
+                            },
                         }
                     ]
                 },
@@ -3743,10 +3736,15 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
         "BR-BE-01",
         "BR-DB-01",
     ]
-    assert [item["role_profile_ref"] for item in snapshot["capability_plan"]["followup_ticket_plans"]] == [
+    assert [
+        item["ticket_payload"]["role_profile_ref"]
+        for item in snapshot["capability_plan"]["followup_ticket_plans"]
+    ] == [
         "backend_engineer_primary",
         "database_engineer_primary",
     ]
+    assert snapshot["capability_plan"]["followup_ticket_plans"][0]["blocked_by_plan_keys"] == []
+    assert snapshot["capability_plan"]["followup_ticket_plans"][1]["blocked_by_plan_keys"] == ["BR-BE-01"]
 
 
 def test_ceo_shadow_snapshot_ignores_noncanonical_backlog_json_artifact(client, monkeypatch):
@@ -3811,6 +3809,9 @@ def test_ceo_shadow_snapshot_ignores_noncanonical_backlog_json_artifact(client, 
     assert [item["ticket_key"] for item in snapshot["capability_plan"]["followup_ticket_plans"]] == [
         "BR-BE-01"
     ]
+    assert snapshot["capability_plan"]["followup_ticket_plans"][0]["ticket_payload"]["node_id"] == (
+        "node_backlog_followup_br_be_01"
+    )
 
 
 def test_trigger_ceo_shadow_with_recovery_opens_incident_when_canonical_backlog_json_is_invalid(
@@ -4013,31 +4014,47 @@ def test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_wh
                     "followup_ticket_plans": [
                         {
                             "ticket_key": "BR-BE-01",
-                            "node_id": "node_backlog_followup_br_be_01",
-                            "task_name": "借阅后端 API 交付",
-                            "summary": "借阅后端 API 交付",
-                            "scope": ["借阅服务", "REST API"],
-                            "role_profile_ref": "backend_engineer_primary",
-                            "output_schema_ref": "source_code_delivery",
-                            "assignee_employee_id": "emp_backend_plan",
-                            "dependency_ticket_keys": [],
-                            "dependency_gate_refs": [],
                             "existing_ticket_id": "tkt_existing_followup_be",
-                            "source_ticket_id": "tkt_backlog_parent",
+                            "blocked_by_plan_keys": [],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_br_be_01",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="backend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_backend_plan",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-BE-01 借阅后端 API 交付；范围：借阅服务、REST API",
+                                "parent_ticket_id": "tkt_backlog_parent",
+                            },
                         },
                         {
                             "ticket_key": "BR-DB-01",
-                            "node_id": "node_backlog_followup_br_db_01",
-                            "task_name": "库存数据库建模",
-                            "summary": "库存数据库建模",
-                            "scope": ["数据库 schema", "索引优化"],
-                            "role_profile_ref": "database_engineer_primary",
-                            "output_schema_ref": "source_code_delivery",
-                            "assignee_employee_id": "emp_database_plan",
-                            "dependency_ticket_keys": ["BR-BE-01"],
-                            "dependency_gate_refs": [],
                             "existing_ticket_id": None,
-                            "source_ticket_id": "tkt_backlog_parent",
+                            "blocked_by_plan_keys": ["BR-BE-01"],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_br_db_01",
+                                "role_profile_ref": "database_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="database_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_database_plan",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-DB-01 库存数据库建模；范围：数据库 schema、索引优化",
+                                "parent_ticket_id": "tkt_backlog_parent",
+                            },
                         },
                     ]
                 }
@@ -4083,17 +4100,25 @@ def test_backlog_followup_batch_builds_retry_ticket_for_retryable_existing_ticke
                     "followup_ticket_plans": [
                         {
                             "ticket_key": "BR-BE-RETRY",
-                            "node_id": "node_backlog_followup_br_be_retryable",
-                            "task_name": "借阅后端 API 交付",
-                            "summary": "借阅后端 API 交付",
-                            "scope": ["借阅服务", "REST API"],
-                            "role_profile_ref": "backend_engineer_primary",
-                            "output_schema_ref": "source_code_delivery",
-                            "assignee_employee_id": "emp_backend_plan",
-                            "dependency_ticket_keys": [],
-                            "dependency_gate_refs": [],
                             "existing_ticket_id": "tkt_existing_followup_retryable",
-                            "source_ticket_id": "tkt_backlog_parent_retryable",
+                            "blocked_by_plan_keys": [],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_br_be_retryable",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="backend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_backend_plan",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-BE-RETRY 借阅后端 API 交付；范围：借阅服务、REST API",
+                                "parent_ticket_id": "tkt_backlog_parent_retryable",
+                            },
                         }
                     ]
                 }
@@ -4146,17 +4171,25 @@ def test_backlog_followup_batch_raises_structured_restore_needed_for_existing_ti
                         "followup_ticket_plans": [
                             {
                                 "ticket_key": "BR-BE-RESTORE",
-                                "node_id": "node_backlog_followup_br_be_restore_needed",
-                                "task_name": "借阅后端 API 交付",
-                                "summary": "借阅后端 API 交付",
-                                "scope": ["借阅服务", "REST API"],
-                                "role_profile_ref": "backend_engineer_primary",
-                                "output_schema_ref": "source_code_delivery",
-                                "assignee_employee_id": "emp_backend_plan",
-                                "dependency_ticket_keys": [],
-                                "dependency_gate_refs": [],
                                 "existing_ticket_id": "tkt_existing_followup_restore_needed",
-                                "source_ticket_id": "tkt_backlog_parent_restore_needed",
+                                "blocked_by_plan_keys": [],
+                                "ticket_payload": {
+                                    "workflow_id": workflow_id,
+                                    "node_id": "node_backlog_followup_br_be_restore_needed",
+                                    "role_profile_ref": "backend_engineer_primary",
+                                    "output_schema_ref": "source_code_delivery",
+                                    "execution_contract": infer_execution_contract_payload(
+                                        role_profile_ref="backend_engineer_primary",
+                                        output_schema_ref="source_code_delivery",
+                                    ),
+                                    "dispatch_intent": {
+                                        "assignee_employee_id": "emp_backend_plan",
+                                        "selection_reason": "Translate the approved backlog item into implementation work.",
+                                        "dependency_gate_refs": [],
+                                    },
+                                    "summary": "BR-BE-RESTORE 借阅后端 API 交付；范围：借阅服务、REST API",
+                                    "parent_ticket_id": "tkt_backlog_parent_restore_needed",
+                                },
                             }
                         ]
                     }
@@ -4243,13 +4276,26 @@ def test_ceo_shadow_snapshot_exposes_required_governance_ticket_plan_when_archit
 
     assert snapshot["controller_state"]["state"] == "ARCHITECT_REQUIRED"
     assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
-    assert required_plan["node_id"] == "node_architect_governance_gate_node_ceo_backlog_architect_doc_gap"
-    assert required_plan["role_profile_ref"] == "architect_primary"
-    assert required_plan["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
-    assert required_plan["assignee_employee_id"] == "emp_architect_doc_gap"
-    assert required_plan["parent_ticket_id"] == "tkt_backlog_architect_doc_gap"
     assert required_plan["existing_ticket_id"] is None
-    assert "architect governance brief" in required_plan["summary"].lower()
+    assert required_plan["ticket_payload"] == {
+        "workflow_id": workflow_id,
+        "node_id": "node_architect_governance_gate_node_ceo_backlog_architect_doc_gap",
+        "role_profile_ref": "architect_primary",
+        "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+        "execution_contract": infer_execution_contract_payload(
+            role_profile_ref="architect_primary",
+            output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        ),
+        "dispatch_intent": {
+            "assignee_employee_id": "emp_architect_doc_gap",
+            "selection_reason": "Satisfy the current architect governance gate before implementation fanout continues.",
+            "dependency_gate_refs": [],
+            "selected_by": "ceo",
+            "wakeup_policy": "default",
+        },
+        "summary": "Prepare the architect governance brief before implementation fanout continues.",
+        "parent_ticket_id": "tkt_backlog_architect_doc_gap",
+    }
 
 
 @pytest.mark.parametrize("workflow_profile", ["CEO_AUTOPILOT_FINE_GRAINED", "STANDARD"])
@@ -4289,9 +4335,9 @@ def test_ceo_shadow_snapshot_requires_next_governance_document_before_backlog_fa
     assert snapshot["task_sensemaking"]["coordination_mode"] == "document_chain"
     assert snapshot["controller_state"]["state"] == "GOVERNANCE_REQUIRED"
     assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
-    assert required_plan["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
-    assert required_plan["parent_ticket_id"] == "tkt_parent_architecture_doc"
-    assert required_plan["dependency_gate_refs"] == ["tkt_parent_architecture_doc"]
+    assert required_plan["ticket_payload"]["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
+    assert required_plan["ticket_payload"]["parent_ticket_id"] == "tkt_parent_architecture_doc"
+    assert required_plan["ticket_payload"]["dispatch_intent"]["dependency_gate_refs"] == ["tkt_parent_architecture_doc"]
 
 
 def test_ceo_shadow_snapshot_builds_full_dependency_chain_for_next_governance_document(
@@ -4341,9 +4387,9 @@ def test_ceo_shadow_snapshot_builds_full_dependency_chain_for_next_governance_do
     required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
 
     assert snapshot["controller_state"]["state"] == "GOVERNANCE_REQUIRED"
-    assert required_plan["output_schema_ref"] == DETAILED_DESIGN_SCHEMA_REF
-    assert required_plan["parent_ticket_id"] == "tkt_parent_milestone_plan"
-    assert required_plan["dependency_gate_refs"] == [
+    assert required_plan["ticket_payload"]["output_schema_ref"] == DETAILED_DESIGN_SCHEMA_REF
+    assert required_plan["ticket_payload"]["parent_ticket_id"] == "tkt_parent_milestone_plan"
+    assert required_plan["ticket_payload"]["dispatch_intent"]["dependency_gate_refs"] == [
         "tkt_parent_architecture_doc",
         "tkt_parent_technology_decision",
         "tkt_parent_milestone_plan",
@@ -4409,7 +4455,7 @@ def test_ceo_shadow_snapshot_keeps_existing_governance_ticket_plan_when_node_pro
 
     assert snapshot["task_sensemaking"]["task_type"] == "governance_followup"
     assert snapshot["controller_state"]["state"] == "READY_TICKET"
-    assert required_plan["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
+    assert required_plan["ticket_payload"]["output_schema_ref"] == TECHNOLOGY_DECISION_SCHEMA_REF
     assert required_plan["existing_ticket_id"] == "tkt_pending_technology_decision"
 
 
@@ -4634,6 +4680,7 @@ def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(cl
             )
         required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
         assert required_plan is not None
+        ticket_payload = required_plan["ticket_payload"]
         return OpenAICompatProviderResult(
             output_text=json.dumps(
                 {
@@ -4641,23 +4688,7 @@ def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(cl
                     "actions": [
                         {
                             "action_type": "CREATE_TICKET",
-                            "payload": {
-                                "workflow_id": workflow_id,
-                                "node_id": required_plan["node_id"],
-                                "role_profile_ref": required_plan["role_profile_ref"],
-                                "output_schema_ref": required_plan["output_schema_ref"],
-                                "execution_contract": infer_execution_contract_payload(
-                                    role_profile_ref=required_plan["role_profile_ref"],
-                                    output_schema_ref=required_plan["output_schema_ref"],
-                                ),
-                                "dispatch_intent": {
-                                    "assignee_employee_id": required_plan["assignee_employee_id"],
-                                    "selection_reason": required_plan["selection_reason"],
-                                    "dependency_gate_refs": list(required_plan.get("dependency_gate_refs") or []),
-                                },
-                                "summary": required_plan["summary"],
-                                "parent_ticket_id": required_plan["parent_ticket_id"],
-                            },
+                            "payload": ticket_payload,
                         }
                     ],
                 }
@@ -4765,6 +4796,7 @@ def test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_follo
         snapshot = rendered_payload.messages[2].content_payload
         required_plan = snapshot["capability_plan"]["required_governance_ticket_plan"]
         assert required_plan is not None
+        ticket_payload = required_plan["ticket_payload"]
         return OpenAICompatProviderResult(
             output_text=json.dumps(
                 {
@@ -4772,23 +4804,7 @@ def test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_follo
                     "actions": [
                         {
                             "action_type": "CREATE_TICKET",
-                            "payload": {
-                                "workflow_id": workflow_id,
-                                "node_id": required_plan["node_id"],
-                                "role_profile_ref": required_plan["role_profile_ref"],
-                                "output_schema_ref": required_plan["output_schema_ref"],
-                                "execution_contract": infer_execution_contract_payload(
-                                    role_profile_ref=required_plan["role_profile_ref"],
-                                    output_schema_ref=required_plan["output_schema_ref"],
-                                ),
-                                "dispatch_intent": {
-                                    "assignee_employee_id": required_plan["assignee_employee_id"],
-                                    "selection_reason": required_plan["selection_reason"],
-                                    "dependency_gate_refs": list(required_plan.get("dependency_gate_refs") or []),
-                                },
-                                "summary": required_plan["summary"],
-                                "parent_ticket_id": required_plan["parent_ticket_id"],
-                            },
+                            "payload": ticket_payload,
                         }
                     ],
                 }
@@ -5184,20 +5200,11 @@ def test_ceo_validator_accepts_required_architect_governance_ticket_plan_and_rej
                     {
                         "action_type": "CREATE_TICKET",
                         "payload": {
-                            "workflow_id": workflow_id,
-                            "node_id": required_plan["node_id"],
-                            "role_profile_ref": required_plan["role_profile_ref"],
-                            "output_schema_ref": required_plan["output_schema_ref"],
-                            "execution_contract": infer_execution_contract_payload(
-                                role_profile_ref=required_plan["role_profile_ref"],
-                                output_schema_ref=required_plan["output_schema_ref"],
-                            ),
+                            **required_plan["ticket_payload"],
                             "dispatch_intent": {
-                                "assignee_employee_id": required_plan["assignee_employee_id"],
+                                **required_plan["ticket_payload"]["dispatch_intent"],
                                 "selection_reason": "Follow the required architect governance ticket plan exactly.",
                             },
-                            "summary": required_plan["summary"],
-                            "parent_ticket_id": required_plan["parent_ticket_id"],
                         },
                     }
                 ],
@@ -5251,43 +5258,116 @@ def test_ceo_shadow_run_marks_deferred_board_escalation(client, monkeypatch):
     assert run["deterministic_fallback_used"] is False
 
 
-def test_provider_action_batch_backfills_missing_dispatch_selection_reason():
-    from app.core import ceo_proposer
-
-    payload = ceo_proposer._normalize_provider_action_batch_payload(
-        {
-            "summary": "Create the next governance ticket.",
-            "actions": [
-                {
-                    "action_type": "CREATE_TICKET",
-                    "payload": {
-                        "workflow_id": "wf_demo",
-                        "node_id": "node_ceo_architecture_brief",
-                        "role_profile_ref": "architect_primary",
-                        "output_schema_ref": "architecture_brief",
-                        "execution_contract": {
-                            "contract_kind": "GOVERNANCE_DOCUMENT",
+@pytest.mark.parametrize(
+    ("payload", "reason_code"),
+    [
+        (
+            {
+                "summary": "Create the next governance ticket.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": "wf_demo",
+                            "node_id": "node_ceo_architecture_brief",
                             "role_profile_ref": "architect_primary",
                             "output_schema_ref": "architecture_brief",
+                            "execution_contract": {
+                                "execution_target_ref": "execution_target:architect_governance_document",
+                                "required_capability_tags": ["structured_output", "planning"],
+                                "runtime_contract_version": "execution_contract_v1",
+                            },
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_architect_governance",
+                                "dependency_gate_refs": ["tkt_seed_parent"],
+                            },
+                            "summary": "Create architecture brief ticket.",
+                            "parent_ticket_id": None,
                         },
-                        "dispatch_intent": {
-                            "assignee_employee_id": "emp_architect_governance",
-                            "dependency_gate_refs": ["tkt_seed_parent"],
+                    }
+                ],
+            },
+            "payload_validation_failed",
+        ),
+        (
+            {
+                "summary": "Create the next governance ticket.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            "workflow_id": "wf_demo",
+                            "node_id": "node_ceo_architecture_brief",
+                            "role_profile_ref": "architect_primary",
+                            "output_schema_ref": "architecture_brief",
+                            "execution_contract": {
+                                "contract_kind": "GOVERNANCE_DOCUMENT",
+                                "role_profile_ref": "architect_primary",
+                                "output_schema_ref": "architecture_brief",
+                            },
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_architect_governance",
+                                "selection_reason": "Use the architect governance owner.",
+                                "dependency_gate_refs": ["tkt_seed_parent"],
+                            },
+                            "summary": "Create architecture brief ticket.",
+                            "parent_ticket_id": None,
                         },
-                        "summary": "Create architecture brief ticket.",
-                        "parent_ticket_id": None,
-                    },
+                    }
+                ],
+            },
+            "payload_validation_failed",
+        ),
+    ],
+)
+def test_provider_action_batch_rejects_legacy_or_incomplete_create_ticket_payload(payload, reason_code):
+    from app.core import ceo_proposer
+
+    with pytest.raises(ceo_proposer.CEOProposalContractError) as exc_info:
+        ceo_proposer._normalize_provider_action_batch_payload(payload)
+
+    assert exc_info.value.source_component == "provider_action_batch"
+    assert exc_info.value.reason_code == reason_code
+
+
+def test_ceo_shadow_live_provider_requests_strict_ceo_action_batch_schema(client, monkeypatch):
+    _set_live_provider(client)
+    workflow_id = _project_init(client, "CEO strict schema request")
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(config, _rendered_payload):
+        assert config.schema_name == "ceo_action_batch"
+        assert config.strict is True
+        assert isinstance(config.schema_body, dict)
+        assert config.schema_body["type"] == "object"
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Stay idle for this schema verification round.",
+                    "actions": [
+                        {
+                            "action_type": "NO_ACTION",
+                            "payload": {"reason": "Schema wiring verified."},
+                        }
+                    ],
                 }
-            ],
-        }
+            ),
+            response_id="resp_ceo_strict_schema_1",
+        )
+
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:strict-schema",
+        runtime_provider_store=client.app.state.runtime_provider_store,
     )
 
-    dispatch_intent = payload["actions"][0]["payload"]["dispatch_intent"]
-    assert dispatch_intent["assignee_employee_id"] == "emp_architect_governance"
-    assert dispatch_intent["dependency_gate_refs"] == ["tkt_seed_parent"]
-    assert dispatch_intent["selection_reason"] == (
-        "Provider selected the current assignee for this ticket and omitted an explicit selection_reason."
-    )
+    assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
+    assert run["deterministic_fallback_used"] is False
 
 
 def test_ceo_shadow_run_raises_execution_failure_without_hidden_fallback(client, monkeypatch):

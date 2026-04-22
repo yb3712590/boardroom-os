@@ -312,3 +312,41 @@ provider 侧也比之前健康很多：
 2. live provider 主路径也能稳定完成治理文档生成。
 3. 真正没收完的，是 **治理结果落实现票时的 provider proposal 兼容层**。
 4. 下一轮如果继续跑，不该再盯 provider stream timeout，而应该直接收 `CREATE_TICKET.execution_contract` 的旧协议兼容口。
+
+---
+
+## 6. 后续处置（2026-04-22）
+
+这条卡点后续已经按“只认新版协议”的方向处理了。
+
+后续修法不是继续补 compat，而是直接硬切：
+
+- `required_governance_ticket_plan` 改成：
+  - `existing_ticket_id`
+  - `ticket_payload`
+- `followup_ticket_plans[]` 改成：
+  - `ticket_key`
+  - `existing_ticket_id`
+  - `blocked_by_plan_keys`
+  - `ticket_payload`
+- `ceo_proposer.py` 不再补旧 `dispatch_intent.selection_reason`
+- live provider 输出如果继续回流旧版 `execution_contract`、旧顶层字段，或者缺新版必填字段，会在 proposal 阶段直接失败
+- OpenAI compat CEO shadow 调用已显式带 `ceo_action_batch` strict schema
+
+这次处理后的口径变成：
+
+1. controller 只产 canonical `ticket_payload`
+2. proposer / validator / deterministic fallback 只消费 canonical `ticket_payload`
+3. provider proposal 不再做旧协议兼容补齐
+4. 如果 live 现场再出现旧结构，会第一时间在 proposal 阶段暴露，不会再拖成“反复 reopen incident 的 maintenance 死循环”
+
+对应代码与验证已经落地：
+
+- `pytest backend/tests/test_ceo_scheduler.py -q`：`108 passed`
+- `pytest backend/tests/test_execution_targets.py -q`：`1 passed`
+
+当前仍有一条额外发现但不属于这份 live 报告主链的问题：
+
+- `pytest backend/tests/test_api.py -k "ticket_create_rejects_missing_execution_contract or scheduler_tick_dispatches_to_explicit_assignee_from_dispatch_intent or ticket_create_is_rejected_when_dispatch_intent_dependency_gate_is_invalid" -q`
+- 其中 `test_scheduler_tick_dispatches_to_explicit_assignee_from_dispatch_intent` 仍失败，现象是 `scheduler-tick` 后 ticket 还停在 `PENDING`
+- 这条需要单独作为 scheduler / dispatch 侧回归处理，不属于本次 `CEO shadow` 协议硬切收口的直接范围

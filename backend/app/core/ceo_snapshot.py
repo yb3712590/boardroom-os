@@ -702,6 +702,7 @@ def build_ceo_shadow_snapshot(
                 "fingerprint": incident["fingerprint"],
                 "ticket_id": incident.get("ticket_id"),
                 "provider_id": incident.get("provider_id"),
+                "trigger_type": (incident.get("payload") or {}).get("trigger_type"),
                 "opened_at": _serialize_timestamp(incident.get("opened_at")),
             }
             for incident in open_incidents

@@ -294,6 +294,40 @@ def _resolve_followup_output_schema_ref(role_profile_ref: str) -> str:
     return SOURCE_CODE_DELIVERY_SCHEMA_REF
 
 
+def _build_ceo_create_ticket_payload(
+    *,
+    workflow_id: str,
+    node_id: str,
+    role_profile_ref: str,
+    output_schema_ref: str,
+    assignee_employee_id: str | None,
+    selection_reason: str,
+    dependency_gate_refs: list[str] | None,
+    summary: str,
+    parent_ticket_id: str | None,
+) -> dict[str, Any]:
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    ) or {}
+    return {
+        "workflow_id": workflow_id,
+        "node_id": node_id,
+        "role_profile_ref": role_profile_ref,
+        "output_schema_ref": output_schema_ref,
+        "execution_contract": execution_contract,
+        "dispatch_intent": {
+            "assignee_employee_id": assignee_employee_id or "",
+            "selection_reason": selection_reason,
+            "dependency_gate_refs": list(dependency_gate_refs or []),
+            "selected_by": "ceo",
+            "wakeup_policy": "default",
+        },
+        "summary": summary,
+        "parent_ticket_id": parent_ticket_id,
+    }
+
+
 def _latest_completed_backlog_ticket(
     repository: ControlPlaneRepository,
     *,
@@ -467,10 +501,6 @@ def _build_governance_progression_ticket_plan(
         completed_ticket_ids_by_schema,
         next_schema_ref,
     )
-    execution_contract = infer_execution_contract_payload(
-        role_profile_ref=role_profile_ref,
-        output_schema_ref=next_schema_ref,
-    ) or {}
     summary = build_governance_followup_summary(next_schema_ref)
     selection_reason = (
         f"Follow the current governance progression and create the next {next_schema_ref} document."
@@ -480,19 +510,18 @@ def _build_governance_progression_ticket_plan(
         summary = str(kickoff_spec["summary"])
         selection_reason = "Keep the first governance document on the current live frontend owner."
     return {
-        "node_id": node_id,
-        "role_profile_ref": role_profile_ref,
-        "output_schema_ref": next_schema_ref,
-        "execution_contract": execution_contract,
-        "required_capability_tags": list(execution_contract.get("required_capability_tags") or []),
-        "assignee_employee_id": assignee_employee_id,
-        "parent_ticket_id": parent_ticket_id,
-        "dependency_gate_refs": dependency_gate_refs,
-        "summary": summary,
-        "selection_reason": selection_reason,
-        "source_ticket_id": parent_ticket_id,
-        "source_node_id": build_governance_followup_node_id(next_schema_ref),
         "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
+        "ticket_payload": _build_ceo_create_ticket_payload(
+            workflow_id=str(workflow.get("workflow_id") or "").strip(),
+            node_id=node_id,
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=next_schema_ref,
+            assignee_employee_id=assignee_employee_id,
+            selection_reason=selection_reason,
+            dependency_gate_refs=dependency_gate_refs,
+            summary=summary,
+            parent_ticket_id=parent_ticket_id,
+        ),
     }
 
 
@@ -557,38 +586,40 @@ def _build_followup_ticket_plans(
             if str(item).strip()
         ]
         output_schema_ref = _resolve_followup_output_schema_ref(role_profile_ref)
-        execution_contract = infer_execution_contract_payload(
+        assignee_employee_id = _select_default_assignee(
+            employees,
             role_profile_ref=role_profile_ref,
             output_schema_ref=output_schema_ref,
-        ) or {}
+        )
+        dependency_ticket_keys = list(dependency_map.get(ticket_key) or [])
+        dependency_gate_refs = [
+            existing_ticket_ids_by_node_id.get(backlog_followup_key_to_node_id(dependency_key))
+            for dependency_key in dependency_ticket_keys
+            if existing_ticket_ids_by_node_id.get(backlog_followup_key_to_node_id(dependency_key))
+        ]
+        scope_suffix = f"；范围：{'、'.join(task_scope)}" if task_scope else ""
         followup_ticket_plans.append(
             {
                 "ticket_key": ticket_key,
-                "node_id": node_id,
-                "task_name": str(raw_ticket.get("name") or ticket_key).strip() or ticket_key,
-                "summary": (
-                    str(raw_ticket.get("summary") or raw_ticket.get("name") or ticket_key).strip()
-                    or ticket_key
-                ),
-                "scope": task_scope,
-                "role_profile_ref": role_profile_ref,
-                "role_type": _ROLE_TYPE_BY_ROLE_PROFILE[role_profile_ref],
-                "output_schema_ref": output_schema_ref,
-                "required_capability_tags": list(execution_contract.get("required_capability_tags") or []),
-                "assignee_employee_id": _select_default_assignee(
-                    employees,
+                "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
+                "blocked_by_plan_keys": dependency_ticket_keys,
+                "ticket_payload": _build_ceo_create_ticket_payload(
+                    workflow_id=backlog_created_spec.get("workflow_id") or backlog_created_spec.get("workflow_ref") or "",
+                    node_id=node_id,
                     role_profile_ref=role_profile_ref,
                     output_schema_ref=output_schema_ref,
+                    assignee_employee_id=assignee_employee_id,
+                    selection_reason=(
+                        "Follow the current capability plan and translate the approved backlog recommendation into an auditable implementation ticket."
+                    ),
+                    dependency_gate_refs=dependency_gate_refs,
+                    summary=(
+                        f"{ticket_key} "
+                        f"{str(raw_ticket.get('name') or raw_ticket.get('summary') or ticket_key).strip() or ticket_key}"
+                        f"{scope_suffix}"
+                    ),
+                    parent_ticket_id=backlog_ticket_id,
                 ),
-                "dependency_ticket_keys": list(dependency_map.get(ticket_key) or []),
-                "dependency_gate_refs": [
-                    existing_ticket_ids_by_node_id.get(backlog_followup_key_to_node_id(dependency_key))
-                    for dependency_key in list(dependency_map.get(ticket_key) or [])
-                    if existing_ticket_ids_by_node_id.get(backlog_followup_key_to_node_id(dependency_key))
-                ],
-                "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
-                "source_ticket_id": backlog_ticket_id,
-                "source_node_id": str(backlog_created_spec.get("node_id") or "").strip() or None,
             }
         )
     return followup_ticket_plans
@@ -660,6 +691,7 @@ def _has_approved_architect_document(
 
 def _build_required_governance_ticket_plan(
     *,
+    workflow_id: str,
     backlog_ticket_id: str,
     backlog_created_spec: dict[str, Any],
     tickets: list[dict[str, Any]],
@@ -668,33 +700,27 @@ def _build_required_governance_ticket_plan(
 ) -> dict[str, Any]:
     source_node_id = str(backlog_created_spec.get("node_id") or "").strip() or None
     node_id = _architect_governance_gate_node_id(source_node_id, backlog_ticket_id)
-    execution_contract = infer_execution_contract_payload(
-        role_profile_ref="architect_primary",
-        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
-    ) or {}
     existing_ticket_ids_by_node_id = _current_ticket_ids_by_node_id(
         tickets=tickets,
         workflow_nodes=workflow_nodes,
     )
     return {
-        "node_id": node_id,
-        "role_profile_ref": "architect_primary",
-        "role_type": _ROLE_TYPE_BY_ROLE_PROFILE["architect_primary"],
-        "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
-        "execution_contract": execution_contract,
-        "required_capability_tags": list(execution_contract.get("required_capability_tags") or []),
-        "assignee_employee_id": _select_default_assignee(
-            employees,
+        "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
+        "ticket_payload": _build_ceo_create_ticket_payload(
+            workflow_id=workflow_id,
+            node_id=node_id,
             role_profile_ref="architect_primary",
             output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+            assignee_employee_id=_select_default_assignee(
+                employees,
+                role_profile_ref="architect_primary",
+                output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+            ),
+            selection_reason="Satisfy the current architect governance gate before implementation fanout continues.",
+            dependency_gate_refs=[],
+            summary="Prepare the architect governance brief before implementation fanout continues.",
+            parent_ticket_id=backlog_ticket_id,
         ),
-        "parent_ticket_id": backlog_ticket_id,
-        "dependency_gate_refs": [],
-        "summary": "Prepare the architect governance brief before implementation fanout continues.",
-        "selection_reason": "Satisfy the current architect governance gate before implementation fanout continues.",
-        "source_ticket_id": backlog_ticket_id,
-        "source_node_id": source_node_id,
-        "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
     }
 
 
@@ -888,9 +914,13 @@ def build_workflow_controller_view(
     requires_meeting = any(any(token in item.lower() for token in _MEETING_REQUIRED_HINTS) for item in hard_constraints)
     staffing_gaps = sorted(
         {
-            plan["role_profile_ref"]
+            str((plan.get("ticket_payload") or {}).get("role_profile_ref") or "").strip()
             for plan in followup_ticket_plans
-            if plan.get("existing_ticket_id") is None and not plan.get("assignee_employee_id")
+            if plan.get("existing_ticket_id") is None
+            and str((plan.get("ticket_payload") or {}).get("role_profile_ref") or "").strip()
+            and not str(
+                (((plan.get("ticket_payload") or {}).get("dispatch_intent") or {}).get("assignee_employee_id") or "")
+            ).strip()
         }
     )
 
@@ -944,7 +974,8 @@ def build_workflow_controller_view(
                 else "NO_ACTION"
             ),
             "blocking_reason": (
-                f"The governance-first progression requires {required_governance_ticket_plan['output_schema_ref']} before implementation fanout."
+                "The governance-first progression requires "
+                f"{required_governance_ticket_plan['ticket_payload']['output_schema_ref']} before implementation fanout."
                 if required_governance_ticket_plan.get("existing_ticket_id") is None
                 else (
                     "The next governance ticket already exists and must finish or be recovered before the progression continues."
@@ -965,6 +996,7 @@ def build_workflow_controller_view(
             connection=connection,
         ):
             required_governance_ticket_plan = _build_required_governance_ticket_plan(
+                workflow_id=workflow_id,
                 backlog_ticket_id=backlog_ticket_id,
                 backlog_created_spec=backlog_created_spec,
                 tickets=tickets,
@@ -1027,12 +1059,15 @@ def build_workflow_controller_view(
         "source_ticket_id": (
             backlog_ticket_id
             if task_type == "implementation_fanout"
-            else str((required_governance_ticket_plan or {}).get("source_ticket_id") or "").strip() or None
+            else str(
+                (((required_governance_ticket_plan or {}).get("ticket_payload") or {}).get("parent_ticket_id") or "")
+            ).strip()
+            or None
         ),
         "source_node_id": (
             str(backlog_created_spec.get("node_id") or "").strip() or None
             if task_type == "implementation_fanout"
-            else str((required_governance_ticket_plan or {}).get("source_node_id") or "").strip() or None
+            else None
         ),
         "hard_constraints": hard_constraints,
         "progression_adapter_id": progression_adapter_id,
@@ -1042,7 +1077,12 @@ def build_workflow_controller_view(
             {
                 capability
                 for plan in followup_ticket_plans
-                for capability in list(plan.get("required_capability_tags") or [])
+                for capability in list(
+                    ((plan.get("ticket_payload") or {}).get("execution_contract") or {}).get(
+                        "required_capability_tags"
+                    )
+                    or []
+                )
             }
         ),
         "optional_capabilities": [],
@@ -1056,7 +1096,13 @@ def build_workflow_controller_view(
     if required_governance_ticket_plan is not None:
         capability_plan["required_capabilities"] = sorted(
             set(capability_plan["required_capabilities"])
-            | set(required_governance_ticket_plan.get("required_capability_tags") or [])
+            | set(
+                (
+                    ((required_governance_ticket_plan.get("ticket_payload") or {}).get("execution_contract") or {})
+                    .get("required_capability_tags")
+                    or []
+                )
+            )
         )
     if controller_state["recommended_action"] == "HIRE_EMPLOYEE":
         if controller_state["state"] == "ARCHITECT_REQUIRED":

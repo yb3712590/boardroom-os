@@ -347,18 +347,20 @@ def validate_ceo_action_batch(
                     capability_plan_view(snapshot).get("required_governance_ticket_plan")
                 )
                 if isinstance(required_governance_ticket_plan, dict):
+                    planned_payload = required_governance_ticket_plan.get("ticket_payload") or {}
                     matching_required_governance_plan = (
-                        str(required_governance_ticket_plan.get("node_id") or "") == action.payload.node_id
-                        and str(required_governance_ticket_plan.get("role_profile_ref") or "")
+                        str(planned_payload.get("node_id") or "") == action.payload.node_id
+                        and str(planned_payload.get("role_profile_ref") or "")
                         == action.payload.role_profile_ref
-                        and str(required_governance_ticket_plan.get("output_schema_ref") or "")
+                        and str(planned_payload.get("output_schema_ref") or "")
                         == action.payload.output_schema_ref
                     )
+                    planned_dispatch_intent = planned_payload.get("dispatch_intent") or {}
                     planned_assignee_employee_id = str(
-                        required_governance_ticket_plan.get("assignee_employee_id") or ""
+                        planned_dispatch_intent.get("assignee_employee_id") or ""
                     ).strip()
                     planned_parent_ticket_id = str(
-                        required_governance_ticket_plan.get("parent_ticket_id") or ""
+                        planned_payload.get("parent_ticket_id") or ""
                     ).strip()
                     if matching_required_governance_plan:
                         if planned_assignee_employee_id and planned_assignee_employee_id != assignee_employee_id:
@@ -410,8 +412,9 @@ def validate_ceo_action_batch(
                         (
                             item
                             for item in planned_followups
-                            if str(item.get("node_id") or "") == action.payload.node_id
-                            and str(item.get("role_profile_ref") or "") == action.payload.role_profile_ref
+                            if str(((item.get("ticket_payload") or {}).get("node_id") or "")) == action.payload.node_id
+                            and str(((item.get("ticket_payload") or {}).get("role_profile_ref") or ""))
+                            == action.payload.role_profile_ref
                         ),
                         None,
                     )
@@ -423,7 +426,11 @@ def validate_ceo_action_batch(
                             )
                         )
                         continue
-                    planned_assignee_employee_id = str(matching_plan.get("assignee_employee_id") or "").strip()
+                    planned_assignee_employee_id = str(
+                        (((matching_plan.get("ticket_payload") or {}).get("dispatch_intent") or {}).get(
+                            "assignee_employee_id"
+                        ) or "")
+                    ).strip()
                     if planned_assignee_employee_id and planned_assignee_employee_id != assignee_employee_id:
                         rejected_actions.append(
                             _action_entry(

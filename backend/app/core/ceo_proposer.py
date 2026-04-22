@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.contracts.ceo_actions import (
     CEOActionBatch,
     CEOActionType,
@@ -15,6 +17,8 @@ from app.contracts.ceo_actions import (
     CEORetryTicketPayload,
     CEONoAction,
     CEONoActionPayload,
+    CEOHireEmployeePayload,
+    CEOEscalateToBoardPayload,
 )
 from app.contracts.commands import IncidentFollowupAction
 from app.core.ceo_prompts import build_ceo_shadow_rendered_payload
@@ -36,7 +40,10 @@ from app.core.provider_openai_compat import (
 )
 from app.core.provider_claude_code import ClaudeCodeProviderConfig, ClaudeCodeProviderError, invoke_claude_code_response
 from app.core.output_schemas import (
+    CEO_ACTION_BATCH_SCHEMA_REF,
+    CEO_ACTION_BATCH_SCHEMA_VERSION,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    OUTPUT_SCHEMA_REGISTRY,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
 from app.core.runtime_node_views import (
@@ -313,6 +320,90 @@ def _normalize_dependency_gate_refs(raw_refs: Any) -> list[str]:
     return normalized_refs
 
 
+def _payload_model_for_action_type(action_type: str):
+    return {
+        CEOActionType.CREATE_TICKET.value: CEOCreateTicketPayload,
+        CEOActionType.RETRY_TICKET.value: CEORetryTicketPayload,
+        CEOActionType.HIRE_EMPLOYEE.value: CEOHireEmployeePayload,
+        CEOActionType.REQUEST_MEETING.value: CEORequestMeetingPayload,
+        CEOActionType.ESCALATE_TO_BOARD.value: CEOEscalateToBoardPayload,
+        CEOActionType.NO_ACTION.value: CEONoActionPayload,
+    }.get(action_type)
+
+
+def _validate_provider_action_payload(
+    *,
+    action_type: str,
+    action_payload: dict[str, Any],
+    action_index: int,
+) -> dict[str, Any]:
+    payload_model = _payload_model_for_action_type(action_type)
+    if payload_model is None:
+        _raise_proposal_contract_error(
+            source_component="provider_action_batch",
+            reason_code="unsupported_action_type",
+            message=f"{action_type} is not supported on the CEO shadow path.",
+            details={"action_index": action_index, "action_type": action_type},
+        )
+    try:
+        return payload_model.model_validate(action_payload).model_dump(mode="json")
+    except ValidationError as exc:
+        _raise_proposal_contract_error(
+            source_component="provider_action_batch",
+            reason_code="payload_validation_failed",
+            message=f"{action_type} payload does not match the required CEO shadow contract.",
+            details={
+                "action_index": action_index,
+                "action_type": action_type,
+                "errors": exc.errors(include_url=False),
+            },
+        )
+
+
+def _resolve_followup_ticket_payload(
+    *,
+    followup_plan: dict[str, Any],
+    plan_index: int,
+) -> dict[str, Any]:
+    ticket_payload = followup_plan.get("ticket_payload")
+    if not isinstance(ticket_payload, dict):
+        _raise_proposal_contract_error(
+            source_component="deterministic_fallback.backlog_followup",
+            reason_code="plan_missing_fields",
+            message="Backlog follow-up plan is missing ticket_payload.",
+            details={"plan_index": plan_index, "missing_fields": ["ticket_payload"]},
+        )
+    try:
+        return CEOCreateTicketPayload.model_validate(ticket_payload).model_dump(mode="json")
+    except ValidationError as exc:
+        _raise_proposal_contract_error(
+            source_component="deterministic_fallback.backlog_followup",
+            reason_code="plan_missing_fields",
+            message="Backlog follow-up plan ticket_payload does not match the canonical CREATE_TICKET contract.",
+            details={"plan_index": plan_index, "errors": exc.errors(include_url=False)},
+        )
+
+
+def _resolve_required_governance_ticket_payload(required_governance_ticket_plan: dict[str, Any]) -> dict[str, Any]:
+    ticket_payload = required_governance_ticket_plan.get("ticket_payload")
+    if not isinstance(ticket_payload, dict):
+        _raise_proposal_contract_error(
+            source_component="deterministic_fallback.required_governance",
+            reason_code="plan_missing_fields",
+            message="Required governance ticket plan is missing ticket_payload.",
+            details={"missing_fields": ["ticket_payload"]},
+        )
+    try:
+        return CEOCreateTicketPayload.model_validate(ticket_payload).model_dump(mode="json")
+    except ValidationError as exc:
+        _raise_proposal_contract_error(
+            source_component="deterministic_fallback.required_governance",
+            reason_code="plan_missing_fields",
+            message="Required governance ticket plan ticket_payload does not match the canonical CREATE_TICKET contract.",
+            details={"errors": exc.errors(include_url=False)},
+        )
+
+
 def _normalize_provider_action_batch_payload(raw_payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw_payload, dict):
         _raise_proposal_contract_error(
@@ -379,18 +470,14 @@ def _normalize_provider_action_batch_payload(raw_payload: dict[str, Any]) -> dic
                     "payload_type": type(action_payload).__name__,
                 },
             )
-        if action_type == CEOActionType.CREATE_TICKET:
-            dispatch_intent = action_payload.get("dispatch_intent")
-            if isinstance(dispatch_intent, dict):
-                assignee_employee_id = str(dispatch_intent.get("assignee_employee_id") or "").strip()
-                if assignee_employee_id and not str(dispatch_intent.get("selection_reason") or "").strip():
-                    dispatch_intent["selection_reason"] = (
-                        "Provider selected the current assignee for this ticket and omitted an explicit selection_reason."
-                    )
         normalized_actions.append(
             {
                 "action_type": action_type,
-                "payload": action_payload,
+                "payload": _validate_provider_action_payload(
+                    action_type=action_type,
+                    action_payload=action_payload,
+                    action_index=index,
+                ),
             }
         )
     return {
@@ -546,9 +633,10 @@ def _build_backlog_followup_batch(
     actions: list[dict[str, Any]] = []
     retry_actions: list[dict[str, Any]] = []
     existing_ticket_ids_by_node_id = {
-        str(plan.get("node_id") or "").strip(): str(plan.get("existing_ticket_id") or "").strip()
+        str(((plan.get("ticket_payload") or {}).get("node_id") or "")).strip(): str(plan.get("existing_ticket_id") or "").strip()
         for plan in followup_ticket_plans
-        if str(plan.get("node_id") or "").strip() and str(plan.get("existing_ticket_id") or "").strip()
+        if str(((plan.get("ticket_payload") or {}).get("node_id") or "")).strip()
+        and str(plan.get("existing_ticket_id") or "").strip()
     }
     existing_node_ids = set(existing_ticket_ids_by_node_id)
     planned_ticket_keys = {
@@ -566,21 +654,17 @@ def _build_backlog_followup_batch(
                     message="Each followup ticket plan must be a JSON object.",
                     details={"plan_index": index},
                 )
-            node_id = str(followup_plan.get("node_id") or "").strip()
             ticket_key = str(followup_plan.get("ticket_key") or "").strip()
-            role_profile_ref = str(followup_plan.get("role_profile_ref") or "").strip()
-            output_schema_ref = str(followup_plan.get("output_schema_ref") or "").strip()
-            assignee_employee_id = str(followup_plan.get("assignee_employee_id") or "").strip()
-            backlog_ticket_id = str(followup_plan.get("source_ticket_id") or "").strip()
+            ticket_payload = _resolve_followup_ticket_payload(
+                followup_plan=followup_plan,
+                plan_index=index,
+            )
+            node_id = str(ticket_payload.get("node_id") or "").strip()
             missing_fields = [
                 field_name
                 for field_name, field_value in (
                     ("ticket_key", ticket_key),
                     ("node_id", node_id),
-                    ("role_profile_ref", role_profile_ref),
-                    ("output_schema_ref", output_schema_ref),
-                    ("assignee_employee_id", assignee_employee_id),
-                    ("source_ticket_id", backlog_ticket_id),
                 )
                 if not field_value
             ]
@@ -608,9 +692,10 @@ def _build_backlog_followup_batch(
             if node_id in existing_node_ids:
                 continue
 
-            dependency_gate_refs = _normalize_dependency_gate_refs(followup_plan.get("dependency_gate_refs"))
+            dispatch_intent = dict(ticket_payload.get("dispatch_intent") or {})
+            dependency_gate_refs = _normalize_dependency_gate_refs(dispatch_intent.get("dependency_gate_refs"))
             ready_to_create = True
-            for dependency_key in list(followup_plan.get("dependency_ticket_keys") or []):
+            for dependency_key in list(followup_plan.get("blocked_by_plan_keys") or []):
                 normalized_dependency_key = str(dependency_key).strip()
                 if not normalized_dependency_key:
                     _raise_proposal_contract_error(
@@ -640,44 +725,14 @@ def _build_backlog_followup_batch(
             if not ready_to_create:
                 continue
 
-            execution_contract = infer_execution_contract_payload(
-                role_profile_ref=role_profile_ref,
-                output_schema_ref=output_schema_ref,
-            )
-            if execution_contract is None:
-                _raise_proposal_contract_error(
-                    source_component="deterministic_fallback.backlog_followup",
-                    reason_code="execution_contract_unavailable",
-                    message="Backlog follow-up plan cannot resolve a valid execution contract.",
-                    details={"plan_index": index, "ticket_key": ticket_key},
-                )
-
-            task_name = str(followup_plan.get("task_name") or followup_plan.get("summary") or ticket_key).strip() or ticket_key
-            task_scope = [
-                str(item).strip()
-                for item in list(followup_plan.get("scope") or [])
-                if str(item).strip()
-            ]
-            scope_suffix = f"；范围：{'、'.join(task_scope)}" if task_scope else ""
+            ticket_payload["dispatch_intent"] = {
+                **dispatch_intent,
+                "dependency_gate_refs": dependency_gate_refs,
+            }
             actions.append(
                 {
                     "action_type": CEOActionType.CREATE_TICKET,
-                    "payload": {
-                        "workflow_id": workflow_id,
-                        "node_id": node_id,
-                        "role_profile_ref": role_profile_ref,
-                        "output_schema_ref": output_schema_ref,
-                        "execution_contract": execution_contract,
-                        "dispatch_intent": {
-                            "assignee_employee_id": assignee_employee_id,
-                            "selection_reason": (
-                                "Follow the current capability plan and translate the approved backlog recommendation into an auditable implementation ticket."
-                            ),
-                            "dependency_gate_refs": dependency_gate_refs,
-                        },
-                        "summary": f"{ticket_key} {task_name}{scope_suffix}",
-                        "parent_ticket_id": backlog_ticket_id,
-                    },
+                    "payload": ticket_payload,
                 }
             )
 
@@ -716,32 +771,8 @@ def _build_required_governance_ticket_batch(
     if not workflow_id or not isinstance(required_governance_ticket_plan, dict):
         return None
 
-    node_id = str(required_governance_ticket_plan.get("node_id") or "").strip()
-    role_profile_ref = str(required_governance_ticket_plan.get("role_profile_ref") or "").strip()
-    output_schema_ref = str(required_governance_ticket_plan.get("output_schema_ref") or "").strip()
-    assignee_employee_id = str(required_governance_ticket_plan.get("assignee_employee_id") or "").strip()
-    parent_ticket_id = str(required_governance_ticket_plan.get("parent_ticket_id") or "").strip() or None
-    summary = str(required_governance_ticket_plan.get("summary") or "").strip()
-    selection_reason = str(required_governance_ticket_plan.get("selection_reason") or "").strip()
-    missing_fields = [
-        field_name
-        for field_name, field_value in (
-            ("node_id", node_id),
-            ("role_profile_ref", role_profile_ref),
-            ("output_schema_ref", output_schema_ref),
-            ("assignee_employee_id", assignee_employee_id),
-            ("summary", summary),
-            ("selection_reason", selection_reason),
-        )
-        if not field_value
-    ]
-    if missing_fields:
-        _raise_proposal_contract_error(
-            source_component="deterministic_fallback.required_governance",
-            reason_code="plan_missing_fields",
-            message="Required governance ticket plan is missing required fields.",
-            details={"missing_fields": missing_fields},
-        )
+    ticket_payload = _resolve_required_governance_ticket_payload(required_governance_ticket_plan)
+    node_id = str(ticket_payload.get("node_id") or "").strip()
 
     with repository.connection() as connection:
         node_view = resolve_runtime_node_lifecycle(
@@ -758,40 +789,13 @@ def _build_required_governance_ticket_batch(
             details={"workflow_id": workflow_id, "node_id": node_id},
         )
 
-    execution_contract = infer_execution_contract_payload(
-        role_profile_ref=role_profile_ref,
-        output_schema_ref=output_schema_ref,
-    )
-    if execution_contract is None:
-        _raise_proposal_contract_error(
-            source_component="deterministic_fallback.required_governance",
-            reason_code="execution_contract_unavailable",
-            message="Required governance ticket plan cannot resolve a valid execution contract.",
-            details={"workflow_id": workflow_id, "node_id": node_id},
-        )
-
     return CEOActionBatch.model_validate(
         {
             "summary": reason,
             "actions": [
                 {
                     "action_type": CEOActionType.CREATE_TICKET,
-                    "payload": {
-                        "workflow_id": workflow_id,
-                        "node_id": node_id,
-                        "role_profile_ref": role_profile_ref,
-                        "output_schema_ref": output_schema_ref,
-                        "execution_contract": execution_contract,
-                        "dispatch_intent": {
-                            "assignee_employee_id": assignee_employee_id,
-                            "selection_reason": selection_reason,
-                            "dependency_gate_refs": list(
-                                required_governance_ticket_plan.get("dependency_gate_refs") or []
-                            ),
-                        },
-                        "summary": summary,
-                        "parent_ticket_id": parent_ticket_id,
-                    },
+                    "payload": ticket_payload,
                 }
             ],
         }
@@ -1100,6 +1104,7 @@ def propose_ceo_action_batch(
 
     def _invoke_selection(current_selection):
         rendered_payload = build_ceo_shadow_rendered_payload(snapshot)
+        schema_entry = OUTPUT_SCHEMA_REGISTRY[(CEO_ACTION_BATCH_SCHEMA_REF, CEO_ACTION_BATCH_SCHEMA_VERSION)]
         provider_result = (
             invoke_openai_compat_response(
                 OpenAICompatProviderConfig(
@@ -1108,6 +1113,9 @@ def propose_ceo_action_batch(
                     model=str(current_selection.actual_model or current_selection.provider.model or ""),
                     timeout_sec=current_selection.provider.timeout_sec,
                     reasoning_effort=current_selection.effective_reasoning_effort,
+                    schema_name=CEO_ACTION_BATCH_SCHEMA_REF,
+                    schema_body=schema_entry["body"](),
+                    strict=True,
                 ),
                 rendered_payload,
             )
@@ -1126,8 +1134,12 @@ def propose_ceo_action_batch(
             if current_selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
             else json.loads(provider_result.output_text)
         )
-        payload = _normalize_provider_action_batch_payload(raw_payload)
-        return CEOActionBatch.model_validate(payload), provider_result
+        try:
+            payload = _normalize_provider_action_batch_payload(raw_payload)
+            return CEOActionBatch.model_validate(payload), provider_result
+        except CEOProposalContractError as exc:
+            exc.details.setdefault("provider_response_id", provider_result.response_id)
+            raise
 
     try:
         action_batch, provider_result = _invoke_selection(selection)

@@ -17,6 +17,7 @@ from app.core.ceo_prompts import CEO_SHADOW_PROMPT_VERSION
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_snapshot_contracts import controller_state_view
 from app.core.ceo_validator import validate_ceo_action_batch
+from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
 from app.core.runtime_provider_config import RuntimeProviderConfigStore
 from app.core.time import now_local
 from app.core.workflow_controller import workflow_controller_effect
@@ -106,6 +107,17 @@ def _snapshot_has_idle_maintenance_signal(snapshot: dict[str, Any]) -> bool:
     return bool(idle_maintenance.get("signal_types"))
 
 
+def _has_blocking_idle_maintenance_incident(snapshot: dict[str, Any]) -> bool:
+    for incident in snapshot.get("incidents") or []:
+        if (
+            str(incident.get("incident_type") or "").strip() == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
+            and str(incident.get("trigger_type") or "").strip() == EVENT_BOARD_DIRECTIVE_RECEIVED
+        ):
+            continue
+        return True
+    return False
+
+
 def _parse_snapshot_timestamp(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value
@@ -117,10 +129,7 @@ def _parse_snapshot_timestamp(value: Any) -> datetime | None:
 def _snapshot_latest_state_change_at(snapshot: dict[str, Any]) -> datetime | None:
     idle_maintenance = snapshot.get("idle_maintenance") or {}
     latest_change = _parse_snapshot_timestamp(idle_maintenance.get("latest_state_change_at"))
-    if latest_change is not None:
-        return latest_change
-    workflow = snapshot.get("workflow") or {}
-    return _parse_snapshot_timestamp(workflow.get("updated_at"))
+    return latest_change
 
 
 def list_due_ceo_maintenance_workflows(
@@ -145,7 +154,7 @@ def list_due_ceo_maintenance_workflows(
             trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
             trigger_ref=None,
         )
-        if snapshot.get("approvals") or snapshot.get("incidents"):
+        if snapshot.get("approvals") or _has_blocking_idle_maintenance_incident(snapshot):
             continue
         if int((snapshot.get("ticket_summary") or {}).get("working_count") or 0) > 0:
             continue
@@ -291,6 +300,12 @@ def run_ceo_shadow_for_trigger(
 
     def _raise_pipeline_error(source_stage: str, exc: Exception) -> None:
         is_existing_error = isinstance(exc, CeoShadowPipelineError)
+        exception_details = getattr(exc, "details", None)
+        provider_response_id = (
+            str(exception_details.get("provider_response_id") or "").strip()
+            if isinstance(exception_details, dict)
+            else ""
+        ) or None
         error = (
             exc
             if is_existing_error
@@ -313,7 +328,7 @@ def run_ceo_shadow_for_trigger(
             actual_model=None,
             selection_reason=None,
             policy_reason=None,
-            provider_response_id=None,
+            provider_response_id=provider_response_id,
             fallback_reason=error.error_message,
             deterministic_used=False,
             deterministic_reason=None,

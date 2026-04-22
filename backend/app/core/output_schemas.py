@@ -1266,24 +1266,7 @@ def _maker_checker_verdict_schema_body() -> dict[str, Any]:
 
 
 def _ceo_action_batch_schema_body() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "required": ["summary", "actions"],
-        "properties": {
-            "summary": {"type": "string"},
-            "actions": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["action_type", "payload"],
-                    "properties": {
-                        "action_type": {"type": "string"},
-                        "payload": {"type": "object"},
-                    },
-                },
-            },
-        },
-    }
+    return CEOActionBatch.model_json_schema()
 
 
 def _validate_ui_milestone_review_payload(payload: dict[str, Any]) -> None:
