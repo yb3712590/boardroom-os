@@ -176,7 +176,9 @@ def build_autopilot_architecture_brief_summary(north_star_goal: str) -> str:
     clean_goal = north_star_goal.strip() or "the current workflow"
     return (
         "Clarify the delivery architecture for "
-        f"{clean_goal}, extract concrete user-facing requirements, and decompose the work into fine-grained atomic tasks."
+        f"{clean_goal}, extract concrete user-facing requirements, define the canonical catalog-visibility contract "
+        "for answering what books exist in the library, define the canonical availability lookup contract including "
+        "ambiguous-title handling, lock the Remove action rules, and decompose the work into fine-grained atomic tasks."
     )
 
 

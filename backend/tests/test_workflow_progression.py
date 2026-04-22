@@ -34,6 +34,9 @@ def test_build_project_init_kickoff_spec_uses_governance_kickoff_for_autopilot()
     assert kickoff["node_id"] == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
     assert kickoff["role_profile_ref"] == "architect_primary"
     assert kickoff["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert "catalog-visibility contract" in kickoff["summary"]
+    assert "availability lookup contract" in kickoff["summary"]
+    assert "Remove action rules" in kickoff["summary"]
 
 
 def test_build_project_init_kickoff_spec_uses_governance_kickoff_for_standard() -> None:
@@ -50,6 +53,9 @@ def test_build_project_init_kickoff_spec_uses_governance_kickoff_for_standard() 
     assert kickoff["node_id"] == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
     assert kickoff["role_profile_ref"] == "architect_primary"
     assert kickoff["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert "catalog-visibility contract" in kickoff["summary"]
+    assert "availability lookup contract" in kickoff["summary"]
+    assert "Remove action rules" in kickoff["summary"]
 
 
 def test_select_governance_role_and_assignee_requires_architect_for_architecture_brief() -> None:

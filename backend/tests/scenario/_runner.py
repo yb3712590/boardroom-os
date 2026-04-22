@@ -275,7 +275,7 @@ class AppScenarioDriver(AbstractContextManager["AppScenarioDriver"]):
             self.repository,
             workflow_id=workflow_id,
             idempotency_key_prefix=f"scenario-stage:auto-advance:{workflow_id}:{tick_index}",
-            max_steps=4,
+            max_steps=1,
             max_dispatches=self._config.runtime.scheduler_max_dispatches,
         )
 
